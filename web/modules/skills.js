@@ -209,7 +209,7 @@ const isSkillEditable = (skill) => {
   if (typeof skill.editable === "boolean") {
     return skill.editable;
   }
-  return resolveSkillSource(skill) === "custom";
+  return true;
 };
 
 const buildSkillSourceLabel = (skill) => {
@@ -641,10 +641,6 @@ const saveSkillFile = async () => {
   const skill = getActiveSkill();
   if (!skill) {
     notify(t("skills.file.selectSkillRequired"), "warn");
-    return;
-  }
-  if (!isSkillEditable(skill)) {
-    notify(t("skills.file.readonly"), "warn");
     return;
   }
   if (!viewState.activeFile) {

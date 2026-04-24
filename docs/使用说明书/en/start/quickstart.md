@@ -1,157 +1,144 @@
 ---
-title: Quickstart
-summary: Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.
+title: Quick Start
+summary: The shortest path to complete your first task in wunder. Desktop by default, then Server or CLI.
 read_when:
-  - You are using wunder for the first time
-  - You need a verifiable result within about ten minutes
+  - You're using wunder for the first time
+  - You need to verify a working setup in 10 minutes
 source_docs:
   - README.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
 ---
 
-# Quickstart
+# Quick Start
 
-This page has one job: **help you get the first working wunder flow up and running in ten minutes.**
+This page does one thing: **help you complete your first task in 10 minutes**.
 
-## Step 1: pick the right path
+## Step 1: Pick Your Path
 
-| Your situation | Recommended path | Why |
-|----------|----------|----------|
-| I just want to start using it now | [Desktop Guide](/docs/en/start/desktop/) | Lowest barrier, ready to use immediately |
-| I need team collaboration and administration | [Server Deployment](/docs/en/start/server/) | Multi-user, permissions, centralized governance |
-| I am a developer and need automation | [CLI Usage](/docs/en/start/cli/) | Terminal-driven, scriptable, pipeline-friendly |
+| Your Situation | Recommended Path | Why |
+|----------------|-----------------|-----|
+| I just want to start using it now | [Desktop Guide](/docs/en/start/desktop/) | Lowest barrier, download and go |
+| I need team collaboration and management | [Server Deployment](/docs/en/start/server/) | Multi-user, permissions, unified management |
+| I'm a developer, I want automation | [CLI Usage](/docs/en/start/cli/) | Terminal-driven, scriptable |
 
 ---
 
-## Shortest path: Desktop
+## Shortest Path: Desktop (Recommended)
 
-Best for: individual users, local demos, and a desktop workstation
+For: Individual users, local demos
 
-### Five steps
+### 5 Steps to Get Running
 
-1. **Download and install**
-   - Go to Releases and download the `wunder-desktop` package for your system
-   - Install it or unzip it, then launch it
+1. **Download and Install**
+   - Get the installer for your system from Releases
+   - Install or extract, then launch
 
-2. **Configure a model**
-   - Open `System Settings` -> `Model Configuration`
-   - Fill in your API key and endpoint
-   - Save and test the connection
+2. **Configure Model**
+   - Open "System Settings" → "Model Configuration"
+   - Enter your API Key and endpoint URL
+   - Click "Test Connection" before saving
 
-3. **Start the first conversation**
-   - Go back to the chat screen
-   - Enter: `Help me list the files in the current directory`
+3. **Start Your First Conversation**
+   - Go back to the chat interface
+   - Type: `List the files in the current directory`
    - Press Enter
 
-4. **Watch the execution**
-   - You will see:
-     - model reasoning
-     - tool calls such as file listing
-     - intermediate results
-     - the final reply
+4. **Watch It Work**
+   - You'll see: model thinks → calls tools → shows results → gives reply
 
-5. **Validate success**
-   - If you can see the full execution flow and the final result, the core path is working
+5. **Verify**
+   - Saw the full execution process and results? Congratulations, you're up and running!
 
-### Desktop-specific strengths
+### Desktop-Only Capabilities
 
-- **Local first**: runs locally by default, but can also connect to a remote gateway
-- **Desktop control**: can operate local windows, files, and browsers
-- **Persistent workspace**: files are not auto-cleaned after 24 hours
-- **Agent-visible configuration**: agent settings and prompts can be edited directly
+- **Local-first**: Runs locally by default, can also connect to a remote server
+- **Desktop control**: Can operate local windows, files, browsers
+- **Persistent workspace**: Files are not auto-cleaned
+- **Direct agent editing**: Adjust agent configuration and prompts anytime
 
 ---
 
-## Team path: Server
+## Team Path: Server
 
-Best for: multi-user collaboration, organizational governance, and unified access
+For: Multi-user collaboration, organizational governance
 
-### Before you start
+### Prerequisites
 
-- Docker and Docker Compose, preferably
-- A PostgreSQL database, or the one included in compose
-- At least 4 GB of free memory
+- Docker and Docker Compose (recommended)
+- At least 4GB available memory
 
-### Three-step deployment
+### 3 Steps to Deploy
 
-1. **Get the code**
+1. **Get the Code**
    ```bash
    git clone <repo-url>
    cd wunder
    ```
 
-2. **Start the services**
+2. **Start the Service**
    ```bash
-   # x86
+   # x86 architecture
    docker-compose -f docker-compose-x86.yml up -d
-
-   # ARM
+   
+   # ARM architecture
    docker-compose -f docker-compose-arm.yml up -d
    ```
 
-3. **Open the system**
-   - User frontend: `http://localhost:18002`
-   - Admin UI and docs: `http://localhost:18000`
-   - Frontend dev service, only for direct integration debugging: `http://localhost:18001`
-   - Default admin account: `admin / admin`
+3. **Access the System**
+   - User frontend: http://localhost:18002
+   - Admin & docs: http://localhost:18000
+   - Default admin: admin / admin
 
-### Core server capabilities
+### Server Core Capabilities
 
-- **Multi-tenancy**: hierarchical governance for users, units, and permissions
-- **Unified interfaces**: `/wunder`, `/wunder/chat/*`, and `/a2a`
-- **Channel integration**: Feishu, WeChat, QQ, XMPP, and more
-- **Observability**: monitoring, benchmarking, and capability evaluation
+- **Multi-tenancy**: Users, organizations, layered permission management
+- **Channel integration**: Feishu, WeChat, QQ, and more
+- **Observability**: Monitoring, benchmarking, capability evaluation
 
 ---
 
-## Developer path: CLI
+## Developer Path: CLI
 
-Best for: developers, automation scripts, and terminal-driven tasks
+For: Developers, automation scripts
 
-### Install and run
+### Install and Run
 
 ```bash
-# build, requires Rust
+# Build (requires Rust)
 cargo build --release
 
-# run
+# Run
 ./target/release/wunder-cli
 ```
 
-### First session
+### First Session
 
 ```bash
-# start the interactive mode
 wunder-cli
-
-# enter a task
-> Help me write a Hello World Python script
+> Write a Hello World Python script
 ```
 
-### CLI-specific strengths
+### CLI-Only Capabilities
 
-- **TUI interface**: a terminal experience similar to Codex
-- **Session management**: `/fork`, `/compact`, and `/resume`
-- **Debugging tools**: `/debug-config` and `/statusline`
-- **JSONL output**: easier to use in pipes and automation
-
----
-
-## Validation checklist
-
-No matter which path you choose, confirm these points:
-
-- [ ] You can submit one execution request successfully
-- [ ] You can see the streaming process, including intermediate steps and tool calls
-- [ ] You receive the final result
-- [ ] You know which document to read next
+- **TUI interface**: Terminal interaction similar to Codex
+- **Session management**: `/fork`, `/compact`, `/resume`
+- **JSONL output**: Easy pipe and automation integration
 
 ---
 
-## Next
+## Verification Checklist
 
-- Want the runtime model? -> [Core Concepts](/docs/en/concepts/)
-- Need to integrate wunder into your own system? -> [Integration Overview](/docs/en/integration/)
-- Hit a problem? -> [Troubleshooting](/docs/en/help/troubleshooting/)
-- Want the full tool set? -> [Tools Overview](/docs/en/tools/)
+No matter which path you chose, confirm:
+
+- [ ] You can successfully start a conversation
+- [ ] You can see intermediate steps and tool calls
+- [ ] You can get the final result
+- [ ] You know what to read next
+
+---
+
+## Next Steps
+
+- Want to understand the system? → [Core Concepts](/docs/en/concepts/)
+- Need to integrate with your system? → [Integration Overview](/docs/en/integration/)
+- Running into issues? → [Troubleshooting](/docs/en/help/troubleshooting/)
+- Want to see all tools? → [Tools Overview](/docs/en/tools/)

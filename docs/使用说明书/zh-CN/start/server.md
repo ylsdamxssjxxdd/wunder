@@ -1,109 +1,36 @@
 ---
 title: Server 部署
-summary: 需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。
+summary: 团队和组织的选择。多用户、权限管理、渠道接入、统一治理。
 read_when:
-  - 你要部署 server 形态
-  - 你需要多用户、组织治理和对外接入能力
+  - 你需要多人共用 wunder
+  - 你需要管理员后台和统一管理
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
   - docs/API文档.md
+  - packaging/docker/
+updated_at: 2026-04-10
 ---
 
 # Server 部署
 
-如果你需要**团队协作、多用户治理、统一对外接口**，这页才用看。
+Server 是团队和组织的选择。多用户协作、权限管理、渠道接入——都需要先部署 Server。
 
-`wunder-server` 是 Wunder 的核心服务形态，负责多租户治理、统一接入和管理员后台。
-
----
-
-## 什么时候必须上 Server？
+## 什么时候选 Server
 
 | 场景 | 选 Server |
 |------|-----------|
-| 多用户并发访问 | ✅ |
-| 组织、单位、租户和管理员治理 | ✅ |
-| 统一暴露 `/wunder`、聊天接口和 `A2A` | ✅ |
-| 把 Wunder 当平台能力接给别的系统 | ✅ |
-| 只是个人本地使用 | ❌ 选 Desktop |
-
----
-
-## Server 架构概览
-
-```
-                    ┌─────────────────┐
-                    │   外部访问      │
-                    │  (用户/业务方)  │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   Nginx (18002)│
-                    │  反向代理 + 静态│
-                    └────────┬────────┘
-         ┌───────────────────┼───────────────────┐
-         │                   │                   │
-    ┌────▼────┐        ┌────▼────┐        ┌────▼────┐
-    │ Frontend│        │ wunder- │        │ 静态文档 │
-    │  (用户) │        │ server  │        │   站     │
-    └─────────┘        └────┬────┘        └─────────┘
-                             │
-         ┌───────────────────┼───────────────────┐
-         │                   │                   │
-    ┌────▼────┐        ┌────▼────┐        ┌────▼────┐
-    │Postgres │        │ Weaviate│        │ wunder- │
-    │  (主库) │        │(向量库) │        │ sandbox │
-    └─────────┘        └─────────┘        └─────────┘
-         │                                       │
-    ┌────▼────┐                             ┌────▼────┐
-    │ 工作区  │                             │ extra-  │
-    │ 存储    │                             │ mcp     │
-    └─────────┘                             └─────────┘
-```
-
-### Server 负责什么
-
-| 能力 | 说明 |
-|------|------|
-| **执行入口** | `/wunder` 底层智能体调度 |
-| **会话入口** | `/wunder/chat/*` 完整聊天接口 |
-| **A2A 接口** | `/a2a` 系统级智能体互通 |
-| **流式能力** | WebSocket + SSE 双链路 |
-| **治理能力** | 用户、单位、权限、Token 账户 |
-| **渠道接入** | 飞书、微信、QQ、XMPP 等（三种形态均支持） |
-
----
+| 多人共用一个系统 | ✅ |
+| 需要管理员后台 | ✅ |
+| 需要接入飞书、微信等渠道 | ✅ |
+| 需要统一治理和审计 | ✅ |
+| 只是个人用 | ❌ 选 Desktop |
 
 ## 部署前准备
 
-### 硬件要求
+- Docker 和 Docker Compose（推荐方式）
+- 至少 4GB 可用内存
+- PostgreSQL 数据库（Docker 部署时自动包含）
 
-| 规模 | CPU | 内存 | 磁盘 |
-|------|-----|------|------|
-| 小规模（<10 用户） | 2 核 | 4GB | 50GB |
-| 中规模（10-50 用户） | 4 核 | 8GB | 100GB |
-| 大规模（>50 用户） | 8 核+ | 16GB+ | 200GB+ |
-
-### 软件依赖
-
-- Docker 20.10+
-- Docker Compose 2.0+
-- 或直接运行 Rust 二进制（需要 PostgreSQL）
-
-### 数据库选择
-
-| 场景 | 数据库 |
-|------|--------|
-| 生产环境 | PostgreSQL（推荐） |
-| 开发测试 | PostgreSQL（Docker 自带） |
-| 桌面端 | SQLite3 |
-
-> **注意**：Server 形态**不使用** SQLite，必须用 PostgreSQL。
-
----
-
-## Docker Compose 部署（推荐）
+## 3 步部署
 
 ### 1. 获取代码
 
@@ -112,173 +39,75 @@ git clone <repo-url>
 cd wunder
 ```
 
-### 2. 配置环境变量（可选）
-
-复制 `.env.example` 为 `.env`，根据需要修改：
+### 2. 启动服务
 
 ```bash
-cp .env.example .env
-```
-
-关键配置：
-
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `WUNDER_PORT` | Server 端口 | 18000 |
-| `WUNDER_TEMP_DIR_ROOT` | 临时文件目录 | ./config/data/temp_dir |
-| `DATABASE_URL` | PostgreSQL 连接串 | postgres://... |
-
-### 3. 启动服务
-
-**x86 架构：**
-```bash
+# x86 架构
 docker-compose -f docker-compose-x86.yml up -d
-```
 
-**ARM 架构（Mac M1/M2/M3、树莓派）：**
-```bash
+# ARM 架构
 docker-compose -f docker-compose-arm.yml up -d
 ```
 
-### 4. 等待启动
+### 3. 访问系统
 
-首次启动会：
-- 拉取或构建镜像
-- 初始化 PostgreSQL 数据库
-- 启动 wunder-server、frontend 构建服务、nginx、sandbox 等
+- 用户前端：http://localhost:18002
+- 管理端与文档：http://localhost:18000
+- 默认管理员：admin / admin
 
-等待约 1-2 分钟，检查状态：
+**首次登录后请立即修改默认密码。**
 
-```bash
-docker-compose -f docker-compose-x86.yml ps
-```
+## 部署后必做
 
-### 5. 访问系统
+1. **修改默认密码**：admin 账号的默认密码不安全
+2. **配置模型**：管理端 → 模型配置 → 添加 API Key
+3. **创建用户**：管理端 → 用户管理 → 添加用户或开放注册
+4. **检查渠道**：如果需要接入外部渠道，先配置凭证
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 用户前端 | http://localhost:18002 | Nginx 对外暴露的普通用户入口 |
-| 前端开发服务 | http://localhost:18001 | Compose 内部前端构建/调试入口，默认不作为对外地址 |
-| 管理端 / 文档 | http://localhost:18000 | Rust 后端直出 `web/` 管理页、调试页与 `/docs/` |
-| 默认管理员 | admin / admin | 首次登录请修改密码 |
+## 核心能力
 
-> 默认 compose 里，`18002` 面向普通用户；`18000` 面向管理员、调试页和说明书；`18001` 更适合前端联调，不建议当生产入口。
+### 多租户
 
----
+- 用户和单位分层管理
+- 权限按角色分配
+- 数据隔离
 
-## 关键配置项
+### 渠道接入
 
-### 配置文件
+支持的外部渠道：
+- 飞书
+- 企业微信 / 微信
+- QQ Bot
+- WhatsApp Cloud
+- XMPP
 
-主配置文件：`config/wunder.yaml`
+### 可观测性
 
-```yaml
-server:
-  mode: server
-  port: 18000
-  max_active_sessions: 100
+- 服务健康监控
+- 性能指标
+- 日志与审计
 
-llm:
-  models:
-    - name: gpt-4o
-      api_key: your-api-key
-      endpoint: https://api.openai.com/v1
-      max_context: 128000
-      max_rounds: 20
+### 安全
 
-database:
-  url: postgres://wunder:wunder@postgres:5432/wunder
+- 令牌鉴权
+- 沙盒隔离
+- 审批策略
+- 请求限制
 
-security:
-  api_key: your-admin-api-key
-  cors:
-    allowed_origins:
-      - http://localhost:18002
-      # 如果你直接暴露 compose 里的前端开发服务，再额外放开 18001
-      - http://localhost:18001
-```
+## 配置文件
 
-### 持久化数据
+主要配置文件位于 `config/` 目录：
 
-| 数据类型 | Docker 卷 | 说明 |
-|----------|-----------|------|
-| 用户工作区 | `wunder_workspaces` | `/workspaces` |
-| PostgreSQL 数据 | `wunder_logs` | PostgreSQL 数据目录 |
-| 临时文件 | `./config/data/temp_dir` | 临时上传/下载 |
-| 服务运行日志 | `./config/data/logs/server` | 仅 `wunder-server` 写本地 JSONL 日志，默认保留 14 天 |
+- 模型配置
+- 工具配置
+- 渠道配置
+- 安全策略
 
-> **重要**：不要把长期业务数据混放进 `config/data/` 运行时目录；长期业务文件请放工作区或外部存储。
+修改配置后通常需要重启服务。
 
-### 服务日志
+## 延伸阅读
 
-服务版启动后会同时输出控制台日志和本地文件日志：
-
-- 本地日志目录：`config/data/logs/server`
-- 日志格式：JSONL 结构化日志，按天轮转
-- 覆盖范围：启动、HTTP 访问、异常退出、panic
-- 非覆盖范围：desktop 和 cli 不写这套本地运行日志
-
----
-
-## 对外访问规划
-
-### 暴露哪些路径
-
-通过 Nginx 反向代理，建议暴露：
-
-| 路径 | 说明 |
-|------|------|
-| `/` | 用户前端 |
-| `/wunder` | 核心 API |
-| `/wunder/chat` | 聊天 API |
-| `/wunder/admin` | 管理端 API（需保护） |
-| `/a2a` | A2A 接口 |
-| `/.well-known/agent-card.json` | 智能体发现 |
-
-### 关键约束
-
-| 约束 | 说明 |
-|------|------|
-| `user_id` 不要求注册 | 可以传任意虚拟标识 |
-| 优先 WebSocket | SSE 作为兜底 |
-| 业务方接 `/wunder` | 底层执行入口 |
-| 稳定调用接 `/wunder/chat/*` | 完整会话入口 |
-
----
-
-## 生产环境检查清单
-
-- [ ] 使用 PostgreSQL 而非 SQLite
-- [ ] 配置数据库备份策略
-- [ ] 工作区存储持久化
-- [ ] HTTPS 证书配置
-- [ ] CORS 策略收紧
-- [ ] API Key 复杂度足够
-- [ ] 日志收集配置
-- [ ] 监控告警设置
-- [ ] 资源限制配置
-
----
-
-## 常见问题
-
-**Q: 能和 Desktop 配合用吗？**  
-A: 可以！Desktop 可以接入 Server 作为远端 Gateway。
-
-**Q: user_id 必须先注册吗？**  
-A: 不需要！外部调用可以传任意虚拟 user_id。
-
-**Q: 只暴露 /wunder 够吗？**  
-A: 建议同时规划聊天域和 WebSocket，体验更好。
-
-**Q: 如何升级？**  
-A: 拉取最新代码，重新 `docker-compose up -d` 即可。
-
----
-
-## 下一步
-
-- 想了解部署细节？→ [部署与运行](/docs/zh-CN/ops/deployment/)
-- 要配置安全？→ [认证与安全](/docs/zh-CN/ops/auth-and-security/)
-- 想看系统架构？→ [系统架构](/docs/zh-CN/concepts/architecture/)
-- 要接入 API？→ [wunder API](/docs/zh-CN/integration/wunder-api/)
+- [管理端界面](/docs/zh-CN/surfaces/web-admin/)
+- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
+- [部署与运行](/docs/zh-CN/ops/deployment/)
+- [配置说明](/docs/zh-CN/reference/config/)

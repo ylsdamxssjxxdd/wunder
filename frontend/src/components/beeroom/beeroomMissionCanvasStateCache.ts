@@ -13,6 +13,7 @@ export type BeeroomMissionCanvasState = {
   version: number;
   nodePositionOverrides: Record<string, BeeroomCanvasPositionOverride>;
   activeNodeId: string;
+  layoutMode: 'horizontal' | 'vertical';
   chatCollapsed: boolean;
   chatWidth: number;
   timelineCollapsed: boolean;
@@ -81,6 +82,9 @@ const normalizeChatWidth = (value: unknown) => {
   return width;
 };
 
+const normalizeLayoutMode = (value: unknown): 'horizontal' | 'vertical' =>
+  String(value || '').trim().toLowerCase() === 'vertical' ? 'vertical' : 'horizontal';
+
 const normalizeTimelineHeight = (value: unknown) => {
   const height = Math.round(Number(value || 0));
   if (!Number.isFinite(height) || height <= 0) return 0;
@@ -91,6 +95,7 @@ const cloneState = (state: BeeroomMissionCanvasState): BeeroomMissionCanvasState
   version: MISSION_CANVAS_STATE_VERSION,
   nodePositionOverrides: cloneNodePositionOverrides(state.nodePositionOverrides),
   activeNodeId: String(state.activeNodeId || '').trim(),
+  layoutMode: normalizeLayoutMode(state.layoutMode),
   chatCollapsed: !!state.chatCollapsed,
   chatWidth: normalizeChatWidth(state.chatWidth),
   timelineCollapsed: !!state.timelineCollapsed,
@@ -103,6 +108,7 @@ const normalizeState = (state: Partial<BeeroomMissionCanvasState> | null | undef
   version: MISSION_CANVAS_STATE_VERSION,
   nodePositionOverrides: cloneNodePositionOverrides(state?.nodePositionOverrides || {}),
   activeNodeId: String(state?.activeNodeId || '').trim(),
+  layoutMode: normalizeLayoutMode(state?.layoutMode),
   chatCollapsed: !!state?.chatCollapsed,
   chatWidth: normalizeChatWidth(state?.chatWidth),
   timelineCollapsed: !!state?.timelineCollapsed,
@@ -207,6 +213,10 @@ export const mergeBeeroomMissionCanvasState = (
       nextPatch.activeNodeId !== undefined
         ? String(nextPatch.activeNodeId || '').trim()
         : current.activeNodeId,
+    layoutMode:
+      nextPatch.layoutMode !== undefined
+        ? normalizeLayoutMode(nextPatch.layoutMode)
+        : current.layoutMode,
     chatCollapsed:
       nextPatch.chatCollapsed !== undefined ? !!nextPatch.chatCollapsed : current.chatCollapsed,
     chatWidth:

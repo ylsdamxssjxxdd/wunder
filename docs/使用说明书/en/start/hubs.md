@@ -1,90 +1,87 @@
 ---
-title: Manual Hubs
-summary: Jump to the right part of the manual by role and task instead of searching the whole site blindly.
+title: Documentation Hub
+summary: Find the docs you need by role.
 read_when:
-  - You are not sure which page to read first
-  - You want the fastest route into the correct documentation path for your role
+  - You're not sure where to start
+  - You want to jump to the right docs by role
 source_docs:
   - docs/wunder补全文档落地方案.md
 ---
 
-# Manual Hubs
+# Documentation Hub
 
-This is a navigation page. It does not repeat the system theory.
+This is a navigation page. Jump directly to actionable pages by role.
 
-Its goal is simple: **take each role straight to pages they can act on.**
-
-## I am a regular user
+## I'm a Regular User
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/quickstart/">
-    <strong>Quickstart</strong>
-    <span>Get it running first, then fill in the mental model.</span>
+    <strong>Quick Start</strong>
+    <span>Complete your first task in 10 minutes.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/desktop/">
     <strong>Desktop Guide</strong>
-    <span>The main recommended path for daily use.</span>
+    <span>Download and start using.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/frontend/">
-    <strong>Frontend Surface</strong>
-    <span>How chat, tools, and workspace areas work together.</span>
+    <strong>User Interface</strong>
+    <span>Chat, files, agents, tools.</span>
   </a>
   <a class="docs-card" href="/docs/en/help/faq/">
     <strong>FAQ</strong>
-    <span>Clear the most common misunderstandings first.</span>
+    <span>Quick answers to common questions.</span>
   </a>
 </div>
 
-## I am an administrator
+## I'm an Administrator
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/server/">
     <strong>Server Deployment</strong>
-    <span>The entry point for multi-tenant governance.</span>
+    <span>Multi-user, unified management.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/web-admin/">
-    <strong>Admin Surface</strong>
-    <span>Panels for models, tools, users, and channels.</span>
+    <strong>Admin Interface</strong>
+    <span>Model, tool, user, channel management panels.</span>
   </a>
   <a class="docs-card" href="/docs/en/ops/deployment/">
-    <strong>Deployment and Operations</strong>
-    <span>The key checks before and after going live.</span>
+    <strong>Deployment & Operations</strong>
+    <span>Key checks before and after going live.</span>
   </a>
   <a class="docs-card" href="/docs/en/ops/auth-and-security/">
-    <strong>Authentication and Security</strong>
-    <span>Tokens, auth, sandbox boundaries, and approval policy.</span>
+    <strong>Authentication & Security</strong>
+    <span>Tokens, auth, sandbox, and approval policies.</span>
   </a>
 </div>
 
-## I am a developer or integrator
+## I'm a Developer / Integrator
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/cli/">
     <strong>CLI Usage</strong>
-    <span>The entry point for scripting, debugging, and automation.</span>
+    <span>Terminal-driven, scriptable, automation.</span>
   </a>
   <a class="docs-card" href="/docs/en/concepts/">
     <strong>Core Concepts</strong>
-    <span>Capture the main model first, then go deeper.</span>
+    <span>Understand the system's running model.</span>
   </a>
   <a class="docs-card" href="/docs/en/integration/">
     <strong>Integration Overview</strong>
-    <span>Choose the right integration layer first.</span>
+    <span>Find the right integration approach.</span>
   </a>
   <a class="docs-card" href="/docs/en/tools/">
     <strong>Tools Overview</strong>
-    <span>Select tools by task and reduce trial and error.</span>
+    <span>Pick tools by task.</span>
   </a>
 </div>
 
-## I am troubleshooting
+## I'm Troubleshooting
 
 - [Help Center](/docs/en/help/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)
-- [Streaming Events Reference](/docs/en/reference/stream-events/)
 - [Configuration Reference](/docs/en/reference/config/)
 
-## Further reading
+## Further Reading
 
-- [Frequently Used Pages](/docs/en/start/docs-directory/)
+- [Docs Directory](/docs/en/start/docs-directory/)
 - [API Index](/docs/en/reference/api-index/)

@@ -1,103 +1,68 @@
 ---
 title: Admin Interface
-summary: The admin frontend lives in `web/`, handling models, tools, users, channels, and runtime governance.
-read_when:
-  - You want to understand the interface seen by administrators and system maintainers
-  - You need to know the responsibility boundary between the admin frontend and the user frontend
-source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
-  - docs/API文档.md
+summary: The admin's backend workbench. Model configuration, tool management, user governance, channel integration — all here.
 ---
 
 # Admin Interface
 
-Wunder's admin interface is not a regular user entry point.
+The admin interface is the system administrator's backend workbench. Regular users don't see this interface.
 
-It is more of a governance and debugging console, serving:
+## When You Need the Admin Interface
 
-- Administrators
-- Platform maintainers
-- Integration developers
+- Need to configure models and API Keys
+- Need to manage users, organizations, permissions
+- Need to connect external channels (Feishu, WeChat, etc.)
+- Need to manage tools and skills
+- Need to view system running status
 
-## Code Location
+## Core Features
 
-- `web/`
+### Model Configuration
 
-## Default Responsibilities
+- Add, edit, delete models
+- Configure API Keys and endpoints
+- Test model connections
+- Set default models
 
-The admin interface is primarily responsible for:
+### Preset Agents
 
-- Model configuration
-- Tool management
-- MCP and A2A service management
-- User and organization governance
-- Channel integration and runtime monitoring
-- Preset agent governance
-- Benchmark and performance observation
+- Manage preset agent cards
+- Configure avatar, name, description
+- Set model, tools, prompts
+- Manage built-in skills
 
-## Why It Must Be Separate from the User Frontend
+### Tool Management
 
-The user frontend pursues a "workbench experience."
+- View all available tools
+- Enable / disable tools
+- Manage skill files
+- Configure MCP / A2A services
 
-The admin frontend pursues:
+### Users & Organizations
 
-- Viewing global state
-- Changing configuration
-- Performing audits and troubleshooting
-- Platform governance
+- User list and status management
+- Organization management
+- Permission and role assignment
+- Token management
 
-These two goals are fundamentally different, so Wunder explicitly splits them into two separate interfaces.
+### Channel Management
 
-## What You Currently See in the Admin Interface
+- Configure Feishu, WeCom, QQ, and other channels
+- Manage channel credentials
+- View channel running status
 
-- System and model configuration pages
-- Tool and MCP/A2A debugging panels
-- Channel accounts and runtime monitoring
-- Preset agents and sync panels
-- Documentation section with usage manual and API entry points
-- Operations capabilities such as benchmark, throughput, and performance sampling
+### System Monitoring
 
-## Token Accounting in User Management
+- Service health status
+- Performance metrics
+- Log viewing
 
-Under "User Management -> Settings," regular users now support two types of Token operations:
+## Access
 
-- Set balance directly
-- Issue Tokens / Deduct Tokens
-
-These entry points have different semantics:
-
-- **Set balance directly**: Overwrites the current balance; suitable for correcting ledger values
-- **Issue Tokens**: Increases the user's held balance and records it as cumulative earnings
-- **Deduct Tokens**: Decreases the user's held balance and records it as cumulative spending
-
-Admin accounts are not subject to Token balance limits, so the relevant controls are disabled in the interface.
-
-## Relationship Between the Usage Manual and the Admin Interface
-
-The current usage manual artifacts are also published under `web/docs/` and served statically via `/docs/`.
-
-This means the admin interface and the usage manual share the same static resource publishing method, but their responsibilities are different:
-
-- The admin interface is for governance and debugging
-- The usage manual is for documentation and navigation
-
-The admin documentation section now directly embeds:
-
-- [Usage Manual](/docs/)
-- Built-in admin API pages
-
-## When to Check the Admin Documentation First
-
-This is useful when:
-
-- You are integrating or troubleshooting MCP/A2A
-- You need to adjust models, authentication, organizations, and Token accounts
-- You want to view channel account status, errors, and bulk governance capabilities
+The admin interface is typically accessed via browser after Server deployment, default port 18000.
 
 ## Further Reading
 
-- [Deployment and Operations](/docs/en/ops/deployment/)
-- [Authentication and Security](/docs/en/ops/auth-and-security/)
-- [MCP Endpoint](/docs/en/integration/mcp-endpoint/)
-- [Admin Panel Index](/docs/en/reference/admin-panels/)
+- [Server Deployment](/docs/en/start/server/)
+- [Authentication & Security](/docs/en/ops/auth-and-security/)
+- [Configuration Reference](/docs/en/reference/config/)

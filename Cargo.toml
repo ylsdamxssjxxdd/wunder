@@ -19,6 +19,12 @@ incremental = false
 incremental = false
 
 [[bin]]
+name = "wunder-server"
+path = "src/main.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "wunder-cli"
 path = "wunder-cli/main.rs"
 
@@ -30,6 +36,8 @@ required-features = ["desktop"]
 [[bin]]
 name = "wunder-desktop-bridge"
 path = "desktop/tauri/bridge_main.rs"
+test = false
+bench = false
 
 # Simulation binaries are used for local benchmarking only.
 # Keep them out of `cargo test` target builds to avoid unnecessary

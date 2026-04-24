@@ -2249,6 +2249,7 @@ export default {
   'orchestration.message.createRunRequired': '请先新建编排，再向母蜂发送消息。',
   'orchestration.message.historyRoundReadonly': '历史轮次将以分支方式继续推进。',
   'orchestration.panel.currentRun': '运行 {runId} · 用户轮次 {round}',
+  'orchestration.panel.roundTag': '第 {round} 轮',
   'orchestration.panel.situation': '当前态势',
   'orchestration.panel.roundMission': '本轮任务',
   'orchestration.panel.roundMissionEmpty': '当前轮次还没有关联到蜂群任务。',
@@ -2802,6 +2803,8 @@ export default {
   'beeroom.canvas.zoomIn': '放大',
   'beeroom.canvas.zoomOut': '缩小',
   'beeroom.canvas.regularize': '规整',
+  'orchestration.canvas.layoutHorizontal': '切换为横向布局',
+  'orchestration.canvas.layoutVertical': '切换为纵向布局',
   'beeroom.canvas.enterFullscreen': '进入全屏',
   'beeroom.canvas.exitFullscreen': '退出全屏',
 };

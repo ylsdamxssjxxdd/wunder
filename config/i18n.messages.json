@@ -1544,12 +1544,12 @@
     "zh-CN": "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。"
   },
   "tool.spec.apply_patch.args.input": {
-    "en-US": "Raw apply_patch payload only (no JSON wrapper / no markdown fence). Start at *** Begin Patch and end at *** End Patch. After @@, every Update File line must start with space/+/-. Do not include editor line numbers like 123:, and do not use *** as an old/new separator inside a hunk. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch",
-    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。@@ 之后的 Update File 内容行都必须以空格/+/- 开头。不要带 123: 这类编辑器行号，也不要在 hunk 内用 *** 分隔旧内容和新内容。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch"
+    "en-US": "Raw apply_patch payload only (no JSON wrapper / no markdown fence). Start at *** Begin Patch and end at *** End Patch. After @@, every Update File line must start with space/+/-. IMPORTANT: (1) Include at least 2-3 context lines (space-prefixed) around each change so the tool can locate it. (2) Do NOT copy line numbers from read_file output — lines like \"3: code\" will fail to match; write just the code. (3) Do not use *** as an old/new separator inside a hunk. (4) A line to be deleted/replaced must appear ONLY as a '-' line, NOT also as a context (' ') line — do not duplicate it. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch",
+    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。@@ 之后的 Update File 内容行都必须以空格/+/- 开头。重要提示：(1) 每处变更前后至少保留 2-3 行上下文行（空格开头），帮助工具定位位置；(2) 绝对不要把读取文件工具输出的行号（如\"3: 代码\"）复制进来，只写代码本身；(3) 不要在 hunk 内用 *** 分隔旧内容和新内容；(4) 要删除/替换的行只能用 '-' 前缀，不能同时再用空格前缀作为上下文行重复出现。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply precise small edits with apply_patch grammar. Use it for narrow reviewable changes; use write_file for full file rewrites.",
-    "zh-CN": "按 apply_patch grammar 做精确小修改。适合小范围可审查编辑；整文件重写请改用写入文件。"
+    "en-US": "Apply precise small edits with apply_patch grammar. Use it for narrow reviewable changes; use write_file for full file rewrites. Always include context lines (space-prefixed) around changes for reliable matching. Lines to delete or replace use '-' prefix only — do NOT also write them as context lines.",
+    "zh-CN": "按 apply_patch grammar 做精确小修改。适合小范围可审查编辑；整文件重写请改用写入文件。务必在变更前后包含上下文行（空格开头），确保可靠匹配。要删除或替换的行只用 '-' 前缀，不要同时写成上下文行。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
@@ -2152,8 +2152,8 @@
     "zh-CN": "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read a local plain-text file, like cat. Only for text files (code, config, logs, markdown). For images use read_image. If the file location is uncertain, use list_files or search_content first.",
-    "zh-CN": "读取本地纯文本文件，类似 cat。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。文件位置不确定时先用 list_files 或 search_content。"
+    "en-US": "Read a local plain-text file, .txt/.md/.py, like cat, docx/xlsx is not supported. Only for text files (code, config, logs, markdown). For images use read_image. If the file location is uncertain, use list_files or search_content first.",
+    "zh-CN": "读取本地纯文本文件 .txt/.md/.py，类似 cat，不支持读取docx/xlsx等文档文件。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。文件位置不确定时先用 list_files 或 search_content。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",

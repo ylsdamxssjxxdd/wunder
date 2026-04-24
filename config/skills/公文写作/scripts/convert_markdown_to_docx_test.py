@@ -3,7 +3,6 @@
 
 import importlib.util
 import sys
-import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -25,8 +24,13 @@ if "docx" not in sys.modules:
     sys.modules["docx.enum.table"] = enum_table
 
     enum_text = types.ModuleType("docx.enum.text")
-    enum_text.WD_ALIGN_PARAGRAPH = types.SimpleNamespace(LEFT="LEFT", CENTER="CENTER", RIGHT="RIGHT")
-    enum_text.WD_LINE_SPACING = types.SimpleNamespace(EXACTLY="EXACTLY", SINGLE="SINGLE")
+    enum_text.WD_ALIGN_PARAGRAPH = types.SimpleNamespace(
+        LEFT="LEFT",
+        CENTER="CENTER",
+        RIGHT="RIGHT",
+        MULTIPLE="MULTIPLE",
+    )
+    enum_text.WD_LINE_SPACING = types.SimpleNamespace(EXACTLY="EXACTLY", SINGLE="SINGLE", MULTIPLE="MULTIPLE")
     sys.modules["docx.enum.text"] = enum_text
 
     oxml_module = types.ModuleType("docx.oxml")
@@ -53,7 +57,7 @@ class ConvertMarkdownToDocxTests(unittest.TestCase):
     def test_normalize_markdown_layout_splits_inline_heading_and_drops_thematic_break(self):
         source = (
             "# 标题\n\n"
-            "第一段内容。 ---\n"
+            "第一段内容 ---\n"
             "## 第二节\n"
             "| 列1 | 列2 |\n"
             "| --- | --- |\n"
@@ -62,13 +66,55 @@ class ConvertMarkdownToDocxTests(unittest.TestCase):
         normalized = MODULE.normalize_markdown_layout(source)
         self.assertNotIn(" ---\n## 第二节", normalized)
         self.assertNotIn("\n---\n", normalized)
-        self.assertIn("第一段内容。", normalized)
+        self.assertIn("第一段内容", normalized)
         self.assertIn("\n\n## 第二节\n\n| 列1 | 列2 |", normalized)
 
     def test_markdown_residue_patterns_detect_expected_cases(self):
         self.assertIsNotNone(MODULE.DOCX_MARKDOWN_HEADING_RE.match("## 一、残留标题"))
         self.assertIsNotNone(MODULE.DOCX_PIPE_TABLE_RE.search("| --- | --- |"))
         self.assertIsNotNone(MODULE.DOCX_FENCE_RE.match("```python"))
+
+    def test_promote_document_title_shifts_following_headings(self):
+        source = "示例标题\n# 第一部分\n## 第二部分\n"
+        promoted = MODULE.promote_document_title(source)
+        lines = promoted.splitlines()
+        self.assertEqual(lines[0], "# 示例标题")
+        self.assertEqual(lines[1], "## 第一部分")
+        self.assertEqual(lines[2], "### 第二部分")
+
+    def test_promote_document_title_keeps_explicit_title_input(self):
+        source = "# 示例标题\n# 第一部分\n## 第二部分\n"
+        promoted = MODULE.promote_document_title(source)
+        lines = promoted.splitlines()
+        self.assertEqual(lines[0], "# 示例标题")
+        self.assertEqual(lines[1], "# 第一部分")
+        self.assertEqual(lines[2], "## 第二部分")
+
+    def test_normalize_title_and_field_blocks_breaks_dense_fields(self):
+        source = (
+            "赛题标题\n"
+            "[命题需求单位]：\n"
+            "[命题需求单位专家]：\n"
+            "[命题负责人联系方式]：\n"
+            "正文开始\n"
+        )
+        normalized = MODULE.normalize_title_and_field_blocks(source)
+        self.assertIn(
+            "[命题需求单位]：\n\n[命题需求单位专家]：\n\n[命题负责人联系方式]：\n\n正文开始",
+            normalized,
+        )
+
+    def test_normalize_markdown_layout_keeps_table_block_together(self):
+        source = (
+            "字段说明：\n\n"
+            "| 字段名 | 类型 | 说明 |\n"
+            "| --- | --- | --- |\n"
+            "| a | b | c |\n"
+            "下一段\n"
+        )
+        normalized = MODULE.normalize_markdown_layout(source)
+        self.assertIn("| 字段名 | 类型 | 说明 |\n| --- | --- | --- |\n| a | b | c |", normalized)
+        self.assertIn("| a | b | c |\n\n下一段", normalized)
 
 
 if __name__ == "__main__":

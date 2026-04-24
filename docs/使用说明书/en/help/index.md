@@ -1,54 +1,50 @@
 ---
 title: Help
-summary: Start by categorizing symptoms, then follow the troubleshooting path; the goal is to reduce blind log searching and repeated trial-and-error.
+summary: Come here first when something goes wrong. Quick triage by symptom.
 read_when:
-  - You want to quickly locate the problem entry point
-  - You want to distinguish between usage questions and system failures
+  - You need to quickly locate a problem
+  - You want to distinguish between usage questions and system issues
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
-  - docs/使用说明书/zh-CN/help/troubleshooting.md
 ---
 
 # Help
 
-This page is the troubleshooting triage center.
+## Three High-Frequency Entries
 
-## Three High-Frequency Entry Points
+- [Troubleshooting](/docs/en/help/troubleshooting/) — Find the cause by symptom
+- [FAQ](/docs/en/help/faq/) — Quick answers to common questions
+- [Glossary](/docs/en/help/glossary/) — Core term explanations
 
-- [Troubleshooting](/docs/en/help/troubleshooting/)
-- [FAQ](/docs/en/help/faq/)
-- [Glossary](/docs/en/help/glossary/)
+## First, Determine the Problem Type
 
-## First, Categorize the Problem
-
-1. Is it a usage issue or a system failure?
-2. Is it an integration issue or a runtime issue?
-3. Is it a file path issue or a session/channel issue?
+1. **Don't know how to use it** → See FAQ and getting started docs
+2. **Feature not working properly** → See Troubleshooting
+3. **Want to integrate or develop** → See Integration Overview
 
 ## Jump by Symptom
 
-### API Anomalies, State Anomalies
+### Page Won't Open, Login Fails
 
-- [Stream Events Reference](/docs/en/reference/stream-events/)
-- [Chat Sessions](/docs/en/integration/chat-sessions/)
+- [Troubleshooting](/docs/en/help/troubleshooting/)
+- [Authentication & Security](/docs/en/ops/auth-and-security/)
 
-### File, Download, Conversion Anomalies
+### Tools Not Appearing, Features Unavailable
 
+- [Troubleshooting](/docs/en/help/troubleshooting/)
+- [Tools Overview](/docs/en/tools/)
+
+### File Upload or Download Issues
+
+- [Troubleshooting](/docs/en/help/troubleshooting/)
 - [Workspace API](/docs/en/integration/workspace-api/)
-- [Temp Directory & Document Conversion](/docs/en/integration/temp-dir/)
 
-### Channel Integration Anomalies
-
-- [Channel Runtime](/docs/en/ops/channel-runtime/)
-- [Channel Webhook](/docs/en/integration/channel-webhook/)
-
-### Configuration & Governance Anomalies
+### Configuration Problems
 
 - [Configuration Reference](/docs/en/reference/config/)
-- [Admin Panel Index](/docs/en/reference/admin-panels/)
+- [Admin Panels Index](/docs/en/reference/admin-panels/)
 
 ## Further Reading
 
-- [Manual Overview](/docs/en/start/hubs/)
+- [Documentation Hub](/docs/en/start/hubs/)
 - [Reference Overview](/docs/en/reference/)

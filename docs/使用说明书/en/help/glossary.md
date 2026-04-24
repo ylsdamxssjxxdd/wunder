@@ -1,141 +1,85 @@
 ---
 title: Glossary
-summary: This page is for quickly standardizing core terminology in Wunder documentation, avoiding mixing user, session, thread, container, and agent into a single concept.
+summary: Core terms in wunder documentation, explained in plain language.
 read_when:
-  - You're reading Wunder documentation systematically for the first time
-  - You notice many terms look similar but don't know the boundaries
+  - You're reading wunder docs for the first time
+  - You find terms that look similar but aren't sure of the difference
 source_docs:
   - docs/系统介绍.md
-  - docs/设计方案.md
-  - docs/API文档.md
 ---
 
 # Glossary
 
-## `user_id`
+## User
 
-User identifier in Wunder requests.
+Your identity. Can be a registered account or a temporary virtual name — the system recognizes both.
 
-It can be a registered user, or just a virtual isolation identifier.
+## Agent
 
-## Registered User
-
-Refers to an account that actually exists in the user management system.
-
-This is different from any arbitrary `user_id` passed in `/wunder` calls.
-
-## `agent_id`
-
-Agent application identifier.
-
-It typically determines:
-
-- Agent configuration
-- Additional prompts
-- Tool mounting
-- Container routing
-
-## `session_id`
-
-Identifier for a specific conversation session.
-
-It's the most important context ID for conversation recovery and continuing to send messages.
+An AI role that executes tasks. Each agent has its own model, tools, and prompt configuration.
 
 ## Thread
 
-When Wunder documentation says "thread", it's usually not an OS thread, but a session-level execution unit.
+A continuous conversation. One agent can have multiple threads, each maintaining its own context independently.
 
-It binds:
+## Swarm
 
-- Frozen system prompt
-- Historical messages
-- Current runtime state
+A group of agents collaborating on a task. A swarm has one queen bee that assigns tasks and multiple worker bees that execute them.
 
-## User Turn / Model Turn
+## Queen Bee
 
-Each message a user sends counts as 1 user turn.
+The role in a swarm responsible for coordinating and assigning tasks.
 
-Each action a model executes counts as 1 model turn. Actions include:
+## Worker Bee
 
-- Model call
-- Tool call
-- Final response
+The role in a swarm responsible for executing specific tasks.
 
-## `container_id`
+## User Turn
 
-Workspace container number.
+Every message you send counts as one user turn.
 
-Current convention:
+## Model Turn
 
-- `0`: User private container
-- `1~10`: Agent execution containers
+Every action the model takes (thinking, calling a tool, replying) counts as one model turn. One user turn may contain multiple model turns.
 
 ## Workspace
 
-Wunder's persistent file space.
+Your persistent file space. Files placed here are not automatically cleaned up.
 
-It's isolated by `user_id + container_id`, not simply "current directory".
+## Container
 
-## `skill`
+An isolated partition within a workspace. Container 0 is your personal space; containers 1–10 are agent execution spaces.
 
-Model-oriented skill package.
+## Skill
 
-Usually contains:
-
-- `SKILL.md`
-- Scripts
-- Resource files
-
-## `skill_call`
-
-Built-in skill invocation tool.
-
-The model can use it to directly read skill content and directory structure.
+A capability package for the model. Typically includes documentation, scripts, and resource files that enable an agent to handle specific types of tasks.
 
 ## MCP
 
-Model Context Protocol integration surface.
-
-In Wunder, it can be either a service Wunder exposes, or an external service Wunder connects to.
+Model Context Protocol. A standard interface that lets wunder connect to external tool services.
 
 ## A2A
 
-Standard inter-agent interoperability protocol integration surface.
+Agent-to-Agent protocol. Enables agents from different systems to discover and collaborate with each other.
 
-It's more "system-to-system" oriented, not ordinary business interfaces.
+## Channel
 
-## `channel`
+An external messaging pathway, such as Feishu, WeCom, QQ, XMPP, etc. Through channels, agents can send and receive external messages.
 
-External message channel.
+## Token
 
-Examples include Feishu, WeCom, QQBot, XMPP, etc.
+The basic unit of measurement for model text processing. Token count reflects the current conversation's context length, not actual cost.
 
-## `outbox`
+## Context Compression
 
-Channel outbound buffer and retry layer.
+When a conversation gets too long, the system automatically compresses historical content so the model can continue working without losing key information.
 
-It transforms channel sending from synchronous operations to resumable async pipelines.
+## Long-term Memory
 
-## `turn_terminal`
-
-Terminal event of a turn execution.
-
-When determining if a turn has ended, check this first.
-
-## `thread_status`
-
-Thread current runtime state event.
-
-When determining if a thread is running, waiting for approval, or idle, check this first.
-
-## `approval_resolved`
-
-Approval closed-loop event.
-
-Indicates that a pending approval request has reached a terminal state.
+Knowledge that an agent remembers across conversations. Can be added manually or automatically extracted by the system.
 
 ## Further Reading
 
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)
-- [Workspaces and Containers](/docs/en/concepts/workspaces/)
+- [Sessions & Turns](/docs/en/concepts/sessions-and-rounds/)
+- [Workspaces & Containers](/docs/en/concepts/workspaces/)
 - [Stream Events Reference](/docs/en/reference/stream-events/)

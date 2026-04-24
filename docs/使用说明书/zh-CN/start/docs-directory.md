@@ -1,83 +1,73 @@
 ---
 title: 常用说明目录
-summary: 这是 wunder 使用说明书里最常用页面的精选目录。
+summary: 按用途列出的文档索引，帮你快速定位到具体页面。
 read_when:
-  - 你不想从左侧导航慢慢翻
-  - 你只想先找到最常用的几篇文档
+  - 你知道想看什么但不确定在哪
+  - 你想了解文档全貌
 source_docs:
   - docs/wunder补全文档落地方案.md
 ---
 
 # 常用说明目录
 
-这页适合两种人：
+按用途分类，帮你快速定位。
 
-- 你不想慢慢翻左侧导航
-- 你只想先找到最常用的几篇文档
+## 入门
 
-## 如果你只看三页
+| 页面 | 内容 |
+|------|------|
+| [快速开始](/docs/zh-CN/start/quickstart/) | 10 分钟跑通第一个任务 |
+| [Desktop 入门](/docs/zh-CN/start/desktop/) | 下载安装就能用 |
+| [CLI 使用](/docs/zh-CN/start/cli/) | 终端驱动、自动化 |
+| [Server 部署](/docs/zh-CN/start/server/) | 多人共用、统一管理 |
 
-- [快速开始](/docs/zh-CN/start/quickstart/)
-- [核心概览](/docs/zh-CN/concepts/)
-- [wunder API](/docs/zh-CN/integration/wunder-api/)
+## 界面
 
-## 第一次使用
+| 页面 | 内容 |
+|------|------|
+| [用户端界面](/docs/zh-CN/surfaces/frontend/) | 聊天、文件、智能体、工具 |
+| [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/) | 本地优先的工作台 |
+| [编排功能](/docs/zh-CN/surfaces/orchestration/) | 蜂群持续推进的专用工作台 |
+| [管理端界面](/docs/zh-CN/surfaces/web-admin/) | 管理员后台 |
 
-- [快速开始](/docs/zh-CN/start/quickstart/)
-- [Desktop 入门](/docs/zh-CN/start/desktop/)
-- [Server 部署](/docs/zh-CN/start/server/)
-- [CLI 使用](/docs/zh-CN/start/cli/)
+## 帮助
 
-## 理解系统
+| 页面 | 内容 |
+|------|------|
+| [帮助中心](/docs/zh-CN/help/) | 问题分流入口 |
+| [故障排查](/docs/zh-CN/help/troubleshooting/) | 按症状找原因 |
+| [FAQ](/docs/zh-CN/help/faq/) | 常见问题快速答复 |
+| [术语表](/docs/zh-CN/help/glossary/) | 核心术语解释 |
 
-- [核心概览](/docs/zh-CN/concepts/)
-- [系统架构](/docs/zh-CN/concepts/architecture/)
-- [工作区与容器](/docs/zh-CN/concepts/workspaces/)
-- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
-- [工具体系](/docs/zh-CN/concepts/tools/)
-- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)
-- [长期记忆](/docs/zh-CN/concepts/memory/)
-- [蜂群协作](/docs/zh-CN/concepts/swarm/)
+## 核心概念
 
-## 做接入
+| 页面 | 内容 |
+|------|------|
+| [核心概览](/docs/zh-CN/concepts/) | 系统运行模型 |
+| [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/) | 用户轮次和模型轮次 |
+| [工作区与容器](/docs/zh-CN/concepts/workspaces/) | 文件空间和隔离分区 |
+| [蜂群协作](/docs/zh-CN/concepts/swarm/) | 多智能体协作机制 |
 
-- [wunder API](/docs/zh-CN/integration/wunder-api/)
-- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
-- [用户世界接口](/docs/zh-CN/integration/user-world/)
-- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)
-- [外部登录与免登嵌入](/docs/zh-CN/integration/external-login/)
-- [A2A 接口](/docs/zh-CN/integration/a2a/)
-- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)
+## 接入与开发
 
-## 看界面
+| 页面 | 内容 |
+|------|------|
+| [接入概览](/docs/zh-CN/integration/) | 找到适合你的接入方式 |
+| [工具总览](/docs/zh-CN/tools/) | 按任务选工具 |
 
-- [用户侧前端](/docs/zh-CN/surfaces/frontend/)
-- [管理端界面](/docs/zh-CN/surfaces/web-admin/)
-- [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/)
+## 运维
 
-## 部署、治理与排障
+| 页面 | 内容 |
+|------|------|
+| [部署与运行](/docs/zh-CN/ops/deployment/) | 上线前后的关键检查项 |
+| [认证与安全](/docs/zh-CN/ops/auth-and-security/) | 令牌、鉴权、沙盒 |
+| [Desktop 本地模式](/docs/zh-CN/ops/desktop-local-mode/) | 本地模式的边界与能力 |
 
-- [部署与运行](/docs/zh-CN/ops/deployment/)
-- [数据与存储](/docs/zh-CN/ops/data-and-storage/)
-- [Desktop 本地模式](/docs/zh-CN/ops/desktop-local-mode/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
-- [配置说明](/docs/zh-CN/reference/config/)
-- [流式事件参考](/docs/zh-CN/reference/stream-events/)
-- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)
-- [API 索引](/docs/zh-CN/reference/api-index/)
-- [FAQ](/docs/zh-CN/help/faq/)
-- [故障排查](/docs/zh-CN/help/troubleshooting/)
-- [术语表](/docs/zh-CN/help/glossary/)
+## 参考
 
-## 一个实用建议
-
-如果你不知道某个问题应该先从哪一层看，按这个顺序：
-
-1. 先看开始页或核心页，确认问题属于哪一层。
-2. 再看接入页、工具页或界面页，确认具体入口。
-3. 最后再回参考页或故障排查页查字段、事件和异常路径。
-
-## 延伸阅读
-
-- [说明书总览](/docs/zh-CN/start/hubs/)
-- [配置说明](/docs/zh-CN/reference/config/)
+| 页面 | 内容 |
+|------|------|
+| [配置说明](/docs/zh-CN/reference/config/) | 配置文件详解 |
+| [API 索引](/docs/zh-CN/reference/api-index/) | 接口索引 |
+| [流式事件参考](/docs/zh-CN/reference/stream-events/) | WebSocket 事件类型 |
+| [管理端面板索引](/docs/zh-CN/reference/admin-panels/) | 管理端面板一览 |

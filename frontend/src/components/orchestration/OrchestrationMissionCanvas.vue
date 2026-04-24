@@ -18,6 +18,7 @@
               :group="group"
               :mission="null"
               :agents="agents"
+              :layout-mode="layoutMode"
               :dispatch-preview="dispatchPreview"
               :subagents-by-task="{}"
               :mother-workflow-items="motherWorkflowItems"
@@ -31,6 +32,7 @@
               @open-agent="emit('open-agent', $event)"
               @preview-node-output="handleAgentOutputPreview"
               @preview-artifact="handleArtifactFilePreview"
+              @update:layout-mode="handleLayoutModeChange"
               @toggle-fullscreen="toggleCanvasFullscreen"
             />
 
@@ -274,7 +276,15 @@
           <template #footer>
             <section class="orchestration-side-control">
               <div class="orchestration-side-control-head">
-                <span class="orchestration-side-control-title">{{ t('orchestration.panel.situation') }}</span>
+                <div class="orchestration-side-control-head-main">
+                  <span
+                    v-if="currentPanelRoundIndex > 0"
+                    class="orchestration-side-control-round"
+                  >
+                    {{ t('orchestration.panel.roundTag', { round: currentPanelRoundIndex }) }}
+                  </span>
+                  <span class="orchestration-side-control-title">{{ t('orchestration.panel.situation') }}</span>
+                </div>
                 <div class="orchestration-side-control-head-actions">
                   <button
                     class="beeroom-canvas-icon-btn orchestration-panel-action orchestration-side-control-icon-btn"
@@ -497,6 +507,7 @@ const chatCollapsed = ref(false);
 const timelineCollapsed = ref(false);
 const timelineHeight = ref(0);
 const isTimelineResizing = ref(false);
+const layoutMode = ref<'horizontal' | 'vertical'>('horizontal');
 const roundContextMenu = ref<{
   visible: boolean;
   x: number;
@@ -552,6 +563,7 @@ const canvasProjection = computed(() =>
     ? buildOrchestrationCanvasProjection({
         group: props.group,
         agents: props.agents,
+        layoutMode: layoutMode.value,
         motherAgentId: props.motherAgentId,
         motherName: props.motherName,
         motherSessionId: props.motherSessionId,
@@ -608,6 +620,13 @@ const frontierPreparedRound = computed(() => {
 const latestRenderableRound = computed(
   () => frontierPreparedRound.value || latestFormalRound.value || sortedRounds.value[sortedRounds.value.length - 1] || null
 );
+const currentPanelRoundIndex = computed(() => {
+  if (!props.isReady) return 0;
+  const activeRoundIndex = Math.max(0, Number(props.activeRound?.index || 0));
+  if (activeRoundIndex > 0) return activeRoundIndex;
+  const fallbackRoundIndex = Math.max(0, Number(latestRenderableRound.value?.index || 0));
+  return fallbackRoundIndex > 0 ? fallbackRoundIndex : 1;
+});
 
 const timelineLayout = computed<TimelineLayout>(() => {
   const layout = buildOrchestrationTimelineLayout({
@@ -901,6 +920,12 @@ const persistTimelineState = () => {
   });
 };
 
+const persistLayoutMode = () => {
+  mergeBeeroomMissionCanvasState(canvasScopeKey.value, {
+    layoutMode: layoutMode.value
+  });
+};
+
 const applyChatWidth = (value: number, options: { persist?: boolean } = {}) => {
   const nextWidth = clampChatWidth(value);
   if (nextWidth === chatWidth.value) {
@@ -935,6 +960,11 @@ const resetChatWidth = () => {
 
 const resetTimelineHeight = () => {
   applyTimelineHeight(DEFAULT_TIMELINE_HEIGHT, { persist: true });
+};
+
+const handleLayoutModeChange = (value: 'horizontal' | 'vertical') => {
+  layoutMode.value = value === 'vertical' ? 'vertical' : 'horizontal';
+  persistLayoutMode();
 };
 
 const nudgeChatWidth = (delta: number) => {
@@ -1164,6 +1194,7 @@ watch(
   canvasScopeKey,
   (scopeKey) => {
     const cached = getBeeroomMissionCanvasState(scopeKey);
+    layoutMode.value = cached?.layoutMode === 'vertical' ? 'vertical' : 'horizontal';
     chatWidth.value = clampChatWidth(Number(cached?.chatWidth || DEFAULT_CHAT_WIDTH));
     chatCollapsed.value = Boolean(cached?.chatCollapsed);
     timelineCollapsed.value = Boolean(cached?.timelineCollapsed);
@@ -1930,10 +1961,32 @@ watch(
   gap: 10px;
 }
 
+.orchestration-side-control-head-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .orchestration-side-control-head-actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.orchestration-side-control-round {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.12);
+  color: rgba(253, 230, 138, 0.92);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .orchestration-side-control-title {

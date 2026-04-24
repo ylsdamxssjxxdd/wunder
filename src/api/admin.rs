@@ -97,10 +97,6 @@ impl AdminSkillSourceKind {
         }
     }
 
-    fn editable(self) -> bool {
-        matches!(self, Self::Custom)
-    }
-
     fn builtin(self) -> bool {
         matches!(self, Self::Builtin)
     }
@@ -1175,26 +1171,17 @@ fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value
         "enabled": enabled,
         "builtin": source.builtin(),
         "source": source.as_str(),
-        "readonly": !source.editable(),
-        "editable": source.editable(),
+        "readonly": false,
+        "editable": true,
     })
 }
 
 fn ensure_admin_skill_editable(spec: &SkillSpec) -> Result<PathBuf, Response> {
-    let custom_root = resolve_admin_custom_skills_root();
-    let source =
-        resolve_admin_skill_source(spec, resolve_builtin_skills_root().as_deref(), &custom_root);
-    if !source.editable() {
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            i18n::t("error.skill_builtin_readonly"),
-        ));
-    }
     let root = normalize_existing_path(&spec.root);
-    if !is_within_root(&custom_root, &root) {
+    if !root.is_dir() {
         return Err(error_response(
-            StatusCode::FORBIDDEN,
-            i18n::t("error.skill_builtin_readonly"),
+            StatusCode::NOT_FOUND,
+            i18n::t("error.skill_not_found"),
         ));
     }
     Ok(root)

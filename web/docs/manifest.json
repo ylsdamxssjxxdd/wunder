@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-17T23:23:54.462000+00:00",
+  "generated_at": "2026-04-24T02:15:03.257316+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -31,7 +31,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder 心舰",
-                    "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；入口建议先按角色和目标分流，再进入具体文档。",
+                    "summary": "wunder 是一个智能体系统，有桌面端、服务端、命令行三种用法。先按你的角色选入口。",
                     "url": "/docs/"
                   }
                 ]
@@ -42,25 +42,25 @@
                   {
                     "slug": "zh-CN/start/quickstart",
                     "title": "快速开始",
-                    "summary": "用最短路径跑通 wunder 的第一条可用链路；默认推荐 desktop，其次按 server 或 cli 分流。",
+                    "summary": "用最短路径跑通 wunder 的第一个任务。默认推荐 desktop，其次按 server 或 cli 分流。",
                     "url": "/docs/zh-CN/start/quickstart/"
                   },
                   {
                     "slug": "zh-CN/start/desktop",
                     "title": "Desktop 入门",
-                    "summary": "先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。",
+                    "summary": "个人用户优先看这页。下载安装就能用，不需要先搭服务器。",
                     "url": "/docs/zh-CN/start/desktop/"
                   },
                   {
                     "slug": "zh-CN/start/server",
                     "title": "Server 部署",
-                    "summary": "需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。",
+                    "summary": "团队和组织的选择。多用户、权限管理、渠道接入、统一治理。",
                     "url": "/docs/zh-CN/start/server/"
                   },
                   {
                     "slug": "zh-CN/start/cli",
                     "title": "CLI 使用",
-                    "summary": "需要终端执行、脚本化接入或开发调试时，再看 `wunder-cli`。",
+                    "summary": "开发者和自动化场景的入口。终端驱动、脚本化、JSONL 输出。",
                     "url": "/docs/zh-CN/start/cli/"
                   }
                 ]
@@ -71,13 +71,13 @@
                   {
                     "slug": "zh-CN/start/hubs",
                     "title": "说明书总览",
-                    "summary": "按角色和任务快速定位使用说明书入口，避免在全站里盲搜。",
+                    "summary": "按角色快速找到你需要的文档入口。",
                     "url": "/docs/zh-CN/start/hubs/"
                   },
                   {
                     "slug": "zh-CN/start/docs-directory",
                     "title": "常用说明目录",
-                    "summary": "这是 wunder 使用说明书里最常用页面的精选目录。",
+                    "summary": "按用途列出的文档索引，帮你快速定位到具体页面。",
                     "url": "/docs/zh-CN/start/docs-directory/"
                   }
                 ]
@@ -461,25 +461,25 @@
                   {
                     "slug": "zh-CN/surfaces/frontend",
                     "title": "用户端界面",
-                    "summary": "你的主要工作台。三栏布局：左栏导航、中栏列表、右栏工作区。聊天、文件、智能体、工具、设置都在这里。",
+                    "summary": "你的主要工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
                     "url": "/docs/zh-CN/surfaces/frontend/"
                   },
                   {
                     "slug": "zh-CN/surfaces/orchestration",
                     "title": "编排功能",
-                    "summary": "编排页是母蜂、工蜂与产物协同的专用工作台，用来持续推进一个蜂群级编排 run，并按母蜂用户轮次查看历史、分支与产物快照。",
+                    "summary": "编排页是蜂群持续推进任务的专用工作台。按轮次推进、查看历史、生成分支。",
                     "url": "/docs/zh-CN/surfaces/orchestration/"
                   },
                   {
                     "slug": "zh-CN/surfaces/web-admin",
                     "title": "管理端界面",
-                    "summary": "系统治理的后台。配置系统、管理用户、监控渠道、查看运行状态。只有管理员能访问。",
+                    "summary": "管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。",
                     "url": "/docs/zh-CN/surfaces/web-admin/"
                   },
                   {
                     "slug": "zh-CN/surfaces/desktop-ui",
                     "title": "桌面端界面",
-                    "summary": "个人用户的主入口。本地优先的工作台，可以直接访问本机文件，有本地运行时和一键重置功能。",
+                    "summary": "个人用户的主入口。本地优先的工作台，可以直接访问本机文件，有一键重置功能。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
                   }
                 ]
@@ -683,7 +683,7 @@
                   {
                     "slug": "zh-CN/help/index",
                     "title": "帮助",
-                    "summary": "先按症状分流，再进入排障路径；目标是减少盲查日志和重复试错。",
+                    "summary": "遇到问题先来这里，按症状快速分流。",
                     "url": "/docs/zh-CN/help/"
                   }
                 ]
@@ -694,19 +694,19 @@
                   {
                     "slug": "zh-CN/help/troubleshooting",
                     "title": "故障排查",
-                    "summary": "按“入口 -> 鉴权 -> 配置 -> 依赖 -> 实时通道”顺序排查，可快速定位大部分 Wunder 故障。",
+                    "summary": "按症状找原因，快速定位大部分问题。",
                     "url": "/docs/zh-CN/help/troubleshooting/"
                   },
                   {
                     "slug": "zh-CN/help/faq",
                     "title": "FAQ",
-                    "summary": "wunder 的高频问题快速答复，适合在进入详细排障前先做判断。",
+                    "summary": "使用 wunder 时的常见问题，先看这里再查详细排障。",
                     "url": "/docs/zh-CN/help/faq/"
                   },
                   {
                     "slug": "zh-CN/help/glossary",
                     "title": "术语表",
-                    "summary": "这页用于快速统一 Wunder 文档里的核心术语，避免把 user、session、thread、container、agent 混成一个概念。",
+                    "summary": "wunder 文档里的核心术语，用大白话解释，避免混淆。",
                     "url": "/docs/zh-CN/help/glossary/"
                   }
                 ]
@@ -729,7 +729,7 @@
                   {
                     "slug": "en/index",
                     "title": "wunder",
-                    "summary": "wunder is an agent orchestration system that unifies three runtime forms: server, cli, and desktop. Start by choosing the path that matches your role and goal.",
+                    "summary": "An agent system that gets things done. You set the goal, it breaks it down, calls tools, and delivers results.",
                     "url": "/docs/en/"
                   }
                 ]
@@ -739,26 +739,26 @@
                 "pages": [
                   {
                     "slug": "en/start/quickstart",
-                    "title": "Quickstart",
-                    "summary": "Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.",
+                    "title": "Quick Start",
+                    "summary": "The shortest path to complete your first task in wunder. Desktop by default, then Server or CLI.",
                     "url": "/docs/en/start/quickstart/"
                   },
                   {
                     "slug": "en/start/desktop",
                     "title": "Desktop Guide",
-                    "summary": "If your first goal is simply to start using wunder, begin with desktop. It is the default entry point for individual and local-first use.",
+                    "summary": "The first choice for individual users. Download, install, and start — no server needed.",
                     "url": "/docs/en/start/desktop/"
                   },
                   {
                     "slug": "en/start/server",
                     "title": "Server Deployment",
-                    "summary": "Start with `wunder-server` only when you need multi-user governance, a unified access layer, and an admin backend.",
+                    "summary": "The choice for teams and organizations. Multi-user, permission management, channel integration, unified governance.",
                     "url": "/docs/en/start/server/"
                   },
                   {
                     "slug": "en/start/cli",
                     "title": "CLI Usage",
-                    "summary": "Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.",
+                    "summary": "The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.",
                     "url": "/docs/en/start/cli/"
                   }
                 ]
@@ -768,14 +768,14 @@
                 "pages": [
                   {
                     "slug": "en/start/hubs",
-                    "title": "Manual Hubs",
-                    "summary": "Jump to the right part of the manual by role and task instead of searching the whole site blindly.",
+                    "title": "Documentation Hub",
+                    "summary": "Find the docs you need by role.",
                     "url": "/docs/en/start/hubs/"
                   },
                   {
                     "slug": "en/start/docs-directory",
-                    "title": "Frequently Used Pages",
-                    "summary": "A curated directory of the most frequently used pages in the wunder manual.",
+                    "title": "Docs Directory",
+                    "summary": "Documentation index by purpose. Quickly locate the page you need.",
                     "url": "/docs/en/start/docs-directory/"
                   }
                 ]
@@ -1158,26 +1158,26 @@
                 "pages": [
                   {
                     "slug": "en/surfaces/frontend",
-                    "title": "User Frontend",
-                    "summary": "The user-side frontend lives in `frontend/`, unified into a single Messenger workbench that covers profile, chat, swarm, workspace, and system settings.",
+                    "title": "User Interface",
+                    "summary": "Your main workbench. Left navigation, middle list, right workspace — all daily work happens here.",
                     "url": "/docs/en/surfaces/frontend/"
                   },
                   {
                     "slug": "en/surfaces/orchestration",
                     "title": "Orchestration",
-                    "summary": "The orchestration page is a dedicated workbench for queen-worker-artifact collaboration. It lets one hive continue a long-running orchestration run, inspect round snapshots, and branch from earlier rounds.",
+                    "summary": "The orchestration page is a dedicated workbench for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
                     "url": "/docs/en/surfaces/orchestration/"
                   },
                   {
                     "slug": "en/surfaces/web-admin",
                     "title": "Admin Interface",
-                    "summary": "The admin frontend lives in `web/`, handling models, tools, users, channels, and runtime governance.",
+                    "summary": "The admin's backend workbench. Model configuration, tool management, user governance, channel integration — all here.",
                     "url": "/docs/en/surfaces/web-admin/"
                   },
                   {
                     "slug": "en/surfaces/desktop-ui",
                     "title": "Desktop Interface",
-                    "summary": "`wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.",
+                    "summary": "The main entry for individual users. Local-first workbench with direct file access and one-click reset.",
                     "url": "/docs/en/surfaces/desktop-ui/"
                   }
                 ]
@@ -1381,7 +1381,7 @@
                   {
                     "slug": "en/help/index",
                     "title": "Help",
-                    "summary": "Start by categorizing symptoms, then follow the troubleshooting path; the goal is to reduce blind log searching and repeated trial-and-error.",
+                    "summary": "Come here first when something goes wrong. Quick triage by symptom.",
                     "url": "/docs/en/help/"
                   }
                 ]
@@ -1392,19 +1392,19 @@
                   {
                     "slug": "en/help/troubleshooting",
                     "title": "Troubleshooting",
-                    "summary": "Follow the \"entry -> auth -> config -> dependencies -> realtime channel\" sequence to quickly locate most Wunder issues.",
+                    "summary": "Find the cause by symptom. Quick diagnosis for most issues.",
                     "url": "/docs/en/help/troubleshooting/"
                   },
                   {
                     "slug": "en/help/faq",
                     "title": "FAQ",
-                    "summary": "Quick answers to high-frequency questions about Wunder, suitable for initial assessment before diving into detailed troubleshooting.",
+                    "summary": "Common questions about using wunder. Check here first before detailed troubleshooting.",
                     "url": "/docs/en/help/faq/"
                   },
                   {
                     "slug": "en/help/glossary",
                     "title": "Glossary",
-                    "summary": "This page is for quickly standardizing core terminology in Wunder documentation, avoiding mixing user, session, thread, container, and agent into a single concept.",
+                    "summary": "Core terms in wunder documentation, explained in plain language.",
                     "url": "/docs/en/help/glossary/"
                   }
                 ]
@@ -1610,8 +1610,8 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder 心舰",
-      "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；入口建议先按角色和目标分流，再进入具体文档。",
-      "updated_at": "2026-04-10",
+      "summary": "wunder 是一个智能体系统，有桌面端、服务端、命令行三种用法。先按你的角色选入口。",
+      "updated_at": "2026-04-24",
       "read_when": [
         "你第一次了解 wunder",
         "你需要快速判断先看 desktop、server 还是 cli",
@@ -1647,7 +1647,7 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "系统结构（1 分钟理解）"
+          "text": "系统结构"
         },
         {
           "id": "section-5",
@@ -1657,50 +1657,35 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "核心特性一览"
+          "text": "核心特性"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "五维能力框架"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "技术亮点"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "最容易搞错的点"
-        },
-        {
-          "id": "section-10",
           "level": 2,
           "text": "快速导航"
         },
         {
-          "id": "section-11",
+          "id": "section-8",
           "level": 3,
           "text": "第一次使用？"
         },
         {
-          "id": "section-12",
+          "id": "section-9",
           "level": 3,
           "text": "想深入理解？"
         },
         {
-          "id": "section-13",
+          "id": "section-10",
           "level": 3,
           "text": "需要接入开发？"
         },
         {
-          "id": "section-14",
+          "id": "section-11",
           "level": 3,
           "text": "遇到问题？"
         },
         {
-          "id": "section-15",
+          "id": "section-12",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -1714,8 +1699,8 @@
       "slug": "zh-CN/start/quickstart",
       "language": "zh-CN",
       "title": "快速开始",
-      "summary": "用最短路径跑通 wunder 的第一条可用链路；默认推荐 desktop，其次按 server 或 cli 分流。",
-      "updated_at": "2026-04-10",
+      "summary": "用最短路径跑通 wunder 的第一个任务。默认推荐 desktop，其次按 server 或 cli 分流。",
+      "updated_at": "2026-04-24",
       "read_when": [
         "你第一次使用 wunder",
         "你需要在 10 分钟内跑通一个可验证结果"
@@ -1817,7 +1802,7 @@
       "slug": "zh-CN/start/desktop",
       "language": "zh-CN",
       "title": "Desktop 入门",
-      "summary": "先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。",
+      "summary": "个人用户优先看这页。下载安装就能用，不需要先搭服务器。",
       "updated_at": "2026-04-10",
       "read_when": [
         "你要先把 wunder 用起来",
@@ -1848,75 +1833,70 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Desktop 是什么"
+          "text": "你打开后会看到什么"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "你打开后会看到什么"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
           "text": "5 步上手"
         },
         {
-          "id": "section-6",
+          "id": "section-5",
           "level": 3,
           "text": "1. 下载安装"
         },
         {
-          "id": "section-7",
+          "id": "section-6",
           "level": 3,
           "text": "2. 首次启动"
         },
         {
-          "id": "section-8",
+          "id": "section-7",
           "level": 3,
           "text": "3. 配置模型"
         },
         {
-          "id": "section-9",
+          "id": "section-8",
           "level": 3,
-          "text": "4. 处理账号资料"
+          "text": "4. 完善账号资料"
         },
         {
-          "id": "section-10",
+          "id": "section-9",
           "level": 3,
           "text": "5. 发起第一次对话"
         },
         {
-          "id": "section-11",
+          "id": "section-10",
           "level": 2,
-          "text": "两个你很快会遇到的交互约束"
+          "text": "两个常见交互约束"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "运行中不能新建线程"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "运行中不能直接新建线程"
+          "text": "蜂群运行时会有高亮提示"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "蜂群运行会有持续高亮"
+          "level": 2,
+          "text": "状态乱了怎么办？"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "系统设置里的恢复入口"
+          "text": "本地模式额外能力"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "本地模式下的额外输入能力"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
           "text": "不会用时，直接打开帮助手册"
         },
         {
-          "id": "section-17",
+          "id": "section-16",
           "level": 2,
           "text": "下一步"
         }
@@ -1930,16 +1910,15 @@
       "slug": "zh-CN/start/server",
       "language": "zh-CN",
       "title": "Server 部署",
-      "summary": "需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。",
+      "summary": "团队和组织的选择。多用户、权限管理、渠道接入、统一治理。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "你要部署 server 形态",
-        "你需要多用户、组织治理和对外接入能力"
+        "你需要多人共用 wunder",
+        "你需要管理员后台和统一管理"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "docs/API文档.md"
+        "docs/API文档.md",
+        "packaging/docker/"
       ],
       "tab": "开始",
       "group": "入门",
@@ -1956,117 +1935,72 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "什么时候必须上 Server？"
+          "text": "什么时候选 Server"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Server 架构概览"
-        },
-        {
-          "id": "section-4",
-          "level": 3,
-          "text": "Server 负责什么"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
           "text": "部署前准备"
         },
         {
-          "id": "section-6",
-          "level": 3,
-          "text": "硬件要求"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "软件依赖"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "数据库选择"
-        },
-        {
-          "id": "section-9",
+          "id": "section-4",
           "level": 2,
-          "text": "Docker Compose 部署（推荐）"
+          "text": "3 步部署"
         },
         {
-          "id": "section-10",
+          "id": "section-5",
           "level": 3,
           "text": "1. 获取代码"
         },
         {
+          "id": "section-6",
+          "level": 3,
+          "text": "2. 启动服务"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "3. 访问系统"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "部署后必做"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "核心能力"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "多租户"
+        },
+        {
           "id": "section-11",
           "level": 3,
-          "text": "2. 配置环境变量（可选）"
+          "text": "渠道接入"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "3. 启动服务"
+          "text": "可观测性"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "4. 等待启动"
+          "text": "安全"
         },
         {
           "id": "section-14",
-          "level": 3,
-          "text": "5. 访问系统"
+          "level": 2,
+          "text": "配置文件"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "关键配置项"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "配置文件"
-        },
-        {
-          "id": "section-17",
-          "level": 3,
-          "text": "持久化数据"
-        },
-        {
-          "id": "section-18",
-          "level": 3,
-          "text": "服务日志"
-        },
-        {
-          "id": "section-19",
-          "level": 2,
-          "text": "对外访问规划"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "暴露哪些路径"
-        },
-        {
-          "id": "section-21",
-          "level": 3,
-          "text": "关键约束"
-        },
-        {
-          "id": "section-22",
-          "level": 2,
-          "text": "生产环境检查清单"
-        },
-        {
-          "id": "section-23",
-          "level": 2,
-          "text": "常见问题"
-        },
-        {
-          "id": "section-24",
-          "level": 2,
-          "text": "下一步"
+          "text": "延伸阅读"
         }
       ],
       "prev_slug": "zh-CN/start/desktop",
@@ -2078,15 +2012,15 @@
       "slug": "zh-CN/start/cli",
       "language": "zh-CN",
       "title": "CLI 使用",
-      "summary": "需要终端执行、脚本化接入或开发调试时，再看 `wunder-cli`。",
+      "summary": "开发者和自动化场景的入口。终端驱动、脚本化、JSONL 输出。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "你想在终端中直接使用 wunder",
-        "你更关注开发调试、脚本任务和工作区驱动执行"
+        "你需要在终端中使用 wunder",
+        "你要把 wunder 集成到脚本或自动化流程"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "wunder-cli/src/main.rs",
+        "wunder-cli/src/tui/"
       ],
       "tab": "开始",
       "group": "入门",
@@ -2103,82 +2037,42 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "什么时候选 CLI？"
+          "text": "什么时候选 CLI"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "CLI 是什么？"
+          "text": "安装"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "CLI 核心能力"
+          "level": 2,
+          "text": "第一次会话"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "5 步上手 CLI"
+          "text": "常用命令"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "1. 安装 CLI"
+          "level": 2,
+          "text": "TUI 界面"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "2. 配置模型"
+          "level": 2,
+          "text": "JSONL 输出"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "3. 启动交互模式"
+          "level": 2,
+          "text": "自动化场景"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "4. 发起第一次任务"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "5. 探索 CLI 命令"
-        },
-        {
-          "id": "section-11",
           "level": 2,
-          "text": "CLI 特有能力"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "TUI 交互界面"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "会话管理"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "脚本化和自动化"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "工作区驱动"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "常见问题"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "下一步"
+          "text": "延伸阅读"
         }
       ],
       "prev_slug": "zh-CN/start/server",
@@ -2190,11 +2084,11 @@
       "slug": "zh-CN/start/hubs",
       "language": "zh-CN",
       "title": "说明书总览",
-      "summary": "按角色和任务快速定位使用说明书入口，避免在全站里盲搜。",
-      "updated_at": "2026-04-10",
+      "summary": "按角色快速找到你需要的文档入口。",
+      "updated_at": "2026-04-24",
       "read_when": [
         "你不确定先看哪一页",
-        "你希望按角色快速进入正确文档路径"
+        "你希望按角色快速进入正确文档"
       ],
       "source_docs": [
         "docs/wunder补全文档落地方案.md"
@@ -2246,11 +2140,11 @@
       "slug": "zh-CN/start/docs-directory",
       "language": "zh-CN",
       "title": "常用说明目录",
-      "summary": "这是 wunder 使用说明书里最常用页面的精选目录。",
-      "updated_at": "2026-04-10",
+      "summary": "按用途列出的文档索引，帮你快速定位到具体页面。",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "你不想从左侧导航慢慢翻",
-        "你只想先找到最常用的几篇文档"
+        "你知道想看什么但不确定在哪",
+        "你想了解文档全貌"
       ],
       "source_docs": [
         "docs/wunder补全文档落地方案.md"
@@ -2270,42 +2164,37 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "如果你只看三页"
+          "text": "入门"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "第一次使用"
+          "text": "界面"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "理解系统"
+          "text": "帮助"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "做接入"
+          "text": "核心概念"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "看界面"
+          "text": "接入与开发"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "部署、治理与排障"
+          "text": "运维"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "一个实用建议"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "参考"
         }
       ],
       "prev_slug": "zh-CN/start/hubs",
@@ -6180,8 +6069,8 @@
       "slug": "zh-CN/surfaces/frontend",
       "language": "zh-CN",
       "title": "用户端界面",
-      "summary": "你的主要工作台。三栏布局：左栏导航、中栏列表、右栏工作区。聊天、文件、智能体、工具、设置都在这里。",
-      "updated_at": "2026-04-18",
+      "summary": "你的主要工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
+      "updated_at": "2026-04-24",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6204,12 +6093,12 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "聊天功能"
+          "text": "聊天"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "输入区能力"
+          "text": "输入区"
         },
         {
           "id": "section-5",
@@ -6229,110 +6118,55 @@
         {
           "id": "section-8",
           "level": 2,
-          "text": "文件功能"
+          "text": "文件"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "工作区浏览"
+          "level": 2,
+          "text": "智能体"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "文件预览"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "智能体管理"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "查看智能体"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "配置智能体"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "新建线程"
-        },
-        {
-          "id": "section-15",
           "level": 2,
           "text": "工具与技能"
         },
         {
-          "id": "section-16",
-          "level": 3,
-          "text": "工具面板"
-        },
-        {
-          "id": "section-17",
-          "level": 3,
-          "text": "知识库"
-        },
-        {
-          "id": "section-18",
+          "id": "section-11",
           "level": 2,
           "text": "定时任务"
         },
         {
-          "id": "section-19",
+          "id": "section-12",
           "level": 2,
           "text": "我的概况与设置"
         },
         {
-          "id": "section-20",
+          "id": "section-13",
           "level": 3,
           "text": "我的概况"
         },
         {
-          "id": "section-21",
+          "id": "section-14",
           "level": 3,
           "text": "账户管理"
         },
         {
-          "id": "section-22",
+          "id": "section-15",
           "level": 3,
           "text": "系统设置"
         },
         {
-          "id": "section-23",
+          "id": "section-16",
           "level": 3,
           "text": "帮助手册"
         },
         {
-          "id": "section-24",
+          "id": "section-17",
           "level": 2,
-          "text": "界面使用技巧"
-        },
-        {
-          "id": "section-25",
-          "level": 3,
-          "text": "快速导航"
-        },
-        {
-          "id": "section-26",
-          "level": 3,
-          "text": "会话管理"
-        },
-        {
-          "id": "section-27",
-          "level": 3,
-          "text": "右栏工作"
-        },
-        {
-          "id": "section-28",
-          "level": 3,
           "text": "状态识别"
         },
         {
-          "id": "section-29",
+          "id": "section-18",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6346,8 +6180,8 @@
       "slug": "zh-CN/surfaces/orchestration",
       "language": "zh-CN",
       "title": "编排功能",
-      "summary": "编排页是母蜂、工蜂与产物协同的专用工作台，用来持续推进一个蜂群级编排 run，并按母蜂用户轮次查看历史、分支与产物快照。",
-      "updated_at": "2026-04-18",
+      "summary": "编排页是蜂群持续推进任务的专用工作台。按轮次推进、查看历史、生成分支。",
+      "updated_at": "2026-04-24",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6405,7 +6239,7 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "产物怎么看"
+          "text": "产物查看"
         },
         {
           "id": "section-11",
@@ -6450,15 +6284,10 @@
         {
           "id": "section-19",
           "level": 2,
-          "text": "历史列表"
-        },
-        {
-          "id": "section-20",
-          "level": 2,
           "text": "使用建议"
         },
         {
-          "id": "section-21",
+          "id": "section-20",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6472,8 +6301,8 @@
       "slug": "zh-CN/surfaces/web-admin",
       "language": "zh-CN",
       "title": "管理端界面",
-      "summary": "系统治理的后台。配置系统、管理用户、监控渠道、查看运行状态。只有管理员能访问。",
-      "updated_at": "2026-04-14",
+      "summary": "管理员的后台工作台。模型配置、工具管理、用户治理、渠道接入，都在这里。",
+      "updated_at": "2026-04-24",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6491,155 +6320,50 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "面板分组"
+          "text": "什么时候需要管理端"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "系统分组"
+          "text": "核心功能"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "内部状态"
+          "text": "模型配置"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "系统设置"
+          "text": "预设智能体"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "用户管理"
+          "text": "工具管理"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "单位管理"
+          "text": "用户与单位"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "渠道监控"
+          "text": "渠道管理"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "智能体分组"
+          "level": 3,
+          "text": "系统监控"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "模型配置"
+          "level": 2,
+          "text": "访问方式"
         },
         {
           "id": "section-11",
-          "level": 3,
-          "text": "线程管理"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "预设智能体"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "工具管理"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "系统提示词"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "调试分组"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "吞吐测试"
-        },
-        {
-          "id": "section-17",
-          "level": 3,
-          "text": "性能测试"
-        },
-        {
-          "id": "section-18",
-          "level": 3,
-          "text": "蜂群测试"
-        },
-        {
-          "id": "section-19",
-          "level": 3,
-          "text": "能力评估"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "调试面板"
-        },
-        {
-          "id": "section-21",
-          "level": 2,
-          "text": "文档分组"
-        },
-        {
-          "id": "section-22",
-          "level": 3,
-          "text": "使用说明书"
-        },
-        {
-          "id": "section-23",
-          "level": 3,
-          "text": "接口参考"
-        },
-        {
-          "id": "section-24",
-          "level": 2,
-          "text": "Token 账户管理"
-        },
-        {
-          "id": "section-25",
-          "level": 2,
-          "text": "常用管理操作"
-        },
-        {
-          "id": "section-26",
-          "level": 3,
-          "text": "新用户加入"
-        },
-        {
-          "id": "section-27",
-          "level": 3,
-          "text": "配置新模型"
-        },
-        {
-          "id": "section-28",
-          "level": 3,
-          "text": "接入新渠道"
-        },
-        {
-          "id": "section-29",
-          "level": 3,
-          "text": "处理异常线程"
-        },
-        {
-          "id": "section-30",
-          "level": 2,
-          "text": "管理端访问"
-        },
-        {
-          "id": "section-31",
-          "level": 2,
-          "text": "安全注意"
-        },
-        {
-          "id": "section-32",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6653,8 +6377,8 @@
       "slug": "zh-CN/surfaces/desktop-ui",
       "language": "zh-CN",
       "title": "桌面端界面",
-      "summary": "个人用户的主入口。本地优先的工作台，可以直接访问本机文件，有本地运行时和一键重置功能。",
-      "updated_at": "2026-04-14",
+      "summary": "个人用户的主入口。本地优先的工作台，可以直接访问本机文件，有一键重置功能。",
+      "updated_at": "2026-04-24",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6687,7 +6411,7 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "本地运行时"
+          "text": "自带运行时"
         },
         {
           "id": "section-6",
@@ -6727,50 +6451,25 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "桌面端安装"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "使用技巧"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "工作目录管理"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "状态异常处理"
-        },
-        {
-          "id": "section-17",
-          "level": 3,
-          "text": "安全边界"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
           "text": "常见问题"
         },
         {
-          "id": "section-19",
+          "id": "section-14",
           "level": 3,
           "text": "数据在哪里？"
         },
         {
-          "id": "section-20",
-          "level": 3,
-          "text": "能迁移到其他电脑吗？"
-        },
-        {
-          "id": "section-21",
+          "id": "section-15",
           "level": 3,
           "text": "本地模式能联网吗？"
         },
         {
-          "id": "section-22",
+          "id": "section-16",
+          "level": 3,
+          "text": "能迁移到其他电脑吗？"
+        },
+        {
+          "id": "section-17",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -9696,10 +9395,10 @@
       "slug": "zh-CN/help/index",
       "language": "zh-CN",
       "title": "帮助",
-      "summary": "先按症状分流，再进入排障路径；目标是减少盲查日志和重复试错。",
-      "updated_at": "2026-04-02",
+      "summary": "遇到问题先来这里，按症状快速分流。",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "你要快速定位问题入口",
+        "你要快速定位问题",
         "你想区分使用疑问与系统故障"
       ],
       "source_docs": [
@@ -9727,7 +9426,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "先做问题分类"
+          "text": "先判断问题类型"
         },
         {
           "id": "section-4",
@@ -9737,22 +9436,22 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "接口异常、状态异常"
+          "text": "页面打不开、登录失败"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "文件、下载、转换异常"
+          "text": "工具不出现、功能不可用"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "渠道接入异常"
+          "text": "文件上传或下载异常"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "配置与治理异常"
+          "text": "配置问题"
         },
         {
           "id": "section-9",
@@ -9769,10 +9468,10 @@
       "slug": "zh-CN/help/troubleshooting",
       "language": "zh-CN",
       "title": "故障排查",
-      "summary": "按“入口 -> 鉴权 -> 配置 -> 依赖 -> 实时通道”顺序排查，可快速定位大部分 Wunder 故障。",
+      "summary": "按症状找原因，快速定位大部分问题。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "Wunder 跑不起来或行为异常",
+        "wunder 跑不起来或行为异常",
         "你已确认不是单纯使用问题"
       ],
       "source_docs": [
@@ -9801,77 +9500,77 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "症状 -> 检查路径"
+          "text": "按症状查找"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "1. 接口直接 401 / 403"
+          "text": "登录失败或提示无权限"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "2. 配置改了没生效"
+          "text": "配置改了没生效"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "3. 服务启动成功但能力不可用"
+          "text": "服务启动成功但功能不可用"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "4. 实时状态不更新、看不到中间过程"
+          "text": "实时状态不更新、看不到中间过程"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "5. 工具不出现或无法调用"
+          "text": "工具不出现或无法调用"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "6. 附件一直处理中，或者上传后无法发送"
+          "text": "附件上传后无法发送"
         },
         {
           "id": "section-10",
           "level": 3,
-          "text": "7. 登录页重置密码失败"
+          "text": "忘记密码怎么办"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "8. 编辑资料或修改密码保存失败"
+          "text": "修改密码保存失败"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "9. 新建线程按钮是灰的"
+          "text": "新建线程按钮是灰的"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "10. 蜂群页面状态看起来不对"
+          "text": "蜂群页面状态不对"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "11. 会话或蜂群状态整体乱了"
+          "text": "会话或蜂群状态整体乱了"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "12. 麦克风或截图按钮不可用"
+          "text": "麦克风或截图按钮不可用"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "13. 帮助手册空白或打不开"
+          "text": "帮助手册空白或打不开"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "仍未定位时"
+          "text": "仍未解决？"
         },
         {
           "id": "section-18",
@@ -9888,11 +9587,11 @@
       "slug": "zh-CN/help/faq",
       "language": "zh-CN",
       "title": "FAQ",
-      "summary": "wunder 的高频问题快速答复，适合在进入详细排障前先做判断。",
+      "summary": "使用 wunder 时的常见问题，先看这里再查详细排障。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "你有高频使用疑问",
-        "你想先快速判断是否属于故障"
+        "你有使用疑问",
+        "你想快速判断是不是故障"
       ],
       "source_docs": [
         "docs/API文档.md",
@@ -9914,57 +9613,57 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "/wunder 的 userid 必须是注册用户吗？"
+          "text": "必须先注册账号才能用吗？"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "我做聊天产品时，应该优先接 /wunder 还是 /wunder/chat/？"
+          "text": "页面上显示的 Token 数就是我的费用吗？"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "SSE 和 WebSocket 怎么选？"
+          "text": "每次发消息，智能体都会重新学习一遍我的要求吗？"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "token 统计为什么和账单不一致？"
+          "text": "智能体每次对话都会重新读取我的历史记忆吗？"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "登录页重置密码需要什么？"
+          "text": "为什么新建线程按钮有时是灰的？"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "已登录后在哪里改用户名或密码？"
+          "text": "蜂群和子智能体怎么选？"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "为什么新建线程按钮有时是灰的？"
+          "text": "Desktop 必须先部署 Server 吗？"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "蜂群和子智能体怎么选？"
+          "text": "怎么改用户名或密码？"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "tempdir 可以当长期存储目录吗？"
+          "text": "忘记密码怎么办？"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "为什么工具在某个会话里看不到？"
+          "text": "上传的文件会被自动删除吗？"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "Desktop 模式是否必须先部署 Server？"
+          "text": "为什么有些工具在某个会话里看不到？"
         },
         {
           "id": "section-13",
@@ -9986,11 +9685,11 @@
       "slug": "zh-CN/help/glossary",
       "language": "zh-CN",
       "title": "术语表",
-      "summary": "这页用于快速统一 Wunder 文档里的核心术语，避免把 user、session、thread、container、agent 混成一个概念。",
-      "updated_at": "2026-04-02",
+      "summary": "wunder 文档里的核心术语，用大白话解释，避免混淆。",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "你第一次系统性阅读 Wunder 文档",
-        "你发现很多词看起来相近但不知道边界"
+        "你第一次系统性阅读 wunder 文档",
+        "你发现很多词看起来相近但不知道区别"
       ],
       "source_docs": [
         "docs/系统介绍.md",
@@ -10012,87 +9711,87 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "userid"
+          "text": "用户"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "注册用户"
+          "text": "智能体"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "agentid"
+          "text": "线程"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "sessionid"
+          "text": "蜂群"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "线程"
+          "text": "母蜂"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "用户轮次 / 模型轮次"
+          "text": "工蜂"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "containerid"
+          "text": "用户轮次"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "工作区"
+          "text": "模型轮次"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "skill"
+          "text": "工作区"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "skillcall"
+          "text": "容器"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "MCP"
+          "text": "技能（Skill）"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "A2A"
+          "text": "MCP"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "channel"
+          "text": "A2A"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "outbox"
+          "text": "渠道（Channel）"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "turnterminal"
+          "text": "Token"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "threadstatus"
+          "text": "上下文压缩"
         },
         {
           "id": "section-18",
           "level": 2,
-          "text": "approvalresolved"
+          "text": "长期记忆"
         },
         {
           "id": "section-19",
@@ -10109,18 +9808,10 @@
       "slug": "en/index",
       "language": "en",
       "title": "wunder",
-      "summary": "wunder is an agent orchestration system that unifies three runtime forms: server, cli, and desktop. Start by choosing the path that matches your role and goal.",
-      "updated_at": "2026-04-10",
-      "read_when": [
-        "You are learning wunder for the first time",
-        "You need to decide whether to start with desktop, server, or cli",
-        "You need an entry point for integration, operations, or tool documentation"
-      ],
-      "source_docs": [
-        "README.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
-      ],
+      "summary": "An agent system that gets things done. You set the goal, it breaks it down, calls tools, and delivers results.",
+      "updated_at": "2026-04-24",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Getting Started",
       "group": "Home",
       "group_path": [
@@ -10136,72 +9827,22 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "What is wunder?"
+          "text": "System Structure"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "What can it do?"
+          "text": "Quick Start"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "System structure in one minute"
+          "text": "Documentation"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Pick the path for your role"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "Core capabilities at a glance"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "Five capability dimensions"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "Technical highlights"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "The easiest mistakes to make"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "Quick navigation"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "First time here?"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "Want the mental model first?"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "Need integration guidance?"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "Hit a problem?"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "Further reading"
+          "text": "Key Concepts"
         }
       ],
       "prev_slug": "zh-CN/help/glossary",
@@ -10212,17 +9853,15 @@
     "en/start/quickstart": {
       "slug": "en/start/quickstart",
       "language": "en",
-      "title": "Quickstart",
-      "summary": "Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.",
-      "updated_at": "2026-04-10",
+      "title": "Quick Start",
+      "summary": "The shortest path to complete your first task in wunder. Desktop by default, then Server or CLI.",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "You are using wunder for the first time",
-        "You need a verifiable result within about ten minutes"
+        "You're using wunder for the first time",
+        "You need to verify a working setup in 10 minutes"
       ],
       "source_docs": [
-        "README.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "README.md"
       ],
       "tab": "Getting Started",
       "group": "Onboarding",
@@ -10234,77 +9873,77 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Quickstart"
+          "text": "Quick Start"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "Step 1: pick the right path"
+          "text": "Step 1: Pick Your Path"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Shortest path: Desktop"
+          "text": "Shortest Path: Desktop (Recommended)"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "Five steps"
+          "text": "5 Steps to Get Running"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "Desktop-specific strengths"
+          "text": "Desktop-Only Capabilities"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Team path: Server"
+          "text": "Team Path: Server"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Before you start"
+          "text": "Prerequisites"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "Three-step deployment"
+          "text": "3 Steps to Deploy"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "Core server capabilities"
+          "text": "Server Core Capabilities"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Developer path: CLI"
+          "text": "Developer Path: CLI"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "Install and run"
+          "text": "Install and Run"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "First session"
+          "text": "First Session"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "CLI-specific strengths"
+          "text": "CLI-Only Capabilities"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "Validation checklist"
+          "text": "Verification Checklist"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Next"
+          "text": "Next Steps"
         }
       ],
       "prev_slug": "en/index",
@@ -10316,16 +9955,14 @@
       "slug": "en/start/desktop",
       "language": "en",
       "title": "Desktop Guide",
-      "summary": "If your first goal is simply to start using wunder, begin with desktop. It is the default entry point for individual and local-first use.",
+      "summary": "The first choice for individual users. Download, install, and start — no server needed.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You want to start using wunder immediately",
-        "You care more about the desktop workstation than deploying a full server stack"
+        "You want to get wunder running right away",
+        "You care more about the desktop workbench than deploying a full server"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue",
-        "frontend/src/components/messenger/MessengerSettingsPanel.vue"
+        "docs/API文档.md"
       ],
       "tab": "Getting Started",
       "group": "Onboarding",
@@ -10342,82 +9979,77 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "When to choose Desktop"
+          "text": "When to Choose Desktop"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "What Desktop is"
+          "text": "What You'll See"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "What you see after launch"
+          "text": "5 Steps to Get Started"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "Five steps to get started"
+          "level": 3,
+          "text": "1. Download and Install"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "1. Download and install"
+          "text": "2. First Launch"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "2. First launch"
+          "text": "3. Configure Model"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "3. Configure a model"
+          "text": "4. Set Up Your Profile"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "4. Set up your account details"
+          "text": "5. Start Your First Conversation"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "5. Start the first conversation"
+          "level": 2,
+          "text": "Two Common Interaction Constraints"
         },
         {
           "id": "section-11",
-          "level": 2,
-          "text": "Two interaction constraints you will hit quickly"
+          "level": 3,
+          "text": "Can't Create New Thread While Running"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "You cannot create a new thread while one is still running"
+          "text": "Swarm Running Has Visual Indicator"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "Active swarms keep a visible highlight"
+          "level": 2,
+          "text": "Workspace State Messed Up?"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "Recovery entry in System Settings"
+          "text": "Local Mode Extras"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Extra input capabilities in local mode"
+          "text": "Need Help? Open the Manual"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "When in doubt, open the manual"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "Next"
+          "text": "Next Steps"
         }
       ],
       "prev_slug": "en/start/quickstart",
@@ -10429,15 +10061,13 @@
       "slug": "en/start/server",
       "language": "en",
       "title": "Server Deployment",
-      "summary": "Start with `wunder-server` only when you need multi-user governance, a unified access layer, and an admin backend.",
+      "summary": "The choice for teams and organizations. Multi-user, permission management, channel integration, unified governance.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You need to deploy the server runtime form",
-        "You need multi-user, organizational governance, and external integration capabilities"
+        "You need multiple people sharing wunder",
+        "You need an admin backend and unified management"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
         "docs/API文档.md"
       ],
       "tab": "Getting Started",
@@ -10455,117 +10085,72 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "When do you need Server?"
+          "text": "When to Choose Server"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Server architecture overview"
+          "text": "Prerequisites"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "What Server is responsible for"
+          "level": 2,
+          "text": "3 Steps to Deploy"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "Preparation before deployment"
+          "level": 3,
+          "text": "1. Get the Code"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "Hardware requirements"
+          "text": "2. Start the Service"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Software dependencies"
+          "text": "3. Access the System"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "Database choice"
+          "level": 2,
+          "text": "Post-Deployment Checklist"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Docker Compose deployment"
+          "text": "Core Capabilities"
         },
         {
           "id": "section-10",
           "level": 3,
-          "text": "1. Get the code"
+          "text": "Multi-tenancy"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "2. Configure environment variables, optional"
+          "text": "Channel Integration"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "3. Start the services"
+          "text": "Observability"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "4. Wait for startup"
+          "text": "Security"
         },
         {
           "id": "section-14",
-          "level": 3,
-          "text": "5. Access the system"
+          "level": 2,
+          "text": "Configuration Files"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Key configuration points"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "Configuration file"
-        },
-        {
-          "id": "section-17",
-          "level": 3,
-          "text": "Persistent data"
-        },
-        {
-          "id": "section-18",
-          "level": 3,
-          "text": "Service logs"
-        },
-        {
-          "id": "section-19",
-          "level": 2,
-          "text": "External access planning"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "Paths to expose"
-        },
-        {
-          "id": "section-21",
-          "level": 3,
-          "text": "Key constraints"
-        },
-        {
-          "id": "section-22",
-          "level": 2,
-          "text": "Production checklist"
-        },
-        {
-          "id": "section-23",
-          "level": 2,
-          "text": "Common questions"
-        },
-        {
-          "id": "section-24",
-          "level": 2,
-          "text": "Next"
+          "text": "Next Steps"
         }
       ],
       "prev_slug": "en/start/desktop",
@@ -10577,15 +10162,14 @@
       "slug": "en/start/cli",
       "language": "en",
       "title": "CLI Usage",
-      "summary": "Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.",
+      "summary": "The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You want to use wunder directly from a terminal",
-        "You care more about debugging, scripting tasks, and workspace-driven execution"
+        "You want to use wunder in the terminal",
+        "You want to integrate wunder into scripts or automation"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "wunder-cli/src/main.rs"
       ],
       "tab": "Getting Started",
       "group": "Onboarding",
@@ -10602,82 +10186,42 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "When to choose CLI"
+          "text": "When to Choose CLI"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "What CLI is"
+          "text": "Installation"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "Core CLI capabilities"
+          "level": 2,
+          "text": "First Session"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Five steps to get started"
+          "text": "Common Commands"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "1. Install CLI"
+          "level": 2,
+          "text": "TUI Interface"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "2. Configure a model"
+          "level": 2,
+          "text": "JSONL Output"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "3. Start interactive mode"
+          "level": 2,
+          "text": "Automation Scenarios"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "4. Launch the first task"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "5. Explore built-in commands"
-        },
-        {
-          "id": "section-11",
           "level": 2,
-          "text": "CLI-specific strengths"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "TUI mode"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "Session management"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "Scripting and automation"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "Workspace-driven execution"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "Common questions"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "Next"
+          "text": "Next Steps"
         }
       ],
       "prev_slug": "en/start/server",
@@ -10688,12 +10232,12 @@
     "en/start/hubs": {
       "slug": "en/start/hubs",
       "language": "en",
-      "title": "Manual Hubs",
-      "summary": "Jump to the right part of the manual by role and task instead of searching the whole site blindly.",
-      "updated_at": "2026-04-10",
+      "title": "Documentation Hub",
+      "summary": "Find the docs you need by role.",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "You are not sure which page to read first",
-        "You want the fastest route into the correct documentation path for your role"
+        "You're not sure where to start",
+        "You want to jump to the right docs by role"
       ],
       "source_docs": [
         "docs/wunder补全文档落地方案.md"
@@ -10708,32 +10252,32 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Manual Hubs"
+          "text": "Documentation Hub"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "I am a regular user"
+          "text": "I'm a Regular User"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "I am an administrator"
+          "text": "I'm an Administrator"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "I am a developer or integrator"
+          "text": "I'm a Developer / Integrator"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "I am troubleshooting"
+          "text": "I'm Troubleshooting"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Further reading"
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/start/cli",
@@ -10744,12 +10288,12 @@
     "en/start/docs-directory": {
       "slug": "en/start/docs-directory",
       "language": "en",
-      "title": "Frequently Used Pages",
-      "summary": "A curated directory of the most frequently used pages in the wunder manual.",
-      "updated_at": "2026-04-10",
+      "title": "Docs Directory",
+      "summary": "Documentation index by purpose. Quickly locate the page you need.",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "You do not want to browse the left navigation slowly",
-        "You only want the most useful documents first"
+        "You know what you want but aren't sure where it is",
+        "You want an overview of all documentation"
       ],
       "source_docs": [
         "docs/wunder补全文档落地方案.md"
@@ -10764,47 +10308,42 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Frequently Used Pages"
+          "text": "Docs Directory"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "If you only read three pages"
+          "text": "Getting Started"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "First-time use"
+          "text": "Interface"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "Understanding the system"
+          "text": "Help"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Integration work"
+          "text": "Core Concepts"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Interface surfaces"
+          "text": "Integration & Development"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Deployment, governance, and troubleshooting"
+          "text": "Operations"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "One practical rule"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "Further reading"
+          "text": "Reference"
         }
       ],
       "prev_slug": "en/start/hubs",
@@ -14476,19 +14015,11 @@
     "en/surfaces/frontend": {
       "slug": "en/surfaces/frontend",
       "language": "en",
-      "title": "User Frontend",
-      "summary": "The user-side frontend lives in `frontend/`, unified into a single Messenger workbench that covers profile, chat, swarm, workspace, and system settings.",
-      "updated_at": "2026-04-10",
-      "read_when": [
-        "You want to understand the primary interface that Wunder exposes to regular users",
-        "You need to know how chat, profile, swarm, files, and settings are organized"
-      ],
-      "source_docs": [
-        "docs/API文档.md",
-        "frontend/src/views/MessengerView.vue",
-        "frontend/src/components/messenger/MessengerSettingsPanel.vue",
-        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
-      ],
+      "title": "User Interface",
+      "summary": "Your main workbench. Left navigation, middle list, right workspace — all daily work happens here.",
+      "updated_at": "2026-04-24",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
       "group_path": [
@@ -14499,70 +14030,90 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "User Frontend"
+          "text": "User Interface"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "Code Location"
+          "text": "Three-Column Layout"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Current Main Entry Points"
+          "text": "Chat"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "How the Interface Is Organized"
+          "level": 3,
+          "text": "Input Area"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "Login, Registration, and Passwords"
+          "level": 3,
+          "text": "Slash Commands"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "What You Can See in My Profile"
+          "level": 3,
+          "text": "Protection Mechanisms"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "What the Chat Area Supports"
+          "text": "Orchestration Workbench"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Why the \"New Thread\" Button Is Sometimes Disabled"
+          "text": "Files"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "How to Read Swarm Status"
+          "text": "Agents"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Orchestration Workbench"
+          "text": "Tools & Skills"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Dangerous Operations in System Settings"
+          "text": "Scheduled Tasks"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "Help Manual Entry"
+          "text": "My Profile & Settings"
         },
         {
           "id": "section-13",
-          "level": 2,
-          "text": "When to Check This Page First"
+          "level": 3,
+          "text": "My Profile"
         },
         {
           "id": "section-14",
+          "level": 3,
+          "text": "Account Management"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "System Settings"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "Help Manual"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Status Indicators"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "Further Reading"
         }
@@ -14576,17 +14127,10 @@
       "slug": "en/surfaces/orchestration",
       "language": "en",
       "title": "Orchestration",
-      "summary": "The orchestration page is a dedicated workbench for queen-worker-artifact collaboration. It lets one hive continue a long-running orchestration run, inspect round snapshots, and branch from earlier rounds.",
-      "updated_at": "2026-04-18",
-      "read_when": [
-        "You want to use the orchestration page instead of a normal swarm run",
-        "You need to understand orchestration mode, timeline snapshots, artifacts, and branching"
-      ],
-      "source_docs": [
-        "docs/设计文档/编排态系统设计.md",
-        "docs/方案/编排态系统落地方案.md",
-        "docs/API文档.md"
-      ],
+      "summary": "The orchestration page is a dedicated workbench for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
+      "updated_at": "2026-04-24",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
       "group_path": [
@@ -14602,7 +14146,7 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "When to Use It"
+          "text": "When to Use Orchestration"
         },
         {
           "id": "section-3",
@@ -14612,7 +14156,7 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "Page Structure"
+          "text": "Page Layout"
         },
         {
           "id": "section-5",
@@ -14622,7 +14166,7 @@
         {
           "id": "section-6",
           "level": 3,
-          "text": "Right Panel"
+          "text": "Right Sidebar"
         },
         {
           "id": "section-7",
@@ -14632,52 +14176,52 @@
         {
           "id": "section-8",
           "level": 2,
-          "text": "Typical Workflow"
+          "text": "Basic Workflow"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Situation Presets"
+          "text": "Situation Settings"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "How Artifacts Are Displayed"
+          "text": "Artifact Viewing"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "History, Replay, and Branching"
+          "text": "History, Review, and Branching"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "Viewing an Older Round"
+          "text": "Reviewing Old Rounds"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "Continuing from an Older Round"
+          "text": "Continuing from Old Rounds"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "Deleting Later Content"
+          "text": "Deleting Subsequent Content"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Relationship with the Chat Page"
+          "text": "Orchestration Mode and Chat Page Relationship"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "Start and Close"
+          "text": "Start and Stop"
         },
         {
           "id": "section-17",
           "level": 3,
-          "text": "Close"
+          "text": "Stop"
         },
         {
           "id": "section-18",
@@ -14687,15 +14231,10 @@
         {
           "id": "section-19",
           "level": 2,
-          "text": "History List"
+          "text": "Usage Tips"
         },
         {
           "id": "section-20",
-          "level": 2,
-          "text": "Practical Advice"
-        },
-        {
-          "id": "section-21",
           "level": 2,
           "text": "Further Reading"
         }
@@ -14709,17 +14248,10 @@
       "slug": "en/surfaces/web-admin",
       "language": "en",
       "title": "Admin Interface",
-      "summary": "The admin frontend lives in `web/`, handling models, tools, users, channels, and runtime governance.",
-      "updated_at": "2026-04-13",
-      "read_when": [
-        "You want to understand the interface seen by administrators and system maintainers",
-        "You need to know the responsibility boundary between the admin frontend and the user frontend"
-      ],
-      "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "docs/API文档.md"
-      ],
+      "summary": "The admin's backend workbench. Model configuration, tool management, user governance, channel integration — all here.",
+      "updated_at": "2026-04-24",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
       "group_path": [
@@ -14735,40 +14267,50 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Code Location"
+          "text": "When You Need the Admin Interface"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Default Responsibilities"
+          "text": "Core Features"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "Why It Must Be Separate from the User Frontend"
+          "level": 3,
+          "text": "Model Configuration"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "What You Currently See in the Admin Interface"
+          "level": 3,
+          "text": "Preset Agents"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "Token Accounting in User Management"
+          "level": 3,
+          "text": "Tool Management"
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "Relationship Between the Usage Manual and the Admin Interface"
+          "level": 3,
+          "text": "Users & Organizations"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "When to Check the Admin Documentation First"
+          "level": 3,
+          "text": "Channel Management"
         },
         {
           "id": "section-9",
+          "level": 3,
+          "text": "System Monitoring"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Access"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "Further Reading"
         }
@@ -14782,17 +14324,10 @@
       "slug": "en/surfaces/desktop-ui",
       "language": "en",
       "title": "Desktop Interface",
-      "summary": "`wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.",
-      "updated_at": "2026-04-13",
-      "read_when": [
-        "You want to use Wunder directly",
-        "You want to understand why desktop is the current product focus"
-      ],
-      "source_docs": [
-        "README.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
-      ],
+      "summary": "The main entry for individual users. Local-first workbench with direct file access and one-click reset.",
+      "updated_at": "2026-04-24",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
       "group_path": [
@@ -14808,35 +14343,80 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "What It Is"
+          "text": "Desktop Features"
         },
         {
           "id": "section-3",
-          "level": 2,
-          "text": "Why Desktop Is the Current Focus"
+          "level": 3,
+          "text": "Local-First"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "Current Characteristics"
+          "level": 3,
+          "text": "Local File Access"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "Relationship with the User Frontend"
+          "level": 3,
+          "text": "Built-in Runtime"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "Who It Suits Best"
+          "level": 3,
+          "text": "One-Click Reset"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "What If You Need Server Capabilities"
+          "text": "Interface Structure"
         },
         {
           "id": "section-8",
+          "level": 2,
+          "text": "Desktop-Specific Features"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Desktop Runtime Settings"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "One-Click Reset Workspace State"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Local File Capabilities"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "When to Use Desktop"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Common Questions"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Where is my data?"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "Can local mode access the internet?"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "Can I migrate to another computer?"
+        },
+        {
+          "id": "section-17",
           "level": 2,
           "text": "Further Reading"
         }
@@ -17192,16 +16772,14 @@
       "slug": "en/help/index",
       "language": "en",
       "title": "Help",
-      "summary": "Start by categorizing symptoms, then follow the troubleshooting path; the goal is to reduce blind log searching and repeated trial-and-error.",
-      "updated_at": "2026-04-13",
+      "summary": "Come here first when something goes wrong. Quick triage by symptom.",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "You want to quickly locate the problem entry point",
-        "You want to distinguish between usage questions and system failures"
+        "You need to quickly locate a problem",
+        "You want to distinguish between usage questions and system issues"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/使用说明书/zh-CN/help/troubleshooting.md"
+        "docs/API文档.md"
       ],
       "tab": "Help",
       "group": "Overview",
@@ -17218,12 +16796,12 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Three High-Frequency Entry Points"
+          "text": "Three High-Frequency Entries"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "First, Categorize the Problem"
+          "text": "First, Determine the Problem Type"
         },
         {
           "id": "section-4",
@@ -17233,22 +16811,22 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "API Anomalies, State Anomalies"
+          "text": "Page Won't Open, Login Fails"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "File, Download, Conversion Anomalies"
+          "text": "Tools Not Appearing, Features Unavailable"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Channel Integration Anomalies"
+          "text": "File Upload or Download Issues"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "Configuration & Governance Anomalies"
+          "text": "Configuration Problems"
         },
         {
           "id": "section-9",
@@ -17265,17 +16843,14 @@
       "slug": "en/help/troubleshooting",
       "language": "en",
       "title": "Troubleshooting",
-      "summary": "Follow the \"entry -> auth -> config -> dependencies -> realtime channel\" sequence to quickly locate most Wunder issues.",
+      "summary": "Find the cause by symptom. Quick diagnosis for most issues.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "Wunder won't start or behaves abnormally",
-        "You've confirmed it's not a simple usage issue"
+        "wunder won't start or behaves abnormally",
+        "You've confirmed it's not a simple usage question"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "frontend/src/views/LoginView.vue",
-        "frontend/src/views/MessengerView.vue",
-        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
+        "docs/API文档.md"
       ],
       "tab": "Help",
       "group": "Help",
@@ -17297,82 +16872,82 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Symptom -> Check Path"
+          "text": "Find by Symptom"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "1. API Returns 401 / 403 Directly"
+          "text": "Login Fails or Access Denied"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "2. Configuration Changed but Not Taking Effect"
+          "text": "Configuration Changes Not Taking Effect"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "3. Service Starts Successfully but Capabilities Unavailable"
+          "text": "Service Starts But Features Don't Work"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "4. Real-time State Not Updating, Can't See Intermediate Process"
+          "text": "Real-time Updates Not Working, Can't See Intermediate Steps"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "5. Tools Not Appearing or Can't Be Invoked"
+          "text": "Tools Not Appearing or Can't Be Called"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "6. Attachment Stuck Processing, or Can't Send After Upload"
+          "text": "Attachment Uploaded But Can't Send"
         },
         {
           "id": "section-10",
           "level": 3,
-          "text": "7. Login Page Password Reset Failed"
+          "text": "Forgot Password"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "8. Edit Profile or Change Password Save Failed"
+          "text": "Password Change Fails"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "9. New Thread Button Is Grayed Out"
+          "text": "New Thread Button Is Grayed Out"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "10. Swarm Page State Looks Incorrect"
+          "text": "Swarm Page State Looks Wrong"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "11. Session or Swarm State Completely Messed Up"
+          "text": "Session or Swarm State Completely Messed Up"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "12. Microphone or Screenshot Button Unavailable"
+          "text": "Microphone or Screenshot Button Not Working"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "13. Help Manual Blank or Won't Open"
+          "text": "Help Manual Blank or Won't Open"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "Still Can't Locate"
+          "text": "Still Not Resolved?"
         },
         {
           "id": "section-18",
           "level": 2,
-          "text": "Suggested Information When Submitting Issues"
+          "text": "When Reporting an Issue, Include"
         }
       ],
       "prev_slug": "en/help/index",
@@ -17384,16 +16959,14 @@
       "slug": "en/help/faq",
       "language": "en",
       "title": "FAQ",
-      "summary": "Quick answers to high-frequency questions about Wunder, suitable for initial assessment before diving into detailed troubleshooting.",
+      "summary": "Common questions about using wunder. Check here first before detailed troubleshooting.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You have common usage questions",
-        "You want to quickly determine if it's a failure"
+        "You have a usage question",
+        "You want to quickly determine if something is a bug"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "frontend/src/views/LoginView.vue",
-        "frontend/src/views/MessengerView.vue"
+        "docs/API文档.md"
       ],
       "tab": "Help",
       "group": "Help",
@@ -17410,67 +16983,67 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Does the userid in /wunder have to be a registered user?"
+          "text": "Do I need to register an account first?"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "When building a chat product, should I prioritize /wunder or /wunder/chat/?"
+          "text": "Does the Token count shown equal my cost?"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "How do I choose between SSE and WebSocket?"
+          "text": "Does the agent re-learn my requirements every time I send a message?"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Why doesn't the token count match the bill?"
+          "text": "Does the agent re-read my long-term memory every conversation turn?"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "What's needed to reset password on the login page?"
+          "text": "Why is the \"New Thread\" button sometimes grayed out?"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Where to change username or password after logging in?"
+          "text": "Swarm vs. Sub-agent — which should I use?"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Why is the \"New Thread\" button sometimes grayed out?"
+          "text": "Does Desktop require deploying Server first?"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "How do I choose between Swarm and Sub-Agent?"
+          "text": "How do I change my username or password?"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Can tempdir be used as a long-term storage directory?"
+          "text": "What if I forgot my password?"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Why can't I see a tool in a particular session?"
+          "text": "Will uploaded files be automatically deleted?"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "Does Desktop mode require Server deployment first?"
+          "text": "Why can't I see some tools in a session?"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "What's the difference between webfetch and browser tools?"
+          "text": "What's the difference between webfetch and the browser tool?"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "Which page should I look at first when problems occur?"
+          "text": "Where should I look when something goes wrong?"
         }
       ],
       "prev_slug": "en/help/troubleshooting",
@@ -17482,16 +17055,14 @@
       "slug": "en/help/glossary",
       "language": "en",
       "title": "Glossary",
-      "summary": "This page is for quickly standardizing core terminology in Wunder documentation, avoiding mixing user, session, thread, container, and agent into a single concept.",
-      "updated_at": "2026-04-13",
+      "summary": "Core terms in wunder documentation, explained in plain language.",
+      "updated_at": "2026-04-24",
       "read_when": [
-        "You're reading Wunder documentation systematically for the first time",
-        "You notice many terms look similar but don't know the boundaries"
+        "You're reading wunder docs for the first time",
+        "You find terms that look similar but aren't sure of the difference"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "docs/API文档.md"
+        "docs/系统介绍.md"
       ],
       "tab": "Help",
       "group": "Help",
@@ -17508,87 +17079,87 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "userid"
+          "text": "User"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Registered User"
+          "text": "Agent"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "agentid"
+          "text": "Thread"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "sessionid"
+          "text": "Swarm"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Thread"
+          "text": "Queen Bee"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "User Turn / Model Turn"
+          "text": "Worker Bee"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "containerid"
+          "text": "User Turn"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Workspace"
+          "text": "Model Turn"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "skill"
+          "text": "Workspace"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "skillcall"
+          "text": "Container"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "MCP"
+          "text": "Skill"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "A2A"
+          "text": "MCP"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "channel"
+          "text": "A2A"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "outbox"
+          "text": "Channel"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "turnterminal"
+          "text": "Token"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "threadstatus"
+          "text": "Context Compression"
         },
         {
           "id": "section-18",
           "level": 2,
-          "text": "approvalresolved"
+          "text": "Long-term Memory"
         },
         {
           "id": "section-19",

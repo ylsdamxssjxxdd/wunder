@@ -46,7 +46,7 @@ const LEGACY_DEFAULT_AVATAR_KEY = "qq-avatar-0199";
 
 async function loadPresetAvatars() {
   try {
-    const response = await fetch(`${getWunderBase()}/wunder/admin/agent_avatars`);
+    const response = await fetch(`${getWunderBase()}/admin/agent_avatars`);
     if (!response.ok) {
       console.warn("[preset-agents] failed to load avatar config");
       return;

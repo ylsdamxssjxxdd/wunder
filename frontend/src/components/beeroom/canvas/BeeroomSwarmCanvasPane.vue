@@ -128,6 +128,23 @@
         <span class="beeroom-visually-hidden">{{ canvasControlLabels.regularize }}</span>
       </button>
       <button
+        v-if="showLayoutToggle"
+        class="beeroom-canvas-tool-btn"
+        :class="{ 'is-active': currentLayoutMode === 'vertical' }"
+        type="button"
+        :title="layoutToggleLabel"
+        :aria-label="layoutToggleLabel"
+        :aria-pressed="currentLayoutMode === 'vertical'"
+        @click="toggleLayoutMode"
+      >
+        <i
+          class="fa-solid"
+          :class="currentLayoutMode === 'vertical' ? 'fa-table-cells-large' : 'fa-bars-staggered'"
+          aria-hidden="true"
+        ></i>
+        <span class="beeroom-visually-hidden">{{ layoutToggleLabel }}</span>
+      </button>
+      <button
         class="beeroom-canvas-tool-btn"
         :class="{ 'is-active': fullscreen }"
         type="button"
@@ -192,7 +209,6 @@ import { chatDebugLog } from '@/utils/chatDebug';
 import {
   getBeeroomMissionCanvasState,
   mergeBeeroomMissionCanvasState,
-  clearBeeroomMissionCanvasState,
   type BeeroomCanvasPositionOverride,
   type BeeroomCanvasViewportState
 } from '@/components/beeroom/beeroomMissionCanvasStateCache';
@@ -244,6 +260,7 @@ const props = defineProps<{
   resolveAgentAvatarImageByAgentId?: (agentId: unknown) => string;
   resolveAgentAvatarColorByAgentId?: (agentId: unknown) => string;
   fullscreen?: boolean;
+  layoutMode?: 'horizontal' | 'vertical';
   externalProjection?: SwarmProjection | null;
   externalScopeKey?: string;
   externalHasNodes?: boolean;
@@ -260,6 +277,7 @@ const emit = defineEmits<{
     statusLabel: string;
   }): void;
   (event: 'preview-artifact', payload: { nodeId: string; item: SwarmProjectionArtifactItem }): void;
+  (event: 'update:layout-mode', value: 'horizontal' | 'vertical'): void;
   (event: 'toggle-fullscreen'): void;
 }>();
 
@@ -297,6 +315,8 @@ const canvasControlLabels = computed(() => ({
   zoomOut: t('beeroom.canvas.zoomOut'),
   fitView: t('beeroom.canvas.fitView'),
   regularize: t('beeroom.canvas.regularize'),
+  layoutHorizontal: t('orchestration.canvas.layoutHorizontal'),
+  layoutVertical: t('orchestration.canvas.layoutVertical'),
   enterFullscreen: t('beeroom.canvas.enterFullscreen'),
   exitFullscreen: t('beeroom.canvas.exitFullscreen')
 }));
@@ -329,6 +349,16 @@ const scopeKey = computed(() =>
     teamRunId: props.mission?.team_run_id,
     groupId: props.group?.group_id
   })
+);
+
+const currentLayoutMode = computed<'horizontal' | 'vertical'>(() =>
+  props.layoutMode === 'vertical' ? 'vertical' : 'horizontal'
+);
+const showLayoutToggle = computed(() => Boolean(props.externalProjection));
+const layoutToggleLabel = computed(() =>
+  currentLayoutMode.value === 'vertical'
+    ? canvasControlLabels.value.layoutHorizontal
+    : canvasControlLabels.value.layoutVertical
 );
 
 const applyProjectionInteractionOverrides = (
@@ -909,10 +939,11 @@ const clearViewportSaveTimer = () => {
   }
 };
 
-const saveNodeState = () => {
+const saveNodeState = (layoutModeOverride: 'horizontal' | 'vertical' = currentLayoutMode.value) => {
   mergeBeeroomMissionCanvasState(scopeKey.value, {
     nodePositionOverrides: nodePositionOverrides.value,
-    activeNodeId: selectedNodeId.value
+    activeNodeId: selectedNodeId.value,
+    layoutMode: layoutModeOverride
   });
 };
 
@@ -945,10 +976,24 @@ const hydrateCanvasState = () => {
 const regularizeLayout = async () => {
   clearPendingNodeOutputPreview();
   clearInteractions();
-  clearBeeroomMissionCanvasState(scopeKey.value);
+  nodePositionOverrides.value = {};
+  saveNodeState();
+  pendingViewportRestore.value = null;
+  pendingFitView.value = false;
+  await fitView(true);
+};
+
+const toggleLayoutMode = async () => {
+  if (!showLayoutToggle.value) return;
+  clearPendingNodeOutputPreview();
+  clearInteractions();
+  const nextLayoutMode = currentLayoutMode.value === 'vertical' ? 'horizontal' : 'vertical';
   nodePositionOverrides.value = {};
   pendingViewportRestore.value = null;
   pendingFitView.value = false;
+  saveNodeState(nextLayoutMode);
+  emit('update:layout-mode', nextLayoutMode);
+  await nextTick();
   await fitView(true);
 };
 

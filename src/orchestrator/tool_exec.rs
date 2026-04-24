@@ -1641,7 +1641,6 @@ const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
 const OBSERVATION_SEARCH_HIT_LIMIT: usize = 10;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 180;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
-const OBSERVATION_READ_CONTENT_HEAD_CHARS: usize = 3200;
 const OBSERVATION_JSONL_ITEM_MAX_DEPTH: usize = 8;
 const READ_OUTPUT_TRUNCATION_PREFIX: &str = "...(truncated read output, omitted ";
 const READ_OUTPUT_TRUNCATION_SUFFIX: &str = " bytes)...";
@@ -2155,19 +2154,20 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
     let content = map.get("content").and_then(Value::as_str)?;
     let mut compacted = Map::new();
     let (clean_content, read_output_omitted_bytes) = strip_read_output_truncation_notice(content);
-    let (content_head, content_omitted_chars) =
-        truncate_text_head(&clean_content, OBSERVATION_READ_CONTENT_HEAD_CHARS);
-    compacted.insert("content".to_string(), Value::String(content_head));
-    if content_omitted_chars > 0 {
-        compacted.insert(
-            "content_omitted_chars".to_string(),
-            json!(content_omitted_chars),
-        );
+    compacted.insert("content".to_string(), Value::String(clean_content));
+    if map.get("continuation_required").and_then(Value::as_bool) == Some(true) {
         compacted.insert("continuation_required".to_string(), Value::Bool(true));
-        compacted.insert(
-            "continuation_hint".to_string(),
-            Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
-        );
+        if let Some(hint) = map
+            .get("continuation_hint")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            compacted.insert(
+                "continuation_hint".to_string(),
+                Value::String(hint.to_string()),
+            );
+        }
     }
     if let Some(omitted_bytes) = read_output_omitted_bytes {
         compacted.insert(
@@ -2210,7 +2210,35 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
             compacted.insert("files".to_string(), Value::Array(file_entries));
         }
     }
+    fit_read_file_content_to_observation_budget(&mut compacted);
     Some(Value::Object(compacted))
+}
+
+fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value>) {
+    let Some(content) = compacted
+        .get("content")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+    else {
+        return;
+    };
+    let mut overhead = compacted.clone();
+    overhead.remove("content");
+    let content_budget = OBSERVATION_MAX_CHARS
+        .saturating_sub(estimate_tool_result_chars(&Value::Object(overhead)))
+        .saturating_sub("content".chars().count());
+    let minimum_marker_budget = TOOL_RESULT_TRUNCATION_MARKER.chars().count().saturating_add(32);
+    let content_budget = content_budget.max(minimum_marker_budget);
+    let truncated =
+        truncate_tool_result_string_to_budget(&content, content_budget, TOOL_RESULT_TRUNCATION_MARKER);
+    if truncated == content {
+        return;
+    }
+    compacted.insert("content".to_string(), Value::String(truncated));
+    compacted.insert("continuation_required".to_string(), Value::Bool(true));
+    compacted
+        .entry("continuation_hint".to_string())
+        .or_insert_with(|| Value::String(TRUNCATION_CONTINUATION_HINT.to_string()));
 }
 
 fn strip_read_output_truncation_notice(content: &str) -> (String, Option<u64>) {
@@ -3334,14 +3362,13 @@ mod tests {
         let data = payload.get("data").and_then(Value::as_object);
         assert!(data.and_then(|value| value.get("meta")).is_none());
         assert!(data.and_then(|value| value.get("content")).is_some());
-        assert_eq!(
-            data.and_then(|value| value.get("content_omitted_chars"))
-                .and_then(Value::as_u64),
-            Some(
-                (OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80
-                    - OBSERVATION_READ_CONTENT_HEAD_CHARS) as u64
-            )
-        );
+        let compacted = Value::Object(data.cloned().unwrap_or_default());
+        let content = data
+            .and_then(|value| value.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(content.contains(TOOL_RESULT_TRUNCATION_MARKER));
+        assert!(estimate_tool_result_chars(&compacted) <= OBSERVATION_MAX_CHARS);
     }
 
     #[test]
@@ -3390,7 +3417,7 @@ mod tests {
 
     #[test]
     fn test_compact_observation_payload_read_file_limits_content_without_marker() {
-        let long_content = "x".repeat(OBSERVATION_READ_CONTENT_HEAD_CHARS + 240);
+        let long_content = "x".repeat(8_000);
         let mut payload = json!({
             "tool": "璇诲彇鏂囦欢",
             "ok": true,
@@ -3420,17 +3447,51 @@ mod tests {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+        assert_eq!(data.get("continuation_required").and_then(Value::as_bool), None);
+        let content = data.get("content").and_then(Value::as_str).unwrap_or("");
+        assert_eq!(content.chars().count(), 8_000);
+        assert!(!content.contains(TOOL_RESULT_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn test_compact_observation_payload_read_file_uses_unified_budget_for_large_content() {
+        let long_content = "x".repeat(OBSERVATION_MAX_CHARS + 240);
+        let mut payload = json!({
+            "tool": "璇诲彇鏂囦欢",
+            "ok": true,
+            "data": {
+                "content": long_content,
+                "meta": {
+                    "files": [
+                        {
+                            "path": "notes.md",
+                            "read_lines": 800,
+                            "total_lines": 2000,
+                            "complete": false
+                        }
+                    ],
+                    "read": {
+                        "requested_files": 1,
+                        "processed_files": 1
+                    }
+                }
+            }
+        });
+
+        compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
+
+        let data = payload
+            .get("data")
+            .cloned()
+            .unwrap_or(Value::Null);
         assert_eq!(
-            data.get("content_omitted_chars").and_then(Value::as_u64),
-            Some(240)
-        );
-        assert_eq!(
-            data.get("continuation_required").and_then(Value::as_bool),
+            payload.get("continuation_required").and_then(Value::as_bool),
             Some(true)
         );
-        let content = data.get("content").and_then(Value::as_str).unwrap_or("");
-        assert_eq!(content.chars().count(), OBSERVATION_READ_CONTENT_HEAD_CHARS);
-        assert!(!content.contains(TOOL_RESULT_TRUNCATION_MARKER));
+        let maybe_content = data.get("content").and_then(Value::as_str);
+        let maybe_preview = data.get("preview").and_then(Value::as_str);
+        let visible = maybe_content.or(maybe_preview).unwrap_or("");
+        assert!(visible.chars().count() > OBSERVATION_HEAD_CHARS);
     }
 
     #[test]

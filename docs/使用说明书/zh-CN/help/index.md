@@ -1,8 +1,8 @@
 ---
 title: 帮助
-summary: 先按症状分流，再进入排障路径；目标是减少盲查日志和重复试错。
+summary: 遇到问题先来这里，按症状快速分流。
 read_when:
-  - 你要快速定位问题入口
+  - 你要快速定位问题
   - 你想区分使用疑问与系统故障
 source_docs:
   - docs/API文档.md
@@ -12,38 +12,36 @@ source_docs:
 
 # 帮助
 
-这页是排障分流中心。
-
 ## 三个高频入口
 
-- [故障排查](/docs/zh-CN/help/troubleshooting/)
-- [FAQ](/docs/zh-CN/help/faq/)
-- [术语表](/docs/zh-CN/help/glossary/)
+- [故障排查](/docs/zh-CN/help/troubleshooting/) — 按症状找原因
+- [FAQ](/docs/zh-CN/help/faq/) — 常见问题快速答复
+- [术语表](/docs/zh-CN/help/glossary/) — 核心术语解释
 
-## 先做问题分类
+## 先判断问题类型
 
-1. 使用问题还是系统故障
-2. 接入问题还是运行问题
-3. 文件链路问题还是会话/渠道问题
+1. **不会用** → 看 FAQ 和入门文档
+2. **功能异常** → 看故障排查
+3. **想接入开发** → 看接入概览
 
 ## 按症状跳转
 
-### 接口异常、状态异常
+### 页面打不开、登录失败
 
-- [流式事件参考](/docs/zh-CN/reference/stream-events/)
-- [聊天会话](/docs/zh-CN/integration/chat-sessions/)
+- [故障排查](/docs/zh-CN/help/troubleshooting/)
+- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
 
-### 文件、下载、转换异常
+### 工具不出现、功能不可用
 
+- [故障排查](/docs/zh-CN/help/troubleshooting/)
+- [工具总览](/docs/zh-CN/tools/)
+
+### 文件上传或下载异常
+
+- [故障排查](/docs/zh-CN/help/troubleshooting/)
 - [工作区 API](/docs/zh-CN/integration/workspace-api/)
-- [临时目录与文档转换](/docs/zh-CN/integration/temp-dir/)
 
-### 渠道接入异常
-
-- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)
-- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)
-
-### 配置与治理异常
+### 配置问题
 
 - [配置说明](/docs/zh-CN/reference/config/)
 - [管理端面板索引](/docs/zh-CN/reference/admin-panels/)
@@ -51,4 +49,4 @@ source_docs:
 ## 延伸阅读
 
 - [说明书总览](/docs/zh-CN/start/hubs/)
-- [参考概览](/docs/zh-CN/reference/)
+- [参考概览](/docs/zh-CN/reference/)

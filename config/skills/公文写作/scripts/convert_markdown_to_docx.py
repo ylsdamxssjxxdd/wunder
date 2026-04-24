@@ -43,6 +43,13 @@ INLINE_HEADING_SPLIT_RE = re.compile(r"([^\n])\s+(#{2,5}\s+)")
 DOCX_MARKDOWN_HEADING_RE = re.compile(r"^\s*#{2,5}\s+\S")
 DOCX_PIPE_TABLE_RE = re.compile(r"\|\s*[-:]{3,}\s*(?:\||$)")
 DOCX_FENCE_RE = re.compile(r"^\s*```")
+HEADER_KEYS = ("份号", "密级", "紧急程度", "发文机关标志", "发文字号", "签发人")
+HEADER_LINE_RE = re.compile(rf"^({'|'.join(map(re.escape, HEADER_KEYS))})[:：]\s*(.*)$")
+ORDERED_LIST_LINE_RE = re.compile(r"^\d+[.)、]\s*")
+FIELD_LINE_RE = re.compile(
+    r"^(?P<label>(?:\*\*)?(?:\[[^\]]{1,40}\]|【[^】]{1,40}】|[A-Za-z0-9\u4e00-\u9fff（）()《》“”‘’、/\-]{1,40})(?:\*\*)?)[:：]\s*(?P<value>.*)$"
+)
+FIELD_SENTENCE_PUNCTUATION = ("。", "；", "！", "？")
 
 
 class PandocNotFoundError(RuntimeError):
@@ -850,6 +857,88 @@ def normalize_reference_entries(md_text: str) -> str:
     return "\n".join(output)
 
 
+def normalize_title_and_field_blocks(md_text: str) -> str:
+    lines = md_text.splitlines()
+    output: list[str] = []
+    in_code_block = False
+
+    for index, raw in enumerate(lines):
+        line = raw.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            output.append(line)
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            output.append(line)
+            continue
+
+        if is_field_like_line(stripped):
+            output.append(normalize_field_line(stripped))
+            output.append("")
+            continue
+
+        output.append(line)
+
+    return "\n".join(output)
+
+
+def promote_document_title(md_text: str) -> str:
+    lines = md_text.splitlines()
+    first_non_empty_index: Optional[int] = None
+    first_non_empty_text = ""
+
+    for index, raw in enumerate(lines):
+        stripped = raw.strip()
+        if stripped:
+            first_non_empty_index = index
+            first_non_empty_text = stripped
+            break
+
+    if first_non_empty_index is None:
+        return md_text
+
+    first_heading = HEADING_RE.match(first_non_empty_text)
+    shift_following_headings = first_heading is None
+    if first_heading:
+        title_text = first_heading.group(2).strip()
+    else:
+        title_text = strip_emphasis_markers(first_non_empty_text)
+
+    output: list[str] = []
+    in_code_block = False
+    title_emitted = False
+
+    for index, raw in enumerate(lines):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not title_emitted and index == first_non_empty_index:
+                output.append(f"# {title_text}")
+                title_emitted = True
+            output.append(line)
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            output.append(line)
+            continue
+        if index == first_non_empty_index:
+            output.append(f"# {title_text}")
+            title_emitted = True
+            continue
+        if shift_following_headings:
+            heading = HEADING_RE.match(stripped)
+            if heading:
+                level = min(len(heading.group(1)) + 1, 6)
+                indent = line[: len(line) - len(line.lstrip())]
+                output.append(f"{indent}{'#' * level} {heading.group(2).strip()}")
+                continue
+        output.append(line)
+
+    return "\n".join(output)
+
+
 def normalize_markdown_layout(md_text: str) -> str:
     text = md_text.replace("\r\n", "\n").replace("\r", "\n")
     text = INLINE_HEADING_SPLIT_RE.sub(r"\1\n\n\2", text)
@@ -861,7 +950,9 @@ def normalize_markdown_layout(md_text: str) -> str:
         if output and output[-1] != "":
             output.append("")
 
-    for raw in lines:
+    index = 0
+    while index < len(lines):
+        raw = lines[index]
         line = raw.rstrip()
         stripped = line.strip()
         if stripped.startswith("```"):
@@ -871,26 +962,40 @@ def normalize_markdown_layout(md_text: str) -> str:
             in_code_block = not in_code_block
             if not in_code_block:
                 append_blank_line()
+            index += 1
             continue
         if in_code_block:
             output.append(line)
+            index += 1
             continue
         if stripped == "":
             append_blank_line()
+            index += 1
             continue
         if is_markdown_thematic_break(stripped):
             append_blank_line()
+            index += 1
             continue
         if HEADING_RE.match(stripped):
             append_blank_line()
             output.append(stripped)
             append_blank_line()
+            index += 1
+            continue
+        if looks_like_table_block(lines, index):
+            table_block, next_index = collect_table_block(lines, index)
+            append_blank_line()
+            output.extend(table_block)
+            append_blank_line()
+            index = next_index
             continue
         if is_table_row(stripped):
             append_blank_line()
             output.append(stripped)
+            index += 1
             continue
         output.append(line)
+        index += 1
 
     normalized = "\n".join(output)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
@@ -904,7 +1009,7 @@ def apply_heading_numbering(md_text: str, force_heading_numbering: bool) -> str:
     counters = [0, 0, 0, 0]
     output = []
     in_code_block = False
-    heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
+    heading_re = re.compile(r"^(#{1,6})\s+(.*)$")
     title_count = 0
 
     for raw in lines:
@@ -977,7 +1082,7 @@ def apply_heading_numbering(md_text: str, force_heading_numbering: bool) -> str:
                 if has_expected
                 else f"{counters[2]}.{normalized_title}"
             )
-        else:
+        elif level == 5:
             counters[3] += 1
             normalized_title, has_expected = normalize_heading_title(
                 level,
@@ -990,6 +1095,8 @@ def apply_heading_numbering(md_text: str, force_heading_numbering: bool) -> str:
                 if has_expected
                 else f"（{counters[3]}）{normalized_title}"
             )
+        else:
+            numbered = title
 
         indent = line[: len(line) - len(stripped)]
         output.append(f"{indent}{prefix} {numbered}")
@@ -1267,6 +1374,14 @@ def is_table_row(line: str) -> bool:
     return len(cells) >= 2
 
 
+def looks_like_table_block(lines: list[str], index: int) -> bool:
+    if index + 1 >= len(lines):
+        return False
+    current = lines[index].strip()
+    next_line = lines[index + 1].strip()
+    return is_table_row(current) and is_table_separator_line(next_line)
+
+
 def is_table_separator_line(line: str) -> bool:
     if "|" not in line:
         return False
@@ -1274,6 +1389,22 @@ def is_table_separator_line(line: str) -> bool:
     if len(cells) < 2:
         return False
     return all(TABLE_SEPARATOR_CELL_RE.match(cell.strip()) for cell in cells)
+
+
+def collect_table_block(lines: list[str], index: int) -> tuple[list[str], int]:
+    block: list[str] = []
+    if not looks_like_table_block(lines, index):
+        return block, index
+    cursor = index
+    while cursor < len(lines):
+        row_line = lines[cursor].strip()
+        if not row_line or not is_table_row(row_line):
+            break
+        if cursor > index + 1 and is_table_separator_line(row_line):
+            break
+        block.append(row_line)
+        cursor += 1
+    return block, cursor
 
 
 def is_markdown_thematic_break(line: str) -> bool:
@@ -1305,6 +1436,91 @@ def parse_table_alignments(line: str) -> list[WD_ALIGN_PARAGRAPH]:
         else:
             alignments.append(WD_ALIGN_PARAGRAPH.LEFT)
     return alignments
+
+
+def is_header_line(line: str) -> bool:
+    return bool(HEADER_LINE_RE.match(line.strip()))
+
+
+def is_heading_line(line: str) -> bool:
+    return bool(HEADING_RE.match(line.strip()))
+
+
+def is_ordered_list_line(line: str) -> bool:
+    return bool(ORDERED_LIST_LINE_RE.match(line.strip()))
+
+
+def is_field_like_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if is_heading_line(stripped) or is_header_line(stripped):
+        return False
+    if stripped.startswith(("- ", "* ", "+ ", ">")) or is_ordered_list_line(stripped):
+        return False
+    if looks_like_title_candidate(stripped):
+        return False
+    match = FIELD_LINE_RE.match(stripped)
+    if not match:
+        return False
+    label = match.group("label").strip("*").strip()
+    if len(label) > 24:
+        return False
+    return True
+
+
+def strip_emphasis_markers(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 4 and text.startswith("**") and text.endswith("**"):
+        return text[2:-2].strip()
+    if len(text) >= 2 and text.startswith("*") and text.endswith("*"):
+        return text[1:-1].strip()
+    return text
+
+
+def looks_like_title_candidate(line: str) -> bool:
+    stripped = strip_emphasis_markers(line.strip())
+    if not stripped:
+        return False
+    if stripped.startswith("#"):
+        return False
+    if is_header_line(stripped) or is_field_like_line_candidate(stripped):
+        return False
+    if is_table_row(stripped) or is_markdown_thematic_break(stripped):
+        return False
+    if stripped.startswith(("```", "![", ">")):
+        return False
+    if stripped.startswith(("-", "*", "+")) or is_ordered_list_line(stripped):
+        return False
+    if len(stripped) > 60:
+        return False
+    if any(mark in stripped for mark in ("。", "；", "！", "？")):
+        return False
+    if stripped.count("：") + stripped.count(":") >= 2:
+        return False
+    return True
+
+
+def is_field_like_line_candidate(line: str) -> bool:
+    match = FIELD_LINE_RE.match(line)
+    if not match:
+        return False
+    label = match.group("label").strip("*").strip()
+    if not label or len(label) > 24:
+        return False
+    value = match.group("value").strip()
+    if value and value.startswith("|"):
+        return False
+    return True
+
+
+def normalize_field_line(line: str) -> str:
+    match = FIELD_LINE_RE.match(line.strip())
+    if not match:
+        return line.strip()
+    label = strip_emphasis_markers(match.group("label"))
+    value = match.group("value").strip()
+    return f"{label}：{value}" if value else f"{label}："
 
 
 def split_inline_breaks(raw_line: str) -> list[tuple[str, bool]]:
@@ -1623,19 +1839,53 @@ def resolve_heading_run_style(
     level: int, args: argparse.Namespace
 ) -> tuple[str, Optional[float]]:
     if level <= 1:
-        return args.title_font, args.title_size
-    if level == 2:
         return args.heading1_font, args.heading_size
-    if level == 3:
+    if level == 2:
         return args.heading2_font, args.heading_size
-    if level == 4:
+    if level == 3:
         return args.heading3_font, args.heading_size
+    if level == 4:
+        return args.heading4_font, args.heading_size
     return args.heading4_font, args.heading_size
+
+
+def add_document_title(doc: Document, title: str, args: argparse.Namespace) -> None:
+    paragraph = doc.add_paragraph(style="Heading 1")
+    add_text_with_breaks(
+        paragraph,
+        title,
+        args,
+        bold=None,
+        font_name=args.title_font,
+        font_size=args.title_size,
+    )
+
+
+def extract_document_title(lines: list[str]) -> tuple[str, int]:
+    for index, raw in enumerate(lines):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        match = HEADING_RE.match(stripped)
+        if match:
+            if len(match.group(1)) != 1:
+                raise ValueError("Document title must be the first line and use plain text or a single '#'.")
+            return match.group(2).strip(), index
+        return stripped, index
+    raise ValueError("Markdown is empty.")
+
+
+def resolve_markdown_heading_level(prefix: str) -> int:
+    return max(1, len(prefix) - 1)
 
 
 def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> None:
     lines = md_text.splitlines()
-    heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
+    document_title, title_index = extract_document_title(lines)
+    add_document_title(doc, document_title, args)
+    lines = lines[title_index + 1 :]
+
+    heading_re = re.compile(r"^(#{2,6})\s+(.*)$")
     ordered_re = re.compile(r"^\d+[.)、]\s*")
     bullet_re = re.compile(r"^[-+*]\s+")
     task_re = re.compile(r"^[-+*]\s+\[( |x|X)\]\s+")
@@ -1800,12 +2050,13 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             flush_paragraph()
             prefix = heading.group(1)
             title = heading.group(2).strip()
-            if header_seen and not separator_inserted and len(prefix) == 1:
+            if header_seen and not separator_inserted and len(prefix) == 2:
                 add_red_separator(doc)
                 separator_inserted = True
-            heading_level = min(len(prefix), 5)
-            paragraph = doc.add_paragraph(style=f"Heading {heading_level}")
-            heading_font, heading_size = resolve_heading_run_style(heading_level, args)
+            markdown_level = resolve_markdown_heading_level(prefix)
+            heading_style_level = min(markdown_level + 1, 5)
+            paragraph = doc.add_paragraph(style=f"Heading {heading_style_level}")
+            heading_font, heading_size = resolve_heading_run_style(markdown_level, args)
             add_text_with_breaks(
                 paragraph,
                 title,
@@ -2248,7 +2499,9 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     raw_text = input_path.read_text(encoding="utf-8-sig")
-    normalized_layout_text = normalize_markdown_layout(raw_text)
+    normalized_title_text = promote_document_title(raw_text)
+    normalized_field_text = normalize_title_and_field_blocks(normalized_title_text)
+    normalized_layout_text = normalize_markdown_layout(normalized_field_text)
     preprocessed_text = promote_ordered_list_headings(normalized_layout_text)
     try:
         normalized_text = apply_heading_numbering(

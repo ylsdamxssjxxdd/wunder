@@ -1,83 +1,73 @@
 ---
-title: Frequently Used Pages
-summary: A curated directory of the most frequently used pages in the wunder manual.
+title: Docs Directory
+summary: Documentation index by purpose. Quickly locate the page you need.
 read_when:
-  - You do not want to browse the left navigation slowly
-  - You only want the most useful documents first
+  - You know what you want but aren't sure where it is
+  - You want an overview of all documentation
 source_docs:
   - docs/wunder补全文档落地方案.md
 ---
 
-# Frequently Used Pages
+# Docs Directory
 
-This page is built for two kinds of readers:
+Organized by purpose. Quickly find what you need.
 
-- you do not want to scroll through the full left navigation
-- you only want the most useful pages first
+## Getting Started
 
-## If you only read three pages
+| Page | Content |
+|------|---------|
+| [Quick Start](/docs/en/start/quickstart/) | Complete your first task in 10 minutes |
+| [Desktop Guide](/docs/en/start/desktop/) | Download and start using |
+| [CLI Usage](/docs/en/start/cli/) | Terminal-driven, automation |
+| [Server Deployment](/docs/en/start/server/) | Multi-user, unified management |
 
-- [Quickstart](/docs/en/start/quickstart/)
-- [Core Concepts](/docs/en/concepts/)
-- [wunder API](/docs/en/integration/wunder-api/)
+## Interface
 
-## First-time use
+| Page | Content |
+|------|---------|
+| [User Interface](/docs/en/surfaces/frontend/) | Chat, files, agents, tools |
+| [Desktop Interface](/docs/en/surfaces/desktop-ui/) | Local-first workbench |
+| [Orchestration](/docs/en/surfaces/orchestration/) | Dedicated workbench for continuous swarm tasks |
+| [Admin Interface](/docs/en/surfaces/web-admin/) | Admin backend |
 
-- [Quickstart](/docs/en/start/quickstart/)
-- [Desktop Guide](/docs/en/start/desktop/)
-- [Server Deployment](/docs/en/start/server/)
-- [CLI Usage](/docs/en/start/cli/)
+## Help
 
-## Understanding the system
+| Page | Content |
+|------|---------|
+| [Help Center](/docs/en/help/) | Problem triage entry point |
+| [Troubleshooting](/docs/en/help/troubleshooting/) | Find causes by symptom |
+| [FAQ](/docs/en/help/faq/) | Quick answers to common questions |
+| [Glossary](/docs/en/help/glossary/) | Core term explanations |
 
-- [Core Concepts](/docs/en/concepts/)
-- [Architecture](/docs/en/concepts/architecture/)
-- [Workspaces and Containers](/docs/en/concepts/workspaces/)
-- [Sessions and Rounds](/docs/en/concepts/sessions-and-rounds/)
-- [Tool System](/docs/en/concepts/tools/)
-- [Prompts and Skills](/docs/en/concepts/prompt-and-skills/)
-- [Long-term Memory](/docs/en/concepts/memory/)
-- [Swarm Collaboration](/docs/en/concepts/swarm/)
+## Core Concepts
 
-## Integration work
+| Page | Content |
+|------|---------|
+| [Core Concepts](/docs/en/concepts/) | System running model |
+| [Sessions & Turns](/docs/en/concepts/sessions-and-rounds/) | User turns and model turns |
+| [Workspaces & Containers](/docs/en/concepts/workspaces/) | File space and isolated partitions |
+| [Swarm Collaboration](/docs/en/concepts/swarm/) | Multi-agent collaboration mechanism |
 
-- [wunder API](/docs/en/integration/wunder-api/)
-- [Chat WebSocket](/docs/en/integration/chat-ws/)
-- [User World API](/docs/en/integration/user-world/)
-- [Channel Webhook](/docs/en/integration/channel-webhook/)
-- [External Login and Embedded Sign-in](/docs/en/integration/external-login/)
-- [A2A Interface](/docs/en/integration/a2a/)
-- [MCP Endpoint](/docs/en/integration/mcp-endpoint/)
+## Integration & Development
 
-## Interface surfaces
+| Page | Content |
+|------|---------|
+| [Integration Overview](/docs/en/integration/) | Find the right integration approach |
+| [Tools Overview](/docs/en/tools/) | Pick tools by task |
 
-- [Frontend Surface](/docs/en/surfaces/frontend/)
-- [Admin Surface](/docs/en/surfaces/web-admin/)
-- [Desktop UI](/docs/en/surfaces/desktop-ui/)
+## Operations
 
-## Deployment, governance, and troubleshooting
+| Page | Content |
+|------|---------|
+| [Deployment & Operations](/docs/en/ops/deployment/) | Key checks before and after going live |
+| [Authentication & Security](/docs/en/ops/auth-and-security/) | Tokens, auth, sandbox |
+| [Desktop Local Mode](/docs/en/ops/desktop-local-mode/) | Local mode boundaries and capabilities |
 
-- [Deployment and Operations](/docs/en/ops/deployment/)
-- [Data and Storage](/docs/en/ops/data-and-storage/)
-- [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)
-- [Authentication and Security](/docs/en/ops/auth-and-security/)
-- [Configuration Reference](/docs/en/reference/config/)
-- [Streaming Events Reference](/docs/en/reference/stream-events/)
-- [Admin Panel Index](/docs/en/reference/admin-panels/)
-- [API Index](/docs/en/reference/api-index/)
-- [FAQ](/docs/en/help/faq/)
-- [Troubleshooting](/docs/en/help/troubleshooting/)
-- [Glossary](/docs/en/help/glossary/)
+## Reference
 
-## One practical rule
-
-If you do not know which layer to inspect first, use this order:
-
-1. Start with a start page or a concepts page and decide which layer the problem belongs to.
-2. Then read the integration, tool, or interface page that owns the entry point.
-3. Only after that move to the reference or troubleshooting pages for exact fields, events, and failure paths.
-
-## Further reading
-
-- [Manual Hubs](/docs/en/start/hubs/)
-- [Configuration Reference](/docs/en/reference/config/)
+| Page | Content |
+|------|---------|
+| [Configuration Reference](/docs/en/reference/config/) | Configuration file details |
+| [API Index](/docs/en/reference/api-index/) | Interface index |
+| [Stream Events Reference](/docs/en/reference/stream-events/) | WebSocket event types |
+| [Admin Panels Index](/docs/en/reference/admin-panels/) | Admin panel overview |

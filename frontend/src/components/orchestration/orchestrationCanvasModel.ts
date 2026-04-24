@@ -36,7 +36,15 @@ const ARTIFACT_NODE_HEIGHT = 186;
 const MOTHER_X = -420;
 const WORKER_X = 0;
 const ARTIFACT_X = 420;
+const VERTICAL_CENTER_X = 0;
+const VERTICAL_WORKER_ROW_Y = 0;
 const ROW_GAP = 228;
+const VERTICAL_NODE_COLUMN_PADDING = 76;
+const VERTICAL_NODE_ROW_PADDING = 150;
+const VERTICAL_COLUMN_GAP = Math.max(NODE_WIDTH, ARTIFACT_NODE_WIDTH) + VERTICAL_NODE_COLUMN_PADDING;
+const VERTICAL_ROW_GAP = Math.max(NODE_HEIGHT, ARTIFACT_NODE_HEIGHT) + VERTICAL_NODE_ROW_PADDING;
+const VERTICAL_MOTHER_Y_OFFSET = -VERTICAL_ROW_GAP;
+const VERTICAL_ARTIFACT_Y_OFFSET = VERTICAL_ROW_GAP;
 const ACTIVE_SUBAGENT_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
 const ACTIVE_MISSION_STATUSES = new Set(['queued', 'pending', 'running', 'awaiting_idle', 'resuming', 'merging']);
 const ACTIVE_TASK_STATUSES = new Set([
@@ -399,8 +407,11 @@ const computeBounds = (nodes: SwarmProjectionNode[]): SwarmProjectionBounds => {
   };
 };
 
+const ORCHESTRATION_CANVAS_CACHE_REVISION = 2;
+
 export const buildOrchestrationCanvasScopeKey = (runId: string, roundId: string) =>
-  `orchestration:${normalizeText(runId) || 'standby'}:${normalizeText(roundId) || 'active'}`;
+  // Default node geometry changed; isolate orchestration canvas cache so stale overrides do not reintroduce overlap.
+  `orchestration:v${ORCHESTRATION_CANVAS_CACHE_REVISION}:${normalizeText(runId) || 'standby'}:${normalizeText(roundId) || 'active'}`;
 
 export const buildOrchestrationCanvasProjection = (options: {
   group: BeeroomGroup | null;
@@ -416,6 +427,7 @@ export const buildOrchestrationCanvasProjection = (options: {
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   dispatchPreview?: BeeroomSwarmDispatchPreview | null;
+  layoutMode?: 'horizontal' | 'vertical';
   resolveWorkerOutputs: (agentId: string) => MissionChatMessage[];
   resolveWorkerThreadSessionId: (agentId: string) => string;
   selectedNodeId: string;
@@ -436,11 +448,27 @@ export const buildOrchestrationCanvasProjection = (options: {
   const nodes: SwarmProjectionNode[] = [];
   const edges: SwarmProjectionEdge[] = [];
   const runtimeDispatch = options.dispatchPreview || null;
+  const layoutMode = options.layoutMode === 'vertical' ? 'vertical' : 'horizontal';
   const motherId = normalizeText(options.motherAgentId);
   const motherNodeId = motherId ? `agent:${motherId}` : 'mother:standby';
   const motherMember = motherId ? memberMap.get(motherId) || null : null;
   const motherOverride = options.nodePositionOverrides[motherNodeId];
   const workerCenterY = options.visibleWorkers.length > 1 ? ((options.visibleWorkers.length - 1) * ROW_GAP) / 2 : 0;
+  const workerCenterX =
+    options.visibleWorkers.length > 1
+      ? ((options.visibleWorkers.length - 1) * VERTICAL_COLUMN_GAP) / 2
+      : 0;
+  const defaultMotherX = layoutMode === 'vertical' ? VERTICAL_CENTER_X : MOTHER_X;
+  const defaultMotherY =
+    layoutMode === 'vertical' ? VERTICAL_MOTHER_Y_OFFSET : workerCenterY;
+  const defaultWorkerX = (index: number) =>
+    layoutMode === 'vertical' ? index * VERTICAL_COLUMN_GAP - workerCenterX : WORKER_X;
+  const defaultWorkerY = (index: number) =>
+    layoutMode === 'vertical' ? VERTICAL_WORKER_ROW_Y : index * ROW_GAP;
+  const defaultArtifactX = (index: number) =>
+    layoutMode === 'vertical' ? index * VERTICAL_COLUMN_GAP - workerCenterX : ARTIFACT_X;
+  const defaultArtifactY = (index: number) =>
+    layoutMode === 'vertical' ? VERTICAL_ARTIFACT_Y_OFFSET : index * ROW_GAP;
   const runtimeWorkers = resolveRuntimeWorkers(runtimeDispatch, motherId);
   const runtimeDispatchSubagents = Array.isArray(runtimeDispatch?.subagents) ? runtimeDispatch.subagents : [];
   options.activeRoundMissions.forEach((mission) => {
@@ -484,13 +512,13 @@ export const buildOrchestrationCanvasProjection = (options: {
       resolveAvatarImage(motherMember?.icon) ||
       normalizeText(options.resolveAgentAvatarImageByAgentId?.(motherId)) ||
       DEFAULT_AGENT_AVATAR_IMAGE,
-    x: Number(motherOverride?.x ?? MOTHER_X),
-      y: Number(motherOverride?.y ?? workerCenterY),
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
-      workflowTaskId: '',
-      workflowTone: isActiveStatus(runtimeDispatch?.status) || hasRunningMission ? 'loading' : 'pending',
-      workflowLines: motherWorkflowLines,
+    x: Number(motherOverride?.x ?? defaultMotherX),
+    y: Number(motherOverride?.y ?? defaultMotherY),
+    width: NODE_WIDTH,
+    height: NODE_HEIGHT,
+    workflowTaskId: '',
+    workflowTone: isActiveStatus(runtimeDispatch?.status) || hasRunningMission ? 'loading' : 'pending',
+    workflowLines: motherWorkflowLines,
     parentId: '',
     emphasis: 'default',
     introFromId: '',
@@ -549,7 +577,8 @@ export const buildOrchestrationCanvasProjection = (options: {
     const workerStatusLabel = resolveNodeStatusLabel(workerStatus, options.t);
     const workerName = normalizeText(member?.name) || agentId;
     const workerOverride = options.nodePositionOverrides[workerNodeId];
-    const workerY = index * ROW_GAP;
+    const workerX = defaultWorkerX(index);
+    const workerY = defaultWorkerY(index);
     const threadShort = normalizeText(options.resolveWorkerThreadSessionId(agentId)).slice(0, 8) || '-';
     const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
       includeEventFallback: true
@@ -579,7 +608,7 @@ export const buildOrchestrationCanvasProjection = (options: {
       avatarImageUrl:
         resolveAvatarImage(member?.icon) ||
         normalizeText(options.resolveAgentAvatarImageByAgentId?.(agentId)),
-      x: Number(workerOverride?.x ?? WORKER_X),
+      x: Number(workerOverride?.x ?? workerX),
       y: Number(workerOverride?.y ?? workerY),
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
@@ -690,8 +719,8 @@ export const buildOrchestrationCanvasProjection = (options: {
       avatarColor: '#10b981',
       avatarInitial: resolveAgentAvatarInitial(artifactCard?.agentName || workerName),
       avatarImageUrl: '',
-      x: Number(artifactOverride?.x ?? ARTIFACT_X),
-      y: Number(artifactOverride?.y ?? workerY),
+      x: Number(artifactOverride?.x ?? defaultArtifactX(index)),
+      y: Number(artifactOverride?.y ?? defaultArtifactY(index)),
       width: ARTIFACT_NODE_WIDTH,
       height: ARTIFACT_NODE_HEIGHT,
       workflowTaskId: '',

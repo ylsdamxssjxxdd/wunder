@@ -1,184 +1,131 @@
 ---
 title: Troubleshooting
-summary: Follow the "entry -> auth -> config -> dependencies -> realtime channel" sequence to quickly locate most Wunder issues.
+summary: Find the cause by symptom. Quick diagnosis for most issues.
 read_when:
-  - Wunder won't start or behaves abnormally
-  - You've confirmed it's not a simple usage issue
+  - wunder won't start or behaves abnormally
+  - You've confirmed it's not a simple usage question
 source_docs:
   - docs/API文档.md
-  - frontend/src/views/LoginView.vue
-  - frontend/src/views/MessengerView.vue
-  - frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue
 updated_at: 2026-04-10
 ---
 
 # Troubleshooting
 
-It's recommended to troubleshoot by link order, not by exhaustively scanning logs first.
+Find the cause by symptom. Don't jump straight to logs.
 
 ## 60-Second Health Check
 
-1. Are core endpoints reachable: `/wunder`, `/wunder/chat/ws`
-2. Is auth matching: API Key / User Token / External Auth
-3. Are dependencies ready: database, sandbox, MCP
+1. Is the service running? Can you open the page?
+2. Is login working? Are your credentials correct?
+3. Is the model configured correctly? Does the API Key work?
 
-## Symptom -> Check Path
+## Find by Symptom
 
-### 1. API Returns 401 / 403 Directly
+### Login Fails or Access Denied
 
-Check first:
+Check:
+- Are your username and password correct?
+- Are you using the right entry point (admin vs. user)?
+- Is your account disabled?
 
-- Is a user token mistakenly used for admin endpoints
-- Is an API Key mistakenly used for user endpoints
-- Are `/a2a`, `/wunder/mcp` carrying an API Key
-- Is `external_auth_key` configured for external link scenarios
+### Configuration Changes Not Taking Effect
 
-### 2. Configuration Changed but Not Taking Effect
+Check:
+- Did you edit the correct config file?
+- Does the change require a service restart?
+- Is the current instance actually loading your config?
 
-Check first:
+### Service Starts But Features Don't Work
 
-- Is the actual loaded file `config/wunder.yaml` or a sample file
-- Is the current instance actually reading `config/wunder.yaml` or local runtime `WUNDER_TEMP/config/wunder.yaml`
-- Are you modifying server config, extra_mcp config, or frontend config
+Check:
+- Is the database connected properly?
+- Are external tool services (MCP, A2A) online?
+- Is the sandbox service reachable?
 
-### 3. Service Starts Successfully but Capabilities Unavailable
+### Real-time Updates Not Working, Can't See Intermediate Steps
 
-Check dependencies first:
+Check:
+- Is your network connection stable?
+- Is WebSocket being blocked by a firewall or proxy?
+- Does it recover after refreshing the page?
 
-- Is PostgreSQL / SQLite connectable
-- Is sandbox reachable
-- Is extra_mcp started
-- Are external MCP/A2A targets online
+### Tools Not Appearing or Can't Be Called
 
-### 4. Real-time State Not Updating, Can't See Intermediate Process
+Check:
+- Is the tool enabled?
+- Are MCP / A2A services running?
+- Does the current agent have that tool mounted?
+- Is it waiting for approval but you didn't see the prompt?
 
-Check first:
+### Attachment Uploaded But Can't Send
 
-1. Did `/wunder/chat/ws` connection succeed
-2. Has it fallen back to SSE
-3. Are `session_id`, `after_event_id` correct
+Check:
+- Is the file type supported (images, audio, video, common documents)?
+- Is the file still being processed (send button is disabled until processing completes)?
+- Does the workspace have write permission?
 
-### 5. Tools Not Appearing or Can't Be Invoked
+### Forgot Password
 
-Check first:
+Click "Reset Password" on the login page. You only need:
+- Username
+- Email
+- New password
 
-- Is the tool enabled
-- Is MCP / A2A service `enabled`
-- Is the target tool mounted to current session or agent
-- Is it stuck in approval state but frontend didn't send back `approval`
+No old password required, and no need to be logged in first.
 
-### 6. Attachment Stuck Processing, or Can't Send After Upload
+### Password Change Fails
 
-Check first:
+Check:
+- Did you enter your current password (required when changing password while logged in)?
+- Do the new password and confirmation match?
+- Is the new password the same as the current one?
 
-- Is the uploaded type currently supported: images, audio, video, common text or Office documents
-- Is document conversion pipeline working: `POST /wunder/chat/attachments/convert`
-- Is media processing pipeline working: `POST /wunder/chat/attachments/media/process`
-- Are `temp_dir` and user private workspace writable
-- If video re-frame extraction failed, check if source file still exists, if `source_public_path` is still valid
+### New Thread Button Is Grayed Out
 
-Additional notes:
+This is not a bug. The system disables new thread creation while the current agent is running. Wait for it to finish or stop the current session.
 
-- Chat input area blocks sending before attachment processing completes; this is normal protection
-- Long videos are automatically limited in total frames, so "requested FPS" and "actual FPS" may differ
+### Swarm Page State Looks Wrong
 
-### 7. Login Page Password Reset Failed
+Check:
+- Does it recover after refreshing?
+- Has the swarm task already finished but the page hasn't updated?
+- Is the real-time channel disconnected?
 
-Check first:
+### Session or Swarm State Completely Messed Up
 
-- Is the username correct
-- Does the email match this account
-- Are the two new password entries consistent
-
-Additional notes:
-
-- Login page password reset only recognizes "username + email + new password"
-- It doesn't require prior login or old password
-
-### 8. Edit Profile or Change Password Save Failed
-
-Check first:
-
-- Is username empty
-- If changing password, did you enter current password
-- Are new password and confirm new password consistent
-- Is new password the same as current password
-
-Additional notes:
-
-- When only changing username or email, password fields can be left empty
-- Password change after login always validates current password
-
-### 9. New Thread Button Is Grayed Out
-
-First determine if the current session is still running.
-
-This is frontend protection, not a bug. When the current agent is executing, the chat page disables `New Thread` to prevent main thread state confusion.
-
-Resolution:
-
-- Wait for current execution to complete
-- Or stop current session first, then create new thread
-
-### 10. Swarm Page State Looks Incorrect
-
-Check first:
-
-- Is the swarm realtime channel still online
-- Is the current mission actually in terminal state, but frontend hasn't received latest event
-- Does the page return to normal after refresh
-
-Additional notes:
-
-- Middle column swarm entries will pulse-highlight as long as there are running missions
-- Canvas workflow area currently prioritizes showing tool trajectories; it shouldn't long-term show only status/summary
-
-### 11. Session or Swarm State Completely Messed Up
-
-Try "System Settings -> Reset Work State" first.
+Use "System Settings → Reset Workspace State".
 
 It will:
+- Stop running sessions and tasks
+- Terminate swarm operations
+- Rebuild clean threads
 
-- Abort running sessions
-- Clear queued tasks
-- Terminate swarm execution
-- Rebuild default agent and each user agent's main thread
-- Clean up working state directories
+It will NOT delete your skills, knowledge bases, or other long-term assets.
 
-Additional notes:
+### Microphone or Screenshot Button Not Working
 
-- It clears working state, not long-term assets
-- Long-term content like `skills`, `knowledge`, `global` is preserved
+Check:
+- Are you in an environment that supports these features?
+- Has the browser granted microphone/screen permissions?
+- Is the desktop bridge working properly?
 
-### 12. Microphone or Screenshot Button Unavailable
+### Help Manual Blank or Won't Open
 
-Check first:
+Check:
+- Has the docs site been built?
+- Is the reverse proxy correctly configured for the `/docs/` path?
 
-- Is current runtime environment supporting the corresponding capability
-- Is microphone permission denied by system or browser
-- Does browser support `getUserMedia` / `MediaRecorder` / `AudioContext`
-- Does desktop bridge expose recording or screenshot capabilities
+## Still Not Resolved?
 
-### 13. Help Manual Blank or Won't Open
-
-Check first:
-
-- Is `/docs/` static site built and accessible
-- Does reverse proxy correctly expose `/docs/` to the frontend domain
-- If using remote API mode, does the current origin actually provide `/docs/`
-
-## Still Can't Locate
-
-Return to these pages to narrow down:
+Continue with:
 
 - [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)
 - [Authentication & Security](/docs/en/ops/auth-and-security/)
 - [Configuration Reference](/docs/en/reference/config/)
-- [Stream Events Reference](/docs/en/reference/stream-events/)
 
-## Suggested Information When Submitting Issues
+## When Reporting an Issue, Include
 
-- Runtime mode: `desktop / server / cli`
-- Failed endpoint and timestamp
-- Key log snippets
-- Whether WS, SSE, Swarm, Sub-Agent, MCP, A2A are involved
+- Runtime mode: desktop / server / cli
+- Steps to reproduce the problem
+- Key error messages
+- Whether it involves swarms, MCP, A2A, etc.

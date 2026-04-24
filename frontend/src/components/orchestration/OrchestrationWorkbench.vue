@@ -444,6 +444,11 @@ const hasActiveDispatchPreview = computed(() =>
     activeDispatchPreviewStatus.value
   )
 );
+const activeRoundHasMotherReply = computed(() =>
+  activeRoundVisibleChatMessages.value.some(
+    (message) => message.tone === 'mother' && Boolean(String(message?.body || '').trim())
+  )
+);
 const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
   Boolean(String(round?.userMessage || '').trim());
 const roundIsCompleted = (round: { finalizedAt?: unknown } | null | undefined) =>
@@ -804,12 +809,44 @@ const orchestrationDispatchRuntimeBusy = computed(() =>
     String(dispatchRuntimeStatus.value || '').trim().toLowerCase()
   )
 );
+const motherRoundTerminalReady = computed(() => {
+  const pending = pendingRound.value;
+  if (!pending?.id || roundIsCompleted(pending) || !roundHasUserMessage(pending)) {
+    return false;
+  }
+  if (orchestrationDispatchPreparing.value || composerSending.value || motherSessionBusy.value) {
+    return false;
+  }
+  if (orchestrationDispatchRuntimeBusy.value) {
+    return false;
+  }
+  return activeRoundHasMotherReply.value;
+});
+const orchestrationResidualWorkerActivity = computed(() => {
+  const activeRoundValue = activeRound.value;
+  if (roundIsCompleted(activeRoundValue)) {
+    return false;
+  }
+  if (latestRoundRunningMissions.value.length > 0 || activeRoundRunningMissions.value.length > 0) {
+    return true;
+  }
+  return hasActiveDispatchPreview.value;
+});
+const orchestrationWorkerRuntimeBlocking = computed(() => {
+  if (motherRoundTerminalReady.value) {
+    return false;
+  }
+  return latestRoundRunningMissions.value.length > 0 || activeRoundRunningMissions.value.length > 0;
+});
 
 const liveDispatchPreviewIsBlocking = computed(() => {
   const preview = dispatchPreview.value;
   if (!preview) return false;
   const previewStatus = activeDispatchPreviewStatus.value;
   if (!previewStatus || !hasActiveDispatchPreview.value) return false;
+  if (motherRoundTerminalReady.value) {
+    return false;
+  }
   if (orchestrationPendingRoundActive.value || composerSending.value || orchestrationDispatchPreparing.value) {
     return true;
   }
@@ -829,7 +866,7 @@ const liveDispatchPreviewIsBlocking = computed(() => {
       return true;
     }
   }
-  return latestRoundRunningMissions.value.length > 0 || activeRoundRunningMissions.value.length > 0;
+  return orchestrationWorkerRuntimeBlocking.value;
 });
 
 const orchestrationRunning = computed(
@@ -839,8 +876,7 @@ const orchestrationRunning = computed(
     motherSessionBusy.value ||
     orchestrationDispatchRuntimeBusy.value ||
     liveDispatchPreviewIsBlocking.value ||
-    latestRoundRunningMissions.value.length > 0 ||
-    activeRoundRunningMissions.value.length > 0 ||
+    orchestrationWorkerRuntimeBlocking.value ||
     orchestrationPendingRoundActive.value
 );
 const orchestrationStopBusy = computed(() => orchestrationRunning.value);
@@ -1455,7 +1491,7 @@ const stopActiveRoundMissions = async () => {
   const sessionId = String(motherSessionId.value || '').trim();
   if (!sessionId) return;
   const missionIds = new Set(
-    latestRoundRunningMissions.value
+    [...latestRoundRunningMissions.value, ...activeRoundRunningMissions.value]
       .map((item) => String(item?.mission_id || item?.team_run_id || '').trim())
       .filter(Boolean)
   );
@@ -1658,18 +1694,25 @@ const maybeFinalizeRecoveredPendingRound = async () => {
   if (!roundHasUserMessage(pending)) return;
   if (orchestrationExplicitStopRequested.value) return;
   if (
+    !motherRoundTerminalReady.value &&
     String(dispatchRuntimeStatus.value || '').trim().toLowerCase() === 'idle' &&
     !composerSending.value &&
     !motherSessionBusy.value
   ) {
     return;
   }
-  const hasVisibleSessionMessage = activeRoundVisibleChatMessages.value.length > 0;
-  if (!hasVisibleSessionMessage) return;
+  if (!activeRoundHasMotherReply.value) return;
   if (orchestrationDispatchPreparing.value || composerSending.value) return;
   if (motherSessionBusy.value) return;
-  if (activeRoundRunningMissions.value.length > 0 || latestRoundRunningMissions.value.length > 0) return;
-  if (liveDispatchPreviewIsBlocking.value) return;
+  if (motherRoundTerminalReady.value) {
+    if (orchestrationResidualWorkerActivity.value) {
+      await stopActiveRoundMissions().catch(() => null);
+      scheduleRuntimeRefreshPulse();
+    }
+  } else {
+    if (activeRoundRunningMissions.value.length > 0 || latestRoundRunningMissions.value.length > 0) return;
+    if (liveDispatchPreviewIsBlocking.value) return;
+  }
   try {
     const finalizedRound = await finalizePendingRound(pending.id, {
       situation: String(pending.situation || '').trim(),
@@ -1759,10 +1802,13 @@ watch(
     pendingRound.value?.userMessage || '',
     composerSending.value,
     motherSessionBusy.value,
+    String(dispatchRuntimeStatus.value || '').trim().toLowerCase(),
     activeDispatchPreviewStatus.value,
     activeRoundRunningMissions.value.length,
     latestRoundRunningMissions.value.length,
-    orchestrationDispatchPreparing.value
+    orchestrationDispatchPreparing.value,
+    activeRoundHasMotherReply.value ? 1 : 0,
+    motherRoundTerminalReady.value ? 1 : 0
   ].join('|'),
   () => {
     void maybeFinalizeRecoveredPendingRound();

@@ -1,82 +1,66 @@
 ---
 title: FAQ
-summary: Quick answers to high-frequency questions about Wunder, suitable for initial assessment before diving into detailed troubleshooting.
+summary: Common questions about using wunder. Check here first before detailed troubleshooting.
 read_when:
-  - You have common usage questions
-  - You want to quickly determine if it's a failure
+  - You have a usage question
+  - You want to quickly determine if something is a bug
 source_docs:
   - docs/API文档.md
-  - frontend/src/views/LoginView.vue
-  - frontend/src/views/MessengerView.vue
 updated_at: 2026-04-10
 ---
 
 # FAQ
 
-## Does the `user_id` in `/wunder` have to be a registered user?
+## Do I need to register an account first?
 
-No. `user_id` is an isolation and attribution identifier; it can be a virtual user identifier passed from the business side.
+No. You can start a conversation with any name, and the system will create an identity for you automatically.
 
-## When building a chat product, should I prioritize `/wunder` or `/wunder/chat/*`?
+## Does the Token count shown equal my cost?
 
-Prioritize `/wunder/chat/*` combined with `/wunder/chat/ws`. `/wunder` is better suited for capability-call-style integration.
+No. The Token count is just a reference for the current conversation's context length. Actual cost depends on your model provider's pricing.
 
-## How do I choose between SSE and WebSocket?
+## Does the agent re-learn my requirements every time I send a message?
 
-For real-time chat, prioritize WebSocket; use SSE as a fallback.
+No. Requirements you set at the beginning of a conversation are remembered and locked in. Subsequent messages will follow them without you needing to repeat.
 
-## Why doesn't the token count match the bill?
+## Does the agent re-read my long-term memory every conversation turn?
 
-Look at it in two layers:
-
-- `round_usage.total_tokens` is the actual context usage after a single request completes
-- Actual total consumption is the cumulative sum of each request's `round_usage.total_tokens`
-
-## What's needed to reset password on the login page?
-
-Only:
-
-- Username
-- Email
-- New password
-
-## Where to change username or password after logging in?
-
-Go to "My Profile -> Edit Profile".
-
-Here you can:
-
-- Change username
-- Change email
-- Change login password
+No. Your long-term memory is loaded once at the start of the conversation, not repeatedly in every turn.
 
 ## Why is the "New Thread" button sometimes grayed out?
 
-Because the current agent is still running.
+Because the current agent is still running. Wait for it to finish, or stop the current session first.
 
-The frontend disables `New Thread` during execution to prevent main thread state confusion. Wait for it to complete, or stop the current session first before creating a new one.
+## Swarm vs. Sub-agent — which should I use?
 
-## How do I choose between Swarm and Sub-Agent?
+- **Swarm**: Have existing agents collaborate on a task
+- **Sub-agent**: Temporarily spawn an independent agent from the current session
 
-- To call existing agents for collaboration: use Swarm
-- To temporarily spawn a child execution from the current session: use Sub-Agent control
+## Does Desktop require deploying Server first?
 
-## Can `temp_dir` be used as a long-term storage directory?
+No. Desktop can run independently locally. Deploy Server when you need multi-user collaboration and unified management.
 
-Not recommended. `temp_dir` is a temporary directory; long-term business data should go in the database or workspace persistent directory.
+## How do I change my username or password?
 
-## Why can't I see a tool in a particular session?
+Go to "My Profile → Edit". Changing your password requires entering your current password.
 
-Usually related to tool mounting policy, runtime capabilities, session-level parameters, or MCP/A2A enablement status.
+## What if I forgot my password?
 
-## Does Desktop mode require Server deployment first?
+Click "Reset Password" on the login page. You only need your username, email, and a new password — no old password required.
 
-No. Desktop can run locally and independently; deploy Server when you need multi-tenant governance and unified access.
+## Will uploaded files be automatically deleted?
 
-## What's the difference between `web_fetch` and browser tools?
+Files in the temporary directory may be cleaned up. Put important files in the workspace's persistent directory.
 
-`web_fetch` is for content extraction; browser tools are for real page interaction.
+## Why can't I see some tools in a session?
 
-## Which page should I look at first when problems occur?
+Possible reasons: the tool is not enabled, MCP/A2A services are not running, or the current agent doesn't have that tool mounted.
+
+## What's the difference between `web_fetch` and the browser tool?
+
+- **web_fetch**: Grabs the main text content of a webpage
+- **Browser tool**: Operates a webpage like a real person (clicking, scrolling, filling forms)
+
+## Where should I look when something goes wrong?
 
 Start with [Troubleshooting](/docs/en/help/troubleshooting/).

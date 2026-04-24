@@ -587,43 +587,21 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
         return Vec::new();
     }
     let has_separator = lines.iter().any(|line| line.trim() == "***");
-    let prefixed_without_separator = lines
+    let prefixed_ignoring_separator = lines
         .iter()
         .filter(|line| line.trim() != "***")
         .all(|line| matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
-    if prefixed_without_separator {
+    if prefixed_ignoring_separator {
         return lines
             .iter()
             .filter(|line| line.trim() != "***")
             .map(|line| strip_line_number_from_prefixed_line(line))
             .collect();
     }
-    // Models may emit raw empty lines in Update hunks; treat them as context blank lines.
-    let has_raw_empty_line = lines.iter().any(|line| line.is_empty());
-    let has_prefixed_non_empty_line = lines.iter().any(|line| {
-        !line.is_empty() && matches!(line.chars().next(), Some(' ') | Some('+') | Some('-'))
-    });
-    let all_non_empty_lines_prefixed = lines
-        .iter()
-        .filter(|line| !line.is_empty())
-        .all(|line| matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
-    if !has_separator
-        && has_raw_empty_line
-        && has_prefixed_non_empty_line
-        && all_non_empty_lines_prefixed
-    {
-        return lines
-            .iter()
-            .map(|line| {
-                if line.is_empty() {
-                    " ".to_string()
-                } else {
-                    strip_line_number_from_prefixed_line(line)
-                }
-            })
-            .collect();
-    }
     if !has_separator {
+        if let Some(repaired) = repair_non_separator_update_chunk_lines(lines) {
+            return repaired;
+        }
         return lines.to_vec();
     }
 
@@ -652,6 +630,71 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
     repaired.extend(before.into_iter().map(|line| format!("-{line}")));
     repaired.extend(after.into_iter().map(|line| format!("+{line}")));
     repaired
+}
+
+fn repair_non_separator_update_chunk_lines(lines: &[String]) -> Option<Vec<String>> {
+    if !lines.iter().any(|line| !line.is_empty()) {
+        return None;
+    }
+    let mut repaired = Vec::with_capacity(lines.len());
+    let mut repaired_numbered_context = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.is_empty() {
+            repaired.push(" ".to_string());
+            repaired_numbered_context.push(false);
+            continue;
+        }
+        let Some(prefix) = line.chars().next() else {
+            return None;
+        };
+        match prefix {
+            ' ' | '+' | '-' => {
+                let body = &line[1..];
+                let numbered_context = prefix == ' ' && strip_display_line_number(body).is_some();
+                repaired.push(strip_line_number_from_prefixed_line(line));
+                repaired_numbered_context.push(numbered_context);
+            }
+            _ => {
+                let content = strip_display_line_number(line)?;
+                repaired.push(format!(" {content}"));
+                repaired_numbered_context.push(true);
+            }
+        }
+    }
+    Some(dedup_repaired_numbered_context_before_delete(
+        &repaired,
+        &repaired_numbered_context,
+    ))
+}
+
+// Removing this pattern is only safe when the context line was synthesized from a numbered
+// display excerpt. User-authored " context" + "-delete" pairs can be legitimate when the
+// source contains repeated adjacent lines.
+fn dedup_repaired_numbered_context_before_delete(
+    lines: &[String],
+    repaired_numbered_context: &[bool],
+) -> Vec<String> {
+    debug_assert_eq!(lines.len(), repaired_numbered_context.len());
+    let mut result = Vec::with_capacity(lines.len());
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = &lines[i];
+        let prefix = line.chars().next();
+        let text: String = line.chars().skip(1).collect();
+        if prefix == Some(' ') && repaired_numbered_context[i] && i + 1 < lines.len() {
+            let next = &lines[i + 1];
+            let next_prefix = next.chars().next();
+            let next_text: String = next.chars().skip(1).collect();
+            if next_prefix == Some('-') && text == next_text {
+                // Skip the context line; keep only the delete line.
+                i += 1;
+                continue;
+            }
+        }
+        result.push(line.clone());
+        i += 1;
+    }
+    result
 }
 
 fn strip_line_number_from_prefixed_line(line: &str) -> String {
@@ -1451,7 +1494,7 @@ fn find_chunk_range(
     // Fallback: fuzzy match by normalizing whitespace (trim leading/trailing).
     let fuzzy_old: Vec<String> = old_lines.iter().map(|line| line.trim().to_string()).collect();
     let fuzzy_source: Vec<String> = source_lines.iter().map(|line| line.trim().to_string()).collect();
-    if fuzzy_old != old_lines.iter().map(|l| l.trim().to_string()).collect::<Vec<_>>() {
+    if fuzzy_old != old_lines {
         let fuzzy_max_start = len.saturating_sub(old_lines.len());
         let fuzzy_matches = collect_fuzzy_match_starts(
             &fuzzy_source,
@@ -1551,6 +1594,12 @@ fn build_context_not_found_hint(
     let best_partial =
         find_best_partial_match_window(source_lines, old_lines, search_plan.search_start);
 
+    let has_context_delete_dup = chunk.lines.windows(2).any(|pair| {
+        matches!(pair[0].kind, ChunkLineKind::Context)
+            && matches!(pair[1].kind, ChunkLineKind::Delete)
+            && pair[0].text == pair[1].text
+    });
+
     let zh_anchor = match search_plan.anchor.as_deref() {
         Some(anchor) if search_plan.anchor_found => {
             format!(
@@ -1607,12 +1656,23 @@ fn build_context_not_found_hint(
         "No partially matching window was found in the file.".to_string()
     };
 
+    let zh_dup_warn = if has_context_delete_dup {
+        "检测到上下文行与紧随的删除行内容重复：要删除/替换的行不应同时作为上下文行出现，请去掉重复的上下文行。\n"
+    } else {
+        ""
+    };
+    let en_dup_warn = if has_context_delete_dup {
+        "Detected context line duplicated with the following delete line: a line to be deleted/replaced should not also appear as context. Remove the redundant context line.\n"
+    } else {
+        ""
+    };
+
     let zh_hint = format!(
-        "请先读取最新文件并重试，或补充更稳定的 @@ 上下文。\n{zh_anchor}\n期望旧片段（前 4 行）：\n{expected_preview}\n邻近源码（从第 {} 行起）：\n{nearby_preview}\n{zh_partial}",
+        "{zh_dup_warn}请先读取最新文件并重试，或补充更稳定的 @@ 上下文。\n{zh_anchor}\n期望旧片段（前 4 行）：\n{expected_preview}\n邻近源码（从第 {} 行起）：\n{nearby_preview}\n{zh_partial}",
         nearby_start + 1
     );
     let en_hint = format!(
-        "Read the latest file and retry, or add more stable @@ context.\n{en_anchor}\nExpected old snippet (first 4 lines):\n{expected_preview}\nNearby source (starting at line {}):\n{nearby_preview}\n{en_partial}",
+        "{en_dup_warn}Read the latest file and retry, or add more stable @@ context.\n{en_anchor}\nExpected old snippet (first 4 lines):\n{expected_preview}\nNearby source (starting at line {}):\n{nearby_preview}\n{en_partial}",
         nearby_start + 1
     );
     (zh_hint, en_hint)
@@ -1726,6 +1786,29 @@ fn collect_chunk_match_starts(
             continue;
         }
         if source_lines[line_start..line_end] == *old_lines {
+            matches.push(line_start);
+        }
+    }
+    matches
+}
+
+fn collect_fuzzy_match_starts(
+    fuzzy_source: &[String],
+    fuzzy_old: &[String],
+    start: usize,
+    end: usize,
+    end_of_file: bool,
+) -> Vec<usize> {
+    if fuzzy_old.is_empty() || start > end {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    for line_start in start..=end {
+        let line_end = line_start + fuzzy_old.len();
+        if end_of_file && line_end != fuzzy_source.len() {
+            continue;
+        }
+        if fuzzy_source[line_start..line_end] == *fuzzy_old {
             matches.push(line_start);
         }
     }
@@ -2209,5 +2292,176 @@ mod tests {
             hint.contains("line-4") || hint.contains("line-x") || hint.contains("Mismatch samples"),
             "hint should include concrete line diff context: {hint}"
         );
+    }
+
+    #[test]
+    fn repair_strips_line_numbers_from_prefixed_context_lines() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+ 1: hello
+ 2: world
+-world
++WORLD
+ 4: end
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("line numbers in context lines should be stripped");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].lines[0].text, "hello");
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Context));
+        // " 2: world" strips to " world" (context), "-world" is delete with same text;
+        // dedup removes the redundant context line, keeping only the delete.
+        assert!(matches!(chunks[0].lines[1].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[1].text, "world");
+        assert!(matches!(chunks[0].lines[2].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[2].text, "WORLD");
+        assert_eq!(chunks[0].lines[3].text, "end");
+        assert!(matches!(chunks[0].lines[3].kind, ChunkLineKind::Context));
+    }
+
+    #[test]
+    fn find_chunk_range_falls_back_to_stripped_line_numbers() {
+        let source = "hello\nworld\nfoo\n";
+        let chunk = UpdateChunk {
+            change_context: None,
+            lines: vec![
+                ChunkLine {
+                    kind: ChunkLineKind::Context,
+                    text: "2: world".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Delete,
+                    text: "3: foo".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Add,
+                    text: "3: bar".to_string(),
+                },
+            ],
+            end_of_file: false,
+        };
+        let old_lines: Vec<String> = chunk
+            .lines
+            .iter()
+            .filter(|l| l.kind != ChunkLineKind::Add)
+            .map(|l| l.text.clone())
+            .collect();
+        let source_lines: Vec<String> = split_lines(source);
+        let result = find_chunk_range(&source_lines, 0, &chunk, &old_lines);
+        assert!(
+            matches!(result, ChunkRangeSearchResult::Found(_)),
+            "should find match after stripping line numbers"
+        );
+    }
+
+    #[test]
+    fn find_chunk_range_fuzzy_matches_with_whitespace_tolerance() {
+        let source = "def hello():\n    print('hi')\n    return\n";
+        let chunk = UpdateChunk {
+            change_context: None,
+            lines: vec![
+                ChunkLine {
+                    kind: ChunkLineKind::Context,
+                    text: "def hello():".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Delete,
+                    text: "  print('hi')".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Add,
+                    text: "  print('hello')".to_string(),
+                },
+            ],
+            end_of_file: false,
+        };
+        let old_lines: Vec<String> = chunk
+            .lines
+            .iter()
+            .filter(|l| l.kind != ChunkLineKind::Add)
+            .map(|l| l.text.clone())
+            .collect();
+        let source_lines: Vec<String> = split_lines(source);
+        let result = find_chunk_range(&source_lines, 0, &chunk, &old_lines);
+        assert!(
+            matches!(result, ChunkRangeSearchResult::Found(_)),
+            "should find match with fuzzy whitespace tolerance"
+        );
+    }
+
+    #[test]
+    fn dedup_repaired_numbered_context_before_delete_removes_redundant_context() {
+        let lines = vec![
+            " hello".to_string(),
+            "-hello".to_string(),
+            "+HELLO".to_string(),
+            " world".to_string(),
+        ];
+        let repaired_numbered_context = vec![true, false, false, false];
+        let result =
+            dedup_repaired_numbered_context_before_delete(&lines, &repaired_numbered_context);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "-hello");
+        assert_eq!(result[1], "+HELLO");
+        assert_eq!(result[2], " world");
+    }
+
+    #[test]
+    fn dedup_repaired_numbered_context_before_delete_keeps_non_duplicate_context() {
+        let lines = vec![
+            " above".to_string(),
+            "-old_line".to_string(),
+            "+new_line".to_string(),
+            " below".to_string(),
+        ];
+        let repaired_numbered_context = vec![true, false, false, false];
+        let result =
+            dedup_repaired_numbered_context_before_delete(&lines, &repaired_numbered_context);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], " above");
+        assert_eq!(result[1], "-old_line");
+    }
+
+    #[test]
+    fn dedup_repaired_numbered_context_before_delete_keeps_user_authored_duplicate_context() {
+        let lines = vec![
+            " same".to_string(),
+            "-same".to_string(),
+            "+SAME".to_string(),
+            " tail".to_string(),
+        ];
+        let repaired_numbered_context = vec![false, false, false, false];
+        let result =
+            dedup_repaired_numbered_context_before_delete(&lines, &repaired_numbered_context);
+        assert_eq!(result, lines);
+    }
+
+    #[test]
+    fn repair_handles_unprefixed_numbered_lines() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+1: hello
+2: world
+-world
++WORLD
+4: end
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("unprefixed numbered lines should be repaired");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[0].lines[0].text, "hello");
+        assert!(matches!(chunks[0].lines[1].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[1].text, "world");
+        assert!(matches!(chunks[0].lines[2].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[2].text, "WORLD");
+        assert!(matches!(chunks[0].lines[3].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[0].lines[3].text, "end");
     }
 }

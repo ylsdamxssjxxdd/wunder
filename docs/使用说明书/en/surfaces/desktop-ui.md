@@ -1,77 +1,108 @@
 ---
 title: Desktop Interface
-summary: `wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.
-read_when:
-  - You want to use Wunder directly
-  - You want to understand why desktop is the current product focus
-source_docs:
-  - README.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+summary: The main entry for individual users. Local-first workbench with direct file access and one-click reset.
 ---
 
 # Desktop Interface
 
-If you think of Wunder as a product rather than a backend project, the most important interface right now is the desktop client.
+Desktop is the main entry for individual users. It's not just a "shell" for the web — it's a local-first complete workbench.
 
-## What It Is
+## Desktop Features
 
-`wunder-desktop` is not simply a web page wrapped in a native shell.
+### Local-First
 
-Its goal is to combine these elements into a "local-first agent workbench":
+- Data stored locally, strong privacy
+- No server dependency, works out of the box
 
-- User-side messaging workbench
-- Local bridge service
-- Local working directory
-- Local run mode
-- Desktop capability access
+### Local File Access
 
-## Why Desktop Is the Current Focus
+Can directly access the local file system (within security boundaries), more flexible than the web-only version.
 
-Because it validates Wunder's core value chain in a single package:
+### Built-in Runtime
 
-- Conversation entry point
-- Tool execution
-- Workspace artifacts
-- Local file capabilities
-- Visualized agent loop
+The installer includes a Python runtime, reducing first-time setup cost.
 
-## Current Characteristics
+### One-Click Reset
 
-- Local mode is the default
-- Uses the bundled Python runtime by default
-- Supports a persistent local working directory
-- Reuses the unified `/wunder` orchestration kernel
-- No longer provides a server connection switch within the desktop client
+Reset workspace state with one click when things go wrong.
 
-## Relationship with the User Frontend
+## Interface Structure
 
-Desktop reuses the same page structure as the user-side frontend wherever possible.
+Desktop reuses the user interface's three-column layout, with additional desktop-specific features:
 
-This means:
+- **Left column**: Navigation (Chat, Files, Agents, Tools, Settings, Desktop Settings, Reset)
+- **Middle column**: Lists
+- **Right column**: Workspace
 
-- Most page interaction logic comes from `frontend/`
-- What the desktop client adds are local bridging, system settings, directory mapping, and runtime-mode capabilities
+## Desktop-Specific Features
 
-## Who It Suits Best
+### Desktop Runtime Settings
 
-- Regular individual users
-- People who need local files and a desktop environment
-- People who want to get started without deploying a full server first
+Configure the local runtime environment: Python path, local working directory, local tool configuration.
 
-## What If You Need Server Capabilities
+### One-Click Reset Workspace State
 
-The desktop client now only maintains local mode.
+**When to use**:
+- Session stuck in running state
+- Swarm task state inconsistent
+- Interface state doesn't match reality
 
-If you need the following capabilities, use a browser to access the server directly instead of switching connection modes inside the desktop client:
+**After reset**:
+- Stops all running sessions
+- Clears queued tasks
+- Terminates swarm tasks
+- Rebuilds clean threads
 
-- Multi-user and multi-tenant
-- Unified admin governance
+**What's preserved**:
+- Skills, knowledge bases, and other long-term assets
+- User configuration
+- Workspace files
+- Session history
+
+So reset is "cleaning workspace state", not "factory reset".
+
+### Local File Capabilities
+
+Desktop allows agents to:
+- Read local files
+- Write local files
+- Execute local commands
+
+This is more powerful than the web version, but subject to security boundaries.
+
+## When to Use Desktop
+
+**Good for**:
+- Personal daily use
+- Need to work with local files
+- Don't want to depend on a server
+- Care about privacy and local data
+
+**If you need**:
+- Multi-user collaboration
+- Admin backend
 - Organization-level deployment
-- Unified channel and gateway access
+
+Use the browser to access Server's web interface instead.
+
+## Common Questions
+
+### Where is my data?
+
+- Workspace: Local working directory
+- Session history: Local SQLite database
+- Configuration: Local config files
+
+### Can local mode access the internet?
+
+Yes. Local mode only means data is stored locally. It doesn't affect internet access for AI models or web pages.
+
+### Can I migrate to another computer?
+
+Yes. Copy the working directory and database files, then configure the paths on the new computer.
 
 ## Further Reading
 
-- [Getting Started with Desktop](/docs/en/start/desktop/)
-- [User Frontend](/docs/en/surfaces/frontend/)
-- [Deployment and Operations](/docs/en/ops/deployment/)
+- [Desktop Guide](/docs/en/start/desktop/)
+- [User Interface](/docs/en/surfaces/frontend/)
+- [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)

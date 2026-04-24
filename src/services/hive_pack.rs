@@ -2805,24 +2805,24 @@ mod tests {
 
     #[test]
     fn unique_slug_with_reserved_appends_numeric_suffix() {
-        let reserved = ["hr-hive".to_string(), "hr-hive-2".to_string()]
+        let reserved = ["hive-alpha".to_string(), "hive-alpha-2".to_string()]
             .into_iter()
             .collect::<HashSet<_>>();
         assert_eq!(
-            unique_slug_with_reserved("hr hive", &reserved, "hive"),
-            "hr-hive-3"
+            unique_slug_with_reserved("hive alpha", &reserved, "hive"),
+            "hive-alpha-3"
         );
     }
 
     #[test]
     fn unique_label_with_reserved_appends_numeric_suffix() {
-        let reserved = ["鎷涜仒涓撳憳".to_string(), "鎷涜仒涓撳憳-2".to_string()]
+        let reserved = ["Worker Alpha".to_string(), "Worker Alpha-2".to_string()]
             .into_iter()
             .map(|item| normalize_conflict_key(&item))
             .collect::<HashSet<_>>();
         assert_eq!(
-            unique_label_with_reserved("鎷涜仒涓撳憳", &reserved, "Imported Worker"),
-            "鎷涜仒涓撳憳-3"
+            unique_label_with_reserved("Worker Alpha", &reserved, "Imported Worker"),
+            "Worker Alpha-3"
         );
     }
 
@@ -2846,16 +2846,16 @@ mod tests {
     fn resolve_import_skill_name_update_replace_prefers_base_name() {
         let root = tempdir().expect("tempdir");
         let skill_root = root.path();
-        std::fs::create_dir_all(skill_root.join("planner-skill")).expect("seed base skill");
+        std::fs::create_dir_all(skill_root.join("skill-alpha")).expect("seed base skill");
         let reserved = HashSet::new();
         assert_eq!(
             resolve_import_skill_name(
                 skill_root,
-                "planner skill",
+                "skill alpha",
                 ImportConflictMode::UpdateReplace,
                 &reserved
             ),
-            "planner-skill"
+            "skill-alpha"
         );
     }
 
@@ -2863,18 +2863,18 @@ mod tests {
     fn resolve_import_skill_name_update_replace_avoids_reserved_and_existing_suffix() {
         let root = tempdir().expect("tempdir");
         let skill_root = root.path();
-        std::fs::create_dir_all(skill_root.join("planner-skill-2")).expect("seed suffix skill");
-        let reserved = ["planner-skill".to_string()]
+        std::fs::create_dir_all(skill_root.join("skill-alpha-2")).expect("seed suffix skill");
+        let reserved = ["skill-alpha".to_string()]
             .into_iter()
             .collect::<HashSet<_>>();
         assert_eq!(
             resolve_import_skill_name(
                 skill_root,
-                "planner skill",
+                "skill alpha",
                 ImportConflictMode::UpdateReplace,
                 &reserved
             ),
-            "planner-skill-3"
+            "skill-alpha-3"
         );
     }
 
@@ -2885,11 +2885,11 @@ mod tests {
         assert_eq!(
             resolve_import_skill_name(
                 skill_root,
-                "传播链路评估",
+                "技能甲",
                 ImportConflictMode::AutoRenameOnly,
                 &HashSet::new()
             ),
-            "传播链路评估"
+            "技能甲"
         );
     }
 
@@ -2897,60 +2897,60 @@ mod tests {
     fn resolve_import_skill_name_suffixes_non_ascii_conflicts() {
         let root = tempdir().expect("tempdir");
         let skill_root = root.path();
-        std::fs::create_dir_all(skill_root.join("传播链路评估")).expect("seed unicode skill");
+        std::fs::create_dir_all(skill_root.join("技能甲")).expect("seed unicode skill");
         assert_eq!(
             resolve_import_skill_name(
                 skill_root,
-                "传播链路评估",
+                "技能甲",
                 ImportConflictMode::AutoRenameOnly,
                 &HashSet::new()
             ),
-            "传播链路评估-2"
+            "技能甲-2"
         );
     }
 
     #[test]
     fn remap_import_declared_skill_names_uses_runtime_names() {
         let mut renamed = HashMap::new();
-        renamed.insert("蓝军通识技能".to_string(), "蓝军通识技能-2".to_string());
-        renamed.insert("政工主官技能".to_string(), "政工主官技能".to_string());
+        renamed.insert("技能甲".to_string(), "技能甲-2".to_string());
+        renamed.insert("技能乙".to_string(), "技能乙".to_string());
         assert_eq!(
             remap_import_declared_skill_names(
                 &[
-                    "政工主官技能".to_string(),
-                    "蓝军通识技能".to_string(),
-                    "蓝军通识技能".to_string()
+                    "技能乙".to_string(),
+                    "技能甲".to_string(),
+                    "技能甲".to_string()
                 ],
                 &renamed
             ),
-            vec!["政工主官技能".to_string(), "蓝军通识技能-2".to_string()]
+            vec!["技能乙".to_string(), "技能甲-2".to_string()]
         );
     }
 
     #[test]
     fn hash_import_skill_source_dir_matches_identical_copies() {
         let root = tempdir().expect("tempdir");
-        let skill_a = root.path().join("skills").join("planner");
+        let skill_a = root.path().join("skills").join("skill-alpha");
         let skill_b = root
             .path()
             .join("workers")
-            .join("planner")
+            .join("worker-alpha")
             .join("skills")
-            .join("planner");
+            .join("skill-alpha");
         std::fs::create_dir_all(&skill_a).expect("skill a dir");
         std::fs::create_dir_all(&skill_b).expect("skill b dir");
         std::fs::write(
             skill_a.join("SKILL.md"),
-            "---\nname: planner\n---\n# demo\n",
+            "---\nname: skill-alpha\n---\n# demo\n",
         )
         .expect("skill a file");
         std::fs::write(
             skill_b.join("SKILL.md"),
-            "---\nname: planner\n---\n# demo\n",
+            "---\nname: skill-alpha\n---\n# demo\n",
         )
         .expect("skill b file");
-        std::fs::write(skill_a.join("skill.yaml"), "name: planner\n").expect("skill a meta");
-        std::fs::write(skill_b.join("skill.yaml"), "name: planner\n").expect("skill b meta");
+        std::fs::write(skill_a.join("skill.yaml"), "name: skill-alpha\n").expect("skill a meta");
+        std::fs::write(skill_b.join("skill.yaml"), "name: skill-alpha\n").expect("skill b meta");
 
         let mut cache = HashMap::new();
         let hash_a = hash_import_skill_source_dir(skill_a.as_path(), &mut cache).expect("hash a");
@@ -2961,8 +2961,8 @@ mod tests {
     #[test]
     fn hash_import_skill_source_dir_distinguishes_different_contents() {
         let root = tempdir().expect("tempdir");
-        let skill_a = root.path().join("skills").join("planner-a");
-        let skill_b = root.path().join("skills").join("planner-b");
+        let skill_a = root.path().join("skills").join("skill-alpha");
+        let skill_b = root.path().join("skills").join("skill-beta");
         std::fs::create_dir_all(&skill_a).expect("skill a dir");
         std::fs::create_dir_all(&skill_b).expect("skill b dir");
         std::fs::write(skill_a.join("SKILL.md"), "# demo a\n").expect("skill a file");
@@ -2980,8 +2980,8 @@ mod tests {
             protocol: Some("hpp/1.0".to_string()),
             kind: Some("hive_pack".to_string()),
             pack: HivePackMeta {
-                id: Some("demo_hive".to_string()),
-                name: Some("Demo".to_string()),
+                id: Some("hive_alpha".to_string()),
+                name: Some("Hive Alpha".to_string()),
                 version: Some("1.0.0".to_string()),
                 description: None,
             },
@@ -2994,14 +2994,14 @@ mod tests {
     fn resolve_import_workers_discovers_workers_when_manifest_empty() {
         let root = tempdir().expect("tempdir");
         let workers_root = root.path().join("workers");
-        std::fs::create_dir_all(workers_root.join("planner")).expect("planner dir");
-        std::fs::create_dir_all(workers_root.join("executor")).expect("executor dir");
+        std::fs::create_dir_all(workers_root.join("worker-alpha")).expect("worker alpha dir");
+        std::fs::create_dir_all(workers_root.join("worker-beta")).expect("worker beta dir");
         let manifest = HiveManifest {
             protocol: Some("hpp/1.0".to_string()),
             kind: Some("hive_pack".to_string()),
             pack: HivePackMeta {
-                id: Some("demo_hive".to_string()),
-                name: Some("Demo".to_string()),
+                id: Some("hive_alpha".to_string()),
+                name: Some("Hive Alpha".to_string()),
                 version: Some("1.0.0".to_string()),
                 description: None,
             },
@@ -3016,29 +3016,29 @@ mod tests {
             .iter()
             .map(|item| item.path.to_string_lossy().to_string())
             .collect::<HashSet<_>>();
-        assert!(ids.contains("planner"));
-        assert!(ids.contains("executor"));
-        assert!(paths.contains("workers/planner"));
-        assert!(paths.contains("workers/executor"));
+        assert!(ids.contains("worker-alpha"));
+        assert!(ids.contains("worker-beta"));
+        assert!(paths.contains("workers/worker-alpha"));
+        assert!(paths.contains("workers/worker-beta"));
     }
 
     #[test]
     fn resolve_worker_skill_sources_supports_worker_card_declared_skills() {
         let root = tempdir().expect("tempdir");
-        let worker_root = root.path().join("workers").join("planner");
+        let worker_root = root.path().join("workers").join("worker-alpha");
         std::fs::create_dir_all(&worker_root).expect("worker dir");
         std::fs::write(
             worker_root.join("worker-card.json"),
             r#"{
   "schema_version": "wunder/worker-card@1",
   "kind": "WorkerCard",
-  "metadata": { "name": "Planner" },
-  "prompt": { "system_prompt": "plan first" },
-  "abilities": { "skills": ["requirement_analyzer"] }
+  "metadata": { "name": "Worker Alpha" },
+  "prompt": { "system_prompt": "follow instructions" },
+  "abilities": { "skills": ["skill_alpha"] }
 }"#,
         )
         .expect("worker card");
-        let skill_root = root.path().join("skills").join("requirement_analyzer");
+        let skill_root = root.path().join("skills").join("skill_alpha");
         std::fs::create_dir_all(&skill_root).expect("skill dir");
         std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
         let worker_card = load_worker_card_manifest(worker_root.as_path())
@@ -3048,31 +3048,31 @@ mod tests {
             resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_card)
                 .expect("resolve worker skills");
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+        assert_eq!(skill_refs[0].preferred_name, "skill_alpha");
         assert_eq!(skill_refs[0].source_dir, skill_root);
     }
 
     #[test]
     fn resolve_worker_skill_sources_supports_worker_card_ability_items() {
         let root = tempdir().expect("tempdir");
-        let worker_root = root.path().join("workers").join("planner");
+        let worker_root = root.path().join("workers").join("worker-alpha");
         std::fs::create_dir_all(&worker_root).expect("worker dir");
         std::fs::write(
             worker_root.join("worker-card.json"),
             r#"{
   "schema_version": "wunder/worker-card@2",
   "kind": "WorkerCard",
-  "metadata": { "name": "Planner" },
-  "prompt": { "system_prompt": "plan first" },
+  "metadata": { "name": "Worker Alpha" },
+  "prompt": { "system_prompt": "follow instructions" },
   "abilities": {
     "items": [
-      { "runtime_name": "requirement_analyzer", "kind": "skill" }
+      { "runtime_name": "skill_alpha", "kind": "skill" }
     ]
   }
 }"#,
         )
         .expect("worker card");
-        let skill_root = root.path().join("skills").join("requirement_analyzer");
+        let skill_root = root.path().join("skills").join("skill_alpha");
         std::fs::create_dir_all(&skill_root).expect("skill dir");
         std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
 
@@ -3083,27 +3083,27 @@ mod tests {
             resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_card)
                 .expect("resolve worker skills");
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+        assert_eq!(skill_refs[0].preferred_name, "skill_alpha");
         assert_eq!(skill_refs[0].source_dir, skill_root);
     }
 
     #[test]
     fn resolve_worker_skill_sources_skips_missing_worker_card_skills() {
         let root = tempdir().expect("tempdir");
-        let worker_root = root.path().join("workers").join("planner");
+        let worker_root = root.path().join("workers").join("worker-alpha");
         std::fs::create_dir_all(&worker_root).expect("worker dir");
         std::fs::write(
             worker_root.join("worker-card.json"),
             r#"{
   "schema_version": "wunder/worker-card@1",
   "kind": "WorkerCard",
-  "metadata": { "name": "Planner" },
-  "prompt": { "system_prompt": "plan first" },
-  "abilities": { "skills": ["requirement_analyzer", "missing_skill"] }
+  "metadata": { "name": "Worker Alpha" },
+  "prompt": { "system_prompt": "follow instructions" },
+  "abilities": { "skills": ["skill_alpha", "skill_missing"] }
 }"#,
         )
         .expect("worker card");
-        let skill_root = root.path().join("skills").join("requirement_analyzer");
+        let skill_root = root.path().join("skills").join("skill_alpha");
         std::fs::create_dir_all(&skill_root).expect("skill dir");
         std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
 
@@ -3114,14 +3114,14 @@ mod tests {
             resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_card)
                 .expect("resolve worker skills");
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+        assert_eq!(skill_refs[0].preferred_name, "skill_alpha");
     }
 
     #[test]
     fn normalize_export_filename_stem_keeps_chinese_hive_name() {
         assert_eq!(
-            normalize_export_filename_stem("人力资源蜂群", "hive_123"),
-            "人力资源蜂群"
+            normalize_export_filename_stem("蜂群甲", "hive_123"),
+            "蜂群甲"
         );
         assert_eq!(normalize_export_filename_stem("  ", "hive_123"), "hive_123");
     }
@@ -3130,19 +3130,19 @@ mod tests {
     fn collect_agent_skills_for_export_supports_plain_skill_name_entries() {
         let root = tempdir().expect("tempdir");
         let skill_root = root.path().join("skills");
-        let skill_dir = skill_root.join("recruit-specialist");
+        let skill_dir = skill_root.join("skill_alpha");
         std::fs::create_dir_all(&skill_dir).expect("skill dir");
         std::fs::write(skill_dir.join("SKILL.md"), "# demo").expect("skill file");
 
         let owner_id = "u_1".to_string();
-        let alias_name = format!("{}@{}", owner_id, "鎷涜仒鍔╂墜");
+        let alias_name = format!("{owner_id}@skill_alpha");
         let mut alias_map = HashMap::new();
         alias_map.insert(
             alias_name.clone(),
             UserToolAlias {
                 kind: UserToolKind::Skill,
                 owner_id: owner_id.clone(),
-                target: "鎷涜仒鍔╂墜".to_string(),
+                target: "skill_alpha".to_string(),
             },
         );
 
@@ -3169,11 +3169,11 @@ mod tests {
             agent_id: "worker_100".to_string(),
             user_id: owner_id.clone(),
             hive_id: "hive_1".to_string(),
-            name: "Recruit Specialist".to_string(),
+            name: "Worker Alpha".to_string(),
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
-            tool_names: vec!["鎷涜仒鍔╂墜".to_string()],
+            tool_names: vec!["skill_alpha".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
             ability_items: Vec::new(),
@@ -3193,7 +3193,7 @@ mod tests {
 
         let skill_refs = collect_agent_skills_for_export(&agent, &bindings, &skill_root, &[]);
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].name, "鎷涜仒鍔╂墜");
+        assert_eq!(skill_refs[0].name, "skill_alpha");
         assert_eq!(skill_refs[0].source_dir, skill_dir);
         assert!(skill_refs[0].include_in_package);
     }
@@ -3202,7 +3202,7 @@ mod tests {
     fn collect_agent_skills_for_export_supports_global_skill_specs() {
         let root = tempdir().expect("tempdir");
         let user_skill_root = root.path().join("user_skills");
-        let global_skill_dir = root.path().join("global_skills").join("report_writer");
+        let global_skill_dir = root.path().join("global_skills").join("skill_beta");
         std::fs::create_dir_all(&global_skill_dir).expect("global skill dir");
         std::fs::write(global_skill_dir.join("SKILL.md"), "# demo").expect("global skill file");
 
@@ -3210,12 +3210,12 @@ mod tests {
             agent_id: "worker_200".to_string(),
             user_id: "u_2".to_string(),
             hive_id: "hive_1".to_string(),
-            name: "Report Worker".to_string(),
+            name: "Worker Beta".to_string(),
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
             ability_items: Vec::new(),
-            tool_names: vec!["report_writer".to_string()],
+            tool_names: vec!["skill_beta".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
             preset_questions: Vec::new(),
@@ -3232,7 +3232,7 @@ mod tests {
             prefer_mother: false,
         };
         let global_specs = vec![SkillSpec {
-            name: "report_writer".to_string(),
+            name: "skill_beta".to_string(),
             description: String::new(),
             path: global_skill_dir
                 .join("SKILL.md")
@@ -3251,7 +3251,7 @@ mod tests {
             &global_specs,
         );
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].name, "report_writer");
+        assert_eq!(skill_refs[0].name, "skill_beta");
         assert_eq!(skill_refs[0].source_dir, global_skill_dir);
         assert!(!skill_refs[0].include_in_package);
     }
@@ -3259,31 +3259,31 @@ mod tests {
     #[test]
     fn resolve_declared_skill_runtime_name_prefers_exact_match() {
         let allowed = HashSet::from([
-            "report_writer".to_string(),
-            "alice@report_writer".to_string(),
+            "skill_beta".to_string(),
+            "owner_a@skill_beta".to_string(),
         ]);
         assert_eq!(
-            resolve_declared_skill_runtime_name("report_writer", &allowed).as_deref(),
-            Some("report_writer")
+            resolve_declared_skill_runtime_name("skill_beta", &allowed).as_deref(),
+            Some("skill_beta")
         );
     }
 
     #[test]
     fn resolve_declared_skill_runtime_name_accepts_single_suffix_match() {
-        let allowed = HashSet::from(["alice@report_writer".to_string()]);
+        let allowed = HashSet::from(["owner_a@skill_beta".to_string()]);
         assert_eq!(
-            resolve_declared_skill_runtime_name("report_writer", &allowed).as_deref(),
-            Some("alice@report_writer")
+            resolve_declared_skill_runtime_name("skill_beta", &allowed).as_deref(),
+            Some("owner_a@skill_beta")
         );
     }
 
     #[test]
     fn resolve_declared_skill_runtime_name_rejects_ambiguous_suffix_match() {
         let allowed = HashSet::from([
-            "alice@report_writer".to_string(),
-            "bob@report_writer".to_string(),
+            "owner_a@skill_beta".to_string(),
+            "owner_b@skill_beta".to_string(),
         ]);
-        assert!(resolve_declared_skill_runtime_name("report_writer", &allowed).is_none());
+        assert!(resolve_declared_skill_runtime_name("skill_beta", &allowed).is_none());
     }
 
     #[test]
@@ -3292,7 +3292,7 @@ mod tests {
             agent_id: "worker_1234567890".to_string(),
             user_id: "u_1".to_string(),
             hive_id: "hive_1".to_string(),
-            name: "Recruit Specialist".to_string(),
+            name: "Worker Alpha".to_string(),
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
@@ -3313,6 +3313,6 @@ mod tests {
             silent: false,
             prefer_mother: false,
         };
-        assert_eq!(export_worker_id(&agent, 0), "Recruit-Specialist");
+        assert_eq!(export_worker_id(&agent, 0), "Worker-Alpha");
     }
 }

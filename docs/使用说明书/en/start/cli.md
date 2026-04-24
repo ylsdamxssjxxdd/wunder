@@ -1,217 +1,88 @@
 ---
 title: CLI Usage
-summary: Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.
+summary: The entry point for developers and automation. Terminal-driven, scriptable, JSONL output.
 read_when:
-  - You want to use wunder directly from a terminal
-  - You care more about debugging, scripting tasks, and workspace-driven execution
+  - You want to use wunder in the terminal
+  - You want to integrate wunder into scripts or automation
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - wunder-cli/src/main.rs
+updated_at: 2026-04-10
 ---
 
 # CLI Usage
 
-If you mainly work in a terminal, start here.
+CLI is the entry point for developers and automation. Use it directly in the terminal — no GUI needed.
 
-`wunder-cli` is wunder's command-line runtime form. It is designed for developers, local tasks, scriptable workflows, and workspace-driven execution.
-
----
-
-## When to choose CLI
+## When to Choose CLI
 
 | Scenario | Choose CLI |
-|------|--------|
-| Programming work or file-processing tasks | ✅ |
-| Watching events, tool calls, and artifacts in the terminal | ✅ |
-| Scripts, CI, batch jobs, or automation | ✅ |
-| JSONL event streams or TUI interaction | ✅ |
-| Daily end-user use without touching a terminal | ❌ Choose Desktop |
+|----------|-----------|
+| Prefer terminal operations | ✅ |
+| Need scripting and automation | ✅ |
+| Want to pipe output to other tools | ✅ |
+| Don't want to install Desktop | ✅ |
+| Need a graphical interface | ❌ Choose Desktop |
 
----
+## Installation
 
-## What CLI is
-
-CLI is not "Desktop with fewer features." It is a **terminal-first independent runtime form**:
-
-```text
-┌─────────────────────────────────────┐
-│     wunder-cli                      │
-│  ┌───────────────────────────────┐ │
-│  │  Optional TUI interface       │ │
-│  │  - Codex-like terminal flow   │ │
-│  │  - real-time event stream     │ │
-│  └───────────────────────────────┘ │
-│  ↓ command-line driven             │
-│  ┌───────────────────────────────┐ │
-│  │  Rust core engine             │ │
-│  │  - orchestrator               │ │
-│  │  - toolchain                  │ │
-│  │  - current dir as workspace   │ │
-│  └───────────────────────────────┘ │
-└─────────────────────────────────────┘
-```
-
-### Core CLI capabilities
-
-- complete agent orchestration and toolchain
-- TUI interaction with a Codex-like flow
-- JSONL output for pipes and automation
-- session management with `fork`, `compact`, and `resume`
-- channel integration such as Feishu, WeChat, QQ, and XMPP
-- debugging utilities including `debug-config` and `statusline`
-
----
-
-## Five steps to get started
-
-### 1. Install CLI
-
-**Build from source, requires Rust 1.70+**
 ```bash
-git clone <repo-url>
-cd wunder
+# Build (requires Rust toolchain)
 cargo build --release
+
+# Run
+./target/release/wunder-cli
 ```
 
-After the build, the executable is in `./target/release/wunder-cli`.
-
-### 2. Configure a model
-
-Create or edit `~/.wunder/config.yaml`:
-
-```yaml
-llm:
-  models:
-    - name: gpt-4o
-      api_key: your-api-key
-      endpoint: https://api.openai.com/v1
-      max_context: 128000
-      max_rounds: 20
-```
-
-### 3. Start interactive mode
+## First Session
 
 ```bash
-cd my-project
 wunder-cli
+> Write a Hello World Python script
 ```
 
-You will see something like:
+You'll see: model thinks → calls tools → shows results → gives reply.
 
-```text
-wunder-cli v0.1.0
-Workspace: /path/to/my-project
-Type /help for commands
->
-```
+## Common Commands
 
-### 4. Launch the first task
+| Command | Action |
+|---------|--------|
+| `/new` | Create new thread |
+| `/stop` | Stop current execution |
+| `/compact` | Compress current conversation |
+| `/fork` | Fork current thread |
+| `/resume` | Resume a previous thread |
+| `/help` | Show help |
+| `/quit` | Exit |
 
-```text
-> Help me list the files in the current directory
-```
+## TUI Interface
 
-You will see:
+CLI includes a built-in TUI (Terminal User Interface), similar to Codex:
 
-- model reasoning
-- a file-listing tool call
-- the returned file list
-- the final answer
+- Top: Conversation area
+- Bottom: Input area
+- Side: Thread list
 
-### 5. Explore built-in commands
+## JSONL Output
 
-Try these:
-
-| Command | Meaning |
-|------|------|
-| `/help` | show all available commands |
-| `/fork` | fork the current session |
-| `/compact` | compress session history |
-| `/resume <id>` | resume a previous session |
-| `/debug-config` | show the active configuration |
-| `/statusline` | show runtime status |
-
----
-
-## CLI-specific strengths
-
-### TUI mode
-
-Start with `--tui`:
+CLI supports JSONL format output for piping and automation:
 
 ```bash
-wunder-cli --tui
+wunder-cli --format jsonl
 ```
 
-This gives you a Codex-like terminal experience:
+Each line is a JSON object with event type and content.
 
-- left: session list
-- center: chat area
-- right: tool calls and status
-- bottom: input box
+## Automation Scenarios
 
-### Session management
+CLI is great for:
 
-```text
-> /fork
-> /compact
-> /resume abc123
-> /list
-```
+- Calling agents in CI/CD pipelines
+- Batch processing tasks
+- Combining with other CLI tools
+- Scheduled task triggers
 
-### Scripting and automation
+## Next Steps
 
-**Single-shot execution**
-```bash
-wunder-cli --execute "Help me write a Hello World program"
-```
-
-**JSONL output for pipes**
-```bash
-wunder-cli --jsonl --execute "List files" | jq .
-```
-
-**Read the task from a file**
-```bash
-wunder-cli --file task.txt
-```
-
-### Workspace-driven execution
-
-By default, CLI uses the **current directory** as its workspace:
-
-```bash
-cd my-project
-wunder-cli
-```
-
-You can also specify one explicitly:
-
-```bash
-wunder-cli --workspace /path/to/workspace
-```
-
----
-
-## Common questions
-
-**Q: Does CLI need network access?**  
-A: Model calls do, but many tool operations can stay local.
-
-**Q: Can it work with Desktop or Server?**  
-A: Yes. All three forms share the same core engine and use compatible workspace conventions.
-
-**Q: How should I use it in CI/CD?**  
-A: Use `--execute` together with `--jsonl` for script-friendly integration.
-
-**Q: Where is session data stored?**  
-A: By default in `~/.wunder/sessions/`, and this can be changed by configuration.
-
----
-
-## Next
-
-- Want the full tool catalog? -> [Tools Overview](/docs/en/tools/)
-- Need integration patterns? -> [Integration Overview](/docs/en/integration/)
-- Hit a problem? -> [Troubleshooting](/docs/en/help/troubleshooting/)
-- Want the core system model? -> [Core Concepts](/docs/en/concepts/)
+- [Quick Start](/docs/en/start/quickstart/)
+- [Core Concepts](/docs/en/concepts/)
+- [Tools Overview](/docs/en/tools/)
