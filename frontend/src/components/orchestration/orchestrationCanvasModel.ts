@@ -30,22 +30,16 @@ import {
 
 type TranslationFn = (key: string, params?: Record<string, unknown>) => string;
 
-const ARTIFACT_NODE_WIDTH = 276;
-const ARTIFACT_NODE_HEIGHT = 186;
 const MOTHER_X = -420;
-const MOTHER_ARTIFACT_X = -840;
 const WORKER_X = 0;
-const ARTIFACT_X = 420;
 const VERTICAL_CENTER_X = 0;
 const VERTICAL_WORKER_ROW_Y = 0;
 const ROW_GAP = 228;
 const VERTICAL_NODE_COLUMN_PADDING = 76;
 const VERTICAL_NODE_ROW_PADDING = 150;
-const VERTICAL_COLUMN_GAP = Math.max(NODE_WIDTH, ARTIFACT_NODE_WIDTH) + VERTICAL_NODE_COLUMN_PADDING;
-const VERTICAL_ROW_GAP = Math.max(NODE_HEIGHT, ARTIFACT_NODE_HEIGHT) + VERTICAL_NODE_ROW_PADDING;
+const VERTICAL_COLUMN_GAP = NODE_WIDTH + VERTICAL_NODE_COLUMN_PADDING;
+const VERTICAL_ROW_GAP = NODE_HEIGHT + VERTICAL_NODE_ROW_PADDING;
 const VERTICAL_MOTHER_Y_OFFSET = -VERTICAL_ROW_GAP;
-const VERTICAL_MOTHER_ARTIFACT_X_OFFSET = VERTICAL_COLUMN_GAP;
-const VERTICAL_ARTIFACT_Y_OFFSET = VERTICAL_ROW_GAP;
 const ACTIVE_SUBAGENT_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
 const ACTIVE_MISSION_STATUSES = new Set(['queued', 'pending', 'running', 'awaiting_idle', 'resuming', 'merging']);
 const ACTIVE_TASK_STATUSES = new Set([
@@ -409,7 +403,7 @@ const computeBounds = (nodes: SwarmProjectionNode[]): SwarmProjectionBounds => {
 };
 
 const buildArtifactWorkflowLines = (options: {
-  artifactNodeId: string;
+  nodeId: string;
   artifactCard: OrchestrationArtifactCard | null;
   artifactActive: boolean;
   t: TranslationFn;
@@ -417,7 +411,7 @@ const buildArtifactWorkflowLines = (options: {
   const entries = Array.isArray(options.artifactCard?.entries) ? options.artifactCard.entries : [];
   if (entries.length > 0) {
     return entries.slice(0, 3).map((entry, entryIndex) => ({
-      key: `${options.artifactNodeId}:entry:${entryIndex}`,
+      key: `${options.nodeId}:artifact-entry:${entryIndex}`,
       main: trimText(entry.name, 14) || '-',
       detail: trimText(entry.preview || entry.updatedTime || entry.path, 24),
       title: entry.path
@@ -425,7 +419,7 @@ const buildArtifactWorkflowLines = (options: {
   }
   return [
     {
-      key: `${options.artifactNodeId}:empty`,
+      key: `${options.nodeId}:artifact-empty`,
       main: options.artifactActive
         ? options.t('orchestration.canvas.artifactPending')
         : options.t('orchestration.canvas.noArtifacts'),
@@ -435,9 +429,9 @@ const buildArtifactWorkflowLines = (options: {
   ];
 };
 
-const buildArtifactProjectionItems = (artifactNodeId: string, artifactCard: OrchestrationArtifactCard | null) =>
+const buildArtifactProjectionItems = (nodeId: string, artifactCard: OrchestrationArtifactCard | null) =>
   (artifactCard?.entries || []).map((entry, entryIndex) => ({
-    key: `${artifactNodeId}:artifact:${entryIndex}`,
+    key: `${nodeId}:artifact:${entryIndex}`,
     label: trimText(entry.name, 12) || '-',
     title: entry.path || entry.name || '',
     meta: resolveArtifactMeta(entry),
@@ -452,11 +446,12 @@ const buildArtifactProjectionItems = (artifactNodeId: string, artifactCard: Orch
     previewable: entry.type !== 'dir'
   }));
 
-const ORCHESTRATION_CANVAS_CACHE_REVISION = 4;
+const ORCHESTRATION_CANVAS_CACHE_REVISION = 5;
 
-export const buildOrchestrationCanvasScopeKey = (runId: string, roundId: string) =>
-  // Default node geometry changed; isolate orchestration canvas cache so stale overrides do not reintroduce overlap.
-  `orchestration:v${ORCHESTRATION_CANVAS_CACHE_REVISION}:${normalizeText(runId) || 'standby'}:${normalizeText(roundId) || 'active'}`;
+export const buildOrchestrationCanvasScopeKey = (runId: string, roundId: string, orchestrationId = '') =>
+  // Scope canvas state to one orchestration run tree so layout survives round switches
+  // while still isolating different orchestrations and geometry revisions.
+  `orchestration:v${ORCHESTRATION_CANVAS_CACHE_REVISION}:${normalizeText(orchestrationId) || normalizeText(runId) || 'standby'}:${normalizeText(roundId) || 'active'}`;
 
 export const buildOrchestrationCanvasProjection = (options: {
   group: BeeroomGroup | null;
@@ -506,18 +501,10 @@ export const buildOrchestrationCanvasProjection = (options: {
   const defaultMotherX = layoutMode === 'vertical' ? VERTICAL_CENTER_X : MOTHER_X;
   const defaultMotherY =
     layoutMode === 'vertical' ? VERTICAL_MOTHER_Y_OFFSET : workerCenterY;
-  const defaultMotherArtifactX =
-    layoutMode === 'vertical' ? VERTICAL_CENTER_X + VERTICAL_MOTHER_ARTIFACT_X_OFFSET : MOTHER_ARTIFACT_X;
-  const defaultMotherArtifactY =
-    layoutMode === 'vertical' ? VERTICAL_MOTHER_Y_OFFSET : workerCenterY;
   const defaultWorkerX = (index: number) =>
     layoutMode === 'vertical' ? index * VERTICAL_COLUMN_GAP - workerCenterX : WORKER_X;
   const defaultWorkerY = (index: number) =>
     layoutMode === 'vertical' ? VERTICAL_WORKER_ROW_Y : index * ROW_GAP;
-  const defaultArtifactX = (index: number) =>
-    layoutMode === 'vertical' ? index * VERTICAL_COLUMN_GAP - workerCenterX : ARTIFACT_X;
-  const defaultArtifactY = (index: number) =>
-    layoutMode === 'vertical' ? VERTICAL_ARTIFACT_Y_OFFSET : index * ROW_GAP;
   const runtimeWorkers = resolveRuntimeWorkers(runtimeDispatch, motherId);
   const runtimeDispatchSubagents = Array.isArray(runtimeDispatch?.subagents) ? runtimeDispatch.subagents : [];
   options.activeRoundMissions.forEach((mission) => {
@@ -591,84 +578,37 @@ export const buildOrchestrationCanvasProjection = (options: {
   const motherArtifactNodeId = motherId ? `artifact:${motherId}` : 'artifact:mother:standby';
   const motherArtifactCard =
     options.artifactCards.find((item) => normalizeText(item.agentId) === motherId) || null;
-  const motherArtifactOverride = options.nodePositionOverrides[motherArtifactNodeId];
-  const motherArtifactPreview = motherArtifactCard?.entries?.[0] || null;
   const motherArtifactActive = hasRunningMission || isActiveStatus(runtimeDispatch?.status);
-  const motherArtifactStatus = motherArtifactCard?.error
-    ? 'failed'
-    : motherArtifactCard?.entries?.length
-      ? 'completed'
-      : motherArtifactActive
-        ? 'queued'
-        : 'idle';
-  nodes.push({
-    id: motherArtifactNodeId,
-    agentId: motherId,
-    name: motherArtifactCard?.agentName || options.motherName,
-    displayName: trimText(motherArtifactCard?.agentName || options.motherName, 12) || '-',
-    renderKind: 'artifact-container',
-    role: 'subagent',
-    roleLabel: options.t('orchestration.canvas.motherArtifact'),
-    status: motherArtifactStatus,
-    statusLabel: resolveNodeStatusLabel(motherArtifactStatus, options.t),
-    selected: motherArtifactNodeId === normalizeText(options.selectedNodeId),
-    accentColor: '#f59e0b',
-    avatarColor: '#f59e0b',
-    avatarInitial: resolveAgentAvatarInitial(motherArtifactCard?.agentName || options.motherName),
-    avatarImageUrl: '',
-    x: Number(motherArtifactOverride?.x ?? defaultMotherArtifactX),
-    y: Number(motherArtifactOverride?.y ?? defaultMotherArtifactY),
-    width: ARTIFACT_NODE_WIDTH,
-    height: ARTIFACT_NODE_HEIGHT,
-    workflowTaskId: '',
-    workflowTone: motherArtifactCard?.error
-      ? 'failed'
-      : motherArtifactCard?.entries?.length
-        ? 'completed'
-        : motherArtifactActive
-          ? 'loading'
-          : 'pending',
-    artifactItems: buildArtifactProjectionItems(motherArtifactNodeId, motherArtifactCard),
-    artifactPath: motherArtifactCard?.path || '',
-    artifactCount: motherArtifactCard?.entries?.length || 0,
-    artifactDisplayMode: 'showcase',
-    workflowLines: buildArtifactWorkflowLines({
-      artifactNodeId: motherArtifactNodeId,
-      artifactCard: motherArtifactCard,
-      artifactActive: motherArtifactActive,
-      t: options.t
-    }),
-    parentId: motherNodeId,
-    emphasis: motherArtifactCard?.entries?.length || motherArtifactActive ? 'active' : 'dormant',
-    introFromId: motherNodeId,
-    introOrder: 1
-  });
-  nodeMetaMap.set(motherArtifactNodeId, {
-    id: motherArtifactNodeId,
-    agent_id: motherId,
-    agent_name: motherArtifactCard?.agentName || options.motherName,
-    role: 'subagent',
-    role_label: options.t('orchestration.canvas.motherArtifact'),
-    status: motherArtifactStatus,
-    task_total: motherArtifactCard?.entries?.length || 0,
-    active_session_total: 0,
-    updated_time: Number(options.activeRound?.createdAt || 0),
-    summary: motherArtifactPreview?.preview || motherArtifactPreview?.path || motherArtifactCard?.path || '',
-    entry_agent: false,
-    parent_id: motherNodeId,
-    emphasis: motherArtifactCard?.entries?.length || motherArtifactActive ? 'active' : 'dormant'
-  });
-  edges.push({
-    id: `artifact:${motherNodeId}:${motherArtifactNodeId}`,
-    source: motherNodeId,
-    target: motherArtifactNodeId,
-    label: motherArtifactCard?.entries?.length ? trimText(motherArtifactPreview?.name || '', 18) : '',
-    active: Boolean(motherArtifactCard?.entries?.length) || motherArtifactActive,
-    selected:
-      normalizeText(options.selectedNodeId) === motherNodeId ||
-      normalizeText(options.selectedNodeId) === motherArtifactNodeId,
-    kind: 'subagent'
-  });
+  const motherArtifactItems = buildArtifactProjectionItems(motherNodeId, motherArtifactCard);
+  if (!motherArtifactActive && motherArtifactItems.length > 0) {
+    const motherNode = nodes[nodes.length - 1];
+    if (motherNode) {
+      motherNode.workflowTone = motherArtifactCard?.error
+        ? 'failed'
+        : motherArtifactItems.length > 0
+          ? 'completed'
+          : motherNode.workflowTone;
+      motherNode.workflowLines = buildArtifactWorkflowLines({
+        nodeId: motherNodeId,
+        artifactCard: motherArtifactCard,
+        artifactActive: false,
+        t: options.t
+      });
+      motherNode.artifactTitle = options.t('orchestration.canvas.motherArtifact');
+      motherNode.artifactItems = motherArtifactItems;
+      motherNode.artifactPath = motherArtifactCard?.path || '';
+      motherNode.artifactCount = motherArtifactCard?.entries?.length || 0;
+      motherNode.artifactDisplayMode = 'showcase';
+      const motherMeta = nodeMetaMap.get(motherNodeId);
+      if (motherMeta) {
+        motherMeta.summary =
+          motherArtifactCard?.entries?.[0]?.preview ||
+          motherArtifactCard?.entries?.[0]?.path ||
+          motherArtifactCard?.path ||
+          motherMeta.summary;
+      }
+    }
+  }
 
   options.visibleWorkers.forEach((member, index) => {
     const agentId = normalizeText(member?.agent_id);
@@ -709,6 +649,8 @@ export const buildOrchestrationCanvasProjection = (options: {
     const workerOverride = options.nodePositionOverrides[workerNodeId];
     const workerX = defaultWorkerX(index);
     const workerY = defaultWorkerY(index);
+    const artifactCard = options.artifactCards.find((item) => normalizeText(item.agentId) === agentId) || null;
+    const artifactItems = buildArtifactProjectionItems(workerNodeId, artifactCard);
     const threadShort = normalizeText(options.resolveWorkerThreadSessionId(agentId)).slice(0, 8) || '-';
     const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
       includeEventFallback: true
@@ -716,6 +658,19 @@ export const buildOrchestrationCanvasProjection = (options: {
     const effectiveWorkflowLines = workerShadowItem
       ? buildWorkerShadowWorkflowLines(workerNodeId, workerShadowItem, options.t)
       : workflowLines;
+    const effectiveWorkflowTone =
+      workerShadowItem
+        ? 'loading'
+        : workflowLines.length > 0
+          ? workflowSnapshot.tone
+          : workerStatus === 'completed' || workerStatus === 'success'
+            ? 'completed'
+            : workerStatus === 'failed'
+              ? 'failed'
+              : workerActive
+                ? 'loading'
+                : 'pending';
+    const displayArtifactOnNode = !workerActive && artifactItems.length > 0;
     nodes.push({
       id: workerNodeId,
       agentId,
@@ -743,39 +698,44 @@ export const buildOrchestrationCanvasProjection = (options: {
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       workflowTaskId: '',
-      workflowTone:
-        workerShadowItem
-          ? 'loading'
-          : workflowLines.length > 0
-            ? workflowSnapshot.tone
-            : workerStatus === 'completed' || workerStatus === 'success'
-              ? 'completed'
-              : workerStatus === 'failed'
-                ? 'failed'
-                : workerActive
-                  ? 'loading'
-                  : 'pending',
-      workflowLines: effectiveWorkflowLines.length
-        ? effectiveWorkflowLines
-        : [
-            ...(workerActive
-              ? [
-                  {
-                    key: `${workerNodeId}:dispatching`,
-                    main: options.t('orchestration.canvas.workerDispatchPending'),
-                    detail: options.t('orchestration.canvas.workerDispatchRunning'),
-                    title: options.t('orchestration.canvas.workerDispatchRunning')
-                  }
-                ]
-              : [
-                  {
-                    key: `${workerNodeId}:thread`,
-                    main: options.t('orchestration.canvas.session', { id: threadShort }),
-                    detail: options.t('orchestration.canvas.noWorkerOutput'),
-                    title: options.t('orchestration.canvas.noWorkerOutput')
-                  }
-                ])
-          ],
+      workflowTone: displayArtifactOnNode
+        ? artifactCard?.error
+          ? 'failed'
+          : 'completed'
+        : effectiveWorkflowTone,
+      workflowLines: displayArtifactOnNode
+        ? buildArtifactWorkflowLines({
+            nodeId: workerNodeId,
+            artifactCard,
+            artifactActive: false,
+            t: options.t
+          })
+        : effectiveWorkflowLines.length
+          ? effectiveWorkflowLines
+          : [
+              ...(workerActive
+                ? [
+                    {
+                      key: `${workerNodeId}:dispatching`,
+                      main: options.t('orchestration.canvas.workerDispatchPending'),
+                      detail: options.t('orchestration.canvas.workerDispatchRunning'),
+                      title: options.t('orchestration.canvas.workerDispatchRunning')
+                    }
+                  ]
+                : [
+                    {
+                      key: `${workerNodeId}:thread`,
+                      main: options.t('orchestration.canvas.session', { id: threadShort }),
+                      detail: options.t('orchestration.canvas.noWorkerOutput'),
+                      title: options.t('orchestration.canvas.noWorkerOutput')
+                    }
+                  ])
+            ],
+      artifactTitle: options.t('orchestration.canvas.artifact'),
+      artifactItems: displayArtifactOnNode ? artifactItems : [],
+      artifactPath: artifactCard?.path || '',
+      artifactCount: artifactCard?.entries?.length || 0,
+      artifactDisplayMode: 'showcase',
       parentId: '',
       emphasis: workerActive ? 'active' : 'default',
       introFromId: motherNodeId,
@@ -794,6 +754,8 @@ export const buildOrchestrationCanvasProjection = (options: {
       summary:
         normalizeText(workerShadowItem?.summary) ||
         workerOutputs[0]?.body ||
+        artifactCard?.entries?.[0]?.preview ||
+        artifactCard?.entries?.[0]?.path ||
         effectiveWorkflowLines[0]?.title ||
         '',
       entry_agent: false,
@@ -821,86 +783,6 @@ export const buildOrchestrationCanvasProjection = (options: {
         normalizeText(options.selectedNodeId) === motherNodeId ||
         normalizeText(options.selectedNodeId) === workerNodeId,
       kind: 'dispatch'
-    });
-
-    const artifactCard = options.artifactCards.find((item) => normalizeText(item.agentId) === agentId) || null;
-    const artifactNodeId = `artifact:${agentId}`;
-    const artifactOverride = options.nodePositionOverrides[artifactNodeId];
-    const artifactPreview = artifactCard?.entries?.[0] || null;
-    const artifactStatus = artifactCard?.error
-      ? 'failed'
-      : artifactCard?.entries?.length
-        ? 'completed'
-        : workerActive
-          ? 'queued'
-          : 'idle';
-    nodes.push({
-      id: artifactNodeId,
-      agentId,
-      name: artifactCard?.agentName || workerName,
-      displayName: trimText(artifactCard?.agentName || workerName, 12) || '-',
-      renderKind: 'artifact-container',
-      role: 'subagent',
-      roleLabel: options.t('orchestration.canvas.artifact'),
-      status: artifactStatus,
-      statusLabel: resolveNodeStatusLabel(artifactStatus, options.t),
-      selected: artifactNodeId === normalizeText(options.selectedNodeId),
-      accentColor: '#10b981',
-      avatarColor: '#10b981',
-      avatarInitial: resolveAgentAvatarInitial(artifactCard?.agentName || workerName),
-      avatarImageUrl: '',
-      x: Number(artifactOverride?.x ?? defaultArtifactX(index)),
-      y: Number(artifactOverride?.y ?? defaultArtifactY(index)),
-      width: ARTIFACT_NODE_WIDTH,
-      height: ARTIFACT_NODE_HEIGHT,
-      workflowTaskId: '',
-      workflowTone: artifactCard?.error
-        ? 'failed'
-        : artifactCard?.entries?.length
-          ? 'completed'
-          : workerActive
-            ? 'loading'
-            : 'pending',
-      artifactItems: buildArtifactProjectionItems(artifactNodeId, artifactCard),
-      artifactPath: artifactCard?.path || '',
-      artifactCount: artifactCard?.entries?.length || 0,
-      artifactDisplayMode: 'showcase',
-      workflowLines: buildArtifactWorkflowLines({
-        artifactNodeId,
-        artifactCard,
-        artifactActive: workerActive,
-        t: options.t
-      }),
-      parentId: workerNodeId,
-      emphasis: artifactCard?.entries?.length || workerActive ? 'active' : 'dormant',
-      introFromId: workerNodeId,
-      introOrder: index + 1
-    });
-    nodeMetaMap.set(artifactNodeId, {
-      id: artifactNodeId,
-      agent_id: agentId,
-      agent_name: artifactCard?.agentName || workerName,
-      role: 'subagent',
-      role_label: options.t('orchestration.canvas.artifact'),
-      status: artifactStatus,
-      task_total: artifactCard?.entries?.length || 0,
-      active_session_total: 0,
-      updated_time: Number(options.activeRound?.createdAt || 0),
-      summary: artifactPreview?.preview || artifactPreview?.path || artifactCard?.path || '',
-      entry_agent: false,
-      parent_id: workerNodeId,
-      emphasis: artifactCard?.entries?.length || workerActive ? 'active' : 'dormant'
-    });
-    edges.push({
-      id: `artifact:${workerNodeId}:${artifactNodeId}`,
-      source: workerNodeId,
-      target: artifactNodeId,
-      label: artifactCard?.entries?.length ? trimText(artifactPreview?.name || '', 18) : '',
-      active: Boolean(artifactCard?.entries?.length) || workerActive,
-      selected:
-        normalizeText(options.selectedNodeId) === workerNodeId ||
-        normalizeText(options.selectedNodeId) === artifactNodeId,
-      kind: 'subagent'
     });
   });
 

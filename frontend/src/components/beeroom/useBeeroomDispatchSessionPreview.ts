@@ -56,7 +56,7 @@ type SessionEventRecord = import('@/components/beeroom/beeroomMissionSubagentSta
 type TranslationFn = (key: string, params?: Record<string, unknown>) => string;
 
 const SUBAGENT_LIST_LIMIT = 64;
-const PREVIEW_CACHE_VERSION = 2;
+const PREVIEW_CACHE_VERSION = 3;
 const PREVIEW_CACHE_STORAGE_KEY = 'wunder:beeroom-dispatch-preview-cache';
 const MAX_PREVIEW_CACHE_ENTRIES = 48;
 const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
@@ -90,6 +90,11 @@ const clipText = (value: unknown, limit: number): string => {
   if (!text) return '';
   if (text.length <= limit) return text;
   return `${text.slice(0, Math.max(0, limit - 3))}...`;
+};
+
+const looksLikeClippedPreviewText = (value: unknown): boolean => {
+  const text = normalizeText(value);
+  return text.endsWith('...') || text.endsWith('…');
 };
 
 const summarizeDebugSubagents = (items: BeeroomMissionSubagentItem[]) =>
@@ -221,20 +226,26 @@ const hydrateDispatchPreviewCache = () => {
     const raw = storage.getItem(PREVIEW_CACHE_STORAGE_KEY);
     if (!raw) return;
     const payload = JSON.parse(raw) as {
+      version?: unknown;
       entries?: Array<[unknown, Partial<BeeroomDispatchSessionPreviewCacheRecord>]>;
     } | null;
+    if (Number(payload?.version || 0) !== PREVIEW_CACHE_VERSION) {
+      storage.removeItem(PREVIEW_CACHE_STORAGE_KEY);
+      return;
+    }
     const entries = Array.isArray(payload?.entries) ? payload.entries : [];
     entries.forEach((entry) => {
       if (!Array.isArray(entry) || entry.length < 2) return;
       const sessionId = normalizeText(entry[0]);
       if (!sessionId) return;
       const record = entry[1];
+      if (Number(record?.version || 0) !== PREVIEW_CACHE_VERSION) return;
       const preview = cloneDispatchPreview({
         sessionId,
         targetAgentId: normalizeText(record?.targetAgentId),
         targetName: normalizeText(record?.targetName),
         status: normalizeText(record?.status),
-        summary: normalizeText(record?.summary),
+        summary: looksLikeClippedPreviewText(record?.summary) ? '' : normalizeText(record?.summary),
         dispatchLabel: normalizeText(record?.dispatchLabel),
         updatedTime: Number(record?.updatedTime || 0),
         subagents: (Array.isArray(record?.subagents) ? record.subagents : [])
@@ -318,14 +329,19 @@ const resolveSummaryFromEvents = (events: SessionEventRecord[]): string => {
     const payload = resolveEventPayload(event);
     const eventName = resolveEventName(event);
     if (eventName === 'final') {
-      const answer = clipText(
-        payload.answer ?? payload.content ?? payload.reply ?? payload.message ?? event?.title,
-        140
+      const answer = normalizeText(
+        payload.answer ??
+          payload.content ??
+          payload.reply ??
+          payload.message ??
+          payload.text ??
+          payload.output ??
+          event?.title
       );
       if (answer) return answer;
     }
     if (eventName === 'error') {
-      const detail = clipText(payload.detail ?? payload.error ?? payload.message ?? event?.title, 140);
+      const detail = normalizeText(payload.detail ?? payload.error ?? payload.message ?? event?.title);
       if (detail) return detail;
     }
     if (eventName === 'progress') {

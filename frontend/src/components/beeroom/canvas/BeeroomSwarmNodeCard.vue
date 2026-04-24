@@ -90,9 +90,46 @@
       <div
         ref="workflowContainerRef"
         class="beeroom-node-workflow"
-        :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]"
+        :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length && !hasArtifactPanel }]"
       >
-        <div v-if="visibleWorkflowLines.length" ref="workflowStepsRef" class="beeroom-node-workflow-steps">
+        <div v-if="hasArtifactPanel" class="beeroom-node-artifact-container is-embedded" @wheel.stop>
+          <div class="beeroom-node-artifact-topbar">
+            <span class="beeroom-node-artifact-title">{{ resolvedArtifactTitle }}</span>
+            <span class="beeroom-node-artifact-count">{{ artifactCountLabel }}</span>
+          </div>
+          <div class="beeroom-node-artifact-scroll">
+            <div class="beeroom-node-artifact-grid" :class="`is-${artifactDisplayMode}`">
+              <button
+                v-for="slot in artifactSlots"
+                :key="slot.key"
+                class="beeroom-node-artifact-slot"
+                :class="{
+                  'is-empty': !slot.item,
+                  'is-clickable': Boolean(slot.item?.previewable)
+                }"
+                type="button"
+                :disabled="!slot.item || !slot.item.previewable"
+                :title="slot.item?.title || ''"
+                @click.stop="handleArtifactSlotClick(slot.item)"
+              >
+                <span
+                  class="beeroom-node-artifact-slot-frame"
+                  :class="[
+                    slot.item ? `is-${slot.item.kind}` : 'is-empty',
+                    slot.item?.previewable ? 'is-previewable' : ''
+                  ]"
+                >
+                  <i v-if="slot.item" class="fa-solid" :class="slot.item.iconClass" aria-hidden="true"></i>
+                  <span v-if="slot.item" class="beeroom-node-artifact-slot-copy">
+                    <span class="beeroom-node-artifact-slot-label">{{ slot.item.label }}</span>
+                    <span v-if="slot.item.meta" class="beeroom-node-artifact-slot-meta">{{ slot.item.meta }}</span>
+                  </span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="visibleWorkflowLines.length" ref="workflowStepsRef" class="beeroom-node-workflow-steps">
           <div
             v-for="line in visibleWorkflowLines"
             :key="line.key"
@@ -190,6 +227,8 @@ const cardStyle = computed(() => {
 
 const visibleWorkflowLines = computed(() => (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : []));
 const visibleArtifactItems = computed(() => (Array.isArray(props.node.artifactItems) ? props.node.artifactItems : []));
+const hasArtifactPanel = computed(() => props.node.renderKind !== 'artifact-container' && visibleArtifactItems.value.length > 0);
+const resolvedArtifactTitle = computed(() => String(props.node.artifactTitle || props.node.roleLabel || '').trim() || '产物');
 const artifactTitle = computed(() => String(props.node.roleLabel || '').trim() || '产物');
 const artifactCount = computed(() => Math.max(Number(props.node.artifactCount || 0), visibleArtifactItems.value.length));
 const artifactDisplayMode = computed(() =>
@@ -862,6 +901,15 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 4px 2px 2px;
   background: transparent;
+}
+
+.beeroom-node-artifact-container.is-embedded {
+  padding: 0;
+  gap: 8px;
+}
+
+.beeroom-node-workflow .beeroom-node-artifact-scroll {
+  padding-right: 0;
 }
 
 .beeroom-node-artifact-topbar {

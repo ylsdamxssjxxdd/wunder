@@ -89,6 +89,7 @@ export type SwarmProjectionNode = {
   workflowTaskId: string;
   workflowTone: BeeroomWorkflowTone;
   workflowLines: BeeroomNodeWorkflowLine[];
+  artifactTitle?: string;
   artifactItems?: SwarmProjectionArtifactItem[];
   artifactPath?: string;
   artifactCount?: number;

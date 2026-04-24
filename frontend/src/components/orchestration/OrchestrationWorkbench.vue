@@ -272,7 +272,10 @@
 import { computed, onBeforeUnmount, ref, toRef, watch, type Ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
+import {
+  compareMissionChatMessages,
+  type MissionChatMessage
+} from '@/components/beeroom/beeroomCanvasChatModel';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import type { BeeroomSwarmDispatchPreview } from '@/components/beeroom/canvas/swarmCanvasModel';
@@ -372,7 +375,7 @@ const {
   updateSituation,
   updatePlannedSituations,
   selectRound,
-  resolveWorkerOutputs,
+  resolveWorkerOutputs: resolveRuntimeWorkerOutputs,
   resolveWorkerThreadSessionId
 } = useOrchestrationRuntimeState({
   group: groupRef,
@@ -444,15 +447,54 @@ const rounds = computed(() => runtimeState.value?.rounds || []);
 const runId = computed(() => String(runtimeState.value?.runId || '').trim());
 const currentOrchestrationId = computed(() => String(runtimeState.value?.orchestrationId || '').trim());
 const motherSessionId = computed(() => String(runtimeState.value?.motherSessionId || '').trim());
-const activeRoundVisibleChatMessages = computed(() =>
-  activeRoundChatMessages.value.filter((message) => String(message?.key || '').startsWith('session:'))
-);
 const activeDispatchPreviewStatus = computed(() => String(dispatchPreview.value?.status || '').trim().toLowerCase());
 const hasActiveDispatchPreview = computed(() =>
   ['queued', 'running', 'resuming', 'awaiting_approval', 'waiting', 'accepted', 'pending'].includes(
     activeDispatchPreviewStatus.value
   )
 );
+const dispatchPreviewTerminal = computed(() =>
+  ['success', 'completed', 'failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(
+    activeDispatchPreviewStatus.value
+  )
+);
+const orchestrationMotherSummaryMessage = computed<MissionChatMessage | null>(() => {
+  const preview = dispatchPreview.value;
+  const summary = String(preview?.summary || '').trim();
+  if (!summary || !dispatchPreviewTerminal.value || !activeRound.value?.id) return null;
+  const updatedTime = Number(preview?.updatedTime || 0);
+  return {
+    key: `orchestration:${currentOrchestrationId.value || 'active'}:${activeRound.value.id}:mother-summary:${Math.round(updatedTime || 0)}`,
+    senderName: motherName.value,
+    senderAgentId: motherAgentId.value,
+    mention: '你',
+    body: summary,
+    meta: '',
+    time: updatedTime > 0 ? updatedTime : Date.now() / 1000,
+    timeLabel: '',
+    tone: 'mother'
+  };
+});
+const activeRoundVisibleChatMessages = computed(() => {
+  const sessionMessages = activeRoundChatMessages.value.filter((message) =>
+    String(message?.key || '').startsWith('session:')
+  );
+  const hasMotherOutput = sessionMessages.some(
+    (message) => message.tone === 'mother' && Boolean(String(message?.body || '').trim())
+  );
+  const motherSummary = orchestrationMotherSummaryMessage.value;
+  if (!motherSummary || hasMotherOutput) return sessionMessages;
+  return [...sessionMessages, motherSummary].sort(compareMissionChatMessages);
+});
+const resolveWorkerOutputs = (agentId: string) => {
+  const normalizedAgentId = String(agentId || '').trim();
+  if (normalizedAgentId && normalizedAgentId === motherAgentId.value) {
+    return activeRoundVisibleChatMessages.value
+      .filter((message) => message.tone === 'mother' && String(message.body || '').trim())
+      .slice(-3);
+  }
+  return resolveRuntimeWorkerOutputs(agentId);
+};
 const activeRoundHasMotherReply = computed(() =>
   activeRoundVisibleChatMessages.value.some(
     (message) => message.tone === 'mother' && Boolean(String(message?.body || '').trim())
@@ -467,7 +509,7 @@ const motherWorkflowTerminal = computed(() => {
   return eventType === 'final' || eventType === 'error';
 });
 const activeRoundMotherHardTerminal = computed(() =>
-  motherWorkflowTerminal.value || roundIsCompleted(activeRound.value)
+  motherWorkflowTerminal.value || dispatchPreviewTerminal.value || roundIsCompleted(activeRound.value)
 );
 const activeRoundMotherTerminal = computed(() => activeRoundMotherHardTerminal.value);
 const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
@@ -1797,6 +1839,7 @@ const maybeFinalizeRecoveredPendingRound = async () => {
   if (!roundHasUserMessage(pending)) return;
   if (orchestrationExplicitStopRequested.value) return;
   if (
+    !activeRoundMotherHardTerminal.value &&
     !motherRoundTerminalReady.value &&
     String(dispatchRuntimeStatus.value || '').trim().toLowerCase() === 'idle' &&
     !composerSending.value &&
@@ -1911,6 +1954,8 @@ watch(
     latestRoundRunningMissions.value.length,
     orchestrationDispatchPreparing.value,
     activeRoundHasMotherReply.value ? 1 : 0,
+    dispatchPreviewTerminal.value ? 1 : 0,
+    activeRoundMotherHardTerminal.value ? 1 : 0,
     motherRoundTerminalReady.value ? 1 : 0
   ].join('|'),
   () => {

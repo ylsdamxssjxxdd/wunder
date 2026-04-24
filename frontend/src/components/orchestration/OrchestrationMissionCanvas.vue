@@ -566,7 +566,15 @@ let dragStartClientY = 0;
 let dragStartTimelineHeight = DEFAULT_TIMELINE_HEIGHT;
 
 const canvasScopeKey = computed(() =>
-  buildOrchestrationCanvasScopeKey(props.runId, props.activeRound?.id || '')
+  buildOrchestrationCanvasScopeKey(
+    props.runId,
+    props.activeRound?.id || '',
+    String(props.currentOrchestrationId || '').trim()
+  )
+);
+
+const canvasLayoutScopeKey = computed(() =>
+  buildOrchestrationCanvasScopeKey(props.runId, '', String(props.currentOrchestrationId || '').trim())
 );
 
 const canvasProjection = computed(() =>
@@ -588,7 +596,7 @@ const canvasProjection = computed(() =>
         dispatchPreview: props.dispatchPreview,
         resolveWorkerOutputs: props.resolveWorkerOutputs,
         resolveWorkerThreadSessionId: props.resolveWorkerThreadSessionId,
-        selectedNodeId: selectedArtifactAgentId.value ? `artifact:${selectedArtifactAgentId.value}` : '',
+        selectedNodeId: '',
         nodePositionOverrides: {},
         t
       })
@@ -937,7 +945,7 @@ const persistTimelineState = () => {
 };
 
 const persistLayoutMode = () => {
-  mergeBeeroomMissionCanvasState(canvasScopeKey.value, {
+  mergeBeeroomMissionCanvasState(canvasLayoutScopeKey.value, {
     layoutMode: layoutMode.value
   });
 };
@@ -1094,13 +1102,6 @@ const handleAgentOutputPreview = (payload: {
   roleLabel: string;
   statusLabel: string;
 }) => {
-  const nodeId = String(payload?.nodeId || '').trim();
-  const artifactMatch = nodeId.match(/^artifact:(.+)$/);
-  if (artifactMatch?.[1]) {
-    selectedArtifactAgentId.value = artifactMatch[1];
-    openActiveArtifactWorkspace();
-    return;
-  }
   const agentId = String(payload?.agentId || '').trim();
   if (!agentId) return;
   agentOutputPreviewAgentId.value = agentId;
@@ -1128,8 +1129,8 @@ const handleArtifactFilePreview = async (payload: {
   if (!itemPath || payload?.item?.previewable !== true) {
     return;
   }
-  const artifactMatch = String(payload?.nodeId || '').trim().match(/^artifact:(.+)$/);
-  const agentId = String(artifactMatch?.[1] || '').trim();
+  const nodeId = String(payload?.nodeId || '').trim();
+  const agentId = nodeId.replace(/^agent:/, '').trim();
   if (!agentId) return;
   const member = resolveArtifactMember(agentId);
   if (!member) return;
@@ -1210,7 +1211,9 @@ watch(
   canvasScopeKey,
   (scopeKey) => {
     const cached = getBeeroomMissionCanvasState(scopeKey);
-    layoutMode.value = cached?.layoutMode === 'vertical' ? 'vertical' : 'horizontal';
+    const sharedLayoutState = getBeeroomMissionCanvasState(canvasLayoutScopeKey.value);
+    layoutMode.value =
+      (sharedLayoutState?.layoutMode || cached?.layoutMode) === 'vertical' ? 'vertical' : 'horizontal';
     chatWidth.value = clampChatWidth(Number(cached?.chatWidth || DEFAULT_CHAT_WIDTH));
     chatCollapsed.value = Boolean(cached?.chatCollapsed);
     timelineCollapsed.value = Boolean(cached?.timelineCollapsed);
