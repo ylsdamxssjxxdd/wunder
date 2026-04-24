@@ -97,6 +97,7 @@ import { ElMessage } from 'element-plus';
 import { getSession as getChatSessionApi, getSessionEvents as getChatSessionEventsApi } from '@/api/chat';
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { downloadSessionLogLines } from '@/utils/sessionLogExport';
 
 type TimelineDetailRoundEvent = {
   event?: unknown;
@@ -758,18 +759,6 @@ const filterStats = computed(() =>
   })
 );
 
-const sanitizeFilenamePart = (value: unknown, fallback: string): string => {
-  const text = String(value || '').trim();
-  const safe = text.replace(/[\\/:*?"<>|]+/g, '_');
-  return safe || fallback;
-};
-
-const buildExportFilename = (sessionId: string): string => {
-  const safeSessionId = sanitizeFilenamePart(sessionId, 'session');
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  return `timeline-detail-${safeSessionId}-${timestamp}.jsonl`;
-};
-
 const buildEventSummary = (eventType: string, payload: unknown): Record<string, unknown> => {
   const data = unwrapEventData(payload);
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -861,16 +850,6 @@ const buildTimelineExportLines = (): TimelineExportLine[] => {
   return output;
 };
 
-const saveBlobUrl = (url: string, filename: string) => {
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-};
-
 const loadTimelineDetail = async (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) {
@@ -911,20 +890,19 @@ const loadTimelineDetail = async (sessionId: string) => {
   }
 };
 
-const exportTimelineDetail = () => {
+const exportTimelineDetail = async () => {
   const session = sessionDetail.value;
   if (!session) {
     return;
   }
   try {
     const lines = buildTimelineExportLines();
-    const payload = lines.map((item) => JSON.stringify(item)).join('\n');
-    const blob = new Blob([payload], {
-      type: 'application/x-ndjson;charset=utf-8'
+    downloadSessionLogLines(lines, {
+      sessionId: session.id,
+      agentName: session.agentName,
+      title: session.title,
+      filenamePrefix: session.agentName || session.title || session.agentId || session.id
     });
-    const objectUrl = URL.createObjectURL(blob);
-    saveBlobUrl(objectUrl, buildExportFilename(session.id));
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     ElMessage.success(t('messenger.timeline.detail.exported'));
   } catch (error) {
     const detail = String((error as { message?: string })?.message || t('common.requestFailed'));

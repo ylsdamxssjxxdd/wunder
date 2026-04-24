@@ -1079,6 +1079,10 @@
     "en-US": "No readable files",
     "zh-CN": "无可读取文件"
   },
+  "tool.read.patch_usage_hint": {
+    "en-US": "This output is display-formatted for reading. Do not copy the leading \">>> path\" header or \"N: \" line numbers into apply_patch; use only the original file content.",
+    "zh-CN": "该输出是便于阅读的展示格式。生成 apply_patch 时，不要复制前导的 \">>> 路径\" 文件头或 \"N: \" 行号，只使用文件原始内容。"
+  },
   "tool.read.no_path": {
     "en-US": "No file path provided.",
     "zh-CN": "未提供文件路径。"
@@ -1544,12 +1548,12 @@
     "zh-CN": "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。"
   },
   "tool.spec.apply_patch.args.input": {
-    "en-US": "Raw apply_patch payload only (no JSON wrapper / no markdown fence). Start at *** Begin Patch and end at *** End Patch. After @@, every Update File line must start with space/+/-. IMPORTANT: (1) Include at least 2-3 context lines (space-prefixed) around each change so the tool can locate it. (2) Do NOT copy line numbers from read_file output — lines like \"3: code\" will fail to match; write just the code. (3) Do not use *** as an old/new separator inside a hunk. (4) A line to be deleted/replaced must appear ONLY as a '-' line, NOT also as a context (' ') line — do not duplicate it. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch",
-    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。@@ 之后的 Update File 内容行都必须以空格/+/- 开头。重要提示：(1) 每处变更前后至少保留 2-3 行上下文行（空格开头），帮助工具定位位置；(2) 绝对不要把读取文件工具输出的行号（如\"3: 代码\"）复制进来，只写代码本身；(3) 不要在 hunk 内用 *** 分隔旧内容和新内容；(4) 要删除/替换的行只能用 '-' 前缀，不能同时再用空格前缀作为上下文行重复出现。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch"
+    "en-US": "Raw apply_patch payload only. Do not wrap it in JSON or Markdown. The text MUST start with *** Begin Patch and end with *** End Patch. After @@, every Update File content line must start with space/+/-. HARD RULES: (1) When the patch is based on read_file output, never copy the display header like \">>> path\". (2) Never copy display line numbers like \"3: code\"; write only the original code text. (3) Include at least 2-3 context lines (space-prefixed) around each change so the tool can locate it. (4) Do not use *** as an old/new separator inside a hunk. (5) A line to be deleted or replaced must appear only as a '-' line, not also as a context (' ') line. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch",
+    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。@@ 之后的 Update File 内容行都必须以空格/+/- 开头。硬规则：(1) 如果补丁基于 read_file 输出，绝对不要复制 \">>> 路径\" 这类展示文件头；(2) 绝对不要复制 \"3: 代码\" 这类展示行号，只写文件原始代码文本；(3) 每处变更前后至少保留 2-3 行上下文行（空格开头），帮助工具定位位置；(4) 不要在 hunk 内用 *** 分隔旧内容和新内容；(5) 要删除或替换的行只能用 '-' 前缀，不能同时再用空格前缀作为上下文行重复出现。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply precise small edits with apply_patch grammar. Use it for narrow reviewable changes; use write_file for full file rewrites. Always include context lines (space-prefixed) around changes for reliable matching. Lines to delete or replace use '-' prefix only — do NOT also write them as context lines.",
-    "zh-CN": "按 apply_patch grammar 做精确小修改。适合小范围可审查编辑；整文件重写请改用写入文件。务必在变更前后包含上下文行（空格开头），确保可靠匹配。要删除或替换的行只用 '-' 前缀，不要同时写成上下文行。"
+    "en-US": "Apply precise small edits with apply_patch grammar. Use it for narrow reviewable changes; use write_file for full file rewrites. Always include context lines (space-prefixed) around changes for reliable matching. Never paste read_file display artifacts such as \">>> path\" or \"123: code\" into the patch. Lines to delete or replace use '-' prefix only and must not also appear as context lines.",
+    "zh-CN": "按 apply_patch grammar 做精确小修改。适合小范围可审查编辑；整文件重写请改用写入文件。务必在变更前后包含上下文行（空格开头），确保可靠匹配。不要把 read_file 输出里的 \">>> 路径\" 或 \"123: 代码\" 这类展示内容粘进补丁。要删除或替换的行只用 '-' 前缀，且不要同时写成上下文行。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
@@ -1724,12 +1728,12 @@
     "zh-CN": "关闭当前浏览器会话"
   },
   "tool.spec.web_fetch.description": {
-    "en-US": "Fetch a single webpage and extract the main content. Usually use url, extract_mode, and max_chars; it is aimed at static fetches rather than complex interactive pages.",
-    "zh-CN": "抓取单个网页并提取正文。常用 url、extract_mode、max_chars；它偏静态抓取，不适合复杂交互网页。"
+    "en-US": "Fetch one confirmed public webpage and extract its main content. This is not a search engine and does not validate guessed URLs; it is suited for static pages, not complex interactive pages, search result pages, bot-protected pages, or client-rendered shell pages.",
+    "zh-CN": "抓取单个已确认的公开网页并提取正文。它不是搜索引擎，也不负责验证猜测 URL；适合静态页面，不适合复杂交互页、搜索结果页、防爬页或客户端渲染壳页。"
   },
   "tool.spec.web_fetch.args.url": {
-    "en-US": "The exact public URL to fetch (http/https only). Pass a full URL, not keywords or local paths.",
-    "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。请传完整 URL，不要传关键词或本地路径。"
+    "en-US": "The exact public URL to fetch (http/https only). Pass a complete, confirmed URL; do not pass keywords, local paths, search intents, or model-guessed site addresses.",
+    "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。必须传完整、已确认的 URL；不要传关键词、本地路径、搜索意图或模型猜测出来的站点地址。"
   },
   "tool.spec.web_fetch.args.extract_mode": {
     "en-US": "Output format: markdown or text. Defaults to markdown.",
@@ -2152,8 +2156,8 @@
     "zh-CN": "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read a local plain-text file, .txt/.md/.py, like cat, docx/xlsx is not supported. Only for text files (code, config, logs, markdown). For images use read_image. If the file location is uncertain, use list_files or search_content first.",
-    "zh-CN": "读取本地纯文本文件 .txt/.md/.py，类似 cat，不支持读取docx/xlsx等文档文件。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。文件位置不确定时先用 list_files 或 search_content。"
+    "en-US": "Read a local plain-text file, .txt/.md/.py, like cat; docx/xlsx is not supported. Only for text files (code, config, logs, markdown). For images use read_image. Output is formatted for display and may contain a \">>> path\" header plus \"N: \" line numbers; do not copy those display markers into apply_patch. If the file location is uncertain, use list_files or search_content first.",
+    "zh-CN": "读取本地纯文本文件 .txt/.md/.py，类似 cat，不支持读取 docx/xlsx 等文档文件。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。输出是便于阅读的展示格式，可能包含 \">>> 路径\" 文件头和 \"N: \" 行号；生成 apply_patch 时不要复制这些展示标记。文件位置不确定时先用 list_files 或 search_content。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",
@@ -2172,8 +2176,8 @@
     "zh-CN": "要加载的技能名称。"
   },
   "tool.spec.skill_call.description": {
-    "en-US": "Load the SKILL.md and directory tree for a named skill. Pass only the skill name instead of guessing file paths.",
-    "zh-CN": "加载指定技能的 SKILL.md 和目录结构。只传技能名，不要猜测技能文件路径。"
+    "en-US": "Load the SKILL.md and directory tree for a named skill. When the user request matches a mounted skill name, description, or common trigger scenario, call this first to read the skill; pass only the skill name instead of guessing file paths.",
+    "zh-CN": "加载指定技能的 SKILL.md 和目录结构。用户请求命中已挂载技能名称、描述或典型触发场景时，应先调用本工具读取技能；只传技能名，不要猜测技能文件路径。"
   },
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",
@@ -2500,8 +2504,8 @@
     "zh-CN": "是否包含系统资源指标。"
   },
   "tool.spec.read.args.path": {
-    "en-US": "Path to a local plain-text file. Only for text files (code, config, logs, markdown). For images use read_image.",
-    "zh-CN": "本地纯文本文件路径。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。"
+    "en-US": "Path to a local plain-text file. Only for text files (code, config, logs, markdown). For images use read_image. The returned text is display-formatted, so if you later build apply_patch, do not copy the \">>> path\" header or \"N: \" line numbers.",
+    "zh-CN": "本地纯文本文件路径。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。返回文本是展示格式；如果后续要生成 apply_patch，不要复制 \">>> 路径\" 文件头或 \"N: \" 行号。"
   },
   "tool.spec.read.args.start_line": {
     "en-US": "Start line (inclusive, 1-based). Omit to read from line 1.",

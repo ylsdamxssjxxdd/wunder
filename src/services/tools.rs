@@ -8627,6 +8627,7 @@ fn read_files_inner(
             .iter()
             .map(compact_read_file_summary_for_model)
             .collect::<Vec<_>>(),
+        "patch_usage_hint": i18n::t("tool.read.patch_usage_hint"),
         "dry_run": dry_run,
         "requested_files": requested_files,
         "processed_files": processed_files,
@@ -10908,6 +10909,12 @@ mod tests {
             .expect("content should exist");
         assert!(body.contains("line 00001"));
         assert!(body.contains(">>> large.md"));
+        assert_eq!(
+            value
+                .pointer("/data/patch_usage_hint")
+                .and_then(Value::as_str),
+            Some(i18n::t("tool.read.patch_usage_hint").as_str())
+        );
     }
 
     #[test]
@@ -10968,6 +10975,12 @@ mod tests {
                 .pointer("/data/files/0/used_default_range")
                 .and_then(Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            value
+                .pointer("/data/patch_usage_hint")
+                .and_then(Value::as_str),
+            Some(i18n::t("tool.read.patch_usage_hint").as_str())
         );
     }
 

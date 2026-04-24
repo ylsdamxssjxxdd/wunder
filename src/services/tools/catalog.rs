@@ -1367,6 +1367,7 @@ mod tests {
     };
     use crate::config::Config;
     use crate::skills::SkillRegistry;
+    use serde_json::Value;
 
     #[test]
     fn read_file_spec_clarifies_plain_text_only_in_english() {
@@ -1377,11 +1378,15 @@ mod tests {
         assert!(spec.description.contains("plain-text"));
         assert!(spec.description.contains("cat"));
         assert!(spec.description.contains("read_image"));
+        assert!(spec.description.contains(">>> path"));
+        assert!(spec.description.contains("apply_patch"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("plain-text"));
         assert!(path_description.contains("read_image"));
+        assert!(path_description.contains(">>> path"));
+        assert!(path_description.contains("N: "));
         assert!(spec.input_schema["properties"]["start_line"].is_object());
         assert!(spec.input_schema["properties"]["end_line"].is_object());
         assert!(spec.input_schema["properties"]["files"].is_null());
@@ -1421,6 +1426,33 @@ mod tests {
         assert!(spec.input_schema["properties"]["indentation"].is_null());
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
+    }
+
+    #[test]
+    fn web_fetch_spec_discourages_search_and_guessed_urls() {
+        let en = builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "网页抓取")
+            .expect("web_fetch spec");
+        assert!(en.description.contains("not a search engine"));
+        assert!(en.description.contains("guessed URLs"));
+        let en_url = en.input_schema["properties"]["url"]["description"]
+            .as_str()
+            .expect("url description");
+        assert!(en_url.contains("confirmed URL"));
+        assert!(en_url.contains("search intents"));
+        assert!(en_url.contains("model-guessed site addresses"));
+
+        let messages: Value = serde_json::from_str(
+            &std::fs::read_to_string("config/i18n.messages.json").expect("i18n messages"),
+        )
+        .expect("valid i18n json");
+        assert!(messages["tool.spec.web_fetch.description"]["en-US"]
+            .as_str()
+            .is_some_and(|value| value.contains("not a search engine")));
+        assert!(messages["tool.spec.web_fetch.args.url"]["en-US"]
+            .as_str()
+            .is_some_and(|value| value.contains("model-guessed site addresses")));
     }
 
     #[test]
@@ -2064,6 +2096,14 @@ mod tests {
             .find(|spec| spec.name == resolve_tool_name("apply_patch"))
             .expect("apply patch spec");
         assert!(apply_patch_spec.description.contains("apply_patch grammar"));
+        assert!(apply_patch_spec.description.contains(">>> path"));
+        assert!(apply_patch_spec.description.contains("123: code"));
+        assert!(
+            apply_patch_spec.input_schema["properties"]["input"]["description"]
+                .as_str()
+                .unwrap_or("")
+                .contains("*** Begin Patch")
+        );
         assert_eq!(
             apply_patch_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)

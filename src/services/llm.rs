@@ -2881,7 +2881,11 @@ fn merge_stream_text_field(target: &mut String, fragment: &str) {
         return;
     }
 
-    let overlap = stream_text_overlap_len(target, fragment);
+    let overlap = stream_text_overlap_len(target, fragment).filter(|overlap| *overlap > 1);
+    let Some(overlap) = overlap else {
+        target.push_str(fragment);
+        return;
+    };
     target.push_str(&fragment[overlap..]);
 }
 
@@ -2894,7 +2898,7 @@ fn should_replace_stream_json_payload(current: &str, next: &str) -> bool {
     serde_json::from_str::<Value>(current).is_ok() && serde_json::from_str::<Value>(next).is_ok()
 }
 
-fn stream_text_overlap_len(target: &str, fragment: &str) -> usize {
+fn stream_text_overlap_len(target: &str, fragment: &str) -> Option<usize> {
     let max_len = target.len().min(fragment.len());
     for len in (1..=max_len).rev() {
         let target_start = target.len() - len;
@@ -2902,10 +2906,10 @@ fn stream_text_overlap_len(target: &str, fragment: &str) -> usize {
             continue;
         }
         if target[target_start..] == fragment[..len] {
-            return len;
+            return Some(len);
         }
     }
-    0
+    None
 }
 
 fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
@@ -3766,6 +3770,14 @@ mod tests {
             merged,
             "import json\nfrom datetime import datetime, timedelta"
         );
+    }
+
+    #[test]
+    fn merge_stream_text_field_preserves_single_character_prefix_overlap() {
+        let mut merged = "plt.savefig(path, b".to_string();
+        merge_stream_text_field(&mut merged, "box_inches='tight')");
+
+        assert_eq!(merged, "plt.savefig(path, bbox_inches='tight')");
     }
 
     #[test]

@@ -1150,10 +1150,13 @@ const handleNodePointerDown = (nodeId: string, event: PointerEvent, pointerTarge
 
 const handleNodeLayerPointerDown = (event: PointerEvent) => {
   const target = event.target as HTMLElement | null;
-  if (target?.closest?.('.beeroom-node-artifact-scroll')) {
+  const card = target?.closest?.('.beeroom-node-card') as HTMLElement | null;
+  if (target?.closest?.('.beeroom-node-artifact-slot.is-clickable')) {
     return;
   }
-  const card = target?.closest?.('.beeroom-node-card') as HTMLElement | null;
+  if (target?.closest?.('.beeroom-node-artifact-scroll') && !card?.classList.contains('is-artifact-container')) {
+    return;
+  }
   const nodeId = String(card?.dataset.nodeId || '').trim();
   if (!card || !nodeId) {
     return;

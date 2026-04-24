@@ -1,6 +1,7 @@
 import type { BeeroomGroup, BeeroomMember } from '@/stores/beeroom';
 import {
   buildOrchestrationAgentArtifactPath,
+  buildOrchestrationMotherArtifactPath,
   buildOrchestrationRoundDirName,
   buildOrchestrationRoundSituationPath,
   normalizeOrchestrationText
@@ -23,6 +24,16 @@ const buildRoundPromptDirectory = (runId: string, roundIndex: number) =>
   ['orchestration', normalizeText(runId), buildOrchestrationRoundDirName(roundIndex)]
     .filter(Boolean)
     .join('/');
+
+const buildMotherPromptArtifactPath = (
+  runId: string,
+  roundIndex: number,
+  currentUserId = '',
+  containerId = 1
+) => {
+  const relativePath = buildOrchestrationMotherArtifactPath(runId, roundIndex);
+  return buildWorkspacePublicPath(currentUserId, relativePath, containerId) || relativePath;
+};
 
 const resolveWorkerContainerId = (worker: BeeroomMember) => {
   const parsed = Number.parseInt(String(worker?.sandbox_container_id ?? 1), 10);
@@ -95,9 +106,18 @@ export const buildMotherRoundArtifactInstructions = (options: {
   templates: OrchestrationPromptTemplates;
 }) => {
   const workers = resolveWorkerArtifactLines(options);
+  const motherAgentId = normalizeText(options.group?.mother_agent_id);
+  const motherMember = options.agents.find((item) => normalizeText(item.agent_id) === motherAgentId) || null;
+  const motherArtifactPath = buildMotherPromptArtifactPath(
+    options.runId,
+    options.roundIndex,
+    options.currentUserId,
+    motherMember ? resolveWorkerContainerId(motherMember) : 1
+  );
   return renderTemplate(options.templates.round_artifacts, {
     current_round_dir: buildRoundPromptDirectory(options.runId, options.roundIndex),
     current_round_situation_file: buildOrchestrationRoundSituationPath(options.runId, options.roundIndex),
+    mother_artifact_dir: motherArtifactPath,
     worker_artifact_lines: workers.map((item) => item.artifactLine).join('\n')
   }).trim();
 };
@@ -112,12 +132,20 @@ export const buildMotherOrchestrationPrimer = (options: {
 }) => {
   const motherAgentId = normalizeText(options.group?.mother_agent_id);
   const motherName = resolveMotherName(options.group, motherAgentId, options.agents);
+  const motherMember = options.agents.find((item) => normalizeText(item.agent_id) === motherAgentId) || null;
   const workers = resolveWorkerArtifactLines(options);
+  const motherArtifactPath = buildMotherPromptArtifactPath(
+    options.runId,
+    options.roundIndex,
+    options.currentUserId,
+    motherMember ? resolveWorkerContainerId(motherMember) : 1
+  );
   return renderTemplate(options.templates.mother_runtime, {
     mother_name: motherName,
     run_id: normalizeText(options.runId),
     current_round_dir: buildRoundPromptDirectory(options.runId, options.roundIndex),
     current_round_situation_file: buildOrchestrationRoundSituationPath(options.runId, options.roundIndex),
+    mother_artifact_dir: motherArtifactPath,
     worker_directory_lines: workers.map((item) => item.nameLine).join('\n')
   }).trim();
 };

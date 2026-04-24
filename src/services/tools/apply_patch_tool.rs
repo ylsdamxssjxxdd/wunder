@@ -87,6 +87,7 @@ struct ApplyPatchSummary {
     moved: usize,
     hunks_applied: usize,
     file_summaries: Vec<FileChangeSummary>,
+    no_effect_updates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,6 +308,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
                 "deleted": summary.deleted,
                 "moved": summary.moved,
                 "hunks_applied": summary.hunks_applied,
+                "no_effect_updates": summary.no_effect_updates,
                 "files": summary.file_summaries.into_iter().map(|item| json!({
                     "action": item.action,
                     "path": item.path,
@@ -329,6 +331,28 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
                 "Retry; if this persists, verify runtime stability.",
             )
         })??;
+
+    if !summary.no_effect_updates.is_empty()
+        && summary.added == 0
+        && summary.deleted == 0
+        && summary.moved == 0
+        && summary.changed_files.is_empty()
+    {
+        let sample = summary
+            .no_effect_updates
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(patch_error_with_hint(
+            "PATCH_NO_EFFECT",
+            format!("补丁没有产生任何实际修改：{sample}"),
+            format!("Patch produced no effective change: {sample}"),
+            "这通常表示 Update File 里的 '-' 与 '+' 内容实际相同，或补丁只重复写回原内容。请重新读取文件，确认新增与删除行确实不同后再重试。",
+            "This usually means the Update File '-' and '+' lines are effectively identical, or the patch only rewrote the original content. Re-read the file and ensure added and deleted lines are actually different before retrying.",
+        ));
+    }
 
     let workspace_root = context.workspace.workspace_root(context.workspace_id);
     let bump_workspace = summary
@@ -364,6 +388,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "deleted": summary.deleted,
             "moved": summary.moved,
             "hunks_applied": summary.hunks_applied,
+            "no_effect_updates": summary.no_effect_updates,
             "files": summary.file_summaries.into_iter().map(|item| json!({
                 "action": item.action,
                 "path": item.path,
@@ -439,6 +464,7 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
         moved,
         hunks_applied,
         file_summaries,
+        no_effect_updates: Vec::new(),
     }
 }
 
@@ -985,6 +1011,7 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
     let mut deleted = 0usize;
     let mut moved = 0usize;
     let mut hunks_applied = 0usize;
+    let mut no_effect_updates = Vec::new();
 
     for op in ops {
         match op {
@@ -1071,6 +1098,14 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                     ));
                 };
                 let next_content = apply_update_chunks(&source_content, &chunks, &path)?;
+                let had_effect = next_content != source_content
+                    || move_to_target
+                        .as_ref()
+                        .is_some_and(|new_target| *new_target != target);
+                if !had_effect {
+                    no_effect_updates.push(path.clone());
+                    continue;
+                }
                 hunks_applied += chunks.len();
                 if let Some(new_target) = move_to_target {
                     if new_target != target && read_staged_or_fs(&new_target, &staged)?.is_some() {
@@ -1148,6 +1183,7 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
         moved,
         hunks_applied,
         file_summaries,
+        no_effect_updates,
     })
 }
 
@@ -1895,6 +1931,30 @@ mod tests {
     }
 
     #[test]
+    fn build_patch_error_result_preserves_patch_no_effect_code() {
+        let err = patch_error_with_hint(
+            "PATCH_NO_EFFECT",
+            "补丁没有产生实际修改",
+            "Patch produced no effective change",
+            "请确认新增与删除行确实不同。",
+            "Ensure added and deleted lines are actually different.",
+        );
+        let result = build_patch_error_result(err);
+        assert_eq!(
+            result
+                .pointer("/data/error_code")
+                .and_then(Value::as_str),
+            Some("PATCH_NO_EFFECT")
+        );
+        assert_eq!(
+            result
+                .pointer("/error_meta/code")
+                .and_then(Value::as_str),
+            Some("PATCH_NO_EFFECT")
+        );
+    }
+
+    #[test]
     fn summarize_patch_ops_counts_actions_for_dry_run_preview() {
         let add_target = PathBuf::from("/tmp/add.txt");
         let del_target = PathBuf::from("/tmp/del.txt");
@@ -1965,6 +2025,42 @@ mod tests {
         let output =
             apply_update_chunks("a\nb\nc\n", &[chunk], "demo.txt").expect("chunk should apply");
         assert_eq!(output, "a\nx\nc\n");
+    }
+
+    #[test]
+    fn apply_patch_ops_marks_no_effect_update_when_content_is_unchanged() {
+        let dir = create_temp_dir("patch-no-effect");
+        let file_path = dir.join("demo.py");
+        fs::write(&file_path, "print('hello')\n").expect("write source file");
+
+        let summary = apply_patch_ops(vec![ResolvedPatchOp::Update {
+            path: "demo.py".to_string(),
+            target: file_path.clone(),
+            move_to_path: None,
+            move_to_target: None,
+            chunks: vec![UpdateChunk {
+                change_context: None,
+                lines: vec![
+                    ChunkLine {
+                        kind: ChunkLineKind::Delete,
+                        text: "print('hello')".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Add,
+                        text: "print('hello')".to_string(),
+                    },
+                ],
+                end_of_file: false,
+            }],
+        }])
+        .expect("no-effect patch should still summarize");
+
+        assert!(summary.changed_files.is_empty());
+        assert_eq!(summary.hunks_applied, 0);
+        assert_eq!(summary.no_effect_updates, vec!["demo.py".to_string()]);
+        assert!(summary.file_summaries.is_empty());
+        let content = fs::read_to_string(&file_path).expect("read source file");
+        assert_eq!(content, "print('hello')\n");
     }
 
     #[test]

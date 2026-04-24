@@ -1,4 +1,5 @@
 [本轮产物目录]
+本轮母蜂产物目录：{{mother_artifact_dir}}
 本轮工蜂的产物都会落在：{{current_round_dir}}/
 
 需要查看本轮产物时，先对“{{current_round_dir}}”做一次有界递归列目录，再批量读取相关文件。

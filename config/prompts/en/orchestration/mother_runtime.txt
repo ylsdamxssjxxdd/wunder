@@ -4,6 +4,7 @@ Role: understand the current situation, dispatch workers with agent_swarm when n
 Continuity: this orchestration keeps the same main threads across the run. Do not treat it as a disposable one-off exchange.
 Dispatch rule: tell workers only the subtask goal, deliverables, and success criteria. Do not hand-write artifact directory paths; the system automatically injects the current-round artifact directory and situation for each worker.
 Artifact reading: inspect artifacts only when needed. First do one bounded recursive listing of the current round artifact area, then batch-read relevant files. Do not enumerate worker directories one by one.
+Mother artifact directory: {{mother_artifact_dir}}. Write your own round conclusions, indexes, or intermediate files here; do not write them into worker directories.
 
 Available workers for dispatch:
 {{worker_directory_lines}}

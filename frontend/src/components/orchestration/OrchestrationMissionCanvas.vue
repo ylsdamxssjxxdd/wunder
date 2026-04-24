@@ -255,6 +255,16 @@
             <button
               class="beeroom-canvas-icon-btn orchestration-panel-action"
               type="button"
+              :title="t('orchestration.action.exportLogs')"
+              :aria-label="t('orchestration.action.exportLogs')"
+              :disabled="!isReady"
+              @click="emit('export-logs')"
+            >
+              <i class="fa-solid fa-download" aria-hidden="true"></i>
+            </button>
+            <button
+              class="beeroom-canvas-icon-btn orchestration-panel-action"
+              type="button"
               :title="t('orchestration.action.history')"
               :aria-label="t('orchestration.action.history')"
               :disabled="historyLoading || runtimeLocked"
@@ -486,6 +496,7 @@ const emit = defineEmits<{
   (event: 'exit-run'): void;
   (event: 'open-history'): void;
   (event: 'open-situation'): void;
+  (event: 'export-logs'): void;
   (event: 'select-round', roundId: string): void;
   (event: 'restore-run', payload: { orchestrationId: string; roundIndex?: number; preview?: boolean }): void;
   (event: 'delete-round-tail', payload: { orchestrationId: string; roundIndex: number }): void;
@@ -710,7 +721,7 @@ const activeArtifactWorkspace = computed(() => {
   const agentId = String(selectedArtifactAgentId.value || '').trim();
   if (!agentId) return null;
   const card = props.artifactCards.find((item) => String(item.agentId || '').trim() === agentId) || null;
-  const member = props.visibleWorkers.find((item) => String(item.agent_id || '').trim() === agentId) || null;
+  const member = resolveArtifactMember(agentId);
   if (!card || !member) return null;
   const containerId = Number.parseInt(String(member.sandbox_container_id ?? 1), 10) || 1;
   return {
@@ -720,6 +731,11 @@ const activeArtifactWorkspace = computed(() => {
     title: `${card.agentName} · ${card.path}`
   };
 });
+
+const resolveArtifactMember = (agentId: string) =>
+  props.visibleWorkers.find((item) => String(item.agent_id || '').trim() === agentId) ||
+  props.agents.find((item) => String(item.agent_id || '').trim() === agentId) ||
+  null;
 
 const artifactWorkspaceDialogTitle = computed(() => activeArtifactWorkspace.value?.title || t('beeroom.canvas.artifacts'));
 
@@ -1115,7 +1131,7 @@ const handleArtifactFilePreview = async (payload: {
   const artifactMatch = String(payload?.nodeId || '').trim().match(/^artifact:(.+)$/);
   const agentId = String(artifactMatch?.[1] || '').trim();
   if (!agentId) return;
-  const member = props.visibleWorkers.find((entry) => String(entry.agent_id || '').trim() === agentId) || null;
+  const member = resolveArtifactMember(agentId);
   if (!member) return;
   const containerId = Number.parseInt(String(member.sandbox_container_id ?? 1), 10) || 1;
 

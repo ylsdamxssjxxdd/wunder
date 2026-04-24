@@ -1307,4 +1307,17 @@ mod tests {
         assert_eq!(resolve_requested_prompt_locale(Some("en-US")), Some("en"));
         assert_eq!(resolve_requested_prompt_locale(Some("zh-Hans")), Some("zh"));
     }
+
+    #[test]
+    fn skills_protocol_requires_loading_matched_skill_first() {
+        let zh = std::fs::read_to_string("config/prompts/zh/system/skills_protocol.txt")
+            .expect("zh skills protocol");
+        assert!(zh.contains("首个相关动作必须调用“技能调用”"));
+        assert!(zh.contains("Frontmatter 是触发依据"));
+
+        let en = std::fs::read_to_string("config/prompts/en/system/skills_protocol.txt")
+            .expect("en skills protocol");
+        assert!(en.contains("first relevant action must be to call the skill tool"));
+        assert!(en.contains("Skill Frontmatter is the trigger source of truth"));
+    }
 }

@@ -2275,6 +2275,7 @@ export default {
   'orchestration.canvas.mother': 'Mother',
   'orchestration.canvas.worker': 'Worker',
   'orchestration.canvas.artifact': 'Artifact',
+  'orchestration.canvas.motherArtifact': 'Mother Artifacts',
   'orchestration.canvas.motherLane': 'Mother',
   'orchestration.canvas.workerLane': 'Workers',
   'orchestration.canvas.artifactLane': 'Artifacts',
@@ -2284,6 +2285,9 @@ export default {
   'orchestration.panel.current': 'Current Orchestration',
   'orchestration.message.createRunRequired': 'Create an orchestration run before sending a message to the mother agent.',
   'orchestration.message.historyRoundReadonly': 'Sending from a historical round will continue on a new branch.',
+  'orchestration.message.exportLogsEmpty': 'There are no orchestration thread logs to export yet.',
+  'orchestration.message.exportLogsSuccess': 'Exported {count} orchestration thread logs.',
+  'orchestration.message.exportLogsFailed': 'Failed to export orchestration logs: {message}',
   'orchestration.panel.currentRun': 'Run {runId} · User Round {round}',
   'orchestration.panel.roundTag': 'Round {round}',
   'orchestration.panel.situation': 'Current Situation',
@@ -2336,6 +2340,7 @@ export default {
   'orchestration.dialog.historyBranchConfirm':
     'Create a new orchestration branch from round {round}? The current history is preserved and the target round will reopen in the new branch.',
   'orchestration.dialog.historyBranchSuccess': 'Created a new orchestration branch',
+  'orchestration.action.exportLogs': 'Export Orchestration Logs',
   'orchestration.dialog.situationSubtitle':
     'You can preset situations by user round. The matching situation is automatically prepended when sending to the mother.',
   'orchestration.dialog.situationImportHint':

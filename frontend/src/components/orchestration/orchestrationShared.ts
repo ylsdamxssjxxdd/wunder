@@ -41,6 +41,16 @@ export const buildOrchestrationAgentArtifactPath = (
     .filter(Boolean)
     .join('/');
 
+export const buildOrchestrationMotherArtifactPath = (runId: string, roundIndex: number) =>
+  [
+    'orchestration',
+    normalizeOrchestrationText(runId),
+    buildOrchestrationRoundDirName(roundIndex),
+    'mother'
+  ]
+    .filter(Boolean)
+    .join('/');
+
 export const buildOrchestrationRoundSituationPath = (runId: string, roundIndex: number) =>
   ['orchestration', normalizeOrchestrationText(runId), buildOrchestrationRoundDirName(roundIndex), 'situation.txt']
     .filter(Boolean)

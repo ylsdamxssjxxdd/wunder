@@ -3,6 +3,8 @@
 - Built-in skills are system/repo-provided workflows. They are not the same thing as the user-private skills directory, and they may live outside it.
 - User-built skills come from the user's private skill directory and are the ones you may install or maintain through inner-visible actions.
 - When you need to use a skill, prefer the skill tool or the real `SKILL.md` path shown below. Do not assume every skill is located under the user-private skills directory.
+- When the user's request clearly matches the name, description, or common trigger scenario of a mounted skill, your first relevant action must be to call the skill tool for that skill, unless the user explicitly forbids skill use.
+- Skill Frontmatter is the trigger source of truth. Do not guess the workflow from the skill name alone, and do not skip `SKILL.md` before executing the task.
 
 [Mounted Built-in Skills]
 {BUILTIN_SKILLS_LIST}

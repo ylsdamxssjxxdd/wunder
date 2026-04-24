@@ -1612,21 +1612,41 @@ fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<St
         .get("stderr")
         .or_else(|| map.get("stdout"))
         .and_then(Value::as_str)?;
-    let detail = output
+    let lines = output
         .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .next_back()
-        .unwrap_or("")
-        .trim();
-    if detail.is_empty() {
+        .map(str::trim_end)
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
         return None;
     }
-    let detail = if detail.chars().count() > 200 {
-        let head = detail.chars().take(200).collect::<String>();
+    let focus_index = lines
+        .iter()
+        .rposition(|line| {
+            let trimmed = line.trim_start();
+            trimmed.contains("Error:")
+                || trimmed.contains("Exception:")
+                || trimmed.contains("SyntaxError")
+                || trimmed.contains("IndentationError")
+                || trimmed.contains("NameError")
+                || trimmed.contains("TypeError")
+                || trimmed.contains("ValueError")
+                || trimmed.contains("Traceback")
+        })
+        .unwrap_or(lines.len().saturating_sub(1));
+    let start = focus_index.saturating_sub(2);
+    let end = (focus_index + 1).min(lines.len().saturating_sub(1));
+    let detail = lines[start..=end]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let detail = if detail.chars().count() > 320 {
+        let head = detail.chars().take(320).collect::<String>();
         format!("{head}...")
     } else {
-        detail.to_string()
+        detail
     };
     Some(format!("stderr: {detail}"))
 }
@@ -2155,6 +2175,17 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
     let mut compacted = Map::new();
     let (clean_content, read_output_omitted_bytes) = strip_read_output_truncation_notice(content);
     compacted.insert("content".to_string(), Value::String(clean_content));
+    if let Some(hint) = map
+        .get("patch_usage_hint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        compacted.insert(
+            "patch_usage_hint".to_string(),
+            Value::String(hint.to_string()),
+        );
+    }
     if map.get("continuation_required").and_then(Value::as_bool) == Some(true) {
         compacted.insert("continuation_required".to_string(), Value::Bool(true));
         if let Some(hint) = map
@@ -2180,11 +2211,12 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
             Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
         );
     }
-    let files = map
-        .get("meta")
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get("files"))
-        .and_then(Value::as_array);
+    let files = map.get("files").and_then(Value::as_array).or_else(|| {
+        map.get("meta")
+            .and_then(Value::as_object)
+            .and_then(|meta| meta.get("files"))
+            .and_then(Value::as_array)
+    });
     if let Some(files) = files {
         let mut file_entries = Vec::new();
         for file in files.iter().take(OBSERVATION_READ_FILE_LIMIT) {
@@ -3085,7 +3117,7 @@ mod tests {
         assert_eq!(
             compacted.get("error").and_then(Value::as_str),
             Some(
-                "命令退出码 1。 stderr: IndentationError: unindent does not match any outer indentation level"
+                "命令退出码 1。 stderr: File \"/tmp/draw_heart.py\", line 6 | y = 13 | IndentationError: unindent does not match any outer indentation level"
             )
         );
         assert_eq!(
@@ -3423,6 +3455,7 @@ mod tests {
             "ok": true,
             "data": {
                 "content": long_content,
+                "patch_usage_hint": "do not copy display markers",
                 "meta": {
                     "files": [
                         {
@@ -3448,9 +3481,48 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(data.get("continuation_required").and_then(Value::as_bool), None);
+        assert_eq!(
+            data.get("patch_usage_hint").and_then(Value::as_str),
+            Some("do not copy display markers")
+        );
         let content = data.get("content").and_then(Value::as_str).unwrap_or("");
         assert_eq!(content.chars().count(), 8_000);
         assert!(!content.contains(TOOL_RESULT_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn test_compact_observation_payload_read_file_keeps_patch_usage_hint_from_flat_data() {
+        let mut payload = json!({
+            "tool": "璇诲彇鏂囦欢",
+            "ok": true,
+            "data": {
+                "content": ">>> notes.md\n1: alpha",
+                "patch_usage_hint": "do not copy >>> path or N: prefixes",
+                "files": [
+                    {
+                        "path": "notes.md",
+                        "read_lines": 1,
+                        "total_lines": 4,
+                        "complete": false
+                    }
+                ]
+            }
+        });
+
+        compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
+
+        let data = payload
+            .get("data")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            data.get("patch_usage_hint").and_then(Value::as_str),
+            Some("do not copy >>> path or N: prefixes")
+        );
+        let files_jsonl = data.get("files_jsonl").and_then(Value::as_str).unwrap_or("");
+        assert!(files_jsonl.contains("\"path\":\"notes.md\""));
+        assert!(files_jsonl.contains("\"read_lines\":1"));
     }
 
     #[test]

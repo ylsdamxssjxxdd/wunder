@@ -55,6 +55,7 @@
         @exit-run="handleStopRun"
         @open-history="handleOpenHistoryDialog"
         @open-situation="handleOpenSituationDialog"
+        @export-logs="handleExportOrchestrationLogs"
         @select-round="selectRound($event)"
         @restore-run="handleRestoreHistoryAction($event)"
         @delete-round-tail="handleDeleteBranchAfterRound($event)"
@@ -268,7 +269,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRef, watch, type Ref } from 'vue';
+import { computed, onBeforeUnmount, ref, toRef, watch, type Ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
@@ -298,6 +299,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
 import { chatDebugLog } from '@/utils/chatDebug';
+import { exportMultipleSessionLogs } from '@/utils/sessionLogExport';
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -420,6 +422,13 @@ const orchestrationDispatchStopRequested = ref(false);
 const orchestrationDispatchFlowToken = ref(0);
 const orchestrationExplicitStopRequested = ref(false);
 let orchestrationPromptLoadTask: Promise<OrchestrationPromptTemplates> | null = null;
+let orchestrationRefreshPumpTimer: number | null = null;
+let orchestrationRefreshPumpStartedAt = 0;
+
+const ORCHESTRATION_ACTIVE_REFRESH_INTERVAL_MS = 1600;
+const ORCHESTRATION_SETTLE_REFRESH_INTERVAL_MS = 2200;
+const ORCHESTRATION_ACTIVE_REFRESH_MAX_MS = 8 * 60 * 1000;
+const ORCHESTRATION_SETTLE_REFRESH_MAX_MS = 18 * 1000;
 
 const ORCHESTRATION_PROMPT_TEMPLATE_KEYS = [
   'mother_runtime',
@@ -449,6 +458,18 @@ const activeRoundHasMotherReply = computed(() =>
     (message) => message.tone === 'mother' && Boolean(String(message?.body || '').trim())
   )
 );
+const motherWorkflowTerminal = computed(() => {
+  const items = Array.isArray(motherWorkflowItems.value) ? motherWorkflowItems.value : [];
+  const meaningfulItems = items.filter((item) => String(item?.eventType || '').trim() !== 'heartbeat');
+  if (!meaningfulItems.length) return false;
+  const tail = meaningfulItems[meaningfulItems.length - 1];
+  const eventType = String(tail?.eventType || '').trim().toLowerCase();
+  return eventType === 'final' || eventType === 'error';
+});
+const activeRoundMotherHardTerminal = computed(() =>
+  motherWorkflowTerminal.value || roundIsCompleted(activeRound.value)
+);
+const activeRoundMotherTerminal = computed(() => activeRoundMotherHardTerminal.value);
 const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
   Boolean(String(round?.userMessage || '').trim());
 const roundIsCompleted = (round: { finalizedAt?: unknown } | null | undefined) =>
@@ -776,6 +797,33 @@ const scheduleRuntimeRefreshPulse = () => {
   });
 };
 
+const clearOrchestrationRefreshPump = () => {
+  if (orchestrationRefreshPumpTimer === null || typeof window === 'undefined') return;
+  window.clearTimeout(orchestrationRefreshPumpTimer);
+  orchestrationRefreshPumpTimer = null;
+};
+
+const scheduleOrchestrationRefreshPump = (options: { active: boolean }) => {
+  clearOrchestrationRefreshPump();
+  if (!isReady.value || !isActive.value || typeof window === 'undefined') return;
+  const now = Date.now();
+  if (!orchestrationRefreshPumpStartedAt) {
+    orchestrationRefreshPumpStartedAt = now;
+  }
+  const elapsed = now - orchestrationRefreshPumpStartedAt;
+  const maxDuration = options.active ? ORCHESTRATION_ACTIVE_REFRESH_MAX_MS : ORCHESTRATION_SETTLE_REFRESH_MAX_MS;
+  if (elapsed > maxDuration) {
+    orchestrationRefreshPumpStartedAt = 0;
+    return;
+  }
+  const delay = options.active ? ORCHESTRATION_ACTIVE_REFRESH_INTERVAL_MS : ORCHESTRATION_SETTLE_REFRESH_INTERVAL_MS;
+  orchestrationRefreshPumpTimer = window.setTimeout(() => {
+    orchestrationRefreshPumpTimer = null;
+    emit('refresh');
+    scheduleOrchestrationRefreshPump(options);
+  }, delay);
+};
+
 const ensureOrchestrationDispatchFlowActive = (token: number) => {
   if (orchestrationDispatchFlowToken.value !== token || orchestrationDispatchStopRequested.value) {
     throw buildOrchestrationDispatchStoppedError();
@@ -814,14 +862,20 @@ const motherRoundTerminalReady = computed(() => {
   if (!pending?.id || roundIsCompleted(pending) || !roundHasUserMessage(pending)) {
     return false;
   }
-  if (orchestrationDispatchPreparing.value || composerSending.value || motherSessionBusy.value) {
+  if (orchestrationDispatchPreparing.value || composerSending.value) {
     return false;
   }
-  if (orchestrationDispatchRuntimeBusy.value) {
+  if (motherSessionBusy.value && !activeRoundMotherTerminal.value) {
     return false;
   }
-  return activeRoundHasMotherReply.value;
+  if (orchestrationDispatchRuntimeBusy.value && !activeRoundMotherTerminal.value) {
+    return false;
+  }
+  return activeRoundMotherTerminal.value;
 });
+const orchestrationPendingRoundBlocksUi = computed(() =>
+  orchestrationPendingRoundActive.value && !motherRoundTerminalReady.value
+);
 const orchestrationResidualWorkerActivity = computed(() => {
   const activeRoundValue = activeRound.value;
   if (roundIsCompleted(activeRoundValue)) {
@@ -873,11 +927,11 @@ const orchestrationRunning = computed(
   () =>
     orchestrationDispatchPreparing.value ||
     composerSending.value ||
-    motherSessionBusy.value ||
-    orchestrationDispatchRuntimeBusy.value ||
+    (motherSessionBusy.value && !activeRoundMotherTerminal.value) ||
+    (orchestrationDispatchRuntimeBusy.value && !activeRoundMotherTerminal.value) ||
     liveDispatchPreviewIsBlocking.value ||
     orchestrationWorkerRuntimeBlocking.value ||
-    orchestrationPendingRoundActive.value
+    orchestrationPendingRoundBlocksUi.value
 );
 const orchestrationStopBusy = computed(() => orchestrationRunning.value);
 const orchestrationRuntimeLocked = computed(() => orchestrationRunning.value);
@@ -1482,6 +1536,55 @@ const handleDeleteBranchAfterRound = async (payload: { orchestrationId: string; 
   }
 };
 
+const handleExportOrchestrationLogs = async () => {
+  if (!isReady.value) {
+    return;
+  }
+  const sources = [
+    motherSessionId.value
+      ? {
+          sessionId: motherSessionId.value,
+          agentName: motherName.value || 'mother',
+          label: 'mother'
+        }
+      : null,
+    ...visibleWorkers.value
+      .map((member) => {
+        const agentId = String(member?.agent_id || '').trim();
+        const sessionId = resolveWorkerThreadSessionId(agentId);
+        if (!sessionId) return null;
+        return {
+          sessionId,
+          agentName: String(member?.name || agentId || 'worker').trim(),
+          label: `worker:${agentId || 'unknown'}`
+        };
+      })
+      .filter((item): item is { sessionId: string; agentName: string; label: string } => Boolean(item))
+  ].filter((item): item is { sessionId: string; agentName: string; label: string } => Boolean(item));
+
+  if (!sources.length) {
+    ElMessage.warning(t('orchestration.message.exportLogsEmpty'));
+    return;
+  }
+
+  try {
+    const result = await exportMultipleSessionLogs(sources, {
+      filenamePrefix: props.group?.name || runId.value || 'orchestration-logs'
+    });
+    ElMessage.success(
+      t('orchestration.message.exportLogsSuccess', {
+        count: result.count
+      })
+    );
+  } catch (error: any) {
+    ElMessage.error(
+      t('orchestration.message.exportLogsFailed', {
+        message: String(error?.message || t('common.requestFailed'))
+      })
+    );
+  }
+};
+
 const syncMotherSessionContext = async (
   roundIndex: number,
   options: { motherPrimerInjected?: boolean } = {}
@@ -1701,9 +1804,9 @@ const maybeFinalizeRecoveredPendingRound = async () => {
   ) {
     return;
   }
-  if (!activeRoundHasMotherReply.value) return;
+  if (!activeRoundHasMotherReply.value && !activeRoundMotherHardTerminal.value) return;
   if (orchestrationDispatchPreparing.value || composerSending.value) return;
-  if (motherSessionBusy.value) return;
+  if (motherSessionBusy.value && !activeRoundMotherHardTerminal.value) return;
   if (motherRoundTerminalReady.value) {
     if (orchestrationResidualWorkerActivity.value) {
       await stopActiveRoundMissions().catch(() => null);
@@ -1815,6 +1918,69 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  () => [
+    currentOrchestrationId.value,
+    activeRound.value?.id || '',
+    activeRound.value?.finalizedAt || 0,
+    activeRound.value?.index || 0,
+    rounds.value.map((round) => `${round.index}:${round.id}:${round.finalizedAt || 0}:${round.userMessage ? 1 : 0}`).join('|')
+  ].join('|'),
+  () => {
+    const round = activeRound.value;
+    if (!isReady.value || !isActive.value || !isViewingLatestRound.value || !roundIsCompleted(round)) return;
+    const nextIndex = Math.max(1, Number(round?.index || 0)) + 1;
+    if (findPreparedRoundByIndex(nextIndex) || findDirectSuccessorRound(Number(round?.index || 0))) return;
+    void createPreparedRoundAtIndex(nextIndex, '', { select: false }).catch((error: any) => {
+      orchestrationWorkbenchDebug('prepared-round:create-after-finalized:error', {
+        roundId: String(round?.id || ''),
+        nextIndex,
+        message: String(error?.message || '')
+      });
+    });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [
+    currentOrchestrationId.value,
+    activeRound.value?.id || '',
+    isReady.value ? 1 : 0,
+    isActive.value ? 1 : 0,
+    orchestrationRunning.value ? 1 : 0,
+    motherRoundTerminalReady.value ? 1 : 0
+  ].join('|'),
+  (_signature, previousSignature) => {
+    const running = orchestrationRunning.value;
+    const terminal = motherRoundTerminalReady.value || roundIsCompleted(activeRound.value);
+    if (!isReady.value || !isActive.value) {
+      orchestrationRefreshPumpStartedAt = 0;
+      clearOrchestrationRefreshPump();
+      return;
+    }
+    if (running) {
+      if (!orchestrationRefreshPumpStartedAt || !previousSignature) {
+        orchestrationRefreshPumpStartedAt = Date.now();
+      }
+      scheduleOrchestrationRefreshPump({ active: true });
+      return;
+    }
+    if (terminal) {
+      orchestrationRefreshPumpStartedAt = Date.now();
+      scheduleOrchestrationRefreshPump({ active: false });
+      return;
+    }
+    orchestrationRefreshPumpStartedAt = 0;
+    clearOrchestrationRefreshPump();
+  },
+  { immediate: true }
+);
+
+onBeforeUnmount(() => {
+  clearOrchestrationRefreshPump();
+});
 
 </script>
 

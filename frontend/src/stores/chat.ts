@@ -2956,6 +2956,9 @@ const resolveEventType = (eventName, payload) => {
 
 const normalizeStreamEventType = (eventType) => String(eventType || '').trim().toLowerCase();
 
+const resolveNormalizedStreamEventType = (eventName, payload) =>
+  normalizeStreamEventType(resolveEventType(eventName, payload));
+
 const isTerminalStreamEventType = (eventType) => {
   const normalized = normalizeStreamEventType(eventType);
   return (
@@ -6437,7 +6440,7 @@ const startSessionWatcher = (store, sessionId) => {
     markWatchdogEvent();
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
-    const normalizedEventType = normalizeStreamEventType(eventType);
+    const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
     if (normalizedEventType !== 'heartbeat' && normalizedEventType !== 'ping') {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
     }
@@ -11995,7 +11998,7 @@ export const useChatStore = defineStore('chat', {
           markRuntimeSendStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
-          const normalizedEventType = normalizeStreamEventType(eventType);
+          const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
           handleApprovalEvent(
             this,
             normalizedEventType || eventType,
@@ -12402,7 +12405,7 @@ export const useChatStore = defineStore('chat', {
           markRuntimeResumeStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
-          const normalizedEventType = normalizeStreamEventType(eventType);
+          const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
           if (perfEnabled) {
             chatPerf.count('chat_resume_event', 1, { eventType: normalizedEventType || eventType, sessionId });
           }

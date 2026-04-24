@@ -39,9 +39,11 @@ import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 import {
   buildOrchestrationAgentArtifactPath,
+  buildOrchestrationMotherArtifactPath,
   buildOrchestrationRoundDirName,
   buildOrchestrationRoundId,
   buildOrchestrationRoundSituationPath,
+  isOrchestrationMissionRunning,
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
 import {
@@ -154,6 +156,7 @@ const ORCHESTRATION_RUNTIME_VERSION = 6;
 const ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES = 4096;
 const ORCHESTRATION_ARTIFACT_CARD_LIMIT = 6;
 const ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS = 1200;
+const ORCHESTRATION_ARTIFACT_POLL_INTERVAL_MS = 2200;
 
 const normalizeText = normalizeOrchestrationText;
 
@@ -279,6 +282,8 @@ const buildRoundId = buildOrchestrationRoundId;
 const buildRoundDirName = buildOrchestrationRoundDirName;
 
 const buildAgentArtifactPath = buildOrchestrationAgentArtifactPath;
+
+const buildMotherArtifactPath = buildOrchestrationMotherArtifactPath;
 
 const buildRoundSituationPath = buildOrchestrationRoundSituationPath;
 
@@ -658,6 +663,16 @@ export const useOrchestrationRuntimeState = (options: {
       .sort(compareOrchestrationWorkerMembers);
   });
 
+  const motherMember = computed(() => {
+    const currentMotherAgentId = motherAgentId.value;
+    if (!currentMotherAgentId) return null;
+    return (
+      (Array.isArray(options.agents.value) ? options.agents.value : []).find(
+        (item) => normalizeText(item?.agent_id) === currentMotherAgentId
+      ) || null
+    );
+  });
+
   const activeRound = computed(() => {
     const rounds = runtimeState.value?.rounds || [];
     const activeRoundId = normalizeText(runtimeState.value?.activeRoundId);
@@ -837,10 +852,17 @@ export const useOrchestrationRuntimeState = (options: {
   const ensureMotherRoundDir = async (state: PersistedRuntime, round: OrchestrationRound) => {
     const motherId = normalizeText(state.motherAgentId);
     if (!motherId) return;
-    await createWunderWorkspaceDir({
-      agent_id: resolveWorkspaceAgentId(motherId),
-      path: ['orchestration', state.runId, buildRoundDirName(round.index)].filter(Boolean).join('/')
-    }).catch(() => null);
+    const motherWorkspaceAgentId = resolveWorkspaceAgentId(motherId);
+    await Promise.all([
+      createWunderWorkspaceDir({
+        agent_id: motherWorkspaceAgentId,
+        path: ['orchestration', state.runId, buildRoundDirName(round.index)].filter(Boolean).join('/')
+      }),
+      createWunderWorkspaceDir({
+        agent_id: motherWorkspaceAgentId,
+        path: buildMotherArtifactPath(state.runId, round.index)
+      })
+    ]).catch(() => null);
   };
 
   const saveRoundSituationFile = async (
@@ -2352,78 +2374,116 @@ export const useOrchestrationRuntimeState = (options: {
     artifactLoading.value = true;
     artifactError.value = '';
     try {
-      const cards = await Promise.all(
-        visibleWorkers.value.map(async (member) => {
+      const loadArtifactCard = async (options: {
+        agentId: string;
+        agentName: string;
+        containerId: number;
+        path: string;
+      }) => {
+        const agentId = normalizeText(options.agentId);
+        const agentName = normalizeText(options.agentName) || agentId;
+        const containerId = options.containerId;
+        const path = normalizeText(options.path);
+        try {
+          await createWunderWorkspaceDir({
+            agent_id: resolveWorkspaceAgentId(agentId),
+            container_id: containerId,
+            path
+          }).catch(() => null);
+          const response = await listWunderWorkspace({
+            agent_id: resolveWorkspaceAgentId(agentId),
+            container_id: containerId,
+            path
+          });
+          const entries = Array.isArray(response?.data?.entries) ? response.data.entries : [];
+          const trimmedEntries = await Promise.all(
+            entries
+              .map(async (entry: WorkspaceEntryLike) => {
+                const name = normalizeText(entry?.name);
+                const entryPath = normalizeText(entry?.path);
+                const type = normalizeText(entry?.type) === 'dir' ? 'dir' : 'file';
+                if (!name || !entryPath) return null;
+                let preview = '';
+                if (type === 'file' && shouldPreviewFile(name)) {
+                  try {
+                    const content = await fetchWunderWorkspaceContent({
+                      agent_id: resolveWorkspaceAgentId(agentId),
+                      container_id: containerId,
+                      path: entryPath,
+                      include_content: true,
+                      max_bytes: ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES
+                    });
+                    preview = extractPreviewText(content?.data?.content);
+                  } catch {
+                    preview = '';
+                  }
+                }
+                return {
+                  name,
+                  path: entryPath,
+                  type,
+                  size: Number(entry?.size || 0),
+                  updatedTime: String(entry?.updated_time || ''),
+                  updatedAtMs: normalizeMsTime(entry?.updated_time),
+                  preview
+                } satisfies OrchestrationArtifactEntry;
+              })
+              .slice(0, ORCHESTRATION_ARTIFACT_CARD_LIMIT)
+          );
+          return {
+            agentId,
+            agentName,
+            path,
+            entries: trimmedEntries.filter((item): item is OrchestrationArtifactEntry => Boolean(item)),
+            loading: false,
+            error: ''
+          } satisfies OrchestrationArtifactCard;
+        } catch (error) {
+          return {
+            agentId,
+            agentName,
+            path,
+            entries: [],
+            loading: false,
+            error: String((error as { message?: unknown })?.message || '')
+          } satisfies OrchestrationArtifactCard;
+        }
+      };
+      const mother = motherMember.value;
+      const motherCardRequest = mother
+        ? [
+            loadArtifactCard({
+              agentId: normalizeText(mother.agent_id),
+              agentName: normalizeText(mother.name || current.motherAgentId) || current.motherAgentId,
+              containerId: resolveWorkspaceContainerId(mother),
+              path: buildMotherArtifactPath(current.runId, round.index)
+            })
+          ]
+        : [];
+      const cards = await Promise.all([
+        ...motherCardRequest,
+        ...visibleWorkers.value.map(async (member) => {
           const agentId = normalizeText(member?.agent_id);
           const agentName = normalizeText(member?.name) || agentId;
-          const containerId = resolveWorkspaceContainerId(member);
-          const path = buildAgentArtifactPath(current.runId, round.index, agentName, agentId);
           try {
-            await createWunderWorkspaceDir({
-              agent_id: resolveWorkspaceAgentId(agentId),
-              container_id: containerId,
-              path
-            }).catch(() => null);
-            const response = await listWunderWorkspace({
-              agent_id: resolveWorkspaceAgentId(agentId),
-              container_id: containerId,
-              path
-            });
-            const entries = Array.isArray(response?.data?.entries) ? response.data.entries : [];
-            const trimmedEntries = await Promise.all(
-              entries
-                .map(async (entry: WorkspaceEntryLike) => {
-                  const name = normalizeText(entry?.name);
-                  const entryPath = normalizeText(entry?.path);
-                  const type = normalizeText(entry?.type) === 'dir' ? 'dir' : 'file';
-                  if (!name || !entryPath) return null;
-                  let preview = '';
-                  if (type === 'file' && shouldPreviewFile(name)) {
-                    try {
-                      const content = await fetchWunderWorkspaceContent({
-                        agent_id: resolveWorkspaceAgentId(agentId),
-                        container_id: containerId,
-                        path: entryPath,
-                        include_content: true,
-                        max_bytes: ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES
-                      });
-                      preview = extractPreviewText(content?.data?.content);
-                    } catch {
-                      preview = '';
-                    }
-                  }
-                  return {
-                    name,
-                    path: entryPath,
-                    type,
-                    size: Number(entry?.size || 0),
-                    updatedTime: String(entry?.updated_time || ''),
-                    updatedAtMs: normalizeMsTime(entry?.updated_time),
-                    preview
-                  } satisfies OrchestrationArtifactEntry;
-                })
-                .slice(0, ORCHESTRATION_ARTIFACT_CARD_LIMIT)
-            );
-            return {
+            return loadArtifactCard({
               agentId,
               agentName,
-              path,
-              entries: trimmedEntries.filter((item): item is OrchestrationArtifactEntry => Boolean(item)),
-              loading: false,
-              error: ''
-            } satisfies OrchestrationArtifactCard;
+              containerId: resolveWorkspaceContainerId(member),
+              path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId)
+            });
           } catch (error) {
             return {
               agentId,
               agentName,
-              path,
+              path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId),
               entries: [],
               loading: false,
               error: String((error as { message?: unknown })?.message || '')
             } satisfies OrchestrationArtifactCard;
           }
         })
-      );
+      ]);
       artifactCards.value = cards;
     } catch (error) {
       artifactError.value = String((error as { message?: unknown })?.message || '');
@@ -2432,13 +2492,22 @@ export const useOrchestrationRuntimeState = (options: {
     }
   };
 
+  const activeRoundHasRunningMission = () => {
+    const roundMissionIds = activeRound.value?.missionIds || [];
+    if (!roundMissionIds.length) return false;
+    return (Array.isArray(options.missions.value) ? options.missions.value : []).some((mission) => {
+      const missionId = normalizeText(mission?.mission_id || mission?.team_run_id);
+      return Boolean(roundMissionIds.includes(missionId)) && isOrchestrationMissionRunning(mission);
+    });
+  };
+
   const clearArtifactReloadTimer = () => {
     if (artifactReloadTimer === null || typeof window === 'undefined') return;
     window.clearTimeout(artifactReloadTimer);
     artifactReloadTimer = null;
   };
 
-  const scheduleArtifactReload = (delayMs = 240) => {
+  const scheduleArtifactReload = (delayMs = 240, options: { repeat?: boolean } = {}) => {
     if (!runtimeState.value?.runId || !activeRound.value?.id) {
       artifactCards.value = [];
       return;
@@ -2450,7 +2519,16 @@ export const useOrchestrationRuntimeState = (options: {
     clearArtifactReloadTimer();
     artifactReloadTimer = window.setTimeout(() => {
       artifactReloadTimer = null;
-      void reloadArtifacts();
+      void reloadArtifacts().finally(() => {
+        if (
+          options.repeat === true &&
+          runtimeState.value?.runId &&
+          activeRound.value?.id &&
+          activeRoundHasRunningMission()
+        ) {
+          scheduleArtifactReload(ORCHESTRATION_ARTIFACT_POLL_INTERVAL_MS, { repeat: true });
+        }
+      });
     }, Math.max(0, Math.floor(delayMs)));
   };
 
@@ -2599,6 +2677,36 @@ export const useOrchestrationRuntimeState = (options: {
       if (!signature || signature === previousSignature) return;
       scheduleArtifactReload();
     }
+  );
+
+  watch(
+    () =>
+      [
+        runtimeState.value?.runId || '',
+        activeRound.value?.id || '',
+        activeRound.value?.missionIds.join('|') || '',
+        visibleWorkers.value.map((item) => normalizeText(item?.agent_id)).join('|'),
+        (Array.isArray(options.missions.value) ? options.missions.value : [])
+          .map((mission) => {
+            const missionId = normalizeText(mission?.mission_id || mission?.team_run_id);
+            if (!activeRound.value?.missionIds.includes(missionId)) return '';
+            const taskPart = (Array.isArray(mission?.tasks) ? mission.tasks : [])
+              .map((task) => [normalizeText(task?.agent_id), normalizeText(task?.status)].join(':'))
+              .join(',');
+            return `${missionId}:${normalizeText(mission?.status)}:${normalizeText(mission?.completion_status)}:${taskPart}`;
+          })
+          .filter(Boolean)
+          .join('||')
+      ].join('|'),
+    () => {
+      if (!runtimeState.value?.runId || !activeRound.value?.id) return;
+      if (activeRoundHasRunningMission()) {
+        scheduleArtifactReload(ORCHESTRATION_ARTIFACT_POLL_INTERVAL_MS, { repeat: true });
+      } else {
+        scheduleArtifactReload(360);
+      }
+    },
+    { immediate: true }
   );
 
   watch(
