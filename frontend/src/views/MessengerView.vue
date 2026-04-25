@@ -241,17 +241,13 @@
 
     <section class="messenger-chat chat-shell">
       <header
-        v-if="
-          !['swarms', 'orchestrations'].includes(sessionHub.activeSection) &&
-          !(sessionHub.activeSection === 'more' && settingsPanelMode === 'help-manual')
-        "
+        v-if="showMessengerChatHeader"
         class="messenger-chat-header"
       >
         <div class="messenger-chat-heading">
           <div class="messenger-chat-title-row">
             <div class="messenger-chat-title">{{ chatPanelTitle }}</div>
           </div>
-          <div v-if="chatPanelSubtitle" class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
         </div>
         <div class="messenger-chat-header-actions">
           <button
@@ -466,6 +462,7 @@
               :group="selectedBeeroomGroup"
               :agents="beeroomStore.activeAgents"
               :missions="beeroomStore.activeMissions"
+              :active="sessionHub.activeSection === 'swarms'"
               :available-agents="beeroomCandidateAgents"
               :loading="beeroomStore.detailLoading || beeroomStore.loading"
               :refreshing="beeroomStore.refreshing"
@@ -485,6 +482,7 @@
               :group="selectedBeeroomGroup"
               :agents="beeroomStore.activeAgents"
               :missions="beeroomStore.activeMissions"
+              :active="sessionHub.activeSection === 'orchestrations'"
               :loading="beeroomStore.detailLoading || beeroomStore.loading"
               :refreshing="beeroomStore.refreshing"
               :error="beeroomStore.error"
@@ -4040,6 +4038,9 @@ const selectedBeeroomGroup = computed<BeeroomGroup | null>(
 );
 
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
+const showMessengerChatHeader = computed(
+  () => sessionHub.activeSection === 'messages' || sessionHub.activeSection === 'agents'
+);
 const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
 );
@@ -6036,7 +6037,10 @@ function reportMessengerLayoutAnomaly(reason: string): void {
   });
   if (signature === lastMessengerLayoutDebugSignature) return;
   lastMessengerLayoutDebugSignature = signature;
-  console.warn('[messenger-layout-anomaly]', snapshot);
+  if (isChatDebugEnabled()) {
+    chatDebugLog('messenger.layout', 'anomaly', snapshot);
+    console.warn('[messenger-layout-anomaly]', snapshot);
+  }
 }
 
 function detectMessengerLayoutAnomaly(): void {

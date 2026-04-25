@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 
 import vue from '@vitejs/plugin-vue';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoEnvDirCandidate = path.resolve(__dirname, '..');
@@ -15,8 +15,15 @@ const envDir =
     existsSync(path.join(repoEnvDirCandidate, '.env.example')))
     ? repoEnvDirCandidate
     : __dirname);
-const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
 const viteCacheDir = path.resolve(__dirname, '..', 'node_modules', '.vite', 'wunder-frontend');
+
+const parsePort = (value: unknown, fallback: number): number => {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return fallback;
+};
 
 const appVersionConfigCandidates = [
   process.env.WUNDER_APP_VERSION_CONFIG_PATH,
@@ -67,13 +74,6 @@ const loadAppVersion = (): string => {
 
 const appVersion = loadAppVersion();
 
-const makeProxyRule = () => ({
-  target: devProxyTarget,
-  changeOrigin: true,
-  ws: true,
-  secure: false
-});
-
 const normalizePath = (id: string) => id.replace(/\\/g, '/');
 
 const resolveManualChunk = (rawId: string) => {
@@ -110,36 +110,49 @@ const resolveManualChunk = (rawId: string) => {
   return 'vendor-misc';
 };
 
-export default defineConfig({
-  cacheDir: viteCacheDir,
-  envDir,
-  define: {
-    __WUNDER_APP_VERSION__: JSON.stringify(appVersion)
-  },
-  plugins: [vue()],
-  build: {
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          return resolveManualChunk(id);
+export default defineConfig(({ mode }) => {
+  const loadedEnv = loadEnv(mode, envDir, '');
+  const devProxyTarget =
+    loadedEnv.VITE_DEV_PROXY_TARGET || process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
+  const frontendPort = parsePort(loadedEnv.FRONTEND_PORT || process.env.FRONTEND_PORT, 18002);
+  const makeProxyRule = () => ({
+    target: devProxyTarget,
+    changeOrigin: true,
+    ws: true,
+    secure: false
+  });
+
+  return {
+    cacheDir: viteCacheDir,
+    envDir,
+    define: {
+      __WUNDER_APP_VERSION__: JSON.stringify(appVersion)
+    },
+    plugins: [vue()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            return resolveManualChunk(id);
+          }
         }
       }
+    },
+    resolve: {
+      alias: {
+        '@': fileURLToPath(new URL('./src', import.meta.url))
+      }
+    },
+    server: {
+      host: '0.0.0.0',
+      port: frontendPort,
+      proxy: {
+        '/docs': makeProxyRule(),
+        '/third': makeProxyRule(),
+        '/wunder': makeProxyRule(),
+        '/a2a': makeProxyRule(),
+        '/.well-known/agent-card.json': makeProxyRule()
+      }
     }
-  },
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url))
-    }
-  },
-  server: {
-    host: '0.0.0.0',
-    port: 18001,
-    proxy: {
-      '/docs': makeProxyRule(),
-      '/third': makeProxyRule(),
-      '/wunder': makeProxyRule(),
-      '/a2a': makeProxyRule(),
-      '/.well-known/agent-card.json': makeProxyRule()
-    }
-  }
+  };
 });

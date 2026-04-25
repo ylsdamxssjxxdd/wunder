@@ -78,7 +78,7 @@ const formatFallbackUrl = (host, port) => {
 
 const args = parseArgs(process.argv.slice(2));
 const host = args.host || process.env.FRONTEND_HOST || '0.0.0.0';
-const port = parsePort(args.port || process.env.FRONTEND_PORT, 18001);
+const port = parsePort(args.port || process.env.FRONTEND_PORT, 18002);
 const strictPort = args.strictPort || parseBoolean(process.env.FRONTEND_STRICT_PORT, false);
 const proxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
 const forceOptimizeDeps = parseBoolean(process.env.FRONTEND_VITE_FORCE_OPTIMIZE, true);

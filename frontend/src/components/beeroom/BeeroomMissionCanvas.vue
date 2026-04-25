@@ -25,6 +25,7 @@
           :resolve-agent-avatar-image-by-agent-id="resolveAgentAvatarImageByAgentId"
           :resolve-agent-avatar-color-by-agent-id="resolveAgentAvatarColorByAgentId"
           :fullscreen="canvasFullscreen"
+          :reveal-replay-key="revealReplayKey"
           @open-agent="emit('open-agent', $event)"
           @preview-node-output="handleAgentOutputPreview"
           @toggle-fullscreen="toggleCanvasFullscreen"
@@ -102,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue';
+import { computed, onActivated, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue';
 
 import BeeroomAgentOutputPreviewDialog from '@/components/beeroom/BeeroomAgentOutputPreviewDialog.vue';
 import BeeroomCanvasChatPanel from '@/components/beeroom/BeeroomCanvasChatPanel.vue';
@@ -127,6 +128,7 @@ const props = defineProps<{
   agents: BeeroomMember[];
   refreshing?: boolean;
   hideStandbyWhenMissionEmpty?: boolean;
+  active?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -142,6 +144,7 @@ const boardWidth = ref(0);
 const chatWidth = ref(344);
 const isChatResizing = ref(false);
 const motherWorkspaceVisible = ref(false);
+const revealReplayKey = ref(0);
 
 const DEFAULT_CHAT_WIDTH = 344;
 const MIN_CHAT_WIDTH = 308;
@@ -153,6 +156,10 @@ let boardResizeObserver: ResizeObserver | null = null;
 let activeResizePointerId: number | null = null;
 let dragStartClientX = 0;
 let dragStartChatWidth = DEFAULT_CHAT_WIDTH;
+
+const requestCanvasRevealReplay = () => {
+  revealReplayKey.value += 1;
+};
 
 const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
@@ -417,6 +424,7 @@ const openMotherWorkspace = () => {
 };
 
 onMounted(() => {
+  requestCanvasRevealReplay();
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
     window.addEventListener('pointermove', handleChatResizePointerMove);
@@ -434,6 +442,10 @@ onMounted(() => {
     });
     boardResizeObserver.observe(boardRef.value);
   }
+});
+
+onActivated(() => {
+  requestCanvasRevealReplay();
 });
 
 onBeforeUnmount(() => {
@@ -454,6 +466,7 @@ watch(
     const cached = getBeeroomMissionCanvasState(scopeKey);
     chatWidth.value = clampChatWidth(Number(cached?.chatWidth || DEFAULT_CHAT_WIDTH));
     closeAgentOutputPreview();
+    requestCanvasRevealReplay();
   },
   { immediate: true }
 );
@@ -461,8 +474,25 @@ watch(
 watch(hasSwarmNodes, (value) => {
   if (!value) {
     closeAgentOutputPreview();
+    return;
   }
+  requestCanvasRevealReplay();
 });
+
+watch(
+  () =>
+    [
+      props.active ? 'active' : 'inactive',
+      props.group?.group_id || '',
+      props.mission?.mission_id || '',
+      props.mission?.team_run_id || '',
+      props.mission?.updated_time || ''
+    ].join('|'),
+  (value, previousValue) => {
+    if (!value || value === previousValue) return;
+    requestCanvasRevealReplay();
+  }
+);
 
 watch(
   () => boardWidth.value,

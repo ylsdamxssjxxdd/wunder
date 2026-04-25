@@ -226,6 +226,7 @@ import {
   NODE_WIDTH,
   WORLD_PADDING,
   type SwarmProjection,
+  type SwarmProjectionNode,
   type SwarmProjectionArtifactItem,
   type BeeroomSwarmDispatchPreview,
   buildBeeroomSwarmProjection,
@@ -265,6 +266,7 @@ const props = defineProps<{
   externalScopeKey?: string;
   externalHasNodes?: boolean;
   showMinimap?: boolean;
+  revealReplayKey?: string | number;
 }>();
 
 const emit = defineEmits<{
@@ -341,6 +343,8 @@ const knownProjectionNodeIds = new Set<string>();
 const knownProjectionNodeDispatchActivity = new Map<string, boolean>();
 const revealCleanupTimers = new Map<string, number>();
 const revealBaselineReady = ref(false);
+const pendingRevealReplay = ref(false);
+let lastProjectionSignatureForReveal = '';
 
 const scopeKey = computed(() =>
   String(props.externalScopeKey || '').trim() ||
@@ -814,9 +818,70 @@ const buildCanvasProjectionDebugSnapshot = () => {
   };
 };
 
+const buildProjectionRevealSignature = (nodes: SwarmProjectionNode[]) =>
+  nodes
+    .map(
+      (node) =>
+        `${node.id}:${node.status}:${node.parentId}:${node.introFromId}:${node.introOrder}:${node.x}:${node.y}`
+    )
+    .join('|');
+
+const clearRevealCleanupTimers = () => {
+  if (typeof window === 'undefined') return;
+  revealCleanupTimers.forEach((timer) => {
+    window.clearTimeout(timer);
+  });
+  revealCleanupTimers.clear();
+};
+
+const replayProjectionRevealCascade = () => {
+  const currentNodes = projection.value.nodes;
+  if (!currentNodes.length) return;
+  const fallbackRootId = String(projection.value.motherNodeId || currentNodes[0]?.id || '').trim();
+  clearRevealCleanupTimers();
+  const nextRevealState: Record<string, { fromId: string; order: number }> = {};
+  currentNodes.forEach((node, index) => {
+    const fromId =
+      node.role === 'subagent'
+        ? String(node.introFromId || node.parentId || fallbackRootId || node.id).trim()
+        : node.role === 'worker'
+          ? fallbackRootId || node.id
+          : node.id;
+    const order = Math.max(0, index);
+    nextRevealState[node.id] = {
+      fromId,
+      order
+    };
+    if (typeof window !== 'undefined') {
+      const timer = window.setTimeout(() => {
+        revealCleanupTimers.delete(node.id);
+        if (!nodeRevealMap.value[node.id]) return;
+        const next = { ...nodeRevealMap.value };
+        delete next[node.id];
+        nodeRevealMap.value = next;
+      }, 760 + order * 90);
+      revealCleanupTimers.set(node.id, timer);
+    }
+  });
+  nodeRevealMap.value = nextRevealState;
+  knownProjectionNodeIds.clear();
+  knownProjectionNodeDispatchActivity.clear();
+  currentNodes.forEach((node) => {
+    const normalizedStatus = String(node.status || '').trim().toLowerCase();
+    const workerDispatchActive =
+      node.role === 'worker' &&
+      (normalizedStatus === 'queued' || normalizedStatus === 'running' || normalizedStatus === 'awaiting_idle');
+    knownProjectionNodeIds.add(node.id);
+    knownProjectionNodeDispatchActivity.set(node.id, workerDispatchActive);
+  });
+  revealBaselineReady.value = true;
+  lastProjectionSignatureForReveal = buildProjectionRevealSignature(currentNodes);
+};
+
 const syncNodeRevealState = () => {
   const currentNodes = projection.value.nodes;
   const currentIds = new Set(currentNodes.map((node) => node.id));
+  const currentProjectionRevealSignature = buildProjectionRevealSignature(currentNodes);
   if (!revealBaselineReady.value) {
     knownProjectionNodeIds.clear();
     knownProjectionNodeDispatchActivity.clear();
@@ -832,8 +897,12 @@ const syncNodeRevealState = () => {
       nodeRevealMap.value = {};
     }
     revealBaselineReady.value = true;
+    lastProjectionSignatureForReveal = currentProjectionRevealSignature;
     return;
   }
+  const shouldCascadeRevealAll =
+    Boolean(currentNodes.length) &&
+    currentProjectionRevealSignature !== lastProjectionSignatureForReveal;
   const activeDispatchSourceByTarget = new Map<string, string>();
   projection.value.edges.forEach((edge) => {
     if (edge.kind !== 'dispatch' || !edge.active) return;
@@ -873,12 +942,20 @@ const syncNodeRevealState = () => {
     const wasWorkerDispatchActive = knownProjectionNodeDispatchActivity.get(node.id) === true;
     const shouldRevealSubagent = node.role === 'subagent' && Boolean(node.introFromId) && !isKnownNode;
     const shouldRevealWorker = workerDispatchActive && (!isKnownNode || !wasWorkerDispatchActive);
-    if (shouldRevealSubagent || shouldRevealWorker) {
+    const shouldRevealCascade = shouldCascadeRevealAll;
+    if (shouldRevealSubagent || shouldRevealWorker || shouldRevealCascade) {
       const revealSourceId =
-        node.role === 'subagent' ? String(node.introFromId || '').trim() : workerRevealSourceId;
+        node.role === 'subagent'
+          ? String(node.introFromId || '').trim()
+          : workerRevealSourceId || projection.value.motherNodeId || currentNodes[0]?.id || '';
+      const revealOrder = shouldRevealCascade
+        ? Math.max(0, currentNodes.findIndex((item) => item.id === node.id))
+        : node.role === 'subagent'
+          ? Number(node.introOrder || 0)
+          : 0;
       nextRevealState[node.id] = {
         fromId: revealSourceId,
-        order: node.role === 'subagent' ? Number(node.introOrder || 0) : 0
+        order: revealOrder
       };
       if (typeof window !== 'undefined') {
         const existingTimer = revealCleanupTimers.get(node.id);
@@ -886,9 +963,7 @@ const syncNodeRevealState = () => {
           window.clearTimeout(existingTimer);
         }
         const revealDuration =
-          node.role === 'subagent'
-            ? 900 + Math.max(0, Number(node.introOrder || 0)) * 70
-            : 760;
+          760 + Math.max(0, revealOrder) * 90;
         const timer = window.setTimeout(() => {
           revealCleanupTimers.delete(node.id);
           if (!nodeRevealMap.value[node.id]) return;
@@ -907,6 +982,7 @@ const syncNodeRevealState = () => {
   if (changed) {
     nodeRevealMap.value = nextRevealState;
   }
+  lastProjectionSignatureForReveal = currentProjectionRevealSignature;
 };
 
 const freezeCurrentProjectionAsRevealBaseline = () => {
@@ -920,16 +996,12 @@ const freezeCurrentProjectionAsRevealBaseline = () => {
     knownProjectionNodeIds.add(node.id);
     knownProjectionNodeDispatchActivity.set(node.id, workerDispatchActive);
   });
-  revealCleanupTimers.forEach((timer) => {
-    if (typeof window !== 'undefined') {
-      window.clearTimeout(timer);
-    }
-  });
-  revealCleanupTimers.clear();
+  clearRevealCleanupTimers();
   if (Object.keys(nodeRevealMap.value).length > 0) {
     nodeRevealMap.value = {};
   }
   revealBaselineReady.value = true;
+  lastProjectionSignatureForReveal = buildProjectionRevealSignature(projection.value.nodes);
 };
 
 const clearViewportSaveTimer = () => {
@@ -1292,6 +1364,7 @@ watch(
     knownProjectionNodeDispatchActivity.clear();
     nodeRevealMap.value = {};
     revealBaselineReady.value = false;
+    lastProjectionSignatureForReveal = '';
     hydrateCanvasState();
   },
   { immediate: true }
@@ -1307,13 +1380,32 @@ watch(
 );
 
 watch(
+  () => props.revealReplayKey,
+  async (value, previousValue) => {
+    if (value === previousValue) return;
+    await nextTick();
+    if (!projection.value.nodes.length) {
+      pendingRevealReplay.value = true;
+      return;
+    }
+    pendingRevealReplay.value = false;
+    replayProjectionRevealCascade();
+  }
+);
+
+watch(
   projectionSignature,
   async () => {
     logCanvasProjection('projection-change', buildCanvasProjectionDebugSnapshot());
-    syncNodeRevealState();
     if (!projection.value.nodes.length) {
       selectedNodeId.value = '';
       return;
+    }
+    if (pendingRevealReplay.value) {
+      pendingRevealReplay.value = false;
+      replayProjectionRevealCascade();
+    } else {
+      syncNodeRevealState();
     }
     if (!selectedNodeId.value || !projection.value.nodeMetaMap.has(selectedNodeId.value)) {
       selectedNodeId.value = projection.value.motherNodeId || projection.value.nodes[0]?.id || '';
@@ -1367,14 +1459,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', handleWindowResize);
   releaseInteractionListeners?.();
   clearInteractions();
-  revealCleanupTimers.forEach((timer) => {
-    window.clearTimeout(timer);
-  });
-  revealCleanupTimers.clear();
+  clearRevealCleanupTimers();
   knownProjectionNodeIds.clear();
   knownProjectionNodeDispatchActivity.clear();
   nodeRevealMap.value = {};
   revealBaselineReady.value = false;
+  lastProjectionSignatureForReveal = '';
 });
 </script>
 

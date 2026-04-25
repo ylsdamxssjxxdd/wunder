@@ -3,6 +3,9 @@
     <div class="workspace-header">
       <div class="workspace-title-row">
         <div class="workspace-title-group">
+          <span class="workspace-title-icon" aria-hidden="true">
+            <i class="fa-solid fa-box-archive"></i>
+          </span>
           <div class="workspace-title">{{ panelTitle }}</div>
           <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
         </div>
@@ -28,6 +31,16 @@
             <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
           </button>
         </div>
+      </div>
+      <div class="workspace-search workspace-search--header">
+        <i class="fa-solid fa-magnifying-glass workspace-search-icon" aria-hidden="true"></i>
+        <input
+          v-model="searchKeyword"
+          type="text"
+          :placeholder="t('workspace.search.placeholder')"
+          @input="handleSearchInput"
+          @keydown="handleSearchKeydown"
+        />
       </div>
     </div>
 
@@ -137,20 +150,6 @@
           :style="{ height: `${workspacePaddingBottom}px` }"
         ></div>
       </template>
-    </div>
-
-    <div class="workspace-toolbar workspace-toolbar-bottom">
-      <div class="workspace-search">
-        <i class="fa-solid fa-magnifying-glass workspace-search-icon" aria-hidden="true"></i>
-        <input
-          v-model="searchKeyword"
-          type="text"
-          :placeholder="t('workspace.search.placeholder')"
-          @input="handleSearchInput"
-          @keydown="handleSearchKeydown"
-        />
-      </div>
-      <div class="workspace-selection-meta muted">{{ selectionMeta }}</div>
     </div>
 
     <input ref="uploadInputRef" type="file" multiple style="display: none" @change="handleUploadInput" />
@@ -529,10 +528,6 @@ const draggingOver = computed(() => state.draggingOver);
 const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
 const contextMenu = computed(() => state.contextMenu);
-const selectedCount = computed(() => state.selectedPaths.size);
-const selectionMeta = computed(() =>
-  selectedCount.value ? t('workspace.selection', { count: selectedCount.value }) : ''
-);
 const emptyText = computed(() => {
   if (state.searchMode) return t('workspace.empty.search');
   if (props.emptyText) return props.emptyText;

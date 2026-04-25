@@ -196,15 +196,17 @@ services:
     volumes:
       - ./:/workspace
       - ./node_modules-linux-arm:/workspace/node_modules
-    ports:
-      - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
+    # Default build-only mode: keep the dev frontend internal and let nginx expose the static site.
+    # To debug the Vite frontend directly, uncomment the mapping below.
+    # ports:
+    #   - "${FRONTEND_PORT:-18002}:${FRONTEND_PORT:-18002}"
     environment:
       - TZ=Asia/Shanghai
       - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-1}
       - VITE_API_BASE=${VITE_API_BASE:-/wunder}
       - VITE_DEV_PROXY_TARGET=${VITE_DEV_PROXY_TARGET:-http://wunder-server:18000}
       - FRONTEND_UMASK=${FRONTEND_UMASK:-022}
-      - FRONTEND_PORT=${FRONTEND_PORT:-18001}
+      - FRONTEND_PORT=${FRONTEND_PORT:-18002}
       - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
       - FRONTEND_STRICT_PORT=${FRONTEND_STRICT_PORT:-1}
       - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
@@ -243,7 +245,7 @@ services:
       - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro${NGINX_BIND_OPTS:-}
       - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
     ports:
-      - "${NGINX_PORT:-18002}:80"
+      - "${NGINX_PORT:-18001}:80"
 
 
 

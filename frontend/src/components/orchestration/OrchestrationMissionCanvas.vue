@@ -29,6 +29,7 @@
               :external-projection="canvasProjection"
               :external-has-nodes="isReady"
               :show-minimap="false"
+              :reveal-replay-key="revealReplayKey"
               @open-agent="emit('open-agent', $event)"
               @preview-node-output="handleAgentOutputPreview"
               @preview-artifact="handleArtifactFilePreview"
@@ -410,7 +411,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { fetchWunderWorkspaceContent } from '@/api/workspace';
 import BeeroomAgentOutputPreviewDialog from '@/components/beeroom/BeeroomAgentOutputPreviewDialog.vue';
@@ -463,6 +464,7 @@ const props = defineProps<{
   motherName: string;
   motherSessionId: string;
   runId: string;
+  active?: boolean;
   dispatchPreview: BeeroomSwarmDispatchPreview | null;
   composerText: string;
   composerSending: boolean;
@@ -519,6 +521,7 @@ const timelineCollapsed = ref(false);
 const timelineHeight = ref(0);
 const isTimelineResizing = ref(false);
 const layoutMode = ref<'horizontal' | 'vertical'>('horizontal');
+const revealReplayKey = ref(0);
 const roundContextMenu = ref<{
   visible: boolean;
   x: number;
@@ -564,6 +567,10 @@ let dragStartClientX = 0;
 let dragStartChatWidth = DEFAULT_CHAT_WIDTH;
 let dragStartClientY = 0;
 let dragStartTimelineHeight = DEFAULT_TIMELINE_HEIGHT;
+
+const requestCanvasRevealReplay = () => {
+  revealReplayKey.value += 1;
+};
 
 const canvasScopeKey = computed(() =>
   buildOrchestrationCanvasScopeKey(
@@ -1166,6 +1173,7 @@ const handleArtifactFilePreview = async (payload: {
 };
 
 onMounted(() => {
+  requestCanvasRevealReplay();
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
     window.addEventListener('pointermove', handleChatResizePointerMove);
@@ -1188,6 +1196,10 @@ onMounted(() => {
     });
     boardResizeObserver.observe(boardRef.value);
   }
+});
+
+onActivated(() => {
+  requestCanvasRevealReplay();
 });
 
 onBeforeUnmount(() => {
@@ -1229,6 +1241,23 @@ watch(
   () => props.currentOrchestrationId,
   () => {
     closeRoundContextMenu();
+    requestCanvasRevealReplay();
+  }
+);
+
+watch(
+  () => props.activeRound?.id || '',
+  (roundId, previousRoundId) => {
+    if (!roundId || roundId === previousRoundId) return;
+    requestCanvasRevealReplay();
+  }
+);
+
+watch(
+  () => props.active,
+  (active, previousActive) => {
+    if (active !== true || previousActive === true) return;
+    requestCanvasRevealReplay();
   }
 );
 

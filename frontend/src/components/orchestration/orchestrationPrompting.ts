@@ -6,7 +6,7 @@ import {
   buildOrchestrationRoundSituationPath,
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
-import { buildWorkspacePublicPath } from '@/utils/messageWorkspacePath';
+import { buildWorkspaceScopeId } from '@/utils/messageWorkspacePath';
 
 export type OrchestrationPromptTemplates = {
   mother_runtime: string;
@@ -25,6 +25,23 @@ const buildRoundPromptDirectory = (runId: string, roundIndex: number) =>
     .filter(Boolean)
     .join('/');
 
+const normalizePromptRelativePath = (value: unknown): string =>
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+
+const buildWorkspacePromptPath = (
+  currentUserId: string,
+  relativePath: string,
+  containerId = 1
+): string => {
+  const scopeId = buildWorkspaceScopeId(currentUserId, containerId);
+  const normalized = normalizePromptRelativePath(relativePath);
+  if (!scopeId || !normalized) return normalized;
+  return `/workspaces/${scopeId}/${normalized}`;
+};
+
 const buildMotherPromptArtifactPath = (
   runId: string,
   roundIndex: number,
@@ -32,7 +49,7 @@ const buildMotherPromptArtifactPath = (
   containerId = 1
 ) => {
   const relativePath = buildOrchestrationMotherArtifactPath(runId, roundIndex);
-  return buildWorkspacePublicPath(currentUserId, relativePath, containerId) || relativePath;
+  return buildWorkspacePromptPath(currentUserId, relativePath, containerId) || relativePath;
 };
 
 const resolveWorkerContainerId = (worker: BeeroomMember) => {
@@ -49,7 +66,7 @@ const buildPromptArtifactPath = (
   containerId = 1
 ) => {
   const relativePath = buildOrchestrationAgentArtifactPath(runId, roundIndex, workerName, fallbackAgentId);
-  return buildWorkspacePublicPath(currentUserId, relativePath, containerId) || relativePath;
+  return buildWorkspacePromptPath(currentUserId, relativePath, containerId) || relativePath;
 };
 
 const resolveMotherName = (group: BeeroomGroup | null, motherAgentId: string, agents: BeeroomMember[]) => {

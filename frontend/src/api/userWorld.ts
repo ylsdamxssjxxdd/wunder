@@ -61,6 +61,8 @@ const isLikelyInternalServiceHost = (hostname: string): boolean => {
   return true;
 };
 
+const shouldUseDevProxyWsBase = (): boolean => import.meta.env.DEV;
+
 const resolveWsBase = (): string => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
   const trimmed = base.replace(/\/$/, '');
@@ -74,7 +76,8 @@ const resolveWsBase = (): string => {
       const parsedHostWithPort = parsed.host.toLowerCase();
       const currentHostWithPort = window.location.host.toLowerCase();
       if (parsedHostWithPort !== currentHostWithPort && isLikelyInternalServiceHost(parsedHost)) {
-        if (import.meta.env.DEV && window.location.port === '18001') {
+        // Any Vite dev port should proxy same-origin WS requests back through the dev server.
+        if (shouldUseDevProxyWsBase()) {
           return resolveDevProxyWsBase(parsed.pathname || '/wunder');
         }
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -86,7 +89,7 @@ const resolveWsBase = (): string => {
     }
   }
   if (trimmed.startsWith('/')) {
-    if (import.meta.env.DEV && window.location.port === '18001') {
+    if (shouldUseDevProxyWsBase()) {
       return resolveDevProxyWsBase(trimmed);
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

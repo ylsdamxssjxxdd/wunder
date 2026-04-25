@@ -5,7 +5,6 @@
       'messenger-right-dock--collapsed': collapsed,
       'messenger-right-dock--edge-active': edgeActive
     }"
-    @pointerdown.right.stop="swallowRightDockRightPointer"
   >
     <div class="messenger-right-dock-toggle-hitbox" aria-hidden="true"></div>
     <button
@@ -19,14 +18,6 @@
     </button>
     <div v-if="!collapsed" class="messenger-right-content messenger-right-content--stack">
       <div class="messenger-right-panel messenger-right-panel--sandbox">
-        <div
-          class="messenger-right-section-title"
-          @contextmenu.prevent.stop="openSandboxContainerMenu($event)"
-          @mousedown.right.prevent.stop="openSandboxContainerMenu($event)"
-        >
-          <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
-          <span>{{ t('messenger.right.sandbox') }}</span>
-        </div>
         <div v-if="showAgentPanels" class="messenger-workspace-scope chat-shell">
           <WorkspacePanel ref="workspacePanelRef" :agent-id="agentIdForApi" :container-id="containerId" />
         </div>
@@ -53,13 +44,13 @@
         <div v-else-if="!enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
           {{ t('chat.ability.emptySkills') }}
         </div>
-        <div v-else class="messenger-skill-groups">
+        <div v-else class="messenger-skill-groups" @wheel.capture="handleSkillGroupsWheel">
           <div class="messenger-skill-list">
             <el-tooltip
               v-for="item in enabledSkills"
               :key="`enabled-${item.name}`"
               placement="left-start"
-              :show-after="100"
+              :disabled="true"
               popper-class="ability-card-popper"
             >
               <template #content>
@@ -103,7 +94,7 @@
               v-for="item in disabledSkills"
               :key="`disabled-${item.name}`"
               placement="left-start"
-              :show-after="100"
+              :disabled="true"
               popper-class="ability-card-popper"
             >
               <template #content>
@@ -148,36 +139,16 @@
     </div>
   </aside>
 
-  <Teleport to="body">
-    <div
-      v-if="sandboxContextMenu.visible"
-      ref="sandboxMenuRef"
-      class="messenger-files-context-menu"
-      :style="sandboxContextMenuStyle"
-      @contextmenu.prevent
-    >
-      <button class="messenger-files-menu-btn" type="button" @click="handleSandboxMenuOpenContainer">
-        {{ t('messenger.files.menu.open') }}
-      </button>
-      <button class="messenger-files-menu-btn" type="button" @click="handleSandboxMenuCopyId">
-        {{ t('messenger.files.menu.copyId') }}
-      </button>
-      <button class="messenger-files-menu-btn" type="button" @click="handleSandboxMenuOpenSettings">
-        {{ t('messenger.files.menu.settings') }}
-      </button>
-    </div>
-  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
 import { useI18n } from '@/i18n';
-import { copyText } from '@/utils/clipboard';
 
 type SkillItem = {
   name: string;
@@ -210,27 +181,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const sandboxMenuRef = ref<HTMLElement | null>(null);
 const workspacePanelRef = ref<WorkspacePanelViewRef | null>(null);
 const skillDropDepth = ref(0);
 const skillDropActive = ref(false);
-const sandboxContextMenu = ref({
-  visible: false,
-  x: 0,
-  y: 0
-});
-const sandboxContextMenuStyle = computed(() => ({
-  left: `${sandboxContextMenu.value.x}px`,
-  top: `${sandboxContextMenu.value.y}px`
-}));
-
-const closeSandboxContextMenu = () => {
-  sandboxContextMenu.value.visible = false;
-};
-
-const swallowRightDockRightPointer = () => {
-  // Stop bubbling right-click pointer events so overlay auto-hide logic does not collapse the dock.
-};
 
 const isSkillArchiveFilename = (name: string): boolean => {
   const lower = String(name || '').trim().toLowerCase();
@@ -287,87 +240,23 @@ const handleSkillDrop = (event: DragEvent) => {
   emitSkillArchive(file);
 };
 
-const openSandboxContainerMenu = async (event: MouseEvent) => {
-  const target = event.target as HTMLElement | null;
-  if (target?.closest('.workspace-context-menu, .workspace-dialog')) {
-    return;
+const handleSkillGroupsWheel = (event: WheelEvent) => {
+  const container = event.currentTarget as HTMLElement | null;
+  if (!container) return;
+  const deltaY = Number(event.deltaY || 0);
+  if (!Number.isFinite(deltaY) || deltaY === 0) return;
+  if (event.cancelable) {
+    event.preventDefault();
   }
-  const targetRect = target?.getBoundingClientRect();
-  const initialX =
-    Number.isFinite(event.clientX) && event.clientX > 0
-      ? event.clientX
-      : Math.round((targetRect?.left || 0) + (targetRect?.width || 0) / 2);
-  const initialY =
-    Number.isFinite(event.clientY) && event.clientY > 0
-      ? event.clientY
-      : Math.round((targetRect?.top || 0) + (targetRect?.height || 0) / 2);
-  sandboxContextMenu.value.visible = true;
-  sandboxContextMenu.value.x = initialX;
-  sandboxContextMenu.value.y = initialY;
-  await nextTick();
-  const menuRect = sandboxMenuRef.value?.getBoundingClientRect();
-  if (!menuRect) return;
-  const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
-  const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
-  sandboxContextMenu.value.x = Math.min(Math.max(8, sandboxContextMenu.value.x), maxLeft);
-  sandboxContextMenu.value.y = Math.min(Math.max(8, sandboxContextMenu.value.y), maxTop);
+  event.stopPropagation();
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  const nextScrollTop = container.scrollTop + deltaY;
+  container.scrollTop = Math.min(maxScrollTop, Math.max(0, nextScrollTop));
 };
-
-const normalizeContainerId = (value: unknown): number => {
-  const parsed = Number.parseInt(String(value ?? 1), 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.min(10, Math.max(1, parsed));
-};
-
-const handleSandboxMenuOpenContainer = () => {
-  const targetId = normalizeContainerId(props.containerId);
-  closeSandboxContextMenu();
-  emit('open-container', targetId);
-};
-
-const handleSandboxMenuCopyId = async () => {
-  const targetId = normalizeContainerId(props.containerId);
-  closeSandboxContextMenu();
-  const copied = await copyText(String(targetId));
-  if (copied) {
-    ElMessage.success(t('messenger.files.copyIdSuccess', { id: targetId }));
-  } else {
-    ElMessage.warning(t('messenger.files.copyIdFailed'));
-  }
-};
-
-const handleSandboxMenuOpenSettings = () => {
-  const targetId = normalizeContainerId(props.containerId);
-  closeSandboxContextMenu();
-  emit('open-container-settings', targetId);
-};
-
-const closeSandboxMenuWhenOutside = (event: Event) => {
-  if (!sandboxContextMenu.value.visible) {
-    return;
-  }
-  const target = event.target as Node | null;
-  if (!target || !sandboxMenuRef.value?.contains(target)) {
-    closeSandboxContextMenu();
-  }
-};
-
-onMounted(() => {
-  window.addEventListener('pointerdown', closeSandboxMenuWhenOutside);
-  window.addEventListener('resize', closeSandboxContextMenu);
-  document.addEventListener('scroll', closeSandboxContextMenu, true);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener('pointerdown', closeSandboxMenuWhenOutside);
-  window.removeEventListener('resize', closeSandboxContextMenu);
-  document.removeEventListener('scroll', closeSandboxContextMenu, true);
-});
 
 watch(
   () => props.collapsed,
   () => {
-    closeSandboxContextMenu();
     skillDropDepth.value = 0;
     skillDropActive.value = false;
   }

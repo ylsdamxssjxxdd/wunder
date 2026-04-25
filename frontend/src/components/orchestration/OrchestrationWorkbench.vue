@@ -10,6 +10,7 @@
         class="orchestration-shell"
         :group="group"
         :agents="agents"
+        :active="active"
         :rounds="rounds"
         :active-round="activeRound"
         :active-round-missions="activeRoundMissions"
@@ -311,6 +312,7 @@ const props = defineProps<{
   loading: boolean;
   refreshing: boolean;
   error: string;
+  active?: boolean;
 }>();
 
 const emit = defineEmits<{

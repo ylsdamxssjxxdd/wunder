@@ -13,6 +13,7 @@
             :group="group"
             :mission="selectedMission"
             :agents="agents"
+            :active="active"
             :refreshing="refreshing"
             @refresh="emit('refresh')"
             @open-agent="emit('open-agent', $event)"
@@ -86,6 +87,7 @@ const props = defineProps<{
   loading: boolean;
   refreshing: boolean;
   error: string;
+  active?: boolean;
 }>();
 
 const emit = defineEmits<{

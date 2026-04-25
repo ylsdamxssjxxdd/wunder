@@ -93,10 +93,6 @@
         :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length && !hasArtifactPanel }]"
       >
         <div v-if="hasArtifactPanel" class="beeroom-node-artifact-container is-embedded" @wheel.stop>
-          <div class="beeroom-node-artifact-topbar">
-            <span class="beeroom-node-artifact-title">{{ resolvedArtifactTitle }}</span>
-            <span class="beeroom-node-artifact-count">{{ artifactCountLabel }}</span>
-          </div>
           <div class="beeroom-node-artifact-scroll">
             <div class="beeroom-node-artifact-grid" :class="`is-${artifactDisplayMode}`">
               <button
@@ -905,7 +901,7 @@ onBeforeUnmount(() => {
 
 .beeroom-node-artifact-container.is-embedded {
   padding: 0;
-  gap: 8px;
+  gap: 0;
 }
 
 .beeroom-node-workflow .beeroom-node-artifact-scroll {
@@ -1128,27 +1124,55 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-node-card.is-revealing {
-  animation: beeroom-subagent-bloom 640ms cubic-bezier(0.18, 0.9, 0.25, 1) both;
+  animation: beeroom-subagent-bloom 760ms cubic-bezier(0.2, 0.9, 0.22, 1.08) both;
   animation-delay: var(--node-intro-delay, 0ms);
+  transform-origin: center center;
+  will-change: transform, opacity, box-shadow;
 }
 
 @keyframes beeroom-subagent-bloom {
   0% {
     opacity: 0;
     transform: translate(
-        calc(var(--node-intro-x, 0px) * -0.26),
-        calc(var(--node-intro-y, 0px) * -0.26)
+        calc(var(--node-intro-x, 0px) * -0.18),
+        calc(var(--node-intro-y, 0px) * -0.18)
       )
-      scale(0.72);
+      scale(0.38);
+    box-shadow:
+      0 0 0 rgba(2, 6, 23, 0),
+      0 0 0 rgba(var(--node-accent-rgb), 0);
   }
 
-  70% {
+  42% {
     opacity: 1;
+    transform: translate(
+        calc(var(--node-intro-x, 0px) * 0.04),
+        calc(var(--node-intro-y, 0px) * 0.04)
+      )
+      scale(1.16);
+    box-shadow:
+      0 18px 36px rgba(2, 6, 23, 0.22),
+      0 0 32px rgba(var(--node-accent-rgb), 0.22);
+  }
+
+  66% {
+    opacity: 1;
+    transform: translate(
+        calc(var(--node-intro-x, 0px) * -0.015),
+        calc(var(--node-intro-y, 0px) * -0.015)
+      )
+      scale(0.94);
+    box-shadow:
+      0 12px 24px rgba(2, 6, 23, 0.18),
+      0 0 20px rgba(var(--node-accent-rgb), 0.14);
   }
 
   100% {
     opacity: 1;
     transform: translate(0, 0) scale(1);
+    box-shadow:
+      0 10px 22px rgba(2, 6, 23, 0.18),
+      inset 0 1px 0 rgba(var(--node-accent-rgb), 0.06);
   }
 }
 
