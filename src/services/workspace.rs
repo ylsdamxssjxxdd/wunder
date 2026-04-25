@@ -677,6 +677,16 @@ impl WorkspaceManager {
     pub fn resolve_path(&self, user_id: &str, path: &str) -> Result<PathBuf> {
         let trimmed = path.trim();
         let user_root = self.user_root(user_id);
+        let public_like = trimmed.replace('\\', "/");
+        if let Some(public_relative) = public_like.strip_prefix("workspaces/") {
+            let public_target = PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(public_relative);
+            if let Some(mapped) = self.map_public_path(user_id, &public_target) {
+                if is_within_root(&user_root, &mapped) {
+                    return Ok(mapped);
+                }
+            }
+            return Err(anyhow!("路径越界"));
+        }
         let target_path = Path::new(trimmed);
         if target_path.is_absolute() {
             if is_within_root(&user_root, target_path) {
@@ -2244,6 +2254,45 @@ mod tests {
             effective_temp_cleanup_idle_ttl_s(false),
             TEMP_FILES_IDLE_TTL_S
         );
+    }
+
+    #[test]
+    fn resolve_path_maps_public_workspace_path_without_leading_slash() {
+        let (workspace, _dir) = build_workspace_manager();
+        let resolved = workspace
+            .resolve_path(
+                "alice__c__1",
+                "workspaces/alice__c__1/orchestration/demo/round_01/worker/report.md",
+            )
+            .expect("resolve public-like path");
+
+        assert_eq!(
+            resolved,
+            workspace
+                .workspace_root("alice__c__1")
+                .join("orchestration")
+                .join("demo")
+                .join("round_01")
+                .join("worker")
+                .join("report.md")
+        );
+        assert!(!resolved
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains("workspaces/alice__c__1/workspaces/alice__c__1"));
+    }
+
+    #[test]
+    fn resolve_path_rejects_public_workspace_path_for_another_scope() {
+        let (workspace, _dir) = build_workspace_manager();
+        let error = workspace
+            .resolve_path(
+                "alice__c__1",
+                "workspaces/bob__c__1/orchestration/demo/round_01/worker/report.md",
+            )
+            .expect_err("reject cross-scope public-like path");
+
+        assert!(error.to_string().contains("路径越界"));
     }
 
     #[test]

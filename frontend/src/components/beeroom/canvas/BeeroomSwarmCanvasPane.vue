@@ -344,7 +344,6 @@ const knownProjectionNodeDispatchActivity = new Map<string, boolean>();
 const revealCleanupTimers = new Map<string, number>();
 const revealBaselineReady = ref(false);
 const pendingRevealReplay = ref(false);
-let lastProjectionSignatureForReveal = '';
 
 const scopeKey = computed(() =>
   String(props.externalScopeKey || '').trim() ||
@@ -818,14 +817,6 @@ const buildCanvasProjectionDebugSnapshot = () => {
   };
 };
 
-const buildProjectionRevealSignature = (nodes: SwarmProjectionNode[]) =>
-  nodes
-    .map(
-      (node) =>
-        `${node.id}:${node.status}:${node.parentId}:${node.introFromId}:${node.introOrder}:${node.x}:${node.y}`
-    )
-    .join('|');
-
 const clearRevealCleanupTimers = () => {
   if (typeof window === 'undefined') return;
   revealCleanupTimers.forEach((timer) => {
@@ -875,13 +866,11 @@ const replayProjectionRevealCascade = () => {
     knownProjectionNodeDispatchActivity.set(node.id, workerDispatchActive);
   });
   revealBaselineReady.value = true;
-  lastProjectionSignatureForReveal = buildProjectionRevealSignature(currentNodes);
 };
 
 const syncNodeRevealState = () => {
   const currentNodes = projection.value.nodes;
   const currentIds = new Set(currentNodes.map((node) => node.id));
-  const currentProjectionRevealSignature = buildProjectionRevealSignature(currentNodes);
   if (!revealBaselineReady.value) {
     knownProjectionNodeIds.clear();
     knownProjectionNodeDispatchActivity.clear();
@@ -897,12 +886,8 @@ const syncNodeRevealState = () => {
       nodeRevealMap.value = {};
     }
     revealBaselineReady.value = true;
-    lastProjectionSignatureForReveal = currentProjectionRevealSignature;
     return;
   }
-  const shouldCascadeRevealAll =
-    Boolean(currentNodes.length) &&
-    currentProjectionRevealSignature !== lastProjectionSignatureForReveal;
   const activeDispatchSourceByTarget = new Map<string, string>();
   projection.value.edges.forEach((edge) => {
     if (edge.kind !== 'dispatch' || !edge.active) return;
@@ -942,17 +927,12 @@ const syncNodeRevealState = () => {
     const wasWorkerDispatchActive = knownProjectionNodeDispatchActivity.get(node.id) === true;
     const shouldRevealSubagent = node.role === 'subagent' && Boolean(node.introFromId) && !isKnownNode;
     const shouldRevealWorker = workerDispatchActive && (!isKnownNode || !wasWorkerDispatchActive);
-    const shouldRevealCascade = shouldCascadeRevealAll;
-    if (shouldRevealSubagent || shouldRevealWorker || shouldRevealCascade) {
+    if (shouldRevealSubagent || shouldRevealWorker) {
       const revealSourceId =
         node.role === 'subagent'
           ? String(node.introFromId || '').trim()
           : workerRevealSourceId || projection.value.motherNodeId || currentNodes[0]?.id || '';
-      const revealOrder = shouldRevealCascade
-        ? Math.max(0, currentNodes.findIndex((item) => item.id === node.id))
-        : node.role === 'subagent'
-          ? Number(node.introOrder || 0)
-          : 0;
+      const revealOrder = node.role === 'subagent' ? Number(node.introOrder || 0) : 0;
       nextRevealState[node.id] = {
         fromId: revealSourceId,
         order: revealOrder
@@ -982,7 +962,6 @@ const syncNodeRevealState = () => {
   if (changed) {
     nodeRevealMap.value = nextRevealState;
   }
-  lastProjectionSignatureForReveal = currentProjectionRevealSignature;
 };
 
 const freezeCurrentProjectionAsRevealBaseline = () => {
@@ -1001,7 +980,6 @@ const freezeCurrentProjectionAsRevealBaseline = () => {
     nodeRevealMap.value = {};
   }
   revealBaselineReady.value = true;
-  lastProjectionSignatureForReveal = buildProjectionRevealSignature(projection.value.nodes);
 };
 
 const clearViewportSaveTimer = () => {
@@ -1364,7 +1342,6 @@ watch(
     knownProjectionNodeDispatchActivity.clear();
     nodeRevealMap.value = {};
     revealBaselineReady.value = false;
-    lastProjectionSignatureForReveal = '';
     hydrateCanvasState();
   },
   { immediate: true }
@@ -1464,7 +1441,6 @@ onBeforeUnmount(() => {
   knownProjectionNodeDispatchActivity.clear();
   nodeRevealMap.value = {};
   revealBaselineReady.value = false;
-  lastProjectionSignatureForReveal = '';
 });
 </script>
 

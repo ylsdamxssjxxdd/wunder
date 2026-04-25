@@ -406,6 +406,7 @@
       :content="artifactPreviewContent"
       :loading="artifactPreviewLoading"
       :error="artifactPreviewError"
+      @download="handleArtifactPreviewDownload"
     />
   </section>
 </template>
@@ -413,7 +414,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { fetchWunderWorkspaceContent } from '@/api/workspace';
+import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent } from '@/api/workspace';
 import BeeroomAgentOutputPreviewDialog from '@/components/beeroom/BeeroomAgentOutputPreviewDialog.vue';
 import BeeroomCanvasChatPanel from '@/components/beeroom/BeeroomCanvasChatPanel.vue';
 import {
@@ -550,6 +551,8 @@ const artifactPreviewError = ref('');
 const artifactPreviewTitle = ref('');
 const artifactPreviewPath = ref('');
 const artifactPreviewContent = ref('');
+const artifactPreviewAgentId = ref('');
+const artifactPreviewContainerId = ref(1);
 
 const DEFAULT_CHAT_WIDTH = 352;
 const MIN_CHAT_WIDTH = 316;
@@ -1149,6 +1152,8 @@ const handleArtifactFilePreview = async (payload: {
   artifactPreviewError.value = '';
   artifactPreviewLoading.value = true;
   artifactPreviewVisible.value = true;
+  artifactPreviewAgentId.value = agentId;
+  artifactPreviewContainerId.value = containerId;
 
   try {
     const response = await fetchWunderWorkspaceContent({
@@ -1169,6 +1174,38 @@ const handleArtifactFilePreview = async (payload: {
     ).trim();
   } finally {
     artifactPreviewLoading.value = false;
+  }
+};
+
+const saveBlobAsFile = (blob: Blob, filename: string) => {
+  if (typeof window === 'undefined') return;
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+};
+
+const handleArtifactPreviewDownload = async () => {
+  const agentId = String(artifactPreviewAgentId.value || '').trim();
+  const path = String(artifactPreviewPath.value || '').trim();
+  const containerId = Number(artifactPreviewContainerId.value || 1);
+  if (!agentId || !path) return;
+  try {
+    const response = await downloadWunderWorkspaceFile({
+      agent_id: agentId,
+      container_id: containerId,
+      path
+    });
+    const fallbackName = path.split('/').pop() || path.split('\\').pop() || 'download';
+    saveBlobAsFile(response.data as Blob, fallbackName);
+  } catch (error: any) {
+    artifactPreviewError.value = String(
+      error?.response?.data?.detail || error?.message || t('workspace.preview.loadFailedHint')
+    ).trim();
   }
 };
 

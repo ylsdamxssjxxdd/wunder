@@ -337,27 +337,6 @@ pub fn agent_artifact_path(
     .join("/")
 }
 
-pub fn public_agent_artifact_path(
-    workspace: &WorkspaceManager,
-    workspace_id: &str,
-    run_id: &str,
-    round_index: i64,
-    agent_name: &str,
-    fallback_agent_id: &str,
-) -> String {
-    let relative_path = agent_artifact_path(run_id, round_index, agent_name, fallback_agent_id);
-    match workspace.resolve_path(workspace_id, &relative_path) {
-        Ok(target) => workspace.display_path(workspace_id, &target),
-        Err(_) => {
-            let public_root = workspace
-                .public_root(workspace_id)
-                .to_string_lossy()
-                .replace('\\', "/");
-            format!("{}/{}", public_root.trim_end_matches('/'), relative_path)
-        }
-    }
-}
-
 pub fn clear_session_context(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -1598,8 +1577,8 @@ pub fn load_dispatch_context(
 
 pub fn build_worker_dispatch_message(
     config: &Config,
-    workspace: &WorkspaceManager,
-    workspace_id: &str,
+    _workspace: &WorkspaceManager,
+    _workspace_id: &str,
     base_message: &str,
     context: Option<&OrchestrationDispatchContext>,
     target_agent_id: &str,
@@ -1614,9 +1593,7 @@ pub fn build_worker_dispatch_message(
     } else {
         target_agent_name.trim()
     };
-    let artifact_path = public_agent_artifact_path(
-        workspace,
-        workspace_id,
+    let artifact_path = agent_artifact_path(
         &context.run_id,
         context.round_index,
         worker_name,
@@ -1897,8 +1874,8 @@ mod tests {
             "Risk Worker",
             false,
         );
-        assert!(message
-            .contains("/workspaces/alice__c__2/orchestration/orch_demo/round_01/Risk Worker"));
+        assert!(message.contains("orchestration/orch_demo/round_01/Risk Worker"));
+        assert!(!message.contains("/workspaces/alice__c__2/orchestration"));
         assert!(!message.contains("位置：round_01/Risk Worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));

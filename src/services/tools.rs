@@ -9228,7 +9228,6 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             "dry_run": dry_run,
             "existed": write_outcome.existed,
             "previous_bytes": write_outcome.previous_bytes,
-            "target": write_outcome.target.to_string_lossy().to_string(),
             "lsp": lsp_info
         }),
     ))

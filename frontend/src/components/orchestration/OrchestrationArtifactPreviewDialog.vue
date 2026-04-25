@@ -42,6 +42,16 @@
           >
             <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
           </button>
+          <button
+            class="beeroom-canvas-icon-btn orchestration-artifact-preview-btn"
+            type="button"
+            :title="t('common.download')"
+            :aria-label="t('common.download')"
+            :disabled="loading || !resolvedPath"
+            @click="emit('download')"
+          >
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+          </button>
         </div>
       </div>
     </template>
@@ -87,6 +97,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void;
+  (event: 'download'): void;
 }>();
 
 const { t } = useI18n();
@@ -202,50 +213,65 @@ const resetZoom = () => {
   align-items: center;
   justify-content: flex-end;
   flex: 0 0 auto;
-  gap: 2px;
-  padding: 0;
-  background: transparent;
-  box-shadow: none;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 163, 184, 0.16),
+    0 8px 18px rgba(2, 6, 23, 0.16);
 }
 
 .orchestration-artifact-preview-btn {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  border: 0;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
   outline: none;
   appearance: none;
-  background: transparent;
-  box-shadow: none;
-  color: rgba(203, 213, 225, 0.82);
+  background: rgba(30, 41, 59, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 4px 10px rgba(2, 6, 23, 0.12);
+  color: rgba(241, 245, 249, 0.96);
   transition:
     background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
     color 0.18s ease,
-    opacity 0.18s ease;
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .orchestration-artifact-preview-btn:hover:not(:disabled),
 .orchestration-artifact-preview-btn:focus-visible:not(:disabled) {
-  background: rgba(148, 163, 184, 0.12);
-  color: #f8fafc;
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(96, 165, 250, 0.4);
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 18px rgba(30, 64, 175, 0.18);
 }
 
 .orchestration-artifact-preview-btn:disabled {
-  background: transparent;
-  color: rgba(148, 163, 184, 0.36);
+  background: rgba(15, 23, 42, 0.28);
+  border-color: rgba(148, 163, 184, 0.1);
+  color: rgba(148, 163, 184, 0.42);
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .orchestration-artifact-preview-scale {
   width: auto;
-  min-width: 44px;
-  padding: 0 6px;
+  min-width: 52px;
+  padding: 0 10px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: rgba(226, 232, 240, 0.74);
+  color: rgba(248, 250, 252, 0.94);
 }
 
 .orchestration-artifact-preview-shell {

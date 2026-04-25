@@ -673,6 +673,13 @@ export const useOrchestrationRuntimeState = (options: {
     );
   });
 
+  const resolveMotherArtifactIdentity = (state: Pick<PersistedRuntime, 'motherAgentId'>) => {
+    const agentId = normalizeText(state.motherAgentId);
+    const member = motherMember.value;
+    const agentName = normalizeText(member?.name || agentId) || agentId;
+    return { agentId, agentName };
+  };
+
   const activeRound = computed(() => {
     const rounds = runtimeState.value?.rounds || [];
     const activeRoundId = normalizeText(runtimeState.value?.activeRoundId);
@@ -852,6 +859,7 @@ export const useOrchestrationRuntimeState = (options: {
   const ensureMotherRoundDir = async (state: PersistedRuntime, round: OrchestrationRound) => {
     const motherId = normalizeText(state.motherAgentId);
     if (!motherId) return;
+    const motherIdentity = resolveMotherArtifactIdentity(state);
     const motherWorkspaceAgentId = resolveWorkspaceAgentId(motherId);
     await Promise.all([
       createWunderWorkspaceDir({
@@ -860,7 +868,12 @@ export const useOrchestrationRuntimeState = (options: {
       }),
       createWunderWorkspaceDir({
         agent_id: motherWorkspaceAgentId,
-        path: buildMotherArtifactPath(state.runId, round.index)
+        path: buildMotherArtifactPath(
+          state.runId,
+          round.index,
+          motherIdentity.agentName,
+          motherIdentity.agentId
+        )
       })
     ]).catch(() => null);
   };
@@ -2456,7 +2469,12 @@ export const useOrchestrationRuntimeState = (options: {
               agentId: normalizeText(mother.agent_id),
               agentName: normalizeText(mother.name || current.motherAgentId) || current.motherAgentId,
               containerId: resolveWorkspaceContainerId(mother),
-              path: buildMotherArtifactPath(current.runId, round.index)
+              path: buildMotherArtifactPath(
+                current.runId,
+                round.index,
+                normalizeText(mother.name || current.motherAgentId) || current.motherAgentId,
+                normalizeText(mother.agent_id)
+              )
             })
           ]
         : [];

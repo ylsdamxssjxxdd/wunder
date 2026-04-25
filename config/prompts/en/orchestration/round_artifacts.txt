@@ -2,4 +2,4 @@
 Mother artifact directory for this round: {{mother_artifact_dir}}
 All worker artifacts for this round will be written under: {{current_round_dir}}/
 
-When this round's artifacts must be inspected, first do one bounded recursive listing of "{{current_round_dir}}", then batch-read only relevant files.
+When this round's artifacts must be inspected, first do one bounded recursive listing of artifact directory, then batch-read only relevant files.
