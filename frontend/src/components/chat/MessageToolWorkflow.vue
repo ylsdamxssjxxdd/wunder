@@ -208,7 +208,7 @@ type Props = {
   loading?: boolean;
   visible?: boolean;
   terminalAutoStick?: TerminalAutoStickMode;
-  renderVersion?: number;
+  renderVersion?: number | string;
 };
 
 type UnknownObject = Record<string, unknown>;

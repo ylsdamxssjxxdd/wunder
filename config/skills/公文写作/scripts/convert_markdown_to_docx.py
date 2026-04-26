@@ -1694,6 +1694,19 @@ def parse_inline_markdown(text: str, base_style: Optional[InlineStyle] = None) -
     return runs
 
 
+def normalize_markdown_link_url(raw_url: str) -> str:
+    url = raw_url.strip()
+    if url.startswith("<") and url.endswith(">"):
+        url = url[1:-1].strip()
+    if not url:
+        return ""
+    if url.startswith(("http://", "https://", "mailto:", "file:", "data:")):
+        # Markdown writers often wrap long URLs across lines. Treat whitespace inside
+        # URL-like targets as layout wrapping instead of a title separator.
+        return re.sub(r"\s+", "", url)
+    return url.split()[0]
+
+
 def parse_markdown_link(text: str, start: int) -> Optional[tuple[str, str, int]]:
     if start >= len(text) or text[start] != "[":
         return None
@@ -1706,11 +1719,7 @@ def parse_markdown_link(text: str, start: int) -> Optional[tuple[str, str, int]]
     if end_url is None:
         return None
     label = text[start + 1 : end_label]
-    url = text[end_label + 2 : end_url].strip()
-    if url.startswith("<") and url.endswith(">"):
-        url = url[1:-1].strip()
-    if url:
-        url = url.split()[0]
+    url = normalize_markdown_link_url(text[end_label + 2 : end_url])
     return label, url, end_url + 1
 
 

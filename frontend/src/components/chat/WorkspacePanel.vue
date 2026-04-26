@@ -2748,10 +2748,6 @@ const handleGlobalClick = (event) => {
   }
 };
 
-const handleGlobalScroll = () => {
-  closeContextMenu();
-};
-
 const handleDocumentVisibilityChange = () => {
   if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
     return;
@@ -2788,7 +2784,6 @@ onMounted(async () => {
     }
   });
   document.addEventListener('click', handleGlobalClick);
-  document.addEventListener('scroll', handleGlobalScroll, true);
   document.addEventListener('visibilitychange', handleDocumentVisibilityChange);
   window.addEventListener('resize', closeContextMenu);
 });
@@ -2860,7 +2855,6 @@ onBeforeUnmount(() => {
     stopWorkspaceRefreshListener = null;
   }
   document.removeEventListener('click', handleGlobalClick);
-  document.removeEventListener('scroll', handleGlobalScroll, true);
   document.removeEventListener('visibilitychange', handleDocumentVisibilityChange);
   window.removeEventListener('resize', closeContextMenu);
 });

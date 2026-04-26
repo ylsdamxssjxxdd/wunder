@@ -1062,7 +1062,7 @@
                   <MessageToolWorkflow
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
-                    :render-version="chatStore.messageMutationVersion"
+                    :render-version="buildMessageWorkflowRenderVersion(item.message)"
                     :visible="
                       Boolean(
                         item.message.workflowStreaming ||
@@ -7979,6 +7979,30 @@ const resolveAgentMessageKey = (message: Record<string, unknown>, index: number)
   const base = String(message?.id || message?.message_id || message?.request_id || message?.role || 'm');
   const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
   return `${base}:${safeIndex}`;
+};
+
+const buildMessageWorkflowRenderVersion = (message: Record<string, unknown>): string => {
+  const items = Array.isArray(message?.workflowItems) ? (message.workflowItems as Array<Record<string, unknown>>) : [];
+  const tail = items
+    .slice(-8)
+    .map((item) =>
+      [
+        String(item?.id || item?.itemId || item?.item_id || ''),
+        String(item?.eventType || item?.event || item?.event_type || ''),
+        String(item?.toolCallId || item?.tool_call_id || item?.callId || item?.call_id || ''),
+        String(item?.status || ''),
+        String(item?.title || ''),
+        String(item?.detail || '').length
+      ].join(':')
+    )
+    .join('|');
+  return [
+    items.length,
+    message?.workflowStreaming === true ? 1 : 0,
+    message?.reasoningStreaming === true ? 1 : 0,
+    message?.stream_incomplete === true ? 1 : 0,
+    tail
+  ].join('::');
 };
 
 const isMixedConversationActive = (item: MixedConversation): boolean => {

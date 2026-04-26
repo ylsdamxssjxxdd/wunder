@@ -189,7 +189,7 @@ tools: # 内置工具配置
   web:
     fetch:
       enabled: true
-      timeout_secs: 20
+      timeout_secs: 30
       max_redirects: 3
       max_response_bytes: 2097152
       max_chars: 12000

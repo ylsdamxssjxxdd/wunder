@@ -1715,14 +1715,14 @@ struct AgentSwarmRuntime {
 #[derive(Debug, Clone)]
 struct SwarmBatchDispatchTask {
     index: usize,
-    team_task_id: String,
-    message: String,
-    label: Option<String>,
     agent_id: String,
     agent_name: String,
     session_id: String,
     created_session: bool,
     thread_strategy: &'static str,
+    team_task_id: String,
+    message: String,
+    label: Option<String>,
     tool_names: Vec<String>,
     model_name: Option<String>,
     agent_prompt: Option<String>,
@@ -2824,12 +2824,20 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         }
     };
     for (index, task) in payload.tasks.iter().enumerate() {
+        let task_message = normalize_optional_string(task.message.clone()).or_else(|| shared_message.clone());
+        let inferred_agent_name = task_message
+            .as_deref()
+            .and_then(infer_swarm_agent_name_from_task_message);
         let has_target = normalize_optional_string(task.agent_id.clone()).is_some()
             || normalize_optional_string(task.agent_name.clone()).is_some()
+            || inferred_agent_name.is_some()
             || task
                 .session_key
                 .as_deref()
-                .is_some_and(|value| !value.trim().is_empty());
+                .is_some_and(|value| {
+                    let trimmed = value.trim();
+                    !trimmed.is_empty() && !is_swarm_artifact_path_misused_as_session_key(trimmed)
+                });
         if !has_target {
             return Ok(build_agent_swarm_args_failure(
                 "batch_send",
@@ -2850,9 +2858,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 }),
             ));
         }
-        let has_message = normalize_optional_string(task.message.clone())
-            .or_else(|| shared_message.clone())
-            .is_some();
+        let has_message = task_message.is_some();
         if !has_message {
             return Ok(build_agent_swarm_args_failure(
                 "batch_send",
@@ -2883,17 +2889,6 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         user_id,
         context.session_id,
     );
-    let mut run_record = create_swarm_team_run_record(
-        context,
-        user_id,
-        &swarm_hive_id,
-        mother_agent_id,
-        payload.team_run_id.as_deref(),
-        "batch_send",
-        payload.tasks.len(),
-    );
-    context.storage.upsert_team_run(&run_record)?;
-    emit_swarm_run_started(context, &run_record);
     let allowed_tools = collect_user_allowed_tools(context, user_id)?;
 
     let agent_access = context.storage.get_user_agent_access(user_id)?;
@@ -2926,7 +2921,6 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     let mut dispatch_plan = Vec::with_capacity(payload.tasks.len());
     let mut indexed_items = Vec::new();
     let mut run_ids = Vec::new();
-    let mut task_records_by_index = HashMap::new();
     for (index, task) in payload.tasks.into_iter().enumerate() {
         let message = normalize_optional_string(task.message)
             .or_else(|| shared_message.clone())
@@ -2934,7 +2928,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         let label = normalize_optional_string(task.label).or_else(|| shared_label.clone());
         let include_current = task.include_current.unwrap_or(default_include_current);
         let requested_agent_id = normalize_optional_string(task.agent_id);
-        let requested_agent_name = normalize_optional_string(task.agent_name);
+        let requested_agent_name =
+            normalize_optional_string(task.agent_name).or_else(|| infer_swarm_agent_name_from_task_message(&message));
         let task_thread_strategy = match if task.thread_strategy.is_some()
             || task.reuse_main_thread.is_some()
         {
@@ -2964,10 +2959,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 ));
             }
         };
-        let requested_session_id = task
-            .session_key
-            .map(|value| resolve_session_key(Some(value)))
-            .transpose()?;
+        let requested_session_id = resolve_swarm_batch_session_key(task.session_key)?;
 
         let (agent_record, session_record) = if let Some(session_id) = requested_session_id {
             let session_record = if let Some(record) = sessions_by_id.get(&session_id).cloned() {
@@ -3044,8 +3036,6 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             // does not explicitly target an existing session_key.
             (agent_record, None)
         };
-        let mut task_record =
-            create_swarm_team_task_record(&run_record, &agent_record.agent_id, None, None, 0);
         let dispatch_message = build_swarm_dispatch_message(
             context.storage.as_ref(),
             context.monitor.as_deref(),
@@ -3053,8 +3043,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             &swarm_hive_id,
             current_agent_id.as_deref(),
             context.session_id,
-            Some(&run_record.team_run_id),
-            Some(&task_record.task_id),
+            None,
+            None,
             &message,
         )?;
         let (
@@ -3191,32 +3181,18 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 },
             )?;
         }
-        task_record.target_session_id = Some(session_id.clone());
-        task_record.spawned_session_id = created_session.then_some(session_id.clone());
-        context.storage.upsert_team_task(&task_record)?;
-        emit_swarm_task_dispatched(context, &run_record, &task_record);
-        task_records_by_index.insert(index, task_record.clone());
-
         if worker_already_dispatched_in_round(
             context.storage.as_ref(),
             user_id,
             context.session_id,
             &session_id,
         )? {
-            let mut skipped_task = task_record.clone();
-            skipped_task.status = "success".to_string();
-            skipped_task.result_summary = Some("already_dispatched_this_round".to_string());
-            skipped_task.updated_time = now_ts();
-            skipped_task.finished_time = Some(skipped_task.updated_time);
-            skipped_task.elapsed_s = Some(0.0);
-            context.storage.upsert_team_task(&skipped_task)?;
-            emit_swarm_task_updated(context, &run_record, &skipped_task);
-            task_records_by_index.insert(index, skipped_task.clone());
+            let skipped_task_id = format!("task_{}", Uuid::new_v4().simple());
             indexed_items.push((
                 index,
                 skipped_swarm_task_result(
                     "batch_send",
-                    &skipped_task.task_id,
+                    &skipped_task_id,
                     &session_id,
                     &agent_record.agent_id,
                     &agent_record.name,
@@ -3228,18 +3204,78 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
 
         dispatch_plan.push(SwarmBatchDispatchTask {
             index,
-            team_task_id: task_record.task_id,
-            message: dispatch_message,
-            label,
             agent_id: agent_record.agent_id,
             agent_name: agent_record.name,
             session_id,
             created_session,
             thread_strategy: resolved_thread_strategy,
+            team_task_id: String::new(),
+            message: dispatch_message,
+            label,
             tool_names,
             model_name,
             agent_prompt,
         });
+    }
+
+    if dispatch_plan.is_empty() {
+        indexed_items.sort_by_key(|(index, _)| *index);
+        let items = indexed_items
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>();
+        return Ok(build_model_tool_success(
+            "batch_send",
+            "skipped",
+            "All swarm tasks were already dispatched in this round.",
+            json!({
+                "items": items,
+                "task_total": 0,
+                "task_success": 0,
+                "task_failed": 0,
+                "skip_reason": "already_dispatched_this_round",
+                "team_run_id": Value::Null,
+            }),
+        ));
+    }
+
+    let mut run_record = create_swarm_team_run_record(
+        context,
+        user_id,
+        &swarm_hive_id,
+        mother_agent_id,
+        payload.team_run_id.as_deref(),
+        "batch_send",
+        dispatch_plan.len(),
+    );
+    context.storage.upsert_team_run(&run_record)?;
+    emit_swarm_run_started(context, &run_record);
+
+    let mut task_records_by_index = HashMap::new();
+    for task in &mut dispatch_plan {
+        let task_record = create_swarm_team_task_record(
+            &run_record,
+            &task.agent_id,
+            Some(task.session_id.clone()),
+            task.created_session.then_some(task.session_id.clone()),
+            0,
+        );
+        let dispatch_message = build_swarm_dispatch_message(
+            context.storage.as_ref(),
+            context.monitor.as_deref(),
+            user_id,
+            &swarm_hive_id,
+            current_agent_id.as_deref(),
+            context.session_id,
+            Some(&run_record.team_run_id),
+            Some(&task_record.task_id),
+            &task.message,
+        )?;
+        task.message = dispatch_message;
+        task.team_task_id = task_record.task_id.clone();
+        context.storage.upsert_team_task(&task_record)?;
+        emit_swarm_task_dispatched(context, &run_record, &task_record);
+        task_records_by_index.insert(task.index, task_record.clone());
     }
 
     let dispatch_parallelism = dispatch_plan.len().min(max_tasks).max(1);
@@ -5467,6 +5503,42 @@ fn resolve_session_key(value: Option<String>) -> Result<String> {
         return Err(anyhow!(i18n::t("error.session_not_found")));
     };
     Ok(key)
+}
+
+fn is_swarm_artifact_path_misused_as_session_key(value: &str) -> bool {
+    let normalized = value.trim().replace('\\', "/");
+    let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
+    stripped.starts_with("orchestration/")
+        || stripped.starts_with("workspaces/")
+        || stripped.starts_with("/workspaces/")
+}
+
+fn resolve_swarm_batch_session_key(value: Option<String>) -> Result<Option<String>> {
+    let Some(key) = normalize_optional_string(value) else {
+        return Ok(None);
+    };
+    if is_swarm_artifact_path_misused_as_session_key(&key) {
+        return Ok(None);
+    }
+    Ok(Some(resolve_session_key(Some(key))?))
+}
+
+fn infer_swarm_agent_name_from_task_message(message: &str) -> Option<String> {
+    let normalized = message.replace('\r', "\n");
+    for marker in ["你的角色：", "你的角色:", "角色：", "角色:"] {
+        if let Some((_, tail)) = normalized.split_once(marker) {
+            let candidate = tail
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_matches(|ch| matches!(ch, '"' | '\'' | '`' | '“' | '”' | '。' | '，' | ','));
+            if !candidate.is_empty() && candidate.chars().count() <= 64 {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn clamp_limit(value: Option<i64>, default: i64, max: i64) -> i64 {
@@ -11840,6 +11912,31 @@ PATCH"#;
     }
 
     #[test]
+    fn swarm_batch_helpers_ignore_artifact_session_id_and_infer_role_name() {
+        assert_eq!(
+            resolve_swarm_batch_session_key(Some("orchestration/测试/round_01/".to_string()))
+                .expect("resolve artifact path session key"),
+            None
+        );
+        assert_eq!(
+            resolve_swarm_batch_session_key(Some("/workspaces/admin__c__1/orchestration/测试".to_string()))
+                .expect("resolve public path session key"),
+            None
+        );
+        assert_eq!(
+            resolve_swarm_batch_session_key(Some("sess_worker".to_string()))
+                .expect("resolve normal session key")
+                .as_deref(),
+            Some("sess_worker")
+        );
+        assert_eq!(
+            infer_swarm_agent_name_from_task_message("【第 1 轮任务】\n你的角色：中方代表\n请完成公开立场。")
+                .as_deref(),
+            Some("中方代表")
+        );
+    }
+
+    #[test]
     fn agent_swarm_send_args_accept_thread_strategy_aliases() {
         let camel: AgentSwarmSendArgs = serde_json::from_value(json!({
             "agent_name": "worker_a",
@@ -11967,7 +12064,7 @@ PATCH"#;
             "already_dispatched_this_round",
         );
         assert_eq!(
-            tool_result_field(&result, "status").and_then(Value::as_str),
+            tool_result_field(&result, "state").and_then(Value::as_str),
             Some("skipped")
         );
         assert_eq!(
@@ -11979,6 +12076,41 @@ PATCH"#;
             Some("already_dispatched_this_round")
         );
         assert_eq!(tool_result_field(&result, "run_id"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn batch_send_all_skipped_response_keeps_team_run_null() {
+        let result = build_model_tool_success(
+            "batch_send",
+            "skipped",
+            "All swarm tasks were already dispatched in this round.",
+            json!({
+                "items": [
+                    tool_result_data(&skipped_swarm_task_result(
+                        "batch_send",
+                        "task_a",
+                        "sess_a",
+                        "agent_a",
+                        "Worker A",
+                        "already_dispatched_this_round"
+                    )).clone()
+                ],
+                "task_total": 0,
+                "task_success": 0,
+                "task_failed": 0,
+                "skip_reason": "already_dispatched_this_round",
+                "team_run_id": Value::Null,
+            }),
+        );
+        assert_eq!(
+            tool_result_field(&result, "state").and_then(Value::as_str),
+            Some("skipped")
+        );
+        assert_eq!(tool_result_field(&result, "team_run_id"), Some(&Value::Null));
+        assert_eq!(
+            tool_result_field(&result, "skip_reason").and_then(Value::as_str),
+            Some("already_dispatched_this_round")
+        );
     }
 
     #[test]
@@ -12207,6 +12339,108 @@ PATCH"#;
             .expect("list team runs");
         assert_eq!(total, 0);
         assert!(runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_swarm_batch_send_ignores_artifact_path_session_id_and_infers_agent_name() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-batch-send-artifact-session.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        let mut worker_agent = sample_agent_record();
+        worker_agent.name = "中方代表".to_string();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        parent_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some("agent_parent"),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let result = agent_swarm_batch_send(
+            &context,
+            &json!({
+                "action": "batch_send",
+                "tasks": [
+                    {
+                        "session_id": "orchestration/测试/round_01/",
+                        "message": "【第 1 轮任务】\n你的角色：中方代表\n请完成公开立场。"
+                    }
+                ]
+            }),
+        )
+        .await
+        .expect("batch send result");
+
+        assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            result.pointer("/data/counts/total").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            result
+                .pointer("/data/items/0/agent_name")
+                .and_then(Value::as_str),
+            Some("中方代表")
+        );
+        assert_ne!(
+            result
+                .pointer("/data/items/0/session_id")
+                .and_then(Value::as_str),
+            Some("orchestration/测试/round_01/")
+        );
     }
 
     #[tokio::test]

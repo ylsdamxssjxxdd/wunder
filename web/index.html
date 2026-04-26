@@ -3569,7 +3569,7 @@
                 <i class="fa-solid fa-key"></i>
                 <span data-i18n="settings.card.api">API & Auth</span>
               </div>
-              <div class="settings-card-body">
+              <form class="settings-card-body" autocomplete="off" onsubmit="return false;">
                 <div class="settings-grid settings-advanced-grid">
                   <div class="form-row">
                     <label for="apiKey" data-i18n="settings.label.apiKey">API Key</label>
@@ -3577,6 +3577,7 @@
                       <input
                         id="apiKey"
                         type="password"
+                        autocomplete="off"
                         placeholder="可选"
                         data-i18n-placeholder="settings.placeholder.optional"
                       />
@@ -3600,6 +3601,7 @@
                     <input
                       id="externalAuthKey"
                       type="password"
+                      autocomplete="off"
                       placeholder="可选"
                       data-i18n-placeholder="settings.placeholder.optional"
                     />
@@ -3614,6 +3616,7 @@
                     <input
                       id="externalEmbedJwtSecret"
                       type="password"
+                      autocomplete="off"
                       placeholder="可选"
                       data-i18n-placeholder="settings.placeholder.optional"
                     />
@@ -3642,7 +3645,7 @@
                 <div class="settings-hint" data-i18n="settings.hint.advanced">
                   API base 固定为当前访问地址，API Key 默认从服务端配置加载。
                 </div>
-              </div>
+              </form>
             </div>
             <div class="settings-card settings-card-cors settings-advanced-card">
               <div class="settings-card-title">
@@ -4395,10 +4398,10 @@
           </div>
           <button id="userAccountModalClose" class="icon-btn" type="button">×</button>
         </div>
-        <div class="modal-body">
+        <form class="modal-body" autocomplete="off" onsubmit="return false;">
           <div class="form-row">
             <label for="userAccountFormUsername" data-i18n="userAccounts.modal.create.username">用户名</label>
-            <input id="userAccountFormUsername" type="text" />
+            <input id="userAccountFormUsername" type="text" autocomplete="username" />
           </div>
           <div class="form-row">
             <label for="userAccountFormEmail" data-i18n="userAccounts.modal.create.email">邮箱</label>
@@ -4406,7 +4409,7 @@
           </div>
           <div class="form-row">
             <label for="userAccountFormPassword" data-i18n="userAccounts.modal.create.password">密码</label>
-            <input id="userAccountFormPassword" type="password" />
+            <input id="userAccountFormPassword" type="password" autocomplete="new-password" />
           </div>
           <div class="form-row">
             <label for="userAccountFormUnit" data-i18n="userAccounts.modal.create.unit">所属单位</label>
@@ -4421,7 +4424,7 @@
               <option value="disabled">disabled</option>
             </select>
           </div>
-        </div>
+        </form>
         <div class="modal-actions">
           <button id="userAccountModalCancel" class="secondary btn-with-icon" type="button">
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
@@ -4508,12 +4511,12 @@
             <label for="userAccountSettingsPasswordInput" data-i18n="userAccounts.modal.settings.password.label">
               重置密码
             </label>
-            <div class="form-row-inline">
-              <input id="userAccountSettingsPasswordInput" type="password" />
+            <form class="form-row-inline" autocomplete="off" onsubmit="return false;">
+              <input id="userAccountSettingsPasswordInput" type="password" autocomplete="new-password" />
               <button id="userAccountSettingsPasswordSave" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-key"></i><span data-i18n="userAccounts.modal.settings.password.action">重置</span>
               </button>
-            </div>
+            </form>
           </div>
           <div class="form-row">
             <label for="userAccountSettingsRolesInput" data-i18n="userAccounts.modal.settings.roles.label">用户权限</label>

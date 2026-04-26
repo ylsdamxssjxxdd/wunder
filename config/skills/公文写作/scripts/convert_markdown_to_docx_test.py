@@ -74,6 +74,13 @@ class ConvertMarkdownToDocxTests(unittest.TestCase):
         self.assertIsNotNone(MODULE.DOCX_PIPE_TABLE_RE.search("| --- | --- |"))
         self.assertIsNotNone(MODULE.DOCX_FENCE_RE.match("```python"))
 
+    def test_parse_markdown_link_keeps_wrapped_url(self):
+        source = "[Aliyun](https://\n  developer.aliyun.com/article/1724368)"
+        parsed = MODULE.parse_markdown_link(source, 0)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed[0], "Aliyun")
+        self.assertEqual(parsed[1], "https://developer.aliyun.com/article/1724368")
+
     def test_promote_document_title_shifts_following_headings(self):
         source = "示例标题\n# 第一部分\n## 第二部分\n"
         promoted = MODULE.promote_document_title(source)
