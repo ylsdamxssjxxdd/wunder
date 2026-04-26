@@ -139,6 +139,22 @@ const resolveViteEntry = async () =>
     path.join(frontendRoot, 'node_modules', 'vite', 'bin', 'vite.js')
   ]);
 
+const hasVueCompilerDependency = async () => {
+  const vuePackageReady = Boolean(
+    await findFirstExistingPath([
+      path.join(repoRoot, 'node_modules', 'vue', 'package.json'),
+      path.join(frontendRoot, 'node_modules', 'vue', 'package.json')
+    ])
+  );
+  const vueCompilerReady = Boolean(
+    await findFirstExistingPath([
+      path.join(repoRoot, 'node_modules', 'vue', 'compiler-sfc', 'index.js'),
+      path.join(frontendRoot, 'node_modules', 'vue', 'compiler-sfc', 'index.js')
+    ])
+  );
+  return vuePackageReady && vueCompilerReady;
+};
+
 const ensureDependencies = async () => {
   const viteEntry = await resolveViteEntry();
   const viteReady = Boolean(viteEntry);
@@ -147,12 +163,15 @@ const ensureDependencies = async () => {
     resolveLinuxEsbuildNativePackageName(),
     ['package.json', 'bin/esbuild']
   );
-  if (viteReady && rollupNativeReady && esbuildNativeReady) {
+  const vueCompilerReady = await hasVueCompilerDependency();
+  if (viteReady && rollupNativeReady && esbuildNativeReady && vueCompilerReady) {
     return viteEntry;
   }
 
   if (!viteReady) {
     log('vite package is missing, reinstalling workspace dependencies');
+  } else if (!vueCompilerReady) {
+    log('vue compiler dependency is incomplete, reinstalling workspace dependencies');
   } else {
     log('linux native frontend dependency is missing, reinstalling workspace dependencies');
   }
@@ -161,6 +180,9 @@ const ensureDependencies = async () => {
       'npm',
       [
         'ci',
+        '--prefer-offline',
+        '--no-audit',
+        '--no-fund',
         '--workspace',
         'wunder-frontend',
         '--include-workspace-root=false',
@@ -187,6 +209,11 @@ const ensureDependencies = async () => {
   if (!(await hasLinuxNativeDependency(resolveLinuxEsbuildNativePackageName()))) {
     throw new Error(
       'esbuild native dependency is unavailable after npm ci; check npm optional dependency settings'
+    );
+  }
+  if (!(await hasVueCompilerDependency())) {
+    throw new Error(
+      'vue compiler dependency is unavailable after npm ci; check whether vue/package.json and vue/compiler-sfc were preserved in node_modules'
     );
   }
   return resolvedViteEntry;

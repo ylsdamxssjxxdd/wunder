@@ -223,6 +223,10 @@ services:
       - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
       - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
       - FRONTEND_SKIP_DIST_BUILD=${FRONTEND_SKIP_DIST_BUILD:-0}
+      - NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
+      - NPM_CONFIG_PREFER_OFFLINE=${NPM_CONFIG_PREFER_OFFLINE:-true}
+      - NPM_CONFIG_AUDIT=${NPM_CONFIG_AUDIT:-false}
+      - NPM_CONFIG_FUND=${NPM_CONFIG_FUND:-false}
     # Force a safe umask so build artifacts remain readable by nginx.
     entrypoint: ["sh", "-lc", "umask ${FRONTEND_UMASK:-022}; exec \"$@\"", "--"]
     command: ["node", "./frontend/scripts/docker-dev-bootstrap.mjs"]
