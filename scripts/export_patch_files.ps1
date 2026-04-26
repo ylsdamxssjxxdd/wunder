@@ -20,13 +20,33 @@ function Get-NormalizedFullPath {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
 }
 
+function Resolve-VerifiedCommit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Revision
+    )
+
+    $trimmed = $Revision.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        throw 'Base commit cannot be empty.'
+    }
+
+    if ($trimmed -match '^[0-9a-fA-F]+$' -and $trimmed.Length -ne 40) {
+        throw "Base commit looks like a raw SHA-1 but length is $($trimmed.Length), expected 40: $trimmed"
+    }
+
+    $resolved = & git rev-parse --quiet --verify "$trimmed`^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($resolved | Select-Object -First 1))) {
+        throw "Base commit not found or is not a commit object: $trimmed"
+    }
+
+    return ($resolved | Select-Object -First 1).Trim()
+}
+
 $repoRoot = (Get-Location).Path
 $repoRootFull = Get-NormalizedFullPath -Path $repoRoot
 
-$null = git rev-parse --verify $BaseCommit 2>$null
-if ($LASTEXITCODE -ne 0) {
-    throw "Base commit not found: $BaseCommit"
-}
+$resolvedBaseCommit = Resolve-VerifiedCommit -Revision $BaseCommit
 
 $outputFull = Get-NormalizedFullPath -Path $OutputDir
 if ($outputFull -eq $repoRootFull) {
@@ -47,7 +67,7 @@ if (Test-Path -LiteralPath $outputFull) {
     New-Item -ItemType Directory -Path $outputFull -Force | Out-Null
 }
 
-$statusLines = git -c core.quotepath=false diff --name-status --find-renames "$BaseCommit^" HEAD
+$statusLines = git -c core.quotepath=false diff --name-status --find-renames "$resolvedBaseCommit^" HEAD
 if ($LASTEXITCODE -ne 0) {
     throw 'git diff failed'
 }
@@ -116,8 +136,8 @@ $deleteContent = if ($uniqueDeletePaths.Count -gt 0) {
 [System.IO.File]::WriteAllText($deleteListPath, $deleteContent, [System.Text.UTF8Encoding]::new($false))
 
 $manifestLines = @(
-    "base_commit_inclusive=$BaseCommit",
-    "comparison=$BaseCommit^..HEAD",
+    "base_commit_inclusive=$resolvedBaseCommit",
+    "comparison=$resolvedBaseCommit^..HEAD",
     "export_source=$repoRootFull",
     "export_target=$outputFull",
     "copied_files=$copiedCount",
