@@ -2824,7 +2824,11 @@ fn build_tool_failure_reroute_model_notice(
         } else {
             Value::String(next_step)
         },
-        "instruction": "Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy.",
+        "instruction": if tool_name == resolve_tool_name("apply_patch") {
+            Value::String("Do not emit another broad apply_patch attempt. Read the latest file, produce at most one small hunk, and if that still fails switch to write_file for a full rewrite.".to_string())
+        } else {
+            Value::String("Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy.".to_string())
+        },
     })
 }
 
@@ -2832,6 +2836,7 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
     let code = error_code.trim().to_ascii_uppercase();
     let lower_detail = detail.trim().to_ascii_lowercase();
     let execute_command = resolve_tool_name("execute_command");
+    let apply_patch = resolve_tool_name("apply_patch");
     if code.starts_with("PRECHECK_SHELL_")
         || code == "COMMAND_NOT_FOUND"
         || (tool_name == execute_command && lower_detail.contains("syntax error"))
@@ -2853,6 +2858,18 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
     }
     if code == "TOOL_TIMEOUT" {
         return "建议下一步：缩小查询范围或改用可分页/导出路径，避免单次超时。".to_string();
+    }
+    if tool_name == apply_patch {
+        if matches!(
+            code.as_str(),
+            "PATCH_FORMAT_INVALID"
+                | "PATCH_CONTEXT_NOT_FOUND"
+                | "PATCH_CONTEXT_AMBIGUOUS"
+                | "PATCH_NO_EFFECT"
+        ) {
+            return "建议下一步：先重新读取目标文件，只保留当前文件中的原始上下文；一次只修改一个小区域（单个 hunk），每处前后保留 2-3 行空格开头的上下文；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
+        }
+        return "建议下一步：不要继续盲目重复 apply_patch。先 `read_file` 读取最新文件，再把修改拆成单个小区域逐次提交；如果改动跨多个区域或接近整文件改写，请改用 `write_file`。".to_string();
     }
     "建议下一步：停止重复当前调用，调整工具参数或更换工具路径后继续。".to_string()
 }

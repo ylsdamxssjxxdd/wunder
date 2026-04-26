@@ -114,6 +114,7 @@ import {
 import {
   buildCommandCardView,
   buildPatchCallView,
+  buildPatchResultNote,
   buildPatchResultView
 } from './toolWorkflowActionViews';
 import { buildToolResultPreview } from './toolWorkflowPreview';
@@ -224,9 +225,6 @@ type RawPatchPreview = {
 const FILE_HINT_LIMIT = 5;
 const FILE_HINT_SUMMARY_LIMIT = 2;
 const PATCH_RESULT_FILE_LIMIT = 10;
-const PATCH_PREVIEW_FILE_LIMIT = 4;
-const PATCH_PREVIEW_LINE_LIMIT = 12;
-const PATCH_PREVIEW_LINE_MAX_CHARS = 140;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
@@ -1296,9 +1294,7 @@ const buildApplyPatchEntries = (item: WorkflowItem | null, toolName: string): Pa
 };
 
 const normalizePatchPreviewLine = (line: string): string => {
-  const normalized = String(line || '').replace(/\t/g, '  ');
-  if (normalized.length <= PATCH_PREVIEW_LINE_MAX_CHARS) return normalized;
-  return `${normalized.slice(0, PATCH_PREVIEW_LINE_MAX_CHARS)}...`;
+  return String(line || '').replace(/\t/g, '  ');
 };
 
 const parseApplyPatchPreview = (patchText: string): RawPatchPreview[] => {
@@ -1318,11 +1314,7 @@ const parseApplyPatchPreview = (patchText: string): RawPatchPreview[] => {
 
   const pushLine = (line: string) => {
     if (!current) return;
-    if (current.lines.length < PATCH_PREVIEW_LINE_LIMIT) {
-      current.lines.push(normalizePatchPreviewLine(line));
-      return;
-    }
-    current.omitted += 1;
+    current.lines.push(normalizePatchPreviewLine(line));
   };
 
   for (const row of rows) {
@@ -1385,7 +1377,7 @@ const buildApplyPatchDiffBlocks = (callItem: WorkflowItem | null, toolName: stri
   if (!patchInput) return [];
 
   const previews = parseApplyPatchPreview(patchInput);
-  return previews.slice(0, PATCH_PREVIEW_FILE_LIMIT).map((preview, index) => {
+  return previews.map((preview, index) => {
     const pathText =
       preview.path && preview.toPath && preview.path !== preview.toPath
         ? `${preview.path} -> ${preview.toPath}`
@@ -1734,6 +1726,135 @@ const buildApplyPatchResultFiles = (patchEntries: PatchEntry[], errorText: strin
       tone: 'danger'
     });
   }
+  return files;
+};
+
+const buildApplyPatchResultFilesFromDiffBlocks = (
+  item: WorkflowItem | null,
+  toolName: string,
+  errorText: string
+): PatchFileView[] => {
+  if (!item || !isApplyPatchTool(toolName)) return [];
+  const detailObject = parseDetailObject(item.detail);
+  const resultObject = extractToolResultObject(detailObject);
+  const dataObject = extractToolResultData(resultObject);
+  const files = Array.isArray(dataObject?.files) ? (dataObject.files as unknown[]) : [];
+  const output: PatchFileView[] = [];
+
+  files.forEach((file, fileIndex) => {
+    const fileObject = asObject(file);
+    if (!fileObject) return;
+    const diffBlocks = Array.isArray(fileObject.diff_blocks) ? (fileObject.diff_blocks as unknown[]) : [];
+    const title =
+      buildCompactPatchPathLabel(
+        String(fileObject.path || ''),
+        String(fileObject.to_path || '')
+      )
+      || String(fileObject.path || fileObject.to_path || `file-${fileIndex + 1}`);
+    const meta = resolvePatchEntryMeta({
+      key: `${String(item.id || 'patch')}-${fileIndex}`,
+      kind:
+        String(fileObject.action || '').trim().toLowerCase() === 'add'
+          ? 'add'
+          : String(fileObject.action || '').trim().toLowerCase() === 'delete'
+            ? 'delete'
+            : String(fileObject.action || '').trim().toLowerCase() === 'move'
+              ? 'move'
+              : 'update',
+      sign: '',
+      text: title
+    });
+    const lines: PatchLine[] = [];
+    diffBlocks.forEach((block, blockIndex) => {
+      const blockObject = asObject(block);
+      if (!blockObject) return;
+      const header = pickString(blockObject.header);
+      if (header) {
+        lines.push({
+          key: `file-${fileIndex}-block-${blockIndex}-header`,
+          kind: 'meta',
+          text: header
+        });
+      }
+      const blockLines = Array.isArray(blockObject.lines) ? (blockObject.lines as unknown[]) : [];
+      blockLines.forEach((line, lineIndex) => {
+        const lineObject = asObject(line);
+        if (!lineObject) return;
+        const kindRaw = String(lineObject.kind || '').trim().toLowerCase();
+        const kind: PatchLine['kind'] =
+          kindRaw === 'add'
+            ? 'add'
+            : kindRaw === 'delete'
+              ? 'delete'
+              : kindRaw === 'error'
+                ? 'error'
+                : 'meta';
+        lines.push({
+          key: `file-${fileIndex}-block-${blockIndex}-line-${lineIndex}`,
+          kind,
+          text: pickString(lineObject.text),
+          oldLine: toOptionalInt(lineObject.old_line),
+          newLine: toOptionalInt(lineObject.new_line)
+        });
+      });
+    });
+    output.push({
+      key: `patch-result-file-${fileIndex}`,
+      title,
+      meta,
+      lines
+    });
+  });
+
+  if (errorText) {
+    output.push({
+      key: 'patch-error',
+      title: 'error',
+      meta: '',
+      lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
+      tone: 'danger'
+    });
+  }
+
+  return output;
+};
+
+const mergeApplyPatchResultFilesWithPreview = (
+  patchEntries: PatchEntry[],
+  patchDiffBlocks: PatchDiffBlock[],
+  errorText: string
+): PatchFileView[] => {
+  if (patchDiffBlocks.length === 0) {
+    return buildApplyPatchResultFiles(patchEntries, errorText);
+  }
+
+  const previewFiles = buildApplyPatchCallFiles(patchDiffBlocks);
+  const patchEntryQueue = [...patchEntries];
+  const files: PatchFileView[] = previewFiles.map((file, index) => {
+    const entry = patchEntryQueue[index] || null;
+    return {
+      key: file.key,
+      title: file.title,
+      meta: entry ? resolvePatchEntryMeta(entry) : file.meta || '',
+      lines: file.lines,
+      tone: entry ? resolvePatchEntryTone(entry) : file.tone || 'default'
+    };
+  });
+
+  if (patchEntryQueue.length > previewFiles.length) {
+    files.push(...buildApplyPatchResultFiles(patchEntryQueue.slice(previewFiles.length), ''));
+  }
+
+  if (errorText) {
+    files.push({
+      key: 'patch-error',
+      title: 'error',
+      meta: '',
+      lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
+      tone: 'danger'
+    });
+  }
+
   return files;
 };
 
@@ -3040,6 +3161,36 @@ const buildToolResultSection = (
       commandView: null,
       patchLines: [],
       compactionView: compactionDisplay.view
+    };
+  }
+
+  if (isApplyPatchTool(entry.toolName)) {
+    const errorText = status === 'failed' ? buildErrorText(entry.resultItem, null) : '';
+    const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
+    const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
+    const resultDiffFiles = buildApplyPatchResultFilesFromDiffBlocks(
+      entry.resultItem,
+      entry.toolName,
+      errorText
+    );
+    const patchFiles =
+      resultDiffFiles.length > 0
+        ? resultDiffFiles
+        : mergeApplyPatchResultFilesWithPreview(patchEntries, patchDiffBlocks, errorText);
+    const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
+    const patchView = buildPatchResultView(counts, patchFiles, t);
+    const summary = buildPatchResultNote(counts, t);
+    const copyText = [rawResultDetail, rawOutputDetail].filter(Boolean).join('\n\n').trim();
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'patch',
+      summary,
+      body: copyText,
+      copyText: copyText || undefined,
+      commandView: null,
+      patchLines: buildApplyPatchResultLines(patchEntries, errorText),
+      patchView
     };
   }
 

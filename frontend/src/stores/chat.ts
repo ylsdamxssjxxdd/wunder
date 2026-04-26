@@ -12313,7 +12313,7 @@ export const useChatStore = defineStore('chat', {
           pendingAssistant.workflowStreaming = false;
           pendingAssistant.reasoningStreaming = false;
           pendingAssistant.stream_incomplete = false;
-          pendingAssistant.resume_available = true;
+          pendingAssistant.resume_available = false;
           clearAssistantRetryState(pendingAssistant);
           if (!pendingAssistant.content) {
             pendingAssistant.content = t('chat.workflow.aborted');

@@ -183,7 +183,7 @@ fn build_write_signature(tool_name: &str, args: &Value) -> String {
     }
     let compact = serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string());
     if compact.len() > 512 {
-        format!("{tool_name}:{}", &compact[..512])
+        format!("{tool_name}:{}", truncate_signature_text(&compact, 512))
     } else {
         format!("{tool_name}:{compact}")
     }
@@ -212,9 +212,24 @@ fn build_control_signature(tool_name: &str, args: &Value) -> String {
     }
     let signature = parts.join("|");
     if signature.len() > 512 {
-        signature[..512].to_string()
+        truncate_signature_text(&signature, 512)
     } else {
         signature
+    }
+}
+
+fn truncate_signature_text(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == 0 {
+        String::new()
+    } else {
+        text[..end].to_string()
     }
 }
 
@@ -457,5 +472,17 @@ mod tests {
             "input": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-// old\n+// hi\n*** End Patch"
         });
         assert!(evaluate_tool_call(&config, &tool_name, &args, None, None).is_none());
+    }
+
+    #[test]
+    fn test_build_write_signature_truncates_on_char_boundary() {
+        let tool_name = resolve_tool_name("apply_patch");
+        let repeated = "局".repeat(300);
+        let args = json!({
+            "input": format!("*** Begin Patch\n*** Update File: demo.txt\n+{repeated}\n*** End Patch")
+        });
+        let signature = build_write_signature(&tool_name, &args);
+        assert!(signature.starts_with(&(tool_name + ":")));
+        assert!(std::str::from_utf8(signature.as_bytes()).is_ok());
     }
 }

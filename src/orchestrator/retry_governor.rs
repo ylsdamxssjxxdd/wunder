@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 3;
 const MAX_SAME_RETRYABLE_FAILURES: u32 = 2;
 const MAX_SAME_TOOL_FAILURES: u32 = 3;
+const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 2;
 const FINGERPRINT_DETAIL_MAX_CHARS: usize = 240;
 
 #[derive(Clone, Debug)]
@@ -57,6 +58,7 @@ impl RetryGovernor {
         result: &ToolResultPayload,
     ) -> Option<RetryStopDecision> {
         let fingerprint = ToolFailureFingerprint::from_result(tool_name, result);
+        let apply_patch = resolve_tool_name("apply_patch");
         if fingerprint.key == self.last_fingerprint {
             self.same_fingerprint_failures = self.same_fingerprint_failures.saturating_add(1);
         } else {
@@ -94,6 +96,19 @@ impl RetryGovernor {
                 same_tool_failures: self.same_tool_failures,
                 threshold: MAX_SAME_RETRYABLE_FAILURES,
                 retryable: true,
+                error_code: fingerprint.code,
+                detail: fingerprint.detail,
+            });
+        }
+
+        if tool_name == apply_patch && self.same_tool_failures >= MAX_SAME_APPLY_PATCH_FAILURES {
+            return Some(RetryStopDecision {
+                reason: "tool_failure_reroute_required",
+                fingerprint: fingerprint.key,
+                repeat_count: self.same_fingerprint_failures,
+                same_tool_failures: self.same_tool_failures,
+                threshold: MAX_SAME_APPLY_PATCH_FAILURES,
+                retryable: fingerprint.retryable,
                 error_code: fingerprint.code,
                 detail: fingerprint.detail,
             });
@@ -233,6 +248,7 @@ fn normalize_detail(detail: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{RetryGovernor, ToolResultPayload, MAX_SAME_NON_RETRYABLE_FAILURES};
+    use crate::tools::resolve_tool_name;
     use chrono::Utc;
     use serde_json::json;
 
@@ -279,5 +295,31 @@ mod tests {
             .record_failure("read_file", &payload)
             .expect("should stop on third same retryable failure");
         assert_eq!(stop.reason, "same_retryable_failure_exhausted");
+    }
+
+    #[test]
+    fn apply_patch_reroutes_after_two_failures() {
+        let mut governor = RetryGovernor::new(6);
+        let tool_name = resolve_tool_name("apply_patch");
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({
+                "error_meta": {
+                    "code": "PATCH_CONTEXT_NOT_FOUND",
+                    "retryable": true
+                }
+            }),
+            error: "Patch apply failed: chunk 2 in demo.txt has no matching context".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        assert!(governor.record_failure(&tool_name, &payload).is_none());
+        let stop = governor
+            .record_failure(&tool_name, &payload)
+            .expect("apply_patch should reroute on second failure");
+        assert_eq!(stop.reason, "tool_failure_reroute_required");
+        assert_eq!(stop.threshold, 2);
+        assert_eq!(stop.same_tool_failures, 2);
     }
 }

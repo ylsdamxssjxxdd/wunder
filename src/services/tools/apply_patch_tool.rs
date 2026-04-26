@@ -1,6 +1,7 @@
 use super::command_options::parse_dry_run;
 use super::*;
 use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
+use crate::monitor::MonitorState;
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
@@ -13,6 +14,7 @@ const PATCH_INPUT_MAX_BYTES: usize = 512 * 1024;
 const PATCH_MAX_FILE_OPS: usize = 200;
 const PATCH_MAX_UPDATE_CHUNKS: usize = 1000;
 const PATCH_INPUT_UNWRAP_MAX_DEPTH: usize = 8;
+const PATCH_CANCEL_CHECK_INTERVAL: usize = 32;
 
 #[derive(Debug, Clone)]
 enum ParsedPatchOp {
@@ -76,6 +78,7 @@ struct FileChangeSummary {
     path: String,
     to_path: Option<String>,
     hunks: usize,
+    diff_blocks: Vec<FileDiffBlock>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +94,24 @@ struct ApplyPatchSummary {
 }
 
 #[derive(Debug, Clone)]
+struct FileDiffBlock {
+    header: String,
+    start_line_before: usize,
+    end_line_before: usize,
+    start_line_after: usize,
+    end_line_after: usize,
+    lines: Vec<FileDiffLine>,
+}
+
+#[derive(Debug, Clone)]
+struct FileDiffLine {
+    kind: &'static str,
+    old_line: Option<usize>,
+    new_line: Option<usize>,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
 enum StagedEntry {
     Existing { content: String },
     Missing,
@@ -102,6 +123,12 @@ struct PatchToolError {
     message: String,
     hint: Option<String>,
     retryable: bool,
+}
+
+#[derive(Clone)]
+struct PatchCancelProbe {
+    monitor: Arc<MonitorState>,
+    session_id: String,
 }
 
 impl PatchToolError {
@@ -243,47 +270,22 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "Split the patch into smaller batches (each touching fewer files).",
         ));
     }
-    let parsed_ops = parse_patch(&input)?;
-    if parsed_ops.is_empty() {
-        return Err(patch_error_with_hint(
-            "PATCH_FORMAT_EMPTY_PATCH",
-            "补丁为空，至少包含一个文件操作",
-            "Patch is empty; include at least one file operation",
-            "补丁至少应包含一个 Add File / Delete File / Update File 块。",
-            "Include at least one Add File / Delete File / Update File block.",
-        ));
-    }
-    if parsed_ops.len() > PATCH_MAX_FILE_OPS {
-        return Err(patch_error_with_hint(
-            "PATCH_LIMIT_TOO_MANY_FILE_OPS",
-            format!("单次补丁文件操作过多（>{PATCH_MAX_FILE_OPS}），请拆分后重试"),
-            format!(
-                "Patch contains too many file operations (>{PATCH_MAX_FILE_OPS}), split and retry"
-            ),
-            "请按目录或功能分批提交补丁，降低单次文件操作数。",
-            "Submit the patch in batches (by directory or feature) to reduce file operations per call.",
-        ));
-    }
-    let total_update_chunks = parsed_ops
-        .iter()
-        .map(|op| match op {
-            ParsedPatchOp::Update { chunks, .. } => chunks.len(),
-            _ => 0,
-        })
-        .sum::<usize>();
-    if total_update_chunks > PATCH_MAX_UPDATE_CHUNKS {
-        return Err(patch_error_with_hint(
-            "PATCH_LIMIT_TOO_MANY_CHUNKS",
-            format!(
-                "补丁变更块过多（>{PATCH_MAX_UPDATE_CHUNKS}），请拆分后重试"
-            ),
-            format!(
-                "Patch contains too many change chunks (>{PATCH_MAX_UPDATE_CHUNKS}), split and retry"
-            ),
-            "请减少单次 Update File 的块数量，按文件或区域分批提交。",
-            "Reduce Update File chunk count per call and submit by file or region.",
-        ));
-    }
+    ensure_patch_not_cancelled(context)?;
+    let parsed_ops = tokio::task::spawn_blocking({
+        let input = input.clone();
+        let cancel_probe = build_patch_cancel_probe(context);
+        move || parse_patch_checked(&input, cancel_probe.as_ref())
+    })
+    .await
+    .map_err(|err| {
+        patch_error_with_hint(
+            "PATCH_RUNTIME_TASK_FAILED",
+            format!("应用补丁预处理任务执行失败：{err}"),
+            format!("Apply patch preprocessing task failed: {err}"),
+            "请重试；若持续失败请检查运行时环境是否稳定。",
+            "Retry; if this persists, verify runtime stability.",
+        )
+    })??;
 
     let allow_roots = collect_allow_roots(context);
     let resolved_ops = parsed_ops
@@ -314,13 +316,30 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
                     "path": item.path,
                     "to_path": item.to_path,
                     "hunks": item.hunks,
+                    "diff_blocks": item.diff_blocks.iter().map(|block| json!({
+                        "header": block.header,
+                        "start_line_before": block.start_line_before,
+                        "end_line_before": block.end_line_before,
+                        "start_line_after": block.start_line_after,
+                        "end_line_after": block.end_line_after,
+                        "lines": block.lines.iter().map(|line| json!({
+                            "kind": line.kind,
+                            "old_line": line.old_line,
+                            "new_line": line.new_line,
+                            "text": line.text,
+                        })).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
                 })).collect::<Vec<_>>(),
                 "lsp": Vec::<Value>::new(),
             }),
         ));
     }
 
-    let summary = tokio::task::spawn_blocking(move || apply_patch_ops(resolved_ops))
+    ensure_patch_not_cancelled(context)?;
+    let summary = tokio::task::spawn_blocking({
+        let cancel_probe = build_patch_cancel_probe(context);
+        move || apply_patch_ops_checked(resolved_ops, cancel_probe.as_ref())
+    })
         .await
         .map_err(|err| {
             patch_error_with_hint(
@@ -394,6 +413,19 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
                 "path": item.path,
                 "to_path": item.to_path,
                 "hunks": item.hunks,
+                "diff_blocks": item.diff_blocks.iter().map(|block| json!({
+                    "header": block.header,
+                    "start_line_before": block.start_line_before,
+                    "end_line_before": block.end_line_before,
+                    "start_line_after": block.start_line_after,
+                    "end_line_after": block.end_line_after,
+                    "lines": block.lines.iter().map(|line| json!({
+                        "kind": line.kind,
+                        "old_line": line.old_line,
+                        "new_line": line.new_line,
+                        "text": line.text,
+                    })).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
             "lsp": lsp_records,
         }),
@@ -419,6 +451,7 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
                     path: path.clone(),
                     to_path: None,
                     hunks: 0,
+                    diff_blocks: Vec::new(),
                 });
             }
             ResolvedPatchOp::Delete { path, target } => {
@@ -429,6 +462,7 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
                     path: path.clone(),
                     to_path: None,
                     hunks: 0,
+                    diff_blocks: Vec::new(),
                 });
             }
             ResolvedPatchOp::Update {
@@ -451,6 +485,7 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
                     path: path.clone(),
                     to_path: move_to_path.clone(),
                     hunks,
+                    diff_blocks: Vec::new(),
                 });
             }
         }
@@ -466,6 +501,92 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
         file_summaries,
         no_effect_updates: Vec::new(),
     }
+}
+
+fn build_patch_cancel_probe(context: &ToolContext<'_>) -> Option<PatchCancelProbe> {
+    let monitor = context.monitor.as_ref()?.clone();
+    let session_id = context.session_id.trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    Some(PatchCancelProbe {
+        monitor,
+        session_id: session_id.to_string(),
+    })
+}
+
+fn ensure_patch_not_cancelled(context: &ToolContext<'_>) -> Result<()> {
+    if let Some(probe) = build_patch_cancel_probe(context) {
+        ensure_patch_not_cancelled_probe(&probe)?;
+    }
+    Ok(())
+}
+
+fn ensure_patch_not_cancelled_probe(probe: &PatchCancelProbe) -> Result<()> {
+    if probe.monitor.is_cancelled(&probe.session_id) {
+        return Err(patch_cancelled_error());
+    }
+    Ok(())
+}
+
+fn patch_cancelled_error() -> anyhow::Error {
+    patch_error_with_hint(
+        "CANCELLED",
+        "补丁已中止，因为会话已请求停止",
+        "Patch cancelled because the session received a stop request",
+        "如需继续，请在确认最新文件状态后重新发起编辑或恢复流程。",
+        "If you still need the edit, re-read the latest file state and start a new edit or resume flow.",
+    )
+}
+
+fn parse_patch_checked(
+    input: &str,
+    cancel_probe: Option<&PatchCancelProbe>,
+) -> Result<Vec<ParsedPatchOp>> {
+    let parsed_ops = parse_patch(input)?;
+    if parsed_ops.is_empty() {
+        return Err(patch_error_with_hint(
+            "PATCH_FORMAT_EMPTY_PATCH",
+            "补丁为空，至少包含一个文件操作",
+            "Patch is empty; include at least one file operation",
+            "补丁至少应包含一个 Add File / Delete File / Update File 块。",
+            "Include at least one Add File / Delete File / Update File block.",
+        ));
+    }
+    if parsed_ops.len() > PATCH_MAX_FILE_OPS {
+        return Err(patch_error_with_hint(
+            "PATCH_LIMIT_TOO_MANY_FILE_OPS",
+            format!("单次补丁文件操作过多（>{PATCH_MAX_FILE_OPS}），请拆分后重试"),
+            format!(
+                "Patch contains too many file operations (>{PATCH_MAX_FILE_OPS}), split and retry"
+            ),
+            "请按目录或功能分批提交补丁，降低单次文件操作数。",
+            "Submit the patch in batches (by directory or feature) to reduce file operations per call.",
+        ));
+    }
+    let mut total_update_chunks = 0usize;
+    for (index, op) in parsed_ops.iter().enumerate() {
+        if index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
+            if let Some(probe) = cancel_probe {
+                ensure_patch_not_cancelled_probe(probe)?;
+            }
+        }
+        if let ParsedPatchOp::Update { chunks, .. } = op {
+            total_update_chunks = total_update_chunks.saturating_add(chunks.len());
+        }
+    }
+    if total_update_chunks > PATCH_MAX_UPDATE_CHUNKS {
+        return Err(patch_error_with_hint(
+            "PATCH_LIMIT_TOO_MANY_CHUNKS",
+            format!("补丁变更块过多（>{PATCH_MAX_UPDATE_CHUNKS}），请拆分后重试"),
+            format!(
+                "Patch contains too many change chunks (>{PATCH_MAX_UPDATE_CHUNKS}), split and retry"
+            ),
+            "请减少单次 Update File 的块数量，按文件或区域分批提交。",
+            "Reduce Update File chunk count per call and submit by file or region.",
+        ));
+    }
+    Ok(parsed_ops)
 }
 
 fn extract_patch_input(args: &Value) -> Result<String> {
@@ -784,7 +905,8 @@ fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
     let end = lines.len().saturating_sub(1);
     while index < end {
         let line = lines[index].as_str();
-        if let Some(rest) = line.strip_prefix(ADD_FILE_MARKER) {
+        let normalized_line = normalized_file_op_header(line).unwrap_or(line);
+        if let Some(rest) = normalized_line.strip_prefix(ADD_FILE_MARKER) {
             let path = parse_patch_path(rest, index + 1)?;
             index += 1;
             let mut add_lines = Vec::new();
@@ -820,13 +942,13 @@ fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
             });
             continue;
         }
-        if let Some(rest) = line.strip_prefix(DELETE_FILE_MARKER) {
+        if let Some(rest) = normalized_line.strip_prefix(DELETE_FILE_MARKER) {
             let path = parse_patch_path(rest, index + 1)?;
             ops.push(ParsedPatchOp::Delete { path });
             index += 1;
             continue;
         }
-        if let Some(rest) = line.strip_prefix(UPDATE_FILE_MARKER) {
+        if let Some(rest) = normalized_line.strip_prefix(UPDATE_FILE_MARKER) {
             let path = parse_patch_path(rest, index + 1)?;
             index += 1;
             let mut move_to = None;
@@ -874,22 +996,14 @@ fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
                 let Some(marker) = chars.next() else {
                     return Err(patch_empty_update_line_error(index + 1));
                 };
-                let text = chars.collect::<String>();
-                let kind = match marker {
-                    ' ' => ChunkLineKind::Context,
-                    '+' => ChunkLineKind::Add,
-                    '-' => ChunkLineKind::Delete,
+                let (kind, text) = match marker {
+                    ' ' => (ChunkLineKind::Context, chars.collect::<String>()),
+                    '+' => (ChunkLineKind::Add, chars.collect::<String>()),
+                    '-' => (ChunkLineKind::Delete, chars.collect::<String>()),
                     _ => {
-                        return Err(patch_format_error(
-                            format!(
-                                "补丁格式错误（第 {} 行）：Update File 行必须以空格/+/- 开头",
-                                index + 1
-                            ),
-                            format!(
-                                "Invalid patch format (line {}): Update File lines must start with space/+/-",
-                                index + 1
-                            ),
-                        ));
+                        // Models sometimes paste raw source lines into hunks without the required
+                        // leading context space. Recover them as context lines instead of failing.
+                        (ChunkLineKind::Context, raw.to_string())
                     }
                 };
                 has_change_line = true;
@@ -935,10 +1049,20 @@ fn parse_patch_path(raw: &str, line_no: usize) -> Result<String> {
 }
 
 fn is_file_op_header(line: &str) -> bool {
-    line.starts_with(ADD_FILE_MARKER)
-        || line.starts_with(DELETE_FILE_MARKER)
-        || line.starts_with(UPDATE_FILE_MARKER)
+    normalized_file_op_header(line).is_some()
         || line.trim() == END_PATCH_MARKER
+}
+
+fn normalized_file_op_header(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with(ADD_FILE_MARKER)
+        || trimmed.starts_with(DELETE_FILE_MARKER)
+        || trimmed.starts_with(UPDATE_FILE_MARKER)
+    {
+        Some(trimmed)
+    } else {
+        None
+    }
 }
 
 fn resolve_patch_op(
@@ -1002,7 +1126,20 @@ fn resolve_patch_op(
     }
 }
 
-fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
+fn apply_patch_ops_checked(
+    ops: Vec<ResolvedPatchOp>,
+    cancel_probe: Option<&PatchCancelProbe>,
+) -> Result<ApplyPatchSummary> {
+    if let Some(probe) = cancel_probe {
+        ensure_patch_not_cancelled_probe(probe)?;
+    }
+    apply_patch_ops(ops, cancel_probe)
+}
+
+fn apply_patch_ops(
+    ops: Vec<ResolvedPatchOp>,
+    cancel_probe: Option<&PatchCancelProbe>,
+) -> Result<ApplyPatchSummary> {
     let mut staged: HashMap<PathBuf, StagedEntry> = HashMap::new();
     let mut changed_files = HashSet::new();
     let mut file_summaries = Vec::new();
@@ -1013,7 +1150,12 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
     let mut hunks_applied = 0usize;
     let mut no_effect_updates = Vec::new();
 
-    for op in ops {
+    for (op_index, op) in ops.into_iter().enumerate() {
+        if op_index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
+            if let Some(probe) = cancel_probe {
+                ensure_patch_not_cancelled_probe(probe)?;
+            }
+        }
         match op {
             ResolvedPatchOp::Add {
                 path,
@@ -1045,9 +1187,10 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                 hunks_applied += 1;
                 file_summaries.push(FileChangeSummary {
                     action: "add".to_string(),
-                    path,
+                    path: path.clone(),
                     to_path: None,
                     hunks: 1,
+                    diff_blocks: vec![build_add_file_diff_block(&lines)],
                 });
             }
             ResolvedPatchOp::Delete { path, target } => {
@@ -1076,9 +1219,10 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                 hunks_applied += 1;
                 file_summaries.push(FileChangeSummary {
                     action: "delete".to_string(),
-                    path,
+                    path: path.clone(),
                     to_path: None,
                     hunks: 1,
+                    diff_blocks: vec![build_delete_file_diff_block(current.as_deref().unwrap_or_default())],
                 });
             }
             ResolvedPatchOp::Update {
@@ -1097,7 +1241,8 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                         "Ensure the Update File path exists, or create it first via Add File.",
                     ));
                 };
-                let next_content = apply_update_chunks(&source_content, &chunks, &path)?;
+                let next_content =
+                    apply_update_chunks(&source_content, &chunks, &path, cancel_probe)?;
                 let had_effect = next_content != source_content
                     || move_to_target
                         .as_ref()
@@ -1126,7 +1271,7 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                     staged.insert(
                         new_target.clone(),
                         StagedEntry::Existing {
-                            content: next_content,
+                            content: next_content.clone(),
                         },
                     );
                     changed_files.insert(target);
@@ -1136,7 +1281,7 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                     staged.insert(
                         target.clone(),
                         StagedEntry::Existing {
-                            content: next_content,
+                            content: next_content.clone(),
                         },
                     );
                     changed_files.insert(target);
@@ -1147,6 +1292,7 @@ fn apply_patch_ops(ops: Vec<ResolvedPatchOp>) -> Result<ApplyPatchSummary> {
                     path,
                     to_path: move_to_path,
                     hunks: chunks.len(),
+                    diff_blocks: build_update_diff_blocks(&source_content, &next_content),
                 });
             }
         }
@@ -1374,10 +1520,91 @@ fn join_lines(lines: &[String], ensure_newline: bool) -> String {
     text
 }
 
-fn apply_update_chunks(source: &str, chunks: &[UpdateChunk], path: &str) -> Result<String> {
+fn build_add_file_diff_block(lines: &[String]) -> FileDiffBlock {
+    FileDiffBlock {
+        header: "new file".to_string(),
+        start_line_before: 0,
+        end_line_before: 0,
+        start_line_after: 1,
+        end_line_after: lines.len(),
+        lines: lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| FileDiffLine {
+                kind: "add",
+                old_line: None,
+                new_line: Some(index + 1),
+                text: line.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn build_delete_file_diff_block(source: &str) -> FileDiffBlock {
+    let lines = split_lines(source);
+    FileDiffBlock {
+        header: "deleted file".to_string(),
+        start_line_before: 1,
+        end_line_before: lines.len(),
+        start_line_after: 0,
+        end_line_after: 0,
+        lines: lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| FileDiffLine {
+                kind: "delete",
+                old_line: Some(index + 1),
+                new_line: None,
+                text: line.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn build_update_diff_blocks(before: &str, after: &str) -> Vec<FileDiffBlock> {
+    let before_lines = split_lines(before);
+    let after_lines = split_lines(after);
+    let mut lines = Vec::with_capacity(before_lines.len() + after_lines.len() + 1);
+    lines.extend(before_lines.iter().enumerate().map(|(index, line)| FileDiffLine {
+        kind: "delete",
+        old_line: Some(index + 1),
+        new_line: None,
+        text: line.clone(),
+    }));
+    lines.extend(after_lines.iter().enumerate().map(|(index, line)| FileDiffLine {
+        kind: "add",
+        old_line: None,
+        new_line: Some(index + 1),
+        text: line.clone(),
+    }));
+    vec![FileDiffBlock {
+        header: format!(
+            "@@ -1,{} +1,{} @@",
+            before_lines.len(),
+            after_lines.len()
+        ),
+        start_line_before: 1,
+        end_line_before: before_lines.len(),
+        start_line_after: 1,
+        end_line_after: after_lines.len(),
+        lines,
+    }]
+}
+
+fn apply_update_chunks(
+    source: &str,
+    chunks: &[UpdateChunk],
+    path: &str,
+    cancel_probe: Option<&PatchCancelProbe>,
+) -> Result<String> {
     let mut lines = split_lines(source);
     let mut cursor = 0usize;
     for (index, chunk) in chunks.iter().enumerate() {
+        if index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
+            if let Some(probe) = cancel_probe {
+                ensure_patch_not_cancelled_probe(probe)?;
+            }
+        }
         let old_lines = chunk
             .lines
             .iter()
@@ -1854,6 +2081,10 @@ fn collect_fuzzy_match_starts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use crate::monitor::MonitorState;
+    use crate::storage::SqliteStorage;
+    use std::sync::Arc;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1865,6 +2096,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wunder-{prefix}-{nanos}"));
         fs::create_dir_all(&dir).expect("temp dir should be created");
         dir
+    }
+
+    fn create_monitor_for_tests(workspace_root: &Path) -> Arc<MonitorState> {
+        let db_path = workspace_root.join("monitor-tests.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let config = Config::default();
+        Arc::new(MonitorState::new(
+            storage,
+            config.observability.clone(),
+            config.sandbox.clone(),
+            workspace_root.to_string_lossy().to_string(),
+        ))
     }
 
     #[test]
@@ -2022,9 +2265,42 @@ mod tests {
             ],
             end_of_file: false,
         };
-        let output =
-            apply_update_chunks("a\nb\nc\n", &[chunk], "demo.txt").expect("chunk should apply");
+        let output = apply_update_chunks("a\nb\nc\n", &[chunk], "demo.txt", None)
+            .expect("chunk should apply");
         assert_eq!(output, "a\nx\nc\n");
+    }
+
+    #[test]
+    fn apply_update_chunks_stops_when_cancelled() {
+        let dir = create_temp_dir("patch-cancelled");
+        let monitor = create_monitor_for_tests(&dir);
+        monitor.register("sess_cancel", "tester", "", "q", false, false);
+        assert!(monitor.cancel("sess_cancel"));
+        let probe = PatchCancelProbe {
+            monitor,
+            session_id: "sess_cancel".to_string(),
+        };
+        let chunk = UpdateChunk {
+            change_context: None,
+            lines: vec![
+                ChunkLine {
+                    kind: ChunkLineKind::Delete,
+                    text: "b".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Add,
+                    text: "x".to_string(),
+                },
+            ],
+            end_of_file: false,
+        };
+        let error = apply_update_chunks("a\nb\nc\n", &[chunk], "demo.txt", Some(&probe))
+            .expect_err("cancelled patch should stop");
+        let result = build_patch_error_result(error);
+        assert_eq!(
+            result.pointer("/error_meta/code").and_then(Value::as_str),
+            Some("CANCELLED")
+        );
     }
 
     #[test]
@@ -2052,7 +2328,7 @@ mod tests {
                 ],
                 end_of_file: false,
             }],
-        }])
+        }], None)
         .expect("no-effect patch should still summarize");
 
         assert!(summary.changed_files.is_empty());
@@ -2098,6 +2374,7 @@ mod tests {
             "line1\nline2\nline3\n",
             &[chunk_late, chunk_early],
             "demo.txt",
+            None,
         )
         .expect("fallback search should apply out-of-order chunks");
         assert_eq!(output, "LINE1\nline2\nLINE3\n");
@@ -2138,6 +2415,7 @@ mod tests {
             "dup\nx\ndup\nend\n",
             &[chunk_tail, chunk_ambiguous],
             "demo.txt",
+            None,
         )
         .expect_err("ambiguous fallback should be rejected");
         let message = error.to_string();
@@ -2154,7 +2432,7 @@ mod tests {
             path: "existing.txt".to_string(),
             target: existing,
             lines: vec!["new".to_string()],
-        }]);
+        }], None);
 
         assert!(result.is_err());
         let message = result.expect_err("should reject overwrite").to_string();
@@ -2191,7 +2469,7 @@ mod tests {
             move_to_path: Some("destination.txt".to_string()),
             move_to_target: Some(destination),
             chunks: vec![chunk],
-        }]);
+        }], None);
 
         assert!(result.is_err());
         let message = result
@@ -2346,6 +2624,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_patch_accepts_indented_update_header() {
+        let patch = r#"*** Begin Patch
+ *** Update File: demo.txt
+@@
+ line1
+-line2
++line2x
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("indented update header should be recovered");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[0].lines[0].text, "line1");
+    }
+
+    #[test]
+    fn parse_patch_accepts_plain_source_lines_inside_hunk_as_context() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+plain context
+-old
++new
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("plain source lines should be recovered as context");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[0].lines[0].text, "plain context");
+    }
+
+    #[test]
     fn apply_update_chunks_not_found_hint_includes_nearby_context_details() {
         let chunk = UpdateChunk {
             change_context: Some("missing-anchor".to_string()),
@@ -2369,8 +2683,13 @@ mod tests {
             ],
             end_of_file: false,
         };
-        let error = apply_update_chunks("line-1\nline-2\nline-3\nline-x\n", &[chunk], "demo.txt")
-            .expect_err("should fail when context is missing");
+        let error = apply_update_chunks(
+            "line-1\nline-2\nline-3\nline-x\n",
+            &[chunk],
+            "demo.txt",
+            None,
+        )
+        .expect_err("should fail when context is missing");
         let result = build_patch_error_result(error);
         let hint = result
             .get("data")

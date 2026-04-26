@@ -28,7 +28,9 @@
             :key="line.key"
             :class="['tool-workflow-patch-line', `is-${line.kind}`]"
           >
-            {{ line.text }}
+            <span class="tool-workflow-patch-line-no old">{{ line.oldLine ?? '' }}</span>
+            <span class="tool-workflow-patch-line-no new">{{ line.newLine ?? '' }}</span>
+            <span class="tool-workflow-patch-line-text">{{ line.text }}</span>
           </div>
         </div>
       </section>
@@ -144,11 +146,24 @@ defineProps<{
 }
 
 .tool-workflow-patch-line {
-  display: block;
+  display: grid;
+  grid-template-columns: 48px 48px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 8px;
   padding: 1px 4px;
   border-radius: 5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
+}
+
+.tool-workflow-patch-line-no {
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  text-align: right;
+  user-select: none;
+}
+
+.tool-workflow-patch-line-text {
   white-space: pre-wrap;
   word-break: break-word;
 }
