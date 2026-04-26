@@ -32,6 +32,8 @@ type PatchCounts = {
   updated: number;
   deleted: number;
   moved: number;
+  addedLines: number;
+  deletedLines: number;
 };
 
 type PatchFileCard = {
@@ -162,7 +164,9 @@ const buildPatchMetrics = (
     buildMetric('added', t('chat.toolWorkflow.detail.added'), counts.added || '', counts.added > 0 ? 'success' : 'default'),
     buildMetric('updated', t('chat.toolWorkflow.detail.updated'), counts.updated || ''),
     buildMetric('deleted', t('chat.toolWorkflow.detail.deleted'), counts.deleted || '', counts.deleted > 0 ? 'warning' : 'default'),
-    buildMetric('moved', t('chat.toolWorkflow.detail.moved'), counts.moved || '')
+    buildMetric('moved', t('chat.toolWorkflow.detail.moved'), counts.moved || ''),
+    buildMetric('addedLines', '+Lines', counts.addedLines || '', counts.addedLines > 0 ? 'success' : 'default'),
+    buildMetric('deletedLines', '-Lines', counts.deletedLines || '', counts.deletedLines > 0 ? 'warning' : 'default')
   ].filter(Boolean) as ToolWorkflowStructuredMetric[];
 };
 
@@ -178,7 +182,9 @@ export const buildPatchCallView = (
       added: 0,
       updated: 0,
       deleted: 0,
-      moved: 0
+      moved: 0,
+      addedLines: 0,
+      deletedLines: 0
     },
     t,
     false

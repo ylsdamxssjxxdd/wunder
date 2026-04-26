@@ -28,9 +28,13 @@
             :key="line.key"
             :class="['tool-workflow-patch-line', `is-${line.kind}`]"
           >
-            <span class="tool-workflow-patch-line-no old">{{ line.oldLine ?? '' }}</span>
-            <span class="tool-workflow-patch-line-no new">{{ line.newLine ?? '' }}</span>
-            <span class="tool-workflow-patch-line-text">{{ line.text }}</span>
+            <div class="tool-workflow-patch-line-gutter">
+              <span class="tool-workflow-patch-line-no">{{ resolveDisplayedLineNo(line) }}</span>
+            </div>
+            <div class="tool-workflow-patch-line-body">
+              <span class="tool-workflow-patch-line-sign" aria-hidden="true">{{ resolveLineSign(line.kind) }}</span>
+              <span class="tool-workflow-patch-line-text">{{ line.text }}</span>
+            </div>
           </div>
         </div>
       </section>
@@ -39,11 +43,28 @@
 </template>
 
 <script setup lang="ts">
-import type { ToolWorkflowPatchView } from './toolWorkflowTypes';
+import type { ToolWorkflowPatchLine, ToolWorkflowPatchView } from './toolWorkflowTypes';
 
 defineProps<{
   view: ToolWorkflowPatchView;
 }>();
+
+const resolveLineSign = (kind: ToolWorkflowPatchLine['kind']): string => {
+  if (kind === 'add') return '+';
+  if (kind === 'delete') return '-';
+  if (kind === 'move') return '>';
+  if (kind === 'update') return '~';
+  if (kind === 'header') return '@@';
+  if (kind === 'meta') return '@@';
+  if (kind === 'error') return '!';
+  return ' ';
+};
+
+const resolveDisplayedLineNo = (line: ToolWorkflowPatchLine): string | number => {
+  if (line.kind === 'delete') return line.oldLine ?? '';
+  if (line.kind === 'add') return line.newLine ?? '';
+  return line.newLine ?? line.oldLine ?? '';
+};
 </script>
 
 <style scoped>
@@ -142,49 +163,171 @@ defineProps<{
 .tool-workflow-patch-file-lines {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .tool-workflow-patch-line {
+  --patch-gutter-column-width: 56px;
+  --patch-sign-width: 2ch;
   display: grid;
-  grid-template-columns: 48px 48px minmax(0, 1fr);
+  grid-template-columns: var(--patch-gutter-column-width) minmax(0, 1fr);
   align-items: start;
-  column-gap: 8px;
-  padding: 1px 4px;
-  border-radius: 5px;
+  column-gap: 0;
+  padding: 0;
+  border-radius: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
+  overflow: hidden;
+}
+
+.tool-workflow-patch-line-gutter {
+  display: flex;
+  align-items: stretch;
+  background: rgba(15, 23, 42, 0.18);
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.tool-workflow-patch-line-body {
+  display: grid;
+  grid-template-columns: var(--patch-sign-width) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 6px;
+  padding: 2px 8px 2px 6px;
+  border-left: 2px solid transparent;
+  min-width: 0;
+}
+
+.tool-workflow-patch-line-sign {
+  color: var(--workflow-term-muted);
+  text-align: left;
+  user-select: none;
 }
 
 .tool-workflow-patch-line-no {
+  display: block;
+  width: 100%;
   color: var(--workflow-term-muted);
   font-size: 11px;
-  text-align: right;
+  text-align: left;
   user-select: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.94;
+  padding: 2px 6px 2px 10px;
 }
 
 .tool-workflow-patch-line-text {
   white-space: pre-wrap;
   word-break: break-word;
+  text-align: left;
+  justify-self: start;
+  width: 100%;
+  padding-left: 0;
+}
+
+.tool-workflow-patch-line.is-meta .tool-workflow-patch-line-no {
+  display: none;
+}
+
+.tool-workflow-patch-line.is-meta .tool-workflow-patch-line-gutter {
+  display: none;
+}
+
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-no {
+  display: none;
+}
+
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-gutter {
+  display: none;
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-no {
+  display: none;
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-gutter {
+  display: none;
+}
+
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-text {
+  font-weight: 600;
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-text {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-body,
+.tool-workflow-patch-line.is-meta .tool-workflow-patch-line-body,
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-body {
+  grid-column: 1 / -1;
+  padding: 4px 10px;
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-body {
+  grid-template-columns: 2.5ch minmax(0, 1fr);
+  column-gap: 6px;
+  padding: 3px 10px 2px;
+}
+
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-body {
+  grid-template-columns: 1fr;
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-sign,
+.tool-workflow-patch-line.is-meta .tool-workflow-patch-line-sign,
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-sign {
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.tool-workflow-patch-line.is-note .tool-workflow-patch-line-no {
+  opacity: 0.28;
 }
 
 .tool-workflow-patch-line.is-meta {
   color: var(--workflow-term-muted);
 }
 
+.tool-workflow-patch-line.is-header {
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.tool-workflow-patch-line.is-header .tool-workflow-patch-line-body {
+  background: rgba(51, 65, 85, 0.22);
+}
+
+.tool-workflow-patch-line.is-meta .tool-workflow-patch-line-body {
+  background: rgba(51, 65, 85, 0.42);
+}
+
 .tool-workflow-patch-line.is-note {
   color: var(--workflow-term-muted);
   font-weight: 600;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.tool-workflow-patch-line.is-context {
+  color: var(--workflow-term-text);
+}
+
+.tool-workflow-patch-line.is-context .tool-workflow-patch-line-body {
+  background: rgba(15, 23, 42, 0.12);
 }
 
 .tool-workflow-patch-line.is-add {
   color: #bbf7d0;
+}
+
+.tool-workflow-patch-line.is-add .tool-workflow-patch-line-body {
   background: rgba(22, 101, 52, 0.44);
   border-left: 2px solid rgba(74, 222, 128, 0.62);
 }
 
 .tool-workflow-patch-line.is-delete {
   color: #fecaca;
+}
+
+.tool-workflow-patch-line.is-delete .tool-workflow-patch-line-body {
   background: rgba(127, 29, 29, 0.5);
   border-left: 2px solid rgba(248, 113, 113, 0.56);
 }
@@ -192,11 +335,34 @@ defineProps<{
 .tool-workflow-patch-line.is-move,
 .tool-workflow-patch-line.is-update {
   color: #bfdbfe;
+}
+
+.tool-workflow-patch-line.is-move .tool-workflow-patch-line-body,
+.tool-workflow-patch-line.is-update .tool-workflow-patch-line-body {
   background: rgba(30, 64, 175, 0.36);
 }
 
 .tool-workflow-patch-line.is-error {
   color: #fecaca;
+}
+
+.tool-workflow-patch-line.is-error .tool-workflow-patch-line-body {
   background: rgba(153, 27, 27, 0.48);
+}
+
+@media (max-width: 640px) {
+  .tool-workflow-patch-line {
+    --patch-gutter-column-width: 48px;
+    --patch-sign-width: 1.5ch;
+  }
+
+  .tool-workflow-patch-line-no {
+    padding: 2px 4px 2px 8px;
+  }
+
+  .tool-workflow-patch-line-body {
+    column-gap: 4px;
+    padding: 2px 6px 2px 4px;
+  }
 }
 </style>

@@ -1646,6 +1646,15 @@ type ApplyPatchCounts = {
   updated: number;
   deleted: number;
   moved: number;
+  addedLines: number;
+  deletedLines: number;
+};
+
+type PatchDiffRenderLine = {
+  kind: PatchLine['kind'];
+  text: string;
+  oldLine?: number | null;
+  newLine?: number | null;
 };
 
 const resolveApplyPatchCounts = (entry: RawEntry, patchDiffBlocks: PatchDiffBlock[] = []): ApplyPatchCounts => {
@@ -1661,20 +1670,46 @@ const resolveApplyPatchCounts = (entry: RawEntry, patchDiffBlocks: PatchDiffBloc
       added: 0,
       updated: 0,
       deleted: 0,
-      moved: 0
+      moved: 0,
+      addedLines: 0,
+      deletedLines: 0
     };
   }
 
   const detailObject = parseDetailObject(entry.resultItem.detail);
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
+  const files = Array.isArray(dataObject?.files) ? (dataObject.files as unknown[]) : [];
+  let addedLines = 0;
+  let deletedLines = 0;
+
+  files.forEach((file) => {
+    const fileObject = asObject(file);
+    if (!fileObject) return;
+    const diffBlocks = Array.isArray(fileObject.diff_blocks) ? (fileObject.diff_blocks as unknown[]) : [];
+    diffBlocks.forEach((block) => {
+      const blockObject = asObject(block);
+      if (!blockObject) return;
+      const blockLines = Array.isArray(blockObject.lines) ? (blockObject.lines as unknown[]) : [];
+      blockLines.forEach((line) => {
+        const lineObject = asObject(line);
+        if (!lineObject) return;
+        const kind = String(lineObject.kind || '').trim().toLowerCase();
+        if (kind === 'add') addedLines += 1;
+        if (kind === 'delete') deletedLines += 1;
+      });
+    });
+  });
+
   return {
     changedFiles: toInt(dataObject?.changed_files, resultObject?.changed_files),
     hunks: toInt(dataObject?.hunks_applied, resultObject?.hunks_applied),
     added: toInt(dataObject?.added, resultObject?.added),
     updated: toInt(dataObject?.updated, resultObject?.updated),
     deleted: toInt(dataObject?.deleted, resultObject?.deleted),
-    moved: toInt(dataObject?.moved, resultObject?.moved)
+    moved: toInt(dataObject?.moved, resultObject?.moved),
+    addedLines,
+    deletedLines
   };
 };
 
@@ -1769,17 +1804,10 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
       const blockObject = asObject(block);
       if (!blockObject) return;
       const header = pickString(blockObject.header);
-      if (header) {
-        lines.push({
-          key: `file-${fileIndex}-block-${blockIndex}-header`,
-          kind: 'meta',
-          text: header
-        });
-      }
       const blockLines = Array.isArray(blockObject.lines) ? (blockObject.lines as unknown[]) : [];
-      blockLines.forEach((line, lineIndex) => {
+      const normalizedBlockLines: PatchDiffRenderLine[] = blockLines.map((line) => {
         const lineObject = asObject(line);
-        if (!lineObject) return;
+        if (!lineObject) return { kind: 'meta', text: '' };
         const kindRaw = String(lineObject.kind || '').trim().toLowerCase();
         const kind: PatchLine['kind'] =
           kindRaw === 'add'
@@ -1788,13 +1816,54 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
               ? 'delete'
               : kindRaw === 'error'
                 ? 'error'
-                : 'meta';
-        lines.push({
-          key: `file-${fileIndex}-block-${blockIndex}-line-${lineIndex}`,
+                : kindRaw === 'meta'
+                  ? 'context'
+                  : 'meta';
+        return {
           kind,
           text: pickString(lineObject.text),
           oldLine: toOptionalInt(lineObject.old_line),
           newLine: toOptionalInt(lineObject.new_line)
+        };
+      });
+
+      const renderedHeader = formatPatchHeaderForDisplay(header);
+      if (renderedHeader) {
+        lines.push({
+          key: `file-${fileIndex}-block-${blockIndex}-header`,
+          kind: 'header',
+          text: renderedHeader
+        });
+      }
+
+      let fallbackOldLine = normalizedBlockLines.find((line) => line.oldLine != null)?.oldLine ?? null;
+      let fallbackNewLine = normalizedBlockLines.find((line) => line.newLine != null)?.newLine ?? null;
+      normalizedBlockLines.forEach((line, lineIndex) => {
+        const kind = line.kind;
+        let oldLine = line.oldLine ?? null;
+        let newLine = line.newLine ?? null;
+
+        if (kind === 'meta') {
+          if (oldLine == null && newLine == null) {
+            oldLine = fallbackOldLine;
+            newLine = fallbackNewLine;
+          }
+          if (oldLine != null) fallbackOldLine = oldLine + 1;
+          if (newLine != null) fallbackNewLine = newLine + 1;
+        } else if (kind === 'delete') {
+          if (oldLine == null) oldLine = fallbackOldLine;
+          if (oldLine != null) fallbackOldLine = oldLine + 1;
+        } else if (kind === 'add') {
+          if (newLine == null) newLine = fallbackNewLine;
+          if (newLine != null) fallbackNewLine = newLine + 1;
+        }
+
+        lines.push({
+          key: `file-${fileIndex}-block-${blockIndex}-line-${lineIndex}`,
+          kind,
+          text: line.text,
+          oldLine,
+          newLine
         });
       });
     });
@@ -1817,6 +1886,17 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
   }
 
   return output;
+};
+
+const formatPatchHeaderForDisplay = (header: string): string => {
+  const text = String(header || '').trim();
+  if (!text || text === '@@') return '';
+  const match = text.match(/^@@\s*-(\d+),(\d+)\s+\+(\d+),(\d+)\s*@@$/);
+  if (!match) return text;
+  const [, oldStart, oldLen, newStart, newLen] = match;
+  const oldEnd = Number(oldStart) + Math.max(Number(oldLen) - 1, 0);
+  const newEnd = Number(newStart) + Math.max(Number(newLen) - 1, 0);
+  return `变更块：旧 ${oldStart}-${oldEnd} 行 -> 新 ${newStart}-${newEnd} 行 (${text})`;
 };
 
 const mergeApplyPatchResultFilesWithPreview = (

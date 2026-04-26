@@ -13,7 +13,7 @@ export type ToolWorkflowCommandView = {
 
 export type ToolWorkflowPatchLine = {
   key: string;
-  kind: 'meta' | 'note' | 'add' | 'delete' | 'move' | 'update' | 'error';
+  kind: 'meta' | 'context' | 'header' | 'note' | 'add' | 'delete' | 'move' | 'update' | 'error';
   text: string;
   oldLine?: number | null;
   newLine?: number | null;

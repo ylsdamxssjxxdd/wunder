@@ -3439,6 +3439,11 @@ button.messenger-chat-header-model {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+}
+
+.messenger-skill-detail-dialog .el-dialog__body {
+  max-height: min(84vh, 900px);
 }
 
 .messenger-skill-detail-toolbar {
@@ -3479,6 +3484,20 @@ button.messenger-chat-header-model {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .messenger-skill-detail-dialog {
+    width: min(760px, calc(100vw - 24px)) !important;
+  }
+
+  .messenger-skill-detail-dialog .el-dialog__body {
+    max-height: calc(100vh - 104px);
+  }
+
+  .messenger-skill-detail-content {
+    max-height: calc(100vh - 220px);
+  }
 }
 
 .messenger-timeline {
@@ -6571,6 +6590,33 @@ button.messenger-chat-header-model {
   color: var(--ui-accent);
 }
 
+.workspace-dialog .workspace-btn.workspace-btn--primary {
+  border-color: rgba(var(--ui-accent-rgb), 0.22);
+  background: linear-gradient(
+    135deg,
+    rgba(var(--ui-accent-rgb), 0.92),
+    rgba(var(--ui-accent-secondary-rgb), 0.84)
+  );
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(var(--ui-accent-rgb), 0.2);
+}
+
+.workspace-dialog .workspace-btn.workspace-btn--primary:not(:disabled):hover,
+.workspace-dialog .workspace-btn.workspace-btn--primary:not(:disabled):focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  background: linear-gradient(
+    135deg,
+    rgba(var(--ui-accent-rgb), 1),
+    rgba(var(--ui-accent-secondary-rgb), 0.92)
+  );
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(var(--ui-accent-rgb), 0.26);
+}
+
+.workspace-dialog .workspace-btn.workspace-btn--primary:not(:disabled):active {
+  box-shadow: 0 4px 12px rgba(var(--ui-accent-rgb), 0.22);
+}
+
 .workspace-dialog .workspace-preview-head {
   display: flex;
   align-items: center;
@@ -6645,6 +6691,11 @@ button.messenger-chat-header-model {
   color: var(--ui-accent-deep);
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.45);
+}
+
+:root[data-user-theme='dark'] .workspace-dialog .workspace-btn.workspace-btn--primary,
+.theme-dark .workspace-dialog .workspace-btn.workspace-btn--primary {
+  color: #03101d;
 }
 
 .workspace-dialog .workspace-preview,

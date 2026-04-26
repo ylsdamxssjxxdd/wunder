@@ -9184,7 +9184,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               })()
             : detailPayload;
         // Workflow detail should mirror model input first; fallback to raw payload only when observation is missing.
-        const detail = buildDetail(modelObservation ?? detailPayloadForDisplay ?? result);
+        const preferRawDetailForDisplay =
+          typeof toolName === 'string'
+          && (toolName.trim().toLowerCase() === 'apply_patch' || toolName.includes('应用补丁'));
+        const detail = buildDetail(
+          preferRawDetailForDisplay
+            ? (detailPayloadForDisplay ?? modelObservation ?? result)
+            : (modelObservation ?? detailPayloadForDisplay ?? result)
+        );
         const timingMeta = buildWorkflowTimingMeta(detailPayload, result, data, payload);
         const commandSessionRows = isExecuteCommandTool(toolName)
           ? extractCommandSessionResultRows(detailPayload ?? result)

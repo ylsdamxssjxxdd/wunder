@@ -253,7 +253,7 @@
       />
       <template #footer>
         <button class="workspace-btn secondary" @click="closeEditor">{{ t('common.close') }}</button>
-        <button class="workspace-btn" :disabled="editor.loading" @click="saveEditor">
+        <button class="workspace-btn workspace-btn--primary" :disabled="editor.loading" @click="saveEditor">
           {{ t('common.save') }}
         </button>
       </template>

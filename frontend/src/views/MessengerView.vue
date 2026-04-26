@@ -1581,6 +1581,7 @@
       class="messenger-dialog messenger-skill-detail-dialog"
       :title="rightDockSkillDialogTitle"
       width="760px"
+      top="5vh"
       :close-on-click-modal="false"
       append-to-body
       destroy-on-close

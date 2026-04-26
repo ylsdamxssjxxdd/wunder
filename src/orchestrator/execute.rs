@@ -2825,7 +2825,7 @@ fn build_tool_failure_reroute_model_notice(
             Value::String(next_step)
         },
         "instruction": if tool_name == resolve_tool_name("apply_patch") {
-            Value::String("Do not emit another broad apply_patch attempt. Read the latest file, produce at most one small hunk, and if that still fails switch to write_file for a full rewrite.".to_string())
+            Value::String("Do not emit another broad apply_patch attempt. Read the latest file, keep the next patch to a small batch (a few files, a few hunks), and if that still fails switch to write_file for a full rewrite.".to_string())
         } else {
             Value::String("Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy.".to_string())
         },
@@ -2867,9 +2867,9 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
                 | "PATCH_CONTEXT_AMBIGUOUS"
                 | "PATCH_NO_EFFECT"
         ) {
-            return "建议下一步：先重新读取目标文件，只保留当前文件中的原始上下文；一次只修改一个小区域（单个 hunk），每处前后保留 2-3 行空格开头的上下文；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
+            return "建议下一步：先重新读取目标文件，只保留当前文件中的原始上下文；把下一次补丁控制在少量文件、少量区域内，每处前后保留 2-3 行空格开头的上下文；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
         }
-        return "建议下一步：不要继续盲目重复 apply_patch。先 `read_file` 读取最新文件，再把修改拆成单个小区域逐次提交；如果改动跨多个区域或接近整文件改写，请改用 `write_file`。".to_string();
+        return "建议下一步：不要继续盲目重复 apply_patch。先 `read_file` 读取最新文件，再把修改拆成少量文件、少量区域逐次提交；如果改动跨很多区域、很多文件，或接近整文件改写，请改用 `write_file`。".to_string();
     }
     "建议下一步：停止重复当前调用，调整工具参数或更换工具路径后继续。".to_string()
 }

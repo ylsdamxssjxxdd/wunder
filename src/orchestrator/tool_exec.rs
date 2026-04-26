@@ -276,7 +276,7 @@ impl Orchestrator {
         mut result: ToolResultPayload,
         started_at: Instant,
     ) -> ToolResultPayload {
-        let skip_truncation = should_skip_tool_truncation(tool_name);
+        let skip_truncation = should_skip_event_payload_truncation(tool_name);
         let duration_ms = started_at.elapsed().as_millis() as i64;
         let continuation_supported =
             supports_tool_result_continuation(&result.data, result.meta.as_ref());
@@ -1756,7 +1756,14 @@ fn supports_tool_result_continuation(data: &Value, meta: Option<&Value>) -> bool
 }
 
 fn should_skip_tool_truncation(tool_name: &str) -> bool {
-    matches!(tool_name, "技能调用" | "skill_call" | "skill_get")
+    let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    matches!(canonical.as_str(), "技能调用" | "skill_call" | "skill_get")
+}
+
+fn should_skip_event_payload_truncation(tool_name: &str) -> bool {
+    let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    should_skip_tool_truncation(canonical.as_str())
+        || matches!(canonical.as_str(), "apply_patch" | "应用补丁")
 }
 
 fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
