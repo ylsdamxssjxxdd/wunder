@@ -22,26 +22,24 @@
               spellcheck="false"
             />
           </label>
-          <div class="hive-plaza-search-actions">
-            <button
-              class="hive-plaza-secondary-btn hive-plaza-toolbar-btn"
-              type="button"
-              :disabled="plazaStore.publishing"
-              @click="openPublishDialog"
-            >
-              <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
-              <span>{{ t('plaza.action.publish') }}</span>
-            </button>
-            <button
-              class="hive-plaza-secondary-btn hive-plaza-toolbar-btn"
-              type="button"
-              :disabled="plazaStore.loading"
-              @click="reload"
-            >
-              <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-              <span>{{ t('common.refresh') }}</span>
-            </button>
-          </div>
+          <button
+            class="hive-plaza-primary-btn hive-plaza-toolbar-btn"
+            type="button"
+            :disabled="plazaStore.publishing"
+            @click="openPublishDialog"
+          >
+            <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
+            <span>{{ t('plaza.action.publish') }}</span>
+          </button>
+          <button
+            class="hive-plaza-secondary-btn hive-plaza-toolbar-btn"
+            type="button"
+            :disabled="plazaStore.loading"
+            @click="reload"
+          >
+            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+            <span>{{ t('common.refresh') }}</span>
+          </button>
         </div>
       </div>
 
@@ -775,19 +773,13 @@ defineExpose({
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
-  flex: 0 1 auto;
-}
-
-.hive-plaza-search-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 .hive-plaza-toolbar-btn {
   min-height: 44px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .hive-plaza-toolbar-meta {
@@ -1208,10 +1200,8 @@ defineExpose({
     align-items: stretch;
   }
 
-  .hive-plaza-search-actions {
+  .hive-plaza-toolbar-btn {
     width: 100%;
-    justify-content: flex-end;
-    flex-wrap: wrap;
   }
 
   .hive-plaza-feed-grid {
