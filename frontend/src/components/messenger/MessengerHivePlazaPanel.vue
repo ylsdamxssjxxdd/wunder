@@ -143,15 +143,6 @@
       destroy-on-close
     >
       <section v-if="selectedItem" class="hive-plaza-detail-shell">
-        <div class="hive-plaza-detail-badges">
-          <span class="hive-plaza-kind-chip" :class="`is-${selectedItem.kind}`">
-            {{ resolveKindLabel(selectedItem.kind) }}
-          </span>
-          <span v-if="selectedItem.mine" class="hive-plaza-kind-chip is-mine">
-            {{ t('plaza.meta.mine') }}
-          </span>
-        </div>
-
         <div class="hive-plaza-detail-head">
           <AgentAvatar
             size="lg"
@@ -197,12 +188,9 @@
           <span>{{ resolveFreshnessNotice(selectedItem) }}</span>
         </div>
 
-        <div v-if="selectedItem.tags?.length" class="hive-plaza-tag-row">
-          <span v-for="tag in selectedItem.tags" :key="tag" class="hive-plaza-tag">{{ tag }}</span>
-        </div>
-
         <div class="hive-plaza-detail-actions">
           <button
+            v-if="!selectedItem.mine"
             class="hive-plaza-primary-btn"
             type="button"
             :disabled="plazaStore.importingItemId === selectedItem.item_id"
@@ -945,8 +933,6 @@ defineExpose({
   color: #be123c;
 }
 
-.hive-plaza-detail-badges,
-.hive-plaza-tag-row,
 .hive-plaza-detail-actions,
 .hive-plaza-publish-kind-row,
 .hive-plaza-dialog-actions {
@@ -962,8 +948,7 @@ defineExpose({
   white-space: nowrap;
 }
 
-.hive-plaza-kind-chip,
-.hive-plaza-tag {
+.hive-plaza-kind-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -992,12 +977,6 @@ defineExpose({
 .hive-plaza-kind-chip.is-skill_pack {
   background: rgba(254, 240, 138, 0.26);
   color: #a16207;
-}
-
-.hive-plaza-kind-chip.is-mine,
-.hive-plaza-tag {
-  background: rgba(234, 179, 8, 0.12);
-  color: #925b12;
 }
 
 .hive-plaza-pager {
