@@ -345,6 +345,17 @@ impl LlmClient {
                     usage_fallback = false;
                     continue;
                 }
+                if should_fallback_stream_failure_to_non_stream(status.as_u16(), &text) {
+                    return self
+                        .complete_with_tools(messages, tools)
+                        .await
+                        .map_err(|fallback_err| {
+                            anyhow!(
+                                "LLM stream request failed: {status} {}; fallback request failed: {fallback_err}",
+                                truncate_text(&text, 2048)
+                            )
+                        });
+                }
                 return Err(anyhow!(
                     "LLM stream request failed: {status} {}",
                     truncate_text(&text, 2048)
@@ -682,6 +693,29 @@ impl LlmClient {
         }
         payload
     }
+}
+
+fn should_fallback_stream_failure_to_non_stream(status: u16, body_text: &str) -> bool {
+    if matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504) {
+        return true;
+    }
+    let normalized = body_text.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "rate limit",
+        "too many requests",
+        "system is busy",
+        "engineinternalerror",
+        "server is busy",
+        "service unavailable",
+        "gateway timeout",
+        "upstream",
+        "tpm",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 fn normalize_chat_tool_definition(tool: &Value, openai_top_level_schema_guard: bool) -> Value {
@@ -4401,6 +4435,124 @@ mod tests {
 
         assert_eq!(response.content, "tail");
         assert!(response.reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_complete_falls_back_to_non_stream_after_retryable_http_failure() {
+        use axum::extract::State;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::net::TcpListener;
+
+        #[derive(Clone)]
+        struct AppState {
+            stream_calls: Arc<AtomicUsize>,
+            non_stream_calls: Arc<AtomicUsize>,
+        }
+
+        let state = AppState {
+            stream_calls: Arc::new(AtomicUsize::new(0)),
+            non_stream_calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(
+                |State(state): State<AppState>,
+                 Json(payload): Json<Value>| async move {
+                    if payload.get("stream").and_then(Value::as_bool) == Some(true) {
+                        state.stream_calls.fetch_add(1, Ordering::SeqCst);
+                        return (
+                            StatusCode::TOO_MANY_REQUESTS,
+                            Json(json!({
+                                "error": {
+                                    "message": "Rate limit reached for TPM"
+                                }
+                            })),
+                        );
+                    }
+                    state.non_stream_calls.fetch_add(1, Ordering::SeqCst);
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": "fallback-ok"
+                                    }
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 12,
+                                "completion_tokens": 3,
+                                "total_tokens": 15
+                            }
+                        })),
+                    )
+                },
+            ),
+        )
+        .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: None,
+            timeout_s: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            thinking_token_budget: None,
+            support_vision: None,
+            support_hearing: None,
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: None,
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let response = client
+            .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
+            .await
+            .expect("fallback response");
+
+        assert_eq!(response.content, "fallback-ok");
+        assert_eq!(
+            state.stream_calls.load(Ordering::SeqCst),
+            1,
+            "stream request should be attempted once"
+        );
+        assert_eq!(
+            state.non_stream_calls.load(Ordering::SeqCst),
+            1,
+            "non-stream fallback should be attempted once"
+        );
     }
 
     #[tokio::test]

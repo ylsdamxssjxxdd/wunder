@@ -2253,6 +2253,12 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     }
     if (snapshotRetryState) {
       target.retry_state = snapshotRetryState;
+    } else if (
+      !normalizeFlag(snapshot.stream_incomplete) &&
+      !normalizeFlag(snapshot.workflowStreaming) &&
+      !normalizeFlag(snapshot.reasoningStreaming)
+    ) {
+      clearAssistantRetryState(target);
     }
     if (snapshotRetryAttempt !== null) {
       target.retry_attempt = snapshotRetryAttempt;
