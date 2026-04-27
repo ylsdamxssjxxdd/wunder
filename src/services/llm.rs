@@ -2896,6 +2896,12 @@ fn merge_stream_text_field(target: &mut String, fragment: &str) {
         return;
     }
 
+    if should_replace_empty_json_stream_payload(target, fragment) {
+        target.clear();
+        target.push_str(fragment);
+        return;
+    }
+
     if should_replace_stream_json_payload(target, fragment) {
         target.clear();
         target.push_str(fragment);
@@ -2908,6 +2914,18 @@ fn merge_stream_text_field(target: &mut String, fragment: &str) {
         return;
     };
     target.push_str(&fragment[overlap..]);
+}
+
+fn should_replace_empty_json_stream_payload(current: &str, next: &str) -> bool {
+    let current = current.trim();
+    let next = next.trim();
+    if current != "{}" {
+        return false;
+    }
+    if next.is_empty() || !next.starts_with('{') {
+        return false;
+    }
+    strict_parse_partial_json_fragment(next)
 }
 
 fn should_replace_stream_json_payload(current: &str, next: &str) -> bool {
@@ -2931,6 +2949,41 @@ fn stream_text_overlap_len(target: &str, fragment: &str) -> Option<usize> {
         }
     }
     None
+}
+
+fn strict_parse_partial_json_fragment(fragment: &str) -> bool {
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in fragment.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    !in_string && depth == 0 && serde_json::from_str::<Value>(fragment).is_ok()
 }
 
 fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
@@ -3994,6 +4047,91 @@ mod tests {
         let mut merged = "{\"content\":\"hello\"}".to_string();
         merge_stream_text_field(&mut merged, "{\"content\":\"hello world\"}");
         assert_eq!(merged, "{\"content\":\"hello world\"}");
+    }
+
+    #[test]
+    fn merge_stream_text_field_replaces_empty_json_before_complete_payload() {
+        let mut merged = "{}".to_string();
+        merge_stream_text_field(
+            &mut merged,
+            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}",
+        );
+        assert_eq!(
+            merged,
+            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+        );
+    }
+
+    #[test]
+    fn finalize_stream_tool_calls_replaces_empty_json_seed_from_anthropic_tool_use() {
+        let mut acc = Vec::new();
+        merge_stream_tool_call_item(
+            &mut acc,
+            &json!({
+                "index": 0,
+                "id": "call_1",
+                "function": {
+                    "name": "ptc",
+                    "arguments": "{}"
+                }
+            }),
+        );
+        merge_stream_tool_call_item(
+            &mut acc,
+            &json!({
+                "index": 0,
+                "function": {
+                    "arguments": "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+                }
+            }),
+        );
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_anthropic_stream_tool_use_replaces_empty_input_seed() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"ptc\",\"input\":{}}}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process anthropic tool_use start");
+        assert!(!done);
+
+        let done = process_sse_event_block(
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"filename\\\":\\\"draw_heart.py\\\",\\\"content\\\":\\\"print('ok')\\\"}\"}}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process anthropic input json delta");
+        assert!(!done);
+
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+        );
     }
 
     #[test]

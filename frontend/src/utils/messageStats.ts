@@ -5,6 +5,7 @@ import {
   isAssistantMessageRunning
 } from './assistantMessageRuntime';
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
+import { shouldDisplayTransientRetry } from './retryVisibility';
 
 export type MessageStatsEntry = {
   key: string;
@@ -568,12 +569,19 @@ const resolveAssistantStatusEntry = (
       Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
       normalizeWorkflowStatus(message?.retry_state ?? message?.retryState) === 'retrying'
   );
+  const shouldShowRetryState = shouldDisplayTransientRetry(
+    {
+      retry_attempt: message?.retry_attempt ?? message?.retryAttempt ?? latestRetry.item?.attempt,
+      retry_started_at_ms: message?.retry_started_at_ms ?? message?.retryStartedAtMs
+    },
+    nowMs
+  );
   if (message?.resume_available && !isAssistantMessageRunning(message)) {
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
   }
   if (
-    (latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) ||
-    hasPersistedRetryState
+    shouldShowRetryState &&
+    ((latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) || hasPersistedRetryState)
   ) {
     return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
   }

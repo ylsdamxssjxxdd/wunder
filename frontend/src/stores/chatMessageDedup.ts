@@ -24,6 +24,26 @@ const normalizeAssistantText = (value: unknown): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const CANCELLATION_MATCH_WINDOW_MS = 30_000;
+
+const CANCELLATION_TOKENS = [
+  'session cancelled',
+  'session canceled',
+  'cancelled',
+  'canceled',
+  'aborted',
+  'stopped by user',
+  '会话已取消',
+  '请求已中止',
+  '请求已终止',
+  '已中止',
+  '已终止'
+];
+
+const ABORT_PREFERRED_TOKENS = ['aborted', '已中止', '已终止', '请求已中止', '请求已终止'];
+
+const SESSION_CANCELLED_TOKENS = ['session cancelled', 'session canceled', '会话已取消'];
+
 const resolveErrorRequestId = (text: string): string => {
   if (!text) return '';
   const matched =
@@ -45,6 +65,139 @@ const isStreamRequestFailureText = (text: string): boolean => {
 
 const hasWorkflowItems = (message: ChatMessage): boolean =>
   Array.isArray(message?.workflowItems) && message.workflowItems.length > 0;
+
+const collectAssistantComparableTexts = (message: ChatMessage): string[] => {
+  if (!message || message.role !== 'assistant') return [];
+  const texts = [
+    normalizeAssistantText(message.content),
+    normalizeAssistantText(message.reasoning),
+    normalizeAssistantText(message.stop_reason)
+  ];
+  const workflowItems = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  workflowItems.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    texts.push(
+      normalizeAssistantText(item.title),
+      normalizeAssistantText(item.detail),
+      normalizeAssistantText(item.error),
+      normalizeAssistantText(item.message)
+    );
+  });
+  return texts.filter(Boolean);
+};
+
+const isCompactionRelatedAssistantMessage = (message: ChatMessage): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (message.manual_compaction_marker === true || message.manualCompactionMarker === true) {
+    return true;
+  }
+  const workflowItems = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  return workflowItems.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const eventType = normalizeComparableValue(item.eventType || item.event).toLowerCase();
+    const toolName = normalizeComparableValue(item.toolName || item.tool || item.name).toLowerCase();
+    const toolCallId = normalizeComparableValue(item.toolCallId || item.tool_call_id).toLowerCase();
+    const combinedText = normalizeAssistantText(
+      `${item.title || ''} ${item.detail || item.message || item.error || ''}`
+    ).toLowerCase();
+    return (
+      eventType.includes('compaction') ||
+      toolName.includes('compaction') ||
+      toolCallId.startsWith('compaction:') ||
+      combinedText.includes('压缩') ||
+      combinedText.includes('compaction')
+    );
+  });
+};
+
+const hasCancellationSignal = (message: ChatMessage): boolean => {
+  const combined = collectAssistantComparableTexts(message).join(' ').toLowerCase();
+  if (!combined) return false;
+  return CANCELLATION_TOKENS.some((token) => combined.includes(token));
+};
+
+const isMinimalAssistantStatusNotice = (message: ChatMessage): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (String(message.reasoning || '').trim()) return false;
+  if (message.plan || message.questionPanel) return false;
+  if (Array.isArray(message.subagents) && message.subagents.length > 0) return false;
+  const contentLength = normalizeAssistantText(message.content).length;
+  const workflowTextLength = (Array.isArray(message.workflowItems) ? message.workflowItems : []).reduce(
+    (total, item) =>
+      total +
+      normalizeAssistantText(`${item?.title || ''} ${item?.detail || item?.message || item?.error || ''}`).length,
+    0
+  );
+  return contentLength <= 32 && workflowTextLength <= 160;
+};
+
+const resolveCancellationNoticePriority = (message: ChatMessage): number => {
+  const combined = collectAssistantComparableTexts(message).join(' ').toLowerCase();
+  if (!combined) return 0;
+  if (ABORT_PREFERRED_TOKENS.some((token) => combined.includes(token))) {
+    return 3;
+  }
+  if (SESSION_CANCELLED_TOKENS.some((token) => combined.includes(token))) {
+    return 2;
+  }
+  if (CANCELLATION_TOKENS.some((token) => combined.includes(token))) {
+    return 1;
+  }
+  return 0;
+};
+
+const shouldMergeCancellationDuplicatePair = (left: ChatMessage, right: ChatMessage): boolean => {
+  if (!left || !right || left.role !== 'assistant' || right.role !== 'assistant') {
+    return false;
+  }
+  if (left.isGreeting || right.isGreeting) {
+    return false;
+  }
+  if (isCompactionRelatedAssistantMessage(left) || isCompactionRelatedAssistantMessage(right)) {
+    return false;
+  }
+  if (!hasCancellationSignal(left) || !hasCancellationSignal(right)) {
+    return false;
+  }
+  if (!isMinimalAssistantStatusNotice(left) && !isMinimalAssistantStatusNotice(right)) {
+    return false;
+  }
+  const leftEventId = normalizeComparableValue(left.stream_event_id);
+  const rightEventId = normalizeComparableValue(right.stream_event_id);
+  if (leftEventId && rightEventId && leftEventId === rightEventId) {
+    return true;
+  }
+  const leftRound = normalizeComparableNumber(left.stream_round);
+  const rightRound = normalizeComparableNumber(right.stream_round);
+  if (leftRound !== null && rightRound !== null && leftRound === rightRound) {
+    return true;
+  }
+  const leftTime = resolveTimestampMs(left.created_at);
+  const rightTime = resolveTimestampMs(right.created_at);
+  return (
+    leftTime !== null &&
+    rightTime !== null &&
+    Math.abs(leftTime - rightTime) <= CANCELLATION_MATCH_WINDOW_MS
+  );
+};
+
+const resolvePreferredCancellationContent = (left: ChatMessage, right: ChatMessage): string => {
+  const candidates = [left, right]
+    .filter((message) => String(message?.content || '').trim())
+    .sort((a, b) => {
+      const aMinimal = isMinimalAssistantStatusNotice(a) ? 1 : 0;
+      const bMinimal = isMinimalAssistantStatusNotice(b) ? 1 : 0;
+      if (aMinimal !== bMinimal) {
+        return aMinimal - bMinimal;
+      }
+      const priorityDelta = resolveCancellationNoticePriority(b) - resolveCancellationNoticePriority(a);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+      return String(b?.content || '').trim().length - String(a?.content || '').trim().length;
+    });
+  return String(candidates[0]?.content || '').trim();
+};
 
 const resolveAssistantScore = (message: ChatMessage): number => {
   let score = 0;
@@ -92,6 +245,9 @@ const shouldDeduplicateAssistantPair = (left: ChatMessage, right: ChatMessage): 
   if (leftText === rightText) {
     return true;
   }
+  if (shouldMergeCancellationDuplicatePair(left, right)) {
+    return true;
+  }
   const shorter = leftText.length <= rightText.length ? leftText : rightText;
   const longer = shorter === leftText ? rightText : leftText;
   if (shorter.length >= 80 && longer.includes(shorter)) {
@@ -120,7 +276,21 @@ const shouldDeduplicateAssistantPair = (left: ChatMessage, right: ChatMessage): 
 };
 
 const mergeAssistantPair = (left: ChatMessage, right: ChatMessage): ChatMessage => {
-  const primary = resolveAssistantScore(right) > resolveAssistantScore(left) ? right : left;
+  const cancellationDuplicate = shouldMergeCancellationDuplicatePair(left, right);
+  let primary = resolveAssistantScore(right) > resolveAssistantScore(left) ? right : left;
+  if (cancellationDuplicate) {
+    const leftMinimal = isMinimalAssistantStatusNotice(left);
+    const rightMinimal = isMinimalAssistantStatusNotice(right);
+    if (leftMinimal !== rightMinimal) {
+      primary = leftMinimal ? right : left;
+    } else {
+      const leftPriority = resolveCancellationNoticePriority(left);
+      const rightPriority = resolveCancellationNoticePriority(right);
+      if (leftPriority !== rightPriority) {
+        primary = rightPriority > leftPriority ? right : left;
+      }
+    }
+  }
   const secondary = primary === left ? right : left;
   const merged: ChatMessage = { ...secondary, ...primary };
   if (String(secondary.content || '').length > String(merged.content || '').length) {
@@ -170,6 +340,12 @@ const mergeAssistantPair = (left: ChatMessage, right: ChatMessage): ChatMessage 
   merged.stream_incomplete = Boolean(left.stream_incomplete && right.stream_incomplete);
   merged.workflowStreaming = Boolean(left.workflowStreaming && right.workflowStreaming);
   merged.reasoningStreaming = Boolean(left.reasoningStreaming && right.reasoningStreaming);
+  if (cancellationDuplicate) {
+    const preferredContent = resolvePreferredCancellationContent(left, right);
+    if (preferredContent) {
+      merged.content = preferredContent;
+    }
+  }
   return merged;
 };
 

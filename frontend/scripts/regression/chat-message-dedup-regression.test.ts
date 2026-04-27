@@ -48,3 +48,27 @@ test('assistant dedupe keeps distinct assistant messages when request ids differ
   const deduped = dedupeAssistantMessages(messages);
   assert.equal(deduped.length, 3);
 });
+
+test('assistant dedupe collapses manual stop abort bubble with server session-cancelled bubble', () => {
+  const messages = [
+    { role: 'user', content: '继续执行', created_at: '2026-04-27T10:00:00.000Z' },
+    {
+      role: 'assistant',
+      content: '已中止',
+      created_at: '2026-04-27T10:00:05.000Z',
+      stream_round: 18,
+      workflowItems: [{ status: 'failed', title: '已中止', detail: '请求已中止' }]
+    },
+    {
+      role: 'assistant',
+      content: '会话已取消',
+      created_at: '2026-04-27T10:00:11.000Z',
+      workflowItems: [{ status: 'failed', title: '请求失败', detail: '会话已取消' }]
+    }
+  ];
+
+  const deduped = dedupeAssistantMessages(messages);
+  assert.equal(deduped.length, 2);
+  assert.equal(deduped[1]?.role, 'assistant');
+  assert.equal(deduped[1]?.content, '已中止');
+});

@@ -20,7 +20,7 @@ enum LlmFailureKind {
 }
 
 const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
-const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [3_000, 6_000, 12_000, 20_000, 30_000];
+const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [1_200, 3_000, 6_000, 12_000, 20_000];
 const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
 
 impl OutputTiming {
@@ -996,12 +996,12 @@ mod tests {
         let attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
         assert_eq!(attempts, LLM_UNAVAILABLE_MIN_RETRIES + 1);
         assert_eq!(
-            resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_secs(),
-            3
+            resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_millis(),
+            1_200
         );
         assert_eq!(
             resolve_llm_retry_delay(5, LlmFailureKind::Unavailable).as_secs(),
-            30
+            20
         );
         assert_eq!(
             llm_retry_reason(LlmFailureKind::Unavailable),

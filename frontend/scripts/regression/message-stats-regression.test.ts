@@ -5,6 +5,10 @@ import {
   buildAssistantMessageStatsEntries,
   sumConversationConsumedTokens
 } from '../../src/utils/messageStats';
+import {
+  RETRY_VISIBILITY_GRACE_WINDOW_MS,
+  shouldDisplayTransientRetry
+} from '../../src/utils/retryVisibility';
 import { summarizeTurnDecodeSpeed } from '../../src/utils/turnDecodeSpeed';
 
 const createTranslator = () => {
@@ -263,6 +267,67 @@ test('message stats interrupted response falls back to round usage instead of us
 
   assert.equal(findEntryValue(entries, 'Quota'), '2520');
   assert.equal(findEntryValue(entries, 'Context'), '6200');
+});
+
+test('transient first retry stays hidden during grace window', () => {
+  const nowMs = 1_000_000;
+  assert.equal(
+    shouldDisplayTransientRetry(
+      {
+        retry_attempt: 1,
+        retry_started_at_ms: nowMs - (RETRY_VISIBILITY_GRACE_WINDOW_MS - 1)
+      },
+      nowMs
+    ),
+    false
+  );
+  assert.equal(
+    shouldDisplayTransientRetry(
+      {
+        retry_attempt: 1,
+        retry_started_at_ms: nowMs - RETRY_VISIBILITY_GRACE_WINDOW_MS
+      },
+      nowMs
+    ),
+    true
+  );
+  assert.equal(
+    shouldDisplayTransientRetry(
+      {
+        retry_attempt: 2,
+        retry_started_at_ms: nowMs
+      },
+      nowMs
+    ),
+    true
+  );
+});
+
+test('message stats hides first transient retry before grace window elapses', () => {
+  const t = createTranslator();
+  const nowMs = 1_000_000;
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      retry_state: 'retrying',
+      retry_attempt: 1,
+      retry_started_at_ms: nowMs - 500,
+      workflowItems: [
+        { eventType: 'llm_request', status: 'completed' },
+        { eventType: 'llm_stream_retry', status: 'pending', attempt: 1, maxAttempts: 6, delayS: 1.2 }
+      ],
+      stats: {
+        interaction_start_ms: nowMs - 2_000
+      }
+    },
+    t,
+    null,
+    nowMs
+  );
+  assert.notEqual(entries[0]?.value, 'Retrying');
+  assert.equal(entries[0]?.value, 'Requesting');
 });
 
 test('message stats interrupted response falls back to completed model-round usage when round totals are missing', () => {

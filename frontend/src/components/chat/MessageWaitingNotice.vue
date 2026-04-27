@@ -49,6 +49,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { normalizeChatTimestampMs } from '@/utils/chatTiming';
+import { shouldDisplayTransientRetry } from '@/utils/retryVisibility';
 
 type WorkflowItemLike = {
   eventType?: unknown;
@@ -205,7 +206,7 @@ const phase = computed<WaitingPhase>(() => {
   if (showResumeAction.value && !normalizeFlag(props.message?.workflowStreaming)) {
     return 'resumable';
   }
-  if (latestRetry.value.index >= 0) {
+  if (latestRetry.value.index >= 0 && shouldShowRetryPhase.value) {
     return 'retrying';
   }
   if (latestSlowClient.value.index >= 0 && !normalizeFlag(props.message?.workflowStreaming)) {
@@ -275,6 +276,17 @@ const retryDelayLabel = computed(() => {
 
 const retryReasonLabel = computed(() =>
   resolveRetryReasonLabel(latestRetry.value.item?.retryReason)
+);
+
+const shouldShowRetryPhase = computed(() =>
+  shouldDisplayTransientRetry(
+    {
+      retry_attempt: retryAttempt.value,
+      retry_started_at_ms: (props.message as { retry_started_at_ms?: unknown } | null | undefined)
+        ?.retry_started_at_ms
+    },
+    nowMs.value
+  )
 );
 
 const parseQueueAhead = (item: WorkflowItemLike | null) => {
