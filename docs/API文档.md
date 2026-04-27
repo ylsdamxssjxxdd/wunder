@@ -1080,8 +1080,8 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop/enable/mock_if_unconfigured）
-  - 说明：`retry` 同时用于请求失败重试与流式断线重连。
+- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop/enable/mock_if_unconfigured）
+  - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
@@ -1089,6 +1089,9 @@
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为真实用户消息窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
+  - 说明：`max_output` 为单次请求的统一输出上限；未配置时服务端默认按 `32768` 下发，避免模型循环无限输出。
+  - 说明：`thinking_token_budget` 为 reasoning/thinking 通道的单次思考 Token 上限；未配置时服务端默认按 `16384` 下发；若 `reasoning_effort=none` 则不下发该预算。
+  - 说明：服务端当前会同时下发 `thinking_token_budget`（对齐 vLLM / OpenAI-compatible 扩展）与 `thinking_budget_tokens`（对齐 `llama.cpp` server 请求体）；Anthropic `messages` 协议不下发这两个非标准字段。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
 - `POST` 入参：
@@ -1640,6 +1643,9 @@
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
 
+- `GET /wunder/admin/user_accounts`：管理员分页读取用户账号列表。
+  - 入参（Query）：`keyword`、`offset`、`limit`，可选 `activity_days`（近几天活跃度窗口，默认 7）。
+  - 返回（JSON）：`data.items[]` 中除用户基础资料与 Token 字段外，额外包含 `activity_series[]`，每项为 `{ date, tokens }`，表示近几天按日聚合的 Token 消耗，可直接用于管理端绘制用户活跃度小曲线图。
 - `POST /wunder/admin/user_accounts/{user_id}/token_adjustment`：管理员对指定用户执行 Token 发放或扣除。
   - 入参（JSON）：`action=grant|deduct`、`amount`
   - 行为：`grant` 会增加余额与累计获得；`deduct` 会减少余额并增加累计消耗；两者都会先结转当天应发放但尚未入账的每日 Token。

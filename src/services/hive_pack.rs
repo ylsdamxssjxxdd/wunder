@@ -1101,7 +1101,7 @@ reference_only mode does not include full skill files.
             tags: vec!["beeroom".to_string(), "hivepack".to_string()],
         },
         compatibility: HiveExportCompatibility {
-            wunder_version: ">=0.1.0".to_string(),
+            wunder_version: ">=0.2.0".to_string(),
             runtime_modes: vec![
                 "server".to_string(),
                 "desktop".to_string(),

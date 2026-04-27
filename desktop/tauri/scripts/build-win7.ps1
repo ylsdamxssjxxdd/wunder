@@ -97,5 +97,5 @@ finally {
   Pop-Location
 }
 
-$output = Join-Path $targetDir 'i686-pc-windows-msvc\release\bundle\nsis\wunder-desktop_0.1.0_x86-setup.exe'
+$output = Join-Path $targetDir 'i686-pc-windows-msvc\release\bundle\nsis\wunder-desktop_0.2.0_x86-setup.exe'
 Write-Step "output installer: $output"

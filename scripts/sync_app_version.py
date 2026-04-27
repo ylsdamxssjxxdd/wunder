@@ -44,7 +44,7 @@ def set_version_field(payload: dict, version: str) -> bool:
 
 
 def replace_package_version(path: Path, version: str) -> bool:
-    text = path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8-sig")
     pattern = re.compile(
         r'(?ms)(^\[package\]\s.*?^version\s*=\s*")[^"]+("\s*$)'
     )

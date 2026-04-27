@@ -126,7 +126,7 @@ npm run build:desktop:win7:gnu:fast
 - 默认会同时产出 `setup.exe + wunder补充包-win7-ia32-common.zip`
 - Win7 安装包默认不再内置 Python、Git、ripgrep；若需要这三项运行时，请使用同目录产出的 `wunder补充包` zip 手工解压到安装目录
 - Win7 `common` 补充包默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖；如需切回官方源，可在脚本层传 `-SupplementPythonPackageIndexUrl https://pypi.org/simple`
-- 最终安装包路径：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder-desktop-win7-0.1.0-ia32-setup.exe`
+- 最终安装包路径：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder-desktop-win7-0.2.0-ia32-setup.exe`
 - `common` 补充包路径：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder补充包-win7-ia32-common.zip`
 - 如需显式构建 `x64`，可执行 `npm run build:desktop:win7:gnu:x64`
 

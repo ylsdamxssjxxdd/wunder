@@ -21,6 +21,7 @@ enum LlmFailureKind {
 
 const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
 const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [3_000, 6_000, 12_000, 20_000, 30_000];
+const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
 
 impl OutputTiming {
     fn mark_output(&mut self, now: Instant) {
@@ -462,7 +463,6 @@ impl Orchestrator {
         } else {
             self.resolve_llm_timeout_s(&effective_config)
         };
-        let configured_attempts = effective_config.retry.unwrap_or(0).saturating_add(1).max(1);
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
         loop {
@@ -607,7 +607,7 @@ impl Orchestrator {
                 }
                 Err(err) => {
                     let failure_kind = classify_llm_error(&err);
-                    let max_attempts = resolve_llm_max_attempts(configured_attempts, failure_kind);
+                    let max_attempts = resolve_llm_max_attempts(failure_kind);
                     let should_retry = attempt < max_attempts;
                     let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
                     if emit_events && should_retry {
@@ -735,12 +735,11 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
-fn resolve_llm_max_attempts(configured_attempts: u32, failure_kind: LlmFailureKind) -> u32 {
-    let configured_attempts = configured_attempts.max(1);
+fn resolve_llm_max_attempts(failure_kind: LlmFailureKind) -> u32 {
     if matches!(failure_kind, LlmFailureKind::Unavailable) {
-        configured_attempts.max(LLM_UNAVAILABLE_MIN_RETRIES.saturating_add(1))
+        DEFAULT_LLM_MAX_ATTEMPTS.max(LLM_UNAVAILABLE_MIN_RETRIES.saturating_add(1))
     } else {
-        configured_attempts
+        DEFAULT_LLM_MAX_ATTEMPTS
     }
 }
 
@@ -881,7 +880,8 @@ mod tests {
     use super::{
         classify_llm_failure, extract_context_window_limit_hint, is_context_window_error_text,
         is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
-        resolve_llm_retry_delay, LlmFailureKind, LLM_UNAVAILABLE_MIN_RETRIES,
+        resolve_llm_retry_delay, LlmFailureKind, DEFAULT_LLM_MAX_ATTEMPTS,
+        LLM_UNAVAILABLE_MIN_RETRIES,
     };
 
     #[test]
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn llm_unavailable_retries_use_floor_and_long_backoff() {
-        let attempts = resolve_llm_max_attempts(1, LlmFailureKind::Unavailable);
+        let attempts = resolve_llm_max_attempts(LlmFailureKind::Unavailable);
         assert_eq!(attempts, LLM_UNAVAILABLE_MIN_RETRIES + 1);
         assert_eq!(
             resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_secs(),
@@ -1006,6 +1006,18 @@ mod tests {
         assert_eq!(
             llm_retry_reason(LlmFailureKind::Unavailable),
             "llm_unavailable"
+        );
+    }
+
+    #[test]
+    fn non_unavailable_llm_failures_use_fixed_internal_attempt_budget() {
+        assert_eq!(
+            resolve_llm_max_attempts(LlmFailureKind::Other),
+            DEFAULT_LLM_MAX_ATTEMPTS
+        );
+        assert_eq!(
+            resolve_llm_max_attempts(LlmFailureKind::ContextWindow),
+            DEFAULT_LLM_MAX_ATTEMPTS
         );
     }
 }

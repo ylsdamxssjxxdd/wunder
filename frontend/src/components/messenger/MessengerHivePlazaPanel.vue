@@ -11,16 +11,38 @@
           <div class="hive-plaza-toolbar-title">{{ resolveKindLabel(browseKindInternal) }}</div>
           <div class="hive-plaza-toolbar-subtitle">{{ currentBrowseDescription }}</div>
         </div>
-        <label class="hive-plaza-search">
-          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-          <input
-            v-model="panelKeyword"
-            type="text"
-            :placeholder="t('plaza.search.placeholder')"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
+        <div class="hive-plaza-search-row">
+          <label class="hive-plaza-search">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            <input
+              v-model="panelKeyword"
+              type="text"
+              :placeholder="t('plaza.search.placeholder')"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <div class="hive-plaza-search-actions">
+            <button
+              class="hive-plaza-secondary-btn hive-plaza-toolbar-btn"
+              type="button"
+              :disabled="plazaStore.publishing"
+              @click="openPublishDialog"
+            >
+              <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
+              <span>{{ t('plaza.action.publish') }}</span>
+            </button>
+            <button
+              class="hive-plaza-secondary-btn hive-plaza-toolbar-btn"
+              type="button"
+              :disabled="plazaStore.loading"
+              @click="reload"
+            >
+              <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+              <span>{{ t('common.refresh') }}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="hive-plaza-toolbar-meta">
@@ -747,6 +769,27 @@ defineExpose({
   font: inherit;
 }
 
+.hive-plaza-search-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.hive-plaza-search-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.hive-plaza-toolbar-btn {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
 .hive-plaza-toolbar-meta {
   display: flex;
   align-items: center;
@@ -1157,6 +1200,18 @@ defineExpose({
   .hive-plaza-search {
     min-width: 0;
     max-width: none;
+  }
+
+  .hive-plaza-search-row {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hive-plaza-search-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .hive-plaza-feed-grid {

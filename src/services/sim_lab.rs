@@ -713,7 +713,6 @@ fn build_mock_request_overrides(args: &SimArgs, llm_base_url: &str) -> Value {
                     "api_key": "swarm-flow-mock-key",
                     "model": "mock-swarm-flow",
                     "stream": false,
-                    "retry": 0,
                     "max_rounds": max_rounds,
                     "tool_call_mode": "tool_call",
                     "temperature": 0.0

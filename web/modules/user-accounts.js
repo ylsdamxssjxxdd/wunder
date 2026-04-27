@@ -134,6 +134,16 @@ const normalizeUserAccount = (item) => {
   const safeTokenUsed = Number.isFinite(tokenUsed) ? Math.max(0, Math.floor(tokenUsed)) : 0;
   const safeTokenGranted = Number.isFinite(tokenGranted) ? Math.max(0, Math.floor(tokenGranted)) : 0;
   const safeDailyTokenGrant = Number.isFinite(dailyTokenGrant) ? Math.max(0, Math.floor(dailyTokenGrant)) : 0;
+  const activitySeries = Array.isArray(item?.activity_series ?? item?.activitySeries)
+    ? (item.activity_series ?? item.activitySeries)
+        .map((point) => {
+          const raw = point && typeof point === "object" ? point : {};
+          const date = String(raw.date || "").trim();
+          const tokens = Math.max(0, Math.floor(Number(raw.tokens) || 0));
+          return date ? { date, tokens } : null;
+        })
+        .filter(Boolean)
+    : [];
   return {
     id,
     username,
@@ -153,6 +163,7 @@ const normalizeUserAccount = (item) => {
     is_demo: Boolean(item?.is_demo || item?.isDemo),
     active_sessions: Number.isFinite(activeSessions) ? activeSessions : 0,
     online,
+    activity_series: activitySeries,
   };
 };
 
@@ -234,6 +245,50 @@ const formatQuotaMeta = (user) => {
 const formatOnlineStatus = (user) =>
   user?.online ? t("userAccounts.status.online") : t("userAccounts.status.offline");
 
+const formatActivityTooltip = (series) =>
+  Array.isArray(series) && series.length
+    ? series.map((point) => `${point.date}: ${formatTokenDisplay(point.tokens)}`).join(" | ")
+    : t("userAccounts.activity.empty");
+
+const buildActivitySparkline = (series) => {
+  const points = Array.isArray(series) ? series : [];
+  const width = 124;
+  const height = 32;
+  const paddingX = 4;
+  const paddingY = 4;
+  const values = points.map((point) => Math.max(0, Number(point?.tokens) || 0));
+  const maxValue = Math.max(...values, 0);
+  const safeMax = maxValue > 0 ? maxValue : 1;
+  const stepX =
+    points.length > 1 ? (width - paddingX * 2) / (points.length - 1) : width - paddingX * 2;
+  const coordinates = points.map((point, index) => {
+    const value = Math.max(0, Number(point?.tokens) || 0);
+    const x = paddingX + index * stepX;
+    const y = height - paddingY - (value / safeMax) * (height - paddingY * 2);
+    return { x, y };
+  });
+  const linePoints =
+    coordinates.length > 0
+      ? coordinates.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")
+      : `${paddingX},${height - paddingY} ${width - paddingX},${height - paddingY}`;
+  const areaPoints =
+    coordinates.length > 0
+      ? `${paddingX},${height - paddingY} ${linePoints} ${
+          coordinates[coordinates.length - 1].x
+        },${height - paddingY}`
+      : `${paddingX},${height - paddingY} ${width - paddingX},${height - paddingY}`;
+  const latestValue = values[values.length - 1] || 0;
+  return `
+    <div class="user-account-activity" title="${formatActivityTooltip(points)}">
+      <svg viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">
+        <path class="user-account-activity-area" d="M ${areaPoints} Z"></path>
+        <polyline class="user-account-activity-line" points="${linePoints}"></polyline>
+      </svg>
+      <span class="user-account-activity-value">${formatTokenDisplay(latestValue)}</span>
+    </div>
+  `;
+};
+
 const resolveUnitOptions = () =>
   getOrgUnitOptions({
     includeRoot: true,
@@ -303,31 +358,6 @@ const renderUserAccountRows = () => {
     const userCell = document.createElement("td");
     userCell.textContent = user.username || user.id || "-";
 
-    const emailCell = document.createElement("td");
-    emailCell.textContent = user.email || "-";
-
-    const unitCell = document.createElement("td");
-    unitCell.textContent = resolveUnitLabel(user);
-    unitCell.title = resolveUnitLabel(user);
-
-    const unitLevelCell = document.createElement("td");
-    unitLevelCell.textContent = formatUnitLevel(user);
-
-    const statusCell = document.createElement("td");
-    const statusSelect = document.createElement("select");
-    ["active", "disabled"].forEach((status) => {
-      const option = document.createElement("option");
-      option.value = status;
-      option.textContent = status;
-      statusSelect.appendChild(option);
-    });
-    statusSelect.value = user.status || "active";
-    statusSelect.addEventListener("change", (event) => {
-      event.stopPropagation();
-      updateUserAccount(user.id, { status: statusSelect.value });
-    });
-    statusCell.appendChild(statusSelect);
-
     const onlineCell = document.createElement("td");
     onlineCell.textContent = formatOnlineStatus(user);
     onlineCell.className = user.online ? "status-online" : "status-offline";
@@ -339,6 +369,10 @@ const renderUserAccountRows = () => {
     const loginText = formatLoginTime(user.last_login_at);
     loginCell.textContent = loginText;
     loginCell.title = loginText === "-" ? "" : loginText;
+
+    const activityCell = document.createElement("td");
+    activityCell.className = "user-account-activity-cell";
+    activityCell.innerHTML = buildActivitySparkline(user.activity_series);
 
     const actionCell = document.createElement("td");
     const settingsBtn = document.createElement("button");
@@ -352,13 +386,10 @@ const renderUserAccountRows = () => {
     actionCell.appendChild(settingsBtn);
 
     row.appendChild(userCell);
-    row.appendChild(emailCell);
-    row.appendChild(unitCell);
-    row.appendChild(unitLevelCell);
-    row.appendChild(statusCell);
     row.appendChild(onlineCell);
     row.appendChild(quotaCell);
     row.appendChild(loginCell);
+    row.appendChild(activityCell);
     row.appendChild(actionCell);
 
     fragment.appendChild(row);

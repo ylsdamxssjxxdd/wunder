@@ -32,6 +32,8 @@ const DEFAULT_MISTRAL_BASE_URL: &str = "https://api.mistral.ai/v1";
 const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
+const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 32_768;
+const DEFAULT_THINKING_TOKEN_BUDGET: u32 = 16_384;
 const CHAT_COMPLETIONS_RESOURCE: &str = "chat/completions";
 const RESPONSES_RESOURCE: &str = "responses";
 const MESSAGES_RESOURCE: &str = "messages";
@@ -135,6 +137,29 @@ fn should_emit_vllm_chat_template_kwargs(config: &LlmModelConfig) -> bool {
     matches!(
         provider.as_str(),
         "openai_compatible" | "vllm" | "vllm_ascend"
+    )
+}
+
+fn should_emit_thinking_token_budget(config: &LlmModelConfig) -> bool {
+    is_llm_model(config) && !matches!(normalize_provider(config.provider.as_deref()).as_str(), "anthropic")
+}
+
+fn resolved_max_output(config: &LlmModelConfig) -> u32 {
+    config
+        .max_output
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+}
+
+fn resolved_thinking_token_budget(config: &LlmModelConfig) -> Option<u32> {
+    if disable_thinking_requested(config) || !should_emit_thinking_token_budget(config) {
+        return None;
+    }
+    Some(
+        config
+            .thinking_token_budget
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_THINKING_TOKEN_BUDGET),
     )
 }
 
@@ -519,11 +544,7 @@ impl LlmClient {
         tools: Option<&[Value]>,
     ) -> Value {
         let (system_prompt, anthropic_messages) = build_anthropic_messages(messages);
-        let max_tokens = self
-            .config
-            .max_output
-            .filter(|value| *value > 0)
-            .unwrap_or(4096);
+        let max_tokens = resolved_max_output(&self.config);
         let mut payload = json!({
             "model": self
                 .config
@@ -584,10 +605,10 @@ impl LlmClient {
         if stream && include_usage {
             payload["stream_options"] = json!({ "include_usage": true });
         }
-        if let Some(max_output) = self.config.max_output {
-            if max_output > 0 {
-                payload["max_tokens"] = json!(max_output);
-            }
+        payload["max_tokens"] = json!(resolved_max_output(&self.config));
+        if let Some(thinking_token_budget) = resolved_thinking_token_budget(&self.config) {
+            payload["thinking_token_budget"] = json!(thinking_token_budget);
+            payload["thinking_budget_tokens"] = json!(thinking_token_budget);
         }
         if let Some(stop) = &self.config.stop {
             if !stop.is_empty() {
@@ -636,10 +657,10 @@ impl LlmClient {
         if stream && include_usage {
             payload["stream_options"] = json!({ "include_usage": true });
         }
-        if let Some(max_output) = self.config.max_output {
-            if max_output > 0 {
-                payload["max_output_tokens"] = json!(max_output);
-            }
+        payload["max_output_tokens"] = json!(resolved_max_output(&self.config));
+        if let Some(thinking_token_budget) = resolved_thinking_token_budget(&self.config) {
+            payload["thinking_token_budget"] = json!(thinking_token_budget);
+            payload["thinking_budget_tokens"] = json!(thinking_token_budget);
         }
         if let Some(stop) = &self.config.stop {
             if !stop.is_empty() {
@@ -3391,10 +3412,10 @@ mod tests {
             model: Some("claude-sonnet-4-5-20250929".to_string()),
             temperature: None,
             timeout_s: None,
-            retry: None,
             max_rounds: None,
             max_context: None,
             max_output: None,
+            thinking_token_budget: None,
             support_vision: None,
             support_hearing: None,
             stream: Some(true),
@@ -3469,10 +3490,10 @@ mod tests {
             model: Some("test-embed-model".to_string()),
             temperature: None,
             timeout_s: None,
-            retry: None,
             max_rounds: None,
             max_context: None,
             max_output: None,
+            thinking_token_budget: None,
             support_vision: None,
             support_hearing: None,
             stream: Some(false),
@@ -4150,10 +4171,10 @@ mod tests {
             model: Some("test-model".to_string()),
             temperature: None,
             timeout_s: None,
-            retry: None,
             max_rounds: None,
             max_context: None,
             max_output: None,
+            thinking_token_budget: None,
             support_vision: None,
             support_hearing: None,
             stream: Some(true),
@@ -4303,10 +4324,10 @@ mod tests {
             model: Some("test-model".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
-            retry: Some(0),
             max_rounds: Some(4),
             max_context: Some(16_384),
             max_output: Some(256),
+            thinking_token_budget: None,
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
@@ -4333,6 +4354,9 @@ mod tests {
             payload.get("reasoning_effort"),
             Some(&Value::String("xhigh".to_string()))
         );
+        assert_eq!(payload["max_tokens"], 256);
+        assert_eq!(payload["thinking_token_budget"], 16_384);
+        assert_eq!(payload["thinking_budget_tokens"], 16_384);
     }
 
     #[test]
@@ -4346,10 +4370,10 @@ mod tests {
             model: Some("gpt-5.2".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
-            retry: Some(0),
             max_rounds: Some(4),
             max_context: Some(16_384),
             max_output: Some(256),
+            thinking_token_budget: None,
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
@@ -4373,6 +4397,9 @@ mod tests {
             false,
         );
         assert_eq!(payload["reasoning"]["effort"], "high");
+        assert_eq!(payload["max_output_tokens"], 256);
+        assert_eq!(payload["thinking_token_budget"], 16_384);
+        assert_eq!(payload["thinking_budget_tokens"], 16_384);
     }
 
     #[test]
@@ -4386,10 +4413,10 @@ mod tests {
             model: Some("qwen3.5-32b".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
-            retry: Some(0),
             max_rounds: Some(4),
             max_context: Some(16_384),
             max_output: Some(256),
+            thinking_token_budget: None,
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
@@ -4416,6 +4443,8 @@ mod tests {
         assert_eq!(payload["reasoning_effort"], "none");
         assert_eq!(payload["enable_thinking"], false);
         assert!(payload.get("chat_template_kwargs").is_none());
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
     }
 
     #[test]
@@ -4429,10 +4458,10 @@ mod tests {
             model: Some("Qwen/Qwen3-8B".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
-            retry: Some(0),
             max_rounds: Some(4),
             max_context: Some(16_384),
             max_output: Some(256),
+            thinking_token_budget: None,
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
@@ -4459,6 +4488,8 @@ mod tests {
         assert_eq!(payload["reasoning_effort"], "none");
         assert_eq!(payload["enable_thinking"], false);
         assert_eq!(payload["chat_template_kwargs"]["enable_thinking"], false);
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
     }
 
     #[test]
@@ -4472,10 +4503,10 @@ mod tests {
             model: Some("qwen3.5-35b-a3b".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
-            retry: Some(0),
             max_rounds: Some(4),
             max_context: Some(16_384),
             max_output: Some(256),
+            thinking_token_budget: None,
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
@@ -4502,6 +4533,8 @@ mod tests {
         assert_eq!(payload["reasoning_effort"], "none");
         assert_eq!(payload["enable_thinking"], false);
         assert_eq!(payload["chat_template_kwargs"]["enable_thinking"], false);
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
     }
 
     #[test]
@@ -4515,10 +4548,10 @@ mod tests {
             model: Some("gpt-5.2".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
-            retry: Some(0),
             max_rounds: Some(4),
             max_context: Some(16_384),
             max_output: Some(256),
+            thinking_token_budget: None,
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
@@ -4545,6 +4578,94 @@ mod tests {
         assert_eq!(payload["reasoning"]["effort"], "none");
         assert!(payload.get("enable_thinking").is_none());
         assert!(payload.get("chat_template_kwargs").is_none());
+        assert_eq!(payload["thinking_token_budget"], 16_384);
+        assert_eq!(payload["thinking_budget_tokens"], 16_384);
+    }
+
+    #[test]
+    fn build_chat_payload_uses_global_defaults_when_max_output_is_unset() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some("http://127.0.0.1:18000/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: None,
+            thinking_token_budget: None,
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: None,
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+
+        assert_eq!(payload["max_tokens"], 32_768);
+        assert_eq!(payload["thinking_token_budget"], 16_384);
+        assert_eq!(payload["thinking_budget_tokens"], 16_384);
+    }
+
+    #[test]
+    fn build_anthropic_payload_does_not_include_thinking_budget_fields() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("anthropic".to_string()),
+            api_mode: None,
+            base_url: Some("https://api.anthropic.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("claude-sonnet-4-5-20250929".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: None,
+            thinking_token_budget: None,
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("function_call".to_string()),
+            reasoning_effort: None,
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
+        assert_eq!(payload["max_tokens"], 32_768);
     }
 
     #[test]
@@ -4558,10 +4679,10 @@ mod tests {
             model: Some("gpt-4.1".to_string()),
             temperature: None,
             timeout_s: None,
-            retry: None,
             max_rounds: None,
             max_context: None,
             max_output: None,
+            thinking_token_budget: None,
             support_vision: None,
             support_hearing: None,
             stream: Some(true),
@@ -4590,10 +4711,10 @@ mod tests {
             model: Some("gpt-5.2".to_string()),
             temperature: None,
             timeout_s: None,
-            retry: None,
             max_rounds: None,
             max_context: None,
             max_output: None,
+            thinking_token_budget: None,
             support_vision: None,
             support_hearing: None,
             stream: Some(true),

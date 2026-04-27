@@ -4751,6 +4751,9 @@ async fn admin_user_accounts_list(
     headers: AxumHeaderMap,
     Query(query): Query<UserAccountListQuery>,
 ) -> Result<Json<Value>, Response> {
+    const DEFAULT_ACTIVITY_DAYS: i64 = 7;
+    const MAX_ACTIVITY_DAYS: i64 = 14;
+
     let keyword = query
         .keyword
         .as_deref()
@@ -4758,6 +4761,10 @@ async fn admin_user_accounts_list(
         .filter(|value| !value.is_empty());
     let offset = query.offset.unwrap_or(0).max(0);
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let activity_days = query
+        .activity_days
+        .unwrap_or(DEFAULT_ACTIVITY_DAYS)
+        .clamp(3, MAX_ACTIVITY_DAYS);
     let units = state
         .user_store
         .list_org_units()
@@ -4793,6 +4800,13 @@ async fn admin_user_accounts_list(
         .control
         .presence
         .user_snapshot_many(users.iter().map(|user| user.user_id.as_str()), presence_now);
+    let activity_user_ids = users
+        .iter()
+        .map(|user| user.user_id.trim())
+        .filter(|user_id| !user_id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let activity_series_map = build_user_activity_series_map(&state, &activity_user_ids, activity_days);
     let items = users
         .into_iter()
         .map(|user| {
@@ -4811,6 +4825,10 @@ async fn admin_user_accounts_list(
                 .get(profile.id.as_str())
                 .map(|snapshot| (snapshot.online, Some(snapshot.last_seen_at)))
                 .unwrap_or((false, None));
+            let activity_series = activity_series_map
+                .get(profile.id.as_str())
+                .cloned()
+                .unwrap_or_else(|| empty_user_activity_series(activity_days));
             let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({}));
             if let Value::Object(ref mut map) = value {
                 map.insert("active_sessions".to_string(), json!(active_count));
@@ -4850,6 +4868,7 @@ async fn admin_user_accounts_list(
                     "daily_quota_date".to_string(),
                     json!(token_status.last_grant_date),
                 );
+                map.insert("activity_series".to_string(), Value::Array(activity_series));
             }
             value
         })
@@ -5835,6 +5854,93 @@ fn format_ts(ts: f64) -> String {
         Some(dt) => dt.to_rfc3339(),
         None => String::new(),
     }
+}
+
+fn empty_user_activity_series(days: i64) -> Vec<Value> {
+    let safe_days = days.max(1) as usize;
+    let today = Local::now().date_naive();
+    (0..safe_days)
+        .map(|offset| {
+            let day = today - chrono::Duration::days((safe_days - 1 - offset) as i64);
+            json!({
+                "date": day.format("%Y-%m-%d").to_string(),
+                "tokens": 0_i64,
+            })
+        })
+        .collect()
+}
+
+fn build_user_activity_series_map(
+    state: &AppState,
+    user_ids: &[String],
+    days: i64,
+) -> HashMap<String, Vec<Value>> {
+    if user_ids.is_empty() {
+        return HashMap::new();
+    }
+    let safe_days = days.clamp(1, 31);
+    let today = Local::now().date_naive();
+    let start_day = today - chrono::Duration::days(safe_days.saturating_sub(1));
+    let since_time = start_day
+        .and_hms_opt(0, 0, 0)
+        .and_then(|dt| Local.from_local_datetime(&dt).single())
+        .map(|dt| dt.timestamp() as f64)
+        .unwrap_or_else(now_ts);
+
+    let mut result = user_ids
+        .iter()
+        .map(|user_id| (user_id.clone(), empty_user_activity_series(safe_days)))
+        .collect::<HashMap<_, _>>();
+
+    for user_id in user_ids {
+        let records = state
+            .monitor
+            .load_records_by_user(user_id, None, Some(since_time), safe_days.saturating_mul(24));
+        if records.is_empty() {
+            continue;
+        }
+        let mut day_buckets = HashMap::<String, i64>::new();
+        for record in records {
+            let updated_time = record
+                .get("updated_time")
+                .and_then(Value::as_f64)
+                .or_else(|| record.get("ended_time").and_then(Value::as_f64))
+                .or_else(|| record.get("start_time").and_then(Value::as_f64))
+                .unwrap_or(0.0);
+            if updated_time <= 0.0 {
+                continue;
+            }
+            let Some(day) = Local.timestamp_opt(updated_time as i64, 0).single() else {
+                continue;
+            };
+            let day_key = day.format("%Y-%m-%d").to_string();
+            let tokens = record
+                .get("consumed_tokens")
+                .and_then(Value::as_i64)
+                .or_else(|| record.get("context_tokens_peak").and_then(Value::as_i64))
+                .or_else(|| record.get("context_tokens").and_then(Value::as_i64))
+                .unwrap_or(0)
+                .max(0);
+            let entry = day_buckets.entry(day_key).or_insert(0);
+            *entry = entry.saturating_add(tokens);
+        }
+        if let Some(series) = result.get_mut(user_id) {
+            for point in series.iter_mut() {
+                let date_key = point
+                    .get("date")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let tokens = day_buckets.get(&date_key).copied().unwrap_or(0);
+                *point = json!({
+                    "date": date_key,
+                    "tokens": tokens,
+                });
+            }
+        }
+    }
+
+    result
 }
 
 struct AdminActor {
@@ -7370,6 +7476,8 @@ struct UserAccountListQuery {
     offset: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
+    #[serde(default)]
+    activity_days: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1690,7 +1690,6 @@ impl Orchestrator {
 
                 let mut extract_config = llm_config.clone();
                 extract_config.max_rounds = Some(1);
-                extract_config.max_output = Some(extract_config.max_output.unwrap_or(768).min(768));
                 extract_config.temperature = Some(0.1);
                 extract_config.stream = Some(false);
                 extract_config.stream_include_usage = Some(false);
@@ -3093,11 +3092,6 @@ fn flatten_compaction_system_content(content: &Value) -> String {
 
 fn build_compaction_summary_config(llm_config: &LlmModelConfig) -> LlmModelConfig {
     let mut summary_config = llm_config.clone();
-    let max_output = llm_config
-        .max_output
-        .unwrap_or(COMPACTION_SUMMARY_MAX_OUTPUT as u32)
-        .min(COMPACTION_SUMMARY_MAX_OUTPUT as u32);
-    summary_config.max_output = Some(max_output);
     summary_config.max_rounds = Some(1);
     // Disable reasoning for compaction summaries to keep the auxiliary request lean.
     summary_config.reasoning_effort = Some(COMPACTION_SUMMARY_REASONING_EFFORT.to_string());
@@ -4228,10 +4222,7 @@ mod tests {
 
         assert_eq!(summary_config.reasoning_effort.as_deref(), Some("none"));
         assert_eq!(summary_config.max_rounds, Some(1));
-        assert_eq!(
-            summary_config.max_output,
-            Some(COMPACTION_SUMMARY_MAX_OUTPUT as u32)
-        );
+        assert_eq!(summary_config.max_output, Some(2048));
         assert_eq!(payload["reasoning"]["effort"], "none");
     }
 

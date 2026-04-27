@@ -264,13 +264,16 @@ const normalizeLlmConfig = (raw) => {
     typeof raw?.temperature === "number" && !Number.isNaN(raw.temperature) ? raw.temperature : 0.7,
   timeout_s:
     typeof raw?.timeout_s === "number" && !Number.isNaN(raw.timeout_s) ? raw.timeout_s : 120,
-  retry: typeof raw?.retry === "number" && !Number.isNaN(raw.retry) ? raw.retry : 1,
   max_rounds:
     typeof raw?.max_rounds === "number" && !Number.isNaN(raw.max_rounds) ? raw.max_rounds : 1000,
   max_context:
     typeof raw?.max_context === "number" && !Number.isNaN(raw.max_context) ? raw.max_context : null,
   max_output:
     typeof raw?.max_output === "number" && !Number.isNaN(raw.max_output) ? raw.max_output : null,
+  thinking_token_budget:
+    typeof raw?.thinking_token_budget === "number" && !Number.isNaN(raw.thinking_token_budget)
+      ? raw.thinking_token_budget
+      : null,
   support_vision: raw?.support_vision === true,
   support_hearing: raw?.support_hearing === true,
   stream: raw?.stream === true,
@@ -333,10 +336,12 @@ const clearLlmForm = () => {
   elements.llmApiKey.value = "";
   elements.llmTemperature.value = formatFloatForInput(0.7, 0.7);
   elements.llmTimeout.value = 120;
-  elements.llmRetry.value = 1;
   elements.llmMaxRounds.value = 1000;
   elements.llmMaxContext.value = "";
   elements.llmMaxOutput.value = "";
+  if (elements.llmThinkingTokenBudget) {
+    elements.llmThinkingTokenBudget.value = "";
+  }
   elements.llmVision.checked = false;
   elements.llmHearing.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
@@ -363,6 +368,7 @@ const updateLlmTypeVisibility = (modelType) => {
   };
   toggle(elements.llmTemperatureRow, !isEmbedding);
   toggle(elements.llmMaxOutputRow, !isEmbedding);
+  toggle(elements.llmThinkingTokenBudgetRow, !isEmbedding);
   toggle(elements.llmMaxRoundsRow, !isEmbedding);
   toggle(elements.llmMaxContextRow, !isEmbedding);
   toggle(elements.llmCapabilitiesCard, !isEmbedding);
@@ -389,10 +395,12 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmApiKey.value = llm.api_key;
   elements.llmTemperature.value = formatFloatForInput(llm.temperature, 0.7);
   elements.llmTimeout.value = llm.timeout_s;
-  elements.llmRetry.value = llm.retry;
   elements.llmMaxRounds.value = llm.max_rounds ?? 1000;
   elements.llmMaxContext.value = llm.max_context ?? "";
   elements.llmMaxOutput.value = llm.max_output ?? "";
+  if (elements.llmThinkingTokenBudget) {
+    elements.llmThinkingTokenBudget.value = llm.thinking_token_budget ?? "";
+  }
   elements.llmVision.checked = llm.support_vision;
   elements.llmHearing.checked = llm.support_hearing;
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
@@ -523,10 +531,10 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const base = normalizeLlmConfig(baseConfig || {});
   const temperature = parseFloatInput(elements.llmTemperature, 0.7);
   const timeout = Number.parseInt(elements.llmTimeout.value, 10);
-  const retry = Number.parseInt(elements.llmRetry.value, 10);
   const maxRounds = Number.parseInt(elements.llmMaxRounds.value, 10);
   const maxContext = Number.parseInt(elements.llmMaxContext.value, 10);
   const maxOutput = Number.parseInt(elements.llmMaxOutput.value, 10);
+  const thinkingTokenBudget = Number.parseInt(elements.llmThinkingTokenBudget?.value, 10);
   const historyCompactionRatio = parseFloatInput(elements.llmHistoryCompactionRatio, 0.9);
   const modelType = normalizeModelType(elements.llmModelType?.value || base.model_type);
   const provider = normalizeProviderId(elements.llmProvider.value || base.provider);
@@ -534,7 +542,6 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const apiKey = elements.llmApiKey.value.trim();
   const model = elements.llmModel.value.trim();
   const timeoutValue = Number.isFinite(timeout) ? timeout : 120;
-  const retryValue = Number.isFinite(retry) ? retry : 1;
   const reasoningEffort = normalizeReasoningEffort(
     elements.llmReasoningEffort?.value || base.reasoning_effort
   );
@@ -548,10 +555,10 @@ const buildLlmConfigFromForm = (baseConfig) => {
       model,
       temperature: null,
       timeout_s: timeoutValue,
-      retry: retryValue,
       max_rounds: null,
       max_context: null,
       max_output: null,
+      thinking_token_budget: null,
       support_vision: false,
       support_hearing: false,
       stream: false,
@@ -571,10 +578,11 @@ const buildLlmConfigFromForm = (baseConfig) => {
     model,
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
     timeout_s: timeoutValue,
-    retry: retryValue,
     max_rounds: Number.isFinite(maxRounds) && maxRounds > 0 ? maxRounds : base.max_rounds ?? 1000,
     max_context: Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null,
     max_output: Number.isFinite(maxOutput) && maxOutput > 0 ? maxOutput : null,
+    thinking_token_budget:
+      Number.isFinite(thinkingTokenBudget) && thinkingTokenBudget > 0 ? thinkingTokenBudget : null,
     support_vision: elements.llmVision.checked,
     support_hearing: elements.llmHearing.checked,
     stream: base.stream,

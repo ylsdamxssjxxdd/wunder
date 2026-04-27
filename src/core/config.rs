@@ -333,13 +333,13 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub timeout_s: Option<u64>,
     #[serde(default)]
-    pub retry: Option<u32>,
-    #[serde(default)]
     pub max_rounds: Option<u32>,
     #[serde(default)]
     pub max_context: Option<u32>,
     #[serde(default)]
     pub max_output: Option<u32>,
+    #[serde(default)]
+    pub thinking_token_budget: Option<u32>,
     #[serde(default)]
     pub support_vision: Option<bool>,
     #[serde(default)]

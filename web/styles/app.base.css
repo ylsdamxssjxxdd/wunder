@@ -2821,6 +2821,70 @@ button.btn-with-icon[aria-busy="true"] i {
   color: #64748b;
 }
 
+.user-account-table col.col-user-id {
+  width: 22%;
+}
+
+.user-account-table col.col-user-online {
+  width: 10%;
+}
+
+.user-account-table col.col-user-quota {
+  width: 10%;
+}
+
+.user-account-table col.col-user-login {
+  width: 16%;
+}
+
+.user-account-table col.col-user-activity {
+  width: 26%;
+}
+
+.user-account-table col.col-user-action {
+  width: 16%;
+}
+
+.user-account-activity-cell {
+  min-width: 168px;
+}
+
+.user-account-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.user-account-activity svg {
+  flex: 1 1 auto;
+  width: 132px;
+  height: 32px;
+  display: block;
+}
+
+.user-account-activity-area {
+  fill: rgba(58, 122, 254, 0.12);
+}
+
+.user-account-activity-line {
+  fill: none;
+  stroke: #3a7afe;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.user-account-activity-value {
+  flex-shrink: 0;
+  min-width: 40px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
 .table-actions {
   display: inline-flex;
   align-items: center;

@@ -735,7 +735,6 @@ fn mock_llm_model_config(base_url: &str) -> Result<LlmModelConfig> {
         "api_key": "swarm-flow-mock-key",
         "model": "mock-swarm-flow",
         "stream": false,
-        "retry": 0,
         "max_rounds": 6,
         "tool_call_mode": "tool_call",
         "temperature": 0.0

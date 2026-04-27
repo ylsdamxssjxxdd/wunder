@@ -710,7 +710,6 @@ fn build_mother_request(
                     "api_key": "beeroom-demo-key",
                     "model": "beeroom-demo-model",
                     "stream": false,
-                    "retry": 0,
                     "max_rounds": 36,
                     "tool_call_mode": "tool_call",
                     "temperature": 0.0

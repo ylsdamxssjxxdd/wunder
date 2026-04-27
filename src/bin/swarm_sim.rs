@@ -366,7 +366,6 @@ fn mock_llm_model_config() -> Result<LlmModelConfig> {
     serde_json::from_value(json!({
         "mock_if_unconfigured": true,
         "stream": false,
-        "retry": 0,
         "max_rounds": 1,
         "tool_call_mode": "tool_call"
     }))
