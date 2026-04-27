@@ -52,6 +52,7 @@
             @click="switchSection(item.key)"
           >
             <i :class="item.icon" aria-hidden="true"></i>
+            <span class="messenger-left-nav-btn-label">{{ resolveLeftNavButtonLabel(item.key) }}</span>
           </button>
         </div>
       </div>
@@ -2440,6 +2441,23 @@ const leftRailSocialSectionOptions = computed(() =>
 
 const isLeftNavSectionActive = (section: MessengerSection): boolean => {
   return isSectionButtonActive(section);
+};
+
+const resolveLeftNavButtonLabel = (section: MessengerSection): string => {
+  switch (section) {
+    case 'messages':
+      return t('messenger.section.messages');
+    case 'agents':
+      return t('messenger.section.agents.short');
+    case 'swarms':
+      return t('messenger.section.swarms');
+    case 'orchestrations':
+      return t('messenger.section.orchestrations');
+    case 'plaza':
+      return t('messenger.section.plaza.short');
+    default:
+      return '';
+  }
 };
 
 const closeLeftRailMoreMenu = () => {

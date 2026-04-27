@@ -2850,7 +2850,7 @@ button.btn-with-icon[aria-busy="true"] i {
 }
 
 .user-account-activity {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -2859,7 +2859,9 @@ button.btn-with-icon[aria-busy="true"] i {
 
 .user-account-activity svg {
   flex: 1 1 auto;
-  width: 132px;
+  width: 100%;
+  min-width: 80px;
+  max-width: 200px;
   height: 32px;
   display: block;
 }

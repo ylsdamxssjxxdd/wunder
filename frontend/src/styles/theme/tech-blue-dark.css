@@ -109,6 +109,14 @@
   --messenger-composer-panel-bg: var(--tech-blue-surface-3);
   --messenger-composer-subtle-bg: var(--tech-blue-surface-2);
   --messenger-composer-border: var(--tech-blue-border);
+  --messenger-panel-border: rgba(132, 173, 255, 0.18);
+  --messenger-panel-bg: rgba(18, 38, 64, 0.9);
+  --messenger-section-title-color: #e6f2ff;
+  --messenger-section-divider: rgba(132, 173, 255, 0.12);
+  --messenger-skill-border: rgba(88, 208, 255, 0.2);
+  --messenger-skill-bg: rgba(22, 45, 76, 0.8);
+  --messenger-divider-color: rgba(132, 173, 255, 0.12);
+  --messenger-list-bg: rgba(14, 32, 56, 0.9);
   background:
     radial-gradient(circle at 12% 10%, rgba(var(--ui-accent-rgb), 0.2), transparent 30%),
     radial-gradient(circle at 88% 0%, rgba(var(--ui-accent-secondary-rgb), 0.16), transparent 34%),
@@ -590,8 +598,8 @@
   box-shadow: none;
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:hover .ability-icon-badge,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:focus-visible .ability-icon-badge {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:not(.is-disabled):hover .ability-icon-badge,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:not(.is-disabled):focus-visible .ability-icon-badge {
   border-color: rgba(251, 191, 36, 0.46);
   background: rgba(245, 158, 11, 0.28);
   color: #fef3c7;

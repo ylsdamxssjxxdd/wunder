@@ -501,8 +501,8 @@
   box-shadow: none;
 }
 
-.messenger-skill-item:hover .ability-icon-badge,
-.messenger-skill-item:focus-visible .ability-icon-badge {
+.messenger-skill-item:not(.is-disabled):hover .ability-icon-badge,
+.messenger-skill-item:not(.is-disabled):focus-visible .ability-icon-badge {
   border-color: rgba(245, 158, 11, 0.42);
   background: rgba(245, 158, 11, 0.22);
   color: #a16207;

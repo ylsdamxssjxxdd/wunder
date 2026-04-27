@@ -1,8 +1,4 @@
 ﻿<template>
-  <header class="messenger-middle-header">
-    <div class="messenger-middle-title">{{ activeSectionTitle }}</div>
-  </header>
-
   <div v-if="showMiddlePaneSearch" class="messenger-search-row">
     <div v-if="activeSection === 'agents'" class="messenger-search-slot">
       <el-dropdown
