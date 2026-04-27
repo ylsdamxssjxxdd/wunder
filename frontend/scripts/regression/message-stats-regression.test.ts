@@ -330,6 +330,34 @@ test('message stats hides first transient retry before grace window elapses', ()
   assert.equal(entries[0]?.value, 'Requesting');
 });
 
+test('message stats does not keep retrying status after model output resumes', () => {
+  const t = createTranslator();
+  const nowMs = 1_000_000;
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      retry_state: 'retrying',
+      retry_attempt: 1,
+      retry_started_at_ms: nowMs - 5_000,
+      workflowItems: [
+        { eventType: 'llm_request', status: 'completed' },
+        { eventType: 'llm_stream_retry', status: 'pending', attempt: 1, maxAttempts: 6, delayS: 1.2 },
+        { eventType: 'llm_output', status: 'completed' }
+      ],
+      stats: {
+        interaction_start_ms: nowMs - 7_000
+      }
+    },
+    t,
+    null,
+    nowMs
+  );
+  assert.notEqual(entries[0]?.value, 'Retrying');
+  assert.equal(entries[0]?.value, 'Requesting');
+});
+
 test('message stats interrupted response falls back to completed model-round usage when round totals are missing', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

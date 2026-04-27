@@ -152,6 +152,29 @@ pub fn normalize_tool_arguments_json_with_meta(arguments: &str) -> (String, Opti
         };
     }
 
+    if let Some(prefixed) = strip_empty_object_prefix(trimmed) {
+        if let Some(Value::Object(map)) = strict_parse_json_value(prefixed) {
+            return (
+                serde_json::to_string(&Value::Object(map)).unwrap_or_else(|_| "{}".to_string()),
+                Some(build_repair_meta(
+                    "tool_arguments",
+                    "arguments",
+                    "empty_object_prefix_removed",
+                )),
+            );
+        }
+        if let Some(Value::Object(map)) = parse_json_value_lossy(prefixed) {
+            return (
+                serde_json::to_string(&Value::Object(map)).unwrap_or_else(|_| "{}".to_string()),
+                Some(build_repair_meta(
+                    "tool_arguments",
+                    "arguments",
+                    "empty_object_prefix_removed",
+                )),
+            );
+        }
+    }
+
     (
         serde_json::to_string(&json!({ "raw": arguments }))
             .unwrap_or_else(|_| "{\"raw\":\"\"}".to_string()),
@@ -227,6 +250,11 @@ fn parse_json_value_lossy(raw: &str) -> Option<Value> {
     (repaired != raw)
         .then(|| serde_json::from_str::<Value>(&repaired).ok())
         .flatten()
+}
+
+fn strip_empty_object_prefix(raw: &str) -> Option<&str> {
+    let stripped = raw.strip_prefix("{}")?.trim_start();
+    stripped.starts_with('{').then_some(stripped)
 }
 
 fn build_repair_meta(kind: &str, source: &str, strategy: &str) -> Value {
@@ -305,7 +333,7 @@ mod tests {
         recover_tool_args_value, recover_tool_args_value_with_meta, sanitize_tool_call_payload,
         sanitize_tool_call_payload_with_meta,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn recover_tool_args_value_repairs_multiline_raw_json() {
@@ -364,6 +392,27 @@ mod tests {
                 "kind": "tool_arguments",
                 "source": "arguments",
                 "strategy": "raw_arguments_wrapped"
+            }))
+        );
+    }
+
+    #[test]
+    fn normalize_tool_arguments_json_with_meta_repairs_empty_object_prefix() {
+        let (normalized, repair) =
+            normalize_tool_arguments_json_with_meta("{}{\"filename\":\"demo.py\",\"content\":\"print(1)\"}");
+        assert_eq!(
+            serde_json::from_str::<Value>(&normalized).expect("prefixed args should parse"),
+            json!({
+                "filename": "demo.py",
+                "content": "print(1)"
+            })
+        );
+        assert_eq!(
+            repair,
+            Some(json!({
+                "kind": "tool_arguments",
+                "source": "arguments",
+                "strategy": "empty_object_prefix_removed"
             }))
         );
     }

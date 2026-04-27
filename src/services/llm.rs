@@ -2922,7 +2922,13 @@ fn should_replace_empty_json_stream_payload(current: &str, next: &str) -> bool {
     if current != "{}" {
         return false;
     }
-    if next.is_empty() || !next.starts_with('{') {
+    if next.is_empty() {
+        return false;
+    }
+    if next == "{" {
+        return true;
+    }
+    if !next.starts_with('{') {
         return false;
     }
     strict_parse_partial_json_fragment(next)
@@ -4091,6 +4097,61 @@ mod tests {
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+        );
+    }
+
+    #[test]
+    fn finalize_stream_tool_calls_replaces_empty_json_seed_from_incremental_anthropic_fragments()
+    {
+        let mut acc = Vec::new();
+        merge_stream_tool_call_item(
+            &mut acc,
+            &json!({
+                "index": 0,
+                "id": "call_1",
+                "function": {
+                    "name": "ptc",
+                    "arguments": "{}"
+                }
+            }),
+        );
+        for fragment in [
+            "{",
+            "\"filename\": ",
+            "\"demo",
+            ".py",
+            "\"",
+            ", ",
+            "\"content\": ",
+            "\"print",
+            "(",
+            "1",
+            ")",
+            "\"",
+            "}",
+        ] {
+            merge_stream_tool_call_item(
+                &mut acc,
+                &json!({
+                    "index": 0,
+                    "function": {
+                        "arguments": fragment
+                    }
+                }),
+            );
+        }
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        let arguments = finalized[0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments string");
+        assert_eq!(
+            serde_json::from_str::<Value>(arguments).expect("incremental anthropic args json"),
+            json!({
+                "filename": "demo.py",
+                "content": "print(1)"
+            })
         );
     }
 

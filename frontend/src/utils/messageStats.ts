@@ -581,7 +581,10 @@ const resolveAssistantStatusEntry = (
   }
   if (
     shouldShowRetryState &&
-    ((latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) || hasPersistedRetryState)
+    (
+      (latestRetry.index >= 0 && latestRetry.index >= latestOutput.index)
+      || (hasPersistedRetryState && latestOutput.index < 0 && latestActiveTool.index < 0)
+    )
   ) {
     return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
   }

@@ -131,6 +131,14 @@ const isMinimalAssistantStatusNotice = (message: ChatMessage): boolean => {
   return contentLength <= 32 && workflowTextLength <= 160;
 };
 
+const isStatusOnlyAssistantNotice = (message: ChatMessage): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (String(message.reasoning || '').trim()) return false;
+  if (message.plan || message.questionPanel) return false;
+  if (Array.isArray(message.subagents) && message.subagents.length > 0) return false;
+  return normalizeAssistantText(message.content).length <= 32;
+};
+
 const resolveCancellationNoticePriority = (message: ChatMessage): number => {
   const combined = collectAssistantComparableTexts(message).join(' ').toLowerCase();
   if (!combined) return 0;
@@ -159,7 +167,11 @@ const shouldMergeCancellationDuplicatePair = (left: ChatMessage, right: ChatMess
   if (!hasCancellationSignal(left) || !hasCancellationSignal(right)) {
     return false;
   }
-  if (!isMinimalAssistantStatusNotice(left) && !isMinimalAssistantStatusNotice(right)) {
+  const leftMinimal = isMinimalAssistantStatusNotice(left);
+  const rightMinimal = isMinimalAssistantStatusNotice(right);
+  const leftStatusOnly = isStatusOnlyAssistantNotice(left);
+  const rightStatusOnly = isStatusOnlyAssistantNotice(right);
+  if (!leftMinimal && !rightMinimal && !(leftStatusOnly && rightStatusOnly)) {
     return false;
   }
   const leftEventId = normalizeComparableValue(left.stream_event_id);

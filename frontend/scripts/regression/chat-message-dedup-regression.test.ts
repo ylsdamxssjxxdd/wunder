@@ -72,3 +72,52 @@ test('assistant dedupe collapses manual stop abort bubble with server session-ca
   assert.equal(deduped[1]?.role, 'assistant');
   assert.equal(deduped[1]?.content, '已中止');
 });
+
+test('assistant dedupe collapses stop bubble even when both terminal notices carry workflow traces', () => {
+  const messages = [
+    { role: 'user', content: '继续执行', created_at: '2026-04-27T07:43:41.000Z' },
+    {
+      role: 'assistant',
+      content: '已中止',
+      created_at: '2026-04-27T07:43:41.658Z',
+      stream_event_id: 6,
+      stream_round: 1,
+      workflowItems: [
+        { status: 'completed', title: '事件：received', detail: '{}' },
+        { status: 'completed', title: '事件：progress', detail: '{}' },
+        { eventType: 'llm_request', status: 'completed', title: '模型请求体', detail: '{}' },
+        {
+          eventType: 'llm_stream_retry',
+          status: 'pending',
+          title: '模型连接重试',
+          detail: '{"attempt":1}'
+        },
+        { status: 'failed', title: '已中止', detail: '请求已中止' }
+      ]
+    },
+    {
+      role: 'assistant',
+      content: '会话已取消',
+      created_at: '2026-04-27T07:43:50.177Z',
+      stream_round: 2,
+      workflowItems: [
+        { status: 'completed', title: '事件：received', detail: '{}' },
+        { status: 'completed', title: '事件：progress', detail: '{}' },
+        { eventType: 'llm_request', status: 'completed', title: '模型请求体', detail: '{}' },
+        {
+          eventType: 'llm_stream_retry',
+          status: 'pending',
+          title: '模型连接重试',
+          detail: '{"attempt":1}'
+        },
+        { eventType: 'error', status: 'failed', title: '请求失败', detail: '会话已取消' }
+      ]
+    }
+  ];
+
+  const deduped = dedupeAssistantMessages(messages);
+  assert.equal(deduped.length, 2);
+  assert.equal(deduped[1]?.role, 'assistant');
+  assert.equal(deduped[1]?.content, '已中止');
+  assert.equal(deduped[1]?.workflowItems?.length, 5);
+});
