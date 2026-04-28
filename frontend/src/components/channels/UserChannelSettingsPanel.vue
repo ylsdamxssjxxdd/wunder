@@ -878,12 +878,6 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         advanced: true
       },
       {
-        key: 'muc_nick',
-        labelKey: 'channels.form.xmpp.mucNick',
-        placeholderKey: 'channels.form.xmpp.mucNickPlaceholder',
-        advanced: true
-      },
-      {
         key: 'muc_rooms',
         labelKey: 'channels.form.xmpp.mucRooms',
         placeholderKey: 'channels.form.xmpp.mucRoomsPlaceholder',

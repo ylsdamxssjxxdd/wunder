@@ -816,8 +816,6 @@ export default {
   'channels.form.xmpp.resourcePlaceholder': 'Default: coplat',
   'channels.form.xmpp.trustSelfSigned': 'Trust private certificate (default)',
   'channels.form.xmpp.directTls': 'Use Direct TLS (5223)',
-  'channels.form.xmpp.mucNick': 'MUC Nickname (Optional)',
-  'channels.form.xmpp.mucNickPlaceholder': 'Used to filter self messages in MUC',
   'channels.form.xmpp.mucRooms': 'Auto-join Rooms (Optional)',
   'channels.form.xmpp.mucRoomsPlaceholder':
     'room1@conference.example.com,room2@conference.example.com',

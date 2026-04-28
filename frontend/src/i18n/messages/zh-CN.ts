@@ -794,8 +794,6 @@ export default {
   'channels.form.xmpp.resourcePlaceholder': '默认 coplat',
   'channels.form.xmpp.trustSelfSigned': '信任自有证书（默认）',
   'channels.form.xmpp.directTls': '使用 Direct TLS（5223）',
-  'channels.form.xmpp.mucNick': '群聊昵称（可选）',
-  'channels.form.xmpp.mucNickPlaceholder': '用于 MUC 自身消息过滤',
   'channels.form.xmpp.mucRooms': '自动加入房间（可选）',
   'channels.form.xmpp.mucRoomsPlaceholder': 'room1@conference.example.com,room2@conference.example.com',
   'channels.form.xmpp.heartbeatEnabled': '启用主动心跳',
