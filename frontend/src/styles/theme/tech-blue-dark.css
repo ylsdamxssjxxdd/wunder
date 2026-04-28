@@ -2233,7 +2233,7 @@
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-nav-btn--helper.active {
-  border-color: rgba(var(--ui-accent-rgb), 0.34);
+  border-color: transparent;
   background: rgba(var(--ui-accent-rgb), 0.18);
   color: #f4fbff;
 }

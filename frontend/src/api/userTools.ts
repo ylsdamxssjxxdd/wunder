@@ -10,6 +10,8 @@ export const fetchUserSkills = () => api.get('/user_tools/skills');
 export const saveUserSkills = (payload: ApiPayload) => api.post('/user_tools/skills', payload);
 export const fetchUserSkillContent = (name: string) =>
   api.get('/user_tools/skills/content', { params: { name } });
+export const exportUserSkillArchive = (name: string) =>
+  api.get('/user_tools/skills/export', { params: { name }, responseType: 'blob' });
 export const fetchUserSkillFiles = (name: string) =>
   api.get('/user_tools/skills/files', { params: { name } });
 export const fetchUserSkillFile = (name: string, path: string) =>

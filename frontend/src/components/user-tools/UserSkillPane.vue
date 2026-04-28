@@ -7,6 +7,15 @@
           <i class="fa-solid fa-plus" aria-hidden="true"></i>
           <span>{{ t('userTools.skills.action.upload') }}</span>
         </button>
+        <button
+          class="user-tools-btn secondary btn-with-icon"
+          type="button"
+          :disabled="!activeSkill"
+          @click="exportSkill"
+        >
+          <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
+          <span>{{ t('userTools.skills.action.export') }}</span>
+        </button>
         <button class="user-tools-btn secondary btn-with-icon" type="button" @click="reloadSkills">
           <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
           <span>{{ t('common.refresh') }}</span>
@@ -135,6 +144,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   deleteUserSkill,
+  exportUserSkillArchive,
   fetchUserSkillFile,
   fetchUserSkillFiles,
   fetchUserSkills,
@@ -144,6 +154,7 @@ import {
 import { showApiError } from '@/utils/apiError';
 import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
 import { invalidateAllUserToolsCaches } from '@/utils/userToolsCache';
+import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -385,6 +396,24 @@ const triggerUpload = () => {
   if (!uploadInputRef.value) return;
   uploadInputRef.value.value = '';
   uploadInputRef.value.click();
+};
+
+const exportSkill = async () => {
+  const skill = activeSkill.value;
+  if (!skill?.name) {
+    ElMessage.warning(t('userTools.skills.file.selectSkillRequired'));
+    return;
+  }
+  try {
+    const response = await exportUserSkillArchive(skill.name);
+    const filename = getFilenameFromHeaders(response.headers, `${skill.name}.zip`);
+    const objectUrl = URL.createObjectURL(response.data);
+    saveObjectUrlAsFile(objectUrl, filename);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    ElMessage.success(t('userTools.skills.export.success'));
+  } catch (error) {
+    showApiError(error, t('userTools.skills.export.failed'));
+  }
 };
 
 const handleUpload = async () => {

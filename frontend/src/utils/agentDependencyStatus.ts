@@ -121,6 +121,21 @@ export const buildDeclaredDependencyPayload = (
   return buildWorkerCardDependencyPayload(selectedToolNames, source, catalog);
 };
 
+export const buildIgnoredMissingDependencyPayload = (
+  selectedToolNames: unknown,
+  source: unknown,
+  catalog: unknown
+) => {
+  const payload = buildDeclaredDependencyPayload(selectedToolNames, source, catalog);
+  const { availableToolNames, availableSkillNames } = collectAvailableNames(catalog);
+
+  return {
+    tool_names: payload.tool_names,
+    declared_tool_names: payload.declared_tool_names.filter((name) => availableToolNames.has(name)),
+    declared_skill_names: payload.declared_skill_names.filter((name) => availableSkillNames.has(name))
+  };
+};
+
 export const resolveAgentDependencyStatus = (
   source: unknown,
   catalog: unknown,

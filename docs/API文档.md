@@ -7,7 +7,7 @@
 - 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
 - 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
 - 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`；Windows 本地开发如果 bind mount 导致前端/编译 I/O 明显卡顿，可改用新增的 `docker-compose-win.yml`，保留源码目录挂载并把运行态数据、前端产物和依赖缓存切到 Docker named volume。
-- MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `config/mcp_config.json` 的 `database` 配置。
+- MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 对宿主机发布 `${MCP_PORT}` 端口（`MCP_BIND_HOST` 默认 `0.0.0.0`，如需仅本机访问可改为 `127.0.0.1`），人员数据库连接通过 `config/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`config/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准；默认优先读取该路径，不存在时兼容回退到 `extra_mcp/mcp_config.json`。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
 - Database data tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query` + `db_export` tools (`db_query`/`db_export` for single table, `db_query_<key>`/`db_export_<key>` for multiple). Each tool is hard-bound to its table; `db_query*` embeds compact schema hints (`column + type`) in description and returns `query_handle`, while `db_export*` writes xlsx/csv directly under the configured export root (`database.export_root`) or, when `path` points to `/workspaces/{user_id}/...`, directly into the current Wunder workspace and returns a lean export payload centered on canonical `path` plus `workspace_relative_path` for follow-up tools. By default `db_export*` rejects SQL/query_handle that still contains `LIMIT/OFFSET`; set `allow_limited_export=true` only for intentional partial exports.
@@ -26,7 +26,7 @@
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - ARM compose 防漂移：`docker-compose-arm.yml` 的 Rust 构建链路显式声明 `build.platforms=linux/arm64`，并在 `wunder-server`/`wunder-sandbox`/`extra-mcp`/`wunder-frontend`/`wunder-nginx` 启动时执行架构自检；若运行时非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
-- Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
+- Docker compose 默认公开入口：`wunder-nginx` 发布 `18001`，`extra-mcp` 额外发布 `${MCP_PORT}`；`wunder-postgres` 与 `wunder-weaviate` 仍默认绑定 `127.0.0.1`。如需将 `extra-mcp` 收回仅本机访问，可设置 `MCP_BIND_HOST=127.0.0.1`。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，接口返回默认智能体 `agent_id=__default__` 且 `focus_mode=false`，前端跳转 `/app/chat?section=messages&entry=default`（desktop 为 `/desktop/chat?section=messages&entry=default`）；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）并隐藏左/中栏聚焦该智能体。`POST /wunder/auth/login`、`/wunder/auth/register`、`/wunder/auth/demo` 以及会直接签发用户 token 的 `/wunder/auth/external/*` 登录接口支持可选请求头 `X-Wunder-Session-Scope`；同一用户仅在同一 `session_scope` 内执行“新登录顶旧登录”，不同 scope（如 `user_web` 与 `admin_web`）互不影响。
 - 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及 Token 账户字段 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`；其中 `token_balance` 是用户当前可支配的 Token 资产余额，`token_granted_total` 记录累计发放与奖励总额，`token_used_total` 记录累计消耗。`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
 - 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页/蜂群页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[] / swarms[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，前端可用它在刷新后恢复用户自定义排序。
@@ -487,7 +487,16 @@
 - 说明：上传目录若与内置技能目录冲突会返回 `403`（避免覆盖内置技能）。
 - 说明：压缩包必须以“技能目录”为顶层，例如 `我的技能/SKILL.md`；不允许直接把 `SKILL.md`、脚本或其他文件放在压缩包根目录，否则会返回 `400`。
 
-### 4.1.2.8 `/wunder/user_tools/knowledge`
+### 4.1.2.8 `/wunder/user_tools/skills/export`
+
+- 方法：`GET`
+- 入参（Query）：
+  - `user_id`：用户唯一标识
+  - `name`：技能名称
+- 返回：`application/zip` 文件流
+- 说明：将当前技能目录按“单独顶层技能目录”结构导出为 zip 压缩包，内置技能与自定义技能都允许导出。
+
+### 4.1.2.9 `/wunder/user_tools/knowledge`
 
 - 方法：`GET/POST`
 - `GET` 入参（Query）：
@@ -501,7 +510,7 @@
 - `POST` 返回：同 `GET`
 - 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `config/data/vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
 
-### 4.1.2.9 `/wunder/user_tools/knowledge/files`
+### 4.1.2.10 `/wunder/user_tools/knowledge/files`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -512,7 +521,7 @@
   - `files`：Markdown 文件相对路径列表
 - 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/docs` 等接口。
 
-### 4.1.2.10 `/wunder/user_tools/knowledge/file`
+### 4.1.2.11 `/wunder/user_tools/knowledge/file`
 
 - 方法：`GET/PUT/DELETE`
 - `GET` 入参（Query）：
@@ -540,7 +549,7 @@
   - `message`：提示信息
 - 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/doc` 等接口。
 
-### 4.1.2.11 `/wunder/user_tools/knowledge/upload`
+### 4.1.2.12 `/wunder/user_tools/knowledge/upload`
 
 - 方法：`POST`
 - 入参（multipart/form-data）：
@@ -559,7 +568,7 @@
   - `warnings`：转换警告列表
 - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传仅解析并切片，需通过 `/wunder/user_tools/knowledge/reindex` 生成向量。
 
-### 4.1.2.12 `/wunder/user_tools/knowledge/docs`
+### 4.1.2.13 `/wunder/user_tools/knowledge/docs`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -570,7 +579,7 @@
   - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.13 `/wunder/user_tools/knowledge/doc`
+### 4.1.2.14 `/wunder/user_tools/knowledge/doc`
 
 - 方法：`GET/DELETE`
 - `GET` 入参（Query）：
@@ -592,7 +601,7 @@
   - `doc_name`：文档名称
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.14 `/wunder/user_tools/knowledge/chunks`
+### 4.1.2.15 `/wunder/user_tools/knowledge/chunks`
 
 - 方法：`GET`
 - 入参（Query）：
@@ -605,7 +614,7 @@
   - `chunks`：切片列表（index/start/end/preview/content/status）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.15 `/wunder/user_tools/knowledge/chunk/embed`
+### 4.1.2.16 `/wunder/user_tools/knowledge/chunk/embed`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -618,7 +627,7 @@
   - `doc`：更新后的文档元数据
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.16 `/wunder/user_tools/knowledge/chunk/delete`
+### 4.1.2.17 `/wunder/user_tools/knowledge/chunk/delete`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -631,7 +640,7 @@
   - `doc`：更新后的文档元数据
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.17 `/wunder/user_tools/knowledge/test`
+### 4.1.2.18 `/wunder/user_tools/knowledge/test`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -649,7 +658,7 @@
   - `reasoning`：字面知识库测试时模型返回的思考过程文本
 - 说明：支持向量/字面知识库。
 
-### 4.1.2.18 `/wunder/user_tools/knowledge/reindex`
+### 4.1.2.19 `/wunder/user_tools/knowledge/reindex`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -662,7 +671,7 @@
   - `failed`：失败项列表（doc_id/error）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.19 `/wunder/user_tools/tools`
+### 4.1.2.20 `/wunder/user_tools/tools`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -679,7 +688,7 @@
 - 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
 - 说明：`items[]` 与旧分组字段同时返回；推荐新前端与新工具目录逻辑优先消费 `items[]`。
 
-### 4.1.2.20 `/wunder/user_tools/catalog`
+### 4.1.2.21 `/wunder/user_tools/catalog`
 
 - 方法：`GET`
 - 返回（JSON）：
@@ -700,7 +709,7 @@
 - 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
 - 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/休眠等待/记忆管理/执行命令/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。
 
-### 4.1.2.21 `/wunder/user_tools/shared_tools`
+### 4.1.2.22 `/wunder/user_tools/shared_tools`
 
 - 方法：`POST`
 - 入参（JSON）：

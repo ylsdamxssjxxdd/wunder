@@ -30,6 +30,11 @@
         <div class="agent-dependency-notice-hint">
           {{ t('portal.agent.dependencies.hint') }}
         </div>
+        <div v-if="allowIgnore" class="agent-dependency-notice-actions">
+          <el-button size="small" text type="primary" @click="ignoreNotice">
+            {{ t('portal.agent.dependencies.ignore') }}
+          </el-button>
+        </div>
       </div>
     </el-alert>
   </div>
@@ -80,8 +85,16 @@ const props = defineProps({
   allowHide: {
     type: Boolean,
     default: true
+  },
+  allowIgnore: {
+    type: Boolean,
+    default: false
   }
 });
+
+const emit = defineEmits<{
+  ignore: [];
+}>();
 
 const { t } = useI18n();
 const hasMissing = computed(() => props.missingToolNames.length > 0 || props.missingSkillNames.length > 0);
@@ -118,6 +131,10 @@ function hideNotice(): void {
 function showNotice(): void {
   hiddenFingerprint.value = '';
   writeHiddenFingerprint(storageKey.value, '');
+}
+
+function ignoreNotice(): void {
+  emit('ignore');
 }
 
 watch(storageKey, syncHiddenState, { immediate: true });
@@ -182,5 +199,10 @@ watch(storageKey, syncHiddenState, { immediate: true });
   font-size: 12px;
   line-height: 1.5;
   opacity: 0.85;
+}
+
+.agent-dependency-notice-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

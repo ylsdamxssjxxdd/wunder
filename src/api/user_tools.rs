@@ -14,6 +14,7 @@ use crate::path_utils::{
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
 use crate::services::abilities::populate_ability_items;
 use crate::services::default_tool_profile::curated_default_tool_candidates;
+use crate::services::skill_archive::create_skill_archive;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
@@ -24,17 +25,23 @@ use crate::user_access::{
 };
 use crate::user_tools::{UserKnowledgeBase, UserMcpServer, UserToolsPayload};
 use crate::vector_knowledge;
+use axum::body::Body;
 use axum::extract::{Multipart, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
+use bytes::Bytes;
+use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::io::{Cursor, ErrorKind, Read};
+use std::io::{self, Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio::io::AsyncWriteExt;
+use tokio_util::io::ReaderStream;
 use tracing::info;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -104,6 +111,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/user_tools/skills/content",
             get(user_skills_content),
         )
+        .route("/wunder/user_tools/skills/export", get(user_skills_export))
         .route("/wunder/user_tools/skills/upload", post(user_skills_upload))
         .route(
             "/wunder/user_tools/knowledge",
@@ -974,6 +982,60 @@ async fn user_skills_content(
             "content": content
         }
     })))
+}
+
+async fn user_skills_export(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<UserSkillExportQuery>,
+) -> Result<Response, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let resolved_skill = resolve_visible_user_skill(&config, &skill_root, name)?;
+    let root = resolved_skill.root;
+    let top_dir = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.skill_file_not_found"),
+            )
+        })?
+        .to_string();
+
+    let archive_path = create_temp_skill_archive_file()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let archive_path_clone = archive_path.clone();
+    let root_clone = root.clone();
+    let top_dir_clone = top_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        create_skill_archive(&root_clone, &top_dir_clone, &archive_path_clone)
+            .map_err(|err| io::Error::other(err.to_string()))
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| {
+        let _ = std::fs::remove_file(&archive_path);
+        error_response(StatusCode::BAD_REQUEST, err.to_string())
+    })?;
+
+    let filename = format!("{}.zip", sanitize_filename_stem(&resolved_skill.spec.name));
+    let file = tokio::fs::File::open(&archive_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let stream = TempFileStream::new(archive_path.clone(), ReaderStream::new(file));
+    Ok(stream_response(stream, &filename, "application/zip"))
 }
 
 async fn user_skills_files(
@@ -3004,6 +3066,14 @@ async fn create_knowledge_temp_dir() -> Result<PathBuf, Response> {
     Ok(root)
 }
 
+fn create_temp_skill_archive_file() -> Result<PathBuf, io::Error> {
+    let mut root = std::env::temp_dir();
+    root.push("wunder_user_skills");
+    std::fs::create_dir_all(&root)?;
+    let filename = format!("wunder_user_skill_{}.zip", Uuid::new_v4().simple());
+    Ok(root.join(filename))
+}
+
 async fn save_knowledge_upload_content(
     mut field: axum::extract::multipart::Field<'_>,
     target: &Path,
@@ -3082,6 +3152,59 @@ fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
 
+fn stream_response<S>(stream: S, filename: &str, content_type: &'static str) -> Response
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send + 'static,
+{
+    let disposition = build_content_disposition(filename);
+    let mut response = Response::new(Body::from_stream(stream));
+    *response.status_mut() = StatusCode::OK;
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    response
+}
+
+fn build_content_disposition(filename: &str) -> String {
+    let ascii_name = sanitize_filename(filename);
+    if ascii_name == filename {
+        return format!("attachment; filename=\"{ascii_name}\"");
+    }
+    let encoded = percent_encode(filename);
+    format!("attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}")
+}
+
+fn sanitize_filename(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.trim().is_empty() {
+        "download".to_string()
+    } else {
+        output
+    }
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.as_bytes() {
+        let ch = *byte as char;
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~' {
+            output.push(ch);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
+}
+
 fn parse_header_map(value: Option<Value>) -> HashMap<String, String> {
     let mut output = HashMap::new();
     let Some(Value::Object(map)) = value else {
@@ -3148,6 +3271,13 @@ struct UserSkillContentQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct UserSkillExportQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct UserSkillFilesQuery {
     #[serde(default)]
     user_id: Option<String>,
@@ -3177,6 +3307,39 @@ struct UserSkillDeleteQuery {
     #[serde(default)]
     user_id: Option<String>,
     name: String,
+}
+
+struct TempFileStream {
+    path: PathBuf,
+    inner: Option<ReaderStream<tokio::fs::File>>,
+}
+
+impl TempFileStream {
+    fn new(path: PathBuf, inner: ReaderStream<tokio::fs::File>) -> Self {
+        Self {
+            path,
+            inner: Some(inner),
+        }
+    }
+}
+
+impl Stream for TempFileStream {
+    type Item = Result<Bytes, io::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.inner.as_mut() {
+            Some(inner) => Pin::new(inner).poll_next(cx),
+            None => Poll::Ready(None),
+        }
+    }
+}
+
+impl Drop for TempFileStream {
+    fn drop(&mut self) {
+        self.inner.take();
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 #[derive(Debug, Deserialize)]

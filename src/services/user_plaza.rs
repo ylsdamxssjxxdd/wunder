@@ -5,6 +5,7 @@ use crate::services::hive_pack::{
     resolve_export_artifact_path, run_export_job, run_import_job, HivePackExportOptions,
     HivePackImportOptions,
 };
+use crate::services::skill_archive::create_skill_archive;
 use crate::services::inner_visible::{build_worker_card, parse_worker_card, WorkerCardDocument};
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_agent_presets::filter_allowed_tools;
@@ -24,12 +25,11 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
-use zip::write::FileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 const USER_PLAZA_META_PREFIX: &str = "user_plaza:item:";
 const USER_PLAZA_SHARED_DIR: &str = "_shared";
@@ -736,44 +736,6 @@ fn resolve_custom_user_skill_spec(
         return Err(anyhow!("only custom user skills can be published"));
     }
     Ok(spec)
-}
-
-fn create_skill_archive(skill_root: &Path, top_dir: &str, target_zip: &Path) -> Result<()> {
-    if let Some(parent) = target_zip.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file = fs::File::create(target_zip)?;
-    let mut writer = ZipWriter::new(file);
-    let options = FileOptions::default()
-        .compression_method(CompressionMethod::Deflated)
-        .unix_permissions(0o644);
-    let mut entries = WalkDir::new(skill_root)
-        .into_iter()
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-    entries.sort_by_key(|entry| entry.path().to_string_lossy().to_string());
-    for entry in entries {
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(skill_root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let target_relative = if relative.is_empty() {
-            top_dir.to_string()
-        } else {
-            format!("{top_dir}/{relative}")
-        };
-        if entry.file_type().is_dir() {
-            writer.add_directory(format!("{target_relative}/"), options)?;
-            continue;
-        }
-        writer.start_file(target_relative, options)?;
-        let bytes = fs::read(path)?;
-        writer.write_all(&bytes)?;
-    }
-    writer.finish()?;
-    Ok(())
 }
 
 #[derive(Debug)]

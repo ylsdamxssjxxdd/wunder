@@ -38,6 +38,7 @@ pub mod preset_worker_cards;
 pub mod prompting;
 pub mod runtime;
 pub mod sim_lab;
+pub mod skill_archive;
 pub mod skills;
 pub mod stream_events;
 pub mod subagents;

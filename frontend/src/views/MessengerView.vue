@@ -4638,9 +4638,7 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
         (agent as Record<string, unknown> | null)?.name ||
           (agentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : agentId)
       );
-      const preview = String(
-        latest?.session?.last_message_preview || latest?.session?.last_message || latest?.session?.summary || ''
-      );
+      const preview = resolveSessionTimelinePreview((latest?.session || main?.session || {}) as Record<string, unknown>);
       return {
         key: `agent:${agentId}`,
         kind: 'agent',
@@ -6204,34 +6202,77 @@ const rightPanelContainerId = computed(() => {
   return Math.min(10, Math.max(1, parsed));
 });
 
+const normalizeConversationPreviewText = (value: unknown): string =>
+  String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+
 const extractLatestUserPreview = (messages: unknown[]): string => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const item = (messages[index] || {}) as Record<string, unknown>;
     if (String(item.role || '').trim() !== 'user') continue;
-    const content = String(item.content || '').trim();
+    if (item.hiddenInternal === true) continue;
+    const content = normalizeConversationPreviewText(item.content);
     if (content) {
-      return content.replace(/\s+/g, ' ').slice(0, 120);
+      return content;
     }
   }
   return '';
 };
 
-const resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
-  const sessionId = String(session?.id || '').trim();
-  if (sessionId) {
-    const cached = String(timelinePreviewMap.value.get(sessionId) || '').trim();
-    if (cached) return cached;
+const extractLatestVisibleMessagePreview = (messages: unknown[]): string => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = (messages[index] || {}) as Record<string, unknown>;
+    const role = String(item.role || '').trim();
+    if (role !== 'user' && role !== 'assistant') continue;
+    if (item.hiddenInternal === true) continue;
+    const content = normalizeConversationPreviewText(item.content);
+    if (content) {
+      return content;
+    }
   }
-  return String(
+  return '';
+};
+
+const extractLatestConversationPreview = (messages: unknown[]): string =>
+  extractLatestUserPreview(messages) || extractLatestVisibleMessagePreview(messages);
+
+const resolveSessionPreviewFromFields = (session: Record<string, unknown>): string =>
+  normalizeConversationPreviewText(
     session?.last_user_message_preview ||
       session?.last_user_message ||
       session?.last_message_preview ||
       session?.last_message ||
       session?.summary ||
       ''
-  )
-    .replace(/\s+/g, ' ')
-    .slice(0, 120);
+  );
+
+const resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
+  const sessionId = String(session?.id || '').trim();
+  if (sessionId) {
+    const cached = String(timelinePreviewMap.value.get(sessionId) || '').trim();
+    if (cached) return cached;
+    const cachedMessages = chatStore.getCachedSessionMessages(sessionId);
+    if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
+      const preview = extractLatestConversationPreview(cachedMessages as unknown[]);
+      if (preview) {
+        return preview;
+      }
+    }
+  }
+  return resolveSessionPreviewFromFields(session);
+};
+
+const refreshSessionPreviewCache = (sessionId: unknown, session?: Record<string, unknown> | null): string => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return '';
+  const cachedMessages = chatStore.getCachedSessionMessages(targetId);
+  const preview =
+    extractLatestConversationPreview(cachedMessages as unknown[]) ||
+    resolveSessionPreviewFromFields((session || {}) as Record<string, unknown>);
+  timelinePreviewMap.value.set(targetId, preview);
+  return preview;
 };
 
 const rightPanelSessionHistory = computed(() => {
@@ -6297,7 +6338,7 @@ const preloadTimelinePreview = async (sessionId: string) => {
     }
     const cachedMessages = chatStore.getCachedSessionMessages(targetId);
     if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
-      const preview = extractLatestUserPreview(cachedMessages as unknown[]);
+      const preview = extractLatestConversationPreview(cachedMessages as unknown[]);
       timelinePreviewMap.value.set(targetId, preview);
       return;
     }
@@ -6307,7 +6348,7 @@ const preloadTimelinePreview = async (sessionId: string) => {
       timelinePreviewMap.value.set(targetId, '');
       return;
     }
-    const preview = extractLatestUserPreview(messages as unknown[]);
+    const preview = extractLatestConversationPreview(messages as unknown[]);
     timelinePreviewMap.value.set(targetId, preview);
   } catch {
     // Ignore timeline prefetch errors to keep the dock lightweight.
@@ -10044,6 +10085,7 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
     }
     const session = chatStore.sessions.find((item) => String(item?.id || '') === normalizedSessionId);
     const targetAgentId = normalizeAgentId(session?.agent_id ?? fallbackAgentId);
+    refreshSessionPreviewCache(normalizedSessionId, (session || sessionDetail || null) as Record<string, unknown> | null);
     selectedAgentId.value = targetAgentId || DEFAULT_AGENT_KEY;
     sessionHub.setActiveConversation({
       kind: 'agent',
@@ -13104,7 +13146,13 @@ watch(
   () => {
     const sessionId = String(chatStore.activeSessionId || '').trim();
     if (!sessionId || !Array.isArray(chatStore.messages) || !chatStore.messages.length) return;
-    const preview = extractLatestUserPreview(chatStore.messages as unknown[]);
+    const activeSession =
+      (Array.isArray(chatStore.sessions)
+        ? chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId)
+        : null) || null;
+    const preview =
+      extractLatestConversationPreview(chatStore.messages as unknown[]) ||
+      resolveSessionPreviewFromFields((activeSession || {}) as Record<string, unknown>);
     if (preview) {
       timelinePreviewMap.value.set(sessionId, preview);
     }

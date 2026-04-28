@@ -478,11 +478,11 @@
 
 .messenger-left-nav-btn {
   flex-direction: column;
-  width: 44px;
+  width: 46px;
   height: auto;
-  min-height: 44px;
-  padding: 5px 2px 4px;
-  gap: 2px;
+  min-height: 50px;
+  padding: 6px 4px 5px;
+  gap: 3px;
 }
 
 .messenger-left-nav-btn i {
@@ -492,9 +492,9 @@
 .messenger-left-nav-btn-label {
   font-size: 10px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 1.15;
   color: rgba(255, 255, 255, 0.72);
-  max-width: 40px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
@@ -639,6 +639,11 @@
 }
 
 .messenger-left-nav-btn--more-item {
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  gap: 0;
   box-shadow:
     0 10px 22px rgba(15, 23, 42, 0.22),
     inset 0 0 0 1px rgba(255, 255, 255, 0.08);
@@ -680,8 +685,16 @@
   transition: transform var(--messenger-motion-fast) var(--messenger-ease-standard);
 }
 
+.messenger-left-nav-btn--more-toggle {
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  gap: 0;
+}
+
 .messenger-left-nav-btn--helper {
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.24);
+  border: 0;
   background: rgba(var(--ui-accent-rgb), 0.1);
 }
 
@@ -7778,7 +7791,8 @@ button.messenger-chat-header-model {
   }
 
   .messenger-avatar-btn,
-  .messenger-left-nav-btn {
+  .messenger-left-nav-btn--more-item,
+  .messenger-left-nav-btn--more-toggle {
     width: 38px;
   }
 
@@ -7788,8 +7802,19 @@ button.messenger-chat-header-model {
 
   .messenger-left-nav-btn {
     height: auto;
-    min-height: 38px;
+    width: 44px;
+    min-height: 46px;
+    padding: 5px 3px 4px;
+    gap: 3px;
     border-radius: 9px;
+  }
+
+  .messenger-left-nav-btn--more-item,
+  .messenger-left-nav-btn--more-toggle {
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    gap: 0;
   }
 
   .messenger-avatar-btn {
@@ -7989,7 +8014,8 @@ button.messenger-chat-header-model {
 }
 
 .messenger-view.messenger-view--host-small .messenger-avatar-btn,
-.messenger-view.messenger-view--host-small .messenger-left-nav-btn {
+.messenger-view.messenger-view--host-small .messenger-left-nav-btn--more-item,
+.messenger-view.messenger-view--host-small .messenger-left-nav-btn--more-toggle {
   width: 38px;
 }
 
@@ -8000,8 +8026,19 @@ button.messenger-chat-header-model {
 
 .messenger-view.messenger-view--host-small .messenger-left-nav-btn {
   height: auto;
-  min-height: 38px;
+  width: 44px;
+  min-height: 46px;
+  padding: 5px 3px 4px;
+  gap: 3px;
   border-radius: 9px;
+}
+
+.messenger-view.messenger-view--host-small .messenger-left-nav-btn--more-item,
+.messenger-view.messenger-view--host-small .messenger-left-nav-btn--more-toggle {
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  gap: 0;
 }
 
 .messenger-view.messenger-view--host-tight .messenger-right-dock,

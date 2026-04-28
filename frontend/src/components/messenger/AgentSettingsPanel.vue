@@ -121,8 +121,10 @@
         </el-form-item>
         <AgentDependencyNotice
           :notice-key="dependencyNoticeKey"
+          :allow-ignore="true"
           :missing-tool-names="dependencyStatus.missingToolNames"
           :missing-skill-names="dependencyStatus.missingSkillNames"
+          @ignore="ignoreMissingDependencies"
         />
 
         <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item messenger-agent-form-item--base">
@@ -389,6 +391,7 @@ import {
   type AgentToolSection
 } from '@/utils/agentToolCatalog';
 import {
+  buildIgnoredMissingDependencyPayload,
   buildDeclaredDependencyPayload,
   buildWorkerCardDependencyPayload,
   resolveAgentDependencyStatus
@@ -460,6 +463,8 @@ type AgentFormSnapshot = {
   system_prompt: string;
   model_name: string;
   tool_names: string[];
+  declared_tool_names: string[];
+  declared_skill_names: string[];
   preset_questions: string[];
   hive_id: string;
   hive_name: string;
@@ -840,6 +845,8 @@ const buildFormSnapshot = (): AgentFormSnapshot => {
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
     tool_names: normalizeStringArrayForSnapshot(form.tool_names),
+    declared_tool_names: normalizeStringArrayForSnapshot(currentAgent.value?.declared_tool_names),
+    declared_skill_names: normalizeStringArrayForSnapshot(currentAgent.value?.declared_skill_names),
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
     hive_id: String(groupPayload.hive_id || '').trim(),
     hive_name: String(groupPayload.hive_name || '').trim(),
@@ -1009,6 +1016,19 @@ const modelSelectOptions = computed<string[]>(() => {
 const dependencyStatus = computed(() =>
   resolveAgentDependencyStatus(currentAgent.value, toolSummary.value, form.tool_names)
 );
+
+const ignoreMissingDependencies = (): void => {
+  const payload = buildIgnoredMissingDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
+  form.tool_names = [...payload.tool_names];
+  currentAgent.value = currentAgent.value
+    ? {
+        ...currentAgent.value,
+        declared_tool_names: payload.declared_tool_names,
+        declared_skill_names: payload.declared_skill_names
+      }
+    : currentAgent.value;
+  ElMessage.success(t('portal.agent.dependencies.ignoreSuccess'));
+};
 
 type AgentSettingsWaitingState = {
   title: string;

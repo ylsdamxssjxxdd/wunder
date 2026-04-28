@@ -66,8 +66,10 @@
         </el-form-item>
         <AgentDependencyNotice
           :notice-key="dependencyNoticeKey"
+          :allow-ignore="true"
           :missing-tool-names="dependencyStatus.missingToolNames"
           :missing-skill-names="dependencyStatus.missingSkillNames"
+          @ignore="ignoreMissingDependencies"
         />
         <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
           <div class="agent-basic-settings">
@@ -164,6 +166,7 @@ import {
   type AgentToolGroup
 } from '@/utils/agentToolCatalog';
 import {
+  buildIgnoredMissingDependencyPayload,
   buildDeclaredDependencyPayload,
   buildWorkerCardDependencyPayload,
   resolveAgentDependencyStatus
@@ -333,6 +336,19 @@ const modelSelectOptions = computed<string[]>(() => {
 const dependencyStatus = computed(() =>
   resolveAgentDependencyStatus(currentAgent.value, toolSummary.value, form.tool_names)
 );
+
+const ignoreMissingDependencies = () => {
+  const payload = buildIgnoredMissingDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
+  form.tool_names = Array.isArray(payload.tool_names) ? [...payload.tool_names] : [];
+  currentAgent.value = currentAgent.value
+    ? {
+        ...currentAgent.value,
+        declared_tool_names: payload.declared_tool_names,
+        declared_skill_names: payload.declared_skill_names
+      }
+    : currentAgent.value;
+  ElMessage.success(t('portal.agent.dependencies.ignoreSuccess'));
+};
 
 const isToolGroupFullySelected = (group: AgentToolGroup<any>) => {
   if (!group || !Array.isArray(group.options) || group.options.length === 0) return false;

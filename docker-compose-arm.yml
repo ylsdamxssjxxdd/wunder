@@ -43,7 +43,7 @@ services:
       - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
       - WUNDER_PORT=${WUNDER_PORT:-18000}
       - WUNDER_MCP_HOST=${WUNDER_MCP_HOST:-extra-mcp}
-      - WUNDER_MCP_PORT=${WUNDER_MCP_PORT:-9010}
+      - WUNDER_MCP_PORT=${WUNDER_MCP_PORT:-18004}
       - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_LOG_COLOR=${WUNDER_LOG_COLOR:-always}
@@ -130,12 +130,12 @@ services:
       - ./:/app
       - ./config/data/workspaces:/workspaces
     ports:
-      - "127.0.0.1:${MCP_PORT:-9010}:${MCP_PORT:-9010}"
+      - "${MCP_BIND_HOST:-0.0.0.0}:${MCP_PORT:-18004}:${MCP_PORT:-18004}"
     environment:
       - TZ=Asia/Shanghai
       - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0
-      - MCP_PORT=${MCP_PORT:-9010}
+      - MCP_PORT=${MCP_PORT:-18004}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
     command: ["bash", "-lc", "python3 -m extra_mcp.main"]
     restart: always
