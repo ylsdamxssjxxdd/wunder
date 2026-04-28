@@ -21,7 +21,6 @@
       <button
         class="workspace-btn secondary"
         type="button"
-        :disabled="!workspacePath"
         @click="emit('download')"
       >
         {{ actionLabel }}

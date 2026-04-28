@@ -2125,9 +2125,63 @@ const downloadUserWorldResource = async (
   }
 };
 
+const downloadExternalImage = async (src: string) => {
+  const url = String(src || '').trim();
+  if (!url) return;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    // Extract filename from URL
+    let filename = 'image';
+    try {
+      const pathname = new URL(url).pathname;
+      const basename = pathname.split('/').pop() || '';
+      if (basename && basename.includes('.')) {
+        filename = basename;
+      } else {
+        // Determine extension from MIME type
+        const ext = blob.type.split('/')[1] || 'png';
+        filename = `image.${ext}`;
+      }
+    } catch {
+      const ext = blob.type.split('/')[1] || 'png';
+      filename = `image.${ext}`;
+    }
+    saveObjectUrlAsFile(objectUrl, filename);
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    ElMessage.error(t('chat.resourceDownloadFailed'));
+  }
+};
+
 const handleMessageClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  // Handle external image preview
+  const externalImage = target.closest('img.ai-external-image-preview') as HTMLImageElement | null;
+  if (externalImage) {
+    const card = externalImage.closest('.ai-external-image-card') as HTMLElement | null;
+    const src = String(card?.dataset?.externalImageSrc || externalImage.getAttribute('src') || '').trim();
+    if (src) {
+      window.open(src, '_blank', 'noopener,noreferrer');
+    }
+    return;
+  }
+  // Handle external image download button
+  const externalImageButton = target.closest('[data-external-image-action]') as HTMLElement | null;
+  if (externalImageButton) {
+    const card = externalImageButton.closest('.ai-external-image-card') as HTMLElement | null;
+    const src = String(card?.dataset?.externalImageSrc || '').trim();
+    if (src) {
+      event.preventDefault();
+      downloadExternalImage(src);
+    }
+    return;
+  }
   const resourceButton = target.closest('[data-workspace-action]') as HTMLElement | null;
   if (resourceButton) {
     const container = resourceButton.closest('[data-workspace-path]') as HTMLElement | null;

@@ -59,10 +59,20 @@ const buildWorkspaceFallbackText = (text: string) =>
 
 const buildExternalMarkdownImage = (src: string, alt: string) => {
   const fallbackText = `![${alt}](${src})`;
+  const safeSrc = escapeHtml(src);
+  const safeAlt = escapeHtml(alt);
+  const displayAlt = safeAlt || 'image';
+  const downloadLabel = resolveWorkspaceResourceActionLabel();
   return `
-    <span class="ai-external-image" data-markdown-fallback="${escapeHtml(fallbackText)}">
-      <img class="ai-external-image-preview" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />
-    </span>
+    <div class="ai-external-image-card" data-external-image-src="${safeSrc}" data-external-image-alt="${displayAlt}" data-markdown-fallback="${escapeHtml(fallbackText)}">
+      <div class="ai-external-image-header">
+        <span class="ai-external-image-name">${displayAlt}</span>
+        <button class="ai-external-image-btn" type="button" data-external-image-action="download">${downloadLabel}</button>
+      </div>
+      <div class="ai-external-image-body">
+        <img class="ai-external-image-preview" src="${safeSrc}" alt="${displayAlt}" loading="lazy" />
+      </div>
+    </div>
   `;
 };
 
@@ -481,7 +491,7 @@ export function renderMarkdown(content = '', options: MarkdownRenderOptions = {}
 
 export function hydrateExternalMarkdownImages(container: ParentNode | null | undefined) {
   if (!container || typeof (container as ParentNode).querySelectorAll !== 'function') return;
-  container.querySelectorAll('.ai-external-image[data-markdown-fallback]').forEach((node) => {
+  container.querySelectorAll('.ai-external-image-card[data-markdown-fallback]').forEach((node) => {
     const host = node as HTMLElement;
     if (host.dataset.externalImageBound === 'true') return;
     host.dataset.externalImageBound = 'true';

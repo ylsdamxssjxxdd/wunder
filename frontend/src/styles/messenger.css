@@ -5629,6 +5629,19 @@ button.messenger-chat-header-model {
   max-height: 300px;
 }
 
+.messenger-markdown .markdown-body .ai-external-image-card {
+  border: 1px solid #dce0e7;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px 10px;
+  max-width: min(100%, 420px);
+}
+
+.messenger-markdown .markdown-body .ai-external-image-preview {
+  max-width: min(100%, 420px);
+  max-height: 300px;
+}
+
 .messenger-markdown .markdown-body a.ai-resource-link {
   color: var(--hula-accent);
   border-color: rgba(var(--ui-accent-rgb), 0.35);
