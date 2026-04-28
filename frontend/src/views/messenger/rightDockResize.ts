@@ -7,6 +7,7 @@ const RIGHT_DOCK_LEFT_RAIL_WIDTH = 56;
 const RIGHT_DOCK_MIDDLE_PANE_WIDTH = 220;
 const RIGHT_DOCK_MIN_CHAT_WIDTH = 460;
 const RIGHT_DOCK_OVERLAY_GUTTER = 20;
+const RIGHT_DOCK_EMBEDDED_MIN_CHAT_WIDTH = 320;
 
 type BooleanLikeRef = Readonly<Ref<boolean>> | ComputedRef<boolean>;
 
@@ -29,6 +30,8 @@ export function useMessengerRightDockResize(options: UseMessengerRightDockResize
 
   const resolveWidthBounds = () => {
     const hostWidth = Math.max(0, Math.round(options.hostWidth.value || 0));
+    const embeddedChatLikeLayout =
+      options.navigationPaneCollapsed.value && options.isMiddlePaneOverlay.value && !options.isOverlay.value;
     if (options.isOverlay.value) {
       const overlayMaxWidth = Math.min(
         MAX_RIGHT_DOCK_WIDTH,
@@ -46,9 +49,10 @@ export function useMessengerRightDockResize(options: UseMessengerRightDockResize
       (!options.isMiddlePaneOverlay.value && !options.navigationPaneCollapsed.value
         ? RIGHT_DOCK_MIDDLE_PANE_WIDTH
         : 0);
+    const minChatWidth = embeddedChatLikeLayout ? RIGHT_DOCK_EMBEDDED_MIN_CHAT_WIDTH : RIGHT_DOCK_MIN_CHAT_WIDTH;
     const layoutMaxWidth = Math.min(
       MAX_RIGHT_DOCK_WIDTH,
-      Math.max(MIN_RIGHT_DOCK_WIDTH, hostWidth - occupiedLeftWidth - RIGHT_DOCK_MIN_CHAT_WIDTH)
+      Math.max(MIN_RIGHT_DOCK_WIDTH, hostWidth - occupiedLeftWidth - minChatWidth)
     );
     return {
       min: MIN_RIGHT_DOCK_WIDTH,

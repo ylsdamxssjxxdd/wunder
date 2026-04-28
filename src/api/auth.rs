@@ -635,13 +635,22 @@ async fn external_token_launch(
 
     let config = state.config_store.get().await;
     let user_id_claim = config.external_embed_jwt_user_id_claim();
-    let validated_user_id = config
-        .external_embed_jwt_secret()
-        .and_then(|jwt_secret| {
-            validate_external_embed_jwt(raw_token, &jwt_secret, &user_id_claim, requested_user_id)
+    let validated_user_id = if raw_token.is_empty() {
+        requested_user_id.to_string()
+    } else {
+        config
+            .external_embed_jwt_secret()
+            .and_then(|jwt_secret| {
+                validate_external_embed_jwt(
+                    raw_token,
+                    &jwt_secret,
+                    &user_id_claim,
+                    requested_user_id,
+                )
                 .ok()
-        })
-        .unwrap_or_else(|| requested_user_id.to_string());
+            })
+            .unwrap_or_else(|| requested_user_id.to_string())
+    };
 
     let launch_username = payload
         .username
@@ -651,7 +660,6 @@ async fn external_token_launch(
         .unwrap_or(validated_user_id.as_str());
     let unit_id = normalize_optional_id(payload.unit_id.as_deref());
     let desktop_mode = is_desktop_mode(&state).await;
-
     let user_store = state.user_store.clone();
     let username_snapshot = launch_username.to_string();
     let unit_snapshot = unit_id.clone();

@@ -3,7 +3,7 @@ import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router
 
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { getDesktopLocalToken, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveApiBase } from '@/config/runtime';
 import {
   buildDefaultAgentChatRoute,
@@ -93,6 +93,11 @@ const resolveExternalQueryAgentName = (query: LocationQuery): string => {
   return asQueryText(query.agent);
 };
 
+const resolveExternalEmbedSection = (query: LocationQuery): 'messages' | 'agents' => {
+  const explicit = asQueryText(query.section).toLowerCase();
+  return explicit === 'agents' ? 'agents' : 'messages';
+};
+
 const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
   const output: LocationQueryRaw = {};
   Object.entries(query).forEach(([key, value]) => {
@@ -139,9 +144,14 @@ const loginWithExternalToken = async (
   userId: string,
   agentName = ''
 ): Promise<{ accessToken: string; user: Record<string, unknown> | null; agentId: string; focusMode: boolean }> => {
+  const desktopLocalToken = getDesktopLocalToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (desktopLocalToken) {
+    headers.Authorization = `Bearer ${desktopLocalToken}`;
+  }
   const response = await fetch(resolveApiEndpoint('/auth/external/token_login'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ token, user_id: userId, agent_name: agentName || undefined })
   });
 
@@ -332,21 +342,18 @@ router.beforeEach(async (to) => {
   const externalToken = resolveExternalQueryToken(query);
   const externalUserId = resolveExternalQueryUserId(query);
   const externalAgentName = resolveExternalQueryAgentName(query);
-  if (externalToken && externalUserId) {
+  if (externalUserId) {
     try {
       const result = await loginWithExternalToken(externalToken, externalUserId, externalAgentName);
       authStore.token = result.accessToken;
       authStore.user = result.user;
       localStorage.setItem('access_token', result.accessToken);
-      const targetPath = isDesktopModeEnabled()
-        ? result.focusMode
-          ? '/desktop/embed/chat'
-          : '/desktop/chat'
-        : result.focusMode
-          ? '/app/embed/chat'
-          : '/app/chat';
-      const nextQuery: LocationQueryRaw = { section: 'messages' };
-      if (result.agentId && result.agentId !== '__default__') {
+      const targetSection = resolveExternalEmbedSection(query);
+      const targetPath = isDesktopModeEnabled() ? '/desktop/embed/chat' : '/app/embed/chat';
+      const nextQuery: LocationQueryRaw = { section: targetSection };
+      if (targetSection === 'agents') {
+        nextQuery.agent_id = result.agentId || '__default__';
+      } else if (result.agentId && result.agentId !== '__default__') {
         nextQuery.agent_id = result.agentId;
       } else {
         nextQuery.entry = 'default';

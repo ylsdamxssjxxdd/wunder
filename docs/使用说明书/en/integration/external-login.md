@@ -57,7 +57,13 @@ The most typical usage currently:
 - Wunder directly exchanges for its own `access_token`
 - Also returns `agent_id`
 - When `agent_name` matches an existing agent accessible to the current user, additionally returns `focus_mode=true`
-- Frontend enters regular chat page or focused embed page based on returned result
+- Frontend always enters the embed shell; inside that shell it opens either the message page or the focused agent page while keeping the left sidebar and middle pane hidden
+
+There is also a shorter entry:
+
+- `/login?user_id=<id>[&agent_name=<name>]`
+
+This form is useful when you do not want the external system to mint a JWT first and only need to pass a user identity into Wunder.
 
 In other words, it's more like a bridging interface for "exchanging external identity for Wunder session".
 
@@ -93,12 +99,12 @@ So it's not "open by default".
 
 Currently, the most typical destinations fall into two categories:
 
-- No `agent_name` passed, or name doesn't match existing agent: `/app/chat?section=messages&entry=default`
+- No `agent_name` passed, or name doesn't match existing agent: `/app/embed/chat?section=messages&entry=default`
 - Matches existing agent and enters focus mode: `/app/embed/chat?section=messages&agent_id=<agent_id>`
-- Desktop equivalents: `/desktop/chat?section=messages&entry=default` and `/desktop/embed/chat?section=messages&agent_id=<agent_id>`
+- Desktop equivalents: `/desktop/embed/chat?section=messages&entry=default` and `/desktop/embed/chat?section=messages&agent_id=<agent_id>`
 
-In other words, regular chat pages will at least have `section=messages`; default agents will additionally have `entry=default`, and focus mode will have the matched `agent_id`.
-Wunder doesn't just return a token, but also decides the final chat shell based on whether a specified agent is matched.
+In other words, external links now land on the `/embed/chat` shell consistently; the default message page will at least carry `section=messages`, default-agent fallback additionally carries `entry=default`, and focus mode carries the matched `agent_id`.
+If you need the embedded agent page, you can also enter with `section=agents&agent_id=<agent_id>` while still keeping the left sidebar and middle pane hidden. Wunder doesn't just return a token, but also decides the final main content state based on whether a specified agent is matched.
 
 ## What Scenarios This Chain Is Suitable For
 

@@ -913,11 +913,11 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
 };
 
 const FALLBACK_CHANNELS = [
+  'qqbot',
   'weixin',
   'wechat',
   'wechat_mp',
   'feishu',
-  'qqbot',
   'whatsapp',
   'telegram',
   'discord',
@@ -942,11 +942,11 @@ const AUTO_ACCOUNT_NAME_PREFIX: Record<string, string> = {
   xmpp: 'xmpp'
 };
 const CHANNEL_PRIORITY: Record<string, number> = {
-  weixin: 0,
-  wechat: 1,
-  wechat_mp: 2,
-  feishu: 3,
-  qqbot: 4,
+  qqbot: 0,
+  weixin: 1,
+  wechat: 2,
+  wechat_mp: 3,
+  feishu: 4,
   whatsapp: 5,
   telegram: 6,
   discord: 7,
@@ -1015,7 +1015,7 @@ let runtimeLogsRequestId = 0;
 let lastLoadedAgentKey = '';
 
 const createForm = reactive({
-  channel: 'weixin',
+  channel: 'qqbot',
   receive_group_chat: true
 });
 
@@ -1351,14 +1351,14 @@ const selectAccount = (account) => {
 };
 
 const resolveDefaultCreateChannel = () => {
-  const preferred = createChannelOptions.value.find((item) => item.channel === 'weixin');
+  const preferred = createChannelOptions.value.find((item) => item.channel === 'qqbot');
   if (preferred) {
     return preferred.channel;
   }
   if (createChannelOptions.value.length > 0) {
     return createChannelOptions.value[0].channel;
   }
-  return 'weixin';
+  return 'qqbot';
 };
 
 const applyCreateChannelDefaults = () => {

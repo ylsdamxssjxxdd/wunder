@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-24T02:15:03.257316+00:00",
+  "generated_at": "2026-04-28T08:39:15.255420+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -5762,7 +5762,7 @@
       "language": "zh-CN",
       "title": "外部登录与免登嵌入",
       "summary": "Wunder 保留 `/wunder/auth/external/*` 作为外部系统嵌入和免登接入面。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要从外部系统直接进入 Wunder",
         "你想分清 external login、launch 和 token_login 的用途"
@@ -13717,7 +13717,7 @@
       "language": "en",
       "title": "External Login and Seamless Embedding",
       "summary": "Wunder reserves `/wunder/auth/external/*` as the interface for external system embedding and passwordless access.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to enter Wunder directly from an external system",
         "You want to understand the purposes of external login, launch, and token_login"

@@ -2346,7 +2346,7 @@ export default {
   'messenger.section.groups': '群聊',
   'messenger.section.groups.desc': '群会话列表',
   'messenger.section.agents': '智能体',
-  'messenger.section.agents.short': '助手',
+  'messenger.section.agents.short': '专家',
   'messenger.section.agents.desc': '智能体应用列表',
   'messenger.section.tools': '工具',
   'messenger.section.tools.desc': '管理员开放工具与自建工具管理',

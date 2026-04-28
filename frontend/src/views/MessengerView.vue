@@ -3,6 +3,7 @@
     ref="messengerRootRef"
     class="messenger-view"
     :class="{
+      'messenger-view--embedded-chat': isEmbeddedChatRoute,
       'messenger-view--without-right': !showRightDock,
       'messenger-view--without-middle': !showMiddlePane,
       'messenger-view--right-collapsed': showRightDock && rightDockCollapsed,
@@ -2648,11 +2649,17 @@ const isSearchableMiddlePaneSection = (section: string): boolean =>
   searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
 const MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT = 1120;
-const MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT = 1360;
+const MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT = 1040;
 const MESSENGER_AGENT_SETTINGS_RIGHT_DOCK_BREAKPOINT = 1820;
+const MESSENGER_EMBEDDED_RIGHT_DOCK_OVERLAY_BREAKPOINT = 800;
 const MESSENGER_TIGHT_HOST_BREAKPOINT = 900;
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT);
 const isRightDockOverlay = computed(() => {
+  // Embedded chat removes the navigation shell and middle pane, so the dock can
+  // stay persistent until the real host width becomes much tighter.
+  if (isEmbeddedChatRoute.value) {
+    return viewportWidth.value <= MESSENGER_EMBEDDED_RIGHT_DOCK_OVERLAY_BREAKPOINT;
+  }
   const inAgentSettingsDetail =
     sessionHub.activeSection === 'agents' && agentOverviewMode.value === 'detail';
   const breakpoint = inAgentSettingsDetail
@@ -6251,6 +6258,19 @@ const extractLatestVisibleMessagePreview = (messages: unknown[]): string => {
 const extractLatestConversationPreview = (messages: unknown[]): string =>
   extractLatestUserPreview(messages) || extractLatestVisibleMessagePreview(messages);
 
+const resolveLatestConversationMessageTimestamp = (messages: unknown[]): number => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = (messages[index] || {}) as Record<string, unknown>;
+    const role = String(item.role || '').trim();
+    if (role !== 'user' && role !== 'assistant') continue;
+    if (item.hiddenInternal === true) continue;
+    const content = normalizeConversationPreviewText(item.content);
+    if (!content) continue;
+    return normalizeTimestamp(item.created_at);
+  }
+  return 0;
+};
+
 const resolveSessionPreviewFromFields = (session: Record<string, unknown>): string =>
   normalizeConversationPreviewText(
     session?.last_user_message_preview ||
@@ -6263,27 +6283,36 @@ const resolveSessionPreviewFromFields = (session: Record<string, unknown>): stri
 
 const resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
   const sessionId = String(session?.id || '').trim();
+  const fieldPreview = resolveSessionPreviewFromFields(session);
+  const fieldTimestamp = normalizeTimestamp(session?.last_message_at || session?.updated_at || session?.created_at);
   if (sessionId) {
     const cachedMessages = chatStore.getCachedSessionMessages(sessionId);
     if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
       const preview = extractLatestConversationPreview(cachedMessages as unknown[]);
-      if (preview) {
+      const previewTimestamp = resolveLatestConversationMessageTimestamp(cachedMessages as unknown[]);
+      if (preview && (!fieldPreview || previewTimestamp >= fieldTimestamp)) {
         return preview;
       }
     }
     const cached = String(timelinePreviewMap.value.get(sessionId) || '').trim();
     if (cached) return cached;
   }
-  return resolveSessionPreviewFromFields(session);
+  return fieldPreview;
 };
 
 const refreshSessionPreviewCache = (sessionId: unknown, session?: Record<string, unknown> | null): string => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return '';
   const cachedMessages = chatStore.getCachedSessionMessages(targetId);
+  const sessionRecord = (session || {}) as Record<string, unknown>;
+  const fieldPreview = resolveSessionPreviewFromFields(sessionRecord);
+  const fieldTimestamp = normalizeTimestamp(
+    sessionRecord?.last_message_at || sessionRecord?.updated_at || sessionRecord?.created_at
+  );
+  const cachedPreview = extractLatestConversationPreview(cachedMessages as unknown[]);
+  const cachedTimestamp = resolveLatestConversationMessageTimestamp(cachedMessages as unknown[]);
   const preview =
-    extractLatestConversationPreview(cachedMessages as unknown[]) ||
-    resolveSessionPreviewFromFields((session || {}) as Record<string, unknown>);
+    cachedPreview && (!fieldPreview || cachedTimestamp >= fieldTimestamp) ? cachedPreview : fieldPreview;
   timelinePreviewMap.value.set(targetId, preview);
   return preview;
 };
@@ -12427,6 +12456,15 @@ function normalizeAgentId(value: unknown): string {
 
 const restoreConversationFromRoute = async () => {
   const query = route.query;
+  const querySection = resolveSectionFromRoute(route.path, query.section);
+  const queryAgentId = String(query?.agent_id || '').trim();
+  if (isEmbeddedChatRoute.value && querySection === 'agents' && queryAgentId) {
+    agentOverviewMode.value = 'detail';
+    selectedAgentId.value = normalizeAgentId(queryAgentId);
+    sessionHub.setSection('agents');
+    return;
+  }
+
   const queryConversationId = String(query?.conversation_id || '').trim();
   if (queryConversationId) {
     if (userWorldPermissionDenied.value) {
@@ -12466,7 +12504,6 @@ const restoreConversationFromRoute = async () => {
     router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
   }
 
-  const queryAgentId = String(query?.agent_id || '').trim();
   const queryEntry = String(query?.entry || '').trim().toLowerCase();
   if (queryAgentId || queryEntry === 'default') {
     await openAgentById(queryAgentId || DEFAULT_AGENT_KEY);
@@ -12638,7 +12675,9 @@ const syncRouteDrivenMessengerViewState = () => {
   }
   if (desktopMode.value && !desktopInitialSectionPinned.value) {
     desktopInitialSectionPinned.value = true;
-    sessionHub.setSection('messages');
+    sessionHub.setSection(
+      isEmbeddedChatRoute.value ? resolveSectionFromRoute(route.path, route.query.section) : 'messages'
+    );
     return;
   }
   if (route.path.includes('/user-world') && sectionHint === 'groups') {
