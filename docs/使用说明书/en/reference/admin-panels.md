@@ -5,8 +5,7 @@ read_when:
   - You are using the admin side for the first time
   - You want to know where to find a specific configuration, monitoring view, or documentation entry
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - web/index.html
 ---
 

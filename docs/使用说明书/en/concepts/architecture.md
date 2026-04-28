@@ -5,8 +5,7 @@ read_when:
   - You want to understand wunder as a whole system
   - You need to see how APIs, orchestration, tools, frontends, and storage cooperate
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # Architecture

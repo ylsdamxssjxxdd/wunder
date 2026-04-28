@@ -4090,6 +4090,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   color: var(--chat-text);
   cursor: pointer;
   font-weight: 600;
@@ -4114,15 +4115,19 @@ onBeforeUnmount(() => {
 }
 
 .tool-workflow-title {
+  flex: 0 0 auto;
   color: var(--chat-text);
+  white-space: nowrap;
 }
 
 .tool-workflow-spacer {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .tool-workflow-latest {
-  flex: 1 1 auto;
+  display: block;
+  flex: 1 1 0;
   min-width: 0;
   color: var(--chat-muted);
   font-size: 12px;

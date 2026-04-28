@@ -5,7 +5,7 @@ read_when:
   - You're reading wunder docs for the first time
   - You find terms that look similar but aren't sure of the difference
 source_docs:
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # Glossary

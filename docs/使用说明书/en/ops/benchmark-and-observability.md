@@ -6,7 +6,7 @@ read_when:
   - You need to distinguish the responsibilities of monitor, throughput, performance, and benchmark
 source_docs:
   - docs/API文档.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - src/api/admin.rs
 ---
 

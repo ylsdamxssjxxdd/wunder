@@ -6,7 +6,7 @@ read_when:
   - 你想分清 external login、launch 和 token_login 的用途
 source_docs:
   - docs/API文档.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - config/wunder-example.yaml
   - src/api/auth.rs
 ---

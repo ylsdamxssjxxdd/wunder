@@ -2708,6 +2708,7 @@ fn build_user_account_item(
                 "direct_tls": xmpp.direct_tls,
                 "trust_self_signed": xmpp.trust_self_signed,
                 "tls_enabled": xmpp.tls_enabled,
+                "resource": xmpp.resource,
                 "custom_message_format_enabled": xmpp.custom_message_format_enabled,
                 "muc_rooms": xmpp.muc_rooms.len(),
                 "heartbeat_enabled": xmpp.heartbeat_enabled,

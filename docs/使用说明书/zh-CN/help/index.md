@@ -6,7 +6,7 @@ read_when:
   - 你想区分使用疑问与系统故障
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/使用说明书/zh-CN/help/troubleshooting.md
 ---
 

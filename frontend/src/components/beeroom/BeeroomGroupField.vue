@@ -263,6 +263,18 @@ watch(
   width: 100%;
 }
 
+.beeroom-group-field__select :deep(.el-select__wrapper),
+.beeroom-group-field__select :deep(.el-select__selection),
+.beeroom-group-field__select :deep(.el-select__selected-item),
+.beeroom-group-field__select :deep(.el-select__placeholder),
+.beeroom-group-field__select :deep(.el-select__caret) {
+  cursor: pointer;
+}
+
+.beeroom-group-field__select :deep(.el-select__input) {
+  cursor: text;
+}
+
 .beeroom-group-field__hint {
   color: var(--hula-muted);
   font-size: 12px;

@@ -137,6 +137,8 @@ pub struct WorkerCardRuntime {
     pub silent: bool,
     #[serde(default)]
     pub prefer_mother: bool,
+    #[serde(default)]
+    pub preview_skill: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -162,6 +164,7 @@ pub struct WorkerCardRecordUpdate {
     pub name: String,
     pub description: String,
     pub system_prompt: String,
+    pub preview_skill: bool,
     pub model_name: Option<String>,
     pub ability_items: Vec<AbilityDescriptor>,
     pub tool_names: Vec<String>,
@@ -236,6 +239,7 @@ pub fn build_worker_card(
             is_shared: record.is_shared,
             silent: record.silent,
             prefer_mother: record.prefer_mother,
+            preview_skill: record.preview_skill,
         },
         hive: WorkerCardHive {
             id: record.hive_id.clone(),
@@ -285,6 +289,7 @@ pub fn parse_worker_card(
             })
             .trim()
             .to_string(),
+        preview_skill: document.runtime.preview_skill,
         model_name: document
             .runtime
             .model_name
@@ -609,6 +614,7 @@ mod tests {
             name: "Agent".to_string(),
             description: "desc".to_string(),
             system_prompt: "prompt".to_string(),
+            preview_skill: false,
             model_name: Some("gpt".to_string()),
             ability_items: Vec::new(),
             tool_names: vec!["read_file".to_string(), "planner".to_string()],
@@ -652,6 +658,7 @@ mod tests {
             name: "Agent".to_string(),
             description: "desc".to_string(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: vec![crate::schemas::AbilityDescriptor {
                 id: "builtin:read_file".to_string(),
@@ -698,6 +705,7 @@ mod tests {
             name: "Agent".to_string(),
             description: "desc".to_string(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: vec![

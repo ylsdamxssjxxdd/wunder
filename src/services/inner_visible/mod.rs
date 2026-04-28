@@ -388,6 +388,7 @@ impl InnerVisibleService {
             name: agent_id.trim().to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: Vec::new(),
@@ -414,6 +415,7 @@ impl InnerVisibleService {
         }
         record.description = parsed.description;
         record.system_prompt = parsed.system_prompt;
+        record.preview_skill = parsed.preview_skill;
         record.model_name = parsed.model_name;
         record.ability_items = parsed.ability_items;
         record.declared_tool_names = parsed.declared_tool_names;
@@ -481,6 +483,7 @@ impl InnerVisibleService {
                 name: record.name,
                 description: record.description,
                 system_prompt: record.system_prompt,
+                preview_skill: record.preview_skill,
                 ability_items: record.ability_items,
                 tool_names: record.tool_names,
                 declared_tool_names: record.declared_tool_names,
@@ -503,6 +506,7 @@ impl InnerVisibleService {
             name: DEFAULT_AGENT_NAME.to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             ability_items: Vec::new(),
             tool_names: curated_default_tool_names(allowed_tool_names),
             declared_tool_names: Vec::new(),
@@ -553,6 +557,7 @@ impl InnerVisibleService {
         }
         config.description = parsed.description;
         config.system_prompt = parsed.system_prompt;
+        config.preview_skill = parsed.preview_skill;
         config.ability_items = parsed.ability_items;
         config.tool_names = filter_allowed_tools(&runtime_tool_names, allowed_tool_names);
         config.declared_tool_names = parsed.declared_tool_names;
@@ -1226,6 +1231,7 @@ mod tests {
             name: "Demo".to_string(),
             description: "desc".to_string(),
             system_prompt: "initial prompt".to_string(),
+            preview_skill: false,
             model_name: Some("gpt-5".to_string()),
             ability_items: Vec::new(),
             tool_names: Vec::new(),
@@ -1310,6 +1316,7 @@ mod tests {
                 name: "Initial".to_string(),
                 description: "desc".to_string(),
                 system_prompt: "initial prompt".to_string(),
+                preview_skill: false,
                 model_name: None,
                 ability_items: Vec::new(),
                 tool_names: Vec::new(),
@@ -1413,6 +1420,7 @@ mod tests {
                 name: "Stable".to_string(),
                 description: "desc".to_string(),
                 system_prompt: "stable prompt".to_string(),
+                preview_skill: false,
                 model_name: None,
                 ability_items: Vec::new(),
                 tool_names: Vec::new(),
@@ -1477,6 +1485,7 @@ mod tests {
                 name: "Default Initial".to_string(),
                 description: "default desc".to_string(),
                 system_prompt: "default prompt".to_string(),
+                preview_skill: false,
                 model_name: None,
                 ability_items: Vec::new(),
                 tool_names: Vec::new(),

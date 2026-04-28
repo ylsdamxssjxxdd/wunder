@@ -1122,6 +1122,7 @@ async fn run_request(
         language: None,
         config_overrides,
         agent_prompt: None,
+        preview_skill: false,
         attachments: None,
         allow_queue: true,
         is_admin: true,

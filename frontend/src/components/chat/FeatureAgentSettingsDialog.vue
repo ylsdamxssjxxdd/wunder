@@ -72,10 +72,10 @@
           @ignore="ignoreMissingDependencies"
         />
         <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
-          <div class="agent-basic-settings">
-            <div class="agent-share-card agent-share-card--combined">
-              <div class="agent-share-row agent-share-row--sandbox">
-                <span>{{ t('portal.agent.sandbox.title') }}</span>
+          <div class="agent-base-grid">
+            <div class="agent-base-card">
+              <div class="agent-base-card-label">{{ t('portal.agent.sandbox.title') }}</div>
+              <div class="agent-base-card-control">
                 <el-select v-model="form.sandbox_container_id" size="small" class="agent-sandbox-select">
                   <el-option
                     v-for="id in sandboxContainerOptions"
@@ -84,9 +84,12 @@
                     :value="id"
                   />
                 </el-select>
+                <div class="agent-base-card-hint">{{ t('portal.agent.sandbox.hint') }}</div>
               </div>
-              <div class="agent-share-row agent-share-row--sandbox">
-                <span>{{ t('portal.agent.model.title') }}</span>
+            </div>
+            <div class="agent-base-card">
+              <div class="agent-base-card-label">{{ t('portal.agent.model.title') }}</div>
+              <div class="agent-base-card-control">
                 <el-select v-model="form.model_name" size="small" class="agent-sandbox-select" :disabled="modelLoading">
                   <el-option :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })" value="" />
                   <el-option
@@ -96,9 +99,12 @@
                     :value="model"
                   />
                 </el-select>
+                <div class="agent-base-card-hint">{{ t('portal.agent.model.hint') }}</div>
               </div>
-              <div v-if="showApprovalModeSetting" class="agent-share-row agent-share-row--sandbox">
-                <span>{{ t('portal.agent.permission.title') }}</span>
+            </div>
+            <div v-if="showApprovalModeSetting" class="agent-base-card">
+              <div class="agent-base-card-label">{{ t('portal.agent.permission.title') }}</div>
+              <div class="agent-base-card-control">
                 <el-select v-model="form.approval_mode" size="small" class="agent-sandbox-select">
                   <el-option
                     v-for="item in approvalModeOptions"
@@ -107,22 +113,31 @@
                     :value="item.value"
                   />
                 </el-select>
+                <div class="agent-base-card-hint">
+                  {{ t('portal.agent.permission.hint') }}
+                </div>
               </div>
-              <div class="agent-share-row agent-share-row--switch">
-                <span>{{ t('portal.agent.silent.title') }}</span>
+            </div>
+            <div class="agent-base-card agent-base-card--switch">
+              <div class="agent-base-card-switch">
+                <div class="agent-base-card-label">{{ t('portal.agent.previewSkill.title') }}</div>
+                <el-switch v-model="form.preview_skill" size="small" />
+              </div>
+              <div class="agent-base-card-hint">{{ t('portal.agent.previewSkill.hint') }}</div>
+            </div>
+            <div class="agent-base-card agent-base-card--switch">
+              <div class="agent-base-card-switch">
+                <div class="agent-base-card-label">{{ t('portal.agent.silent.title') }}</div>
                 <el-switch v-model="form.silent" size="small" />
               </div>
-              <div class="agent-editor-hint">{{ t('portal.agent.silent.hint') }}</div>
-              <div class="agent-share-row agent-share-row--switch">
-                <span>{{ t('portal.agent.preferMother.title') }}</span>
+              <div class="agent-base-card-hint">{{ t('portal.agent.silent.hint') }}</div>
+            </div>
+            <div class="agent-base-card agent-base-card--switch">
+              <div class="agent-base-card-switch">
+                <div class="agent-base-card-label">{{ t('portal.agent.preferMother.title') }}</div>
                 <el-switch v-model="form.prefer_mother" size="small" />
               </div>
-              <div class="agent-editor-hint">{{ t('portal.agent.preferMother.hint') }}</div>
-              <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-              <div class="agent-editor-hint">{{ t('portal.agent.model.hint') }}</div>
-              <div v-if="showApprovalModeSetting" class="agent-editor-hint">
-                {{ t('portal.agent.permission.hint') }}
-              </div>
+              <div class="agent-base-card-hint">{{ t('portal.agent.preferMother.hint') }}</div>
             </div>
           </div>
         </el-form-item>
@@ -260,6 +275,7 @@ const form = reactive({
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode(),
+  preview_skill: false,
   silent: false,
   prefer_mother: false
 });
@@ -428,6 +444,7 @@ const loadAgent = async () => {
     ) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
+    form.preview_skill = Boolean(agent.preview_skill);
     form.silent = Boolean(agent.silent);
     form.prefer_mother = Boolean(agent.prefer_mother);
   } catch (error) {
@@ -458,6 +475,7 @@ const saveAgent = async () => {
       model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode),
+      preview_skill: Boolean(form.preview_skill),
       silent: Boolean(form.silent),
       prefer_mother: Boolean(form.prefer_mother)
     };
@@ -490,6 +508,7 @@ const exportWorkerCard = () => {
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
     approval_mode: normalizeApprovalMode(form.approval_mode),
     sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+    preview_skill: Boolean(form.preview_skill),
     silent: Boolean(form.silent),
     prefer_mother: Boolean(form.prefer_mother),
     hive_id: groupPayload.hive_id,
@@ -541,4 +560,64 @@ watch(
   }
 );
 </script>
+
+<style scoped>
+.agent-base-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+.agent-base-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.agent-base-card-label {
+  color: var(--el-text-color-regular, #111827);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.agent-base-card-control {
+  min-width: 0;
+}
+
+.agent-base-card-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-base-card-hint {
+  color: var(--el-text-color-secondary, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-base-card-control :deep(.el-select),
+.agent-base-card-control :deep(.el-select__wrapper) {
+  width: 100%;
+}
+
+.agent-form-item--base :deep(.el-form-item__content) {
+  display: block;
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .agent-base-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>
 

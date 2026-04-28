@@ -568,13 +568,12 @@ fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
 
     let mut jid = Jid::from_str(jid_raw).map_err(|err| anyhow!("invalid xmpp jid: {err}"))?;
 
-    if let Some(resource) = optional_trimmed(config.resource.as_deref()) {
-        jid = Jid::from(
-            jid.to_bare()
-                .with_resource_str(resource)
-                .map_err(|err| anyhow!("invalid xmpp resource: {err}"))?,
-        );
-    }
+    let resource = optional_trimmed(config.resource.as_deref()).unwrap_or("coplat");
+    jid = Jid::from(
+        jid.to_bare()
+            .with_resource_str(resource)
+            .map_err(|err| anyhow!("invalid xmpp resource: {err}"))?,
+    );
 
     let default_port = if config.direct_tls.unwrap_or(false) {
         XMPP_DEFAULT_DIRECT_TLS_PORT
@@ -632,7 +631,7 @@ fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
         heartbeat_interval_s,
         heartbeat_timeout_s,
         respond_ping: config.respond_ping.unwrap_or(true),
-        custom_message_format_enabled: config.custom_message_format_enabled.unwrap_or(false),
+        custom_message_format_enabled: config.custom_message_format_enabled.unwrap_or(true),
     })
 }
 
@@ -696,7 +695,7 @@ async fn send_outbound_stanza(
 ) -> Result<()> {
     let prepared = prepare_outbound_payload(outbound);
 
-    if settings.custom_message_format_enabled && prepared.attachments.is_empty() {
+    if settings.custom_message_format_enabled {
         let target = resolve_outbound_target(outbound);
         let to_jid = resolve_outbound_target_jid(&target, &settings.login_domain)?;
         let text = resolve_outbound_text(prepared.text.as_deref(), &prepared.attachments)?;
@@ -1573,7 +1572,7 @@ mod tests {
             login_bare: "bot@example.com".to_string(),
             login_node: Some("bot".to_string()),
             login_domain: "example.com".to_string(),
-            login_resource: Some("wunder".to_string()),
+            login_resource: Some("coplat".to_string()),
             send_initial_presence: true,
             status_text: None,
             muc_nick: Some("botnick".to_string()),
@@ -1582,7 +1581,7 @@ mod tests {
             heartbeat_interval_s: 60,
             heartbeat_timeout_s: 20,
             respond_ping: true,
-            custom_message_format_enabled: false,
+            custom_message_format_enabled: true,
         }
     }
 
@@ -1889,6 +1888,8 @@ mod tests {
             XMPP_HEARTBEAT_DEFAULT_TIMEOUT_S
         );
         assert!(settings.respond_ping);
+        assert_eq!(settings.login_resource.as_deref(), Some("coplat"));
+        assert!(settings.custom_message_format_enabled);
         match settings.server {
             XmppTlsServerConfig::UseSrv { security_mode } => {
                 assert_eq!(security_mode, XmppTlsSecurityMode::TrustSelfSigned);

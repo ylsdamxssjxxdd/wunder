@@ -1530,6 +1530,10 @@ pub(crate) async fn build_chat_request(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let preview_skill = agent_record
+        .as_ref()
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
 
     if should_auto_title(&record.title) {
         if let Some(title) = build_session_title(&content) {
@@ -1621,6 +1625,7 @@ pub(crate) async fn build_chat_request(
         language: Some(i18n::get_language()),
         config_overrides,
         agent_prompt,
+        preview_skill,
         attachments,
         allow_queue: true,
         is_admin: UserStore::is_admin(user),
@@ -2168,6 +2173,10 @@ async fn compact_session(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let preview_skill = agent_record
+        .as_ref()
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
     let user_id = resolved.user.user_id.clone();
     let is_admin = UserStore::is_admin(&resolved.user);
     let manual_user_round = state.monitor.register(
@@ -2194,6 +2203,7 @@ async fn compact_session(
                 model_name.as_deref(),
                 agent_id_for_task.as_deref(),
                 agent_prompt_for_task.as_deref(),
+                Some(preview_skill),
                 Some(manual_user_round),
                 debug_payload,
                 true,
@@ -2241,6 +2251,10 @@ async fn system_prompt(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let preview_skill = agent_record
+        .as_ref()
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
     let workspace_id = resolve_agent_workspace_id(
         &state,
         &resolved.user.user_id,
@@ -2261,6 +2275,7 @@ async fn system_prompt(
             &workspace_id,
             None,
             agent_prompt.as_deref(),
+            preview_skill,
         )
         .await;
     Ok(Json(json!({
@@ -2355,6 +2370,10 @@ async fn session_system_prompt(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let preview_skill = agent_record
+        .as_ref()
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
     let workspace_id = resolve_agent_workspace_id(
         &state,
         &resolved.user.user_id,
@@ -2375,6 +2394,7 @@ async fn session_system_prompt(
             &workspace_id,
             None,
             agent_prompt.as_deref(),
+            preview_skill,
         )
         .await;
     Ok(Json(json!({

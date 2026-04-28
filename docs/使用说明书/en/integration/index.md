@@ -6,8 +6,7 @@ read_when:
   - You are not sure whether to start with /wunder, the chat domain, or the workspace API
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # Integration Overview

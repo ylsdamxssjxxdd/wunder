@@ -84,6 +84,7 @@ impl Orchestrator {
             model_name: request.model_name.clone(),
             config_overrides: request.config_overrides.clone(),
             agent_prompt: request.agent_prompt.clone(),
+            preview_skill: request.preview_skill,
             agent_id,
             stream: request.stream,
             debug_payload: request.debug_payload,
@@ -210,6 +211,7 @@ impl Orchestrator {
         workspace_id: &str,
         config_overrides: Option<&Value>,
         agent_prompt: Option<&str>,
+        preview_skill: bool,
     ) -> String {
         let allow_vision = self
             .resolve_llm_config(config, None)
@@ -233,6 +235,7 @@ impl Orchestrator {
                 workspace_id,
                 agent_id,
                 agent_prompt,
+                preview_skill,
             )
             .await;
         self.append_memory_prompt(user_id, agent_id, prompt, None, None, None)

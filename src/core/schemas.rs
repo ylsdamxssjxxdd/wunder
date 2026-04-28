@@ -29,6 +29,8 @@ pub struct WunderRequest {
     #[serde(default)]
     pub agent_prompt: Option<String>,
     #[serde(default)]
+    pub preview_skill: bool,
+    #[serde(default)]
     pub attachments: Option<Vec<AttachmentPayload>>,
     #[serde(default = "default_allow_queue")]
     pub allow_queue: bool,
@@ -89,6 +91,8 @@ pub struct WunderPromptRequest {
     pub config_overrides: Option<Value>,
     #[serde(default)]
     pub agent_prompt: Option<String>,
+    #[serde(default)]
+    pub preview_skill: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

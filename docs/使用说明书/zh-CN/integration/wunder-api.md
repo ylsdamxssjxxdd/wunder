@@ -6,8 +6,7 @@ read_when:
   - "你要判断该走 `/wunder` 还是 `/wunder/chat/*`"
 source_docs:
   - "docs/API文档.md"
-  - "docs/系统介绍.md"
-  - "docs/设计方案.md"
+  - "docs/设计文档/01-系统总体设计.md"
 ---
 
 # wunder API
@@ -91,4 +90,4 @@ source_docs:
 
 - [聊天会话](/docs/zh-CN/integration/chat-sessions/)
 - [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
-- [API 索引](/docs/zh-CN/reference/api-index/)
+- [API 索引](/docs/zh-CN/reference/api-index/)

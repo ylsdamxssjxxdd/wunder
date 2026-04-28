@@ -5,7 +5,7 @@ read_when:
   - You need to understand session state, event streams, and counting conventions
   - You need to distinguish user rounds, model rounds, and token occupancy
 source_docs:
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
 ---
 

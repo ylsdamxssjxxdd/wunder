@@ -7,8 +7,7 @@ read_when:
   - 你要定位接入、运维和工具文档入口
 source_docs:
   - README.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # wunder 心舰
@@ -112,5 +111,4 @@ wunder
 
 - [说明书总览](/docs/zh-CN/start/hubs/)
 - [API 索引](/docs/zh-CN/reference/api-index/)
-- [系统介绍](/docs/系统介绍.md)
-- [设计方案](/docs/设计方案.md)
+- [系统介绍](/docs/设计文档/01-系统总体设计.md)

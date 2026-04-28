@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-28T08:39:15.255420+00:00",
+  "generated_at": "2026-04-28T13:19:52.400463+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -1611,7 +1611,7 @@
       "language": "zh-CN",
       "title": "wunder 心舰",
       "summary": "wunder 是一个智能体系统，有桌面端、服务端、命令行三种用法。先按你的角色选入口。",
-      "updated_at": "2026-04-24",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你第一次了解 wunder",
         "你需要快速判断先看 desktop、server 还是 cli",
@@ -1619,8 +1619,7 @@
       ],
       "source_docs": [
         "README.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "开始",
       "group": "首页",
@@ -1700,15 +1699,14 @@
       "language": "zh-CN",
       "title": "快速开始",
       "summary": "用最短路径跑通 wunder 的第一个任务。默认推荐 desktop，其次按 server 或 cli 分流。",
-      "updated_at": "2026-04-24",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你第一次使用 wunder",
         "你需要在 10 分钟内跑通一个可验证结果"
       ],
       "source_docs": [
         "README.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "开始",
       "group": "入门",
@@ -4992,15 +4990,14 @@
       "language": "zh-CN",
       "title": "接入概览",
       "summary": "Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。",
-      "updated_at": "2026-04-07",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你准备把 Wunder 接入业务系统",
         "你不确定该从 `/wunder`、聊天域还是工作区接口开始"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "接入",
       "group": "概览",
@@ -5095,15 +5092,14 @@
       "language": "zh-CN",
       "title": "wunder API",
       "summary": "`/wunder` 是统一执行入口，适合能力调用；当你要做完整聊天产品时，优先切到 `/wunder/chat/*`。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要从业务系统接入 Wunder",
         "你要判断该走 `/wunder` 还是 `/wunder/chat/*`"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "接入",
       "group": "核心接口",
@@ -5173,14 +5169,14 @@
       "language": "zh-CN",
       "title": "聊天 WebSocket",
       "summary": "`/wunder/chat/ws` 是 Wunder 聊天主实时通道；实时会话优先 WS，SSE 作为兜底。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你在开发聊天 UI 或桌面实时会话",
         "你要处理 start/resume/watch/cancel/approval"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/chat_ws.rs"
       ],
       "tab": "接入",
@@ -5328,7 +5324,7 @@
       "language": "zh-CN",
       "title": "工作区 API",
       "summary": "`/wunder/workspace*` 不只是文件接口，它决定文件到底落在哪个隔离工作区。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你在做工作区面板、文件上传下载或产物回传",
         "你要理解 `container_id` 为什么会覆盖 `agent_id`"
@@ -5336,7 +5332,7 @@
       "source_docs": [
         "docs/API文档.md",
         "src/api/workspace.rs",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "接入",
       "group": "核心接口",
@@ -5391,14 +5387,14 @@
       "language": "zh-CN",
       "title": "临时目录与文档转换",
       "summary": "`/wunder/temp_dir/*` 负责临时上传、下载和中转；文档转换与聊天附件预处理分别走公共转换、调试转换和聊天域转换接口。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要给外部系统发下载链接",
         "你要区分工作区、temp_dir 和 doc2md 的职责"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/temp_dir.rs",
         "src/api/doc2md.rs",
         "src/api/chat.rs"
@@ -5481,15 +5477,14 @@
       "language": "zh-CN",
       "title": "用户世界接口",
       "summary": "`/wunder/user_world/*` 是 Wunder 里的用户到用户通信域，与用户到智能体会话域并行存在。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要接用户之间的单聊或群聊",
         "你想分清 user_world 和 chat 两套接口的边界"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/user_world.rs",
         "src/api/user_world_ws.rs"
       ],
@@ -5586,15 +5581,15 @@
       "language": "zh-CN",
       "title": "渠道 Webhook",
       "summary": "Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要把飞书、企业微信、QQBot、XMPP 等渠道接进 Wunder",
         "你想知道 Webhook、长连接和 outbox 的关系"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
+        "docs/设计文档/07-接入、网关与渠道系统设计.md",
         "src/api/channel.rs",
         "src/channels/catalog.rs"
       ],
@@ -5769,7 +5764,7 @@
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "config/wunder-example.yaml",
         "src/api/auth.rs"
       ],
@@ -5841,14 +5836,14 @@
       "language": "zh-CN",
       "title": "A2A 接口",
       "summary": "Wunder 通过 `/a2a` 提供 A2A JSON-RPC 标准接入，并通过 AgentCard 暴露能力发现入口。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要让 Wunder 被别的智能体系统调用",
         "你要把外部 A2A 服务接进 Wunder 的工具体系"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/a2a.rs",
         "config/wunder-example.yaml"
       ],
@@ -5920,14 +5915,14 @@
       "language": "zh-CN",
       "title": "MCP 入口",
       "summary": "Wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要把 Wunder 作为 MCP 服务暴露出去",
         "你要理解 Wunder 内部 MCP 与 extra_mcp 的关系"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/services/mcp.rs",
         "config/wunder-example.yaml"
       ],
@@ -9396,14 +9391,14 @@
       "language": "zh-CN",
       "title": "帮助",
       "summary": "遇到问题先来这里，按症状快速分流。",
-      "updated_at": "2026-04-24",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你要快速定位问题",
         "你想区分使用疑问与系统故障"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/使用说明书/zh-CN/help/troubleshooting.md"
       ],
       "tab": "帮助",
@@ -9686,14 +9681,13 @@
       "language": "zh-CN",
       "title": "术语表",
       "summary": "wunder 文档里的核心术语，用大白话解释，避免混淆。",
-      "updated_at": "2026-04-24",
+      "updated_at": "2026-04-28",
       "read_when": [
         "你第一次系统性阅读 wunder 文档",
         "你发现很多词看起来相近但不知道区别"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md"
       ],
       "tab": "帮助",
@@ -12947,15 +12941,14 @@
       "language": "en",
       "title": "Integration Overview",
       "summary": "Wunder's integration surface includes a unified execution entry, chat domain, workspace, channels, A2A, and MCP; pick the right layer first for a more stable integration.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are about to integrate Wunder into your business system",
         "You are not sure whether to start with /wunder, the chat domain, or the workspace API"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Integrations",
       "group": "Overview",
@@ -13050,15 +13043,14 @@
       "language": "en",
       "title": "wunder API",
       "summary": "`/wunder` is the unified execution entry point, suitable for capability calls; when building a complete chat product, prefer `/wunder/chat/*`.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to integrate Wunder from a business system",
         "You need to decide between `/wunder` and `/wunder/chat/*`"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -13128,14 +13120,14 @@
       "language": "en",
       "title": "Chat WebSocket",
       "summary": "`/wunder/chat/ws` is Wunder's primary real-time chat channel; real-time sessions prefer WS, with SSE as fallback.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are developing chat UI or desktop real-time sessions",
         "You need to handle start/resume/watch/cancel/approval"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/chat_ws.rs"
       ],
       "tab": "Integrations",
@@ -13283,7 +13275,7 @@
       "language": "en",
       "title": "Workspace API",
       "summary": "/wunder/workspace* is not just a file interface - it determines which isolated workspace files are stored in.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are building workspace panels, file upload/download, or artifact callbacks",
         "You need to understand why container_id overrides agent_id"
@@ -13291,7 +13283,7 @@
       "source_docs": [
         "docs/API文档.md",
         "src/api/workspace.rs",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -13346,14 +13338,14 @@
       "language": "en",
       "title": "Temp Directory and Document Conversion",
       "summary": "`/wunder/temp_dir/*` handles temporary upload, download, and transit; document conversion and chat attachment preprocessing are handled by separate public conversion, debug conversion, and chat-domain conversion endpoints.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to send download links to external systems",
         "You need to distinguish the responsibilities of workspace, temp_dir, and doc2md"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/temp_dir.rs",
         "src/api/doc2md.rs",
         "src/api/chat.rs"
@@ -13436,15 +13428,14 @@
       "language": "en",
       "title": "User World",
       "summary": "`/wunder/user_world/*` is the user-to-user communication domain in Wunder, existing in parallel with the user-to-agent conversation domain.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to integrate user-to-user direct or group chat",
         "You want to understand the boundary between user_world and chat endpoints"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/user_world.rs",
         "src/api/user_world_ws.rs"
       ],
@@ -13541,15 +13532,15 @@
       "language": "en",
       "title": "Channel Webhook",
       "summary": "Wunder uses /wunder/channel/{provider}/webhook as a unified inbound entry for external channels, then hands off to ChannelHub and the outbox for processing.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to connect Feishu, WeCom, QQBot, XMPP, and other channels into Wunder",
         "You want to understand the relationship between Webhook, persistent connections, and the outbox"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
+        "docs/设计文档/07-接入、网关与渠道系统设计.md",
         "src/api/channel.rs",
         "src/channels/catalog.rs"
       ],
@@ -13724,7 +13715,7 @@
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "config/wunder-example.yaml",
         "src/api/auth.rs"
       ],
@@ -13796,14 +13787,14 @@
       "language": "en",
       "title": "A2A Interface",
       "summary": "Wunder exposes A2A JSON-RPC standard access via /a2a and provides a capability discovery entry through AgentCard.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want Wunder to be called by other agent systems",
         "You want to plug external A2A services into Wunder's tool system"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/a2a.rs",
         "config/wunder-example.yaml"
       ],
@@ -13875,14 +13866,14 @@
       "language": "en",
       "title": "MCP Endpoint",
       "summary": "Wunder supports both a self-hosted MCP service at `/wunder/mcp` and external MCP service integration.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to expose Wunder as an MCP service",
         "You need to understand the relationship between Wunder's internal MCP and extra_mcp"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/services/mcp.rs",
         "config/wunder-example.yaml"
       ],
@@ -13944,15 +13935,14 @@
       "language": "en",
       "title": "Interface Overview",
       "summary": "Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.",
-      "updated_at": "2026-04-18",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to quickly understand what the user frontend, admin frontend, and desktop each do",
         "You are looking for which interface a particular feature belongs to"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/API文档.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md",
+        "docs/API文档.md"
       ],
       "tab": "Surfaces",
       "group": "Overview",
@@ -14431,14 +14421,13 @@
       "language": "en",
       "title": "Operations Overview",
       "summary": "Wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just \"it started successfully.\"",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are deploying or taking over a Wunder runtime environment",
         "You need to quickly locate operations and governance entry points"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md"
       ],
       "tab": "Operations",
@@ -14519,7 +14508,7 @@
       "language": "en",
       "title": "Deployment and Running",
       "summary": "Before deploying Wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to deploy Wunder",
         "You need to confirm where to place databases, MCP, sandbox, and workspaces"
@@ -14527,7 +14516,7 @@
       "source_docs": [
         "README.md",
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "config/wunder-example.yaml"
       ],
       "tab": "Operations",
@@ -14623,7 +14612,7 @@
       "language": "en",
       "title": "Data and Storage",
       "summary": "Wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to deploy or migrate data",
         "You want to understand what PostgreSQL, SQLite, Weaviate, workspaces, and temp_dir each store"
@@ -14631,8 +14620,7 @@
       "source_docs": [
         "config/wunder-example.yaml",
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -14820,14 +14808,14 @@
       "language": "en",
       "title": "Authentication and Security",
       "summary": "Wunder needs to distinguish between API Keys, user tokens, external auth, and tool execution boundaries.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are deploying Wunder to a long-running environment",
         "You need to determine which credentials to use for which entry points"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/core/auth.rs",
         "config/wunder-example.yaml"
       ],
@@ -14914,14 +14902,14 @@
       "language": "en",
       "title": "Monitoring and Benchmark",
       "summary": "Wunder's observability surface is not a single monitoring page, but composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and benchmark together.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are troubleshooting thread, tool, or model pipeline issues",
         "You need to distinguish the responsibilities of monitor, throughput, performance, and benchmark"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/admin.rs"
       ],
       "tab": "Operations",
@@ -15022,15 +15010,14 @@
       "language": "en",
       "title": "Channel Runtime",
       "summary": "Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are troubleshooting channel anomalies for Feishu, WeChat, QQBot, WhatsApp, XMPP, etc.",
         "You want to know what channel runtime interfaces are available on both admin and user sides"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -15090,15 +15077,14 @@
       "language": "en",
       "title": "Reference Overview",
       "summary": "Reference pages provide stable lookup content and also collect runtime model reference pages broken down by topic, suitable for diving into details after reviewing the core overview.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need field-level, event-level, or configuration-level reference",
         "You already know which layer the problem is in and want to quickly check the standard answer"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Reference",
       "group": "Overview",
@@ -15148,14 +15134,14 @@
       "language": "en",
       "title": "API Index",
       "summary": "This is an index page for Wunder's most commonly used interface groups, used for quickly locating endpoints rather than replacing the full API documentation.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are looking for which category an interface roughly belongs to",
         "You don't want to browse through the complete `docs/API文档.md` directly"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -15220,7 +15206,7 @@
       "language": "en",
       "title": "Configuration",
       "summary": "When configuration doesn't take effect, first confirm which layer you're modifying, rather than suspecting the program isn't reading it.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are checking where a specific configuration should be written",
         "You need to distinguish between base configuration, runtime overrides, and external MCP configuration"
@@ -15228,7 +15214,7 @@
       "source_docs": [
         "config/wunder-example.yaml",
         "docs/API文档.md",
-        "docs/系统介绍.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -15313,14 +15299,14 @@
       "language": "en",
       "title": "Stream Events",
       "summary": "When integrating with Wunder's streaming pipeline, the most important thing is not memorizing every event, but knowing which events carry true lifecycle semantics.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are integrating SSE or WebSocket",
         "You want to understand why turn_terminal, approval_resolved, and thread_status matter"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/orchestrator/execute.rs",
         "src/api/chat.rs"
       ],
@@ -15412,7 +15398,7 @@
       "language": "en",
       "title": "Workspace Routing",
       "summary": "Wunder's workspace routing is not simply directory lookup by user_id; it is determined jointly by `container_id`, agent container configuration, and scoped user_id.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are troubleshooting why files ended up in \"a different workspace\"",
         "You want to precisely understand the routing priority of workspace endpoints"
@@ -15420,7 +15406,7 @@
       "source_docs": [
         "docs/API文档.md",
         "src/api/workspace.rs",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -15500,7 +15486,7 @@
       "language": "en",
       "title": "Prompt Templates",
       "summary": "Wunder splits system prompts into template packs and segment files. Administrators manage system template packs. The user side currently provides two built-in template packs (Chinese and English) by default and supports switching or copying them into custom packs.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to modify system prompt template packs",
         "You want to understand the relationship between `default-zh`, `default-en`, and custom packs on the user side",
@@ -15508,8 +15494,7 @@
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/admin_prompt_templates.rs",
         "src/api/user_prompt_templates.rs"
       ],
@@ -15576,14 +15561,13 @@
       "language": "en",
       "title": "Admin Panels",
       "summary": "The admin-side frontend is not a single debug page, but a set of well-organized governance panels with clear responsibilities.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are using the admin side for the first time",
         "You want to know where to find a specific configuration, monitoring view, or documentation entry"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "web/index.html"
       ],
       "tab": "Reference",
@@ -15674,14 +15658,13 @@
       "language": "en",
       "title": "Architecture",
       "summary": "wunder uses one unified orchestration kernel to support three runtime forms: server, cli, and desktop.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to understand wunder as a whole system",
         "You need to see how APIs, orchestration, tools, frontends, and storage cooperate"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Reference",
       "group": "Deep Dives",
@@ -15751,14 +15734,13 @@
       "language": "en",
       "title": "Workspaces and Containers",
       "summary": "Wunder's file isolation is not 'a current directory', but a persistent workspace organized by `user_id + container_id` in layers.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You want to understand why files are isolated by user and container",
         "You need to determine the relationship between `agent_id`, `container_id`, and workspace"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md"
       ],
       "tab": "Reference",
@@ -15834,13 +15816,13 @@
       "language": "en",
       "title": "Sessions and Rounds",
       "summary": "wunder splits a conversation into sessions, threads, user rounds, and model rounds.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to understand session state, event streams, and counting conventions",
         "You need to distinguish user rounds, model rounds, and token occupancy"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md"
       ],
       "tab": "Reference",
@@ -15911,14 +15893,14 @@
       "language": "en",
       "title": "Streaming Execution",
       "summary": "Wunder's streaming is not just a character stream, but exposes thread execution, tool calls, and terminal states together.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are integrating SSE or WebSocket",
         "You are designing a state machine for a chat interface"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/api/chat.rs",
         "src/api/core.rs"
       ],
@@ -16103,13 +16085,13 @@
       "language": "en",
       "title": "Tool System",
       "summary": "wunder is not built around \"the model answers.\" It is built around \"the model selects and orchestrates tools to finish work.\"",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to understand why wunder is more than chat",
         "You need to understand tool sources, boundaries, and orchestration"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md",
         "docs/工具调用.md"
       ],
@@ -16186,14 +16168,13 @@
       "language": "en",
       "title": "Prompts and Skills",
       "summary": "wunder treats system prompts and skills as governed runtime objects rather than temporary text scattered across the codebase.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to understand why a thread's system prompt is frozen",
         "You need to understand the relationship between Skills, template packs, and `skill_call`"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md",
         "config/wunder-example.yaml"
       ],
@@ -16300,13 +16281,13 @@
       "language": "en",
       "title": "Long-term Memory",
       "summary": "wunder's long-term memory design revolves around thread freezing, one-time injection, and structured memory fragments.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to understand why long-term memory emphasizes freezing and one-time injection",
         "You need to troubleshoot the relationship between thread memory and the system prompt"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
+        "docs/设计文档/01-系统总体设计.md",
         "docs/API文档.md"
       ],
       "tab": "Reference",
@@ -16367,15 +16348,14 @@
       "language": "en",
       "title": "Token Account and Usage",
       "summary": "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You are looking at Token balance, daily grants, or session resource usage",
         "You want to understand why the system emphasizes round_usage.total_tokens and context occupancy"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Reference",
       "group": "Deep Dives",
@@ -16538,15 +16518,14 @@
       "language": "en",
       "title": "Boundary Handling",
       "summary": "wunder's handling strategies and recovery mechanisms for edge cases such as context overflow, network interruption, tool failure, and system exceptions.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You need to understand system behavior under exceptional conditions",
         "You need to design fault tolerance and recovery logic",
         "You need to troubleshoot production environment issues"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
+        "docs/设计文档/01-系统总体设计.md",
         "src/orchestrator/",
         "src/core/"
       ],
@@ -17056,13 +17035,13 @@
       "language": "en",
       "title": "Glossary",
       "summary": "Core terms in wunder documentation, explained in plain language.",
-      "updated_at": "2026-04-24",
+      "updated_at": "2026-04-28",
       "read_when": [
         "You're reading wunder docs for the first time",
         "You find terms that look similar but aren't sure of the difference"
       ],
       "source_docs": [
-        "docs/系统介绍.md"
+        "docs/设计文档/01-系统总体设计.md"
       ],
       "tab": "Help",
       "group": "Help",

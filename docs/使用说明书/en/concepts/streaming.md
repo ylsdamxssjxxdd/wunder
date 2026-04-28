@@ -6,7 +6,7 @@ read_when:
   - "You are designing a state machine for a chat interface"
 source_docs:
   - "docs/API文档.md"
-  - "docs/设计方案.md"
+  - "docs/设计文档/01-系统总体设计.md"
   - "src/api/chat.rs"
   - "src/api/core.rs"
 ---

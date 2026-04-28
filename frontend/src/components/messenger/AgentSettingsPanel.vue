@@ -129,8 +129,8 @@
 
         <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item messenger-agent-form-item--base">
           <div class="messenger-agent-base">
-            <div class="messenger-agent-base-item">
-              <div class="messenger-agent-base-label">{{ t('messenger.agentGroup.label') }}</div>
+            <div class="messenger-agent-base-card">
+              <div class="messenger-agent-base-card-label">{{ t('messenger.agentGroup.label') }}</div>
               <div class="messenger-agent-base-control">
                 <BeeroomGroupField
                   v-model="form.group"
@@ -140,8 +140,8 @@
                 />
               </div>
             </div>
-            <div ref="modelSectionRef" class="messenger-agent-base-item">
-              <div class="messenger-agent-base-label">{{ t('portal.agent.model.title') }}</div>
+            <div ref="modelSectionRef" class="messenger-agent-base-card">
+              <div class="messenger-agent-base-card-label">{{ t('portal.agent.model.title') }}</div>
               <div class="messenger-agent-base-control">
                 <el-select
                   v-model="form.model_name"
@@ -159,10 +159,11 @@
                     :value="model"
                   />
                 </el-select>
+                <div class="messenger-agent-base-hint">{{ t('portal.agent.model.hint') }}</div>
               </div>
             </div>
-            <div class="messenger-agent-base-item">
-              <div class="messenger-agent-base-label">{{ t('portal.agent.sandbox.title') }}</div>
+            <div class="messenger-agent-base-card">
+              <div class="messenger-agent-base-card-label">{{ t('portal.agent.sandbox.title') }}</div>
               <div class="messenger-agent-base-control">
                 <el-select
                   v-model="form.sandbox_container_id"
@@ -176,10 +177,11 @@
                     :value="id"
                   />
                 </el-select>
+                <div class="messenger-agent-base-hint">{{ t('portal.agent.sandbox.hint') }}</div>
               </div>
             </div>
-            <div v-if="showApprovalModeSetting" class="messenger-agent-base-item">
-              <div class="messenger-agent-base-label">{{ t('portal.agent.permission.title') }}</div>
+            <div v-if="showApprovalModeSetting" class="messenger-agent-base-card">
+              <div class="messenger-agent-base-card-label">{{ t('portal.agent.permission.title') }}</div>
               <div class="messenger-agent-base-control">
                 <el-select
                   v-model="form.approval_mode"
@@ -193,25 +195,29 @@
                     :value="item.value"
                   />
                 </el-select>
+                <div class="messenger-agent-base-hint">{{ t('portal.agent.permission.hint') }}</div>
               </div>
             </div>
-            <div class="messenger-agent-base-item messenger-agent-base-item--switch">
-              <div class="messenger-agent-base-label">{{ t('portal.agent.silent.title') }}</div>
-              <div class="messenger-agent-base-control">
-                <div class="messenger-agent-switch-row">
-                  <el-switch v-model="form.silent" :disabled="isInteractionDisabled" />
-                  <span class="messenger-agent-base-hint">{{ t('portal.agent.silent.hint') }}</span>
-                </div>
+            <div class="messenger-agent-base-card messenger-agent-base-card--switch">
+              <div class="messenger-agent-switch-head">
+                <div class="messenger-agent-base-card-label">{{ t('portal.agent.previewSkill.title') }}</div>
+                <el-switch v-model="form.preview_skill" :disabled="isInteractionDisabled" />
               </div>
+              <div class="messenger-agent-base-hint">{{ t('portal.agent.previewSkill.hint') }}</div>
             </div>
-            <div class="messenger-agent-base-item messenger-agent-base-item--switch">
-              <div class="messenger-agent-base-label">{{ t('portal.agent.preferMother.title') }}</div>
-              <div class="messenger-agent-base-control">
-                <div class="messenger-agent-switch-row">
-                  <el-switch v-model="form.prefer_mother" :disabled="isInteractionDisabled" />
-                  <span class="messenger-agent-base-hint">{{ t('portal.agent.preferMother.hint') }}</span>
-                </div>
+            <div class="messenger-agent-base-card messenger-agent-base-card--switch">
+              <div class="messenger-agent-switch-head">
+                <div class="messenger-agent-base-card-label">{{ t('portal.agent.silent.title') }}</div>
+                <el-switch v-model="form.silent" :disabled="isInteractionDisabled" />
               </div>
+              <div class="messenger-agent-base-hint">{{ t('portal.agent.silent.hint') }}</div>
+            </div>
+            <div class="messenger-agent-base-card messenger-agent-base-card--switch">
+              <div class="messenger-agent-switch-head">
+                <div class="messenger-agent-base-card-label">{{ t('portal.agent.preferMother.title') }}</div>
+                <el-switch v-model="form.prefer_mother" :disabled="isInteractionDisabled" />
+              </div>
+              <div class="messenger-agent-base-hint">{{ t('portal.agent.preferMother.hint') }}</div>
             </div>
           </div>
         </el-form-item>
@@ -473,6 +479,7 @@ type AgentFormSnapshot = {
   approval_mode: string;
   icon_name: string;
   icon_color: string;
+  preview_skill: boolean;
   silent: boolean;
   prefer_mother: boolean;
 };
@@ -549,6 +556,7 @@ const form = reactive({
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode(),
+  preview_skill: false,
   silent: false,
   prefer_mother: false,
   icon_name: DEFAULT_AGENT_AVATAR_IMAGE_KEY,
@@ -855,6 +863,7 @@ const buildFormSnapshot = (): AgentFormSnapshot => {
     approval_mode: normalizeApprovalMode(form.approval_mode),
     icon_name: normalizeAgentAvatarName(form.icon_name),
     icon_color: normalizeAgentAvatarColor(form.icon_color),
+    preview_skill: Boolean(form.preview_skill),
     silent: Boolean(form.silent),
     prefer_mother: Boolean(form.prefer_mother)
   };
@@ -1169,6 +1178,7 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     ) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
+    form.preview_skill = Boolean((agent as Record<string, unknown>).preview_skill);
     form.silent = Boolean(agent.silent);
     form.prefer_mother = Boolean(agent.prefer_mother);
     form.icon_name = normalizeAgentAvatarName(avatarConfig.name);
@@ -1225,6 +1235,7 @@ const saveAgent = async () => {
       model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode),
+      preview_skill: Boolean(form.preview_skill),
       silent: Boolean(form.silent),
       prefer_mother: Boolean(form.prefer_mother),
       icon: stringifyAgentAvatarIconConfig({
@@ -1266,6 +1277,7 @@ const exportWorkerCard = () => {
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
     approval_mode: normalizeApprovalMode(form.approval_mode),
     sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+    preview_skill: Boolean(form.preview_skill),
     silent: Boolean(form.silent),
     prefer_mother: Boolean(form.prefer_mother),
     hive_id: groupPayload.hive_id,
@@ -1450,21 +1462,24 @@ onBeforeUnmount(() => {
 .messenger-agent-base {
   width: 100%;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.messenger-agent-base-item {
+.messenger-agent-base-card {
   width: 100%;
   min-width: 0;
-  display: grid;
-  grid-template-columns: 148px minmax(0, 1fr);
-  gap: 16px;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.9);
 }
 
-.messenger-agent-base-label {
+.messenger-agent-base-card-label {
   color: var(--el-text-color-regular, #111827);
   font-size: 13px;
   font-weight: 600;
@@ -1476,16 +1491,11 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.messenger-agent-base-item--switch {
-  align-items: start;
-}
-
-.messenger-agent-switch-row {
+.messenger-agent-switch-head {
   display: flex;
+  justify-content: space-between;
   align-items: center;
   gap: 10px;
-  min-height: 32px;
-  flex-wrap: wrap;
 }
 
 .messenger-agent-base-hint {
@@ -1550,10 +1560,8 @@ onBeforeUnmount(() => {
     width: fit-content;
   }
 
-  .messenger-agent-base-item {
+  .messenger-agent-base {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-    align-items: stretch;
   }
 }
 </style>

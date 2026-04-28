@@ -3853,6 +3853,17 @@ async fn admin_monitor_compaction(
                 Some(prompt.to_string())
             }
         });
+    let preview_skill = agent_id
+        .as_deref()
+        .and_then(|agent_id| {
+            state
+                .user_store
+                .get_user_agent_by_id(agent_id)
+                .ok()
+                .flatten()
+        })
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
     let is_admin = state
         .user_store
         .get_user_by_id(&user_id)
@@ -3870,6 +3881,7 @@ async fn admin_monitor_compaction(
             payload.model_name.as_deref(),
             agent_id.as_deref(),
             agent_prompt.as_deref(),
+            Some(preview_skill),
             None,
             false,
             false,
@@ -4490,6 +4502,7 @@ async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, R
         "name": record.name.trim(),
         "description": record.description.trim(),
         "system_prompt": record.system_prompt.trim(),
+        "preview_skill": record.preview_skill,
         "model_name": Value::Null,
         "icon_name": icon_name,
         "icon_color": icon_color,
@@ -5995,6 +6008,7 @@ fn preset_agent_payload(
         name,
         description,
         system_prompt,
+        preview_skill,
         model_name,
         icon_name,
         icon_color,
@@ -6013,6 +6027,7 @@ fn preset_agent_payload(
         "name": name.trim(),
         "description": description.trim(),
         "system_prompt": system_prompt.trim(),
+        "preview_skill": preview_skill,
         "model_name": user_agent_presets::normalize_optional_model_name(model_name.as_deref()),
         "icon_name": normalize_preset_icon_name(Some(icon_name.as_str())),
         "icon_color": normalize_preset_icon_color(Some(icon_color.as_str())),
@@ -6076,6 +6091,7 @@ fn normalize_preset_agents(
                 name: cleaned_name.to_string(),
                 description: item.description.trim().to_string(),
                 system_prompt: item.system_prompt.trim().to_string(),
+                preview_skill: item.preview_skill.unwrap_or(false),
                 model_name: user_agent_presets::normalize_optional_model_name(
                     item.model_name.as_deref(),
                 ),
@@ -7372,6 +7388,8 @@ struct PresetAgentUpsertItem {
     description: String,
     #[serde(default)]
     system_prompt: String,
+    #[serde(default)]
+    preview_skill: Option<bool>,
     #[serde(default, alias = "modelName", alias = "model_name")]
     model_name: Option<String>,
     #[serde(default)]

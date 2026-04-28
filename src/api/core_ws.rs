@@ -64,6 +64,8 @@ struct WsStartPayload {
     #[serde(default)]
     agent_prompt: Option<String>,
     #[serde(default)]
+    preview_skill: bool,
+    #[serde(default)]
     attachments: Option<Vec<AttachmentPayload>>,
 }
 
@@ -396,6 +398,7 @@ async fn handle_ws(
                             language: payload.language,
                             config_overrides: payload.config_overrides,
                             agent_prompt: payload.agent_prompt,
+                            preview_skill: payload.preview_skill,
                             attachments: payload.attachments,
                             allow_queue: true,
                             is_admin: UserStore::is_admin(&user),

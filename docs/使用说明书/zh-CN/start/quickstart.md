@@ -6,8 +6,7 @@ read_when:
   - 你需要在 10 分钟内跑通一个可验证结果
 source_docs:
   - README.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # 快速开始

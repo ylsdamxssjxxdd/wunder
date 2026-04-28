@@ -537,6 +537,7 @@ async fn run_attempt(
             .or_else(|| Some(i18n::get_default_language())),
         config_overrides: ctx.config_overrides.clone(),
         agent_prompt: None,
+        preview_skill: false,
         attachments: None,
         allow_queue: true,
         is_admin: false,

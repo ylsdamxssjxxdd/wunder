@@ -23,7 +23,7 @@ mod search_content_tool;
 mod self_status_tool;
 mod session_run_stream;
 pub(crate) mod sessions_yield_tool;
-mod skill_call;
+pub(crate) mod skill_call;
 mod sleep_tool;
 mod subagent_control;
 mod swarm_realtime;
@@ -1726,6 +1726,7 @@ struct SwarmBatchDispatchTask {
     tool_names: Vec<String>,
     model_name: Option<String>,
     agent_prompt: Option<String>,
+    preview_skill: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1816,6 +1817,7 @@ async fn dispatch_swarm_batch_task(
         language: Some(i18n::get_language()),
         config_overrides: context.request_config_overrides.cloned(),
         agent_prompt: task.agent_prompt,
+        preview_skill: task.preview_skill,
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
@@ -3054,6 +3056,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             tool_names,
             model_name,
             agent_prompt,
+            preview_skill,
         ) = if let Some(session_record) = session_record {
             let tool_names = resolve_swarm_batch_tool_names(
                 context,
@@ -3080,6 +3083,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 tool_names,
                 model_name,
                 agent_prompt,
+                agent_record.preview_skill,
             )
         } else {
             match task_thread_strategy {
@@ -3133,6 +3137,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         tool_names,
                         model_name,
                         agent_prompt,
+                        agent_record.preview_skill,
                     )
                 }
                 SwarmWorkerThreadStrategy::FreshMainThread => {
@@ -3149,6 +3154,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         prepared.request.tool_names,
                         prepared.model_name,
                         prepared.request.agent_prompt,
+                        prepared.request.preview_skill,
                     )
                 }
             }
@@ -3215,6 +3221,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             tool_names,
             model_name,
             agent_prompt,
+            preview_skill,
         });
     }
 
@@ -4532,6 +4539,10 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         language: Some(i18n::get_language()),
         config_overrides: context.request_config_overrides.cloned(),
         agent_prompt,
+        preview_skill: agent_record
+            .as_ref()
+            .map(|record| record.preview_skill)
+            .unwrap_or(false),
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
@@ -4747,6 +4758,10 @@ fn prepare_child_session(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let preview_skill = child_agent_record
+        .as_ref()
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
 
     let now = now_ts();
     let child_session_id = format!("sess_{}", Uuid::new_v4().simple());
@@ -4794,6 +4809,7 @@ fn prepare_child_session(
             language: Some(i18n::get_language()),
             config_overrides: context.request_config_overrides.cloned(),
             agent_prompt,
+            preview_skill,
             attachments: None,
             allow_queue: true,
             is_admin: context.is_admin,
@@ -10268,6 +10284,7 @@ mod tests {
             name: "政策副手".to_string(),
             description: String::new(),
             system_prompt: "use policy knowledge".to_string(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: vec!["技能创建器".to_string()],
@@ -10323,6 +10340,7 @@ mod tests {
             name: "母蜂".to_string(),
             description: String::new(),
             system_prompt: "coordinate workers".to_string(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: vec!["智能体蜂群".to_string()],

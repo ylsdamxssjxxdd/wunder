@@ -5,8 +5,7 @@ read_when:
   - 你第一次系统性阅读 wunder 文档
   - 你发现很多词看起来相近但不知道区别
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
 ---
 

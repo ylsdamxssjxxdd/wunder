@@ -6,7 +6,7 @@ read_when:
   - You want to plug external A2A services into Wunder's tool system
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/api/a2a.rs
   - config/wunder-example.yaml
 ---

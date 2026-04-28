@@ -6,8 +6,7 @@ read_when:
   - "You need to decide between `/wunder` and `/wunder/chat/*`"
 source_docs:
   - "docs/API文档.md"
-  - "docs/系统介绍.md"
-  - "docs/设计方案.md"
+  - "docs/设计文档/01-系统总体设计.md"
 ---
 
 # wunder API

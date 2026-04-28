@@ -124,6 +124,7 @@ pub async fn ensure_external_embed_agent_with_runtime(
         name: cleaned_name.to_string(),
         description: preset.description.trim().to_string(),
         system_prompt: preset.system_prompt.trim().to_string(),
+        preview_skill: preset.preview_skill,
         model_name: None,
         ability_items: Vec::new(),
         declared_tool_names: Vec::new(),

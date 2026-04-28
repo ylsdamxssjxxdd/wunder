@@ -614,6 +614,15 @@
                     <textarea id="presetAgentFormPrompt" rows="6"></textarea>
                   </div>
                   <div class="form-row">
+                    <label class="checkbox-row">
+                      <input id="presetAgentPreviewSkill" type="checkbox" />
+                      <span data-i18n="presetAgents.form.previewSkill">预习技能</span>
+                    </label>
+                    <div class="tips" data-i18n="presetAgents.form.previewSkillHint">
+                      开启后，挂载技能会将 SKILL.md 直接并入系统提示词。
+                    </div>
+                  </div>
+                  <div class="form-row">
                     <label for="presetAgentFormModelName" data-i18n="presetAgents.form.modelName">启用模型</label>
                     <div class="preset-agent-model-row">
                       <select id="presetAgentFormModelName"></select>

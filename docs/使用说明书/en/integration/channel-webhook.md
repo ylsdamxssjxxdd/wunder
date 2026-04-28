@@ -6,8 +6,8 @@ read_when:
   - You want to understand the relationship between Webhook, persistent connections, and the outbox
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
+  - docs/设计文档/07-接入、网关与渠道系统设计.md
   - src/api/channel.rs
   - src/channels/catalog.rs
 ---

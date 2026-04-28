@@ -7,7 +7,7 @@ read_when:
 source_docs:
   - config/wunder-example.yaml
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # Configuration

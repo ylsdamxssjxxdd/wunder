@@ -6,7 +6,7 @@ read_when:
   - 你要理解 Wunder 内部 MCP 与 extra_mcp 的关系
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/services/mcp.rs
   - config/wunder-example.yaml
 ---

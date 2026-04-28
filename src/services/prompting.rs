@@ -14,6 +14,7 @@ use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
     render_prompt_tool_spec, resolve_tool_name,
 };
+use crate::services::tools::skill_call::render_skill_markdown_for_model;
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
 use chrono::Local;
@@ -169,6 +170,7 @@ impl PromptComposer {
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         agent_prompt: Option<&str>,
+        preview_skill: bool,
     ) -> String {
         let tool_key = build_tool_key(allowed_tool_names);
         let language = i18n::get_language();
@@ -190,8 +192,9 @@ impl PromptComposer {
         let prompt_template_key = build_prompt_template_cache_key(&prompt_template_scope);
         let templates_revision = system_prompt_templates_revision();
         let workdir_key = workdir.to_string_lossy();
+        let preview_skill_key = if preview_skill { "preview" } else { "meta" };
         let base_key = format!(
-            "{workspace_id}|{current_agent_key}|{config_version}|{prompt_template_key}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
+            "{workspace_id}|{current_agent_key}|{config_version}|{prompt_template_key}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{preview_skill_key}|{language}"
         );
         let workspace_version = workspace.get_tree_cache_version(workspace_id);
         let cache_key = format!("{base_key}|{workspace_version}");
@@ -302,6 +305,7 @@ impl PromptComposer {
                 &builtin_skills_for_prompt,
                 &user_skills_for_prompt,
                 agent_prompt,
+                preview_skill,
                 &build_inner_visible_prompt_mapping(
                     workspace,
                     prompt_owner_user_id,
@@ -543,6 +547,7 @@ fn build_system_prompt_skeleton(
     builtin_skills: &[SkillSpec],
     user_skills: &[SkillSpec],
     agent_prompt: Option<&str>,
+    preview_skill: bool,
     inner_visible_mapping: &HashMap<String, String>,
 ) -> String {
     let os_name = system_name();
@@ -646,8 +651,16 @@ fn build_system_prompt_skeleton(
     let skills_block = if builtin_skills.is_empty() && user_skills.is_empty() {
         String::new()
     } else {
-        let builtin_skills_list = render_skill_list_or_placeholder(builtin_skills);
-        let user_skills_list = render_skill_list_or_placeholder(user_skills);
+        let builtin_skills_list = if preview_skill {
+            render_preview_skill_list_or_placeholder(builtin_skills)
+        } else {
+            render_skill_list_or_placeholder(builtin_skills)
+        };
+        let user_skills_list = if preview_skill {
+            render_preview_skill_list_or_placeholder(user_skills)
+        } else {
+            render_skill_list_or_placeholder(user_skills)
+        };
         let skills_template = read_prompt_template_from_scope(
             config,
             template_scope,
@@ -863,6 +876,34 @@ fn render_skill_list_or_placeholder(skills: &[SkillSpec]) -> String {
         "- (none)".to_string()
     } else {
         render_skill_list(skills)
+    }
+}
+
+fn render_preview_skill_list(skills: &[SkillSpec]) -> String {
+    let mut sorted = skills.to_vec();
+    sorted.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    let mut blocks = Vec::new();
+    for spec in sorted {
+        let raw = match std::fs::read_to_string(&spec.path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let skill_path = absolute_path_str_from_text(&spec.path);
+        let skill_root = absolute_path_str(&spec.root);
+        let rendered = render_skill_markdown_for_model(&raw, &skill_root);
+        blocks.push(format!(
+            "## {}\nSKILL.md: {}\n\n{}",
+            spec.name, skill_path, rendered.trim()
+        ));
+    }
+    blocks.join("\n\n").trim().to_string()
+}
+
+fn render_preview_skill_list_or_placeholder(skills: &[SkillSpec]) -> String {
+    if skills.is_empty() {
+        "- (none)".to_string()
+    } else {
+        render_preview_skill_list(skills)
     }
 }
 

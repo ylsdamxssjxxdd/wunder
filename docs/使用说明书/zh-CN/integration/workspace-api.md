@@ -7,7 +7,7 @@ read_when:
 source_docs:
   - docs/API文档.md
   - src/api/workspace.rs
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # 工作区 API

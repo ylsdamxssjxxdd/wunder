@@ -6,7 +6,7 @@ read_when:
   - You don't want to browse through the complete `docs/API文档.md` directly
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # API Index

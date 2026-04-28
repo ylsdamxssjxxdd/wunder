@@ -4260,6 +4260,7 @@ pub(crate) async fn build_current_system_prompt(
             &workspace_id,
             request_overrides.as_ref(),
             effective_prompt.as_deref(),
+            false,
         )
         .await)
 }
@@ -6474,6 +6475,18 @@ pub(crate) async fn build_wunder_request(
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string)
         });
+    let preview_skill = resolved_agent
+        .as_deref()
+        .and_then(|agent_id| {
+            runtime
+                .state
+                .user_store
+                .get_user_agent(&runtime.user_id, agent_id)
+                .ok()
+                .flatten()
+        })
+        .map(|record| record.preview_skill)
+        .unwrap_or(false);
 
     Ok(WunderRequest {
         user_id: runtime.user_id.clone(),
@@ -6488,6 +6501,7 @@ pub(crate) async fn build_wunder_request(
         language: global.language.clone(),
         config_overrides: request_overrides,
         agent_prompt: build_effective_agent_prompt(runtime),
+        preview_skill,
         attachments,
         allow_queue: true,
         is_admin: false,

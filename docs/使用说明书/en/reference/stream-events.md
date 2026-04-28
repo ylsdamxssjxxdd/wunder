@@ -6,7 +6,7 @@ read_when:
   - You want to understand why turn_terminal, approval_resolved, and thread_status matter
 source_docs:
   - docs/API文档.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - src/orchestrator/execute.rs
   - src/api/chat.rs
 ---

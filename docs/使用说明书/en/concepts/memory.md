@@ -5,7 +5,7 @@ read_when:
   - You need to understand why long-term memory emphasizes freezing and one-time injection
   - You need to troubleshoot the relationship between thread memory and the system prompt
 source_docs:
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
 ---
 

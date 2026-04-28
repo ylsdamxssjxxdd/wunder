@@ -637,6 +637,7 @@ async fn import_worker_card_item(
         name: parsed.name.clone(),
         description: parsed.description.clone(),
         system_prompt: parsed.system_prompt.clone(),
+        preview_skill: parsed.preview_skill,
         model_name: parsed.model_name.clone(),
         ability_items: selection.ability_items,
         tool_names: filter_allowed_tools(&selection.tool_names, &allowed_tool_names),

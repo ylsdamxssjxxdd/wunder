@@ -269,6 +269,8 @@ pub struct UserAgentPresetConfig {
     #[serde(default)]
     pub system_prompt: String,
     #[serde(default)]
+    pub preview_skill: bool,
+    #[serde(default)]
     pub model_name: Option<String>,
     #[serde(default = "default_user_agent_preset_icon_name")]
     pub icon_name: String,

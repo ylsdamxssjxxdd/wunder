@@ -7,8 +7,7 @@ read_when:
   - You are troubleshooting why switching template packs takes effect for new threads but not existing ones
 source_docs:
   - docs/API文档.md
-  - docs/设计方案.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/api/admin_prompt_templates.rs
   - src/api/user_prompt_templates.rs
 ---

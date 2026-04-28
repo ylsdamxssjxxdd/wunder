@@ -6,7 +6,7 @@ read_when:
   - You need to determine which credentials to use for which entry points
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/core/auth.rs
   - config/wunder-example.yaml
 ---

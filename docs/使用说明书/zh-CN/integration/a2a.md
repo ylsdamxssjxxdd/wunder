@@ -6,7 +6,7 @@ read_when:
   - 你要把外部 A2A 服务接进 Wunder 的工具体系
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/api/a2a.rs
   - config/wunder-example.yaml
 ---

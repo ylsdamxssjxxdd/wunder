@@ -58,6 +58,20 @@ impl Orchestrator {
         filter_tool_names_by_model_capability(allowed_tool_names, support_vision)
     }
 
+    pub(super) fn apply_preview_skill_tool_policy(
+        &self,
+        mut allowed_tool_names: HashSet<String>,
+        preview_skill: bool,
+    ) -> HashSet<String> {
+        if preview_skill {
+            for name in ["skill_call", "skill_get", "技能调用"] {
+                allowed_tool_names.remove(name);
+                allowed_tool_names.remove(&resolve_tool_name(name));
+            }
+        }
+        allowed_tool_names
+    }
+
     pub(crate) fn build_function_tooling(
         &self,
         config: &Config,
@@ -144,6 +158,7 @@ impl Orchestrator {
         workspace_id: &str,
         agent_id: Option<&str>,
         agent_prompt: Option<&str>,
+        preview_skill: bool,
     ) -> String {
         let workdir = self
             .workspace
@@ -165,6 +180,7 @@ impl Orchestrator {
                 skills,
                 user_tool_bindings,
                 agent_prompt,
+                preview_skill,
             )
             .await
     }
@@ -185,6 +201,7 @@ impl Orchestrator {
         agent_id: Option<&str>,
         _is_admin: bool,
         agent_prompt: Option<&str>,
+        preview_skill: bool,
         _query_text: Option<&str>,
         round_id: Option<&str>,
     ) -> String {
@@ -239,6 +256,7 @@ impl Orchestrator {
                 workspace_id,
                 resolved_agent_id.as_deref(),
                 effective_agent_prompt.as_deref(),
+                preview_skill,
             )
             .await;
         // Freeze the initial memory snapshot together with the session prompt so

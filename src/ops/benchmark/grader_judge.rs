@@ -40,6 +40,7 @@ pub async fn grade_with_judge(
         language,
         config_overrides,
         agent_prompt: None,
+        preview_skill: false,
         attachments: None,
         allow_queue: true,
         is_admin: false,

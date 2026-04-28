@@ -12,6 +12,7 @@ pub(super) struct PreparedRequest {
     pub(super) model_name: Option<String>,
     pub(super) config_overrides: Option<Value>,
     pub(super) agent_prompt: Option<String>,
+    pub(super) preview_skill: bool,
     pub(super) agent_id: Option<String>,
     pub(super) stream: bool,
     pub(super) debug_payload: bool,

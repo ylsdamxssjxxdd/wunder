@@ -13,6 +13,8 @@ pub struct DefaultAgentConfig {
     #[serde(default)]
     pub system_prompt: String,
     #[serde(default)]
+    pub preview_skill: bool,
+    #[serde(default)]
     pub ability_items: Vec<AbilityDescriptor>,
     #[serde(default)]
     pub tool_names: Vec<String>,
@@ -49,6 +51,7 @@ pub fn default_agent_config_from_record(record: &UserAgentRecord) -> DefaultAgen
         name: record.name.clone(),
         description: record.description.clone(),
         system_prompt: record.system_prompt.clone(),
+        preview_skill: record.preview_skill,
         ability_items: record.ability_items.clone(),
         tool_names: record.tool_names.clone(),
         declared_tool_names: record.declared_tool_names.clone(),
@@ -78,6 +81,7 @@ pub fn record_from_default_agent_config(
         name: config.name.clone(),
         description: config.description.clone(),
         system_prompt: config.system_prompt.clone(),
+        preview_skill: config.preview_skill,
         model_name: None,
         ability_items: config.ability_items.clone(),
         tool_names: config.tool_names.clone(),

@@ -864,6 +864,13 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         defaultValue: true
       },
       {
+        key: 'resource',
+        labelKey: 'channels.form.xmpp.resource',
+        placeholderKey: 'channels.form.xmpp.resourcePlaceholder',
+        defaultValue: 'coplat',
+        advanced: true
+      },
+      {
         key: 'direct_tls',
         labelKey: 'channels.form.xmpp.directTls',
         type: 'checkbox',

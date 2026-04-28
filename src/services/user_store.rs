@@ -1493,6 +1493,7 @@ mod tests {
             name: "预设问题测试".to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: vec!["file_read".to_string()],

@@ -263,6 +263,7 @@ fn create_agent(
         name: name.to_string(),
         description: description.to_string(),
         system_prompt: format!("system prompt for {name}"),
+        preview_skill: false,
         model_name: Some("gpt-5.4".to_string()),
         ability_items: Vec::new(),
         tool_names: Vec::new(),

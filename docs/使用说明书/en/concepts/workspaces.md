@@ -5,8 +5,7 @@ read_when:
   - "You want to understand why files are isolated by user and container"
   - "You need to determine the relationship between `agent_id`, `container_id`, and workspace"
 source_docs:
-  - "docs/系统介绍.md"
-  - "docs/设计方案.md"
+  - "docs/设计文档/01-系统总体设计.md"
   - "docs/API文档.md"
 ---
 

@@ -256,6 +256,8 @@ struct WorkerCardRuntime {
     #[serde(default)]
     approval_mode: Option<String>,
     #[serde(default)]
+    preview_skill: Option<bool>,
+    #[serde(default)]
     sandbox_container_id: Option<i32>,
     #[serde(default)]
     is_shared: Option<bool>,
@@ -367,6 +369,7 @@ struct WorkerImportSnapshot {
     description: String,
     duty: String,
     approval_mode: String,
+    preview_skill: bool,
     icon: Option<String>,
     silent: bool,
     prefer_mother: bool,
@@ -808,6 +811,7 @@ async fn run_import_job_inner(
             name: final_agent_name.clone(),
             description: snapshot.description.clone(),
             system_prompt: snapshot.role_prompt.clone(),
+            preview_skill: snapshot.preview_skill,
             model_name: None,
             ability_items: Vec::new(),
             tool_names,
@@ -1208,6 +1212,7 @@ fn install_worker_snapshot(
         .icon
         .clone()
         .or_else(|| worker_ref.icon.clone());
+    let preview_skill = worker_card.runtime.preview_skill.unwrap_or(false);
     let silent = worker_card
         .runtime
         .silent
@@ -1316,6 +1321,7 @@ fn install_worker_snapshot(
         description,
         duty,
         approval_mode,
+        preview_skill,
         icon,
         silent,
         prefer_mother,
@@ -1666,6 +1672,7 @@ fn build_worker_card_manifest(
         },
         runtime: WorkerCardRuntime {
             approval_mode: Some(normalize_approval_mode(Some(&agent.approval_mode))),
+            preview_skill: Some(agent.preview_skill),
             sandbox_container_id: Some(normalize_sandbox_container_id(agent.sandbox_container_id)),
             is_shared: Some(agent.is_shared),
             silent: Some(agent.silent),
@@ -2883,10 +2890,11 @@ mod tests {
         normalize_export_filename_stem, normalize_import_conflict_mode, normalize_name,
         remap_import_declared_skill_names, resolve_declared_skill_runtime_name,
         resolve_import_skill_name, resolve_import_workers, resolve_worker_skill_sources,
-        unique_label_with_reserved, unique_slug_with_reserved, validate_archive_entry_path,
+        unique_label_with_reserved, unique_slug_with_reserved,
         validate_hive_manifest, validate_relative_path, HiveManifest, HivePackMeta,
         ImportConflictMode,
     };
+    use crate::services::archive_extract::validate_archive_entry_path;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::SkillSpec;
     use crate::storage::{UserAgentRecord, DEFAULT_SANDBOX_CONTAINER_ID};
@@ -3287,6 +3295,7 @@ mod tests {
             name: "Worker Alpha".to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             tool_names: vec!["skill_alpha".to_string()],
             declared_tool_names: Vec::new(),
@@ -3328,6 +3337,7 @@ mod tests {
             name: "Worker Beta".to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: vec!["skill_beta".to_string()],
@@ -3410,6 +3420,7 @@ mod tests {
             name: "Worker Alpha".to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: Vec::new(),

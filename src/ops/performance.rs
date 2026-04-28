@@ -282,6 +282,7 @@ async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) 
                 &context.workspace.scoped_user_id(&context.user_id, None),
                 None,
                 None,
+                false,
             )
             .await;
         Ok((started.elapsed().as_secs_f64() * 1000.0, None))

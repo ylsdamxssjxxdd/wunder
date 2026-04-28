@@ -1101,6 +1101,10 @@ async fn create_agent(
         .as_ref()
         .map(|source| source.prefer_mother)
         .unwrap_or_else(|| payload.prefer_mother.unwrap_or(false));
+    let preview_skill = copy_source
+        .as_ref()
+        .map(|source| source.preview_skill)
+        .unwrap_or_else(|| payload.preview_skill.unwrap_or(false));
     let now = now_ts();
     let sandbox_container_id =
         normalize_sandbox_container_id(payload.sandbox_container_id.unwrap_or_else(|| {
@@ -1136,6 +1140,7 @@ async fn create_agent(
         name,
         description,
         system_prompt,
+        preview_skill,
         model_name: requested_model_name.or_else(|| {
             copy_source
                 .as_ref()
@@ -1204,6 +1209,9 @@ async fn update_agent(
         }
         if let Some(system_prompt) = payload.system_prompt {
             config.system_prompt = system_prompt;
+        }
+        if let Some(preview_skill) = payload.preview_skill {
+            config.preview_skill = preview_skill;
         }
         if payload.tool_names.is_some()
             || payload.ability_items.is_some()
@@ -1278,6 +1286,9 @@ async fn update_agent(
     }
     if let Some(system_prompt) = payload.system_prompt {
         record.system_prompt = system_prompt;
+    }
+    if let Some(preview_skill) = payload.preview_skill {
+        record.preview_skill = preview_skill;
     }
     if payload.model_name.is_some() {
         record.model_name = normalize_request_model_name(payload.model_name.as_deref());
@@ -1560,6 +1571,7 @@ fn agent_payload(
         "name": record.name,
         "description": record.description,
         "system_prompt": record.system_prompt,
+        "preview_skill": record.preview_skill,
         "configured_model_name": configured_model_name,
         "model_name": effective_model_name,
         "ability_items": ability_items.clone(),
@@ -2242,6 +2254,7 @@ async fn build_default_agent_config(
         name: DEFAULT_AGENT_NAME.to_string(),
         description: DEFAULT_AGENT_DESCRIPTION.to_string(),
         system_prompt: DEFAULT_AGENT_SYSTEM_PROMPT.to_string(),
+        preview_skill: false,
         ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
         tool_names,
         declared_tool_names: Vec::new(),
@@ -2320,6 +2333,7 @@ fn default_agent_payload(
         "name": config.name,
         "description": config.description,
         "system_prompt": config.system_prompt,
+        "preview_skill": config.preview_skill,
         "configured_model_name": Value::Null,
         "model_name": effective_model_name,
         "ability_items": ability_items.clone(),
@@ -2460,6 +2474,8 @@ struct AgentCreateRequest {
     silent: Option<bool>,
     #[serde(default, alias = "preferMother", alias = "prefer_mother")]
     prefer_mother: Option<bool>,
+    #[serde(default, alias = "previewSkill", alias = "preview_skill")]
+    preview_skill: Option<bool>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
     #[serde(
@@ -2542,6 +2558,8 @@ struct AgentUpdateRequest {
     silent: Option<bool>,
     #[serde(default, alias = "preferMother", alias = "prefer_mother")]
     prefer_mother: Option<bool>,
+    #[serde(default, alias = "previewSkill", alias = "preview_skill")]
+    preview_skill: Option<bool>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
     #[serde(
@@ -2630,6 +2648,7 @@ mod tests {
                 name: "Default Agent".to_string(),
                 description: String::new(),
                 system_prompt: String::new(),
+                preview_skill: false,
                 ability_items: Vec::new(),
                 tool_names: vec!["read_file".to_string(), "planner".to_string()],
                 declared_tool_names: vec!["read_file".to_string()],

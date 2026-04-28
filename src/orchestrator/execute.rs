@@ -351,6 +351,10 @@ impl Orchestrator {
                 ),
                 llm_config.support_vision.unwrap_or(false),
             );
+            let allowed_tool_names = self.apply_preview_skill_tool_policy(
+                allowed_tool_names,
+                prepared.preview_skill,
+            );
             let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
             let function_tooling = if uses_native_tool_api(tool_call_mode, &llm_config)
                 && !prepared.skip_tool_calls
@@ -385,6 +389,7 @@ impl Orchestrator {
                     prepared.agent_id.as_deref(),
                     is_admin,
                     prepared.agent_prompt.as_deref(),
+                    prepared.preview_skill,
                     Some(&question),
                     Some(user_round_id.as_str()),
                 )

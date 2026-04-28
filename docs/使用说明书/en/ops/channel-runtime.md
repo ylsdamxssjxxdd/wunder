@@ -6,8 +6,7 @@ read_when:
   - You want to know what channel runtime interfaces are available on both admin and user sides
 source_docs:
   - docs/API文档.md
-  - docs/设计方案.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # Channel Runtime

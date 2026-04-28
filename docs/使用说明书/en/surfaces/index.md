@@ -5,9 +5,8 @@ read_when:
   - You want to quickly understand what the user frontend, admin frontend, and desktop each do
   - You are looking for which interface a particular feature belongs to
 source_docs:
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
-  - docs/设计方案.md
 ---
 
 # Interface Overview

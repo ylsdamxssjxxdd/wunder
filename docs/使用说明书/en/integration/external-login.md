@@ -6,7 +6,7 @@ read_when:
   - You want to understand the purposes of external login, launch, and token_login
 source_docs:
   - docs/API文档.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - config/wunder-example.yaml
   - src/api/auth.rs
 ---

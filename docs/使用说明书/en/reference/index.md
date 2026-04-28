@@ -6,8 +6,7 @@ read_when:
   - You already know which layer the problem is in and want to quickly check the standard answer
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # Reference Overview

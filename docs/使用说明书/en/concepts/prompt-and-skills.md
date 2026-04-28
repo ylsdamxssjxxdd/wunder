@@ -5,8 +5,7 @@ read_when:
   - You need to understand why a thread's system prompt is frozen
   - You need to understand the relationship between Skills, template packs, and `skill_call`
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
   - config/wunder-example.yaml
 ---

@@ -397,6 +397,8 @@ export default {
   'portal.agent.sandbox.label': 'Workspace Directory',
   'portal.agent.sandbox.option': 'Agent Workspace {id}',
   'portal.agent.sandbox.hint': 'Agents using the same agent workspace ID (1-10) share one file workspace.',
+  'portal.agent.previewSkill.title': 'Preview Skills',
+  'portal.agent.previewSkill.hint': 'When enabled, mounted skills inject their full SKILL.md into the system prompt.',
   'portal.agent.silent.title': 'Silent Mode',
   'portal.agent.silent.hint':
     'Hide this agent from the messenger middle list and the beeroom right sidebar message feed.',
@@ -810,6 +812,8 @@ export default {
   'channels.form.xmpp.hostPlaceholder': 'For example: xmpp.example.com',
   'channels.form.xmpp.port': 'Server Port (Optional)',
   'channels.form.xmpp.portPlaceholder': 'Default 5222/5223',
+  'channels.form.xmpp.resource': 'Resource',
+  'channels.form.xmpp.resourcePlaceholder': 'Default: coplat',
   'channels.form.xmpp.trustSelfSigned': 'Trust private certificate (default)',
   'channels.form.xmpp.directTls': 'Use Direct TLS (5223)',
   'channels.form.xmpp.mucNick': 'MUC Nickname (Optional)',

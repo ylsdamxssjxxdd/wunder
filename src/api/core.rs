@@ -178,6 +178,7 @@ async fn wunder_system_prompt(
             &workspace_id,
             request.config_overrides.as_ref(),
             request.agent_prompt.as_deref(),
+            request.preview_skill,
         )
         .await;
     let elapsed = Utc::now() - start;

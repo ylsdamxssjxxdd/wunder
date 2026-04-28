@@ -6,7 +6,7 @@ read_when:
   - 你要处理 start/resume/watch/cancel/approval
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/api/chat_ws.rs
 ---
 
@@ -99,4 +99,4 @@ WS 不可用时：
 
 - [聊天会话](/docs/zh-CN/integration/chat-sessions/)
 - [wunder API](/docs/zh-CN/integration/wunder-api/)
-- [流式事件参考](/docs/zh-CN/reference/stream-events/)
+- [流式事件参考](/docs/zh-CN/reference/stream-events/)

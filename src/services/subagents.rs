@@ -956,6 +956,7 @@ fn build_parent_auto_wake_request(
         language: None,
         config_overrides: Some(build_auto_wake_request_overrides(config_overrides)),
         agent_prompt: None,
+        preview_skill: false,
         attachments: None,
         allow_queue: true,
         is_admin: false,

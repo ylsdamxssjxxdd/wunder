@@ -1130,6 +1130,7 @@ mod tests {
                     name: agent_id.to_string(),
                     description: String::new(),
                     system_prompt: String::new(),
+                    preview_skill: false,
                     model_name: None,
                     ability_items: Vec::new(),
                     tool_names: Vec::new(),

@@ -1108,6 +1108,10 @@ impl ChannelHub {
             .as_ref()
             .map(|record| record.system_prompt.trim().to_string())
             .filter(|value| !value.is_empty());
+        let preview_skill = agent_record
+            .as_ref()
+            .map(|record| record.preview_skill)
+            .unwrap_or(false);
 
         let mut request = WunderRequest {
             user_id: session_info.user_id.clone(),
@@ -1122,6 +1126,7 @@ impl ChannelHub {
             language: Some(crate::i18n::get_language()),
             config_overrides,
             agent_prompt,
+            preview_skill,
             attachments: None,
             allow_queue: false,
             is_admin: false,
@@ -5353,6 +5358,7 @@ mod tests {
             name: "数据助手".to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: Vec::new(),

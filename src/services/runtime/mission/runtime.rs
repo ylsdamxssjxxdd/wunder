@@ -1296,6 +1296,7 @@ fn build_task_request(
         language: Some(i18n::get_language()),
         config_overrides: None,
         agent_prompt,
+        preview_skill: agent.preview_skill,
         attachments: None,
         allow_queue: true,
         is_admin: false,

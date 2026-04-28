@@ -6,8 +6,7 @@ read_when:
   - 你不确定该从 `/wunder`、聊天域还是工作区接口开始
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
 ---
 
 # 接入概览

@@ -5,7 +5,7 @@ read_when:
   - You need to understand why wunder is more than chat
   - You need to understand tool sources, boundaries, and orchestration
 source_docs:
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
   - docs/工具调用.md
 ---

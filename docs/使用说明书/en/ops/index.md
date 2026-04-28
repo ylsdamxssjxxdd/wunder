@@ -5,8 +5,7 @@ read_when:
   - You are deploying or taking over a Wunder runtime environment
   - You need to quickly locate operations and governance entry points
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - docs/API文档.md
 ---
 

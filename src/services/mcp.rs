@@ -218,6 +218,7 @@ impl ServerHandler for WunderMcpServer {
                 language: Some(i18n::get_default_language()),
                 config_overrides: None,
                 agent_prompt: None,
+                preview_skill: false,
                 attachments: None,
                 allow_queue: true,
                 is_admin: false,

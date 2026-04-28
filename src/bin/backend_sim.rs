@@ -182,6 +182,7 @@ async fn run_one_request(
         language: Some("zh-CN".to_string()),
         config_overrides: Some(config_overrides.as_ref().clone()),
         agent_prompt: None,
+        preview_skill: false,
         attachments: None,
         allow_queue: true,
         is_admin: false,

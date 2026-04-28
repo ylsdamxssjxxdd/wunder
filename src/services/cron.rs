@@ -1634,6 +1634,10 @@ impl CronRuntime {
             .as_ref()
             .map(|record| record.system_prompt.trim().to_string())
             .filter(|value| !value.is_empty());
+        let preview_skill = agent_record
+            .as_ref()
+            .map(|record| record.preview_skill)
+            .unwrap_or(false);
 
         if should_auto_title(&record.title) {
             if let Some(title) = build_session_title(message) {
@@ -1662,6 +1666,7 @@ impl CronRuntime {
             language: None,
             config_overrides: None,
             agent_prompt,
+            preview_skill,
             attachments: None,
             allow_queue: true,
             is_admin: UserStore::is_admin(&user),

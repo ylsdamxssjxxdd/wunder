@@ -6,8 +6,7 @@ read_when:
   - You need to design fault tolerance and recovery logic
   - You need to troubleshoot production environment issues
 source_docs:
-  - docs/系统介绍.md
-  - docs/设计方案.md
+  - docs/设计文档/01-系统总体设计.md
   - src/orchestrator/
   - src/core/
 ---

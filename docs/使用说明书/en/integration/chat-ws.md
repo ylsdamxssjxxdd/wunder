@@ -6,7 +6,7 @@ read_when:
   - You need to handle start/resume/watch/cancel/approval
 source_docs:
   - docs/API文档.md
-  - docs/系统介绍.md
+  - docs/设计文档/01-系统总体设计.md
   - src/api/chat_ws.rs
 ---
 

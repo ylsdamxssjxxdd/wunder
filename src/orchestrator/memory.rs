@@ -1151,6 +1151,7 @@ impl Orchestrator {
         model_name: Option<&str>,
         agent_id: Option<&str>,
         agent_prompt: Option<&str>,
+        preview_skill_override: Option<bool>,
         manual_user_round_override: Option<i64>,
         debug_payload: bool,
         manage_runtime_turn: bool,
@@ -1232,6 +1233,14 @@ impl Orchestrator {
             ),
             llm_config.support_vision.unwrap_or(false),
         );
+        let preview_skill = preview_skill_override.unwrap_or_else(|| {
+            agent_id
+            .and_then(|id| self.storage.get_user_agent(user_id, id).ok().flatten())
+            .map(|record| record.preview_skill)
+            .unwrap_or(false)
+        });
+        let allowed_tool_names =
+            self.apply_preview_skill_tool_policy(allowed_tool_names, preview_skill);
         let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
         let workspace_id = self.resolve_workspace_id(user_id, agent_id);
         let system_prompt = self
@@ -1249,6 +1258,7 @@ impl Orchestrator {
                 agent_id,
                 is_admin,
                 agent_prompt,
+                preview_skill,
                 None,
                 None,
             )

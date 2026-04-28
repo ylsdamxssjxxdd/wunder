@@ -387,6 +387,7 @@ fn seed_agents(state: &AppState, user_id: &str, agent_count: usize) -> Result<Ve
             description: "Deterministic swarm benchmark worker".to_string(),
             system_prompt: "Return a short deterministic completion for benchmark validation."
                 .to_string(),
+            preview_skill: false,
             model_name: None,
             ability_items: Vec::new(),
             tool_names: Vec::new(),

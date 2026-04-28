@@ -181,6 +181,7 @@ const REQUIRED_KEYS = [
   "presetAgentFormName",
   "presetAgentFormDescription",
   "presetAgentFormPrompt",
+  "presetAgentPreviewSkill",
   "presetAgentFormModelName",
   "presetAgentAvatarTrigger",
   "presetAgentAvatarPreview",
@@ -544,6 +545,7 @@ const normalizePreset = (item) => ({
   name: String(item?.name || "").trim(),
   description: String(item?.description || "").trim(),
   system_prompt: String(item?.system_prompt || "").trim(),
+  preview_skill: item?.preview_skill === true,
   model_name: normalizeOptionalModelName(item?.model_name || item?.modelName),
   icon_name: normalizeIconName(item?.icon_name),
   icon_color: normalizeIconColor(item?.icon_color),
@@ -629,6 +631,7 @@ const normalizeUserAgent = (item) => ({
   name: String(item?.name || "").trim(),
   description: String(item?.description || "").trim(),
   system_prompt: String(item?.system_prompt || "").trim(),
+  preview_skill: item?.preview_skill === true,
   configured_model_name: normalizeOptionalModelName(item?.configured_model_name || item?.configuredModelName),
   model_name: normalizeOptionalModelName(item?.model_name || item?.modelName),
   tool_names: Array.isArray(item?.tool_names)
@@ -1273,6 +1276,7 @@ const fillPresetForm = (preset) => {
   elements.presetAgentFormName.value = preset?.name || "";
   elements.presetAgentFormDescription.value = preset?.description || "";
   elements.presetAgentFormPrompt.value = preset?.system_prompt || "";
+  elements.presetAgentPreviewSkill.checked = preset?.preview_skill === true;
   renderModelOptions(normalizeOptionalModelName(preset?.model_name));
   elements.presetAgentFormModelName.disabled = preset?.is_default_agent === true;
   elements.presetAgentFormContainerId.value = String(
@@ -1676,6 +1680,7 @@ const ensureAgentForPreset = async (preset) => {
     name: preset.name,
     description: preset.description,
     system_prompt: preset.system_prompt,
+    preview_skill: preset.preview_skill === true,
     model_name: normalizeOptionalModelName(preset.model_name) || undefined,
     tool_names: Array.isArray(preset.tool_names) ? preset.tool_names : [],
     declared_tool_names: Array.isArray(preset.declared_tool_names) ? preset.declared_tool_names : [],
@@ -1811,6 +1816,7 @@ const collectPresetForm = () => {
     name,
     description: String(elements.presetAgentFormDescription.value || "").trim(),
     system_prompt: String(elements.presetAgentFormPrompt.value || "").trim(),
+    preview_skill: elements.presetAgentPreviewSkill?.checked === true,
     model_name: normalizeOptionalModelName(elements.presetAgentFormModelName?.value),
     sandbox_container_id: Number.isFinite(sandbox) && sandbox > 0 ? sandbox : 1,
   };
@@ -2096,6 +2102,7 @@ const collectAgentForm = () => {
     name,
     description: String(elements.presetAgentFormDescription.value || "").trim(),
     system_prompt: String(elements.presetAgentFormPrompt.value || "").trim(),
+    preview_skill: elements.presetAgentPreviewSkill?.checked === true,
     model_name: normalizeOptionalModelName(elements.presetAgentFormModelName?.value),
     tool_names,
     declared_tool_names,
