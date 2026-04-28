@@ -2648,7 +2648,7 @@ const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'sw
 const isSearchableMiddlePaneSection = (section: string): boolean =>
   searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT = 1120;
+const MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT = 1040;
 const MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT = 1040;
 const MESSENGER_AGENT_SETTINGS_RIGHT_DOCK_BREAKPOINT = 1820;
 const MESSENGER_EMBEDDED_RIGHT_DOCK_OVERLAY_BREAKPOINT = 800;
@@ -6112,8 +6112,11 @@ function detectMessengerLayoutAnomaly(): void {
     isRightDockOverlay.value &&
     rightDockRect &&
     rightDockRect.width > 0 &&
+    !rightDockCollapsed.value &&
+    windowWidth >= MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT &&
     rootRect.width >= windowWidth - 80 &&
-    rightDockRect.left < Math.round(windowWidth * 0.5)
+    rightDockRect.left < Math.round(windowWidth * 0.72) &&
+    rightDockRect.right < windowWidth - 12
   ) {
     reportMessengerLayoutAnomaly('overlay-dock-shifted-left');
   }
