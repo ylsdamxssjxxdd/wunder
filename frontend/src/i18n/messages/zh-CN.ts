@@ -2040,7 +2040,8 @@ export default {
   'userTools.shared.title': '可用工具',
   'userTools.skills.action.upload': '上传技能',
   'userTools.skills.action.export': '导出技能',
-  'userTools.skills.upload.zipOnly': '仅支持 .zip 或 .skill 压缩包',
+  'userTools.skills.upload.zipOnly':
+    '支持 .zip、.skill、.rar、.7z、.tar、.tgz、.tar.gz、.tbz2、.tar.bz2、.txz、.tar.xz；部分格式依赖本机解压器',
   'userTools.skills.list.title': '技能列表',
   'userTools.skills.detail.empty': '暂无内容',
   'userTools.skills.detail.unselected': '未选择技能',
@@ -2063,7 +2064,8 @@ export default {
   'userTools.skills.refresh.failed': '刷新失败',
   'userTools.skills.refresh.success': '刷新成功',
   'userTools.skills.saveFailed': '保存失败',
-  'userTools.skills.tip': '从技能目录读取可用技能，并支持直接编辑文件。',
+  'userTools.skills.tip':
+    '从技能目录读取可用技能，并支持直接编辑文件。上传支持常见压缩包格式，部分格式依赖本机解压器。',
   'userTools.skills.source.builtin': '内置',
   'userTools.skills.source.custom': '自定义',
   'userTools.skills.readonlyHint': '内置技能只读，如需修改请直接改源码 skills 目录。',

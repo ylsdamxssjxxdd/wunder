@@ -2075,7 +2075,8 @@ export default {
   'userTools.shared.title': 'Available Tools',
   'userTools.skills.action.upload': 'Upload skill',
   'userTools.skills.action.export': 'Export skill',
-  'userTools.skills.upload.zipOnly': 'Only .zip or .skill files are supported',
+  'userTools.skills.upload.zipOnly':
+    'Supported: .zip, .skill, .rar, .7z, .tar, .tgz, .tar.gz, .tbz2, .tar.bz2, .txz, .tar.xz. Some formats require a local extractor.',
   'userTools.skills.list.title': 'Skills list',
   'userTools.skills.detail.empty': 'No content',
   'userTools.skills.detail.unselected': 'No skill selected',
@@ -2098,7 +2099,8 @@ export default {
   'userTools.skills.refresh.failed': 'Refresh failed',
   'userTools.skills.refresh.success': 'Refresh succeeded',
   'userTools.skills.saveFailed': 'Save failed',
-  'userTools.skills.tip': 'Load skills from your directory and edit files directly.',
+  'userTools.skills.tip':
+    'Load skills from your directory and edit files directly. Upload supports common archive formats; some formats depend on a local extractor.',
   'userTools.skills.source.builtin': 'Built-in',
   'userTools.skills.source.custom': 'Custom',
   'userTools.skills.readonlyHint': 'Built-in skills are read-only. Modify source files under skills/.',

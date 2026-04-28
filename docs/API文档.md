@@ -478,7 +478,7 @@
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
-  - `file`：技能 .zip 或 .skill 压缩包
+  - `file`：技能压缩包，支持 `.zip`、`.skill`、`.rar`、`.7z`、`.tar`、`.tgz`、`.tar.gz`、`.tbz2`、`.tar.bz2`、`.txz`、`.tar.xz`
 - 返回（JSON）：
   - `ok`：是否成功
   - `extracted`：解压文件数量
@@ -486,6 +486,7 @@
 - 说明：上传内容写入自定义技能目录（`source=custom`），不会覆盖内置 `config/skills/` 源码目录。
 - 说明：上传目录若与内置技能目录冲突会返回 `403`（避免覆盖内置技能）。
 - 说明：压缩包必须以“技能目录”为顶层，例如 `我的技能/SKILL.md`；不允许直接把 `SKILL.md`、脚本或其他文件放在压缩包根目录，否则会返回 `400`。
+- 说明：`.zip/.skill` 使用内置解压；`.rar/.7z/.tar*` 等常见格式会优先调用系统已有解压器，若本机缺少对应解压工具会返回错误提示。
 
 ### 4.1.2.8 `/wunder/user_tools/skills/export`
 
@@ -1340,10 +1341,12 @@
 
 - 方法：`POST`
 - 入参：`multipart/form-data`
-  - `file`：技能 .zip 或 .skill 压缩包
+  - `file`：技能压缩包，支持 `.zip`、`.skill`、`.rar`、`.7z`、`.tar`、`.tgz`、`.tar.gz`、`.tbz2`、`.tar.bz2`、`.txz`、`.tar.xz`
 - 返回（JSON）：
   - `ok`：是否成功
   - `extracted`：解压文件数量
+- 说明：压缩包必须包含独立的顶层技能目录。
+- 说明：`.zip/.skill` 使用内置解压；`.rar/.7z/.tar*` 等常见格式会优先调用系统已有解压器，若本机缺少对应解压工具会返回错误提示。
 
 ### 4.1.8 `/wunder/admin/monitor`
 

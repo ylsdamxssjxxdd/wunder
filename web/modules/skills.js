@@ -11,6 +11,19 @@ const skillsList = document.getElementById("skillsList");
 const refreshSkillsBtn = document.getElementById("refreshSkillsBtn");
 const addSkillBtn = document.getElementById("addSkillBtn");
 const skillUploadInput = document.getElementById("skillUploadInput");
+const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
+  ".zip",
+  ".skill",
+  ".rar",
+  ".7z",
+  ".tar",
+  ".tgz",
+  ".tar.gz",
+  ".tbz2",
+  ".tar.bz2",
+  ".txz",
+  ".tar.xz",
+];
 const skillDetailTitle = document.getElementById("skillDetailTitle");
 const skillDetailMeta = document.getElementById("skillDetailMeta");
 const skillFileTree = document.getElementById("skillFileTree");
@@ -619,7 +632,7 @@ const uploadSkillZip = async (file) => {
   }
   const filename = file.name || "";
   const lowerName = filename.toLowerCase();
-  if (!(lowerName.endsWith(".zip") || lowerName.endsWith(".skill"))) {
+  if (!SUPPORTED_SKILL_ARCHIVE_SUFFIXES.some((suffix) => lowerName.endsWith(suffix))) {
     throw new Error(t("skills.upload.zipOnly"));
   }
   const wunderBase = getWunderBase();

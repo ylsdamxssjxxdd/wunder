@@ -1921,6 +1921,19 @@ import {
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
+const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
+  '.zip',
+  '.skill',
+  '.rar',
+  '.7z',
+  '.tar',
+  '.tgz',
+  '.tar.gz',
+  '.tbz2',
+  '.tar.bz2',
+  '.txz',
+  '.tar.xz'
+];
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
@@ -6251,8 +6264,6 @@ const resolveSessionPreviewFromFields = (session: Record<string, unknown>): stri
 const resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
   const sessionId = String(session?.id || '').trim();
   if (sessionId) {
-    const cached = String(timelinePreviewMap.value.get(sessionId) || '').trim();
-    if (cached) return cached;
     const cachedMessages = chatStore.getCachedSessionMessages(sessionId);
     if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
       const preview = extractLatestConversationPreview(cachedMessages as unknown[]);
@@ -6260,6 +6271,8 @@ const resolveSessionTimelinePreview = (session: Record<string, unknown>): string
         return preview;
       }
     }
+    const cached = String(timelinePreviewMap.value.get(sessionId) || '').trim();
+    if (cached) return cached;
   }
   return resolveSessionPreviewFromFields(session);
 };
@@ -9832,7 +9845,7 @@ const handleChatPageRefresh = () => {
 const handleRightDockSkillArchiveUpload = async (file: File) => {
   if (!file || skillDockUploading.value) return;
   const filename = String(file.name || '').trim().toLowerCase();
-  if (!filename.endsWith('.zip') && !filename.endsWith('.skill')) {
+  if (!SUPPORTED_SKILL_ARCHIVE_SUFFIXES.some((suffix) => filename.endsWith(suffix))) {
     ElMessage.warning(t('userTools.skills.upload.zipOnly'));
     return;
   }
@@ -13145,17 +13158,12 @@ watch(
   () => [chatStore.activeSessionId, chatStore.messages.length],
   () => {
     const sessionId = String(chatStore.activeSessionId || '').trim();
-    if (!sessionId || !Array.isArray(chatStore.messages) || !chatStore.messages.length) return;
+    if (!sessionId) return;
     const activeSession =
       (Array.isArray(chatStore.sessions)
         ? chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId)
         : null) || null;
-    const preview =
-      extractLatestConversationPreview(chatStore.messages as unknown[]) ||
-      resolveSessionPreviewFromFields((activeSession || {}) as Record<string, unknown>);
-    if (preview) {
-      timelinePreviewMap.value.set(sessionId, preview);
-    }
+    refreshSessionPreviewCache(sessionId, (activeSession || null) as Record<string, unknown> | null);
   }
 );
 

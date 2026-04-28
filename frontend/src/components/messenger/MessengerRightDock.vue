@@ -184,10 +184,23 @@ const { t } = useI18n();
 const workspacePanelRef = ref<WorkspacePanelViewRef | null>(null);
 const skillDropDepth = ref(0);
 const skillDropActive = ref(false);
+const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
+  '.zip',
+  '.skill',
+  '.rar',
+  '.7z',
+  '.tar',
+  '.tgz',
+  '.tar.gz',
+  '.tbz2',
+  '.tar.bz2',
+  '.txz',
+  '.tar.xz'
+];
 
 const isSkillArchiveFilename = (name: string): boolean => {
   const lower = String(name || '').trim().toLowerCase();
-  return lower.endsWith('.zip') || lower.endsWith('.skill');
+  return SUPPORTED_SKILL_ARCHIVE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 };
 
 const emitSkillArchive = (file: File | null | undefined) => {

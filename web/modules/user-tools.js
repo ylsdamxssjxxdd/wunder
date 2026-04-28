@@ -19,6 +19,19 @@ import { t } from "./i18n.js?v=20260215-01";
 
 // 自建工具统一使用输入即保存的节流时间，避免频繁写入
 const SAVE_DEBOUNCE_MS = 600;
+const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
+  ".zip",
+  ".skill",
+  ".rar",
+  ".7z",
+  ".tar",
+  ".tgz",
+  ".tar.gz",
+  ".tbz2",
+  ".tar.bz2",
+  ".txz",
+  ".tar.xz",
+];
 
 let mcpSaveTimer = null;
 let skillsSaveTimer = null;
@@ -1109,7 +1122,7 @@ const uploadUserSkillZip = async (file) => {
   }
   const filename = file.name || "";
   const lowerName = filename.toLowerCase();
-  if (!(lowerName.endsWith(".zip") || lowerName.endsWith(".skill"))) {
+  if (!SUPPORTED_SKILL_ARCHIVE_SUFFIXES.some((suffix) => lowerName.endsWith(suffix))) {
     throw new Error(t("skills.upload.zipOnly"));
   }
   const wunderBase = getWunderBase();

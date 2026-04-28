@@ -5,7 +5,10 @@ use crate::services::hive_pack::{
     resolve_export_artifact_path, run_export_job, run_import_job, HivePackExportOptions,
     HivePackImportOptions,
 };
-use crate::services::skill_archive::create_skill_archive;
+use crate::services::archive_extract::extract_zip_bytes;
+use crate::services::skill_archive::{
+    create_skill_archive, import_skill_archive, is_supported_skill_archive_filename,
+};
 use crate::services::inner_visible::{build_worker_card, parse_worker_card, WorkerCardDocument};
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_agent_presets::filter_allowed_tools;
@@ -25,11 +28,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
-use zip::ZipArchive;
 
 const USER_PLAZA_META_PREFIX: &str = "user_plaza:item:";
 const USER_PLAZA_SHARED_DIR: &str = "_shared";
@@ -751,52 +752,16 @@ fn import_skill_archive_for_user(
     filename: &str,
     data: &[u8],
 ) -> Result<SkillArchiveImportSummary> {
-    let lower_name = filename.trim().to_ascii_lowercase();
-    if !(lower_name.ends_with(".zip") || lower_name.ends_with(".skill")) {
-        return Err(anyhow!("skill archive must be .zip or .skill"));
+    if !is_supported_skill_archive_filename(filename) {
+        return Err(anyhow!(
+            "skill archive must be a common archive format such as .zip, .skill, .rar, .7z, .tar, .tgz, or .tar.gz"
+        ));
     }
     let skill_root = state.user_tool_store.get_skill_root(user_id);
     fs::create_dir_all(&skill_root)?;
     let reserved_top_dirs = build_reserved_skill_dir_names(config, &skill_root);
-    let cursor = Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor).context("invalid skill archive")?;
-    let mut extracted = 0;
-    let mut top_level_dirs = BTreeSet::new();
-    for index in 0..archive.len() {
-        let mut file = archive
-            .by_index(index)
-            .context("invalid skill archive entry")?;
-        if file.is_dir() {
-            continue;
-        }
-        let name = file.name().replace('\\', "/");
-        if name.starts_with('/') || name.starts_with('\\') {
-            return Err(anyhow!("skill archive contains absolute paths"));
-        }
-        let path = Path::new(&name);
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(anyhow!("skill archive contains illegal paths"));
-        }
-        let top_dir = uploaded_skill_archive_top_dir(path)?;
-        if reserved_top_dirs.contains(&top_dir) {
-            return Err(anyhow!(
-                "skill archive conflicts with builtin skill directory"
-            ));
-        }
-        top_level_dirs.insert(top_dir);
-        let dest = skill_root.join(path);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        fs::write(&dest, buffer)?;
-        extracted += 1;
-    }
-    if extracted > 0 {
+    let imported = import_skill_archive(filename, data, &skill_root, &reserved_top_dirs)?;
+    if imported.extracted > 0 {
         let payload = state.user_tool_store.load_user_tools(user_id);
         let _ = state.user_tool_store.update_skills(
             user_id,
@@ -806,8 +771,8 @@ fn import_skill_archive_for_user(
         state.user_tool_manager.clear_skill_cache(Some(user_id));
     }
     Ok(SkillArchiveImportSummary {
-        extracted,
-        top_level_dirs: top_level_dirs.into_iter().collect(),
+        extracted: imported.extracted,
+        top_level_dirs: imported.top_level_dirs,
     })
 }
 
@@ -824,29 +789,6 @@ fn build_reserved_skill_dir_names(config: &Config, skill_root: &Path) -> HashSet
         })
         .filter(|value| !value.is_empty())
         .collect()
-}
-
-fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String> {
-    let mut components = path.components();
-    let top = components
-        .next()
-        .ok_or_else(|| anyhow!("skill archive entry is empty"))?;
-    if components.next().is_none() {
-        return Err(anyhow!(
-            "skill archive must contain a dedicated top-level directory"
-        ));
-    }
-    match top {
-        std::path::Component::Normal(value) => {
-            let text = value.to_string_lossy().trim().to_string();
-            if text.is_empty() {
-                Err(anyhow!("skill archive top-level directory is empty"))
-            } else {
-                Ok(text)
-            }
-        }
-        _ => Err(anyhow!("skill archive top-level path is invalid")),
-    }
 }
 
 fn ensure_import_hive(
@@ -1286,39 +1228,9 @@ fn compute_published_hive_pack_signature(artifact_path: &Path) -> Result<String>
 }
 
 fn extract_zip_into_dir(zip_path: &Path, target_root: &Path) -> Result<()> {
-    let file = fs::File::open(zip_path)
+    let bytes = fs::read(zip_path)
         .with_context(|| format!("open plaza artifact failed: {}", zip_path.display()))?;
-    let mut archive = ZipArchive::new(file).context("open plaza artifact zip failed")?;
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .context("read plaza artifact zip entry failed")?;
-        let name = entry.name().replace('\\', "/");
-        if name.trim().is_empty() {
-            continue;
-        }
-        if name.starts_with('/') || name.starts_with('\\') {
-            return Err(anyhow!("artifact contains absolute paths"));
-        }
-        let relative = Path::new(&name);
-        if relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(anyhow!("artifact contains illegal paths"));
-        }
-        let target = target_root.join(relative);
-        if entry.is_dir() {
-            fs::create_dir_all(&target)?;
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut buffer = Vec::new();
-        entry.read_to_end(&mut buffer)?;
-        fs::write(&target, buffer)?;
-    }
+    extract_zip_bytes(&bytes, target_root).context("open plaza artifact zip failed")?;
     Ok(())
 }
 

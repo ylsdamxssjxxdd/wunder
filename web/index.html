@@ -4211,7 +4211,12 @@
                 <div class="tips" data-i18n="userTools.skills.tip">
                   技能名称会以 user_id@技能名 展示，上传后会自动进入可挂载工具目录。
                 </div>
-                <input id="userSkillUploadInput" type="file" accept=".zip,.skill" hidden />
+                <input
+                  id="userSkillUploadInput"
+                  type="file"
+                  accept=".zip,.skill,.rar,.7z,.tar,.tgz,.tar.gz,.tbz2,.tar.bz2,.txz,.tar.xz"
+                  hidden
+                />
                 <div id="userSkillsList" class="skills-list"></div>
               </div>
               <div id="userToolPaneKnowledge" class="user-tool-pane">
@@ -4704,7 +4709,12 @@
         </div>
       </div>
     </div>
-    <input id="skillUploadInput" type="file" accept=".zip,.skill" style="display: none" />
+    <input
+      id="skillUploadInput"
+      type="file"
+      accept=".zip,.skill,.rar,.7z,.tar,.tgz,.tar.gz,.tbz2,.tar.bz2,.txz,.tar.xz"
+      style="display: none"
+    />
     <input id="workspaceUploadInput" type="file" style="display: none" multiple />
     <input id="debugUploadInput" type="file" style="display: none" multiple />
     <div id="workspaceMenu" class="context-menu">

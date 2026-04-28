@@ -1,5 +1,6 @@
 use crate::schemas::AbilityKind;
 use crate::services::swarm::beeroom::claim_mother_agent;
+use crate::services::archive_extract::{collect_relative_dirs, extract_zip_bytes};
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
 use crate::services::worker_card_protocol::{
@@ -16,12 +17,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::io::{Cursor, Read, Write};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, ZipWriter};
 
 const HIVE_PACK_META_PREFIX: &str = "beeroom_pack_job:";
 pub const HIVE_PACK_IMPORT_BINDING_PREFIX: &str = "beeroom_pack_import_binding:";
@@ -606,14 +607,14 @@ async fn run_import_job_inner(
     update_job(job, "validating", 10, "validating hivepack structure");
     persist_job(state, job)?;
 
-    let import_root = hivepack_temp_root().join("imports").join(&job.job_id);
+    let import_root = hivepack_temp_root().join(format!("i-{}", short_hivepack_job_id(&job.job_id)));
     if import_root.exists() {
         std::fs::remove_dir_all(&import_root).ok();
     }
     std::fs::create_dir_all(&import_root)?;
-    let extract_root = import_root.join("extract");
+    let extract_root = import_root.join("x");
     std::fs::create_dir_all(&extract_root)?;
-    extract_zip(data, &extract_root)?;
+    extract_zip_bytes(data, &extract_root)?;
     let package_root = resolve_package_root(&extract_root)?;
 
     let hive_manifest_path = package_root.join("hive.yaml");
@@ -1171,11 +1172,11 @@ fn install_worker_snapshot(
     replace_backup_root: &Path,
     runtime: &mut ImportRuntime,
 ) -> Result<WorkerImportSnapshot> {
-    let worker_root = package_root.join(&worker_ref.path);
+    let worker_root = resolve_worker_root(package_root, worker_ref)?;
     if !worker_root.exists() || !worker_root.is_dir() {
         return Err(anyhow!(
             "worker path missing: {}",
-            worker_root.to_string_lossy()
+            package_root.join(&worker_ref.path).to_string_lossy()
         ));
     }
     let worker_card = load_worker_card_manifest(&worker_root)?
@@ -1397,6 +1398,68 @@ fn resolve_import_workers(
         occupied.insert(worker.worker_id.clone());
     }
     Ok(workers)
+}
+
+fn resolve_worker_root(package_root: &Path, worker_ref: &ImportWorkerRef) -> Result<PathBuf> {
+    let preferred = package_root.join(&worker_ref.path);
+    if preferred.is_dir() {
+        return Ok(preferred);
+    }
+    let workers_root = package_root.join("workers");
+    if !workers_root.is_dir() {
+        return Ok(preferred);
+    }
+    let mut candidates = std::fs::read_dir(&workers_root)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|path| path.to_string_lossy().to_string());
+
+    let expected_dir_name = worker_ref
+        .path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let expected_dir_key = normalize_fuzzy_name_key(&expected_dir_name);
+    let worker_id_key = normalize_fuzzy_name_key(&worker_ref.worker_id);
+    let display_name_key = normalize_fuzzy_name_key(
+        worker_ref.display_name.as_deref().unwrap_or_default(),
+    );
+    for candidate in candidates {
+        let file_name_key = candidate
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(normalize_fuzzy_name_key)
+            .unwrap_or_default();
+        if !expected_dir_key.is_empty() && file_name_key == expected_dir_key {
+            return Ok(candidate);
+        }
+        let Some(worker_card) = load_worker_card_manifest(&candidate)? else {
+            continue;
+        };
+        let metadata_id_key = worker_card
+            .metadata
+            .id
+            .as_deref()
+            .map(normalize_fuzzy_name_key)
+            .unwrap_or_default();
+        let metadata_name_key = worker_card
+            .metadata
+            .name
+            .as_deref()
+            .map(normalize_fuzzy_name_key)
+            .unwrap_or_default();
+        if (!worker_id_key.is_empty() && metadata_id_key == worker_id_key)
+            || (!display_name_key.is_empty() && metadata_name_key == display_name_key)
+            || (!expected_dir_key.is_empty() && metadata_name_key == expected_dir_key)
+        {
+            return Ok(candidate);
+        }
+    }
+    Ok(preferred)
 }
 
 fn remap_import_declared_skill_names(
@@ -1662,9 +1725,16 @@ fn resolve_declared_skill_source_dir(
         worker_root.join("skills").join(sanitized),
         worker_root.join("skills").join(&normalized),
     ];
-    Ok(candidate_dirs
+    if let Some(found) = candidate_dirs
         .into_iter()
-        .find(|path| path.is_dir() && path.join("SKILL.md").is_file()))
+        .find(|path| path.is_dir() && path.join("SKILL.md").is_file())
+    {
+        return Ok(Some(found));
+    }
+    Ok(resolve_skill_dir_fallback(
+        &[package_root.join("skills"), worker_root.join("skills")],
+        skill_name,
+    ))
 }
 
 fn resolve_worker_id(preferred: Option<&str>, from_path: Option<&str>, index: usize) -> String {
@@ -2397,58 +2467,36 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip(data: &[u8], output_root: &Path) -> Result<()> {
-    // Security note: every entry path is validated before writing to disk.
-    let cursor = Cursor::new(data.to_vec());
-    let mut archive = ZipArchive::new(cursor).context("invalid zip archive")?;
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index).context("invalid zip entry")?;
-        if file.is_dir() {
-            continue;
-        }
-        let relative = validate_archive_entry_path(file.name())?;
-        let destination = output_root.join(&relative);
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        std::fs::write(destination, bytes)?;
-    }
-    Ok(())
-}
-
 fn resolve_package_root(extract_root: &Path) -> Result<PathBuf> {
     let direct = extract_root.join("hive.yaml");
     if direct.is_file() {
         return Ok(extract_root.to_path_buf());
     }
-    let candidates = std::fs::read_dir(extract_root)?
+    let direct_children = std::fs::read_dir(extract_root)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.is_dir() && path.join("hive.yaml").is_file())
         .collect::<Vec<_>>();
+    if direct_children.len() == 1 {
+        return Ok(direct_children[0].clone());
+    }
+    let mut candidates = collect_relative_dirs(extract_root)?
+        .into_iter()
+        .map(|relative| extract_root.join(relative))
+        .filter(|path| path.join("hive.yaml").is_file())
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|path| path.components().count());
     if candidates.len() == 1 {
         return Ok(candidates[0].clone());
     }
+    if let Some(best) = candidates
+        .iter()
+        .find(|candidate| candidate.join("workers").is_dir())
+        .cloned()
+    {
+        return Ok(best);
+    }
     Err(anyhow!("hive.yaml not found in package root"))
-}
-
-fn validate_archive_entry_path(raw: &str) -> Result<PathBuf> {
-    let normalized = raw.replace('\\', "/");
-    if normalized.starts_with('/') || normalized.starts_with('\\') {
-        return Err(anyhow!("zip entry path is absolute: {normalized}"));
-    }
-    let path = Path::new(&normalized);
-    for component in path.components() {
-        if matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        ) {
-            return Err(anyhow!("zip entry path is unsafe: {normalized}"));
-        }
-    }
-    Ok(path.to_path_buf())
 }
 
 fn validate_relative_path(raw: &str) -> Result<PathBuf> {
@@ -2639,6 +2687,73 @@ fn normalize_name(raw: &str, fallback: &str) -> String {
     } else {
         output
     }
+}
+
+fn short_hivepack_job_id(job_id: &str) -> String {
+    let cleaned = job_id.trim();
+    if cleaned.len() <= 12 {
+        cleaned.to_string()
+    } else {
+        cleaned[cleaned.len() - 12..].to_string()
+    }
+}
+
+fn resolve_skill_dir_fallback(roots: &[PathBuf], skill_name: &str) -> Option<PathBuf> {
+    let target_key = normalize_fuzzy_name_key(skill_name);
+    if target_key.is_empty() {
+        return None;
+    }
+    for root in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        let mut dirs = std::fs::read_dir(root)
+            .ok()?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir() && path.join("SKILL.md").is_file())
+            .collect::<Vec<_>>();
+        dirs.sort_by_key(|path| path.to_string_lossy().to_string());
+        for dir in dirs {
+            let file_name_key = dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(normalize_fuzzy_name_key)
+                .unwrap_or_default();
+            if file_name_key == target_key {
+                return Some(dir);
+            }
+            let skill_meta = dir.join("skill.yaml");
+            if let Ok(text) = std::fs::read_to_string(&skill_meta) {
+                if let Ok(meta) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+                    let name_key = meta
+                        .get("skill")
+                        .and_then(|value| value.get("name"))
+                        .and_then(serde_yaml::Value::as_str)
+                        .map(normalize_fuzzy_name_key)
+                        .unwrap_or_default();
+                    let id_key = meta
+                        .get("skill")
+                        .and_then(|value| value.get("id"))
+                        .and_then(serde_yaml::Value::as_str)
+                        .map(normalize_fuzzy_name_key)
+                        .unwrap_or_default();
+                    if name_key == target_key || id_key == target_key {
+                        return Some(dir);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn normalize_fuzzy_name_key(raw: &str) -> String {
+    raw.trim()
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != '_' && *ch != '-' && *ch != '/')
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>()
 }
 
 fn normalize_export_filename_stem(hive_name: &str, hive_id: &str) -> String {

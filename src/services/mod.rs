@@ -1,6 +1,7 @@
 pub mod a2a_store;
 pub mod abilities;
 pub mod agent_abilities;
+pub mod archive_extract;
 pub mod attachment;
 pub mod auth_sessions;
 pub mod beeroom_cleanup;

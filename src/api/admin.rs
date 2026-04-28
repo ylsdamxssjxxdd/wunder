@@ -26,6 +26,9 @@ use crate::services::default_agent_sync::{
 };
 use crate::services::inner_visible::build_worker_card;
 use crate::services::preset_worker_cards;
+use crate::services::skill_archive::{
+    import_skill_archive, is_supported_skill_archive_filename,
+};
 use crate::services::user_agent_presets::{
     self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
@@ -61,7 +64,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::io::{Cursor, ErrorKind, Read};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -73,7 +76,6 @@ use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
-use zip::ZipArchive;
 
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
@@ -1092,32 +1094,6 @@ fn normalize_admin_skill_paths(paths: Vec<String>) -> Vec<String> {
     output
 }
 
-fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String, Response> {
-    // Require a dedicated top-level directory per uploaded skill package so a
-    // root-level SKILL.md can never shadow the whole custom skill root.
-    let mut components = path.components();
-    let Some(top_dir) = components.next() else {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.skill_upload_top_dir_required"),
-        ));
-    };
-    if components.next().is_none() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.skill_upload_top_dir_required"),
-        ));
-    }
-    let top_name = top_dir.as_os_str().to_string_lossy().trim().to_string();
-    if top_name.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.skill_upload_top_dir_required"),
-        ));
-    }
-    Ok(top_name)
-}
-
 fn resolve_admin_skill_source(
     spec: &SkillSpec,
     builtin_root: Option<&Path>,
@@ -1580,8 +1556,7 @@ async fn admin_skills_upload(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
             .to_vec();
     }
-    let lower_name = filename.to_lowercase();
-    if !(lower_name.ends_with(".zip") || lower_name.ends_with(".skill")) {
+    if !is_supported_skill_archive_filename(&filename) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.skill_upload_zip_only"),
@@ -1591,53 +1566,15 @@ async fn admin_skills_upload(
     tokio::fs::create_dir_all(&skill_root)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let cursor = Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor)
-        .map_err(|_| error_response(StatusCode::BAD_REQUEST, i18n::t("error.zip_invalid")))?;
-    let mut extracted = 0;
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|_| error_response(StatusCode::BAD_REQUEST, i18n::t("error.zip_invalid")))?;
-        if file.is_dir() {
-            continue;
-        }
-        let name = file.name().replace('\\', "/");
-        if name.starts_with('/') || name.starts_with('\\') {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                i18n::t("error.zip_path_invalid"),
-            ));
-        }
-        let path = Path::new(&name);
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                i18n::t("error.zip_path_illegal"),
-            ));
-        }
-        uploaded_skill_archive_top_dir(path)?;
-        let dest = skill_root.join(path);
-        let dest = dest.canonicalize().unwrap_or(dest);
-        if dest != skill_root && !dest.starts_with(&skill_root) {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                i18n::t("error.zip_path_out_of_bounds"),
-            ));
-        }
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        std::fs::write(&dest, buffer)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        extracted += 1;
-    }
+    let import_result = tokio::task::spawn_blocking({
+        let filename = filename.clone();
+        let data = data.clone();
+        let skill_root = skill_root.clone();
+        move || import_skill_archive(&filename, &data, &skill_root, &HashSet::new())
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let skill_root_text = skill_root.to_string_lossy().to_string();
     let updated = state
         .config_store
@@ -1650,7 +1587,7 @@ async fn admin_skills_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     state.reload_skills(&updated).await;
     Ok(Json(
-        json!({ "ok": true, "extracted": extracted, "message": i18n::t("message.upload_success") }),
+        json!({ "ok": true, "extracted": import_result.extracted, "message": i18n::t("message.upload_success") }),
     ))
 }
 

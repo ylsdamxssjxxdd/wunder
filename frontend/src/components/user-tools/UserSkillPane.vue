@@ -24,7 +24,13 @@
       </div>
     </div>
     <div class="tips">{{ t('userTools.skills.tip') }}</div>
-    <input ref="uploadInputRef" type="file" accept=".zip,.skill" hidden @change="handleUpload" />
+    <input
+      ref="uploadInputRef"
+      type="file"
+      accept=".zip,.skill,.rar,.7z,.tar,.tgz,.tar.gz,.tbz2,.tar.bz2,.txz,.tar.xz"
+      hidden
+      @change="handleUpload"
+    />
 
     <div class="management-layout skill-layout">
       <div class="management-list skill-sidebar">
@@ -156,6 +162,20 @@ import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
 import { invalidateAllUserToolsCaches } from '@/utils/userToolsCache';
 import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 import { useI18n } from '@/i18n';
+
+const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
+  '.zip',
+  '.skill',
+  '.rar',
+  '.7z',
+  '.tar',
+  '.tgz',
+  '.tar.gz',
+  '.tbz2',
+  '.tar.bz2',
+  '.txz',
+  '.tar.xz'
+];
 
 const props = defineProps({
   visible: {
@@ -421,7 +441,7 @@ const handleUpload = async () => {
   if (!file) return;
   const filename = file.name || '';
   const lower = filename.toLowerCase();
-  if (!lower.endsWith('.zip') && !lower.endsWith('.skill')) {
+  if (!SUPPORTED_SKILL_ARCHIVE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
     ElMessage.warning(t('userTools.skills.upload.zipOnly'));
     uploadInputRef.value.value = '';
     return;
