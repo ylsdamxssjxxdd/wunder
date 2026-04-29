@@ -86,16 +86,15 @@ pub fn import_skill_archive(
             if path == temp_root {
                 continue;
             }
-            let relative = path
-                .strip_prefix(&temp_root)
-                .unwrap_or(path)
-                .to_path_buf();
+            let relative = path.strip_prefix(&temp_root).unwrap_or(path).to_path_buf();
             if entry.file_type().is_dir() {
                 continue;
             }
             let top_dir = uploaded_skill_archive_top_dir(&relative)?;
             if reserved_top_dirs.contains(&top_dir) {
-                return Err(anyhow!("skill archive conflicts with builtin skill directory"));
+                return Err(anyhow!(
+                    "skill archive conflicts with builtin skill directory"
+                ));
             }
             top_level_dirs.insert(top_dir);
             files.push(relative);

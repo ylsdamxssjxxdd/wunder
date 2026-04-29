@@ -39,11 +39,7 @@ pub fn detect_archive_kind(filename: &str) -> Option<ArchiveKind> {
     None
 }
 
-pub fn extract_archive_bytes(
-    filename: &str,
-    data: &[u8],
-    output_root: &Path,
-) -> Result<()> {
+pub fn extract_archive_bytes(filename: &str, data: &[u8], output_root: &Path) -> Result<()> {
     let kind = detect_archive_kind(filename)
         .ok_or_else(|| anyhow!("unsupported archive format: {filename}"))?;
     match kind {
@@ -167,8 +163,18 @@ fn extract_via_system_tool(
 fn archive_temp_suffix(filename: &str, kind: ArchiveKind) -> String {
     let lower = filename.trim().to_ascii_lowercase();
     for suffix in [
-        ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz", ".hivepack", ".skill", ".zip",
-        ".rar", ".7z", ".tar",
+        ".tar.gz",
+        ".tar.bz2",
+        ".tar.xz",
+        ".tgz",
+        ".tbz2",
+        ".txz",
+        ".hivepack",
+        ".skill",
+        ".zip",
+        ".rar",
+        ".7z",
+        ".tar",
     ] {
         if lower.ends_with(suffix) {
             return suffix.to_string();
@@ -315,10 +321,7 @@ fn binary_exists_in_dir(dir: &Path, program: &str) -> bool {
 }
 
 fn ps_escape(value: &Path) -> String {
-    value
-        .as_os_str()
-        .to_string_lossy()
-        .replace('\'', "''")
+    value.as_os_str().to_string_lossy().replace('\'', "''")
 }
 
 fn apply_platform_spawn_options_std(command: &mut Command) {

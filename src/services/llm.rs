@@ -141,7 +141,11 @@ fn should_emit_vllm_chat_template_kwargs(config: &LlmModelConfig) -> bool {
 }
 
 fn should_emit_thinking_token_budget(config: &LlmModelConfig) -> bool {
-    is_llm_model(config) && !matches!(normalize_provider(config.provider.as_deref()).as_str(), "anthropic")
+    is_llm_model(config)
+        && !matches!(
+            normalize_provider(config.provider.as_deref()).as_str(),
+            "anthropic"
+        )
 }
 
 fn resolved_max_output(config: &LlmModelConfig) -> u32 {
@@ -4135,8 +4139,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_stream_tool_calls_replaces_empty_json_seed_from_incremental_anthropic_fragments()
-    {
+    fn finalize_stream_tool_calls_replaces_empty_json_seed_from_incremental_anthropic_fragments() {
         let mut acc = Vec::new();
         merge_stream_tool_call_item(
             &mut acc,
@@ -4443,8 +4446,8 @@ mod tests {
         use axum::http::StatusCode;
         use axum::routing::post;
         use axum::{Json, Router};
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
         use tokio::net::TcpListener;
 
         #[derive(Clone)]
@@ -4457,44 +4460,44 @@ mod tests {
             stream_calls: Arc::new(AtomicUsize::new(0)),
             non_stream_calls: Arc::new(AtomicUsize::new(0)),
         };
-        let app = Router::new().route(
-            "/v1/chat/completions",
-            post(
-                |State(state): State<AppState>,
-                 Json(payload): Json<Value>| async move {
-                    if payload.get("stream").and_then(Value::as_bool) == Some(true) {
-                        state.stream_calls.fetch_add(1, Ordering::SeqCst);
-                        return (
-                            StatusCode::TOO_MANY_REQUESTS,
+        let app = Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(
+                    |State(state): State<AppState>, Json(payload): Json<Value>| async move {
+                        if payload.get("stream").and_then(Value::as_bool) == Some(true) {
+                            state.stream_calls.fetch_add(1, Ordering::SeqCst);
+                            return (
+                                StatusCode::TOO_MANY_REQUESTS,
+                                Json(json!({
+                                    "error": {
+                                        "message": "Rate limit reached for TPM"
+                                    }
+                                })),
+                            );
+                        }
+                        state.non_stream_calls.fetch_add(1, Ordering::SeqCst);
+                        (
+                            StatusCode::OK,
                             Json(json!({
-                                "error": {
-                                    "message": "Rate limit reached for TPM"
+                                "choices": [
+                                    {
+                                        "message": {
+                                            "content": "fallback-ok"
+                                        }
+                                    }
+                                ],
+                                "usage": {
+                                    "prompt_tokens": 12,
+                                    "completion_tokens": 3,
+                                    "total_tokens": 15
                                 }
                             })),
-                        );
-                    }
-                    state.non_stream_calls.fetch_add(1, Ordering::SeqCst);
-                    (
-                        StatusCode::OK,
-                        Json(json!({
-                            "choices": [
-                                {
-                                    "message": {
-                                        "content": "fallback-ok"
-                                    }
-                                }
-                            ],
-                            "usage": {
-                                "prompt_tokens": 12,
-                                "completion_tokens": 3,
-                                "total_tokens": 15
-                            }
-                        })),
-                    )
-                },
-            ),
-        )
-        .with_state(state.clone());
+                        )
+                    },
+                ),
+            )
+            .with_state(state.clone());
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

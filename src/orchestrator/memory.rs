@@ -1235,9 +1235,9 @@ impl Orchestrator {
         );
         let preview_skill = preview_skill_override.unwrap_or_else(|| {
             agent_id
-            .and_then(|id| self.storage.get_user_agent(user_id, id).ok().flatten())
-            .map(|record| record.preview_skill)
-            .unwrap_or(false)
+                .and_then(|id| self.storage.get_user_agent(user_id, id).ok().flatten())
+                .map(|record| record.preview_skill)
+                .unwrap_or(false)
         });
         let allowed_tool_names =
             self.apply_preview_skill_tool_policy(allowed_tool_names, preview_skill);

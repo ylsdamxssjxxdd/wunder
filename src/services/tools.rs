@@ -2826,20 +2826,18 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         }
     };
     for (index, task) in payload.tasks.iter().enumerate() {
-        let task_message = normalize_optional_string(task.message.clone()).or_else(|| shared_message.clone());
+        let task_message =
+            normalize_optional_string(task.message.clone()).or_else(|| shared_message.clone());
         let inferred_agent_name = task_message
             .as_deref()
             .and_then(infer_swarm_agent_name_from_task_message);
         let has_target = normalize_optional_string(task.agent_id.clone()).is_some()
             || normalize_optional_string(task.agent_name.clone()).is_some()
             || inferred_agent_name.is_some()
-            || task
-                .session_key
-                .as_deref()
-                .is_some_and(|value| {
-                    let trimmed = value.trim();
-                    !trimmed.is_empty() && !is_swarm_artifact_path_misused_as_session_key(trimmed)
-                });
+            || task.session_key.as_deref().is_some_and(|value| {
+                let trimmed = value.trim();
+                !trimmed.is_empty() && !is_swarm_artifact_path_misused_as_session_key(trimmed)
+            });
         if !has_target {
             return Ok(build_agent_swarm_args_failure(
                 "batch_send",
@@ -2930,8 +2928,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         let label = normalize_optional_string(task.label).or_else(|| shared_label.clone());
         let include_current = task.include_current.unwrap_or(default_include_current);
         let requested_agent_id = normalize_optional_string(task.agent_id);
-        let requested_agent_name =
-            normalize_optional_string(task.agent_name).or_else(|| infer_swarm_agent_name_from_task_message(&message));
+        let requested_agent_name = normalize_optional_string(task.agent_name)
+            .or_else(|| infer_swarm_agent_name_from_task_message(&message));
         let task_thread_strategy = match if task.thread_strategy.is_some()
             || task.reuse_main_thread.is_some()
         {
@@ -11937,8 +11935,10 @@ PATCH"#;
             None
         );
         assert_eq!(
-            resolve_swarm_batch_session_key(Some("/workspaces/admin__c__1/orchestration/测试".to_string()))
-                .expect("resolve public path session key"),
+            resolve_swarm_batch_session_key(Some(
+                "/workspaces/admin__c__1/orchestration/测试".to_string()
+            ))
+            .expect("resolve public path session key"),
             None
         );
         assert_eq!(
@@ -11948,8 +11948,10 @@ PATCH"#;
             Some("sess_worker")
         );
         assert_eq!(
-            infer_swarm_agent_name_from_task_message("【第 1 轮任务】\n你的角色：中方代表\n请完成公开立场。")
-                .as_deref(),
+            infer_swarm_agent_name_from_task_message(
+                "【第 1 轮任务】\n你的角色：中方代表\n请完成公开立场。"
+            )
+            .as_deref(),
             Some("中方代表")
         );
     }
@@ -12124,7 +12126,10 @@ PATCH"#;
             tool_result_field(&result, "state").and_then(Value::as_str),
             Some("skipped")
         );
-        assert_eq!(tool_result_field(&result, "team_run_id"), Some(&Value::Null));
+        assert_eq!(
+            tool_result_field(&result, "team_run_id"),
+            Some(&Value::Null)
+        );
         assert_eq!(
             tool_result_field(&result, "skip_reason").and_then(Value::as_str),
             Some("already_dispatched_this_round")

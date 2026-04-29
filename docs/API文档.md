@@ -828,7 +828,10 @@
   - 说明：
     - `job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点，首次触发为“下一个间隔点”（严格晚于当前时刻，避免创建即触发）。
     - 可选 `job.schedule_text` 支持自然语言或 cron（如 `every 5 minutes`、`daily at 9am`、`0 */6 * * *`）；若同时传 `schedule` 与 `schedule_text`，以 `schedule` 为准。
+    - `job.session=main` 时，任务触发会把消息发送到该智能体**触发时的当前主线程**；若当前没有可用主线程，则回退到任务记录保存的 `session_id`。
+    - `job.session=isolated` 时，任务会先在新线程执行，再把结果回送到该智能体**触发时的当前主线程**；若没有可用主线程，同样回退到任务记录保存的 `session_id`。
     - `schedule.at` 必须是未来时间且不超过 1 年；`schedule.every_ms` 最大 24 小时；`schedule.cron` 需为 5-7 段字段。
+    - 周期任务同一时刻最多只有一个活跃执行实例；如果执行耗时超过间隔，系统不会为每个错过的 tick 额外堆积并发实例，而是跳过或折叠逾期间隔后继续推进下一次执行时间。
     - 调度执行遇到 `USER_BUSY` 会按 `cron.idle_retry_ms` 重试，并受 `cron.max_busy_wait_ms` 上限保护，超时后写入 error 运行记录。
     - 连续失败达到 `cron.max_consecutive_failures` 会自动停用任务并写入 `auto_disabled_reason`。
     - 周期任务失败后会按退避策略推迟下一次执行时间，取“自然下一次执行时间”和“错误退避时间”中的较大值，降低高错误率场景下的重试风暴。

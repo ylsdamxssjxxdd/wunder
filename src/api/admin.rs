@@ -26,9 +26,7 @@ use crate::services::default_agent_sync::{
 };
 use crate::services::inner_visible::build_worker_card;
 use crate::services::preset_worker_cards;
-use crate::services::skill_archive::{
-    import_skill_archive, is_supported_skill_archive_filename,
-};
+use crate::services::skill_archive::{import_skill_archive, is_supported_skill_archive_filename};
 use crate::services::user_agent_presets::{
     self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
@@ -4756,7 +4754,8 @@ async fn admin_user_accounts_list(
         .filter(|user_id| !user_id.is_empty())
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
-    let activity_series_map = build_user_activity_series_map(&state, &activity_user_ids, activity_days);
+    let activity_series_map =
+        build_user_activity_series_map(&state, &activity_user_ids, activity_days);
     let items = users
         .into_iter()
         .map(|user| {
@@ -5843,9 +5842,12 @@ fn build_user_activity_series_map(
         .collect::<HashMap<_, _>>();
 
     for user_id in user_ids {
-        let records = state
-            .monitor
-            .load_records_by_user(user_id, None, Some(since_time), safe_days.saturating_mul(24));
+        let records = state.monitor.load_records_by_user(
+            user_id,
+            None,
+            Some(since_time),
+            safe_days.saturating_mul(24),
+        );
         if records.is_empty() {
             continue;
         }

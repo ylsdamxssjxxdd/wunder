@@ -112,8 +112,17 @@ pub async fn execute_builtin_tool(
         "问询面板" => execute_question_panel_tool(context, args).await,
         "定时任务" => {
             let normalized = normalize_cron_action_args(args);
-            let payload: CronActionRequest =
-                serde_json::from_value(normalized).map_err(|err| anyhow!(err.to_string()))?;
+            let payload: CronActionRequest = serde_json::from_value(normalized.clone()).map_err(
+                |err| {
+                    if normalized.get("raw").is_some() {
+                        anyhow!(
+                            "schedule_task arguments are not valid JSON; retry with a complete JSON object including action"
+                        )
+                    } else {
+                        anyhow!(err.to_string())
+                    }
+                },
+            )?;
             let user_tool_manager = context
                 .user_tool_manager
                 .clone()

@@ -398,8 +398,9 @@ mod tests {
 
     #[test]
     fn normalize_tool_arguments_json_with_meta_repairs_empty_object_prefix() {
-        let (normalized, repair) =
-            normalize_tool_arguments_json_with_meta("{}{\"filename\":\"demo.py\",\"content\":\"print(1)\"}");
+        let (normalized, repair) = normalize_tool_arguments_json_with_meta(
+            "{}{\"filename\":\"demo.py\",\"content\":\"print(1)\"}",
+        );
         assert_eq!(
             serde_json::from_str::<Value>(&normalized).expect("prefixed args should parse"),
             json!({

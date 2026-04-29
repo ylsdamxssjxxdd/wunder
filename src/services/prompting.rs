@@ -4,6 +4,7 @@ use crate::i18n;
 use crate::llm::ToolCallMode;
 use crate::schemas::ToolSpec;
 use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
+use crate::services::tools::skill_call::render_skill_markdown_for_model;
 use crate::services::user_prompt_templates;
 use crate::services::worker_card_files::{
     stable_id_from_worker_card_file_name, worker_card_file_name as canonical_worker_card_file_name,
@@ -14,7 +15,6 @@ use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
     render_prompt_tool_spec, resolve_tool_name,
 };
-use crate::services::tools::skill_call::render_skill_markdown_for_model;
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
 use chrono::Local;
@@ -893,7 +893,9 @@ fn render_preview_skill_list(skills: &[SkillSpec]) -> String {
         let rendered = render_skill_markdown_for_model(&raw, &skill_root);
         blocks.push(format!(
             "## {}\nSKILL.md: {}\n\n{}",
-            spec.name, skill_path, rendered.trim()
+            spec.name,
+            skill_path,
+            rendered.trim()
         ));
     }
     blocks.join("\n\n").trim().to_string()

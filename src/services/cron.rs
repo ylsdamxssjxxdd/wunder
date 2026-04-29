@@ -9,6 +9,7 @@ use crate::services::cron_schedule::{
     normalize_every_ms, parse_schedule_text, validate_cron_expr, validate_message, validate_name,
     validate_schedule_at, ParsedScheduleText, MIN_EVERY_MS,
 };
+use crate::services::swarm::beeroom::resolve_agent_main_session;
 use crate::skills::SkillRegistry;
 use crate::storage::{
     ChatSessionRecord, CronJobRecord, CronRunRecord, StorageBackend, UserAccountRecord,
@@ -51,6 +52,13 @@ type NormalizedSchedule = (
     Option<String>,
     Option<String>,
 );
+
+#[derive(Debug, Clone)]
+struct CronSessionRouting {
+    run_session_id: String,
+    deliver_session_id: String,
+    parent_session_id: Option<String>,
+}
 
 #[derive(Clone, Default)]
 pub struct CronWakeSignal {
@@ -1102,6 +1110,49 @@ fn normalize_agent_id(agent_id: Option<&str>) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+fn resolve_cron_session_routing(
+    storage: &dyn StorageBackend,
+    job: &CronJobRecord,
+) -> Result<CronSessionRouting> {
+    let deliver_session_id = resolve_cron_delivery_session_id(storage, job)?;
+    let is_isolated = job.session_target.trim().eq_ignore_ascii_case("isolated");
+    let run_session_id = if is_isolated {
+        Uuid::new_v4().simple().to_string()
+    } else {
+        deliver_session_id.clone()
+    };
+    let parent_session_id = is_isolated.then(|| deliver_session_id.clone());
+    Ok(CronSessionRouting {
+        run_session_id,
+        deliver_session_id,
+        parent_session_id,
+    })
+}
+
+fn resolve_cron_delivery_session_id(
+    storage: &dyn StorageBackend,
+    job: &CronJobRecord,
+) -> Result<String> {
+    let fallback = job.session_id.trim();
+    if let Some(agent_id) = job
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(record) = resolve_agent_main_session(storage, &job.user_id, agent_id)? {
+            let session_id = record.session_id.trim();
+            if !session_id.is_empty() {
+                return Ok(session_id.to_string());
+            }
+        }
+    }
+    if fallback.is_empty() {
+        return Err(anyhow!(i18n::t("error.session_not_found")));
+    }
+    Ok(fallback.to_string())
+}
+
 fn resolve_scoped_agent_id(
     request_agent_id: Option<&str>,
     job: Option<&CronJobInput>,
@@ -1393,7 +1444,6 @@ impl CronRuntime {
         let mut status = "ok".to_string();
         let mut summary = None;
         let mut error_msg = None;
-        let mut run_session_id = job.session_id.clone();
         let lease_heartbeat = self.start_lease_heartbeat(&job);
         let message = extract_payload_message(Some(&job.payload));
         let message = match message {
@@ -1416,18 +1466,34 @@ impl CronRuntime {
             }
         };
 
-        let is_isolated = job.session_target.trim().eq_ignore_ascii_case("isolated");
-        if is_isolated {
-            run_session_id = Uuid::new_v4().simple().to_string();
-        }
+        let routing = match self.resolve_session_routing(&job) {
+            Ok(routing) => routing,
+            Err(err) => {
+                status = "error".to_string();
+                error_msg = Some(format!("resolve session routing failed: {err}"));
+                self.finish_job(
+                    job,
+                    trigger,
+                    &status,
+                    &summary,
+                    &error_msg,
+                    start_ts,
+                    started,
+                    lease_heartbeat,
+                )
+                .await;
+                return;
+            }
+        };
+        let is_isolated = routing.parent_session_id.is_some();
 
         let run_result = self
             .run_request_when_idle(
                 &job.user_id,
-                &run_session_id,
+                &routing.run_session_id,
                 job.agent_id.as_deref(),
                 &message,
-                is_isolated.then_some(&job.session_id),
+                routing.parent_session_id.as_deref(),
             )
             .await;
 
@@ -1439,7 +1505,7 @@ impl CronRuntime {
                     let deliver_result = self
                         .run_request_when_idle(
                             &job.user_id,
-                            &job.session_id,
+                            &routing.deliver_session_id,
                             job.agent_id.as_deref(),
                             &deliver_message,
                             None,
@@ -1468,6 +1534,10 @@ impl CronRuntime {
             lease_heartbeat,
         )
         .await;
+    }
+
+    fn resolve_session_routing(&self, job: &CronJobRecord) -> Result<CronSessionRouting> {
+        resolve_cron_session_routing(self.storage.as_ref(), job)
     }
 
     async fn run_request_when_idle(
@@ -2042,5 +2112,145 @@ impl CronScheduler {
     async fn execute_job(&self, job: CronJobRecord, trigger: &str) {
         let runtime = CronRuntime::from_scheduler(self).await;
         runtime.execute_job(job, trigger).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_cron_session_routing;
+    use crate::storage::{
+        AgentThreadRecord, ChatSessionRecord, CronJobRecord, SqliteStorage, StorageBackend,
+    };
+    use serde_json::json;
+
+    fn now_ts_test() -> f64 {
+        chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+    }
+
+    fn build_chat_session(session_id: &str, agent_id: &str, now: f64) -> ChatSessionRecord {
+        ChatSessionRecord {
+            session_id: session_id.to_string(),
+            user_id: "cron_user".to_string(),
+            title: session_id.to_string(),
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_message_at: now,
+            agent_id: Some(agent_id.to_string()),
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        }
+    }
+
+    fn build_job(session_id: &str, session_target: &str, now: f64) -> CronJobRecord {
+        CronJobRecord {
+            job_id: format!("job_{session_target}"),
+            user_id: "cron_user".to_string(),
+            session_id: session_id.to_string(),
+            agent_id: Some("agent_a".to_string()),
+            name: Some("job".to_string()),
+            session_target: session_target.to_string(),
+            payload: json!({ "message": "ping" }),
+            deliver: None,
+            enabled: true,
+            delete_after_run: false,
+            schedule_kind: "every".to_string(),
+            schedule_at: None,
+            schedule_every_ms: Some(1000),
+            schedule_cron: None,
+            schedule_tz: None,
+            dedupe_key: None,
+            next_run_at: Some(now + 1.0),
+            running_at: None,
+            runner_id: None,
+            run_token: None,
+            heartbeat_at: None,
+            lease_expires_at: None,
+            last_run_at: None,
+            last_status: None,
+            last_error: None,
+            consecutive_failures: 0,
+            auto_disabled_reason: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn cron_main_mode_routes_to_current_agent_main_session() {
+        let db_path = std::env::temp_dir().join(format!(
+            "wunder_cron_main_route_{}.db",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().unwrap();
+        let now = now_ts_test();
+
+        storage
+            .upsert_chat_session(&build_chat_session("sess_old", "agent_a", now))
+            .unwrap();
+        storage
+            .upsert_chat_session(&build_chat_session("sess_current_main", "agent_a", now))
+            .unwrap();
+        storage
+            .upsert_agent_thread(&AgentThreadRecord {
+                thread_id: "thread_sess_current_main".to_string(),
+                user_id: "cron_user".to_string(),
+                agent_id: "agent_a".to_string(),
+                session_id: "sess_current_main".to_string(),
+                status: "idle".to_string(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let routing =
+            resolve_cron_session_routing(&storage, &build_job("sess_old", "main", now)).unwrap();
+        assert_eq!(routing.run_session_id, "sess_current_main");
+        assert_eq!(routing.deliver_session_id, "sess_current_main");
+        assert!(routing.parent_session_id.is_none());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn cron_isolated_mode_returns_result_to_current_agent_main_session() {
+        let db_path = std::env::temp_dir().join(format!(
+            "wunder_cron_isolated_route_{}.db",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().unwrap();
+        let now = now_ts_test();
+
+        storage
+            .upsert_chat_session(&build_chat_session("sess_current_main", "agent_a", now))
+            .unwrap();
+        storage
+            .upsert_agent_thread(&AgentThreadRecord {
+                thread_id: "thread_sess_current_main".to_string(),
+                user_id: "cron_user".to_string(),
+                agent_id: "agent_a".to_string(),
+                session_id: "sess_current_main".to_string(),
+                status: "idle".to_string(),
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+
+        let routing =
+            resolve_cron_session_routing(&storage, &build_job("sess_created", "isolated", now))
+                .unwrap();
+        assert_ne!(routing.run_session_id, "sess_current_main");
+        assert_eq!(routing.deliver_session_id, "sess_current_main");
+        assert_eq!(
+            routing.parent_session_id.as_deref(),
+            Some("sess_current_main")
+        );
+
+        let _ = std::fs::remove_file(db_path);
     }
 }

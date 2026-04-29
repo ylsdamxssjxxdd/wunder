@@ -1,6 +1,6 @@
 use crate::schemas::AbilityKind;
-use crate::services::swarm::beeroom::claim_mother_agent;
 use crate::services::archive_extract::{collect_relative_dirs, extract_zip_bytes};
+use crate::services::swarm::beeroom::claim_mother_agent;
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
 use crate::services::worker_card_protocol::{
@@ -610,7 +610,8 @@ async fn run_import_job_inner(
     update_job(job, "validating", 10, "validating hivepack structure");
     persist_job(state, job)?;
 
-    let import_root = hivepack_temp_root().join(format!("i-{}", short_hivepack_job_id(&job.job_id)));
+    let import_root =
+        hivepack_temp_root().join(format!("i-{}", short_hivepack_job_id(&job.job_id)));
     if import_root.exists() {
         std::fs::remove_dir_all(&import_root).ok();
     }
@@ -1431,9 +1432,8 @@ fn resolve_worker_root(package_root: &Path, worker_ref: &ImportWorkerRef) -> Res
         .to_string();
     let expected_dir_key = normalize_fuzzy_name_key(&expected_dir_name);
     let worker_id_key = normalize_fuzzy_name_key(&worker_ref.worker_id);
-    let display_name_key = normalize_fuzzy_name_key(
-        worker_ref.display_name.as_deref().unwrap_or_default(),
-    );
+    let display_name_key =
+        normalize_fuzzy_name_key(worker_ref.display_name.as_deref().unwrap_or_default());
     for candidate in candidates {
         let file_name_key = candidate
             .file_name()
@@ -2890,9 +2890,8 @@ mod tests {
         normalize_export_filename_stem, normalize_import_conflict_mode, normalize_name,
         remap_import_declared_skill_names, resolve_declared_skill_runtime_name,
         resolve_import_skill_name, resolve_import_workers, resolve_worker_skill_sources,
-        unique_label_with_reserved, unique_slug_with_reserved,
-        validate_hive_manifest, validate_relative_path, HiveManifest, HivePackMeta,
-        ImportConflictMode,
+        unique_label_with_reserved, unique_slug_with_reserved, validate_hive_manifest,
+        validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode,
     };
     use crate::services::archive_extract::validate_archive_entry_path;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
@@ -3383,10 +3382,7 @@ mod tests {
 
     #[test]
     fn resolve_declared_skill_runtime_name_prefers_exact_match() {
-        let allowed = HashSet::from([
-            "skill_beta".to_string(),
-            "owner_a@skill_beta".to_string(),
-        ]);
+        let allowed = HashSet::from(["skill_beta".to_string(), "owner_a@skill_beta".to_string()]);
         assert_eq!(
             resolve_declared_skill_runtime_name("skill_beta", &allowed).as_deref(),
             Some("skill_beta")

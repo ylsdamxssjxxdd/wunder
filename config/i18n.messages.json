@@ -1872,68 +1872,68 @@
     "zh-CN": "当用户需要在多条可行路线中选择下一步时，展示问询面板。优先提供 2-4 条简短路线，必要时标注推荐项；调用后暂停执行，等待用户选择。"
   },
   "tool.spec.schedule_task.args.action": {
-    "en-US": "Action.",
-    "zh-CN": "动作。"
+    "en-US": "Action to perform: add, update, remove, enable, disable, get, list, run, or status.",
+    "zh-CN": "要执行的动作：add、update、remove、enable、disable、get、list、run、status。"
   },
   "tool.spec.schedule_task.args.job": {
     "en-US": "Job data.",
     "zh-CN": "任务数据。"
   },
   "tool.spec.schedule_task.args.job.job_id": {
-    "en-US": "Job id.",
-    "zh-CN": "任务ID。"
+    "en-US": "Job id. Reuse it for update/get/remove/enable/disable/run.",
+    "zh-CN": "任务 ID。更新、查询、删除、启停、立即执行时复用它。"
   },
   "tool.spec.schedule_task.args.job.name": {
-    "en-US": "Name.",
-    "zh-CN": "名称。"
+    "en-US": "Short human-readable name for the scheduled job.",
+    "zh-CN": "定时任务的人类可读短名称。"
   },
   "tool.spec.schedule_task.args.job.schedule": {
     "en-US": "Schedule.",
     "zh-CN": "调度。"
   },
   "tool.spec.schedule_task.args.job.schedule.kind": {
-    "en-US": "at/every/cron.",
-    "zh-CN": "at/every/cron。"
+    "en-US": "Precise schedule mode: at, every, or cron.",
+    "zh-CN": "精确调度模式：at、every、cron。"
   },
   "tool.spec.schedule_task.args.job.schedule.at": {
-    "en-US": "Run time (RFC3339).",
-    "zh-CN": "执行时间（RFC3339）。"
+    "en-US": "Exact run time in RFC3339. For every, this can also be the first anchor time.",
+    "zh-CN": "RFC3339 格式的执行时间。对于 every，也可作为首次触发锚点。"
   },
   "tool.spec.schedule_task.args.job.schedule.every_ms": {
-    "en-US": "Interval ms.",
-    "zh-CN": "间隔毫秒。"
+    "en-US": "Recurring interval in milliseconds. Minimum 1000.",
+    "zh-CN": "循环间隔，单位毫秒，最小 1000。"
   },
   "tool.spec.schedule_task.args.job.schedule.cron": {
-    "en-US": "Cron expr.",
-    "zh-CN": "Cron表达式。"
+    "en-US": "Cron expression used when kind=cron.",
+    "zh-CN": "当 kind=cron 时使用的 Cron 表达式。"
   },
   "tool.spec.schedule_task.args.job.schedule.tz": {
-    "en-US": "Timezone.",
-    "zh-CN": "时区。"
+    "en-US": "Timezone for cron parsing, for example Asia/Shanghai.",
+    "zh-CN": "Cron 解析使用的时区，例如 Asia/Shanghai。"
   },
   "tool.spec.schedule_task.args.job.schedule_text": {
-    "en-US": "Natural language or cron expression (optional).",
-    "zh-CN": "自然语言或 cron 表达式（选填）"
+    "en-US": "Preferred shortcut. Natural language or cron text such as 'every 5 minutes' or '0 9 * * *'.",
+    "zh-CN": "推荐快捷写法。可填自然语言或 cron 文本，例如“every 5 minutes”或“0 9 * * *”。"
   },
   "tool.spec.schedule_task.args.job.session": {
-    "en-US": "main or isolated.",
-    "zh-CN": "main/isolated。"
+    "en-US": "main sends the trigger into the agent's current main thread at run time. isolated runs in a fresh thread, then sends the result back to the current main thread.",
+    "zh-CN": "main 表示触发时把消息送入该智能体当前主线程。isolated 表示先在新线程执行，再把结果回送到当前主线程。"
   },
   "tool.spec.schedule_task.args.job.payload": {
     "en-US": "Payload (message).",
     "zh-CN": "payload（message）。"
   },
   "tool.spec.schedule_task.args.job.payload.message": {
-    "en-US": "Message.",
-    "zh-CN": "消息内容。"
+    "en-US": "Message the agent should receive when the job fires.",
+    "zh-CN": "任务触发时要发给智能体的消息内容。"
   },
   "tool.spec.schedule_task.args.job.deliver": {
     "en-US": "Deliver config.",
     "zh-CN": "回传配置。"
   },
   "tool.spec.schedule_task.args.job.enabled": {
-    "en-US": "Enabled?",
-    "zh-CN": "是否启用。"
+    "en-US": "Whether the job starts enabled.",
+    "zh-CN": "任务创建后是否立即启用。"
   },
   "tool.spec.schedule_task.args.job.delete_after_run": {
     "en-US": "Delete after run.",
@@ -1944,8 +1944,8 @@
     "zh-CN": "去重key。"
   },
   "tool.spec.schedule_task.description": {
-    "en-US": "Manage scheduled tasks: add/update/remove/enable/disable/get/list/run/status. Prefer flat fields such as job_id, schedule_text, message, and enabled; only fill schedule when you need precise at/every/cron timing.",
-    "zh-CN": "管理定时任务：add/update/remove/enable/disable/get/list/run/status。优先使用扁平字段 job_id、schedule_text、message、enabled；只有需要精确 at/every/cron 时再填写 schedule。"
+    "en-US": "Create and manage scheduled jobs. Prefer flat fields like action, job_id, schedule_text, message, session, and enabled. Use session=main to inject the trigger into the agent's current main thread at fire time; use session=isolated to run in a fresh thread and send the result back. Recurring jobs keep at most one active run and skip missed ticks instead of piling up every overdue interval.",
+    "zh-CN": "创建和管理定时任务。优先使用扁平字段 action、job_id、schedule_text、message、session、enabled。session=main 会在触发时把消息注入该智能体当前主线程；session=isolated 会先在新线程执行，再把结果回送到当前主线程。循环任务同一时刻最多只有一个活跃执行，不会把所有逾期 tick 全部堆积起来。"
   },
   "tool.spec.sleep.args.reason": {
     "en-US": "Optional reason for this sleep.",

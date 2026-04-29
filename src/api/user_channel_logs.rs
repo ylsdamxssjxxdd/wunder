@@ -69,7 +69,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/channels/runtime_logs/probe",
             post(write_channel_runtime_probe),
         )
-        .route("/wunder/channels/reconnect", post(reconnect_channel_account))
+        .route(
+            "/wunder/channels/reconnect",
+            post(reconnect_channel_account),
+        )
 }
 
 async fn list_channel_runtime_logs(
@@ -171,7 +174,9 @@ async fn list_channel_runtime_logs(
     }
 
     let mut status = runtime_log_status_payload(account_keys.len(), scanned_total);
-    if let (Some(channel), Some(account_id)) = (channel_filter.as_deref(), account_filter.as_deref()) {
+    if let (Some(channel), Some(account_id)) =
+        (channel_filter.as_deref(), account_filter.as_deref())
+    {
         if let Ok(selected_runtime) =
             build_user_channel_runtime(&state, &user_id, channel, account_id)
         {
@@ -294,7 +299,12 @@ async fn reconnect_channel_account(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "account_id is required".to_string()))?
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "account_id is required".to_string(),
+            )
+        })?
         .to_string();
 
     if !channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
@@ -518,7 +528,10 @@ fn build_user_channel_runtime(
     account_id: &str,
 ) -> Result<Value, Response> {
     let owned = list_owned_account_keys(state, user_id, Some(channel))?;
-    if !owned.contains(&(channel.trim().to_ascii_lowercase(), account_id.trim().to_string())) {
+    if !owned.contains(&(
+        channel.trim().to_ascii_lowercase(),
+        account_id.trim().to_string(),
+    )) {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             i18n::t("error.permission_denied"),
@@ -533,7 +546,12 @@ fn build_user_channel_runtime(
         .storage
         .get_channel_account(channel, account_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "channel account not found".to_string()))?;
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "channel account not found".to_string(),
+            )
+        })?;
     let account_cfg = ChannelAccountConfig::from_value(&record.config);
     let Some(xmpp_cfg) = account_cfg.xmpp else {
         return Ok(json!({

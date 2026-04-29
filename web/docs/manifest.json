@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-28T13:19:52.400463+00:00",
+  "generated_at": "2026-04-29T00:57:29.018606+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -264,7 +264,7 @@
                   {
                     "slug": "zh-CN/tools/schedule-task",
                     "title": "定时任务",
-                    "summary": "`schedule_task` 的扁平参数、调度动作与压缩返回。",
+                    "summary": "`schedule_task` 的推荐写法、线程投递语义与调度行为。",
                     "url": "/docs/zh-CN/tools/schedule-task/"
                   },
                   {
@@ -962,7 +962,7 @@
                   {
                     "slug": "en/tools/schedule-task",
                     "title": "Schedule Task",
-                    "summary": "The flat input style, scheduling actions, and compact return shape of `schedule_task`.",
+                    "summary": "Recommended `schedule_task` usage, thread delivery semantics, and recurring behavior.",
                     "url": "/docs/en/tools/schedule-task/"
                   },
                   {
@@ -4290,8 +4290,8 @@
       "slug": "zh-CN/tools/schedule-task",
       "language": "zh-CN",
       "title": "定时任务",
-      "summary": "`schedule_task` 的扁平参数、调度动作与压缩返回。",
-      "updated_at": "2026-04-10",
+      "summary": "`schedule_task` 的推荐写法、线程投递语义与调度行为。",
+      "updated_at": "2026-04-29",
       "read_when": [
         "你要新增、更新、查询或触发定时任务"
       ],
@@ -4319,32 +4319,47 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "推荐输入风格"
+          "text": "推荐写法"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "成功返回"
+          "text": "字段说明"
         },
         {
           "id": "section-5",
+          "level": 2,
+          "text": "session 语义"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "循环任务是否会堆积"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "成功返回"
+        },
+        {
+          "id": "section-8",
           "level": 3,
           "text": "status"
         },
         {
-          "id": "section-6",
+          "id": "section-9",
           "level": 3,
           "text": "add / update / get"
         },
         {
-          "id": "section-7",
+          "id": "section-10",
           "level": 3,
           "text": "list"
         },
         {
-          "id": "section-8",
+          "id": "section-11",
           "level": 2,
-          "text": "重点"
+          "text": "注意"
         }
       ],
       "prev_slug": "zh-CN/tools/panels-and-a2ui",
@@ -12241,8 +12256,8 @@
       "slug": "en/tools/schedule-task",
       "language": "en",
       "title": "Schedule Task",
-      "summary": "The flat input style, scheduling actions, and compact return shape of `schedule_task`.",
-      "updated_at": "2026-04-10",
+      "summary": "Recommended `schedule_task` usage, thread delivery semantics, and recurring behavior.",
+      "updated_at": "2026-04-29",
       "read_when": [
         "You need to create, update, inspect, or trigger scheduled jobs"
       ],
@@ -12270,32 +12285,47 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Recommended input style"
+          "text": "Recommended style"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "Success results"
+          "text": "Field guide"
         },
         {
           "id": "section-5",
+          "level": 2,
+          "text": "session semantics"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Do recurring jobs pile up?"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Success results"
+        },
+        {
+          "id": "section-8",
           "level": 3,
           "text": "status"
         },
         {
-          "id": "section-6",
+          "id": "section-9",
           "level": 3,
           "text": "add, update, and get"
         },
         {
-          "id": "section-7",
+          "id": "section-10",
           "level": 3,
           "text": "list"
         },
         {
-          "id": "section-8",
+          "id": "section-11",
           "level": 2,
-          "text": "Key points"
+          "text": "Notes"
         }
       ],
       "prev_slug": "en/tools/panels-and-a2ui",

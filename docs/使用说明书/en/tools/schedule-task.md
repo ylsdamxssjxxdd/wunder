@@ -1,21 +1,23 @@
 ---
 title: Schedule Task
-summary: The flat input style, scheduling actions, and compact return shape of `schedule_task`.
+summary: Recommended `schedule_task` usage, thread delivery semantics, and recurring behavior.
 read_when:
   - You need to create, update, inspect, or trigger scheduled jobs
 source_docs:
   - src/services/tools/dispatch.rs
   - src/services/cron.rs
-updated_at: 2026-04-10
+updated_at: 2026-04-29
 ---
 
 # Schedule Task
 
-`schedule_task` is a clear exception in the current tool system:
+`schedule_task` creates, updates, inspects, runs, enables, and disables scheduled jobs.
+
+It is a deliberate exception in the current tool system:
 
 - the input side supports model-friendly flat fields
 - the success side returns compact scheduling objects
-- **it does not use the unified success envelope**
+- it does not use the unified `ok/action/state/summary/data` envelope
 
 ## Supported actions
 
@@ -29,9 +31,9 @@ updated_at: 2026-04-10
 - `run`
 - `status`
 
-## Recommended input style
+## Recommended style
 
-Prefer flat fields first:
+Prefer flat fields first instead of building a full nested `job` object:
 
 ```json
 {
@@ -56,9 +58,44 @@ Only use the nested `schedule` object when you need exact control:
     "cron": "*/5 * * * *",
     "tz": "Asia/Shanghai"
   },
-  "message": "Run the inspection"
+  "message": "Run the inspection",
+  "session": "isolated"
 }
 ```
+
+## Field guide
+
+- `action`: operation to perform.
+- `job_id`: stable job identifier reused for later management calls.
+- `name`: short display name.
+- `schedule_text`: preferred shortcut using natural language or cron text.
+- `schedule`: precise `at/every/cron` object when needed.
+- `message`: content the agent should receive when the job fires.
+- `session`: execution thread strategy, either `main` or `isolated`.
+- `enabled`: whether the job starts active.
+
+## `session` semantics
+
+- `main`
+  At fire time, send the message into the agent's **current main thread**.
+  It does not keep using the old thread captured when the job was created.
+
+- `isolated`
+  At fire time, run in a fresh isolated thread first, then send the result back into the agent's **current main thread**.
+
+If the agent does not currently have a bound main thread, the runtime falls back to the job's stored `session_id`.
+
+## Do recurring jobs pile up?
+
+No. They do not accumulate one backlog item per missed tick.
+
+Current behavior:
+
+- one recurring job can have at most one active run at a time
+- if a job is scheduled `every 1s` but one run takes much longer than 1 second, it will not fan out into many concurrent copies
+- missed intervals are skipped or coalesced, and the next run is advanced from the current time base
+
+This means recurring jobs behave more like "keep the latest cadence" than "replay every missed interval".
 
 ## Success results
 
@@ -72,14 +109,14 @@ Only use the nested `schedule` object when you need exact control:
     "poll_interval_ms": 1000,
     "running_jobs": 1,
     "next_run_at": 1760000000,
-    "next_run_at_text": "2026-04-10T10:00:00+08:00"
+    "next_run_at_text": "2026-04-29T10:00:00+08:00"
   },
   "user_jobs": {
     "total": 3,
     "enabled": 2,
     "running": 1,
     "next_run_at": 1760000000,
-    "next_run_at_text": "2026-04-10T10:00:00+08:00"
+    "next_run_at_text": "2026-04-29T10:00:00+08:00"
   }
 }
 ```
@@ -97,12 +134,10 @@ Only use the nested `schedule` object when you need exact control:
       "kind": "every",
       "every_ms": 300000
     },
-    "next_run_at": 1760000000,
-    "next_run_at_text": "2026-04-10T10:00:00+08:00",
+    "next_run_at": "2026-04-29T10:00:00+08:00",
     "last_run_at": null,
     "last_status": null
-  },
-  "deduped": false
+  }
 }
 ```
 
@@ -117,15 +152,16 @@ Only use the nested `schedule` object when you need exact control:
       "name": "Daily report reminder",
       "enabled": true,
       "schedule": { "kind": "every", "every_ms": 300000 },
-      "next_run_at": "2026-04-10T10:00:00+08:00",
-      "last_run_at": null
+      "next_run_at": "2026-04-29T10:00:00+08:00",
+      "last_run_at": null,
+      "last_status": null
     }
   ]
 }
 ```
 
-## Key points
+## Notes
 
-- This is one of the few tools that still does not use `ok/action/state/summary/data`
-- Prefer flat input fields when the model writes arguments
-- The most important result fields are `job`, `jobs`, `scheduler`, and `user_jobs`
+- If both `schedule_text` and `schedule` are provided, `schedule` wins.
+- `schedule.every_ms` must be at least `1000`.
+- Arguments must be a complete JSON object. If the JSON is incomplete, the tool now reports invalid arguments directly.

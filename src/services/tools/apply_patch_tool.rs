@@ -344,16 +344,16 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         let cancel_probe = build_patch_cancel_probe(context);
         move || apply_patch_ops_checked(resolved_ops, cancel_probe.as_ref())
     })
-        .await
-        .map_err(|err| {
-            patch_error_with_hint(
-                "PATCH_RUNTIME_TASK_FAILED",
-                format!("应用补丁任务执行失败：{err}"),
-                format!("Apply patch worker task failed: {err}"),
-                "请重试；若持续失败请检查运行时环境是否稳定。",
-                "Retry; if this persists, verify runtime stability.",
-            )
-        })??;
+    .await
+    .map_err(|err| {
+        patch_error_with_hint(
+            "PATCH_RUNTIME_TASK_FAILED",
+            format!("应用补丁任务执行失败：{err}"),
+            format!("Apply patch worker task failed: {err}"),
+            "请重试；若持续失败请检查运行时环境是否稳定。",
+            "Retry; if this persists, verify runtime stability.",
+        )
+    })??;
 
     if !summary.no_effect_updates.is_empty()
         && summary.added == 0
@@ -1101,8 +1101,7 @@ fn parse_patch_path(raw: &str, line_no: usize) -> Result<String> {
 }
 
 fn is_file_op_header(line: &str) -> bool {
-    normalized_file_op_header(line).is_some()
-        || line.trim() == END_PATCH_MARKER
+    normalized_file_op_header(line).is_some() || line.trim() == END_PATCH_MARKER
 }
 
 fn normalized_file_op_header(line: &str) -> Option<&str> {
@@ -1274,7 +1273,9 @@ fn apply_patch_ops(
                     path: path.clone(),
                     to_path: None,
                     hunks: 1,
-                    diff_blocks: vec![build_delete_file_diff_block(current.as_deref().unwrap_or_default())],
+                    diff_blocks: vec![build_delete_file_diff_block(
+                        current.as_deref().unwrap_or_default(),
+                    )],
                 });
             }
             ResolvedPatchOp::Update {
@@ -1738,7 +1739,12 @@ fn compute_chunk_replacements(
                 );
                 return Err(patch_error_with_hint(
                     "PATCH_CONTEXT_NOT_FOUND",
-                    format!("补丁应用失败：{} 第 {} 个变更块找不到 @@ 锚点 {}", path, index + 1, raw_anchor),
+                    format!(
+                        "补丁应用失败：{} 第 {} 个变更块找不到 @@ 锚点 {}",
+                        path,
+                        index + 1,
+                        raw_anchor
+                    ),
                     format!(
                         "Patch apply failed: chunk {} in {} cannot find @@ anchor {}",
                         index + 1,
@@ -1791,7 +1797,11 @@ fn compute_chunk_replacements(
                 build_context_not_found_hint(source_lines, &pattern, line_index, chunk);
             return Err(patch_error_with_hint(
                 "PATCH_CONTEXT_NOT_FOUND",
-                format!("补丁应用失败：{} 第 {} 个变更块找不到匹配上下文", path, index + 1),
+                format!(
+                    "补丁应用失败：{} 第 {} 个变更块找不到匹配上下文",
+                    path,
+                    index + 1
+                ),
                 format!(
                     "Patch apply failed: chunk {} in {} has no matching context",
                     index + 1,
@@ -1834,33 +1844,19 @@ fn normalize_punctuation(value: &str) -> String {
     value
         .chars()
         .map(|ch| match ch {
-            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}' | '\u{2212}' => '-',
+            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+            | '\u{2212}' => '-',
             '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
             '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-            '\u{00A0}'
-            | '\u{2002}'
-            | '\u{2003}'
-            | '\u{2004}'
-            | '\u{2005}'
-            | '\u{2006}'
-            | '\u{2007}'
-            | '\u{2008}'
-            | '\u{2009}'
-            | '\u{200A}'
-            | '\u{202F}'
-            | '\u{205F}'
+            '\u{00A0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
+            | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
             | '\u{3000}' => ' ',
             _ => ch,
         })
         .collect()
 }
 
-fn seek_sequence(
-    lines: &[String],
-    pattern: &[String],
-    start: usize,
-    eof: bool,
-) -> Option<usize> {
+fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {
     if pattern.is_empty() {
         return Some(start.min(lines.len()));
     }
@@ -2026,8 +2022,14 @@ fn find_chunk_range(
     }
 
     // Fallback: fuzzy match by normalizing whitespace (trim leading/trailing).
-    let fuzzy_old: Vec<String> = old_lines.iter().map(|line| line.trim().to_string()).collect();
-    let fuzzy_source: Vec<String> = source_lines.iter().map(|line| line.trim().to_string()).collect();
+    let fuzzy_old: Vec<String> = old_lines
+        .iter()
+        .map(|line| line.trim().to_string())
+        .collect();
+    let fuzzy_source: Vec<String> = source_lines
+        .iter()
+        .map(|line| line.trim().to_string())
+        .collect();
     if fuzzy_old != old_lines {
         let fuzzy_max_start = len.saturating_sub(old_lines.len());
         let fuzzy_matches = collect_fuzzy_match_starts(
@@ -2357,8 +2359,8 @@ mod tests {
     use crate::config::Config;
     use crate::monitor::MonitorState;
     use crate::storage::SqliteStorage;
-    use std::sync::Arc;
     use serde_json::json;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn create_temp_dir(prefix: &str) -> PathBuf {
@@ -2457,15 +2459,11 @@ mod tests {
         );
         let result = build_patch_error_result(err);
         assert_eq!(
-            result
-                .pointer("/data/error_code")
-                .and_then(Value::as_str),
+            result.pointer("/data/error_code").and_then(Value::as_str),
             Some("PATCH_NO_EFFECT")
         );
         assert_eq!(
-            result
-                .pointer("/error_meta/code")
-                .and_then(Value::as_str),
+            result.pointer("/error_meta/code").and_then(Value::as_str),
             Some("PATCH_NO_EFFECT")
         );
     }
@@ -2582,26 +2580,29 @@ mod tests {
         let file_path = dir.join("demo.py");
         fs::write(&file_path, "print('hello')\n").expect("write source file");
 
-        let summary = apply_patch_ops(vec![ResolvedPatchOp::Update {
-            path: "demo.py".to_string(),
-            target: file_path.clone(),
-            move_to_path: None,
-            move_to_target: None,
-            chunks: vec![UpdateChunk {
-                change_context: None,
-                lines: vec![
-                    ChunkLine {
-                        kind: ChunkLineKind::Delete,
-                        text: "print('hello')".to_string(),
-                    },
-                    ChunkLine {
-                        kind: ChunkLineKind::Add,
-                        text: "print('hello')".to_string(),
-                    },
-                ],
-                end_of_file: false,
+        let summary = apply_patch_ops(
+            vec![ResolvedPatchOp::Update {
+                path: "demo.py".to_string(),
+                target: file_path.clone(),
+                move_to_path: None,
+                move_to_target: None,
+                chunks: vec![UpdateChunk {
+                    change_context: None,
+                    lines: vec![
+                        ChunkLine {
+                            kind: ChunkLineKind::Delete,
+                            text: "print('hello')".to_string(),
+                        },
+                        ChunkLine {
+                            kind: ChunkLineKind::Add,
+                            text: "print('hello')".to_string(),
+                        },
+                    ],
+                    end_of_file: false,
+                }],
             }],
-        }], None)
+            None,
+        )
         .expect("no-effect patch should still summarize");
 
         assert!(summary.changed_files.is_empty());
@@ -2742,11 +2743,14 @@ mod tests {
         let existing = dir.join("existing.txt");
         fs::write(&existing, "old\n").expect("seed file should be written");
 
-        let result = apply_patch_ops(vec![ResolvedPatchOp::Add {
-            path: "existing.txt".to_string(),
-            target: existing,
-            lines: vec!["new".to_string()],
-        }], None);
+        let result = apply_patch_ops(
+            vec![ResolvedPatchOp::Add {
+                path: "existing.txt".to_string(),
+                target: existing,
+                lines: vec!["new".to_string()],
+            }],
+            None,
+        );
 
         assert!(result.is_err());
         let message = result.expect_err("should reject overwrite").to_string();
@@ -2777,13 +2781,16 @@ mod tests {
             ],
             end_of_file: false,
         };
-        let result = apply_patch_ops(vec![ResolvedPatchOp::Update {
-            path: "source.txt".to_string(),
-            target: source,
-            move_to_path: Some("destination.txt".to_string()),
-            move_to_target: Some(destination),
-            chunks: vec![chunk],
-        }], None);
+        let result = apply_patch_ops(
+            vec![ResolvedPatchOp::Update {
+                path: "source.txt".to_string(),
+                target: source,
+                move_to_path: Some("destination.txt".to_string()),
+                move_to_target: Some(destination),
+                chunks: vec![chunk],
+            }],
+            None,
+        );
 
         assert!(result.is_err());
         let message = result

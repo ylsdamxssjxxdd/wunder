@@ -2651,9 +2651,10 @@ fn message_is_suppressed(round_state: &OrchestrationRoundState, created_at: f64)
 
 fn trim_trailing_empty_rounds(round_state: &mut OrchestrationRoundState) {
     while round_state.rounds.len() > 1 {
-        let should_remove = round_state.rounds.last().is_some_and(|round| {
-            round.user_message.trim().is_empty() && round.finalized_at <= 0.0
-        });
+        let should_remove = round_state
+            .rounds
+            .last()
+            .is_some_and(|round| round.user_message.trim().is_empty() && round.finalized_at <= 0.0);
         if !should_remove {
             break;
         }

@@ -2266,10 +2266,16 @@ fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value
     let content_budget = OBSERVATION_MAX_CHARS
         .saturating_sub(estimate_tool_result_chars(&Value::Object(overhead)))
         .saturating_sub("content".chars().count());
-    let minimum_marker_budget = TOOL_RESULT_TRUNCATION_MARKER.chars().count().saturating_add(32);
+    let minimum_marker_budget = TOOL_RESULT_TRUNCATION_MARKER
+        .chars()
+        .count()
+        .saturating_add(32);
     let content_budget = content_budget.max(minimum_marker_budget);
-    let truncated =
-        truncate_tool_result_string_to_budget(&content, content_budget, TOOL_RESULT_TRUNCATION_MARKER);
+    let truncated = truncate_tool_result_string_to_budget(
+        &content,
+        content_budget,
+        TOOL_RESULT_TRUNCATION_MARKER,
+    );
     if truncated == content {
         return;
     }
@@ -3487,7 +3493,10 @@ mod tests {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        assert_eq!(data.get("continuation_required").and_then(Value::as_bool), None);
+        assert_eq!(
+            data.get("continuation_required").and_then(Value::as_bool),
+            None
+        );
         assert_eq!(
             data.get("patch_usage_hint").and_then(Value::as_str),
             Some("do not copy display markers")
@@ -3527,7 +3536,10 @@ mod tests {
             data.get("patch_usage_hint").and_then(Value::as_str),
             Some("do not copy >>> path or N: prefixes")
         );
-        let files_jsonl = data.get("files_jsonl").and_then(Value::as_str).unwrap_or("");
+        let files_jsonl = data
+            .get("files_jsonl")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         assert!(files_jsonl.contains("\"path\":\"notes.md\""));
         assert!(files_jsonl.contains("\"read_lines\":1"));
     }
@@ -3559,12 +3571,11 @@ mod tests {
 
         compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
 
-        let data = payload
-            .get("data")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let data = payload.get("data").cloned().unwrap_or(Value::Null);
         assert_eq!(
-            payload.get("continuation_required").and_then(Value::as_bool),
+            payload
+                .get("continuation_required")
+                .and_then(Value::as_bool),
             Some(true)
         );
         let maybe_content = data.get("content").and_then(Value::as_str);
