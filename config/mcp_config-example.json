@@ -11,7 +11,7 @@
     "targets": {
       "local_hr_mysql": {
         "type": "mysql",
-        "host": "192.168.0.2",
+        "host": "192.168.0.6",
         "port": 3307,
         "user": "root",
         "password": "rootpass123!",
@@ -29,7 +29,7 @@
   },
   "knowledge": {
     "enabled": true,
-    "base_url": "http://192.168.0.2:9380",
+    "base_url": "http://192.168.0.6:9380",
     "api_key": "ragflow-iUR6fuhanBhyoVPXqpu8OAZ0LDTKZPug9h_4cQlqbN8",
     "default_key": "product_docs",
     "request": {

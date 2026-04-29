@@ -77,3 +77,5 @@ config/preset_worker_cards
 .sync_probe*
 .replace_probe*
 .rename_only_probe*
+config/mcp_config.json
+config/org_units.json
