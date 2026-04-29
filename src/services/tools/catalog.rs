@@ -12,13 +12,166 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpToolAliasEntry {
+    pub runtime_name: String,
+    pub display_name: String,
+    pub server_name: String,
+    pub tool_name: String,
+    pub tool_title: Option<String>,
+}
+
+fn sanitize_mcp_display_segment(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_underscore = false;
+    for ch in value.trim().chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else if ch == '_' || ch == '-' {
+            ch
+        } else if ch.is_alphanumeric() {
+            ch
+        } else {
+            '_'
+        };
+        if mapped == '_' {
+            if last_underscore {
+                continue;
+            }
+            last_underscore = true;
+        } else {
+            last_underscore = false;
+        }
+        output.push(mapped);
+    }
+    output.trim_matches('_').to_string()
+}
+
+fn short_hash_suffix(value: &str) -> String {
+    let mut state = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut state);
+    let hash = format!("{:x}", state.finish());
+    hash.chars().take(6).collect()
+}
+
+fn build_mcp_tool_alias_entries_from_raw(
+    raw_entries: Vec<(String, String, String, Option<String>)>,
+) -> Vec<McpToolAliasEntry> {
+    let mut tool_counts: HashMap<String, usize> = HashMap::new();
+    let mut tool_server_counts: HashMap<(String, String), usize> = HashMap::new();
+    for (_, server_name, tool_name, _) in &raw_entries {
+        *tool_counts.entry(tool_name.clone()).or_default() += 1;
+        *tool_server_counts
+            .entry((tool_name.clone(), server_name.clone()))
+            .or_default() += 1;
+    }
+
+    let mut used_display_names = HashSet::new();
+    let mut output = Vec::new();
+    for (runtime_name, server_name, tool_name, tool_title) in raw_entries {
+        let tool_segment = sanitize_mcp_display_segment(&tool_name);
+        let server_segment = sanitize_mcp_display_segment(&server_name);
+        let base = if tool_counts.get(&tool_name).copied().unwrap_or_default() <= 1 {
+            tool_segment.clone()
+        } else {
+            format!("{tool_segment}__{server_segment}")
+        };
+        let same_server_count = tool_server_counts
+            .get(&(tool_name.clone(), server_name.clone()))
+            .copied()
+            .unwrap_or_default();
+        let preferred_title = tool_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let mut display_name = preferred_title.unwrap_or_else(|| {
+            if same_server_count <= 1 {
+                base.clone()
+            } else {
+                format!("{base}__{}", short_hash_suffix(&runtime_name))
+            }
+        });
+        if display_name.is_empty() {
+            display_name = format!("mcp_tool__{}", short_hash_suffix(&runtime_name));
+        }
+        if !used_display_names.insert(display_name.clone()) {
+            let candidate = format!("{display_name}__{}", short_hash_suffix(&runtime_name));
+            used_display_names.insert(candidate.clone());
+            display_name = candidate;
+        }
+        output.push(McpToolAliasEntry {
+            runtime_name,
+            display_name,
+            server_name,
+            tool_name,
+            tool_title,
+        });
+    }
+    output
+}
+
+pub fn build_mcp_tool_alias_entries_for_names<I, S>(names: I) -> Vec<McpToolAliasEntry>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut raw_entries = Vec::new();
+    for raw_name in names {
+        let runtime_name = raw_name.as_ref().trim();
+        let Some((server_name, tool_name)) = runtime_name.split_once('@') else {
+            continue;
+        };
+        let server_name = server_name.trim();
+        let tool_name = tool_name.trim();
+        if server_name.is_empty() || tool_name.is_empty() {
+            continue;
+        }
+        raw_entries.push((
+            runtime_name.to_string(),
+            server_name.to_string(),
+            tool_name.to_string(),
+            None,
+        ));
+    }
+    build_mcp_tool_alias_entries_from_raw(raw_entries)
+}
+
+pub fn build_mcp_tool_alias_entries(config: &Config) -> Vec<McpToolAliasEntry> {
+    let mut raw_entries = Vec::new();
+    for server in &config.mcp.servers {
+        if !server.enabled {
+            continue;
+        }
+        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+        for tool in &server.tool_specs {
+            let tool_name = tool.name.trim();
+            if tool_name.is_empty() {
+                continue;
+            }
+            if !allow.is_empty() && !allow.contains(&tool.name) {
+                continue;
+            }
+            raw_entries.push((
+                format!("{}@{}", server.name, tool_name),
+                server.name.trim().to_string(),
+                tool_name.to_string(),
+                tool.title.clone(),
+            ));
+        }
+    }
+    build_mcp_tool_alias_entries_from_raw(raw_entries)
+}
 
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
     vec![
         ToolSpec {
             name: "最终回复".to_string(),
+            title: Some("???????????".to_string()),
             description: t("tool.spec.final.description"),
             input_schema: json!({
                 "type": "object",
@@ -31,6 +184,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "a2ui".to_string(),
+            title: None,
             description: t("tool.spec.a2ui.description"),
             input_schema: json!({
                 "type": "object",
@@ -59,6 +213,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "计划面板".to_string(),
+            title: None,
             description: t("tool.spec.plan.description"),
             input_schema: json!({
                 "type": "object",
@@ -90,6 +245,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "问询面板".to_string(),
+            title: None,
             description: t("tool.spec.question_panel.description"),
             input_schema: json!({
                 "type": "object",
@@ -119,6 +275,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
+            title: None,
             description: t("tool.spec.sessions_yield.description"),
             input_schema: json!({
                 "type": "object",
@@ -133,6 +290,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "定时任务".to_string(),
+            title: None,
             description: t("tool.spec.schedule_task.description"),
             input_schema: json!({
                 "type": "object",
@@ -167,6 +325,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+            title: None,
             description: t("tool.spec.sleep.description"),
             input_schema: json!({
                 "type": "object",
@@ -180,6 +339,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "用户世界工具".to_string(),
+            title: None,
             description: t("tool.spec.user_world.description"),
             input_schema: json!({
                 "type": "object",
@@ -203,6 +363,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: channel_tool::TOOL_CHANNEL.to_string(),
+            title: None,
             description: t("tool.spec.channel_tool.description"),
             input_schema: json!({
                 "type": "object",
@@ -244,6 +405,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "记忆管理".to_string(),
+            title: None,
             description: t("tool.spec.memory_manager.description"),
             input_schema: json!({
                 "type": "object",
@@ -273,6 +435,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "a2a观察".to_string(),
+            title: None,
             description: t("tool.spec.a2a_observe.description"),
             input_schema: json!({
                 "type": "object",
@@ -288,6 +451,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "a2a等待".to_string(),
+            title: None,
             description: t("tool.spec.a2a_wait.description"),
             input_schema: json!({
                 "type": "object",
@@ -303,6 +467,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "执行命令".to_string(),
+            title: None,
             description: t("tool.spec.exec.description"),
             input_schema: json!({
                 "type": "object",
@@ -318,6 +483,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "ptc".to_string(),
+            title: None,
             description: t("tool.spec.ptc.description"),
             input_schema: json!({
                 "type": "object",
@@ -332,6 +498,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "列出文件".to_string(),
+            title: None,
             description: t("tool.spec.list.description"),
             input_schema: json!({
                 "type": "object",
@@ -346,6 +513,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "搜索内容".to_string(),
+            title: None,
             description: t("tool.spec.search.description"),
             input_schema: json!({
                 "type": "object",
@@ -366,6 +534,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "读取文件".to_string(),
+            title: None,
             description: t("tool.spec.read.description"),
             input_schema: json!({
                 "type": "object",
@@ -389,6 +558,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: read_image_tool::TOOL_READ_IMAGE.to_string(),
+            title: None,
             description: t("tool.spec.read_image.description"),
             input_schema: json!({
                 "type": "object",
@@ -402,6 +572,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "技能调用".to_string(),
+            title: None,
             description: t("tool.spec.skill_call.description"),
             input_schema: json!({
                 "type": "object",
@@ -414,6 +585,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "写入文件".to_string(),
+            title: None,
             description: t("tool.spec.write.description"),
             input_schema: json!({
                 "type": "object",
@@ -428,6 +600,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "应用补丁".to_string(),
+            title: None,
             description: t("tool.spec.apply_patch.description"),
             input_schema: json!({
                 "type": "object",
@@ -441,6 +614,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "LSP查询".to_string(),
+            title: None,
             description: t("tool.spec.lsp.description"),
             input_schema: json!({
                 "type": "object",
@@ -474,6 +648,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "子智能体控制".to_string(),
+            title: None,
             description: t("tool.spec.subagent_control.description"),
             input_schema: json!({
                 "type": "object",
@@ -540,6 +715,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: thread_control_tool::TOOL_THREAD_CONTROL.to_string(),
+            title: None,
             description: t("tool.spec.thread_control.description"),
             input_schema: json!({
                 "type": "object",
@@ -581,6 +757,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "智能体蜂群".to_string(),
+            title: None,
             description: t("tool.spec.agent_swarm.description"),
             input_schema: json!({
                 "type": "object",
@@ -627,6 +804,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "节点调用".to_string(),
+            title: None,
             description: t("tool.spec.node_invoke.description"),
             input_schema: json!({
                 "type": "object",
@@ -647,6 +825,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: web_fetch_tool::TOOL_WEB_FETCH.to_string(),
+            title: None,
             description: t("tool.spec.web_fetch.description"),
             input_schema: json!({
                 "type": "object",
@@ -669,6 +848,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: browser_tool::TOOL_BROWSER.to_string(),
+            title: None,
             description: t("tool.spec.browser.description"),
             input_schema: json!({
                 "type": "object",
@@ -713,6 +893,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+            title: None,
             description: t("tool.spec.desktop_controller.description"),
             input_schema: json!({
                 "type": "object",
@@ -770,6 +951,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+            title: None,
             description: t("tool.spec.desktop_monitor.description"),
             input_schema: json!({
                 "type": "object",
@@ -783,6 +965,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: self_status_tool::TOOL_SELF_STATUS.to_string(),
+            title: None,
             description: t("tool.spec.self_status.description"),
             input_schema: json!({
                 "type": "object",
@@ -1050,6 +1233,52 @@ pub fn resolve_tool_name(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+pub fn build_runtime_tool_display_map(config: &Config) -> HashMap<String, String> {
+    let prefer_alias = i18n::get_language().to_lowercase().starts_with("en");
+    let aliases_by_name = {
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for (alias, canonical) in builtin_aliases() {
+            map.entry(canonical).or_default().push(alias);
+        }
+        for aliases in map.values_mut() {
+            aliases.sort();
+        }
+        map
+    };
+    let mut display_map = HashMap::new();
+    for spec in builtin_tool_specs() {
+        let runtime_name = spec.name.trim().to_string();
+        if runtime_name.is_empty() {
+            continue;
+        }
+        let display_name = if prefer_alias {
+            aliases_by_name
+                .get(&runtime_name)
+                .and_then(|aliases| aliases.first())
+                .cloned()
+                .unwrap_or_else(|| runtime_name.clone())
+        } else {
+            runtime_name.clone()
+        };
+        display_map.insert(runtime_name, display_name);
+    }
+    for entry in build_mcp_tool_alias_entries(config) {
+        display_map.insert(entry.runtime_name, entry.display_name);
+    }
+    display_map
+}
+
+pub fn resolve_runtime_tool_display_name(config: &Config, runtime_name: &str) -> String {
+    let trimmed = runtime_name.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    build_runtime_tool_display_map(config)
+        .get(trimmed)
+        .cloned()
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
 fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
     match canonical {
         sessions_yield_tool::TOOL_SESSIONS_YIELD => {
@@ -1240,32 +1469,46 @@ pub fn collect_prompt_tool_specs_with_language(
         }
         output.push(ToolSpec {
             name,
+            title: None,
             description: spec.description.clone(),
             input_schema: spec.input_schema.clone(),
         });
     }
-    for server in &config.mcp.servers {
-        if !server.enabled {
+    let mcp_alias_entries = build_mcp_tool_alias_entries(config);
+    let mcp_tool_lookup: HashMap<String, (&str, &YamlValue)> = config
+        .mcp
+        .servers
+        .iter()
+        .filter(|server| server.enabled)
+        .flat_map(|server| {
+            let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+            server.tool_specs.iter().filter_map(move |tool| {
+                if tool.name.is_empty() {
+                    return None;
+                }
+                if !allow.is_empty() && !allow.contains(&tool.name) {
+                    return None;
+                }
+                Some((
+                    format!("{}@{}", server.name, tool.name),
+                    (tool.description.as_str(), &tool.input_schema),
+                ))
+            })
+        })
+        .collect();
+    for entry in mcp_alias_entries {
+        if !allowed_names.contains(&entry.runtime_name) || !seen.insert(entry.display_name.clone()) {
             continue;
         }
-        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
-        for tool in &server.tool_specs {
-            if tool.name.is_empty() {
-                continue;
-            }
-            if !allow.is_empty() && !allow.contains(&tool.name) {
-                continue;
-            }
-            let full_name = format!("{}@{}", server.name, tool.name);
-            if !allowed_names.contains(&full_name) || !seen.insert(full_name.clone()) {
-                continue;
-            }
-            output.push(ToolSpec {
-                name: full_name,
-                description: tool.description.clone(),
-                input_schema: yaml_to_json(&tool.input_schema),
-            });
-        }
+        let Some((description, input_schema)) = mcp_tool_lookup.get(&entry.runtime_name) else {
+            continue;
+        };
+        output.push(ToolSpec {
+            name: entry.display_name.clone(),
+            title: None,
+            description: (*description).to_string(),
+            input_schema: yaml_to_json(input_schema),
+        });
     }
     for service in &config.a2a.services {
         if !service.enabled {
@@ -1280,6 +1523,7 @@ pub fn collect_prompt_tool_specs_with_language(
         }
         output.push(ToolSpec {
             name: full_name,
+            title: None,
             description: service.description.clone().unwrap_or_default(),
             input_schema: a2a_service_schema_with_language(language),
         });
@@ -1311,6 +1555,7 @@ pub fn collect_prompt_tool_specs_with_language(
         };
         output.push(ToolSpec {
             name: name.to_string(),
+            title: None,
             description,
             input_schema: json!({
                 "type": "object",
@@ -1363,7 +1608,8 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        builtin_tool_specs_with_language, collect_available_tool_names, resolve_tool_name,
+        build_mcp_tool_alias_entries, builtin_tool_specs_with_language, collect_available_tool_names,
+        resolve_tool_name,
     };
     use crate::config::Config;
     use crate::skills::SkillRegistry;
@@ -1402,6 +1648,62 @@ mod tests {
                 .map(|items| items.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn mcp_alias_prefers_plain_tool_name_when_unique() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![crate::config::McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            tool_specs: vec![crate::config::McpToolSpec {
+                name: "db_query_人员信息".to_string(),
+                title: None,
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+            }],
+            ..Default::default()
+        }];
+        let aliases = build_mcp_tool_alias_entries(&config);
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].runtime_name, "extra_mcp@db_query_人员信息");
+        assert_eq!(aliases[0].display_name, "db_query_人员信息");
+    }
+
+    #[test]
+    fn mcp_alias_adds_server_suffix_when_tool_names_conflict() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![
+            crate::config::McpServerConfig {
+                name: "extra_mcp".to_string(),
+                endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+                enabled: true,
+                tool_specs: vec![crate::config::McpToolSpec {
+                    name: "search".to_string(),
+                    title: None,
+                    description: String::new(),
+                    input_schema: serde_json::json!({}),
+                }],
+                ..Default::default()
+            },
+            crate::config::McpServerConfig {
+                name: "ragflow".to_string(),
+                endpoint: "http://127.0.0.1:9380/mcp".to_string(),
+                enabled: true,
+                tool_specs: vec![crate::config::McpToolSpec {
+                    name: "search".to_string(),
+                    title: None,
+                    description: String::new(),
+                    input_schema: serde_json::json!({}),
+                }],
+                ..Default::default()
+            },
+        ];
+        let aliases = build_mcp_tool_alias_entries(&config);
+        assert_eq!(aliases.len(), 2);
+        assert!(aliases.iter().any(|item| item.display_name == "search__extra_mcp"));
+        assert!(aliases.iter().any(|item| item.display_name == "search__ragflow"));
     }
 
     #[test]

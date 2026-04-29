@@ -1004,6 +1004,8 @@ pub struct McpServerConfig {
 pub struct McpToolSpec {
     pub name: String,
     #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
     pub description: String,
     #[serde(default)]
     pub input_schema: Value,

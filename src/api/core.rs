@@ -228,6 +228,7 @@ async fn wunder_tools(
         if let Some(alias) = english_alias {
             builtin_tools.push(ToolSpec {
                 name: alias,
+                title: None,
                 description: spec.description.clone(),
                 input_schema: spec.input_schema.clone(),
             });
@@ -262,6 +263,7 @@ async fn wunder_tools(
             };
             mcp_tools.push(ToolSpec {
                 name: format!("{}@{}", server.name, tool.name),
+                title: tool.title.clone(),
                 description,
                 input_schema,
             });
@@ -275,6 +277,7 @@ async fn wunder_tools(
         .filter(|service| service.enabled)
         .map(|service| ToolSpec {
             name: format!("a2a@{}", service.name),
+            title: None,
             description: service.description.clone().unwrap_or_default(),
             input_schema: a2a_service_schema(),
         })
@@ -286,6 +289,7 @@ async fn wunder_tools(
         .into_iter()
         .map(|spec| ToolSpec {
             name: spec.name,
+            title: None,
             description: spec.description,
             input_schema: spec.input_schema,
         })
@@ -330,6 +334,7 @@ async fn wunder_tools(
         };
         let spec = ToolSpec {
             name: name.to_string(),
+            title: None,
             description,
             input_schema: knowledge_schema.clone(),
         };
@@ -357,6 +362,7 @@ async fn wunder_tools(
                     used_names.insert(runtime_name.clone());
                     bucket.push(ToolSpec {
                         name: runtime_name,
+                        title: None,
                         description,
                         input_schema,
                     });

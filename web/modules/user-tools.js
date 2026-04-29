@@ -17,6 +17,14 @@ import {
 } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260215-01";
 
+const resolveUserMcpToolDisplayName = (tool) => {
+  const title = String(tool?.title || "").trim();
+  if (title) {
+    return title;
+  }
+  return String(tool?.name || "").trim();
+};
+
 // 自建工具统一使用输入即保存的节流时间，避免频繁写入
 const SAVE_DEBOUNCE_MS = 600;
 const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
@@ -578,7 +586,7 @@ const renderUserMcpTools = () => {
     const info = document.createElement("label");
     info.className = "tool-item-info";
     const desc = tool.description ? `<span class="muted">${tool.description}</span>` : "";
-    info.innerHTML = `<strong>${tool.name}</strong>${desc}`;
+    info.innerHTML = `<strong>${resolveUserMcpToolDisplayName(tool)}</strong>${desc}`;
 
     item.addEventListener("click", (event) => {
       if (shareLabel.contains(event.target)) {
@@ -593,7 +601,7 @@ const renderUserMcpTools = () => {
         shareCheckbox.checked ? t("userTools.shared.on") : t("userTools.shared.off")
       );
       openToolDetailModal({
-        title: tool.name || t("tool.detail.title"),
+        title: resolveUserMcpToolDisplayName(tool) || t("tool.detail.title"),
         meta: metaParts.join(" · "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),
@@ -612,7 +620,7 @@ const renderUserMcpTools = () => {
       const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
       state.userTools.mcp.lastAction = {
         type: event.target.checked ? "tool_shared" : "tool_unshared",
-        name: tool.name,
+        name: resolveUserMcpToolDisplayName(tool) || tool.name,
         server: serverTitle,
       };
       server.shared_tools = nextShared;

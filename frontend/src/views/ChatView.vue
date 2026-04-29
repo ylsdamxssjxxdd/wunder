@@ -426,6 +426,7 @@
                                     v-for="item in section.items"
                                     :key="`${section.key}-${item.name}`"
                                     :name="item.name"
+                                    :display-name="item.displayName"
                                     :description="item.description"
                                     :kind="section.kind"
                                     :group="section.key"

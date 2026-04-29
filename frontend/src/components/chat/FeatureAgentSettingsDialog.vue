@@ -303,10 +303,13 @@ const normalizeToolOption = (item) => {
     const name = item.trim();
     return name ? { label: name, value: name, description: '', hint: name } : null;
   }
-  const value = String(item.name || item.tool_name || item.toolName || item.id || '').trim();
+  const value = String(
+    item.runtime_name || item.runtimeName || item.name || item.tool_name || item.toolName || item.id || ''
+  ).trim();
   if (!value) return null;
+  const label = String(item.display_name || item.displayName || item.title || item.label || value).trim() || value;
   const option = {
-    label: value,
+    label,
     value,
     description: String(item.description || '').trim(),
     hint: ''

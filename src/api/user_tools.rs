@@ -2432,6 +2432,7 @@ fn build_user_tools_summary(
         }
         builtin_tools.push(ToolSpec {
             name,
+            title: None,
             description: spec.description.clone(),
             input_schema: spec.input_schema.clone(),
         });
@@ -2467,6 +2468,7 @@ fn build_user_tools_summary(
             };
             mcp_tools.push(ToolSpec {
                 name: full_name,
+                title: tool.title.clone(),
                 description,
                 input_schema,
             });
@@ -2485,6 +2487,7 @@ fn build_user_tools_summary(
             }
             Some(ToolSpec {
                 name: full_name,
+                title: None,
                 description: service.description.clone().unwrap_or_default(),
                 input_schema: a2a_service_schema(),
             })
@@ -2498,6 +2501,7 @@ fn build_user_tools_summary(
         .filter(|spec| allowed.contains(&spec.name))
         .map(|spec| ToolSpec {
             name: spec.name,
+            title: None,
             description: spec.description,
             input_schema: spec.input_schema,
         })
@@ -2545,6 +2549,7 @@ fn build_user_tools_summary(
         };
         knowledge_tools.push(ToolSpec {
             name: name.to_string(),
+            title: None,
             description,
             input_schema: knowledge_schema.clone(),
         });
@@ -2562,6 +2567,7 @@ fn build_user_tools_summary(
             .entry(spec.name.clone())
             .or_insert_with(|| ToolSpec {
                 name: spec.name.clone(),
+                title: None,
                 description: spec.description.clone(),
                 input_schema: spec.input_schema.clone(),
             });
@@ -2614,6 +2620,7 @@ fn build_user_tools_summary(
         if alias_info.owner_id == user_id {
             let tool = ToolSpec {
                 name: alias.clone(),
+                title: None,
                 description: spec.description.clone(),
                 input_schema: spec.input_schema.clone(),
             };
@@ -3594,6 +3601,7 @@ mod tests {
             "custom_skill".to_string(),
             ToolSpec {
                 name: "custom_skill".to_string(),
+                title: None,
                 description: "custom skill".to_string(),
                 input_schema: json!({ "type": "object" }),
             },
@@ -3610,6 +3618,7 @@ mod tests {
             "alice@mcp_demo@tool".to_string(),
             ToolSpec {
                 name: "alice@mcp_demo@tool".to_string(),
+                title: None,
                 description: "mcp tool".to_string(),
                 input_schema: json!({ "type": "object" }),
             },

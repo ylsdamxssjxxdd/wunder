@@ -6,6 +6,7 @@ use crate::core::tool_args::{
     normalize_tool_arguments_json as normalize_tool_arguments_json_lossy,
     sanitize_tool_call_payload,
 };
+use crate::services::chat_attachments::parse_image_data_url;
 use crate::schemas::TokenUsage;
 use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
 use anyhow::{anyhow, Context, Result};
@@ -980,6 +981,11 @@ fn convert_responses_content_part(part: &Value) -> Option<Value> {
                             .map(|v| v.to_string())
                     });
                 if let Some(url) = url {
+                    if url.starts_with("data:image/")
+                        && parse_image_data_url(&url, None).is_none()
+                    {
+                        return None;
+                    }
                     let mut item = json!({ "type": "input_image", "image_url": url });
                     if let Some(detail) = map.get("detail") {
                         item["detail"] = detail.clone();
@@ -2036,12 +2042,51 @@ fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
         .iter()
         .map(|message| ChatMessage {
             role: message.role.clone(),
-            content: message.content.clone(),
+            content: sanitize_message_content(&message.content),
             reasoning_content: message.reasoning_content.clone(),
             tool_calls: message.tool_calls.as_ref().map(sanitize_tool_call_payload),
             tool_call_id: message.tool_call_id.clone(),
         })
         .collect()
+}
+
+fn sanitize_message_content(content: &Value) -> Value {
+    match content {
+        Value::Array(items) => {
+            let mut sanitized = Vec::new();
+            for item in items {
+                let Some(obj) = item.as_object() else {
+                    sanitized.push(item.clone());
+                    continue;
+                };
+                let raw_type = obj
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if raw_type == "image_url" || raw_type == "input_image" || obj.contains_key("image_url")
+                {
+                    let url = obj
+                        .get("image_url")
+                        .and_then(|value| match value {
+                            Value::String(text) => Some(text.as_str()),
+                            Value::Object(map) => map.get("url").and_then(Value::as_str),
+                            _ => None,
+                        })
+                        .or_else(|| obj.get("url").and_then(Value::as_str));
+                    if url.is_some_and(|value| {
+                        value.starts_with("data:image/")
+                            && parse_image_data_url(value, None).is_none()
+                    }) {
+                        continue;
+                    }
+                }
+                sanitized.push(item.clone());
+            }
+            Value::Array(sanitized)
+        }
+        _ => content.clone(),
+    }
 }
 
 fn extract_stream_text(value: Option<&Value>) -> String {
@@ -3451,6 +3496,29 @@ mod tests {
         assert_eq!(anthropic_messages[2]["role"], "user");
         assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_result");
         assert_eq!(anthropic_messages[2]["content"][0]["tool_use_id"], "call_1");
+    }
+
+    #[test]
+    fn sanitize_chat_messages_drops_invalid_image_parts_from_history() {
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: json!([
+                { "type": "text", "text": "look at this" },
+                {
+                    "type": "image_url",
+                    "image_url": { "url": "data:image/png;base64,ZW5jcnlwdGVkIHBheWxvYWQ=" }
+                }
+            ]),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let sanitized = sanitize_chat_messages(&messages);
+        assert_eq!(
+            sanitized[0].content,
+            json!([{ "type": "text", "text": "look at this" }])
+        );
     }
 
     #[test]

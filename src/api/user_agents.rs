@@ -754,6 +754,7 @@ async fn get_agent_runtime_records(
     let range_end = Local::now().date_naive();
     let selected_date = parse_runtime_date(query.date.as_deref()).unwrap_or(range_end);
     let range_start = range_end - Duration::days(window_days.saturating_sub(1));
+    let tool_display_map = crate::tools::build_runtime_tool_display_map(&crate::config::load());
 
     let (range_start_ts, _) = local_day_bounds(range_start).ok_or_else(|| {
         error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
@@ -891,7 +892,11 @@ async fn get_agent_runtime_records(
                         let Some(hour) = runtime_day_hour(event_ts) else {
                             continue;
                         };
-                        let bucket = heatmap_by_tool.entry(tool_name).or_insert([0; 24]);
+                        let display_tool_name = tool_display_map
+                            .get(tool_name.as_str())
+                            .cloned()
+                            .unwrap_or_else(|| tool_name.clone());
+                        let bucket = heatmap_by_tool.entry(display_tool_name).or_insert([0; 24]);
                         bucket[hour] = bucket[hour].saturating_add(1);
                     }
                     _ => {}

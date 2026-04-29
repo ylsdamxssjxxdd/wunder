@@ -729,6 +729,7 @@ impl UserToolManager {
                                 alias_name.clone(),
                                 ToolSpec {
                                     name: alias_name.clone(),
+                                    title: None,
                                     description,
                                     input_schema: schema,
                                 },
@@ -915,6 +916,7 @@ impl UserToolManager {
                             alias_name.clone(),
                             ToolSpec {
                                 name: alias_name.clone(),
+                                title: None,
                                 description,
                                 input_schema: knowledge_schema.clone(),
                             },
@@ -1385,6 +1387,11 @@ fn user_mcp_to_config(server: &UserMcpServer) -> McpServerConfig {
             .to_string();
         tool_specs.push(McpToolSpec {
             name: name.to_string(),
+            title: tool
+                .get("title")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
             description,
             input_schema: serde_yaml::to_value(normalize_mcp_input_schema(tool))
                 .unwrap_or(serde_yaml::Value::Null),

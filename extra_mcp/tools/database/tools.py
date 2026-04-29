@@ -35,7 +35,7 @@ def _normalize_max_rows(value: int) -> int:
 
 
 def _sanitize_tool_suffix(value: str) -> str:
-    normalized = re.sub(r"\W+", "_", value.strip().lower(), flags=re.UNICODE)
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip().lower())
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     if not normalized:
         normalized = "target"
@@ -48,13 +48,17 @@ def _build_tool_names(prefix: str, targets: Sequence[DbQueryTarget]) -> list[str
     names: list[str] = []
     seen: dict[str, int] = {}
     for target in targets:
-        suffix = _sanitize_tool_suffix(target.name or target.table or target.key)
+        suffix = _sanitize_tool_suffix(target.key or target.table or target.name)
         count = seen.get(suffix, 0) + 1
         seen[suffix] = count
         if count > 1:
             suffix = f"{suffix}_{count}"
         names.append(f"{prefix}_{suffix}")
     return names
+
+
+def _tool_display_name(target: DbQueryTarget) -> str:
+    return (target.name or target.table or target.key).strip() or target.table
 
 
 def _build_schema_hint(columns: Sequence[dict[str, Any]]) -> str:
@@ -249,7 +253,7 @@ def _register_bound_db_query_tool(
 ) -> None:
     @mcp.tool(
         name=tool_name,
-        title=f"数据库查询（{target.table}）",
+        title=f"数据库查询（{_tool_display_name(target)}）",
         description=description,
         annotations={
             "readOnlyHint": True,
@@ -320,7 +324,7 @@ def _register_bound_db_export_tool(
 ) -> None:
     @mcp.tool(
         name=tool_name,
-        title=f"数据库导出（{target.table}）",
+        title=f"数据库导出（{_tool_display_name(target)}）",
         description=description,
         annotations={
             "readOnlyHint": False,

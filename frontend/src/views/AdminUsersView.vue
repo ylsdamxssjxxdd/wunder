@@ -176,8 +176,8 @@ const toolGroups = computed(() => {
   const catalog = adminStore.wunderTools || {};
   const buildOptions = (list) =>
     (list || []).map((item) => ({
-      label: item.name,
-      value: item.name,
+      label: item.display_name || item.displayName || item.name,
+      value: item.runtime_name || item.runtimeName || item.name,
       description: item.description || ''
     }));
   return [

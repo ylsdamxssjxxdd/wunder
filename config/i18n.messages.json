@@ -7,6 +7,10 @@
     "en-US": "Please refer to the following image.",
     "zh-CN": "请参考以下图片。"
   },
+  "attachment.invalid_image_notice": {
+    "en-US": "The image attachment was unsupported, invalid, or unreadable, so it was excluded from model vision input.",
+    "zh-CN": "该图片附件格式不受支持、内容无效或不可读取，已从模型视觉输入中排除。"
+  },
   "attachment.label": {
     "en-US": "The content of the file provided by the user",
     "zh-CN": "用户提供的文件内容"

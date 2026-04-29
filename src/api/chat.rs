@@ -3463,6 +3463,19 @@ fn build_prompt_tooling_preview_payload(
 ) -> Value {
     let tool_call_mode = resolve_system_prompt_tool_call_mode(&user_context.config, agent_record);
     let selected_tool_names = finalize_tool_names(allowed_tool_names.clone());
+    let runtime_tool_display_map = crate::tools::build_runtime_tool_display_map(&user_context.config);
+    let selected_tool_display_map = selected_tool_names
+        .iter()
+        .map(|name| {
+            (
+                name.clone(),
+                runtime_tool_display_map
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| name.clone()),
+            )
+        })
+        .collect::<HashMap<String, String>>();
     let tooling = state.kernel.orchestrator.build_function_tooling(
         &user_context.config,
         &user_context.skills,
@@ -3478,11 +3491,12 @@ fn build_prompt_tooling_preview_payload(
         .map(|resolved| resolved.tools.clone())
         .unwrap_or_default();
     let llm_tool_name_map = tooling
-        .map(|resolved| resolved.name_map)
+        .map(|resolved| resolved.display_map)
         .unwrap_or_default();
     json!({
         "tool_call_mode": tool_call_mode_key(tool_call_mode),
         "selected_tool_names": selected_tool_names,
+        "selected_tool_display_map": selected_tool_display_map,
         "llm_tools": llm_tools,
         "llm_tool_name_map": llm_tool_name_map,
     })

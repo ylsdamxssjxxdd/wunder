@@ -118,7 +118,7 @@
                 <span>{{ t('userTools.action.share') }}</span>
               </label>
               <label class="tool-item-info">
-                <strong>{{ tool.name }}</strong>
+                <strong>{{ resolveToolTitle(tool) }}</strong>
                 <span class="muted">{{ tool.description || t('common.noDescription') }}</span>
               </label>
             </div>
@@ -861,6 +861,12 @@ const toggleToolShare = (tool, checked) => {
   scheduleSave();
 };
 
+const resolveToolTitle = (tool) => {
+  const title = String(tool?.title || '').trim();
+  if (title) return title;
+  return String(tool?.name || '').trim() || t('userTools.mcp.tool.detailTitle');
+};
+
 const openToolDetail = (tool) => {
   const server = activeServer.value;
   if (!tool || !server) return;
@@ -873,7 +879,7 @@ const openToolDetail = (tool) => {
     metaParts.push(isToolShared(tool) ? t('userTools.shared.on') : t('userTools.shared.off'));
   }
   toolDetail.value = {
-    title: tool.name || t('userTools.mcp.tool.detailTitle'),
+    title: resolveToolTitle(tool),
     meta: metaParts.join(' · '),
     description: tool.description || '',
     schema: formatToolSchema(getToolInputSchema(tool))

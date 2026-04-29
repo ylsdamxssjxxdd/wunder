@@ -17,7 +17,7 @@ def _error_response(exc: Exception) -> dict[str, Any]:
 
 
 def _sanitize_tool_suffix(value: str) -> str:
-    normalized = re.sub(r"\W+", "_", value.strip().lower(), flags=re.UNICODE)
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip().lower())
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     if not normalized:
         normalized = "target"
@@ -30,13 +30,17 @@ def _build_tool_names(targets: list[KnowledgeTargetConfig]) -> list[str]:
     names: list[str] = []
     seen: dict[str, int] = {}
     for cfg in targets:
-        suffix = _sanitize_tool_suffix(cfg.name or cfg.key)
+        suffix = _sanitize_tool_suffix(cfg.key or cfg.name)
         count = seen.get(suffix, 0) + 1
         seen[suffix] = count
         if count > 1:
             suffix = f"{suffix}_{count}"
         names.append(f"kb_query_{suffix}")
     return names
+
+
+def _tool_display_name(cfg: KnowledgeTargetConfig) -> str:
+    return (cfg.name or cfg.key).strip() or cfg.key
 
 
 def _build_description(cfg: KnowledgeTargetConfig) -> str:
@@ -56,7 +60,7 @@ def _register_bound_kb_query_tool(
 ) -> None:
     @mcp.tool(
         name=tool_name,
-        title=f"知识库检索（{cfg.key}）",
+        title=f"知识库检索（{_tool_display_name(cfg)}）",
         description=description,
         annotations={
             "readOnlyHint": True,

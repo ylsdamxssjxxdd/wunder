@@ -71,9 +71,9 @@
                           v-for="item in group.items"
                           :key="item.name"
                           class="tool-catalog-tag"
-                          :title="resolveToolUsageHint(item) || item.name"
+                          :title="resolveToolUsageHint(item) || item.displayName || item.name"
                         >
-                          {{ item.name }}
+                          {{ item.displayName || item.name }}
                         </span>
                         <span v-if="!group.items.length" class="tool-catalog-empty">
                           {{ t('common.none') }}

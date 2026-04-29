@@ -4,6 +4,8 @@ type UnknownRecord = Record<string, unknown>;
 
 type AbilityItem = {
   name: string;
+  runtimeName: string;
+  displayName: string;
   description: string;
   kind?: AbilityKind;
   group?: AbilityGroupKey;
@@ -41,6 +43,25 @@ const pickName = (item: unknown): string => {
   return String(obj.runtime_name || obj.runtimeName || obj.name || obj.tool_name || obj.toolName || obj.id || '');
 };
 
+const pickDisplayName = (item: unknown): string => {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  const obj = asRecord(item);
+  return String(
+    obj.display_name ||
+      obj.displayName ||
+      obj.title ||
+      obj.label ||
+      obj.runtime_name ||
+      obj.runtimeName ||
+      obj.name ||
+      obj.tool_name ||
+      obj.toolName ||
+      obj.id ||
+      ''
+  );
+};
+
 const normalizeToolNames = (list: unknown): string[] => {
   if (!Array.isArray(list)) {
     return [];
@@ -56,27 +77,30 @@ const normalizeAbilityItems = (list: unknown): AbilityItem[] => {
   const indexMap = new Map<string, number>();
   list.forEach((item) => {
     if (!item) return;
-    let name = '';
-    let description = '';
-    if (typeof item === 'string') {
-      name = item;
-    } else {
-      const obj = asRecord(item);
-      name = String(obj.name || obj.tool_name || obj.toolName || obj.id || '');
-      description = String(obj.description || obj.desc || obj.summary || '');
-    }
-    const normalizedName = name.trim();
-    if (!normalizedName) return;
-    const normalizedDesc = description.trim();
-    if (indexMap.has(normalizedName)) {
-      const existingIndex = indexMap.get(normalizedName);
-      if (existingIndex !== undefined && !items[existingIndex].description && normalizedDesc) {
-        items[existingIndex].description = normalizedDesc;
+    const runtimeName = pickName(item).trim();
+    if (!runtimeName) return;
+    const displayName = pickDisplayName(item).trim() || runtimeName;
+    const description =
+      typeof item === 'string' ? '' : String(asRecord(item).description || asRecord(item).desc || asRecord(item).summary || '').trim();
+    if (indexMap.has(runtimeName)) {
+      const existingIndex = indexMap.get(runtimeName);
+      if (existingIndex !== undefined) {
+        if (!items[existingIndex].description && description) {
+          items[existingIndex].description = description;
+        }
+        if (!items[existingIndex].displayName && displayName) {
+          items[existingIndex].displayName = displayName;
+        }
       }
       return;
     }
-    items.push({ name: normalizedName, description: normalizedDesc });
-    indexMap.set(normalizedName, items.length - 1);
+    items.push({
+      name: runtimeName,
+      runtimeName,
+      displayName,
+      description
+    });
+    indexMap.set(runtimeName, items.length - 1);
   });
   return items;
 };
@@ -138,10 +162,17 @@ const mergeAbilityItems = (...lists: Array<AbilityItem[] | undefined>): AbilityI
         if (!items[existingIndex].description && description) {
           items[existingIndex].description = description;
         }
+        if (!items[existingIndex].displayName && item?.displayName) {
+          items[existingIndex].displayName = item.displayName;
+        }
         continue;
       }
+      const runtimeName = String(item?.runtimeName || item?.name || '').trim() || name;
+      const displayName = String(item?.displayName || runtimeName).trim() || runtimeName;
       items.push({
         name,
+        runtimeName,
+        displayName,
         description,
         kind: item?.kind,
         group: item?.group
@@ -161,20 +192,33 @@ const normalizeCatalogItems = (list: unknown): AbilityItem[] => {
   list.forEach((item) => {
     if (!item || typeof item !== 'object') return;
     const obj = asRecord(item);
-    const name = pickName(obj).trim();
-    if (!name) return;
+    const runtimeName = pickName(obj).trim();
+    if (!runtimeName) return;
+    const displayName = pickDisplayName(obj).trim() || runtimeName;
     const description = String(obj.description || obj.desc || obj.summary || '').trim();
     const kind = normalizeAbilityKind(obj.kind);
     const group = normalizeAbilityGroup(obj.group, obj.source, kind);
-    const key = `${kind}:${name}`;
+    const key = `${kind}:${runtimeName}`;
     if (indexMap.has(key)) {
       const existingIndex = indexMap.get(key);
-      if (existingIndex !== undefined && !items[existingIndex].description && description) {
-        items[existingIndex].description = description;
+      if (existingIndex !== undefined) {
+        if (!items[existingIndex].description && description) {
+          items[existingIndex].description = description;
+        }
+        if (!items[existingIndex].displayName && displayName) {
+          items[existingIndex].displayName = displayName;
+        }
       }
       return;
     }
-    items.push({ name, description, kind, group });
+    items.push({
+      name: runtimeName,
+      runtimeName,
+      displayName,
+      description,
+      kind,
+      group
+    });
     indexMap.set(key, items.length - 1);
   });
   return items;

@@ -953,10 +953,13 @@ const normalizeOption = (item: unknown): ToolOption | null => {
     return { label: value, value, description: '', hint: value };
   }
   const source = item as Record<string, unknown>;
-  const value = String(source.name || source.tool_name || source.toolName || source.id || '').trim();
+  const value = String(
+    source.runtime_name || source.runtimeName || source.name || source.tool_name || source.toolName || source.id || ''
+  ).trim();
   if (!value) return null;
+  const label = String(source.display_name || source.displayName || source.title || source.label || value).trim() || value;
   const option: ToolOption = {
-    label: value,
+    label,
     value,
     description: String(source.description || '').trim(),
     hint: ''

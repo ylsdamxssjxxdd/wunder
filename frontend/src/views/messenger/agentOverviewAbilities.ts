@@ -69,11 +69,12 @@ const collectStructuredAbilityGroups = (agent: Record<string, unknown> | null) =
   const items = normalizeAbilityDescriptors(agent).filter(isSelectedAbilityDescriptor);
   const normalizedItems = items.map((item) => {
     const name = String(item.runtime_name || item.runtimeName || item.name || '').trim();
+    const displayName = String(item.display_name || item.displayName || item.title || name).trim() || name;
     const description = String(item.description || item.desc || item.summary || '').trim();
     const group = String(item.group || '').trim();
     const source = String(item.source || '').trim();
     const kind = resolveAbilityKind(item.kind, group || source);
-    return { name, description, group, source, kind };
+    return { name, runtimeName: name, displayName, description, group, source, kind };
   });
   return collectAbilityGroupDetails({
     items: normalizedItems

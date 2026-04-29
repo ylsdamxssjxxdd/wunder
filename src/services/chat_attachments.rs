@@ -5,6 +5,7 @@ use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use image::ImageFormat;
 use mime::Mime;
 use std::path::Path;
 use std::str::FromStr;
@@ -51,6 +52,19 @@ pub async fn persist_user_chat_attachments(
             continue;
         };
         if bytes.is_empty() {
+            continue;
+        }
+        if mime_type
+            .trim()
+            .to_ascii_lowercase()
+            .starts_with("image/")
+            && (!is_supported_model_image_mime(&mime_type)
+                || !validate_image_attachment_bytes(&mime_type, &bytes))
+        {
+            warn!(
+                "chat attachment skipped invalid image payload: user_id={}, session_id={}, mime_type={}",
+                user_id, session_id, mime_type
+            );
             continue;
         }
         if bytes.len() > MAX_PERSIST_BYTES {
@@ -141,6 +155,83 @@ fn parse_data_url(raw: &str, hint: Option<&str>) -> Option<(String, Vec<u8>)> {
         .collect::<String>();
     let bytes = STANDARD.decode(cleaned.as_bytes()).ok()?;
     Some((mime_type, bytes))
+}
+
+pub fn parse_image_data_url(raw: &str, hint: Option<&str>) -> Option<(String, Vec<u8>)> {
+    let (mime_type, bytes) = parse_data_url(raw, hint)?;
+    if !mime_type
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("image/")
+    {
+        return None;
+    }
+    if !is_supported_model_image_mime(&mime_type) {
+        return None;
+    }
+    if !validate_image_attachment_bytes(&mime_type, &bytes) {
+        return None;
+    }
+    Some((mime_type, bytes))
+}
+
+pub fn is_supported_model_image_mime(mime_type: &str) -> bool {
+    matches!(
+        normalize_model_image_mime(mime_type).as_deref(),
+        Some(
+            "image/png"
+                | "image/jpeg"
+                | "image/gif"
+                | "image/webp"
+                | "image/bmp"
+                | "image/tiff"
+        )
+    )
+}
+
+pub fn validate_image_attachment_bytes(mime_type: &str, bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let Some(normalized) = normalize_model_image_mime(mime_type) else {
+        return false;
+    };
+    let Some(expected_format) = image_format_for_model_image(&normalized) else {
+        return false;
+    };
+    match image::guess_format(bytes).ok() {
+        Some(actual) if actual == expected_format => {
+            image::load_from_memory_with_format(bytes, actual).is_ok()
+        }
+        Some(_) => false,
+        None => image::load_from_memory_with_format(bytes, expected_format).is_ok(),
+    }
+}
+
+fn normalize_model_image_mime(mime_type: &str) -> Option<String> {
+    let normalized = mime_type
+        .split(';')
+        .next()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn image_format_for_model_image(mime_type: &str) -> Option<ImageFormat> {
+    match mime_type {
+        "image/png" => Some(ImageFormat::Png),
+        "image/jpeg" => Some(ImageFormat::Jpeg),
+        "image/gif" => Some(ImageFormat::Gif),
+        "image/webp" => Some(ImageFormat::WebP),
+        "image/bmp" => Some(ImageFormat::Bmp),
+        "image/tiff" => Some(ImageFormat::Tiff),
+        _ => None,
+    }
 }
 
 fn build_attachment_filename(raw_name: Option<&str>, mime_type: &str) -> String {
@@ -244,5 +335,37 @@ fn sanitize_session_id(value: &str) -> String {
         "default".to_string()
     } else {
         sanitized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_image_data_url, validate_image_attachment_bytes};
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    const TINY_PNG_BASE64: &str =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
+
+    #[test]
+    fn validate_image_attachment_bytes_accepts_valid_png() {
+        let bytes = STANDARD
+            .decode(TINY_PNG_BASE64.as_bytes())
+            .expect("decode png");
+        assert!(validate_image_attachment_bytes("image/png", &bytes));
+    }
+
+    #[test]
+    fn validate_image_attachment_bytes_rejects_invalid_png_payload() {
+        assert!(!validate_image_attachment_bytes("image/png", b"encrypted payload"));
+    }
+
+    #[test]
+    fn parse_image_data_url_rejects_invalid_png_payload() {
+        let raw = format!(
+            "data:image/png;base64,{}",
+            STANDARD.encode("encrypted payload".as_bytes())
+        );
+        assert!(parse_image_data_url(&raw, Some("image/png")).is_none());
     }
 }

@@ -112,6 +112,35 @@ test('prompt tooling preview keeps MCP and knowledge tones aligned with shared a
   assert.equal(resolveAbilityVisual(knowledgeItem || {}).icon, 'fa-database');
 });
 
+test('prompt tooling preview tolerates display-only llm tool name map entries', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['extra_mcp@kb_query_product_docs'],
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_2d9e84',
+            description: 'Search product knowledge base.'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        tool_2d9e84: '知识库检索（产品文档）',
+        extra_mcp@kb_query_product_docs: '知识库检索（产品文档）'
+      }
+    }
+  });
+
+  assert.ok(
+    preview.items.some(
+      (item) =>
+        item.name === '知识库检索（产品文档）' &&
+        item.protocolName === 'tool_2d9e84'
+    )
+  );
+});
+
 test('agent overview counts only selected structured skills and MCP items', () => {
   assert.deepEqual(
     resolveAgentOverviewAbilityCounts({

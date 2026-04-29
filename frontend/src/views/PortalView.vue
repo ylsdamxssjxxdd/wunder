@@ -1106,15 +1106,19 @@ const dialogTitle = computed(() =>
 );
 
 const normalizeToolOption = (item) => {
-  const label =
+  const value =
     typeof item === 'string'
       ? item.trim()
-      : String(item?.name || item?.tool_name || item?.toolName || item?.id || '').trim();
-  if (!label) return null;
+      : String(item?.runtime_name || item?.runtimeName || item?.name || item?.tool_name || item?.toolName || item?.id || '').trim();
+  if (!value) return null;
+  const label =
+    typeof item === 'string'
+      ? value
+      : String(item?.display_name || item?.displayName || item?.title || item?.label || value).trim() || value;
   const description = typeof item === 'string' ? '' : String(item?.description || '').trim();
   const option = {
     label,
-    value: label,
+    value,
     description,
     hint: ''
   };

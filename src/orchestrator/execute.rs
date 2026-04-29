@@ -788,7 +788,13 @@ impl Orchestrator {
                 let tool_calls = if let Some(tooling) = function_tooling.as_ref() {
                     apply_tool_name_map(tool_calls, &tooling.name_map)
                 } else {
-                    tool_calls
+                    apply_tool_name_map(
+                        tool_calls,
+                        &crate::orchestrator::prompt::build_prompt_tool_name_map(
+                            &config,
+                            &allowed_tool_names,
+                        ),
+                    )
                 };
                 let planned_calls = build_planned_tool_calls(tool_calls, &allowed_tool_names);
                 if planned_calls.is_empty() {

@@ -11267,6 +11267,9 @@ export const useChatStore = defineStore('chat', {
               : {}
           );
         } else {
+          if (!remoteRunning) {
+            clearCompletedAssistantStreamingState(this.messages);
+          }
           setSessionLoading(this, targetSessionId, false);
         }
       }

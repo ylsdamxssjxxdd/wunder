@@ -176,6 +176,7 @@ const extractLlmToolMeta = (value: unknown): ToolMeta | null => {
 
 const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolingPreviewItem[] => {
   const llmToolNameMap = asRecord(tooling.llm_tool_name_map);
+  const selectedToolDisplayMap = asRecord(tooling.selected_tool_display_map);
   const llmTools = Array.isArray(tooling.llm_tools) ? tooling.llm_tools : [];
   const selectedToolNames = asStringArray(tooling.selected_tool_names);
   const resolvedTools = llmTools
@@ -198,6 +199,18 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
       byProtocol.set(normalizedProtocol, tool);
     }
   }
+  Object.entries(llmToolNameMap).forEach(([protocolName, displayName]) => {
+    const normalizedProtocol = normalizeKey(protocolName);
+    if (!normalizedProtocol || byProtocol.has(normalizedProtocol)) {
+      return;
+    }
+    const fallbackName = cleanText(displayName) || protocolName;
+    byProtocol.set(normalizedProtocol, {
+      name: fallbackName,
+      description: '',
+      protocolName
+    });
+  });
 
   const used = new Set<string>();
   const items: PromptToolingPreviewItem[] = [];
@@ -232,7 +245,8 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
 
   for (const selectedName of selectedToolNames) {
     const normalizedSelected = normalizeKey(selectedName);
-    appendItem(selectedName, byName.get(normalizedSelected) || byProtocol.get(normalizedSelected));
+    const displayName = cleanText(selectedToolDisplayMap[selectedName]) || selectedName;
+    appendItem(displayName, byName.get(normalizedSelected) || byProtocol.get(normalizedSelected));
   }
 
   for (const tool of resolvedTools) {

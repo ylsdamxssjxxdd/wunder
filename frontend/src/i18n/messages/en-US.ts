@@ -1451,6 +1451,7 @@ export default {
   'chat.attachments.fileParsed': 'File parsed: {name}',
   'chat.attachments.imageAdded': 'Image added: {name}',
   'chat.attachments.imageEmpty': 'Image is empty',
+  'chat.attachments.imageInvalid': 'The image format is unsupported or the file is unreadable',
   'chat.attachments.imageReadFailed': 'Failed to read image',
   'chat.attachments.processFailed': 'Attachment processing failed',
   'chat.attachments.processing': 'Processing {count} attachment(s)',

@@ -31,7 +31,8 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 当 `extra_mcp` 运行在 Docker 容器内且数据库主机配置为 `127.0.0.1` / `localhost` 时，会先直连本机回环地址；若失败，再自动回退到 `host.docker.internal`，以兼容“宿主机数据库 + 容器内 MCP”场景
 - 如需覆盖回退主机名，可设置环境变量 `EXTRA_MCP_LOOPBACK_FALLBACK_HOST`
 - 绑定表场景会同时注册 `db_query*` 与 `db_export*`：前者返回小样本与短 `query_handle` token，后者可直接把同一查询导出为 `xlsx/csv`
-- `database.tables[*].name` 与 `knowledge.targets[*].name` 可用于指定对外展示名和工具名后缀；数据库未配置时默认使用 `table`，知识库未配置时默认使用目标 `key`
+- `database.tables[*].key` 与 `knowledge.targets[*].key` 用于生成真实 MCP `tool.name` 后缀，建议只用 ASCII 字母、数字、下划线、短横线或点；`name` 只用于展示名
+- 数据库目标未配置 `name` 时默认展示 `table`；知识库目标未配置 `name` 时默认展示目标 `key`
 - 若 `db_export*` 的 `path` 使用 `/workspaces/{user_id}/exports/...`（提示词里会自动替换成当前工作区根路径），导出文件会直接落到智能体当前工作区，并在结果中返回精简后的 `path` 与 `workspace_relative_path`
 - 可用 `database.export_root` 或环境变量 `EXTRA_MCP_EXPORT_ROOT` 配置导出根目录（默认 `exports/extra_mcp`）；`db_export*` 的 `path` 参数必须是相对该根目录的相对路径
 - 若希望 `db_export*` 直接写入 Wunder 工作区，`extra-mcp` 进程必须能看到与 `wunder-server` 相同的工作区根目录；Docker Compose 已通过共享 `wunder_workspaces:/workspaces` 卷打通该路径
@@ -55,6 +56,7 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
     "export_root": "exports/extra_mcp",
     "tables": {
       "employees": {
+        "key": "employees",
         "name": "员工信息",
         "table": "employees",
         "description": "员工主数据"
@@ -122,7 +124,7 @@ mcp:
 ```
 
 首次接入 `extra_mcp` 后，请在管理端 MCP 页面执行一次“连接/刷新工具”，把拉取到的 `tool_specs` 保存到配置中，避免模型侧无可用工具描述。
-如果修改了 `database.tables[*].name`、`knowledge.targets[*].name`、`table` 或目标 `key`，也需要重新刷新一次工具规格。
+如果修改了 `database.tables[*].key`、`database.tables[*].name`、`knowledge.targets[*].key`、`knowledge.targets[*].name`、`table` 或目标 `key`，也需要重新刷新一次工具规格。
 
 ### 导出型任务推荐流程
 

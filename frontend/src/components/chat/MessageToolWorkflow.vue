@@ -42,9 +42,7 @@
             <i :class="['fa-solid', 'tool-workflow-entry-tool-icon', entry.toolIconClass]" aria-hidden="true"></i>
             <span
               class="tool-workflow-entry-title"
-              @mouseenter="handleToolCallTitleMouseEnter(entry, $event)"
-              @mousemove="handleToolCallTitleMouseMove($event)"
-              @mouseleave="scheduleHideToolCallDebugHint"
+              @contextmenu.prevent.stop="handleToolCallTitleContextMenu(entry, $event)"
             >
               <span class="tool-workflow-entry-tool-name">
                 {{ entry.toolLabel }}
@@ -94,8 +92,7 @@
         ref="toolCallDebugHintRef"
         class="tool-workflow-debug-floating"
         :style="toolCallDebugHintStyle"
-        @mouseenter="handleToolCallDebugHintMouseEnter"
-        @mouseleave="scheduleHideToolCallDebugHint"
+        @contextmenu.prevent
       >
         {{ toolCallDebugHint.text }}
       </div>
@@ -231,7 +228,6 @@ const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
 const TOOL_CALL_DEBUG_HINT_MARGIN = 12;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH = 360;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_HEIGHT = 160;
-const TOOL_CALL_DEBUG_HINT_HIDE_DELAY_MS = 140;
 
 const PATH_HINT_KEYS = [
   'path',
@@ -415,29 +411,30 @@ const showToolCallDebugHint = (text: string, event: MouseEvent): void => {
   }
   toolCallDebugHint.value.visible = true;
   toolCallDebugHint.value.text = normalized;
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', handleGlobalPointerDown, true);
+    window.removeEventListener('keydown', handleGlobalKeydown, true);
+    window.addEventListener('pointerdown', handleGlobalPointerDown, true);
+    window.addEventListener('keydown', handleGlobalKeydown, true);
+  }
   updateToolCallDebugHintPosition(event.clientX, event.clientY);
   void nextTick(() => updateToolCallDebugHintPosition(event.clientX, event.clientY));
 };
 
-const handleToolCallTitleMouseEnter = (entry: ToolEntryView, event: MouseEvent): void => {
+const handleToolCallTitleContextMenu = (entry: ToolEntryView, event: MouseEvent): void => {
   showToolCallDebugHint(entry.toolCallRawTitle, event);
 };
 
-const handleToolCallTitleMouseMove = (event: MouseEvent): void => {
-  if (!toolCallDebugHint.value.visible || !toolCallDebugHint.value.text) return;
-  updateToolCallDebugHintPosition(event.clientX, event.clientY);
+const handleGlobalPointerDown = (event: Event): void => {
+  if (!toolCallDebugHint.value.visible) return;
+  const target = event.target as Node | null;
+  if (target && toolCallDebugHintRef.value?.contains(target)) return;
+  hideToolCallDebugHint();
 };
 
-const handleToolCallDebugHintMouseEnter = (): void => {
-  clearToolCallDebugHintHideTimer();
-};
-
-const scheduleHideToolCallDebugHint = (): void => {
-  clearToolCallDebugHintHideTimer();
-  toolCallDebugHintHideTimer = setTimeout(() => {
-    toolCallDebugHintHideTimer = null;
-    hideToolCallDebugHint();
-  }, TOOL_CALL_DEBUG_HINT_HIDE_DELAY_MS);
+const handleGlobalKeydown = (event: KeyboardEvent): void => {
+  if (event.key !== 'Escape') return;
+  hideToolCallDebugHint();
 };
 
 const hideToolCallDebugHint = (): void => {
@@ -445,6 +442,10 @@ const hideToolCallDebugHint = (): void => {
   if (!toolCallDebugHint.value.visible && !toolCallDebugHint.value.text) return;
   toolCallDebugHint.value.visible = false;
   toolCallDebugHint.value.text = '';
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', handleGlobalPointerDown, true);
+    window.removeEventListener('keydown', handleGlobalKeydown, true);
+  }
 };
 
 const toolCallDebugHintStyle = computed<Record<string, string>>(() => ({
@@ -3771,6 +3772,10 @@ onBeforeUnmount(() => {
   clearToolCallDebugHintHideTimer();
   hideToolCallDebugHint();
   entryDetailRefMap.clear();
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', handleGlobalPointerDown, true);
+    window.removeEventListener('keydown', handleGlobalKeydown, true);
+  }
   if (typeof window !== 'undefined' && workflowLayoutFrame !== null) {
     window.cancelAnimationFrame(workflowLayoutFrame);
     workflowLayoutFrame = null;

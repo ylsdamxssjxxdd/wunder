@@ -7,9 +7,30 @@ const THREAD_AGENTS_MD_BLOCK_BEGIN: &str = "<!-- WUNDER_THREAD_AGENTS_MD_BEGIN -
 const THREAD_AGENTS_MD_BLOCK_END: &str = "<!-- WUNDER_THREAD_AGENTS_MD_END -->";
 const MAX_THREAD_AGENTS_MD_TOKENS: i64 = 3_000;
 
+pub(crate) fn build_prompt_tool_name_map(
+    config: &Config,
+    allowed_tool_names: &HashSet<String>,
+) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for runtime_name in allowed_tool_names {
+        map.entry(runtime_name.clone())
+            .or_insert_with(|| runtime_name.clone());
+    }
+    for entry in crate::tools::build_mcp_tool_alias_entries(config) {
+        if !allowed_tool_names.contains(&entry.runtime_name) {
+            continue;
+        }
+        map.insert(entry.display_name.clone(), entry.runtime_name.clone());
+        map.entry(entry.runtime_name.clone())
+            .or_insert(entry.runtime_name);
+    }
+    map
+}
+
 pub(crate) struct FunctionTooling {
     pub(crate) tools: Vec<Value>,
     pub(crate) name_map: HashMap<String, String>,
+    pub(crate) display_map: HashMap<String, String>,
 }
 
 impl Orchestrator {
@@ -106,7 +127,8 @@ impl Orchestrator {
 
         let mut used_names = HashSet::new();
         let mut tools = Vec::new();
-        let mut name_map = HashMap::new();
+        let mut name_map = build_prompt_tool_name_map(config, allowed_tool_names);
+        let mut display_map = HashMap::new();
         // Replace the generic {user_id} placeholder in builtin tool descriptions
         // with the actual scoped workspace id so the model produces correct paths.
         let ws_placeholder = "/workspaces/{user_id}/";
@@ -116,7 +138,22 @@ impl Orchestrator {
             let sanitized = sanitize_function_name(&preferred);
             let function_name =
                 ensure_unique_function_name(&sanitized, &spec.name, &mut used_names);
-            name_map.insert(function_name.clone(), spec.name.clone());
+            let runtime_name = name_map
+                .get(&spec.name)
+                .cloned()
+                .unwrap_or_else(|| spec.name.clone());
+            name_map.insert(function_name.clone(), runtime_name);
+            let display_name = if function_name == spec.name {
+                spec.title
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(spec.name.as_str())
+                    .to_string()
+            } else {
+                spec.name.clone()
+            };
+            display_map.insert(function_name.clone(), display_name);
             // Resolve workspace placeholders in description.
             let description = if spec.description.contains(ws_placeholder) {
                 spec.description.replace(ws_placeholder, &ws_actual)
@@ -142,7 +179,11 @@ impl Orchestrator {
                 }
             }));
         }
-        Some(FunctionTooling { tools, name_map })
+        Some(FunctionTooling {
+            tools,
+            name_map,
+            display_map,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -491,6 +532,7 @@ fn short_hash(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, McpServerConfig, McpToolSpec};
 
     fn create_temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("wunder-thread-agents-{}", Uuid::new_v4()));
@@ -562,5 +604,32 @@ mod tests {
             "C:/workspace/demo",
         );
         assert_eq!(reused, None);
+    }
+
+    #[test]
+    fn build_prompt_tool_name_map_includes_mcp_display_alias() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            tool_specs: vec![McpToolSpec {
+                name: "db_query_人员信息".to_string(),
+                title: None,
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+            }],
+            ..Default::default()
+        }];
+        let allowed = HashSet::from(["extra_mcp@db_query_人员信息".to_string()]);
+        let map = build_prompt_tool_name_map(&config, &allowed);
+        assert_eq!(
+            map.get("db_query_人员信息").map(String::as_str),
+            Some("extra_mcp@db_query_人员信息")
+        );
+        assert_eq!(
+            map.get("extra_mcp@db_query_人员信息").map(String::as_str),
+            Some("extra_mcp@db_query_人员信息")
+        );
     }
 }

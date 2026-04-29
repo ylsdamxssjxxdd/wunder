@@ -133,6 +133,7 @@ export type MixedConversation = {
 
 export type ToolEntry = {
   name: string;
+  displayName: string;
   description: string;
   ownerId: string;
   source: Record<string, unknown>;

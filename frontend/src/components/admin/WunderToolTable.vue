@@ -22,7 +22,7 @@
     >
       <el-table-column prop="name" :label="t('admin.tools.column.name')" width="240">
         <template #default="{ row }">
-          <span class="tool-cell">{{ row.name }}</span>
+          <span class="tool-cell">{{ resolveDisplayName(row) || '-' }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="description" :label="t('admin.tools.column.description')">
@@ -41,7 +41,7 @@
       <div class="tool-detail">
         <div class="detail-line">
           <span class="label">{{ t('admin.tools.detail.name') }}</span>
-          <span>{{ selectedTool?.name || '-' }}</span>
+          <span>{{ resolveDisplayName(selectedTool) || '-' }}</span>
         </div>
         <div class="detail-line">
           <span class="label">{{ t('admin.tools.detail.description') }}</span>
@@ -70,6 +70,7 @@ import { useI18n } from '@/i18n';
 
 type ToolItem = {
   name?: string;
+  display_name?: string;
   description?: string;
   input_schema?: unknown;
 };
@@ -101,10 +102,14 @@ const filteredTools = computed(() => {
   if (!target) return list;
   return list.filter((item) => {
     const name = String(item?.name || '').toLowerCase();
+    const displayName = String(item?.display_name || '').toLowerCase();
     const desc = String(item?.description || '').toLowerCase();
-    return name.includes(target) || desc.includes(target);
+    return name.includes(target) || displayName.includes(target) || desc.includes(target);
   });
 });
+
+const resolveDisplayName = (tool: ToolItem | null | undefined) =>
+  String(tool?.display_name || tool?.name || '').trim();
 
 const openDetail = (tool: ToolItem) => {
   selectedTool.value = tool;

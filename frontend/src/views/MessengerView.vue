@@ -1128,6 +1128,7 @@
                                       v-for="item in section.items"
                                       :key="`${section.key}-${item.name}`"
                                       :name="item.name"
+                                      :display-name="item.displayName"
                                       :description="item.description"
                                       :kind="section.kind"
                                       :group="section.key"
@@ -1684,6 +1685,10 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
+import {
+  settleAgentSessionBusyAfterRefresh,
+  type SessionBusyRecoveryStatus
+} from '@/views/messenger/chatRefreshRecovery';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
 import {
@@ -2423,11 +2428,11 @@ const sectionOptions = computed(() => {
       icon: 'fa-solid fa-diagram-project',
       label: t('messenger.section.orchestrations')
     },
-    { key: 'plaza' as MessengerSection, icon: 'fa-solid fa-store', label: t('messenger.section.plaza') },
     { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
     { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
     { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
     { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
+    { key: 'plaza' as MessengerSection, icon: 'fa-solid fa-store', label: t('messenger.section.plaza') },
     { key: 'more' as MessengerSection, icon: 'fa-solid fa-gear', label: t('messenger.section.settings') }
   ];
 });
@@ -3479,12 +3484,6 @@ const pendingApprovalAgentIdSet = computed(() => {
 const isSessionBusy = (sessionId: unknown): boolean =>
   Boolean(chatStore.isSessionBusy?.(sessionId) || chatStore.isSessionLoading?.(sessionId));
 
-const activeMessengerSessionBusy = computed(() => {
-  const sessionId = String(chatStore.activeSessionId || '').trim();
-  if (!sessionId) return false;
-  return isSessionBusy(sessionId);
-});
-
 const TERMINAL_RUNTIME_STATUS_SET = new Set(['idle', 'not_loaded', 'system_error']);
 
 const resolveSessionRuntimeStatus = (sessionId: string): string =>
@@ -3499,6 +3498,40 @@ const resolveSessionLoadingFlag = (sessionId: string): boolean => {
       : {}) as Record<string, unknown>;
   return Boolean(loadingBySession[sessionId]);
 };
+
+const resolveEffectiveSessionBusy = (sessionId: unknown, messagesOverride: unknown[] | null = null): boolean => {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) return false;
+  const runtimeStatus = resolveSessionRuntimeStatus(normalizedSessionId);
+  const loadingBySession = resolveSessionLoadingFlag(normalizedSessionId);
+  const messages = Array.isArray(messagesOverride)
+    ? messagesOverride
+    : normalizedSessionId === String(chatStore.activeSessionId || '').trim()
+      ? (Array.isArray(chatStore.messages) ? chatStore.messages : [])
+      : chatStore.getCachedSessionMessages(normalizedSessionId);
+  const busyByStoreGetter = isSessionBusy(normalizedSessionId);
+  if (
+    !loadingBySession &&
+    TERMINAL_RUNTIME_STATUS_SET.has(runtimeStatus) &&
+    hasRunningAssistantMessage(messages)
+  ) {
+    chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
+      sessionId: normalizedSessionId,
+      runtimeStatus,
+      loadingBySession,
+      busyByStoreGetter,
+      messageCount: messages.length
+    });
+    return false;
+  }
+  return busyByStoreGetter;
+};
+
+const activeMessengerSessionBusy = computed(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return false;
+  return resolveEffectiveSessionBusy(sessionId);
+});
 
 const streamingAgentIdSet = computed(() => {
   const sessionAgentMap = buildSessionAgentMap();
@@ -5044,26 +5077,7 @@ const agentSessionLoading = computed(() => {
   if (!isAgentConversationActive.value) return false;
   const sessionId = String(chatStore.activeSessionId || '').trim();
   if (!sessionId) return false;
-  const runtimeStatus = resolveSessionRuntimeStatus(sessionId);
-  const loadingBySession = resolveSessionLoadingFlag(sessionId);
-  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
-  const hasTrailingRunningAssistant = hasRunningAssistantMessage(messages);
-  const busyByStoreGetter = isSessionBusy(sessionId);
-  if (
-    !loadingBySession &&
-    TERMINAL_RUNTIME_STATUS_SET.has(runtimeStatus) &&
-    hasTrailingRunningAssistant
-  ) {
-    chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
-      sessionId,
-      runtimeStatus,
-      loadingBySession,
-      busyByStoreGetter,
-      messageCount: messages.length
-    });
-    return false;
-  }
-  return busyByStoreGetter;
+  return resolveEffectiveSessionBusy(sessionId, Array.isArray(chatStore.messages) ? chatStore.messages : []);
 });
 
 const buildActiveSessionBusyDebugSnapshot = () => {
@@ -7006,6 +7020,21 @@ const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean 
   return true;
 };
 
+const isVisibleAgentAssistantMessage = (message: Record<string, unknown>): boolean =>
+  String(message?.role || '') === 'assistant' &&
+  !isHiddenInternalMessage(message) &&
+  (!isCompactionMarkerMessage(message) || shouldShowCompactionDivider(message));
+
+const latestVisibleAgentAssistantMessage = computed<Record<string, unknown> | null>(() => {
+  for (let index = chatStore.messages.length - 1; index >= 0; index -= 1) {
+    const message = (chatStore.messages[index] || {}) as Record<string, unknown>;
+    if (isVisibleAgentAssistantMessage(message)) {
+      return message;
+    }
+  }
+  return null;
+});
+
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
   if (resolveAssistantFailureNotice(message, t)) return 'error';
@@ -7014,7 +7043,7 @@ const resolveMessageAgentAvatarState = (message: Record<string, unknown>): Agent
     runtimeState === 'done' &&
     isAgentConversationActive.value &&
     activeMessengerSessionBusy.value &&
-    latestRenderableAssistantMessage.value === message
+    latestVisibleAgentAssistantMessage.value === message
   ) {
     return 'running';
   }
@@ -9937,7 +9966,7 @@ const handleChatPageRefresh = () => {
   if (isMessengerInteractionBlocked.value) {
     return;
   }
-  window.location.reload();
+  void refreshActiveAgentConversation();
 };
 
 const handleRightDockSkillArchiveUpload = async (file: File) => {
@@ -10511,17 +10540,66 @@ const normalizeToolEntry = (item: unknown): ToolEntry | null => {
   if (typeof item === 'string') {
     const name = item.trim();
     if (!name) return null;
-    return { name, description: '', ownerId: '', source: {} };
+    return { name, displayName: name, description: '', ownerId: '', source: {} };
   }
   const source = item as Record<string, unknown>;
-  const name = String(source.name || source.tool_name || source.id || '').trim();
+  const name = String(
+    source.runtime_name || source.runtimeName || source.name || source.tool_name || source.toolName || source.id || ''
+  ).trim();
   if (!name) return null;
+  const displayName = String(source.display_name || source.displayName || source.title || source.label || name).trim() || name;
   return {
     name,
+    displayName,
     description: String(source.description || '').trim(),
     ownerId: String(source.owner_id || source.ownerId || '').trim(),
     source
   };
+};
+
+const SESSION_OPEN_RECOVERY_ATTEMPTS = 2;
+
+const resolveSessionBusyRecoveryMessage = (status: SessionBusyRecoveryStatus): string => {
+  if (status === 'runtime_busy') {
+    return t('chat.session.running');
+  }
+  if (status === 'unsettled') {
+    return t('common.requestFailed');
+  }
+  return t('common.refreshSuccess');
+};
+
+const refreshActiveAgentConversation = async () => {
+  if (!isAgentConversationActive.value) return;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return;
+  const activeAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
+  try {
+    const runResult = await runWithMessengerInteractionBlock('refresh', async () => {
+      await openAgentSession(sessionId, activeAgent || DEFAULT_AGENT_KEY);
+      const recoveryStatus = await settleAgentSessionBusyAfterRefresh({
+        sessionId,
+        isSessionBusy: (targetSessionId) => resolveEffectiveSessionBusy(targetSessionId),
+        resolveRuntimeStatus: (targetSessionId) => resolveSessionRuntimeStatus(String(targetSessionId || '').trim()),
+        loadSessionDetail: (targetSessionId, options) =>
+          chatStore.loadSessionDetail(String(targetSessionId || '').trim(), options),
+        attempts: SESSION_OPEN_RECOVERY_ATTEMPTS
+      });
+      return recoveryStatus;
+    });
+    const status = runResult || 'settled';
+    if (status === 'runtime_busy') {
+      ElMessage.info(resolveSessionBusyRecoveryMessage(status));
+      return;
+    }
+    if (status === 'unsettled') {
+      ElMessage.warning(resolveSessionBusyRecoveryMessage(status));
+      return;
+    }
+    ElMessage.success(resolveSessionBusyRecoveryMessage(status));
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
 };
 
 const loadToolsCatalog = async (options: { silent?: boolean } = {}) => {
@@ -11781,13 +11859,16 @@ async function openOrReuseFreshAgentSession(
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 async function runStartNewSession(options: { notify?: boolean } = {}): Promise<StartNewSessionOutcome> {
-  if (
-    !isAgentConversationActive.value ||
-    creatingAgentSession.value ||
-    isMessengerInteractionBlocked.value ||
-    activeMessengerSessionBusy.value ||
-    activeSessionOrchestrationLocked.value
-  ) {
+  if (!isAgentConversationActive.value || creatingAgentSession.value || isMessengerInteractionBlocked.value) {
+    return 'noop';
+  }
+  if (activeSessionOrchestrationLocked.value) {
+    ElMessage.warning(t('orchestration.chat.lockedInMessenger'));
+    return 'noop';
+  }
+  if (activeMessengerSessionBusy.value) {
+    void refreshActiveAgentConversation();
+    ElMessage.info(t('chat.session.running'));
     return 'noop';
   }
   const targetAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value);

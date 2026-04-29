@@ -2,7 +2,8 @@ use crate::schemas::{
     AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey, AvailableToolsResponse,
     SharedToolSpec, ToolSpec,
 };
-use std::collections::HashSet;
+use crate::tools::build_mcp_tool_alias_entries_for_names;
+use std::collections::{HashMap, HashSet};
 
 fn ability_source_key(source: AbilitySourceKey) -> &'static str {
     match source {
@@ -40,13 +41,19 @@ fn build_tool_ability(
     kind: AbilityKind,
     owner_id: Option<&str>,
     selected: bool,
+    display_name: Option<&str>,
 ) -> AbilityDescriptor {
     let runtime_name = spec.name.trim().to_string();
+    let display_name = display_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&runtime_name)
+        .to_string();
     AbilityDescriptor {
         id: build_ability_id(source, owner_id, &runtime_name),
         name: runtime_name.clone(),
         runtime_name: runtime_name.clone(),
-        display_name: runtime_name,
+        display_name,
         description: spec.description.clone(),
         input_schema: spec.input_schema.clone(),
         group,
@@ -94,9 +101,20 @@ fn push_tool_specs(
     source: AbilitySourceKey,
     kind: AbilityKind,
     owner_id: Option<&str>,
+    display_name_map: Option<&HashMap<String, String>>,
 ) {
     for spec in specs {
-        let descriptor = build_tool_ability(spec, group, source, kind, owner_id, false);
+        let descriptor = build_tool_ability(
+            spec,
+            group,
+            source,
+            kind,
+            owner_id,
+            false,
+            display_name_map
+                .and_then(|map| map.get(spec.name.trim()))
+                .map(String::as_str),
+        );
         if seen_ids.insert(descriptor.id.clone()) {
             items.push(descriptor);
         }
@@ -106,6 +124,12 @@ fn push_tool_specs(
 pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDescriptor> {
     let mut items = Vec::new();
     let mut seen_ids = HashSet::new();
+    let mcp_display_names: HashMap<String, String> = build_mcp_tool_alias_entries_for_names(
+        response.mcp_tools.iter().map(|item| item.name.as_str()),
+    )
+    .into_iter()
+    .map(|entry| (entry.runtime_name, entry.display_name))
+    .collect();
     let selected_shared_names: HashSet<String> = response
         .shared_tools_selected
         .as_ref()
@@ -123,6 +147,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilitySourceKey::Builtin,
         AbilityKind::Tool,
         None,
+        None,
     );
     push_tool_specs(
         &mut items,
@@ -132,6 +157,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilitySourceKey::Mcp,
         AbilityKind::Tool,
         None,
+        Some(&mcp_display_names),
     );
     push_tool_specs(
         &mut items,
@@ -140,6 +166,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilityGroupKey::A2a,
         AbilitySourceKey::A2a,
         AbilityKind::Tool,
+        None,
         None,
     );
     push_tool_specs(
@@ -150,6 +177,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilitySourceKey::Skill,
         AbilityKind::Skill,
         None,
+        None,
     );
     push_tool_specs(
         &mut items,
@@ -158,6 +186,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilityGroupKey::Knowledge,
         AbilitySourceKey::Knowledge,
         AbilityKind::Tool,
+        None,
         None,
     );
     push_tool_specs(
@@ -168,6 +197,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilitySourceKey::UserMcp,
         AbilityKind::Tool,
         None,
+        None,
     );
     push_tool_specs(
         &mut items,
@@ -177,6 +207,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilitySourceKey::UserSkill,
         AbilityKind::Skill,
         None,
+        None,
     );
     push_tool_specs(
         &mut items,
@@ -185,6 +216,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         AbilityGroupKey::Knowledge,
         AbilitySourceKey::UserKnowledge,
         AbilityKind::Tool,
+        None,
         None,
     );
 
@@ -214,9 +246,40 @@ mod tests {
     fn sample_spec(name: &str) -> ToolSpec {
         ToolSpec {
             name: name.to_string(),
+            title: None,
             description: format!("desc:{name}"),
             input_schema: json!({"type": "object"}),
         }
+    }
+
+    #[test]
+    fn build_ability_items_uses_short_display_name_for_mcp_items() {
+        let response = AvailableToolsResponse {
+            builtin_tools: vec![],
+            mcp_tools: vec![sample_spec("extra_mcp@db_query_人员信息")],
+            a2a_tools: vec![],
+            skills: vec![],
+            knowledge_tools: vec![],
+            user_tools: vec![],
+            admin_builtin_tools: vec![],
+            admin_mcp_tools: vec![],
+            admin_a2a_tools: vec![],
+            admin_skills: vec![],
+            admin_knowledge_tools: vec![],
+            user_mcp_tools: vec![],
+            user_skills: vec![],
+            user_knowledge_tools: vec![],
+            default_agent_tool_names: vec![],
+            shared_tools: vec![],
+            shared_tools_selected: None,
+            items: vec![],
+        };
+
+        let items = build_ability_items(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].runtime_name, "extra_mcp@db_query_人员信息");
+        assert_eq!(items[0].name, "extra_mcp@db_query_人员信息");
+        assert_eq!(items[0].display_name, "db_query_人员信息");
     }
 
     #[test]
@@ -239,6 +302,7 @@ mod tests {
             default_agent_tool_names: vec![],
             shared_tools: vec![SharedToolSpec {
                 name: "bob@shared_tool".to_string(),
+                title: None,
                 description: "shared".to_string(),
                 input_schema: json!({"type": "object"}),
                 owner_id: "bob".to_string(),

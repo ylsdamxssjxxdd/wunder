@@ -1422,6 +1422,7 @@ export default {
   'chat.attachments.fileParsed': '文件已解析：{name}',
   'chat.attachments.imageAdded': '图片已添加：{name}',
   'chat.attachments.imageEmpty': '图片内容为空',
+  'chat.attachments.imageInvalid': '图片格式不受支持或文件无法读取',
   'chat.attachments.imageReadFailed': '读取图片失败',
   'chat.attachments.processFailed': '附件处理失败',
   'chat.attachments.processing': '附件处理中 {count} 个',

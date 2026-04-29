@@ -38,8 +38,10 @@ pub(crate) use catalog::builtin_tool_specs_with_language;
 pub(crate) use catalog::yaml_to_json;
 pub use catalog::{
     a2a_service_schema, a2a_service_schema_with_language, browser_tools_available,
-    build_desktop_followup_user_message, build_read_image_followup_user_message, builtin_aliases,
-    builtin_tool_specs, collect_available_tool_names, collect_prompt_tool_specs,
+    build_desktop_followup_user_message, build_mcp_tool_alias_entries,
+    build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,
+    build_runtime_tool_display_map, builtin_aliases, builtin_tool_specs,
+    collect_available_tool_names, collect_prompt_tool_specs,
     collect_prompt_tool_specs_with_language, desktop_tools_available, extract_sleep_seconds,
     filter_tool_names_by_model_capability, is_browser_tool_name, is_desktop_control_tool_name,
     is_read_image_tool_name, is_sleep_tool_name, resolve_tool_name,

@@ -11,6 +11,14 @@ import { openToolDetailModal, setToolDetailTestMode } from "./tool-detail.js?v=2
 let mcpTestFields = [];
 let mcpTestActiveKey = "";
 
+const resolveMcpToolDisplayName = (tool) => {
+  const title = String(tool?.title || "").trim();
+  if (title) {
+    return title;
+  }
+  return String(tool?.name || "").trim();
+};
+
 // 规范化 MCP 服务字段，兼容后端与导入结构
 const normalizeMcpServer = (server) => {
   const headers = isPlainObject(server.headers) ? server.headers : {};
@@ -398,7 +406,7 @@ const renderMcpTestPanel = (tool, server, options = {}) => {
   }
   mcpTestActiveKey = key;
   if (elements.mcpTestToolTitle) {
-    elements.mcpTestToolTitle.textContent = tool.name || t("mcp.test.empty");
+    elements.mcpTestToolTitle.textContent = resolveMcpToolDisplayName(tool) || t("mcp.test.empty");
   }
   if (elements.mcpTestToolMeta) {
     const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
@@ -718,8 +726,8 @@ const renderMcpTools = () => {
       }
       const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
       const actionMessage = event.target.checked
-        ? t("mcp.tool.enabled", { name: tool.name, server: serverTitle })
-        : t("mcp.tool.disabled", { name: tool.name, server: serverTitle });
+        ? t("mcp.tool.enabled", { name: resolveMcpToolDisplayName(tool) || tool.name, server: serverTitle })
+        : t("mcp.tool.disabled", { name: resolveMcpToolDisplayName(tool) || tool.name, server: serverTitle });
       // 勾选状态变更后立即保存，避免依赖手动保存按钮
       saveMcpServers({ refreshUI: false })
         .then((ok) => {
@@ -735,7 +743,7 @@ const renderMcpTools = () => {
         });
     });
     const label = document.createElement("label");
-    label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
+    label.innerHTML = `<strong>${resolveMcpToolDisplayName(tool)}</strong><span class="muted">${tool.description || ""}</span>`;
     // 点击工具条目弹出详情 + 测试面板，避免与勾选动作冲突
     item.addEventListener("click", (event) => {
       if (event.target === checkbox) {
@@ -757,7 +765,7 @@ const renderMcpTools = () => {
         checkbox.checked ? t("mcp.tool.selected") : t("mcp.tool.unselected")
       );
       openToolDetailModal({
-        title: tool.name || t("tool.detail.title"),
+        title: resolveMcpToolDisplayName(tool) || t("tool.detail.title"),
         meta: metaParts.join(" · "),
         description: tool.description || "",
         schema: getToolInputSchema(tool),

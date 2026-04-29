@@ -23,9 +23,9 @@
                 >
                   <template #content>
                     <AbilityTooltipCard
-                      :name="item.name"
-                      :description="item.description"
+                      :name="resolveAdminToolDisplayName(item)"
                       :hint="resolveAdminToolDetail(item)"
+                      :description="item.description"
                       :show-detail="false"
                       :kind="group.key === 'skills' ? 'skill' : 'tool'"
                       :group="group.key"
@@ -34,14 +34,14 @@
                   </template>
                   <span class="messenger-tool-tag messenger-tool-tag--detail">
                     <AbilityIconBadge
-                      :name="item.name"
+                      :name="resolveAdminToolDisplayName(item)"
                       :description="item.description"
                       :hint="resolveAdminToolDetail(item)"
                       :kind="group.key === 'skills' ? 'skill' : 'tool'"
                       :group="group.key"
                       size="xs"
                     />
-                    <span class="messenger-tool-tag-text">{{ item.name }}</span>
+                    <span class="messenger-tool-tag-text">{{ resolveAdminToolDisplayName(item) }}</span>
                   </span>
                 </el-tooltip>
               </template>
@@ -151,6 +151,10 @@ const handleToolPaneLoadingChange = (value: unknown) => {
   toolPaneLoading.value = value === true;
 };
 
+const resolveAdminToolDisplayName = (item: ToolEntry): string => {
+  return String(item.displayName || item.name || '').trim() || item.name;
+};
+
 watch(
   () => props.selectedToolCategory,
   () => {
@@ -183,5 +187,13 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.messenger-tools-admin-groups {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 </style>

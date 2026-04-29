@@ -201,6 +201,7 @@
   - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
   - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空或 `null`）
   - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
 - 说明：
   - 用户自建工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
   - `items[]` 为新的统一能力输出；旧的分组字段继续保留，便于前端与旧调用方平滑迁移。
@@ -685,6 +686,7 @@
   - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
   - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空数组）
   - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
 - 说明：返回的是当前用户实际可用工具（已按等级与用户自身配置过滤）。
 - 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
 - 说明：`items[]` 与旧分组字段同时返回；推荐新前端与新工具目录逻辑优先消费 `items[]`。
@@ -704,6 +706,7 @@
   - `user_knowledge_tools`：当前用户配置的自建知识库工具
   - `default_agent_tool_names`：默认智能体/预制智能体新建时的默认勾选项
   - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
 - 说明：用于智能体设置与工具管理页面；`shared_tools/shared_tools_selected` 仅为兼容字段，当前恒为空。
 - 说明：管理员开放工具与用户自建工具已拆分为独立区域。服务端/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
 - 说明：`items[]` 是目录接口的统一能力视图：`group` 用于前端分组展示，`kind` 用于区分工具/技能；旧字段继续保留用于兼容。

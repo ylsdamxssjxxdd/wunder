@@ -555,6 +555,7 @@ fn collect_tool_specs(server: &McpServerConfig, tools: Vec<Tool>) -> Vec<ToolSpe
             .unwrap_or_default();
         items.push(ToolSpec {
             name,
+            title: tool.title.clone(),
             description: if description.is_empty() {
                 fallback
             } else {
@@ -572,6 +573,7 @@ pub fn build_tool_specs_from_config(server: &McpServerConfig) -> Vec<ToolSpec> {
         .iter()
         .map(|spec| ToolSpec {
             name: spec.name.clone(),
+            title: spec.title.clone(),
             description: spec.description.clone(),
             input_schema: serde_json::to_value(&spec.input_schema).unwrap_or(Value::Null),
         })

@@ -184,6 +184,8 @@ pub struct AbilityDescriptor {
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolSpec {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub description: String,
     pub input_schema: Value,
 }

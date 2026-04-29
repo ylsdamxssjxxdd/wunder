@@ -60,7 +60,7 @@
             <span>{{ t('common.use') }}</span>
           </label>
           <label class="tool-item-info">
-            <strong>{{ tool.name }}</strong>
+            <strong>{{ tool.displayName || tool.name }}</strong>
             <span class="muted">{{ buildToolDesc(tool) }}</span>
           </label>
         </div>
@@ -108,12 +108,13 @@ const normalizeTool = (tool) => {
   if (!tool) return null;
   if (typeof tool === 'string') {
     const name = tool.trim();
-    return name ? { name, description: '', ownerId: '' } : null;
+    return name ? { name, displayName: name, description: '', ownerId: '' } : null;
   }
-  const name = String(tool.name || '').trim();
+  const name = String(tool.runtime_name || tool.runtimeName || tool.name || tool.tool_name || tool.toolName || tool.id || '').trim();
   if (!name) return null;
   return {
     name,
+    displayName: String(tool.display_name || tool.displayName || tool.title || tool.label || name).trim() || name,
     description: tool.description || '',
     ownerId: tool.owner_id || tool.ownerId || ''
   };

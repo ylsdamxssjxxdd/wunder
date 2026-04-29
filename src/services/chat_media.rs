@@ -1,5 +1,8 @@
 use crate::config::{ChannelAsrConfig, Config};
 use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
+use crate::services::chat_attachments::{
+    is_supported_model_image_mime, parse_image_data_url, validate_image_attachment_bytes,
+};
 use crate::schemas::AttachmentPayload;
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::workspace::WorkspaceManager;
@@ -57,6 +60,7 @@ pub struct ChatMediaProcessResult {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MediaKind {
+    Image,
     Audio,
     Video,
 }
@@ -134,8 +138,9 @@ async fn process_chat_media_source_path(
         .unwrap_or_else(|| "media".to_string());
     let source_public_path = workspace.display_path(workspace_id, source_path);
     let media_kind = detect_media_kind(filename.as_str(), content_type_hint)
-        .ok_or_else(|| anyhow!("unsupported media type, expected audio/video"))?;
+        .ok_or_else(|| anyhow!("unsupported media type, expected image/audio/video"))?;
     match media_kind {
+        MediaKind::Image => process_image_source(workspace, workspace_id, source_path).await,
         MediaKind::Audio => {
             process_audio_source(config, source_path, filename.as_str(), source_public_path).await
         }
@@ -192,6 +197,45 @@ async fn process_audio_source(
             public_path: Some(source_public_path),
         }],
         warnings,
+    })
+}
+
+async fn process_image_source(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_path: &Path,
+) -> Result<ChatMediaProcessResult> {
+    let filename = source_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "image".to_string());
+    let bytes = fs::read(source_path).await?;
+    let mime_type =
+        detect_supported_image_content_type(source_path, bytes.as_slice()).ok_or_else(|| {
+            anyhow!("unsupported image type, expected png/jpeg/gif/webp/bmp/tiff")
+        })?;
+    if !validate_image_attachment_bytes(&mime_type, bytes.as_slice()) {
+        return Err(anyhow!("image file is invalid or unreadable"));
+    }
+    let public_path = workspace.display_path(workspace_id, source_path);
+    Ok(ChatMediaProcessResult {
+        kind: "image".to_string(),
+        name: filename.clone(),
+        source_public_path: public_path.clone(),
+        duration_ms: None,
+        requested_frame_rate: None,
+        applied_frame_rate: None,
+        frame_count: 1,
+        has_audio: false,
+        attachments: vec![AttachmentPayload {
+            name: Some(filename),
+            content: None,
+            content_type: Some(mime_type),
+            public_path: Some(public_path),
+        }],
+        warnings: Vec::new(),
     })
 }
 
@@ -666,6 +710,9 @@ async fn transcribe_audio_file(
 
 fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<MediaKind> {
     let lowered_mime = content_type.unwrap_or("").trim().to_ascii_lowercase();
+    if lowered_mime.starts_with("image/") {
+        return Some(MediaKind::Image);
+    }
     if lowered_mime.starts_with("audio/") {
         return Some(MediaKind::Audio);
     }
@@ -679,6 +726,12 @@ fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<Media
         .to_ascii_lowercase();
     if matches!(
         extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff"
+    ) {
+        return Some(MediaKind::Image);
+    }
+    if matches!(
+        extension.as_str(),
         "mp3" | "wav" | "ogg" | "opus" | "aac" | "flac" | "m4a"
     ) {
         return Some(MediaKind::Audio);
@@ -690,6 +743,35 @@ fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<Media
         return Some(MediaKind::Video);
     }
     None
+}
+
+fn detect_supported_image_content_type(path: &Path, bytes: &[u8]) -> Option<String> {
+    let guessed = image::guess_format(bytes).ok().and_then(|format| match format {
+        image::ImageFormat::Png => Some("image/png"),
+        image::ImageFormat::Jpeg => Some("image/jpeg"),
+        image::ImageFormat::Gif => Some("image/gif"),
+        image::ImageFormat::WebP => Some("image/webp"),
+        image::ImageFormat::Bmp => Some("image/bmp"),
+        image::ImageFormat::Tiff => Some("image/tiff"),
+        _ => None,
+    });
+    if guessed.is_some() {
+        return guessed.map(|value| value.to_string());
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png".to_string()),
+        "jpg" | "jpeg" => Some("image/jpeg".to_string()),
+        "gif" => Some("image/gif".to_string()),
+        "webp" => Some("image/webp".to_string()),
+        "bmp" => Some("image/bmp".to_string()),
+        "tif" | "tiff" => Some("image/tiff".to_string()),
+        _ => None,
+    }
 }
 
 fn normalize_requested_frame_rate(value: Option<f64>) -> Result<f64> {
@@ -811,8 +893,10 @@ pub async fn load_image_attachment_data_url(
     attachment: &AttachmentPayload,
 ) -> Option<String> {
     let raw_content = attachment.content.as_deref().unwrap_or("").trim();
-    if raw_content.starts_with("data:image/") {
-        return Some(raw_content.to_string());
+    if let Some((mime_type, bytes)) =
+        parse_image_data_url(raw_content, attachment.content_type.as_deref())
+    {
+        return Some(format!("data:{mime_type};base64,{}", STANDARD.encode(bytes)));
     }
     let public_path = attachment.public_path.as_deref()?.trim();
     if public_path.is_empty() {
@@ -827,6 +911,12 @@ pub async fn load_image_attachment_data_url(
         .map(str::trim)
         .filter(|value| value.starts_with("image/"))
         .unwrap_or("image/jpeg");
+    if !is_supported_model_image_mime(mime) {
+        return None;
+    }
+    if !validate_image_attachment_bytes(mime, &bytes) {
+        return None;
+    }
     Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 

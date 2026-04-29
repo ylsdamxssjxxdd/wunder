@@ -3576,8 +3576,9 @@ async fn admin_monitor_tool_usage(
     };
 
     let display_name = display_map
-        .get(&canonical)
+        .get(&tool_name)
         .cloned()
+        .or_else(|| display_map.get(&canonical).cloned())
         .unwrap_or_else(|| cleaned.clone());
     let mut session_map = HashMap::new();
     for session in state.monitor.list_sessions(false) {
@@ -6334,29 +6335,15 @@ fn build_builtin_aliases_by_name() -> HashMap<String, Vec<String>> {
     map
 }
 
-fn build_builtin_tool_display_map() -> HashMap<String, String> {
-    // 按语言偏好选择展示名，英文优先展示别名。
-    let prefer_alias = i18n::get_language().to_lowercase().starts_with("en");
-    let aliases_by_name = build_builtin_aliases_by_name();
-    let mut display_map = HashMap::new();
-    for spec in builtin_tool_specs() {
-        let name = spec.name;
-        let display = if prefer_alias {
-            aliases_by_name
-                .get(&name)
-                .and_then(|aliases| aliases.first())
-                .cloned()
-                .unwrap_or_else(|| name.clone())
-        } else {
-            name.clone()
-        };
-        display_map.insert(name, display);
-    }
-    display_map
+fn build_builtin_tool_display_map(config: &crate::config::Config) -> HashMap<String, String> {
+    crate::tools::build_runtime_tool_display_map(config)
 }
 
-fn normalize_tool_stats(tool_stats: Vec<HashMap<String, Value>>) -> Vec<HashMap<String, Value>> {
-    let display_map = build_builtin_tool_display_map();
+fn normalize_tool_stats(
+    tool_stats: Vec<HashMap<String, Value>>,
+    config: &crate::config::Config,
+) -> Vec<HashMap<String, Value>> {
+    let display_map = build_builtin_tool_display_map(config);
     let builtin_names = builtin_tool_names();
     let mut merged: HashMap<String, i64> = HashMap::new();
     for item in tool_stats {

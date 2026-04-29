@@ -568,7 +568,14 @@ let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
 const chatStore = useChatStore();
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp']);
+const IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/bmp',
+  'image/webp'
+]);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'opus', 'aac', 'flac', 'm4a', 'webm']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'mkv', 'avi', 'webm', 'mpeg', 'mpg', 'm4v']);
 
@@ -1299,12 +1306,46 @@ const resolveFileExtension = (filename) => {
   return parts.pop().toLowerCase();
 };
 
-const isImageFile = (file) => {
-  if (file?.type && file.type.startsWith('image/')) {
-    return true;
+const normalizeImageMimeType = (value: unknown): string => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .split(';')[0]
+    ?.trim();
+  if (normalized === 'image/jpg') return 'image/jpeg';
+  return normalized;
+};
+
+const inferImageMimeTypeFromExtension = (filename: unknown): string => {
+  const ext = resolveFileExtension(String(filename || ''));
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'gif':
+      return 'image/gif';
+    case 'bmp':
+      return 'image/bmp';
+    case 'webp':
+      return 'image/webp';
+    default:
+      return '';
   }
-  const ext = resolveFileExtension(file?.name);
-  return ext ? IMAGE_EXTENSIONS.has(ext) : false;
+};
+
+const resolveSupportedImageMimeType = (file): string => {
+  const mimeType = normalizeImageMimeType(file?.type);
+  if (mimeType && IMAGE_MIME_TYPES.has(mimeType)) {
+    return mimeType;
+  }
+  const inferred = inferImageMimeTypeFromExtension(file?.name);
+  return IMAGE_MIME_TYPES.has(inferred) ? inferred : '';
+};
+
+const isImageFile = (file) => {
+  return Boolean(resolveSupportedImageMimeType(file));
 };
 
 const isAudioFile = (file) => {
@@ -1323,13 +1364,33 @@ const isVideoFile = (file) => {
   return ext ? VIDEO_EXTENSIONS.has(ext) : false;
 };
 
-const readFileAsDataUrl = (file): Promise<string> =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error(t('chat.attachments.imageReadFailed')));
-    reader.readAsDataURL(file);
-  });
+const validateImageFile = async (file: File): Promise<void> => {
+  if (!file) {
+    throw new Error(t('chat.attachments.imageInvalid'));
+  }
+  if (typeof createImageBitmap === 'function') {
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await createImageBitmap(file);
+      return;
+    } catch {
+      // Fallback to object URL decode below when bitmap decoding is unavailable.
+    } finally {
+      bitmap?.close();
+    }
+  }
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error(t('chat.attachments.imageInvalid')));
+      image.src = objectUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
 
 const isAttachmentProcessing = (id: string): boolean => attachmentProcessingIds.value.includes(id);
 
@@ -1837,6 +1898,25 @@ const requestMediaProcessing = async (formData: FormData): Promise<ProcessedMedi
   return (response?.data?.data || {}) as ProcessedMediaResponse;
 };
 
+const buildImageDraftAttachment = (
+  filename: string,
+  payload: ProcessedMediaResponse
+): ComposerDraftAttachment => {
+  const attachment = Array.isArray(payload.attachments)
+    ? payload.attachments
+        .map((item) => normalizeProcessedMediaAttachment(item, 'image'))
+        .find(Boolean) || null
+    : null;
+  if (!attachment) {
+    throw new Error(t('chat.attachments.emptyResult'));
+  }
+  attachment.id = buildAttachmentId();
+  attachment.type = 'image';
+  attachment.name = attachment.name || filename;
+  attachment.content = '';
+  return attachment;
+};
+
 const buildAudioDraftAttachment = (
   filename: string,
   payload: ProcessedMediaResponse
@@ -1910,6 +1990,12 @@ const processAudioFile = async (file: File): Promise<ComposerDraftAttachment> =>
   return buildAudioDraftAttachment(file.name || 'audio', await requestMediaProcessing(formData));
 };
 
+const processImageFile = async (file: File): Promise<ComposerDraftAttachment> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return buildImageDraftAttachment(file.name || 'image', await requestMediaProcessing(formData));
+};
+
 const processVideoFile = async (
   file: File,
   requestedFrameRate?: string
@@ -1964,17 +2050,14 @@ const handleAttachmentSelection = async (file) => {
   attachmentBusy.value += 1;
   try {
     if (isImageFile(file)) {
-      const dataUrl = await readFileAsDataUrl(file);
-      if (!dataUrl) {
-        throw new Error(t('chat.attachments.imageEmpty'));
+      const mimeType = resolveSupportedImageMimeType(file);
+      if (!mimeType) {
+        throw new Error(t('chat.attachments.imageInvalid'));
       }
-      attachments.value.push({
-        id: buildAttachmentId(),
-        type: 'image',
-        name: filename,
-        content: dataUrl,
-        mime_type: file.type || ''
-      });
+      await validateImageFile(file);
+      const attachment = await processImageFile(file);
+      attachment.mime_type = mimeType;
+      pushAttachment(attachment);
       syncVideoAttachmentDrafts();
       ElMessage.success(t('chat.attachments.imageAdded', { name: filename }));
       return;
@@ -2119,14 +2202,16 @@ const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOptio
     if (option.region && !/[-_]region(\.[^./]+)?$/i.test(name)) {
       name = appendFileNameSuffix(name, '-region');
     }
-    const mimeType = String(result.mimeType || '').trim() || 'image/png';
-    attachments.value.push({
-      id: buildAttachmentId(),
-      type: 'image',
-      name,
-      content: dataUrl,
-      mime_type: mimeType
-    });
+    const mimeType = normalizeImageMimeType(String(result.mimeType || '').trim() || 'image/png') || 'image/png';
+    const byteString = atob(dataUrl.split(',', 2)[1] || '');
+    const bytes = new Uint8Array(byteString.length);
+    for (let index = 0; index < byteString.length; index += 1) {
+      bytes[index] = byteString.charCodeAt(index);
+    }
+    const screenshotFile = new File([bytes], name, { type: mimeType });
+    const attachment = await processImageFile(screenshotFile);
+    attachment.mime_type = mimeType;
+    pushAttachment(attachment);
     ElMessage.success(t('chat.attachments.screenshotAdded', { name }));
   } catch (error) {
     ElMessage.error(resolveUploadError(error, t('chat.attachments.screenshotFailed')));

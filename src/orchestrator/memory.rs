@@ -1890,6 +1890,7 @@ impl Orchestrator {
         let attachment_label = i18n::t("attachment.label");
         let attachment_separator = i18n::t("attachment.label.separator");
         let attachment_default_name = i18n::t("attachment.default_name");
+        let attachment_invalid_image_notice = i18n::t("attachment.invalid_image_notice");
         let mut attachment_parts: Vec<String> = Vec::new();
         let mut image_parts: Vec<Value> = Vec::new();
         for attachment in attachments {
@@ -1923,17 +1924,9 @@ impl Orchestrator {
                         "image_url": { "url": image_url }
                     }));
                 } else {
-                    let fallback = attachment
-                        .public_path
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .unwrap_or(trimmed);
-                    if !fallback.is_empty() {
-                        attachment_parts.push(format!(
-                            "[{attachment_label}{attachment_separator}{display_name}]\n{fallback}"
-                        ));
-                    }
+                    attachment_parts.push(format!(
+                        "[{attachment_label}{attachment_separator}{display_name}]\n{attachment_invalid_image_notice}"
+                    ));
                 }
                 continue;
             }

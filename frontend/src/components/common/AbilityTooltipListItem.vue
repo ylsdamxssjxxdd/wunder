@@ -10,7 +10,7 @@
     />
     <div class="ability-tooltip-list-item__copy">
       <div class="ability-tooltip-list-item__head">
-        <div class="ability-tooltip-list-item__name">{{ name }}</div>
+        <div class="ability-tooltip-list-item__name">{{ displayName || name }}</div>
         <span v-if="chip" class="ability-tooltip-list-item__chip">{{ chip }}</span>
       </div>
       <div
@@ -32,6 +32,7 @@ import { resolveAbilityVisual } from '@/utils/abilityVisuals';
 const props = withDefaults(
   defineProps<{
     name?: string;
+    displayName?: string;
     description?: string;
     kind?: string;
     group?: string;
@@ -41,6 +42,7 @@ const props = withDefaults(
   }>(),
   {
     name: '',
+    displayName: '',
     description: '',
     kind: 'tool',
     group: '',

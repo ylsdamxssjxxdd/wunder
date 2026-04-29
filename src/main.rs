@@ -184,6 +184,7 @@ fn to_mcp_tool_specs(specs: Vec<schemas::ToolSpec>) -> Vec<McpToolSpec> {
         .into_iter()
         .map(|spec| McpToolSpec {
             name: spec.name,
+            title: None,
             description: spec.description,
             input_schema: serde_yaml::to_value(spec.input_schema)
                 .unwrap_or(serde_yaml::Value::Null),
