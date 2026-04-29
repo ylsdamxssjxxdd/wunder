@@ -179,6 +179,31 @@
                 {{ selectedAccount.configured ? t('channels.detail.configured') : t('channels.detail.unconfigured') }}
               </div>
             </div>
+            <div v-if="xmppConnectionStatusText" class="channel-detail-wide">
+              <div class="channel-detail-label">{{ t('channels.detail.connectionStatus') }}</div>
+              <div class="channel-detail-value">{{ xmppConnectionStatusText }}</div>
+            </div>
+            <div v-if="showXmppReconnectAction" class="channel-detail-wide">
+              <div class="channel-detail-label">{{ t('channels.detail.lastConnectionIssue') }}</div>
+              <div class="channel-detail-value">{{ xmppLastConnectionIssueText }}</div>
+              <div v-if="xmppLastConnectionIssueHint" class="channel-detail-hint">
+                {{ xmppLastConnectionIssueHint }}
+              </div>
+            </div>
+            <div v-if="xmppLastReconnectText" class="channel-detail-wide">
+              <div class="channel-detail-label">{{ t('channels.detail.lastReconnectRequest') }}</div>
+              <div class="channel-detail-value">{{ xmppLastReconnectText }}</div>
+            </div>
+            <div v-if="showXmppReconnectAction" class="channel-detail-wide channel-inline-options">
+              <button
+                class="channel-refresh-btn subtle"
+                type="button"
+                :disabled="runtimeReconnectLoading || runtimeLogsLoading"
+                @click="reconnectXmppAccount"
+              >
+                {{ runtimeReconnectLoading ? t('common.saving') : t('channels.runtime.reconnect') }}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -336,6 +361,7 @@ import {
   listChannelAccounts,
   listChannelBindings,
   listChannelRuntimeLogs,
+  reconnectChannelAccount,
   startWeixinQrLogin,
   upsertChannelAccount,
   waitWeixinQrLogin,
@@ -476,6 +502,7 @@ type ChannelRuntimeLogStatus = {
   server_ts: number;
   owned_accounts: number;
   scanned_total: number;
+  selected_runtime?: Record<string, unknown> | null;
 };
 
 type WeixinQrState = {
@@ -1006,6 +1033,7 @@ const runtimeLogs = ref<ChannelRuntimeLogItem[]>([]);
 const runtimeStatus = ref<ChannelRuntimeLogStatus | null>(null);
 const runtimeLogsLoading = ref(false);
 const runtimeProbeLoading = ref(false);
+const runtimeReconnectLoading = ref(false);
 const runtimeLogsError = ref('');
 const runtimeLogsClearedAt = ref(0);
 const mounted = ref(false);
@@ -1111,6 +1139,7 @@ const showEditXmppAdvancedToggle = computed(
     editSchemaFields.value.some((field) => field.advanced) &&
     editChannelSchema.value?.mode === 'config'
 );
+const showXmppReconnectAction = computed(() => selectedAccount.value?.channel === 'xmpp');
 const showCreateWeixinAdvancedToggle = computed(
   () =>
     createForm.channel === 'weixin' &&
@@ -1172,6 +1201,89 @@ const runtimeStatusText = computed(() => {
   return `${t('channels.runtime.statusAlive')} · ${t('channels.runtime.statusOwnedAccounts')}: ${
     status.owned_accounts
   }${tsText ? ` · ${tsText}` : ''}`;
+});
+
+const xmppConnectionStatusText = computed(() => {
+  if (selectedAccount.value?.channel !== 'xmpp') {
+    return '';
+  }
+  const selectedRuntime = runtimeStatus.value?.selected_runtime;
+  const node = isObjectRecord(selectedRuntime)
+    ? (selectedRuntime.xmpp_long_connection as Record<string, unknown> | undefined)
+    : undefined;
+  const rawStatus = String(node?.status || '').trim().toLowerCase();
+  if (!rawStatus) {
+    return '';
+  }
+  const key = `channels.runtime.xmpp.status.${rawStatus}`;
+  const translated = t(key);
+  return translated === key ? rawStatus : translated;
+});
+
+const XMPP_CONNECTION_ISSUE_EVENTS = new Set([
+  'long_connection_failed',
+  'long_connection_closed',
+  'long_connection_credentials_missing'
+]);
+
+const selectedXmppRuntimeLogs = computed(() => {
+  const account = selectedAccount.value;
+  if (account?.channel !== 'xmpp') {
+    return [] as ChannelRuntimeLogItem[];
+  }
+  return runtimeLogs.value.filter(
+    (item) => item.channel === 'xmpp' && item.account_id === account.account_id
+  );
+});
+
+const xmppRuntimeEventLabel = (event: string) => {
+  const normalized = String(event || '').trim().toLowerCase();
+  if (!normalized) {
+    return '';
+  }
+  const key = `channels.runtime.xmpp.event.${normalized}`;
+  const translated = t(key);
+  return translated === key ? normalized : translated;
+};
+
+const latestXmppReconnectLog = computed(
+  () =>
+    selectedXmppRuntimeLogs.value.find((item) => item.event === 'reconnect_requested') || null
+);
+
+const latestXmppConnectionIssueLog = computed(
+  () =>
+    selectedXmppRuntimeLogs.value.find((item) => XMPP_CONNECTION_ISSUE_EVENTS.has(item.event)) ||
+    null
+);
+
+const xmppLastReconnectText = computed(() => {
+  const item = latestXmppReconnectLog.value;
+  if (!item) {
+    return '';
+  }
+  return formatRuntimeLogTime(item.ts) || t('common.unknown');
+});
+
+const xmppLastConnectionIssueText = computed(() => {
+  const item = latestXmppConnectionIssueLog.value;
+  if (!item) {
+    return t('channels.runtime.xmpp.noRecentIssue');
+  }
+  const timeText = formatRuntimeLogTime(item.ts);
+  const eventText = xmppRuntimeEventLabel(item.event);
+  if (timeText && eventText) {
+    return `${timeText} · ${eventText}`;
+  }
+  return timeText || eventText || t('common.unknown');
+});
+
+const xmppLastConnectionIssueHint = computed(() => {
+  const item = latestXmppConnectionIssueLog.value;
+  if (!item) {
+    return '';
+  }
+  return String(item.message || '').trim();
 });
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
@@ -1951,7 +2063,8 @@ const normalizeRuntimeStatus = (value: unknown): ChannelRuntimeLogStatus | null 
     collector_alive: row.collector_alive !== false,
     server_ts: Number.isFinite(serverTs) ? serverTs : 0,
     owned_accounts: Number.isFinite(ownedAccounts) ? Math.max(0, ownedAccounts) : 0,
-    scanned_total: Number.isFinite(scannedTotal) ? Math.max(0, scannedTotal) : 0
+    scanned_total: Number.isFinite(scannedTotal) ? Math.max(0, scannedTotal) : 0,
+    selected_runtime: isObjectRecord(row.selected_runtime) ? row.selected_runtime : null
   };
 };
 
@@ -2021,6 +2134,25 @@ const writeRuntimeProbe = async () => {
     showApiError(error, t('channels.runtime.probeFailed'));
   } finally {
     runtimeProbeLoading.value = false;
+  }
+};
+
+const reconnectXmppAccount = async () => {
+  if (selectedAccount.value?.channel !== 'xmpp') {
+    return;
+  }
+  runtimeReconnectLoading.value = true;
+  try {
+    await reconnectChannelAccount({
+      channel: selectedAccount.value.channel,
+      account_id: selectedAccount.value.account_id
+    });
+    ElMessage.success(t('channels.runtime.reconnectSuccess'));
+    await refreshRuntimeLogs(true);
+  } catch (error) {
+    showApiError(error, t('channels.runtime.reconnectFailed'));
+  } finally {
+    runtimeReconnectLoading.value = false;
   }
 };
 
@@ -2850,6 +2982,10 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.channel-detail-wide {
+  grid-column: 1 / -1;
 }
 
 .channel-detail-label {

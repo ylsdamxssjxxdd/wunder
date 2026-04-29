@@ -325,7 +325,7 @@
             @click="enterSelectedAgentConversation"
           >
             <i class="fa-solid fa-comments" aria-hidden="true"></i>
-            <span>{{ t('messenger.action.openConversation') }}</span>
+            <span>{{ t('messenger.agent.openChat') }}</span>
           </button>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'users' && selectedContact"
@@ -351,12 +351,12 @@
             :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
             type="button"
             :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy || activeSessionOrchestrationLocked"
-            :title="t('chat.newSession')"
-            :aria-label="t('chat.newSession')"
+            :title="t('chat.newConversation')"
+            :aria-label="t('chat.newConversation')"
             @click="startNewSession"
           >
             <i class="fa-solid fa-plus" aria-hidden="true"></i>
-            {{ t('chat.newSession') }}
+            {{ t('chat.newConversation') }}
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"

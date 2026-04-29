@@ -41,11 +41,11 @@
             class="new-chat-btn"
             type="button"
             :disabled="creatingSession"
-            :title="t('chat.newSession')"
-            :aria-label="t('chat.newSession')"
+            :title="t('chat.newConversation')"
+            :aria-label="t('chat.newConversation')"
             @click="handleCreateSession"
           >
-            {{ t('chat.newSession') }}
+            {{ t('chat.newConversation') }}
           </button>
           <button
             class="topbar-icon-btn"

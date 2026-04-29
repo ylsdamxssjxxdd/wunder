@@ -366,6 +366,29 @@ impl ChannelHub {
         self.adapter_registry.clone()
     }
 
+    pub fn force_xmpp_reconnect(&self, account_id: &str) -> Result<()> {
+        let cleaned = account_id.trim();
+        if cleaned.is_empty() {
+            return Err(anyhow!("xmpp account_id is empty"));
+        }
+        let current = self
+            .storage
+            .get_channel_account(xmpp::XMPP_CHANNEL, cleaned)?
+            .ok_or_else(|| anyhow!("xmpp account not found: {cleaned}"))?;
+        let refreshed = ChannelAccountRecord {
+            updated_at: now_ts(),
+            ..current
+        };
+        self.storage.upsert_channel_account(&refreshed)?;
+        self.record_runtime_info(
+            xmpp::XMPP_CHANNEL,
+            Some(cleaned),
+            "reconnect_requested",
+            format!("xmpp reconnect requested: account_id={cleaned}"),
+        );
+        Ok(())
+    }
+
     pub fn record_runtime_info(
         &self,
         channel: &str,

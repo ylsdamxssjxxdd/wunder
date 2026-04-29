@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::channels::catalog;
 use crate::channels::types::ChannelAccountConfig;
+use crate::channels::xmpp;
 use crate::i18n;
 use crate::state::AppState;
 use axum::extract::{Query, State};
@@ -50,6 +51,14 @@ struct ChannelRuntimeLogsProbeRequest {
     message: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ChannelReconnectRequest {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -60,6 +69,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/channels/runtime_logs/probe",
             post(write_channel_runtime_probe),
         )
+        .route("/wunder/channels/reconnect", post(reconnect_channel_account))
 }
 
 async fn list_channel_runtime_logs(
@@ -160,10 +170,21 @@ async fn list_channel_runtime_logs(
         }
     }
 
+    let mut status = runtime_log_status_payload(account_keys.len(), scanned_total);
+    if let (Some(channel), Some(account_id)) = (channel_filter.as_deref(), account_filter.as_deref()) {
+        if let Ok(selected_runtime) =
+            build_user_channel_runtime(&state, &user_id, channel, account_id)
+        {
+            if let Some(map) = status.as_object_mut() {
+                map.insert("selected_runtime".to_string(), selected_runtime);
+            }
+        }
+    }
+
     Ok(Json(json!({ "data": {
         "items": items,
         "total": items.len(),
-        "status": runtime_log_status_payload(account_keys.len(), scanned_total),
+        "status": status,
     } })))
 }
 
@@ -257,6 +278,51 @@ async fn write_channel_runtime_probe(
         "message": message,
         "ts": ts,
         "status": runtime_log_status_payload(account_keys.len(), 1),
+    } })))
+}
+
+async fn reconnect_channel_account(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ChannelReconnectRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let channel = normalize_user_channel(payload.channel.as_deref())?;
+    let account_id = payload
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "account_id is required".to_string()))?
+        .to_string();
+
+    if !channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "only xmpp reconnect is supported".to_string(),
+        ));
+    }
+
+    let owned = list_owned_account_keys(&state, &user_id, Some(&channel))?;
+    if !owned.contains(&(channel.clone(), account_id.clone())) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ));
+    }
+
+    state
+        .control
+        .channels
+        .force_xmpp_reconnect(&account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    Ok(Json(json!({ "data": {
+        "channel": channel,
+        "account_id": account_id,
+        "message": "xmpp reconnect requested",
+        "ts": chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
     } })))
 }
 
@@ -443,6 +509,63 @@ fn runtime_log_status_payload(owned_accounts: usize, scanned_total: usize) -> Va
         "owned_accounts": owned_accounts,
         "scanned_total": scanned_total,
     })
+}
+
+fn build_user_channel_runtime(
+    state: &Arc<AppState>,
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> Result<Value, Response> {
+    let owned = list_owned_account_keys(state, user_id, Some(channel))?;
+    if !owned.contains(&(channel.trim().to_ascii_lowercase(), account_id.trim().to_string())) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ));
+    }
+
+    if !channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
+        return Ok(json!({}));
+    }
+
+    let record = state
+        .storage
+        .get_channel_account(channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "channel account not found".to_string()))?;
+    let account_cfg = ChannelAccountConfig::from_value(&record.config);
+    let Some(xmpp_cfg) = account_cfg.xmpp else {
+        return Ok(json!({
+            "xmpp_long_connection": {
+                "status": "not_configured",
+                "long_connection_enabled": false,
+                "has_credentials": false,
+            }
+        }));
+    };
+
+    let long_connection_enabled = xmpp::long_connection_enabled(&xmpp_cfg);
+    let has_credentials = xmpp::has_long_connection_credentials(&xmpp_cfg);
+    let account_active = record.status.trim().eq_ignore_ascii_case("active");
+    let status = if !account_active {
+        "account_inactive"
+    } else if !long_connection_enabled {
+        "disabled"
+    } else if !has_credentials {
+        "missing_credentials"
+    } else {
+        "running"
+    };
+
+    Ok(json!({
+        "xmpp_long_connection": {
+            "status": status,
+            "long_connection_enabled": long_connection_enabled,
+            "has_credentials": has_credentials,
+            "updated_at": record.updated_at,
+        }
+    }))
 }
 
 fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {

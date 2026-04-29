@@ -860,6 +860,7 @@
     - `server_ts`：服务端当前时间戳（秒）
     - `owned_accounts`：当前用户可见账号数
     - `scanned_total`：本次扫描到的原始日志条数（过滤前）
+    - `selected_runtime`：当请求同时传入 `channel + account_id` 时返回对应账号运行态快照；当前 XMPP 会返回 `xmpp_long_connection.status/long_connection_enabled/has_credentials/updated_at`
 
 ### 4.1.2.31.1 `/wunder/channels/runtime_logs/probe`
 
@@ -878,7 +879,20 @@
   - `data.ts`：写入时间戳（秒）
   - `data.status`：同 `/wunder/channels/runtime_logs` 的 `status` 字段
 
-### 4.1.2.31.2 `/wunder/plaza/items*`
+### 4.1.2.31.2 `/wunder/channels/reconnect`
+
+- 方法：`POST`
+- 说明：用户侧渠道账号重连接口；当前仅支持 XMPP。接口会触发账号配置时间戳刷新并写入 `reconnect_requested` 运行日志，供长连接 supervisor 重建对应 worker。
+- 入参（JSON）：
+  - `channel`：渠道名，当前仅支持 `xmpp`
+  - `account_id`：账号 ID（必填）
+- 返回（JSON）：
+  - `data.channel`：渠道名
+  - `data.account_id`：账号 ID
+  - `data.message`：固定 `xmpp reconnect requested`
+  - `data.ts`：请求时间戳（秒）
+
+### 4.1.2.31.3 `/wunder/plaza/items*`
 
 - 说明：用户侧蜂巢广场接口。用于发布、浏览、下架和引入蜂群包（`hive_pack`）、工蜂卡（`worker_card`）和技能包（`skill_pack`）。
 - 鉴权：用户端 Bearer Token；`user_id` 可省略，服务端默认按当前登录用户解析。

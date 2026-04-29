@@ -21,6 +21,9 @@ export const listChannelRuntimeLogs = (params: QueryParams | undefined = undefin
 export const writeChannelRuntimeProbe = (payload: ApiPayload) =>
   api.post('/channels/runtime_logs/probe', payload);
 
+export const reconnectChannelAccount = (payload: ApiPayload) =>
+  api.post('/channels/reconnect', payload);
+
 export const upsertChannelBinding = (payload: ApiPayload) => api.post('/channels/bindings', payload);
 
 export const startWeixinQrLogin = (payload: ApiPayload) =>
