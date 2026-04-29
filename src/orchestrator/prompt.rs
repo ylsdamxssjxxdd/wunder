@@ -617,7 +617,7 @@ mod tests {
                 name: "db_query_人员信息".to_string(),
                 title: None,
                 description: String::new(),
-                input_schema: serde_json::json!({}),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
             }],
             ..Default::default()
         }];
@@ -630,6 +630,35 @@ mod tests {
         assert_eq!(
             map.get("extra_mcp@db_query_人员信息").map(String::as_str),
             Some("extra_mcp@db_query_人员信息")
+        );
+    }
+
+    #[test]
+    fn build_prompt_tool_name_map_keeps_runtime_name_distinct_from_display_alias() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            tool_specs: vec![McpToolSpec {
+                name: "db_query_company_all_personnel".to_string(),
+                title: Some("数据库查询（人员信息）".to_string()),
+                description: String::new(),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
+            }],
+            ..Default::default()
+        }];
+        let allowed = HashSet::from(["extra_mcp@db_query_company_all_personnel".to_string()]);
+        let map = build_prompt_tool_name_map(&config, &allowed);
+
+        assert_eq!(
+            map.get("数据库查询（人员信息）").map(String::as_str),
+            Some("extra_mcp@db_query_company_all_personnel")
+        );
+        assert_eq!(
+            map.get("extra_mcp@db_query_company_all_personnel")
+                .map(String::as_str),
+            Some("extra_mcp@db_query_company_all_personnel")
         );
     }
 }

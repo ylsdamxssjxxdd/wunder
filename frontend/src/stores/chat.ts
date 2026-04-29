@@ -31,11 +31,20 @@ import {
   resolveChatRequestTextInputOverflow
 } from '@/utils/chatRequestInputLimit';
 import {
+  hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
+  hasStreamingAssistantMessage,
   isSessionBusyFromSignals,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
 } from '@/utils/chatSessionRuntime';
+import {
+  isSubagentItemActive,
+  normalizeSubagentRuntimeFlag,
+  isSubagentStatusFailed,
+  isSubagentStatusSuccessful,
+  normalizeSubagentRuntimeStatus
+} from '@/utils/subagentRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
 import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
@@ -730,7 +739,7 @@ const normalizeInteractionTimestamp = (value) => {
 };
 
 const normalizeSubagentEventStatus = (value) => {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = normalizeSubagentRuntimeStatus(value);
   if (!normalized) return 'running';
   return normalized;
 };
@@ -899,6 +908,7 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   ).trim();
   const title = label || sessionId || runId || '子智能体';
   const status = normalizeSubagentEventStatus(source.status);
+  const active = isSubagentItemActive(source);
   const assistantMessage = pickSubagentTextValue(
     normalizedDetail.assistant_message,
     source.assistant_message,
@@ -930,9 +940,11 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
     label,
     status,
     summary,
-    terminal: Boolean(source.terminal),
-    failed: Boolean(source.failed),
-    canTerminate: Boolean(source.can_terminate ?? source.canTerminate ?? !source.terminal),
+    terminal:
+      normalizeSubagentRuntimeFlag(source.terminal) ||
+      (!active && (isSubagentStatusSuccessful(status) || isSubagentStatusFailed(status))),
+    failed: normalizeSubagentRuntimeFlag(source.failed) || isSubagentStatusFailed(status),
+    canTerminate: normalizeSubagentRuntimeFlag(source.can_terminate ?? source.canTerminate ?? active),
     updated_at: updatedAt,
     updated_at_ms: updatedAtMs,
     parent_user_round: normalizeStreamRound(
@@ -983,6 +995,47 @@ const upsertMessageSubagent = (message, payload) => {
   }
   message.subagents = normalizeMessageSubagents(items);
   return normalized;
+};
+
+const resolveSubagentPayloadItems = (source: unknown): unknown[] => {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
+  const record = source as Record<string, unknown>;
+  const candidates = [
+    record.item,
+    record.selected_item,
+    record.selectedItem,
+    record.winner_item,
+    record.winnerItem,
+    ...(Array.isArray(record.items) ? record.items : []),
+    ...(Array.isArray(record.selected_items) ? record.selected_items : []),
+    ...(Array.isArray(record.selectedItems) ? record.selectedItems : []),
+    ...(Array.isArray(record.settled_items) ? record.settled_items : []),
+    ...(Array.isArray(record.settledItems) ? record.settledItems : [])
+  ];
+  if (record.data && typeof record.data === 'object' && !Array.isArray(record.data)) {
+    candidates.push(...resolveSubagentPayloadItems(record.data));
+  }
+  return candidates.filter((item) => item && typeof item === 'object');
+};
+
+const hasSubagentIdentity = (source: unknown): boolean => {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return false;
+  const record = source as Record<string, unknown>;
+  return Boolean(String(record.session_id ?? record.sessionId ?? record.run_id ?? record.runId ?? '').trim());
+};
+
+const collectSubagentPayloads = (source: unknown): Record<string, unknown>[] => {
+  const output: Record<string, unknown>[] = [];
+  const append = (item: unknown) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+    const record = item as Record<string, unknown>;
+    if (hasSubagentIdentity(record)) {
+      output.push(record);
+    }
+    resolveSubagentPayloadItems(record).forEach(append);
+  };
+  append(source);
+  return output;
 };
 
 const attachSubagentsToMessages = (messages, subagents) => {
@@ -2912,6 +2965,38 @@ const buildWorkflowItem = (title, detail, status = 'completed', meta = {}) => ({
   status,
   ...meta
 });
+
+const buildToolIdentityMeta = (...sources) => {
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    const toolDisplayName = pickString(
+      source.tool_display_name,
+      source.toolDisplayName,
+      source.display_name,
+      source.displayName
+    );
+    const toolRuntimeName = pickString(
+      source.tool_runtime_name,
+      source.toolRuntimeName,
+      source.runtime_name,
+      source.runtimeName
+    );
+    const toolFunctionName = pickString(
+      source.tool_function_name,
+      source.toolFunctionName,
+      source.function_name,
+      source.functionName
+    );
+    if (toolDisplayName || toolRuntimeName || toolFunctionName) {
+      return {
+        ...(toolDisplayName ? { toolDisplayName, tool_display_name: toolDisplayName } : {}),
+        ...(toolRuntimeName ? { toolRuntimeName, tool_runtime_name: toolRuntimeName } : {}),
+        ...(toolFunctionName ? { toolFunctionName, tool_function_name: toolFunctionName } : {})
+      };
+    }
+  }
+  return {};
+};
 
 const hydrateSessionCommandSessions = (sessionId, snapshots) => {
   const targetId = resolveSessionKey(sessionId);
@@ -7261,6 +7346,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return normalized === executeCommandToolName || normalized.includes('执行命令');
   };
 
+  const isSubagentControlTool = (toolName) => {
+    const normalized = String(toolName || '').trim().toLowerCase();
+    return normalized.includes('subagent') || normalized.includes('child_agent') || normalized.includes('子智能体');
+  };
+
   const normalizeCommandSessionRef = (value) => {
     const normalized = String(value || '').trim();
     return normalized || null;
@@ -8011,6 +8101,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
+      ...buildToolIdentityMeta(source, {
+        tool_display_name: executeCommandToolName
+      }),
       modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
       ...usageMeta,
       ...buildWorkflowTimingMeta(source)
@@ -8027,6 +8120,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
+      ...buildToolIdentityMeta(source, {
+        tool_display_name: executeCommandToolName
+      }),
       modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
       ...usageMeta,
       ...buildWorkflowTimingMeta(source)
@@ -8111,6 +8207,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
+      ...buildToolIdentityMeta(source, {
+        tool_display_name: executeCommandToolName
+      }),
       ...buildWorkflowUsageMeta(source),
       ...buildWorkflowTimingMeta(source)
     };
@@ -8126,6 +8225,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
+      ...buildToolIdentityMeta(source, {
+        tool_display_name: executeCommandToolName
+      }),
       ...buildWorkflowUsageMeta(source),
       ...buildWorkflowTimingMeta(source)
     });
@@ -8527,6 +8629,35 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (normalized) {
       subagentRunItemMap.set(normalized.key, normalized.key);
     }
+  };
+
+  const upsertSubagentPayloads = (source, fallbackTitle, fallbackStatus, meta: Record<string, unknown> = {}) => {
+    const payloads = collectSubagentPayloads(source);
+    if (!payloads.length) {
+      const record = source && typeof source === 'object' ? (source as Record<string, unknown>) : {};
+      upsertSubagentRunItem(
+        record.run_id ?? record.runId ?? record.session_id ?? record.sessionId ?? '',
+        fallbackTitle,
+        buildDetail(record),
+        fallbackStatus,
+        { ...meta, source: record }
+      );
+      return;
+    }
+    payloads.forEach((item) => {
+      const label = String(item.label ?? item.spawn_label ?? item.spawnLabel ?? item.title ?? '').trim();
+      const sessionId = String(item.session_id ?? item.sessionId ?? '').trim();
+      const runId = String(item.run_id ?? item.runId ?? '').trim();
+      const itemTitle = label || sessionId || runId || fallbackTitle;
+      const itemStatus = normalizeSubagentEventStatus(item.status ?? fallbackStatus);
+      upsertSubagentRunItem(
+        runId || sessionId,
+        itemTitle,
+        buildDetail(item),
+        itemStatus,
+        { ...meta, source: item }
+      );
+    });
   };
 
   const updateRoundState = (roundNumber) => {
@@ -9109,6 +9240,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           toolName: String(toolName || ''),
           toolCallId: toolCallId || commandSessionId || undefined,
           commandSessionId: commandSessionId || undefined,
+          ...buildToolIdentityMeta(data, payload, detailSource),
           modelRound: toolCallRound ?? undefined,
           ...usageMeta,
           ...timingMeta
@@ -9157,7 +9289,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             toolCategory,
             commandSessionId,
             buildCommandSessionTitle(command, data?.command_index ?? payload?.command_index),
-            { commandSessionId }
+            {
+              commandSessionId,
+              ...buildToolIdentityMeta(data, payload)
+            }
           );
           if (itemId) {
             updateWorkflowItem(assistantMessage.workflowItems, itemId, {
@@ -9187,10 +9322,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           toolCategory,
           toolCallId,
           null,
-          null
+          buildToolIdentityMeta(data, payload)
         );
         if (itemId) {
           scheduleToolOutputFlush(outputKey, itemId);
+          updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+            ...buildToolIdentityMeta(data, payload)
+          });
         }
         break;
       }
@@ -9233,6 +9371,25 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             : (modelObservation ?? detailPayloadForDisplay ?? result)
         );
         const timingMeta = buildWorkflowTimingMeta(detailPayload, result, data, payload);
+        if (isSubagentControlTool(toolName)) {
+          const subagentSource =
+            result && typeof result === 'object' && !Array.isArray(result)
+              ? result
+              : detailPayload && typeof detailPayload === 'object' && !Array.isArray(detailPayload)
+                ? detailPayload
+                : data ?? payload;
+          const subagentStatus =
+            (subagentSource as Record<string, unknown>)?.state ??
+            (subagentSource as Record<string, unknown>)?.status ??
+            (failed ? 'error' : 'accepted');
+          upsertSubagentPayloads(
+            subagentSource,
+            t('chat.workflow.event', { event: 'subagent_control' }),
+            normalizeSubagentEventStatus(subagentStatus),
+            { eventType: 'tool_result', source: subagentSource }
+          );
+          sessionSubagentsCache.delete(processorSessionId);
+        }
         const commandSessionRows = isExecuteCommandTool(toolName)
           ? extractCommandSessionResultRows(detailPayload ?? result)
           : [];
@@ -9286,7 +9443,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
                 source?.command,
                 toOptionalInt(source?.command_index, source?.commandIndex)
               ),
-              { commandSessionId }
+              {
+                commandSessionId,
+                ...buildToolIdentityMeta(data, payload, source)
+              }
             );
             if (outputItemId) {
               clearToolOutputFlush(outputKey);
@@ -9310,6 +9470,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
                 eventType: 'tool_result',
                 toolName: String(toolName || ''),
                 toolCallId: toolCallId || undefined,
+                ...buildToolIdentityMeta(data, payload, detailPayload),
                 ...buildWorkflowUsageMeta(detailPayload, result, data, payload),
                 ...timingMeta
               }
@@ -9334,6 +9495,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               eventType: 'tool_result',
               toolName: String(toolName || ''),
               toolCallId: toolCallId || undefined,
+              ...buildToolIdentityMeta(data, payload, detailPayload),
               ...buildWorkflowUsageMeta(detailPayload, result, data, payload),
               ...timingMeta
             }
@@ -9893,22 +10055,24 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const title = label ? `子智能体调度：${label}` : '子智能体调度';
         const detail = buildDetail(source);
         ensureSubagentDispatchItem(dispatchId, title, detail, 'loading');
+        sessionSubagentsCache.delete(processorSessionId);
         break;
       }
       case 'subagent_dispatch_item_update': {
         const source = data ?? payload ?? {};
-        const runId = String(source?.run_id ?? source?.runId ?? '').trim();
-        const sessionId = String(source?.session_id ?? source?.sessionId ?? '').trim();
         const label = String(source?.label ?? source?.spawn_label ?? source?.title ?? '').trim();
-        const titleBase = label || sessionId || runId || '任务';
+        const titleBase =
+          label ||
+          String(source?.session_id ?? source?.sessionId ?? source?.run_id ?? source?.runId ?? '').trim() ||
+          '任务';
         const title = `子智能体：${titleBase}`;
-        upsertSubagentRunItem(
-          runId || sessionId,
+        upsertSubagentPayloads(
+          source,
           title,
-          buildDetail(source),
           normalizeSubagentWorkflowStatus(source?.status),
           { eventType: 'subagent_dispatch_item_update', source }
         );
+        sessionSubagentsCache.delete(processorSessionId);
         break;
       }
       case 'subagent_dispatch_finish': {
@@ -9918,6 +10082,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const detail = buildDetail(source);
         const status = normalizeSubagentWorkflowStatus(source?.status);
         ensureSubagentDispatchItem(dispatchId, title, detail, status);
+        upsertSubagentPayloads(source, title, normalizeSubagentEventStatus(source?.status), {
+          eventType: 'subagent_dispatch_finish',
+          source
+        });
+        sessionSubagentsCache.delete(processorSessionId);
         break;
       }
       case 'subagent_status':
@@ -9934,20 +10103,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           subagent_announce: '子智能体回执'
         };
         const sourceObject = source && typeof source === 'object' ? source : {};
-        const runKey = String(
-          sourceObject?.run_id ??
-            sourceObject?.runId ??
-            sourceObject?.session_id ??
-            sourceObject?.sessionId ??
-            ''
-        ).trim();
-        upsertSubagentRunItem(
-          runKey,
+        upsertSubagentPayloads(
+          sourceObject,
           titleMap[eventType] || '子智能体事件',
-          buildDetail(sourceObject),
           normalizeSubagentWorkflowStatus((data ?? payload ?? {})?.status),
           { eventType, source: sourceObject }
         );
+        sessionSubagentsCache.delete(processorSessionId);
         break;
       }
       case 'team_start':
@@ -10127,7 +10289,12 @@ export const useChatStore = defineStore('chat', {
         Boolean(runtime) &&
         !hasRuntimeControllers(runtime) &&
         isTerminalRuntimeStatus(runtime?.threadStatus);
-      if (!hasLoadingFlag && runtimeTerminal && hasRunningAssistantMessage(messages)) {
+      if (
+        !hasLoadingFlag &&
+        runtimeTerminal &&
+        !hasActiveSubagentsAfterLatestUser(messages) &&
+        hasStreamingAssistantMessage(messages)
+      ) {
         chatDebugLog('chat.store.busy', 'suppress-stale-assistant-busy-after-terminal', {
           sessionId: key,
           runtime: buildRuntimeDebugSnapshot(runtime),

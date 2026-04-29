@@ -55,6 +55,13 @@ const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
 const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
 const HEATMAP_TOOL_LIMIT: usize = 24;
 
+#[derive(Debug, Clone)]
+struct RuntimeHeatmapToolStats {
+    display_name: String,
+    category: String,
+    hourly: [i64; 24],
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/agents", get(list_agents).post(create_agent))
@@ -754,7 +761,9 @@ async fn get_agent_runtime_records(
     let range_end = Local::now().date_naive();
     let selected_date = parse_runtime_date(query.date.as_deref()).unwrap_or(range_end);
     let range_start = range_end - Duration::days(window_days.saturating_sub(1));
-    let tool_display_map = crate::tools::build_runtime_tool_display_map(&crate::config::load());
+    let app_config = state.config_store.get().await;
+    let tool_display_map = crate::tools::build_runtime_tool_display_map(&app_config);
+    let tool_display_to_runtime_map = build_tool_display_to_runtime_map(&tool_display_map);
 
     let (range_start_ts, _) = local_day_bounds(range_start).ok_or_else(|| {
         error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
@@ -772,7 +781,7 @@ async fn get_agent_runtime_records(
             .monitor
             .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
     let mut daily = build_runtime_day_map(range_start, range_end);
-    let mut heatmap_by_tool: HashMap<String, [i64; 24]> = HashMap::new();
+    let mut heatmap_by_tool: HashMap<String, RuntimeHeatmapToolStats> = HashMap::new();
     let mut summary_runtime_seconds = 0.0_f64;
     let mut summary_billed_tokens = 0_i64;
     let mut summary_quota_consumed = 0_i64;
@@ -885,19 +894,36 @@ async fn get_agent_runtime_records(
                         if event_ts < selected_start_ts || event_ts >= selected_end_ts {
                             continue;
                         }
-                        let tool_name = extract_event_tool_name(data);
+                        let tool_name =
+                            extract_event_tool_runtime_name(data, &tool_display_to_runtime_map);
                         if tool_name.is_empty() {
                             continue;
                         }
                         let Some(hour) = runtime_day_hour(event_ts) else {
                             continue;
                         };
-                        let display_tool_name = tool_display_map
-                            .get(tool_name.as_str())
-                            .cloned()
+                        let display_tool_name = extract_event_tool_display_name(data)
+                            .or_else(|| tool_display_map.get(tool_name.as_str()).cloned())
                             .unwrap_or_else(|| tool_name.clone());
-                        let bucket = heatmap_by_tool.entry(display_tool_name).or_insert([0; 24]);
-                        bucket[hour] = bucket[hour].saturating_add(1);
+                        let category = classify_runtime_heatmap_tool(&tool_name);
+                        let bucket =
+                            heatmap_by_tool.entry(tool_name.clone()).or_insert_with(|| {
+                                RuntimeHeatmapToolStats {
+                                    display_name: display_tool_name.clone(),
+                                    category: category.clone(),
+                                    hourly: [0; 24],
+                                }
+                            });
+                        if bucket.display_name.is_empty()
+                            || bucket.display_name == tool_name
+                            || (bucket.display_name == "unknown" && display_tool_name != "unknown")
+                        {
+                            bucket.display_name = display_tool_name;
+                        }
+                        if bucket.category == "other" && category != "other" {
+                            bucket.category = category;
+                        }
+                        bucket.hourly[hour] = bucket.hourly[hour].saturating_add(1);
                     }
                     _ => {}
                 }
@@ -938,11 +964,16 @@ async fn get_agent_runtime_records(
 
     let mut heatmap_items = heatmap_by_tool
         .into_iter()
-        .map(|(tool, hourly)| {
-            let total_calls = hourly.iter().copied().sum::<i64>();
+        .map(|(runtime_name, stats)| {
+            let total_calls = stats.hourly.iter().copied().sum::<i64>();
             json!({
-                "tool": tool,
-                "hourly_calls": hourly.to_vec(),
+                "tool": stats.display_name,
+                "name": stats.display_name,
+                "display_name": stats.display_name,
+                "tool_name": runtime_name,
+                "runtime_name": runtime_name,
+                "category": stats.category,
+                "hourly_calls": stats.hourly.to_vec(),
                 "total_calls": total_calls.max(0),
             })
         })
@@ -1912,17 +1943,79 @@ fn parse_usage_total_tokens(data: &Value) -> i64 {
     nested_input.saturating_add(nested_output).max(0)
 }
 
-fn extract_event_tool_name(data: &Value) -> String {
-    for key in ["tool", "tool_name", "toolName", "name"] {
+fn build_tool_display_to_runtime_map(
+    display_map: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut reverse = HashMap::new();
+    for (runtime_name, display_name) in display_map {
+        let runtime_name = runtime_name.trim();
+        let display_name = display_name.trim();
+        if runtime_name.is_empty() || display_name.is_empty() {
+            continue;
+        }
+        reverse
+            .entry(display_name.to_string())
+            .or_insert_with(|| runtime_name.to_string());
+    }
+    reverse
+}
+
+fn extract_event_string(data: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
         let Some(value) = data.get(key).and_then(Value::as_str) else {
             continue;
         };
         let cleaned = value.trim();
         if !cleaned.is_empty() {
-            return cleaned.to_string();
+            return Some(cleaned.to_string());
         }
     }
+    None
+}
+
+fn extract_event_tool_runtime_name(
+    data: &Value,
+    display_to_runtime_map: &HashMap<String, String>,
+) -> String {
+    if let Some(runtime_name) = extract_event_string(
+        data,
+        &[
+            "tool_runtime_name",
+            "runtime_name",
+            "tool_name",
+            "toolName",
+            "function_name",
+            "tool_function_name",
+        ],
+    ) {
+        return runtime_name;
+    }
+    if let Some(name) = extract_event_string(data, &["tool", "name"]) {
+        return display_to_runtime_map
+            .get(name.as_str())
+            .cloned()
+            .unwrap_or(name);
+    }
     "unknown".to_string()
+}
+
+fn extract_event_tool_display_name(data: &Value) -> Option<String> {
+    extract_event_string(data, &["tool_display_name", "display_name", "displayName"])
+}
+
+fn classify_runtime_heatmap_tool(runtime_name: &str) -> String {
+    let trimmed = runtime_name.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("a2a@") {
+        return "a2a".to_string();
+    }
+    if trimmed.contains('@') {
+        return "mcp".to_string();
+    }
+    if lower.starts_with("kb_") || lower.contains("knowledge") || lower.contains("rag") {
+        return "knowledge".to_string();
+    }
+    "other".to_string()
 }
 
 fn accumulate_runtime_seconds(
@@ -2720,5 +2813,31 @@ mod tests {
             &[],
             &["retry"],
         ));
+    }
+
+    #[test]
+    fn runtime_heatmap_resolves_display_alias_to_runtime_name() {
+        let display_map = std::collections::HashMap::from([(
+            "server@tool_alpha".to_string(),
+            "展示工具（示例）".to_string(),
+        )]);
+        let reverse = super::build_tool_display_to_runtime_map(&display_map);
+        let payload = json!({
+            "tool": "展示工具（示例）",
+            "args": {}
+        });
+
+        assert_eq!(
+            super::extract_event_tool_runtime_name(&payload, &reverse),
+            "server@tool_alpha"
+        );
+        assert_eq!(
+            super::classify_runtime_heatmap_tool("server@tool_alpha"),
+            "mcp"
+        );
+        assert_eq!(
+            super::classify_runtime_heatmap_tool("a2a@service_alpha"),
+            "a2a"
+        );
     }
 }

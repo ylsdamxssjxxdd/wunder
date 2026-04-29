@@ -56,7 +56,7 @@
           <div class="messenger-agent-runtime-tool-heatmap" :style="{ '--heatmap-rows': String(heatmapRows) }">
             <article
               v-for="item in heatmapTiles"
-              :key="item.tool"
+              :key="item.runtimeName"
               class="messenger-agent-runtime-tool-heatmap-item"
               :style="{ backgroundColor: item.color, color: item.textColor }"
               :title="
@@ -87,6 +87,11 @@ import { getAgentRuntimeRecords } from '@/api/agents';
 import { useI18n } from '@/i18n';
 import { useThemeStore } from '@/stores/theme';
 import { resolveAbilityVisual } from '@/utils/abilityVisuals';
+import {
+  normalizeRuntimeHeatmapItems,
+  type RuntimeHeatmapItem,
+  type RuntimeHeatmapSourceItem
+} from '@/utils/runtimeHeatmap';
 
 use([CanvasRenderer, GridComponent, LegendComponent, LineChart, TooltipComponent]);
 
@@ -98,13 +103,9 @@ type RuntimeDailyRecord = {
   tool_calls: number;
 };
 
-type RuntimeHeatmapItem = {
-  tool: string;
-  total_calls: number;
-};
-
 type RuntimeHeatmapTile = {
   tool: string;
+  runtimeName: string;
   totalCalls: number;
   color: string;
   textColor: string;
@@ -129,7 +130,7 @@ type RuntimePayload = {
   heatmap?: {
     date?: string;
     max_calls?: number;
-    items?: RuntimeHeatmapItem[];
+    items?: RuntimeHeatmapSourceItem[];
   };
 };
 
@@ -281,10 +282,7 @@ const dailyRows = computed<RuntimeDailyRecord[]>(() => {
 
 const heatmapItems = computed<RuntimeHeatmapItem[]>(() => {
   const source = Array.isArray(runtimeData.value?.heatmap?.items) ? runtimeData.value?.heatmap?.items : [];
-  return (source || []).map((item) => ({
-    tool: String(item?.tool || '').trim() || 'unknown',
-    total_calls: Math.max(0, toSafeNumber(item?.total_calls))
-  }));
+  return normalizeRuntimeHeatmapItems(source);
 });
 
 const summary = computed<RuntimeSummary>(() => {
@@ -313,10 +311,11 @@ const heatmapTiles = computed<RuntimeHeatmapTile[]>(() =>
     const { color, rgb } = resolveHeatmapColor(item.total_calls);
     return {
       tool: item.tool,
+      runtimeName: item.runtimeName,
       totalCalls: item.total_calls,
       color,
       textColor: resolveHeatmapTextColor(rgb),
-      icon: resolveToolIcon(item.tool)
+      icon: resolveToolIcon(item)
     };
   })
 );
@@ -460,8 +459,11 @@ function matchesToolKeyword(lowerName: string, normalizedName: string, keyword: 
   return normalizedKeyword ? normalizedName.includes(normalizedKeyword) : false;
 }
 
-function resolveToolIcon(name: string): string {
-  const toolName = String(name || '').trim();
+function resolveToolIcon(item: RuntimeHeatmapItem): string {
+  const displayName = String(item?.tool || '').trim();
+  const runtimeName = String(item?.runtimeName || '').trim();
+  const category = String(item?.category || '').trim().toLowerCase();
+  const toolName = runtimeName || displayName;
   const lowerName = toolName.toLowerCase();
   const normalizedName = normalizeToolMatchKey(lowerName);
   if (lowerName === 'wunder@excute' || lowerName.endsWith('@wunder@excute')) {
@@ -470,11 +472,20 @@ function resolveToolIcon(name: string): string {
   if (lowerName === 'wunder@doc2md' || lowerName.endsWith('@wunder@doc2md')) {
     return 'fa-file-lines';
   }
+  if (category === 'mcp') {
+    return 'fa-plug';
+  }
+  if (category === 'knowledge') {
+    return 'fa-database';
+  }
+  if (category === 'skill') {
+    return 'fa-book';
+  }
   const unifiedIcon = resolveAbilityVisual({
     name: toolName,
     kind: 'tool',
-    group: 'builtin',
-    source: 'builtin'
+    group: item?.group || category || 'builtin',
+    source: item?.source || category || 'builtin'
   }).icon;
   if (unifiedIcon && unifiedIcon !== 'fa-toolbox') {
     return unifiedIcon;
@@ -484,9 +495,8 @@ function resolveToolIcon(name: string): string {
       return rule.icon;
     }
   }
-  if (toolName.includes('@')) {
-    const atCount = toolName.split('@').length - 1;
-    return atCount >= 2 ? 'fa-wrench' : 'fa-plug';
+  if (runtimeName.includes('@') || displayName.includes('@')) {
+    return 'fa-plug';
   }
   if (
     matchesToolKeyword(lowerName, normalizedName, '执行命令') ||

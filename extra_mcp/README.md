@@ -30,7 +30,7 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 运行参数优先级：环境变量 > `config/mcp_config.json` 的 `mcp.transport/host/port` > 默认值
 - 当 `extra_mcp` 运行在 Docker 容器内且数据库主机配置为 `127.0.0.1` / `localhost` 时，会先直连本机回环地址；若失败，再自动回退到 `host.docker.internal`，以兼容“宿主机数据库 + 容器内 MCP”场景
 - 如需覆盖回退主机名，可设置环境变量 `EXTRA_MCP_LOOPBACK_FALLBACK_HOST`
-- 绑定表场景会同时注册 `db_query*` 与 `db_export*`：前者返回小样本与短 `query_handle` token，后者可直接把同一查询导出为 `xlsx/csv`
+- 绑定表场景会同时注册 `db_query*` 与 `db_export*`：前者返回小样本或聚合结果，后者用模型明确传入的只读 SQL 直接导出为 `xlsx/csv`
 - `database.tables[*].key` 与 `knowledge.targets[*].key` 用于生成真实 MCP `tool.name` 后缀，建议只用 ASCII 字母、数字、下划线、短横线或点；`name` 只用于展示名
 - 数据库目标未配置 `name` 时默认展示 `table`；知识库目标未配置 `name` 时默认展示目标 `key`
 - 若 `db_export*` 的 `path` 使用 `/workspaces/{user_id}/exports/...`（提示词里会自动替换成当前工作区根路径），导出文件会直接落到智能体当前工作区，并在结果中返回精简后的 `path` 与 `workspace_relative_path`
@@ -129,7 +129,7 @@ mcp:
 ### 导出型任务推荐流程
 
 1. 先用 `db_query*` 做 `COUNT(*)`、聚合或 `LIMIT 3~5` 小样本校验。
-2. 使用不带 `LIMIT/OFFSET` 的最终明细 SQL，或复用来自全量明细查询的短 `query_handle` token 调 `db_export*`，并把 `path` 设为 `/workspaces/{user_id}/exports/...`，直接生成 `xlsx/csv` 到当前工作区。
+2. 使用不带 `LIMIT/OFFSET` 的最终明细 SQL 调 `db_export*`，并把 `path` 设为 `/workspaces/{user_id}/exports/...`，直接生成 `xlsx/csv` 到当前工作区。
 3. 如需后续处理，优先使用返回的 `workspace_relative_path` 交给读文件/写文件/文档工具继续处理，而不是重新分页查询数据库。
 4. 回复里只保留导出文件路径、行数、字段与筛选口径，不要把分页明细继续贴进上下文。
 

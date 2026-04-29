@@ -21,8 +21,8 @@
         <div class="subagent-panel__item-main">
           <div class="subagent-panel__item-top">
             <span class="subagent-panel__item-title">{{ item.title || item.label || item.session_id }}</span>
-            <span :class="['subagent-panel__status', statusClass(item.status)]">
-              {{ statusText(item.status) }}
+            <span :class="['subagent-panel__status', statusClass(item.status, item)]">
+              {{ statusText(item.status, item) }}
             </span>
           </div>
           <div v-if="userPreview(item)" class="subagent-panel__summary">
@@ -63,8 +63,8 @@
       <div v-if="activeItem" class="subagent-detail">
         <div class="subagent-detail__top">
           <div class="subagent-detail__headline">{{ activeItem.title || activeItem.session_id }}</div>
-          <span :class="['subagent-panel__status', statusClass(activeItem.status)]">
-            {{ statusText(activeItem.status) }}
+          <span :class="['subagent-panel__status', statusClass(activeItem.status, activeItem)]">
+            {{ statusText(activeItem.status, activeItem) }}
           </span>
         </div>
         <div v-if="activeItem.summary" class="subagent-detail__summary">{{ activeItem.summary }}</div>
@@ -77,6 +77,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useChatStore } from '@/stores/chat';
+import {
+  isSubagentItemActive,
+  isSubagentStatusFailed,
+  isSubagentStatusSuccessful,
+  normalizeSubagentRuntimeStatus
+} from '@/utils/subagentRuntime';
 
 type SubagentPanelItem = Record<string, unknown> & {
   key: string;
@@ -111,17 +117,17 @@ const items = computed<SubagentPanelItem[]>(() =>
 
 const visible = computed(() => items.value.length > 0);
 
-const runningTotal = computed(() =>
-  items.value.filter((item) => {
-    const status = String(item.status || '').trim().toLowerCase();
-    return ['running', 'queued', 'accepted', 'waiting', 'cancelling'].includes(status);
-  }).length
-);
+const runningTotal = computed(() => items.value.filter((item) => isSubagentItemActive(item)).length);
 
-const statusText = (value: unknown) => {
-  const status = String(value || '').trim().toLowerCase();
-  if (['success', 'completed', 'idle'].includes(status)) return '已完成';
-  if (['error', 'failed', 'timeout', 'cancelled', 'closed', 'partial', 'not_found'].includes(status)) {
+const statusText = (value: unknown, item: SubagentPanelItem | null = null) => {
+  const status = normalizeSubagentRuntimeStatus(value);
+  if (item && isSubagentItemActive(item)) {
+    if (status === 'queued' || status === 'accepted') return '排队中';
+    if (status === 'cancelling') return '终止中';
+    return '运行中';
+  }
+  if (isSubagentStatusSuccessful(status)) return '已完成';
+  if (isSubagentStatusFailed(status) || status === 'timeout') {
     return '异常';
   }
   if (status === 'cancelling') return '终止中';
@@ -129,10 +135,11 @@ const statusText = (value: unknown) => {
   return '运行中';
 };
 
-const statusClass = (value: unknown) => {
-  const status = String(value || '').trim().toLowerCase();
-  if (['success', 'completed', 'idle'].includes(status)) return 'is-success';
-  if (['error', 'failed', 'timeout', 'cancelled', 'closed', 'partial', 'not_found'].includes(status)) {
+const statusClass = (value: unknown, item: SubagentPanelItem | null = null) => {
+  const status = normalizeSubagentRuntimeStatus(value);
+  if (item && isSubagentItemActive(item)) return 'is-running';
+  if (isSubagentStatusSuccessful(status)) return 'is-success';
+  if (isSubagentStatusFailed(status) || status === 'timeout') {
     return 'is-failed';
   }
   return 'is-running';

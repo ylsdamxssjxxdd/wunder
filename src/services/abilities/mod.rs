@@ -302,7 +302,6 @@ mod tests {
             default_agent_tool_names: vec![],
             shared_tools: vec![SharedToolSpec {
                 name: "bob@shared_tool".to_string(),
-                title: None,
                 description: "shared".to_string(),
                 input_schema: json!({"type": "object"}),
                 owner_id: "bob".to_string(),

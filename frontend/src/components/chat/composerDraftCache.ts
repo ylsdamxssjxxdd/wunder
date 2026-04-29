@@ -10,6 +10,9 @@ export type ComposerDraftAttachment = {
   derived_attachments?: ComposerDraftAttachment[];
   requested_frame_rate?: number;
   applied_frame_rate?: number;
+  requested_frame_step?: number;
+  applied_frame_step?: number;
+  total_frame_count?: number;
   duration_ms?: number;
   frame_count?: number;
   has_audio?: boolean;
@@ -44,6 +47,15 @@ const cloneAttachment = (attachment: ComposerDraftAttachment): ComposerDraftAtta
     : {}),
   ...(Number.isFinite(attachment.applied_frame_rate)
     ? { applied_frame_rate: Number(attachment.applied_frame_rate) }
+    : {}),
+  ...(Number.isFinite(attachment.requested_frame_step)
+    ? { requested_frame_step: Number(attachment.requested_frame_step) }
+    : {}),
+  ...(Number.isFinite(attachment.applied_frame_step)
+    ? { applied_frame_step: Number(attachment.applied_frame_step) }
+    : {}),
+  ...(Number.isFinite(attachment.total_frame_count)
+    ? { total_frame_count: Number(attachment.total_frame_count) }
     : {}),
   ...(Number.isFinite(attachment.duration_ms) ? { duration_ms: Number(attachment.duration_ms) } : {}),
   ...(Number.isFinite(attachment.frame_count) ? { frame_count: Number(attachment.frame_count) } : {}),

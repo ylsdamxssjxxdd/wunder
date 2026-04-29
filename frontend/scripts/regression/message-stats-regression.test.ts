@@ -26,6 +26,7 @@ const createTranslator = () => {
     'messenger.messageStatus.modelOutputting': 'Model outputting',
     'messenger.messageStatus.running': 'Running',
     'messenger.messageStatus.toolRunning': 'Tool running',
+    'messenger.messageStatus.subagentRunning': 'Sub-agent running',
     'messenger.messageStatus.queued': 'Queued',
     'messenger.messageStatus.queuedAhead': 'Queued · {count} ahead',
     'messenger.messageStatus.resumable': 'Resumable',
@@ -712,6 +713,39 @@ test('message stats suppresses completed metrics while compaction is still runni
 
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.value, 'Compacting');
+});
+
+test('message stats keeps active subagent status ahead of stale failed workflow items', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowItems: [
+        {
+          status: 'failed',
+          detail: 'stale parent stream failure'
+        }
+      ],
+      subagents: [
+        {
+          session_id: 'child-session',
+          run_id: 'child-run',
+          status: 'timeout',
+          terminal: 'false',
+          failed: 'false'
+        }
+      ],
+      stats: {
+        usage: {
+          total_tokens: 2048
+        }
+      }
+    },
+    t
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Sub-agent running');
 });
 
 test('turn decode speed summary matches backend user-round average semantics', () => {

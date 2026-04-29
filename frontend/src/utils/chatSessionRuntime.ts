@@ -1,4 +1,8 @@
-import { isAssistantMessageRunning } from './assistantMessageRuntime';
+import {
+  hasAssistantWaitingForCurrentOutput,
+  isAssistantMessageRunning
+} from './assistantMessageRuntime';
+import { hasActiveSubagentItems } from './subagentRuntime';
 
 type ChatMessage = Record<string, unknown>;
 export type ThreadRuntimeStatus =
@@ -57,10 +61,30 @@ export const didThreadRuntimeEnterBusyState = (
 };
 
 export const isAssistantRuntimeRunning = (message: ChatMessage | null | undefined): boolean => {
-  return isAssistantMessageRunning(message);
+  return isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message);
 };
 
 export const hasRunningAssistantMessage = (
+  messages: ChatMessage[] | null | undefined
+): boolean => {
+  return hasActiveSubagentsAfterLatestUser(messages) || hasStreamingAssistantMessage(messages);
+};
+
+export const hasActiveSubagentsAfterLatestUser = (
+  messages: ChatMessage[] | null | undefined
+): boolean => {
+  if (!Array.isArray(messages) || messages.length === 0) return false;
+  const latestUserIndex = resolveLatestUserIndex(messages);
+  const startIndex = latestUserIndex >= 0 ? latestUserIndex + 1 : 0;
+  for (let index = messages.length - 1; index >= startIndex; index -= 1) {
+    if (hasActiveSubagentItems(messages[index]?.subagents)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const hasStreamingAssistantMessage = (
   messages: ChatMessage[] | null | undefined
 ): boolean => {
   if (!Array.isArray(messages) || messages.length === 0) return false;

@@ -1773,10 +1773,16 @@ import {
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
 import {
+  hasAssistantWaitingForCurrentOutput,
   normalizeAssistantMessageRuntimeState,
   resolveAssistantMessageRuntimeState
 } from '@/utils/assistantMessageRuntime';
-import { hasRunningAssistantMessage } from '@/utils/chatSessionRuntime';
+import {
+  hasActiveSubagentsAfterLatestUser,
+  hasRunningAssistantMessage,
+  hasStreamingAssistantMessage
+} from '@/utils/chatSessionRuntime';
+import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
   isCompactionOnlyWorkflowItems,
@@ -3513,7 +3519,8 @@ const resolveEffectiveSessionBusy = (sessionId: unknown, messagesOverride: unkno
   if (
     !loadingBySession &&
     TERMINAL_RUNTIME_STATUS_SET.has(runtimeStatus) &&
-    hasRunningAssistantMessage(messages)
+    !hasActiveSubagentsAfterLatestUser(messages) &&
+    hasStreamingAssistantMessage(messages)
   ) {
     chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
       sessionId: normalizedSessionId,
@@ -6801,6 +6808,8 @@ const hasWorkflowOrThinking = (message: Record<string, unknown>): boolean =>
   Boolean(message?.workflowStreaming) ||
   Boolean(message?.reasoningStreaming) ||
   Boolean((message?.workflowItems as unknown[])?.length) ||
+  hasActiveSubagentItems(message?.subagents) ||
+  Boolean((message?.subagents as unknown[])?.length) ||
   hasMessageContent(message?.reasoning);
 
 const shouldRenderAgentMessage = (message: Record<string, unknown>): boolean => {
@@ -6931,6 +6940,17 @@ const buildLatestAssistantLayoutSignature = (message: Record<string, unknown> | 
     })
     .join('|');
   const subagents = Array.isArray(message.subagents) ? message.subagents : [];
+  const subagentSignature = subagents
+    .map((item, index) => {
+      const record = (item || {}) as Record<string, unknown>;
+      return [
+        index,
+        String(record.key || record.run_id || record.session_id || '').trim(),
+        String(record.status || '').trim(),
+        String(record.summary || '').length
+      ].join(':');
+    })
+    .join('|');
   return [
     latestAgentRenderableMessageKey.value,
     String(message.id || message.localId || '').trim(),
@@ -6941,7 +6961,8 @@ const buildLatestAssistantLayoutSignature = (message: Record<string, unknown> | 
     Boolean(message.stream_incomplete),
     workflowItems.length,
     workflowSignature,
-    subagents.length
+    subagents.length,
+    subagentSignature
   ].join('::');
 };
 
@@ -7038,6 +7059,8 @@ const latestVisibleAgentAssistantMessage = computed<Record<string, unknown> | nu
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
   if (resolveAssistantFailureNotice(message, t)) return 'error';
+  if (hasActiveSubagentItems(message.subagents)) return 'running';
+  if (hasAssistantWaitingForCurrentOutput(message)) return 'running';
   const runtimeState = resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
   if (
     runtimeState === 'done' &&

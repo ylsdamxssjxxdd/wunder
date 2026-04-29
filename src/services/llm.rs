@@ -6,8 +6,8 @@ use crate::core::tool_args::{
     normalize_tool_arguments_json as normalize_tool_arguments_json_lossy,
     sanitize_tool_call_payload,
 };
-use crate::services::chat_attachments::parse_image_data_url;
 use crate::schemas::TokenUsage;
+use crate::services::chat_attachments::parse_image_data_url;
 use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
@@ -981,8 +981,7 @@ fn convert_responses_content_part(part: &Value) -> Option<Value> {
                             .map(|v| v.to_string())
                     });
                 if let Some(url) = url {
-                    if url.starts_with("data:image/")
-                        && parse_image_data_url(&url, None).is_none()
+                    if url.starts_with("data:image/") && parse_image_data_url(&url, None).is_none()
                     {
                         return None;
                     }
@@ -2064,7 +2063,9 @@ fn sanitize_message_content(content: &Value) -> Value {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_ascii_lowercase();
-                if raw_type == "image_url" || raw_type == "input_image" || obj.contains_key("image_url")
+                if raw_type == "image_url"
+                    || raw_type == "input_image"
+                    || obj.contains_key("image_url")
                 {
                     let url = obj
                         .get("image_url")

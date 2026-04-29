@@ -44,7 +44,8 @@ pub use catalog::{
     collect_available_tool_names, collect_prompt_tool_specs,
     collect_prompt_tool_specs_with_language, desktop_tools_available, extract_sleep_seconds,
     filter_tool_names_by_model_capability, is_browser_tool_name, is_desktop_control_tool_name,
-    is_read_image_tool_name, is_sleep_tool_name, resolve_tool_name,
+    is_read_image_tool_name, is_sleep_tool_name, resolve_runtime_tool_display_name,
+    resolve_tool_name,
 };
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};
 pub(crate) use context::{
@@ -4958,8 +4959,8 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         request,
         run_id.clone(),
         Some(parent_session_id),
-        child_agent_id,
-        model_name,
+        child_agent_id.clone(),
+        model_name.clone(),
         SessionRunMeta {
             run_kind: Some("subagent".to_string()),
             requested_by: Some("subagent_control".to_string()),
@@ -4971,6 +4972,25 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         payload.run_timeout_seconds,
     )
     .await?;
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit(
+            "subagent_dispatch_item_update",
+            json!({
+                "status": "accepted",
+                "terminal": false,
+                "failed": false,
+                "run_id": run_id.clone(),
+                "session_id": child_session_id.clone(),
+                "parent_session_id": context.session_id,
+                "label": payload.label.clone(),
+                "agent_id": child_agent_id.clone(),
+                "model_name": model_name.clone(),
+                "parent_user_round": context.user_round,
+                "parent_model_round": context.model_round,
+                "can_terminate": true,
+            }),
+        );
+    }
     if wait_seconds <= 0.0 {
         return Ok(build_session_tool_result(
             "spawn",

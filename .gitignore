@@ -79,3 +79,4 @@ config/preset_worker_cards
 .rename_only_probe*
 config/mcp_config.json
 config/org_units.json
+exports/

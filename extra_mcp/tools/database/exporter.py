@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 import csv
-import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -13,11 +11,6 @@ from .config import DbConfig, DbExportConfig, DbQueryTarget, get_db_export_confi
 from .db import _has_multiple_statements, _is_read_only_sql, _normalize_value, open_connection
 
 SUPPORTED_EXPORT_FORMATS = ("xlsx", "csv")
-QUERY_HANDLE_VERSION = 1
-QUERY_HANDLE_KIND = "db_query"
-QUERY_HANDLE_PREFIX = "qh_"
-QUERY_HANDLE_STORE_DIRNAME = ".query_handles"
-QUERY_HANDLE_TOKEN_PATTERN = re.compile(r"^qh_[0-9a-f]{16}$")
 INVALID_PATH_SEGMENT_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WINDOWS_DRIVE_PATTERN = re.compile(r"^[a-zA-Z]:")
 INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
@@ -39,144 +32,14 @@ def _normalize_export_format(format_value: str | None, requested_path: str | Non
     return candidate
 
 
-def _normalize_query_handle_param(value: Any) -> Any:
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
-
-
-def _build_query_handle_payload(
-    sql: str,
-    params: Sequence[Any] | None,
-    target: DbQueryTarget | None,
-) -> dict[str, Any]:
-    return {
-        "version": QUERY_HANDLE_VERSION,
-        "kind": QUERY_HANDLE_KIND,
-        "sql": sql.strip(),
-        "params": [_normalize_query_handle_param(item) for item in (params or [])],
-        "table": target.table if target else None,
-        "db_key": target.db_key if target else None,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
-
-def _encode_legacy_query_handle(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
-
-
-def _query_handle_store_dir() -> Path:
-    export_cfg = get_db_export_config()
-    return export_cfg.root.resolve() / QUERY_HANDLE_STORE_DIRNAME
-
-
-def _store_query_handle_payload(payload: dict[str, Any]) -> str:
-    store_dir = _query_handle_store_dir()
-    store_dir.mkdir(parents=True, exist_ok=True)
-    for _ in range(8):
-        token = f"{QUERY_HANDLE_PREFIX}{uuid4().hex[:16]}"
-        destination = store_dir / f"{token}.json"
-        if destination.exists():
-            continue
-        tmp_path = store_dir / f".{token}.{uuid4().hex}.tmp"
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        tmp_path.replace(destination)
-        return token
-    raise RuntimeError("Failed to allocate query_handle token.")
-
-
-def build_query_handle(
-    sql: str,
-    params: Sequence[Any] | None,
-    target: DbQueryTarget | None,
-) -> str:
-    payload = _build_query_handle_payload(sql, params, target)
-    try:
-        return _store_query_handle_payload(payload)
-    except Exception:
-        return _encode_legacy_query_handle(payload)
-
-
-def _decode_legacy_query_handle(query_handle: str) -> dict[str, Any]:
-    cleaned = query_handle.strip()
-    padding = "=" * (-len(cleaned) % 4)
-    try:
-        raw = base64.urlsafe_b64decode((cleaned + padding).encode("ascii"))
-        payload = json.loads(raw.decode("utf-8"))
-    except Exception as exc:  # pragma: no cover - invalid user input path
-        raise ValueError("Invalid query_handle.") from exc
-    return payload
-
-
-def _decode_stored_query_handle(query_handle: str) -> dict[str, Any]:
-    cleaned = query_handle.strip()
-    if not QUERY_HANDLE_TOKEN_PATTERN.fullmatch(cleaned):
-        raise ValueError("Invalid query_handle.")
-    token_path = _query_handle_store_dir() / f"{cleaned}.json"
-    try:
-        raw = token_path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise ValueError("Unknown or expired query_handle.") from exc
-    except OSError as exc:  # pragma: no cover - filesystem failure path
-        raise ValueError("Failed to read query_handle.") from exc
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:  # pragma: no cover - corrupted file path
-        raise ValueError("Invalid query_handle payload.") from exc
-    return payload
-
-
-def _decode_query_handle(query_handle: str) -> dict[str, Any]:
-    cleaned = query_handle.strip()
-    if not cleaned:
-        raise ValueError("query_handle cannot be empty.")
-    if cleaned.startswith(QUERY_HANDLE_PREFIX):
-        payload = _decode_stored_query_handle(cleaned)
-    else:
-        payload = _decode_legacy_query_handle(cleaned)
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid query_handle payload.")
-    if payload.get("kind") != QUERY_HANDLE_KIND or payload.get("version") != QUERY_HANDLE_VERSION:
-        raise ValueError("Unsupported query_handle version.")
-    return payload
-
-
-def resolve_query_request(
+def resolve_sql_request(
     *,
-    query_handle: str | None,
     sql: str | None,
     params: Sequence[Any] | None,
-    expected_target: DbQueryTarget | None,
 ) -> tuple[str, list[Any] | None]:
-    if query_handle and query_handle.strip():
-        payload = _decode_query_handle(query_handle)
-        handle_sql = str(payload.get("sql") or "").strip()
-        handle_params = payload.get("params")
-        if not isinstance(handle_params, list):
-            handle_params = []
-        if expected_target is not None:
-            handle_table = str(payload.get("table") or "").strip()
-            if handle_table and handle_table != expected_target.table:
-                raise ValueError(
-                    f"query_handle belongs to table '{handle_table}', not bound table '{expected_target.table}'."
-                )
-            handle_db_key = str(payload.get("db_key") or "").strip()
-            expected_db_key = str(expected_target.db_key or "").strip()
-            if expected_db_key and handle_db_key and handle_db_key != expected_db_key:
-                raise ValueError(
-                    f"query_handle belongs to db_key '{handle_db_key}', not '{expected_db_key}'."
-                )
-        if not handle_sql:
-            raise ValueError("query_handle does not contain SQL.")
-        return handle_sql, handle_params or None
-
     sql_text = (sql or "").strip()
     if not sql_text:
-        raise ValueError("Either query_handle or sql is required.")
+        raise ValueError("SQL statement is required.")
     return sql_text, list(params) if params else None
 
 
@@ -453,7 +316,7 @@ def _validate_export_sql(sql: str, allow_write: bool, allow_limited_export: bool
         raise ValueError("Only read-only SQL is allowed (SELECT/SHOW/DESCRIBE/EXPLAIN/WITH).")
     if not allow_limited_export and LIMIT_OR_OFFSET_PATTERN.search(sql):
         raise ValueError(
-            "db_export rejects SQL/query_handle with LIMIT/OFFSET by default to avoid accidental partial exports. Remove LIMIT/OFFSET for formal full exports, or set allow_limited_export=true if you intentionally want a partial export."
+            "db_export rejects SQL with LIMIT/OFFSET by default to avoid accidental partial exports. Remove LIMIT/OFFSET for formal full exports, or set allow_limited_export=true if you intentionally want a partial export."
         )
 
 

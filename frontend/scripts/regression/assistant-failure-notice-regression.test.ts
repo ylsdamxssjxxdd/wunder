@@ -77,3 +77,30 @@ test('hides failure notice while a compaction recovery is still running', () => 
 
   assert.equal(rendered, '');
 });
+
+test('hides failure notice while a subagent is still running', () => {
+  const rendered = buildAssistantDisplayContent(
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [
+        {
+          status: 'failed',
+          detail: 'parent stream finished before child observation'
+        }
+      ],
+      subagents: [
+        {
+          session_id: 'child-session',
+          run_id: 'child-run',
+          status: 'timeout',
+          terminal: 'false',
+          failed: 'false'
+        }
+      ]
+    },
+    translate
+  );
+
+  assert.equal(rendered, '');
+});

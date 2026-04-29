@@ -13,7 +13,9 @@ use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::chat_media::{
     process_chat_media_upload, reprocess_chat_media_source, ChatMediaUpload,
 };
-use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
+use crate::services::llm::{
+    build_llm_client, is_llm_model, resolve_tool_call_mode, ChatMessage, ToolCallMode,
+};
 use crate::services::orchestration_context::{
     active_orchestration_for_agent, build_locked_thread_message, load_round_state,
     load_session_context, repair_orchestration_session_main_thread,
@@ -230,6 +232,8 @@ struct SystemPromptRequest {
     agent_id: Option<String>,
     #[serde(default)]
     tool_overrides: Option<Vec<String>>,
+    #[serde(default)]
+    question: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2240,13 +2244,6 @@ async fn system_prompt(
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed.clone());
-    let tooling_preview = build_prompt_tooling_preview_payload(
-        &state,
-        &resolved.user.user_id,
-        &user_context,
-        &allowed,
-        agent_record.as_ref(),
-    );
     let agent_prompt = agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
@@ -2278,6 +2275,15 @@ async fn system_prompt(
             preview_skill,
         )
         .await;
+    let tooling_preview = build_prompt_tooling_preview_payload(
+        &state,
+        &resolved.user.user_id,
+        &user_context,
+        &allowed,
+        agent_record.as_ref(),
+        &prompt,
+        payload.question.as_deref(),
+    );
     Ok(Json(json!({
         "data": build_system_prompt_preview_payload(prompt, "pending", Some(tooling_preview)),
     })))
@@ -2346,16 +2352,18 @@ async fn session_system_prompt(
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed.clone());
-    let tooling_preview = build_prompt_tooling_preview_payload(
-        &state,
-        &resolved.user.user_id,
-        &user_context,
-        &allowed,
-        agent_record.as_ref(),
-    );
     if request_overrides.is_none() {
         if let Some(prompt) = stored_prompt {
             if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
+                let tooling_preview = build_prompt_tooling_preview_payload(
+                    &state,
+                    &resolved.user.user_id,
+                    &user_context,
+                    &allowed,
+                    agent_record.as_ref(),
+                    &prompt,
+                    payload.question.as_deref(),
+                );
                 return Ok(Json(json!({
                     "data": build_system_prompt_preview_payload(
                         prompt,
@@ -2397,6 +2405,15 @@ async fn session_system_prompt(
             preview_skill,
         )
         .await;
+    let tooling_preview = build_prompt_tooling_preview_payload(
+        &state,
+        &resolved.user.user_id,
+        &user_context,
+        &allowed,
+        agent_record.as_ref(),
+        &prompt,
+        payload.question.as_deref(),
+    );
     Ok(Json(json!({
         "data": build_system_prompt_preview_payload(prompt, "pending", Some(tooling_preview)),
     })))
@@ -2453,6 +2470,7 @@ struct ChatMediaProcessFields {
     upload: Option<ChatMediaUpload>,
     source_public_path: Option<String>,
     frame_rate: Option<f64>,
+    frame_step: Option<usize>,
 }
 
 async fn chat_attachment_media_process(
@@ -2470,6 +2488,7 @@ async fn chat_attachment_media_process(
             &resolved.user.user_id,
             upload,
             fields.frame_rate,
+            fields.frame_step,
         )
         .await
     } else if let Some(source_public_path) = fields.source_public_path.as_deref() {
@@ -2479,6 +2498,7 @@ async fn chat_attachment_media_process(
             &resolved.user.user_id,
             source_public_path,
             fields.frame_rate,
+            fields.frame_step,
         )
         .await
     } else {
@@ -2553,6 +2573,23 @@ async fn parse_chat_media_process_multipart(
                     )
                 })?;
                 fields.frame_rate = Some(parsed);
+            }
+            "frame_step" | "framestep" | "gif_frame_step" | "frame_interval" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let parsed = trimmed.parse::<usize>().map_err(|_| {
+                    error_response(
+                        StatusCode::BAD_REQUEST,
+                        "frame_step must be a non-negative integer".to_string(),
+                    )
+                })?;
+                fields.frame_step = Some(parsed);
             }
             _ => {}
         }
@@ -3460,10 +3497,13 @@ fn build_prompt_tooling_preview_payload(
     user_context: &crate::user_access::UserToolContext,
     allowed_tool_names: &HashSet<String>,
     agent_record: Option<&crate::storage::UserAgentRecord>,
+    system_prompt: &str,
+    question: Option<&str>,
 ) -> Value {
     let tool_call_mode = resolve_system_prompt_tool_call_mode(&user_context.config, agent_record);
     let selected_tool_names = finalize_tool_names(allowed_tool_names.clone());
-    let runtime_tool_display_map = crate::tools::build_runtime_tool_display_map(&user_context.config);
+    let runtime_tool_display_map =
+        crate::tools::build_runtime_tool_display_map(&user_context.config);
     let selected_tool_display_map = selected_tool_names
         .iter()
         .map(|name| {
@@ -3491,15 +3531,82 @@ fn build_prompt_tooling_preview_payload(
         .map(|resolved| resolved.tools.clone())
         .unwrap_or_default();
     let llm_tool_name_map = tooling
-        .map(|resolved| resolved.display_map)
+        .as_ref()
+        .map(|resolved| resolved.display_map.clone())
         .unwrap_or_default();
+    let model_request = build_system_prompt_model_request_preview(
+        &user_context.config,
+        agent_record,
+        system_prompt,
+        question,
+        llm_tools.as_slice(),
+    );
     json!({
         "tool_call_mode": tool_call_mode_key(tool_call_mode),
         "selected_tool_names": selected_tool_names,
         "selected_tool_display_map": selected_tool_display_map,
         "llm_tools": llm_tools,
         "llm_tool_name_map": llm_tool_name_map,
+        "model_request": model_request,
     })
+}
+
+fn build_system_prompt_model_request_preview(
+    config: &crate::config::Config,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+    system_prompt: &str,
+    question: Option<&str>,
+    llm_tools: &[Value],
+) -> Value {
+    let Some(model_name) = resolve_chat_model_name(config, agent_record) else {
+        return json!({
+            "messages": [{
+                "role": "system",
+                "content": system_prompt,
+            }],
+            "tools": llm_tools,
+        });
+    };
+    let Some(llm_config) = config
+        .llm
+        .models
+        .get(&model_name)
+        .filter(|model| is_llm_model(model))
+    else {
+        return json!({
+            "messages": [{
+                "role": "system",
+                "content": system_prompt,
+            }],
+            "tools": llm_tools,
+        });
+    };
+    let mut messages = vec![ChatMessage {
+        role: "system".to_string(),
+        content: Value::String(system_prompt.to_string()),
+        reasoning_content: None,
+        tool_calls: None,
+        tool_call_id: None,
+    }];
+    if let Some(question) = question.map(str::trim).filter(|value| !value.is_empty()) {
+        messages.push(ChatMessage {
+            role: "user".to_string(),
+            content: Value::String(question.to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+    let tools = if llm_tools.is_empty() {
+        None
+    } else {
+        Some(llm_tools)
+    };
+    build_llm_client(llm_config, reqwest::Client::new()).build_request_payload_with_tools(
+        &messages,
+        true,
+        tools,
+    )
 }
 
 fn build_system_prompt_preview_payload(

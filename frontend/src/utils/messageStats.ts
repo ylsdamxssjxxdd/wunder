@@ -2,10 +2,12 @@ import { normalizeChatDurationSeconds } from './chatTiming';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
   hasAssistantPendingQuestion,
+  hasAssistantWaitingForCurrentOutput,
   isAssistantMessageRunning
 } from './assistantMessageRuntime';
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
 import { shouldDisplayTransientRetry } from './retryVisibility';
+import { hasActiveSubagentItems } from './subagentRuntime';
 
 export type MessageStatsEntry = {
   key: string;
@@ -326,23 +328,6 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
 const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
   Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
 
-const hasAssistantWaitingForCurrentOutput = (message: Record<string, any>): boolean => {
-  const waitingUpdatedAtMs = Number(
-    message?.waiting_updated_at_ms ?? message?.waitingUpdatedAtMs ?? message?.stats?.interaction_start_ms
-  );
-  const waitingFirstOutputAtMs = Number(
-    message?.waiting_phase_first_output_at_ms ??
-      message?.waitingPhaseFirstOutputAtMs ??
-      message?.waiting_first_output_at_ms ??
-      message?.waitingFirstOutputAtMs
-  );
-  return (
-    Number.isFinite(waitingUpdatedAtMs) &&
-    waitingUpdatedAtMs > 0 &&
-    (!Number.isFinite(waitingFirstOutputAtMs) || waitingFirstOutputAtMs <= 0)
-  );
-};
-
 const normalizeWorkflowEventType = (value: unknown): string => String(value || '').trim().toLowerCase();
 const normalizeWorkflowStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
 
@@ -443,6 +428,8 @@ const hasAssistantActivitySignals = (message: Record<string, any> | null | undef
       Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
       normalizeWorkflowStatus(message?.retry_state ?? message?.retryState) === 'retrying' ||
       (Array.isArray(message?.workflowItems) && message.workflowItems.length > 0) ||
+      hasActiveSubagentItems(message?.subagents) ||
+      (Array.isArray(message?.subagents) && message.subagents.length > 0) ||
       (message?.stats && typeof message.stats === 'object')
   );
 };
@@ -609,6 +596,9 @@ const resolveAssistantStatusEntry = (
   if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
     return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
   }
+  if (hasActiveSubagentItems(message?.subagents)) {
+    return buildStatusEntry(t('messenger.messageStatus.subagentRunning'), 'running', true);
+  }
   if (
     (isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message) || latestRequest.index >= 0) &&
     hasConversationCompactionRunning(message, allMessages)
@@ -618,10 +608,10 @@ const resolveAssistantStatusEntry = (
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
   }
+  if (hasAssistantWaitingForCurrentOutput(message)) {
+    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
+  }
   if (isAssistantMessageRunning(message)) {
-    if (hasAssistantWaitingForCurrentOutput(message)) {
-      return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
-    }
     if (latestActiveModelOutput.index >= 0 || message?.reasoningStreaming) {
       return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true);
     }
@@ -649,7 +639,11 @@ export const buildAssistantMessageStatsEntries = (
   const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs);
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return statusEntry ? [statusEntry] : [];
-  if (isAssistantMessageRunning(message)) {
+  if (
+    isAssistantMessageRunning(message) ||
+    hasAssistantWaitingForCurrentOutput(message) ||
+    hasActiveSubagentItems(message?.subagents)
+  ) {
     return statusEntry ? [statusEntry] : [];
   }
   const durationSeconds = resolveDurationSeconds(stats);

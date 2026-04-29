@@ -1,4 +1,5 @@
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
+import { normalizeChatTimestampMs } from './chatTiming';
 
 type AssistantMessageLike = Record<string, unknown>;
 
@@ -15,6 +16,29 @@ const normalizeFlag = (value: unknown): boolean => {
 
 const normalizeRuntimeText = (value: unknown): string => String(value || '').trim().toLowerCase();
 
+const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+
+const hasVisibleAssistantOutput = (message: AssistantMessageLike | null | undefined): boolean =>
+  Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
+
+const normalizeTimestampMs = (value: unknown): number | null => {
+  const millis = normalizeChatTimestampMs(value);
+  return Number.isFinite(millis) ? Number(millis) : null;
+};
+
+const resolveLatestWorkflowStatus = (workflowItems: unknown): string => {
+  const items = Array.isArray(workflowItems) ? workflowItems : [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (!item || typeof item !== 'object') continue;
+    const status = normalizeRuntimeText((item as AssistantMessageLike).status);
+    if (status) {
+      return status;
+    }
+  }
+  return '';
+};
+
 export const hasAssistantPendingQuestion = (
   message: AssistantMessageLike | null | undefined
 ): boolean => {
@@ -27,6 +51,55 @@ export const hasAssistantPendingQuestion = (
     normalizeFlag(message.awaiting_confirmation) ||
     normalizeFlag(message.requires_confirmation)
   );
+};
+
+export const hasAssistantWaitingForCurrentOutput = (
+  message: AssistantMessageLike | null | undefined
+): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (hasAssistantPendingQuestion(message) || hasVisibleAssistantOutput(message)) return false;
+
+  const waitingUpdatedAtMs = normalizeTimestampMs(
+    message.waiting_updated_at_ms ??
+      message.waitingUpdatedAtMs ??
+      (message.stats as AssistantMessageLike | null)?.interaction_start_ms ??
+      (message.stats as AssistantMessageLike | null)?.interactionStartMs
+  );
+  if (waitingUpdatedAtMs === null || waitingUpdatedAtMs <= 0) {
+    return false;
+  }
+
+  const waitingFirstOutputAtMs = normalizeTimestampMs(
+    message.waiting_phase_first_output_at_ms ??
+      message.waitingPhaseFirstOutputAtMs ??
+      message.waiting_first_output_at_ms ??
+      message.waitingFirstOutputAtMs
+  );
+  if (waitingFirstOutputAtMs !== null && waitingFirstOutputAtMs > 0) {
+    return false;
+  }
+
+  const interactionEndMs = normalizeTimestampMs(
+    (message.stats as AssistantMessageLike | null)?.interaction_end_ms ??
+      (message.stats as AssistantMessageLike | null)?.interactionEndMs ??
+      (message.stats as AssistantMessageLike | null)?.interaction_end ??
+      (message.stats as AssistantMessageLike | null)?.ended_at
+  );
+  if (interactionEndMs !== null && interactionEndMs >= waitingUpdatedAtMs) {
+    return false;
+  }
+
+  const explicitState = normalizeAssistantMessageRuntimeState(message.state, false);
+  if (explicitState === 'done' || explicitState === 'error' || explicitState === 'pending') {
+    return false;
+  }
+
+  const latestWorkflowStatus = resolveLatestWorkflowStatus(message.workflowItems);
+  if (latestWorkflowStatus && !ACTIVE_WORKFLOW_STATUSES.has(latestWorkflowStatus)) {
+    return false;
+  }
+
+  return true;
 };
 
 export const normalizeAssistantMessageRuntimeState = (

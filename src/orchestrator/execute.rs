@@ -21,6 +21,7 @@ use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
 struct PlannedToolCall {
     call: ToolCall,
     name: String,
+    function_name: String,
 }
 
 struct ToolExecutionOutcome {
@@ -1016,6 +1017,8 @@ impl Orchestrator {
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty());
+                    let tool_display_name =
+                        crate::tools::resolve_runtime_tool_display_name(&config, &planned.name);
                     let safe_args = if args.is_object() {
                         args.clone()
                     } else {
@@ -1030,6 +1033,18 @@ impl Orchestrator {
                     };
                     let mut tool_payload = json!({ "tool": planned.name, "args": event_args });
                     if let Value::Object(ref mut map) = tool_payload {
+                        map.insert(
+                            "tool_runtime_name".to_string(),
+                            Value::String(planned.name.clone()),
+                        );
+                        map.insert(
+                            "tool_display_name".to_string(),
+                            Value::String(tool_display_name),
+                        );
+                        map.insert(
+                            "tool_function_name".to_string(),
+                            Value::String(planned.function_name.clone()),
+                        );
                         if let Some(repair) = recovered_args.repair.clone() {
                             map.insert("repair".to_string(), repair);
                         }
@@ -1090,8 +1105,21 @@ impl Orchestrator {
                             name,
                             mut result,
                         } = outcome;
-                        let ToolCall { id, arguments, .. } = call;
+                        let ToolCall {
+                            id,
+                            arguments,
+                            function_name,
+                            ..
+                        } = call;
                         let args = arguments;
+                        let tool_function_name = function_name
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or(name.as_str())
+                            .to_string();
+                        let tool_display_name =
+                            crate::tools::resolve_runtime_tool_display_name(&config, &name);
 
                         tool_budget_usage.total = tool_budget_usage.total.saturating_add(1);
                         if is_db_query_tool_name(&name) {
@@ -1150,7 +1178,9 @@ impl Orchestrator {
                         let observation = self.build_tool_observation(&name, &result);
                         let observation_value = Value::String(observation.clone());
                         let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
-                            match build_read_image_followup_user_message(&result.data).await {
+                            match build_read_image_followup_user_message(&tool_context, &result.data)
+                                .await
+                            {
                                 Ok(payload) => payload,
                                 Err(err) => {
                                     warn!(
@@ -1244,6 +1274,18 @@ impl Orchestrator {
 
                         let mut tool_result_payload = result.to_event_payload(&name);
                         if let Value::Object(ref mut map) = tool_result_payload {
+                            map.insert(
+                                "tool_runtime_name".to_string(),
+                                Value::String(name.clone()),
+                            );
+                            map.insert(
+                                "tool_display_name".to_string(),
+                                Value::String(tool_display_name),
+                            );
+                            map.insert(
+                                "tool_function_name".to_string(),
+                                Value::String(tool_function_name),
+                            );
                             if let Some(tool_call_id) = event_tool_call_id.as_ref() {
                                 map.insert(
                                     "tool_call_id".to_string(),
@@ -1885,23 +1927,38 @@ impl Orchestrator {
             let emitter = emitter.clone();
             let execution_lock = Arc::clone(&execution_lock);
             async move {
-                let PlannedToolCall { mut call, name } = planned;
+                let PlannedToolCall {
+                    mut call,
+                    name,
+                    function_name,
+                } = planned;
                 let event_tool_call_id = call
                     .id
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToString::to_string);
+                let tool_display_name =
+                    crate::tools::resolve_runtime_tool_display_name(tool_context.config, &name);
                 let scoped_tool_context = tool_context.with_event_emitter(
                     tool_context.event_emitter.as_ref().map(|event_emitter| {
+                        let mut scoped = event_emitter
+                            .with_field("tool_runtime_name", Value::String(name.clone()))
+                            .with_field(
+                                "tool_display_name",
+                                Value::String(tool_display_name.clone()),
+                            )
+                            .with_field(
+                                "tool_function_name",
+                                Value::String(function_name.clone()),
+                            );
                         if let Some(tool_call_id) = event_tool_call_id.as_ref() {
-                            event_emitter.with_field(
+                            scoped = scoped.with_field(
                                 "tool_call_id",
                                 Value::String(tool_call_id.clone()),
-                            )
-                        } else {
-                            event_emitter.clone()
+                            );
                         }
+                        scoped
                     }),
                 );
                 let recovered_args =
@@ -2471,6 +2528,13 @@ fn build_planned_tool_calls(
             if name.is_empty() {
                 return None;
             }
+            let function_name = call
+                .function_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(name)
+                .to_string();
             let resolved = resolve_tool_name(name);
             if resolved.trim().is_empty() {
                 return None;
@@ -2482,6 +2546,7 @@ fn build_planned_tool_calls(
             Some(PlannedToolCall {
                 call,
                 name: resolved,
+                function_name,
             })
         })
         .collect()
@@ -3690,11 +3755,13 @@ mod tests {
             ToolCall {
                 id: None,
                 name: "read_file".to_string(),
+                function_name: None,
                 arguments: json!({ "path": "Cargo.toml" }),
             },
             ToolCall {
                 id: None,
                 name: "2026-03-03".to_string(),
+                function_name: None,
                 arguments: json!({ "timestamp": "..." }),
             },
         ];
@@ -3709,6 +3776,7 @@ mod tests {
         let calls = vec![ToolCall {
             id: None,
             name: "final_response".to_string(),
+            function_name: None,
             arguments: json!({ "content": "ok" }),
         }];
         let planned = build_planned_tool_calls(calls, &allowed);
@@ -3802,9 +3870,11 @@ mod tests {
             call: ToolCall {
                 id: Some("call_1".to_string()),
                 name: tool_name.clone(),
+                function_name: None,
                 arguments: json!({ "action": "recall", "query": "晋升规则" }),
             },
             name: tool_name.clone(),
+            function_name: tool_name.clone(),
         };
         let cache_key = normalize_memory_recall_query(Some("晋升规则")).expect("query key");
         let mut cache = HashMap::new();

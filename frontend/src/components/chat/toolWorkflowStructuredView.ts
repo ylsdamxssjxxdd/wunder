@@ -19,6 +19,9 @@ const READ_FILE_LIMIT = 8;
 const LIST_ITEM_LIMIT = 80;
 const SEARCH_GROUP_LIMIT = 8;
 const SEARCH_HIT_LIMIT = 24;
+const DATABASE_ROW_LIMIT = 12;
+const DATABASE_CELL_LIMIT = 160;
+const KNOWLEDGE_CHUNK_LIMIT = 8;
 const SNIPPET_MAX_CHARS = 1400;
 
 const asObject = (value: unknown): UnknownObject | null =>
@@ -136,6 +139,26 @@ const isSearchContentTool = (toolName: string): boolean => {
 const isWriteFileTool = (toolName: string): boolean => {
   const normalized = normalizeToolName(toolName);
   return normalized === 'write_file' || toolName.includes('写入文件');
+};
+
+const isDatabaseQueryTool = (toolName: string): boolean => {
+  const normalized = normalizeToolName(toolName);
+  return (
+    normalized === 'db_query' ||
+    normalized.startsWith('db_query_') ||
+    normalized.endsWith('@db_query') ||
+    normalized.includes('@db_query_')
+  );
+};
+
+const isKnowledgeQueryTool = (toolName: string): boolean => {
+  const normalized = normalizeToolName(toolName);
+  return (
+    normalized === 'kb_query' ||
+    normalized.startsWith('kb_query_') ||
+    normalized.endsWith('@kb_query') ||
+    normalized.includes('@kb_query_')
+  );
 };
 
 const buildMetric = (
@@ -466,6 +489,211 @@ const buildWriteStructuredView = (
   };
 };
 
+const parseJsonValue = (value: string): unknown => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const parseObjectJsonlRows = (value: unknown): UnknownObject[] => {
+  if (typeof value !== 'string') return [];
+  return parseJsonlRows(value)
+    .map(parseJsonValue)
+    .map(asObject)
+    .filter(Boolean) as UnknownObject[];
+};
+
+const parseColumnNames = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => pickString(item))
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const parsed = parseJsonValue(value);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => pickString(item)).filter(Boolean);
+    }
+    return value
+      .split(/[,\n\r\t|]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
+const formatDbCellValue = (value: unknown): string => {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'string') return truncateText(value, DATABASE_CELL_LIMIT);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return truncateText(JSON.stringify(value), DATABASE_CELL_LIMIT);
+  } catch {
+    return truncateText(String(value), DATABASE_CELL_LIMIT);
+  }
+};
+
+const buildDatabaseStructuredView = (
+  dataObject: UnknownObject,
+  t: Translate,
+  callArgs: UnknownObject | null
+): ToolWorkflowStructuredView | null => {
+  const rows = Array.isArray(dataObject.rows)
+    ? (dataObject.rows.map(asObject).filter(Boolean) as UnknownObject[])
+    : parseObjectJsonlRows(dataObject.rows_jsonl);
+  const columns = parseColumnNames(dataObject.columns ?? dataObject.columns_jsonl);
+  const declaredRows = toInt(dataObject.row_count, dataObject.rows_count);
+  const declaredColumns = toInt(dataObject.columns_count);
+  const table = pickString(dataObject.table, callArgs?.table);
+  const sql = pickString(dataObject.sql, callArgs?.sql);
+  const query = pickString(callArgs?.query);
+  const elapsed = pickString(dataObject.elapsed_ms);
+  const truncated = dataObject.truncated === true;
+
+  const metrics = [
+    buildMetric('rows', t('chat.toolWorkflow.detail.rows'), declaredRows || rows.length),
+    buildMetric('columns', t('chat.toolWorkflow.detail.columns'), declaredColumns || columns.length),
+    buildMetric('table', t('chat.toolWorkflow.detail.table'), table),
+    buildMetric('elapsed', t('chat.toolWorkflow.detail.elapsed'), elapsed ? `${elapsed}ms` : ''),
+    buildMetric(
+      'truncated',
+      t('chat.toolWorkflow.detail.truncated'),
+      truncated ? t('common.yes') : '',
+      'warning'
+    )
+  ].filter(Boolean) as ToolWorkflowStructuredMetric[];
+
+  const infoRows: ToolWorkflowStructuredGroup['rows'] = [];
+  if (query) {
+    infoRows.push({
+      key: 'db-query',
+      title: `${t('chat.toolWorkflow.detail.query')}: ${truncateText(query, 360)}`
+    });
+  }
+  if (sql) {
+    infoRows.push({
+      key: 'db-sql',
+      title: t('chat.toolWorkflow.detail.sql'),
+      body: truncateText(sql, 900),
+      mono: true
+    });
+  }
+
+  const rowViews: ToolWorkflowStructuredGroup['rows'] = rows.slice(0, DATABASE_ROW_LIMIT).map((row, index) => {
+    const keys = columns.length > 0 ? columns : Object.keys(row);
+    const parts = keys
+      .map((key) => `${key}: ${formatDbCellValue(row[key])}`)
+      .filter(Boolean);
+    return {
+      key: `db-row-${index}`,
+      title: `${t('chat.toolWorkflow.detail.row')} ${index + 1}`,
+      body: parts.join('\n'),
+      mono: true
+    };
+  });
+
+  if (declaredRows > rowViews.length) {
+    rowViews.push({
+      key: 'db-omitted-rows',
+      title: `... (+${declaredRows - rowViews.length} rows omitted)`,
+      tone: 'warning'
+    });
+  }
+
+  const groups: ToolWorkflowStructuredGroup[] = [];
+  if (infoRows.length) groups.push({ key: 'db-info', rows: infoRows });
+  if (rowViews.length) {
+    groups.push({
+      key: 'db-rows',
+      title: t('chat.toolWorkflow.detail.rows'),
+      rows: rowViews
+    });
+  }
+
+  if (!metrics.length && !groups.length) return null;
+  return {
+    variant: 'database',
+    metrics,
+    groups
+  };
+};
+
+const buildKnowledgeStructuredView = (
+  dataObject: UnknownObject,
+  t: Translate,
+  callArgs: UnknownObject | null
+): ToolWorkflowStructuredView | null => {
+  const chunks = Array.isArray(dataObject.chunks)
+    ? (dataObject.chunks.map(asObject).filter(Boolean) as UnknownObject[])
+    : parseObjectJsonlRows(dataObject.chunks_jsonl);
+  const documents = Array.isArray(dataObject.documents)
+    ? (dataObject.documents.map(asObject).filter(Boolean) as UnknownObject[])
+    : parseObjectJsonlRows(dataObject.documents_jsonl);
+  const total = toInt(dataObject.total, dataObject.chunks_count);
+  const elapsed = pickString(dataObject.elapsed_ms);
+  const query = pickString(callArgs?.query, callArgs?.question);
+
+  const metrics = [
+    buildMetric('hits', t('chat.toolWorkflow.detail.hits'), total || chunks.length),
+    buildMetric('documents', t('chat.toolWorkflow.detail.documents'), documents.length),
+    buildMetric('elapsed', t('chat.toolWorkflow.detail.elapsed'), elapsed ? `${elapsed}ms` : '')
+  ].filter(Boolean) as ToolWorkflowStructuredMetric[];
+
+  const groups: ToolWorkflowStructuredGroup[] = [];
+  if (query) {
+    groups.push({
+      key: 'kb-query',
+      rows: [
+        {
+          key: 'kb-query-row',
+          title: `${t('chat.toolWorkflow.detail.query')}: ${truncateText(query, 360)}`
+        }
+      ]
+    });
+  }
+
+  if (chunks.length) {
+    groups.push({
+      key: 'kb-chunks',
+      title: t('chat.toolWorkflow.detail.hits'),
+      rows: chunks.slice(0, KNOWLEDGE_CHUNK_LIMIT).map((chunk, index) => {
+        const documentName = pickString(chunk.document_name, chunk.document, chunk.title);
+        const score = pickString(chunk.similarity, chunk.score);
+        return {
+          key: `kb-chunk-${index}`,
+          title: documentName || `${t('chat.toolWorkflow.detail.hit')} ${index + 1}`,
+          meta: score ? `score ${score}` : '',
+          body: truncateText(
+            pickString(chunk.highlight, chunk.content, chunk.text, chunk.answer),
+            900
+          )
+        };
+      })
+    });
+  }
+
+  if (documents.length) {
+    groups.push({
+      key: 'kb-documents',
+      title: t('chat.toolWorkflow.detail.documents'),
+      rows: documents.slice(0, KNOWLEDGE_CHUNK_LIMIT).map((document, index) => ({
+        key: `kb-document-${index}`,
+        title: pickString(document.name, document.title, document.id) || `${t('chat.toolWorkflow.detail.document')} ${index + 1}`,
+        meta: pickString(document.count)
+      }))
+    });
+  }
+
+  if (!metrics.length && !groups.length) return null;
+  return {
+    variant: 'knowledge',
+    metrics,
+    groups
+  };
+};
+
 export const buildStructuredToolResultView = (
   toolName: string,
   resultObject: UnknownObject | null,
@@ -478,6 +706,8 @@ export const buildStructuredToolResultView = (
   if (isListFilesTool(toolName)) return buildListStructuredView(dataObject, t);
   if (isSearchContentTool(toolName)) return buildSearchStructuredView(dataObject, t);
   if (isWriteFileTool(toolName)) return buildWriteStructuredView(resultObject, dataObject, t, callArgs);
+  if (isDatabaseQueryTool(toolName)) return buildDatabaseStructuredView(dataObject, t, callArgs);
+  if (isKnowledgeQueryTool(toolName)) return buildKnowledgeStructuredView(dataObject, t, callArgs);
   return null;
 };
 

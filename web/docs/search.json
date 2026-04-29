@@ -637,7 +637,7 @@
       "成功返回",
       "重点"
     ],
-    "text": "读图工具 readimage 的用途与返回结构。 # 读图工具 readimage 做的事很简单： 把本地图片准备好，并提示系统在后续上下文里附上一条图片消息。 最小参数 成功返回 重点 真正的图片内容通常会在这次工具调用之后，以额外 user message 的形式进上下文 所以这个工具结果本身不是图像分析结论，只是“图片已准备好” 读图工具 最小参数 成功返回 重点"
+    "text": "读图工具 readimage 的用途与返回结构。 # 读图工具 readimage 现在不只读静态图片。 它会把本地视觉媒体预处理好，并提示系统在后续上下文里附上可供模型继续分析的视觉消息。 当前支持： 静态图片 GIF 动图 本地视频 最小参数 GIF 示例： 视频示例： 成功返回 重点 静态图片会直接作为图片输入进入上下文。 GIF 不会再原样送模型。 默认只取首帧。 如果提供 framestep，则按间隔取帧。 视频会被规范化成图片帧序列，并在可用时附带音轨转写文本。 这个工具结果本身不是图像分析结论，只表示视觉媒体已经准备好，可以继续让模型分析。 读图工具 最小参数 成功返回 重点"
   },
   {
     "slug": "zh-CN/tools/lsp",
@@ -2859,7 +2859,7 @@
       "Success result",
       "Key point"
     ],
-    "text": "Read Image The purpose and return structure of readimage. # Read Image readimage does one simple thing: it prepares a local image and prompts the system to append that image into the upcoming context as an additional message. Minimum arguments Success result Key point The actual image content usually enters the conversation after this tool call as an extra user message So the tool result itself is not an image-analysis conclusion. It only means the image has been prepared for inspection Read Image Minimum arguments Success result Key point"
+    "text": "Read Image The purpose and return structure of readimage. # Read Image readimage prepares local visual media and prompts the system to append the derived visual context into the upcoming conversation as an additional message. It now supports: static images animated GIFs local videos Minimum arguments GIF example: Video example: Success result Key point Static images are forwarded as image input. GIFs are normalized before entering the model context. Default behavior is first frame only. Set framestep to sample frames by interval. Videos are normalized into image frames and optional audio transcript context. The tool result itself is not the analysis conclusion. It only means the visual media has been prepared for inspection. Read Image Minimum arguments Success result Key point"
   },
   {
     "slug": "en/tools/lsp",

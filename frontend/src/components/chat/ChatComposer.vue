@@ -7,19 +7,19 @@
           :key="attachment.id"
           class="upload-preview-item"
           :class="{
-            'upload-preview-item--video': attachment.type === 'video',
-            'is-active': attachment.type === 'video' && isVideoControlOpen(attachment.id),
+            'upload-preview-item--video': attachment.type === 'video' || attachment.type === 'gif',
+            'is-active': (attachment.type === 'video' || attachment.type === 'gif') && isVideoControlOpen(attachment.id),
             'is-processing': isAttachmentProcessing(attachment.id)
           }"
         >
           <div
             class="upload-preview-main"
-            :class="{ 'upload-preview-main--button': attachment.type === 'video' }"
-            :role="attachment.type === 'video' ? 'button' : undefined"
-            :tabindex="attachment.type === 'video' ? 0 : undefined"
-            @click="attachment.type === 'video' && toggleVideoControl(attachment.id)"
-            @keydown.enter.prevent="attachment.type === 'video' && toggleVideoControl(attachment.id)"
-            @keydown.space.prevent="attachment.type === 'video' && toggleVideoControl(attachment.id)"
+            :class="{ 'upload-preview-main--button': attachment.type === 'video' || attachment.type === 'gif' }"
+            :role="attachment.type === 'video' || attachment.type === 'gif' ? 'button' : undefined"
+            :tabindex="attachment.type === 'video' || attachment.type === 'gif' ? 0 : undefined"
+            @click="(attachment.type === 'video' || attachment.type === 'gif') && toggleVideoControl(attachment.id)"
+            @keydown.enter.prevent="(attachment.type === 'video' || attachment.type === 'gif') && toggleVideoControl(attachment.id)"
+            @keydown.space.prevent="(attachment.type === 'video' || attachment.type === 'gif') && toggleVideoControl(attachment.id)"
           >
             <i
               :class="['fa-solid', resolveAttachmentIconClass(attachment), 'upload-preview-icon']"
@@ -31,7 +31,7 @@
                 {{ resolveAttachmentMeta(attachment) }}
               </span>
               <span
-                v-if="attachment.type === 'video' && attachment.warnings?.length"
+                v-if="(attachment.type === 'video' || attachment.type === 'gif') && attachment.warnings?.length"
                 class="upload-preview-warning"
                 :title="attachment.warnings[0]"
               >
@@ -49,10 +49,10 @@
             <i class="fa-solid fa-xmark upload-preview-remove-icon" aria-hidden="true"></i>
           </button>
           <div
-            v-if="attachment.type === 'video' && isVideoControlOpen(attachment.id)"
+            v-if="(attachment.type === 'video' || attachment.type === 'gif') && isVideoControlOpen(attachment.id)"
             class="upload-preview-video-controls"
           >
-            <label class="upload-preview-video-field">
+            <label v-if="attachment.type === 'video'" class="upload-preview-video-field">
               <span class="upload-preview-video-label">
                 {{ t('chat.attachments.video.frameRate') }}
               </span>
@@ -67,13 +67,28 @@
                 @keydown.enter.prevent="applyVideoFrameRate(attachment.id)"
               />
             </label>
+            <label v-else class="upload-preview-video-field">
+              <span class="upload-preview-video-label">
+                {{ t('chat.attachments.gif.frameStep') }}
+              </span>
+              <input
+                class="upload-preview-video-input"
+                type="number"
+                min="0"
+                max="120"
+                step="1"
+                :value="resolveGifFrameStepInput(attachment.id)"
+                @input="handleGifFrameStepInput(attachment.id, $event)"
+                @keydown.enter.prevent="applyGifFrameStep(attachment.id)"
+              />
+            </label>
             <button
               class="upload-preview-video-apply"
               type="button"
               :disabled="!attachment.source_public_path || isAttachmentProcessing(attachment.id)"
-              @click="applyVideoFrameRate(attachment.id)"
+              @click="attachment.type === 'video' ? applyVideoFrameRate(attachment.id) : applyGifFrameStep(attachment.id)"
             >
-              {{ t('chat.attachments.video.reextract') }}
+              {{ attachment.type === 'video' ? t('chat.attachments.video.reextract') : t('chat.attachments.gif.reextract') }}
             </button>
             <div class="upload-preview-video-summary">
               {{ resolveVideoControlSummary(attachment) }}
@@ -562,6 +577,7 @@ const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
 const expandedVideoAttachmentId = ref('');
 const videoFrameRateDrafts = ref<Record<string, string>>({});
+const gifFrameStepDrafts = ref<Record<string, string>>({});
 const attachmentProcessingIds = ref<string[]>([]);
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -602,6 +618,9 @@ type ProcessedMediaResponse = {
   duration_ms?: number;
   requested_frame_rate?: number;
   applied_frame_rate?: number;
+  requested_frame_step?: number;
+  applied_frame_step?: number;
+  total_frame_count?: number;
   frame_count?: number;
   has_audio?: boolean;
   warnings?: string[];
@@ -1413,12 +1432,15 @@ const resolveAttachmentIconClass = (attachment: ComposerDraftAttachment): string
   if (attachment.type === 'image') return 'fa-image';
   if (attachment.type === 'audio') return 'fa-music';
   if (attachment.type === 'video') return 'fa-film';
+  if (attachment.type === 'gif') return 'fa-photo-film';
   return 'fa-file-lines';
 };
 
 const resolveAttachmentMeta = (attachment: ComposerDraftAttachment): string => {
   if (isAttachmentProcessing(attachment.id)) {
-    return t('chat.attachments.video.processingSingle');
+    return attachment.type === 'gif'
+      ? t('chat.attachments.gif.processingSingle')
+      : t('chat.attachments.video.processingSingle');
   }
   if (attachment.type === 'audio') {
     return t('chat.attachments.audio.ready');
@@ -1430,6 +1452,13 @@ const resolveAttachmentMeta = (attachment: ComposerDraftAttachment): string => {
       audio: attachment.has_audio
         ? t('chat.attachments.video.metaAudioYes')
         : t('chat.attachments.video.metaAudioNo')
+    });
+  }
+  if (attachment.type === 'gif') {
+    return t('chat.attachments.gif.meta', {
+      selected: Number(attachment.frame_count || 0),
+      total: Number(attachment.total_frame_count || attachment.frame_count || 0),
+      step: Number(attachment.applied_frame_step ?? attachment.requested_frame_step ?? 0)
     });
   }
   if (attachment.converter) {
@@ -1465,9 +1494,37 @@ const handleVideoFrameRateInput = (id: string, event: Event) => {
   };
 };
 
+const resolveGifFrameStepInput = (id: string): string => {
+  const normalized = String(id || '').trim();
+  if (!normalized) return '0';
+  const existing = gifFrameStepDrafts.value[normalized];
+  if (String(existing || '').trim()) return String(existing);
+  const current = attachments.value.find((item) => item.id === normalized);
+  return String(Number(current?.requested_frame_step ?? current?.applied_frame_step ?? 0));
+};
+
+const handleGifFrameStepInput = (id: string, event: Event) => {
+  const normalized = String(id || '').trim();
+  if (!normalized) return;
+  gifFrameStepDrafts.value = {
+    ...gifFrameStepDrafts.value,
+    [normalized]: String((event.target as HTMLInputElement | null)?.value || '')
+  };
+};
+
 const resolveVideoControlSummary = (attachment: ComposerDraftAttachment): string => {
   if (!attachment.source_public_path) {
-    return t('chat.attachments.video.controlUnavailable');
+    return attachment.type === 'gif'
+      ? t('chat.attachments.gif.controlUnavailable')
+      : t('chat.attachments.video.controlUnavailable');
+  }
+  if (attachment.type === 'gif') {
+    return t('chat.attachments.gif.controlSummary', {
+      requested: Number(attachment.requested_frame_step ?? 0),
+      applied: Number(attachment.applied_frame_step ?? attachment.requested_frame_step ?? 0),
+      selected: Number(attachment.frame_count || 0),
+      total: Number(attachment.total_frame_count || attachment.frame_count || 0)
+    });
   }
   return t('chat.attachments.video.controlSummary', {
     requested: formatFrameRate(attachment.requested_frame_rate || 1),
@@ -1703,6 +1760,18 @@ const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | nul
   if (appliedFrameRate !== null && appliedFrameRate > 0) {
     attachment.applied_frame_rate = appliedFrameRate;
   }
+  const requestedFrameStep = normalizeFiniteNumber(source.requested_frame_step);
+  if (requestedFrameStep !== null && requestedFrameStep >= 0) {
+    attachment.requested_frame_step = requestedFrameStep;
+  }
+  const appliedFrameStep = normalizeFiniteNumber(source.applied_frame_step);
+  if (appliedFrameStep !== null && appliedFrameStep >= 0) {
+    attachment.applied_frame_step = appliedFrameStep;
+  }
+  const totalFrameCount = normalizeFiniteNumber(source.total_frame_count);
+  if (totalFrameCount !== null && totalFrameCount >= 0) {
+    attachment.total_frame_count = totalFrameCount;
+  }
   const durationMs = normalizeFiniteNumber(source.duration_ms);
   if (durationMs !== null && durationMs >= 0) {
     attachment.duration_ms = durationMs;
@@ -1726,18 +1795,30 @@ const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | nul
 };
 
 const syncVideoAttachmentDrafts = () => {
-  const next: Record<string, string> = {};
+  const nextVideo: Record<string, string> = {};
+  const nextGif: Record<string, string> = {};
   attachments.value.forEach((attachment) => {
-    if (attachment.type !== 'video') return;
+    if (attachment.type !== 'video' && attachment.type !== 'gif') return;
     const id = String(attachment.id || '').trim();
     if (!id) return;
-    const existing = String(videoFrameRateDrafts.value[id] || '').trim();
-    next[id] =
-      existing ||
-      formatFrameRate(attachment.requested_frame_rate || attachment.applied_frame_rate || 1);
+    if (attachment.type === 'video') {
+      const existing = String(videoFrameRateDrafts.value[id] || '').trim();
+      nextVideo[id] =
+        existing ||
+        formatFrameRate(attachment.requested_frame_rate || attachment.applied_frame_rate || 1);
+      return;
+    }
+    const existing = String(gifFrameStepDrafts.value[id] || '').trim();
+    nextGif[id] =
+      existing || String(Number(attachment.requested_frame_step ?? attachment.applied_frame_step ?? 0));
   });
-  videoFrameRateDrafts.value = next;
-  if (expandedVideoAttachmentId.value && !next[expandedVideoAttachmentId.value]) {
+  videoFrameRateDrafts.value = nextVideo;
+  gifFrameStepDrafts.value = nextGif;
+  if (
+    expandedVideoAttachmentId.value &&
+    !nextVideo[expandedVideoAttachmentId.value] &&
+    !nextGif[expandedVideoAttachmentId.value]
+  ) {
     expandedVideoAttachmentId.value = '';
   }
 };
@@ -1782,6 +1863,7 @@ const restoreDraftStateByKey = (key: string) => {
     attachmentProcessingIds.value = [];
     expandedVideoAttachmentId.value = '';
     videoFrameRateDrafts.value = {};
+    gifFrameStepDrafts.value = {};
     commandMenuDismissed.value = false;
     caretPosition.value = 0;
     void nextTick(() => {
@@ -1944,7 +2026,8 @@ const buildAudioDraftAttachment = (
 const buildVideoDraftAttachment = (
   filename: string,
   payload: ProcessedMediaResponse,
-  attachmentId?: string
+  attachmentId?: string,
+  forcedType?: 'video' | 'gif'
 ): ComposerDraftAttachment => {
   const derivedAttachments = Array.isArray(payload.attachments)
     ? (payload.attachments
@@ -1956,7 +2039,7 @@ const buildVideoDraftAttachment = (
   }
   const nextAttachment: ComposerDraftAttachment = {
     id: attachmentId || buildAttachmentId(),
-    type: 'video',
+    type: forcedType || (String(payload.kind || '').trim() === 'gif' ? 'gif' : 'video'),
     name: String(payload.name || filename || '').trim() || filename,
     content: '',
     source_public_path: String(payload.source_public_path || '').trim() || undefined,
@@ -1966,6 +2049,15 @@ const buildVideoDraftAttachment = (
       : 1,
     applied_frame_rate: Number.isFinite(payload.applied_frame_rate)
       ? Number(payload.applied_frame_rate)
+      : undefined,
+    requested_frame_step: Number.isFinite(payload.requested_frame_step)
+      ? Number(payload.requested_frame_step)
+      : undefined,
+    applied_frame_step: Number.isFinite(payload.applied_frame_step)
+      ? Number(payload.applied_frame_step)
+      : undefined,
+    total_frame_count: Number.isFinite(payload.total_frame_count)
+      ? Number(payload.total_frame_count)
       : undefined,
     duration_ms: Number.isFinite(payload.duration_ms) ? Number(payload.duration_ms) : undefined,
     frame_count: Number.isFinite(payload.frame_count)
@@ -1993,7 +2085,11 @@ const processAudioFile = async (file: File): Promise<ComposerDraftAttachment> =>
 const processImageFile = async (file: File): Promise<ComposerDraftAttachment> => {
   const formData = new FormData();
   formData.append('file', file);
-  return buildImageDraftAttachment(file.name || 'image', await requestMediaProcessing(formData));
+  const payload = await requestMediaProcessing(formData);
+  if (String(payload.kind || '').trim() === 'gif') {
+    return buildVideoDraftAttachment(file.name || 'gif', payload, undefined, 'gif');
+  }
+  return buildImageDraftAttachment(file.name || 'image', payload);
 };
 
 const processVideoFile = async (
@@ -2043,6 +2139,41 @@ const applyVideoFrameRate = async (attachmentId: string) => {
   }
 };
 
+const applyGifFrameStep = async (attachmentId: string) => {
+  const normalized = String(attachmentId || '').trim();
+  const current = attachments.value.find((item) => item.id === normalized);
+  if (!current || current.type !== 'gif') return;
+  const sourcePublicPath = String(current.source_public_path || '').trim();
+  if (!sourcePublicPath) {
+    ElMessage.warning(t('chat.attachments.gif.controlUnavailable'));
+    return;
+  }
+  attachmentBusy.value += 1;
+  markAttachmentProcessing(normalized, true);
+  try {
+    const formData = new FormData();
+    formData.append('source_public_path', sourcePublicPath);
+    formData.append('frame_step', String(resolveGifFrameStepInput(normalized) || '0').trim() || '0');
+    const nextAttachment = buildVideoDraftAttachment(
+      current.name,
+      await requestMediaProcessing(formData),
+      normalized,
+      'gif'
+    );
+    replaceAttachment(normalized, nextAttachment);
+    if (nextAttachment.warnings?.length) {
+      ElMessage.warning(nextAttachment.warnings[0]);
+    } else {
+      ElMessage.success(t('chat.attachments.gifUpdated', { name: current.name }));
+    }
+  } catch (error) {
+    ElMessage.error(resolveUploadError(error, t('chat.attachments.processFailed')));
+  } finally {
+    markAttachmentProcessing(normalized, false);
+    attachmentBusy.value = Math.max(0, attachmentBusy.value - 1);
+  }
+};
+
 // 附件处理遵循 Wunder 调试面板：图片走 data URL，文件先转 Markdown
 const handleAttachmentSelection = async (file) => {
   if (!file) return;
@@ -2059,7 +2190,12 @@ const handleAttachmentSelection = async (file) => {
       attachment.mime_type = mimeType;
       pushAttachment(attachment);
       syncVideoAttachmentDrafts();
-      ElMessage.success(t('chat.attachments.imageAdded', { name: filename }));
+      if (attachment.type === 'gif') {
+        expandedVideoAttachmentId.value = attachment.id;
+        ElMessage.success(t('chat.attachments.gifAdded', { name: filename }));
+      } else {
+        ElMessage.success(t('chat.attachments.imageAdded', { name: filename }));
+      }
       return;
     }
 

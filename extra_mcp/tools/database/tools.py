@@ -11,7 +11,7 @@ from pydantic import Field
 from ...common.async_utils import run_in_thread
 from .config import DbQueryTarget, get_db_config, load_db_query_targets
 from .db import execute_sql_sync, get_table_schema_compact_sync, validate_sql_against_target_table
-from .exporter import build_query_handle, export_sql_to_file_sync, resolve_query_request
+from .exporter import export_sql_to_file_sync, resolve_sql_request
 
 logger = logging.getLogger(__name__)
 SAFE_ASCII_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
@@ -179,7 +179,6 @@ def _build_query_description(
         "强约束：查询只能访问这个绑定表。",
         "数据量较大时，优先使用 LIMIT/OFFSET 分页，并尽量收窄筛选条件。",
         "分页查询必须包含稳定的 ORDER BY。",
-        "成功调用后会返回 query_handle，可直接传给配套导出工具。",
     ]
     if target.description:
         parts.append(f"用途：{target.description}。")
@@ -201,10 +200,10 @@ def _build_export_description(
     parts = [
         f"将表 {target.table} 的只读 SQL 结果直接导出为 xlsx 或 csv 文件。",
         "强约束：查询只能访问这个绑定表。",
-        f"建议先用 {query_tool_name} 校验计数或小样本，再优先复用返回的 query_handle；正式全量导出时，只应复用不带 LIMIT/OFFSET 的完整明细 query_handle。",
+        f"建议先用 {query_tool_name} 校验计数或小样本，再使用不带 LIMIT/OFFSET 的最终明细 SQL 导出。",
         "适合生成 Excel/CSV 交付物，不要把大量分页结果塞进模型上下文。",
         "如果希望文件直接落到当前工作区，请把 path 写成 `/workspaces/{user_id}/exports/...`；返回结果会包含规范化后的 path 和 workspace_relative_path，便于后续工具继续处理。",
-        "默认拒绝仍包含 LIMIT/OFFSET 的 SQL 或 query_handle；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。",
+        "默认拒绝仍包含 LIMIT/OFFSET 的 SQL；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。",
     ]
     if target.description:
         parts.append(f"用途：{target.description}。")
@@ -213,35 +212,21 @@ def _build_export_description(
     return "".join(parts).strip()
 
 
-def _annotate_query_result(
-    result: dict[str, Any],
-    *,
-    sql_text: str,
-    params: list[Any] | None,
-    target: DbQueryTarget | None,
-) -> dict[str, Any]:
-    if not result.get("ok"):
-        return result
-    result["query_handle"] = build_query_handle(sql_text, params, target)
-    return result
-
-
 def _build_generic_query_description() -> str:
     return (
         "执行只读 SQL，并返回紧凑结果。"
         "数据量较大时，优先使用 LIMIT/OFFSET 分页，并尽量收窄筛选条件。"
         "分页查询必须包含稳定的 ORDER BY。"
-        "成功调用后会返回 query_handle，可直接传给 db_export。"
     )
 
 
 def _build_generic_export_description() -> str:
     return (
         "将只读 SQL 结果直接导出为 xlsx 或 csv 文件。"
-        "建议先用 db_query 校验计数或小样本，再优先复用返回的 query_handle；正式全量导出时，只应复用不带 LIMIT/OFFSET 的完整明细 query_handle。"
+        "建议先用 db_query 校验计数或小样本，再使用不带 LIMIT/OFFSET 的最终明细 SQL 导出。"
         "适合生成 Excel/CSV 交付物，不要把大量分页结果塞进模型上下文。"
         "如果希望文件直接落到当前工作区，请把 path 写成 `/workspaces/{user_id}/exports/...`；返回结果会包含规范化后的 path 和 workspace_relative_path，便于后续工具继续处理。"
-        "默认拒绝仍包含 LIMIT/OFFSET 的 SQL 或 query_handle；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。"
+        "默认拒绝仍包含 LIMIT/OFFSET 的 SQL；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。"
     )
 
 
@@ -304,12 +289,6 @@ def _register_bound_db_query_tool(
                 _normalize_max_rows(max_rows),
                 False,
             )
-            _annotate_query_result(
-                result,
-                sql_text=sql_text,
-                params=params_list,
-                target=target,
-            )
             result["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 2)
             return result
         except Exception as exc:  # pragma: no cover
@@ -334,24 +313,17 @@ def _register_bound_db_export_tool(
         },
     )
     async def table_db_export(
-        query_handle: Annotated[
-            str,
-            Field(
-                description="由配套 db_query 工具返回的不透明 query_handle。导出时优先使用它。",
-                title="查询句柄",
-            ),
-        ] = "",
         sql: Annotated[
             str,
             Field(
-                description="兜底 SQL 查询语句，仅允许只读语句。当 query_handle 不可用时再使用。",
+                description="SQL 查询语句，仅允许只读语句。正式全量导出时应使用不带 LIMIT/OFFSET 的最终明细 SQL。",
                 title="SQL 语句",
             ),
-        ] = "",
+        ],
         params: Annotated[
             Sequence[Any],
             Field(
-                description="在未提供 query_handle、改用 sql 时使用的可选 SQL 位置参数。",
+                description="可选的 SQL 位置参数。",
                 title="参数",
             ),
         ] = (),
@@ -386,7 +358,7 @@ def _register_bound_db_export_tool(
         allow_limited_export: Annotated[
             bool,
             Field(
-                description="是否允许导出仍包含 LIMIT/OFFSET 的 SQL 或 query_handle。正式全量导出应保持 false；只有明确要导出局部结果时才设为 true。",
+                description="是否允许导出仍包含 LIMIT/OFFSET 的 SQL。正式全量导出应保持 false；只有明确要导出局部结果时才设为 true。",
                 title="允许局部导出",
             ),
         ] = False,
@@ -394,12 +366,7 @@ def _register_bound_db_export_tool(
         """将 SQL 查询结果直接导出到文件。"""
         start = time.perf_counter()
         try:
-            sql_text, params_list = resolve_query_request(
-                query_handle=query_handle,
-                sql=sql,
-                params=params,
-                expected_target=target,
-            )
+            sql_text, params_list = resolve_sql_request(sql=sql, params=params)
             cfg = get_db_config(None, target.db_key)
             validation_error = validate_sql_against_target_table(sql_text, cfg, target.table)
             if validation_error:
@@ -473,12 +440,6 @@ def _register_generic_db_query_tool(mcp: FastMCP) -> None:
                 _normalize_max_rows(max_rows),
                 False,
             )
-            _annotate_query_result(
-                result,
-                sql_text=sql_text,
-                params=params_list,
-                target=None,
-            )
             result["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 2)
             return result
         except Exception as exc:  # pragma: no cover
@@ -498,24 +459,17 @@ def _register_generic_db_export_tool(mcp: FastMCP) -> None:
         },
     )
     async def db_export(
-        query_handle: Annotated[
-            str,
-            Field(
-                description="由 db_query 返回的不透明 query_handle。导出时优先使用它。",
-                title="查询句柄",
-            ),
-        ] = "",
         sql: Annotated[
             str,
             Field(
-                description="兜底 SQL 查询语句，仅允许只读语句。当 query_handle 不可用时再使用。",
+                description="SQL 查询语句，仅允许只读语句。正式全量导出时应使用不带 LIMIT/OFFSET 的最终明细 SQL。",
                 title="SQL 语句",
             ),
-        ] = "",
+        ],
         params: Annotated[
             Sequence[Any],
             Field(
-                description="在未提供 query_handle、改用 sql 时使用的可选 SQL 位置参数。",
+                description="可选的 SQL 位置参数。",
                 title="参数",
             ),
         ] = (),
@@ -550,7 +504,7 @@ def _register_generic_db_export_tool(mcp: FastMCP) -> None:
         allow_limited_export: Annotated[
             bool,
             Field(
-                description="是否允许导出仍包含 LIMIT/OFFSET 的 SQL 或 query_handle。正式全量导出应保持 false；只有明确要导出局部结果时才设为 true。",
+                description="是否允许导出仍包含 LIMIT/OFFSET 的 SQL。正式全量导出应保持 false；只有明确要导出局部结果时才设为 true。",
                 title="允许局部导出",
             ),
         ] = False,
@@ -558,12 +512,7 @@ def _register_generic_db_export_tool(mcp: FastMCP) -> None:
         """将 SQL 查询结果直接导出到文件。"""
         start = time.perf_counter()
         try:
-            sql_text, params_list = resolve_query_request(
-                query_handle=query_handle,
-                sql=sql,
-                params=params,
-                expected_target=None,
-            )
+            sql_text, params_list = resolve_sql_request(sql=sql, params=params)
             cfg = get_db_config(None, None)
             result = await run_in_thread(
                 export_sql_to_file_sync,

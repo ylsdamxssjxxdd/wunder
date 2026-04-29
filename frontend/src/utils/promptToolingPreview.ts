@@ -75,6 +75,7 @@ type ToolMeta = {
   name: string;
   description: string;
   protocolName: string;
+  displayOnly?: boolean;
 };
 
 type PromptToolingAbilityMeta = Pick<PromptToolingPreviewItem, 'kind' | 'group' | 'source'>;
@@ -174,6 +175,31 @@ const extractLlmToolMeta = (value: unknown): ToolMeta | null => {
   };
 };
 
+const resolveSelectedToolMeta = (
+  selectedName: string,
+  displayName: string,
+  byName: Map<string, ToolMeta>,
+  byProtocol: Map<string, ToolMeta>
+): ToolMeta | null => {
+  const normalizedSelected = normalizeKey(selectedName);
+  const normalizedDisplay = normalizeKey(displayName);
+  const candidates = [
+    normalizedSelected ? byProtocol.get(normalizedSelected) : null,
+    normalizedDisplay ? byProtocol.get(normalizedDisplay) : null,
+    normalizedDisplay ? byName.get(normalizedDisplay) : null,
+    normalizedSelected ? byName.get(normalizedSelected) : null
+  ].filter((item): item is ToolMeta => Boolean(item));
+  return candidates.find((item) => !item.displayOnly) || candidates[0] || null;
+};
+
+const buildPromptToolingDebugText = (tooling: Record<string, unknown>): string => {
+  const modelRequest = asRecord(tooling.model_request);
+  if (Object.keys(modelRequest).length > 0) {
+    return safeStringify(modelRequest);
+  }
+  return safeStringify(tooling);
+};
+
 const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolingPreviewItem[] => {
   const llmToolNameMap = asRecord(tooling.llm_tool_name_map);
   const selectedToolDisplayMap = asRecord(tooling.selected_tool_display_map);
@@ -208,7 +234,8 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
     byProtocol.set(normalizedProtocol, {
       name: fallbackName,
       description: '',
-      protocolName
+      protocolName,
+      displayOnly: true
     });
   });
 
@@ -244,9 +271,8 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
   };
 
   for (const selectedName of selectedToolNames) {
-    const normalizedSelected = normalizeKey(selectedName);
     const displayName = cleanText(selectedToolDisplayMap[selectedName]) || selectedName;
-    appendItem(displayName, byName.get(normalizedSelected) || byProtocol.get(normalizedSelected));
+    appendItem(displayName, resolveSelectedToolMeta(selectedName, displayName, byName, byProtocol));
   }
 
   for (const tool of resolvedTools) {
@@ -264,7 +290,7 @@ export const extractPromptToolingPreview = (payload: unknown): PromptToolingPrev
   }
   return {
     mode: normalizeMode(tooling.tool_call_mode),
-    text: safeStringify(tooling),
+    text: buildPromptToolingDebugText(tooling),
     items: buildPromptToolingItems(tooling)
   };
 };

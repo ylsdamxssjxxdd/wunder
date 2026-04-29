@@ -47,8 +47,8 @@
               <span class="tool-workflow-entry-tool-name">
                 {{ entry.toolLabel }}
               </span>
-              <span class="tool-workflow-entry-brief">
-                {{ entry.summaryBrief || entry.summaryTitle }}
+              <span v-if="entry.summaryBrief" class="tool-workflow-entry-brief">
+                {{ entry.summaryBrief }}
               </span>
             </span>
             <span
@@ -110,7 +110,6 @@ import {
 } from '@/stores/commandSessions';
 import {
   buildCommandCardView,
-  buildPatchCallView,
   buildPatchResultNote,
   buildPatchResultView
 } from './toolWorkflowActionViews';
@@ -125,9 +124,6 @@ import {
   formatWorkflowConsumedTokensLabel,
   resolveWorkflowEntryConsumedTokenResolution
 } from './toolWorkflowUsage';
-import {
-  buildStructuredToolResultView
-} from './toolWorkflowStructuredView';
 import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
@@ -1469,92 +1465,6 @@ const countApplyPatchHunks = (patchInput: string, fallback = 0): number => {
   return patchInput.match(/^@@/gm)?.length || fallback;
 };
 
-// Keep command/patch sections consistent: summary shows metadata, body keeps raw payload.
-const buildExecuteCommandCallSummary = (
-  entry: RawEntry,
-  snapshot: CommandSessionRuntimeEntry | null
-): string => {
-  const args = extractCallArgs(entry.callItem);
-  const commandText = pickString(
-    args?.content,
-    args?.input,
-    args?.raw,
-    args?.script,
-    args?.command,
-    args?.cmd,
-    snapshot?.command,
-    resolveCommandFromCall(entry.callItem)
-  );
-  const commandLine = truncateSingleLine(
-    pickString(snapshot?.command, resolveCommandFromCall(entry.callItem)),
-    120
-  );
-  const commandCount = Math.max(countNonEmptyCommandLines(commandText), commandLine ? 1 : 0);
-  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory, snapshot?.cwd);
-  const timeout = formatTimeoutValue(
-    args?.timeout_s,
-    args?.timeout,
-    args?.timeoutSeconds,
-    args?.timeout_seconds
-  );
-
-  return buildLabeledTextBlock([
-    {
-      label:
-        commandCount > 1
-          ? t('chat.toolWorkflow.detail.commands')
-          : t('chat.toolWorkflow.detail.command'),
-      value: commandCount > 1 ? commandCount : commandLine
-    },
-    { label: t('chat.toolWorkflow.detail.workdir'), value: workdir },
-    { label: t('chat.toolWorkflow.detail.timeout'), value: timeout }
-  ]);
-};
-
-const buildExecuteCommandCallBody = (
-  entry: RawEntry,
-  command: string,
-  snapshot: CommandSessionRuntimeEntry | null
-): string => {
-  const args = extractCallArgs(entry.callItem);
-  const commandText = pickString(
-    args?.content,
-    args?.input,
-    args?.raw,
-    args?.script,
-    args?.command,
-    args?.cmd,
-    snapshot?.command,
-    command
-  );
-
-  const extraArgs = omitObjectKeys(args, [
-    'command',
-    'cmd',
-    'script',
-    'raw',
-    'content',
-    'input',
-    'workdir',
-    'cwd',
-    'dir',
-    'directory',
-    'timeout_s',
-    'timeout',
-    'timeoutSeconds',
-    'timeout_seconds'
-  ]);
-  const extraPreview = buildObjectPreview(extraArgs);
-  const blocks: string[] = [];
-  if (commandText && (countNonEmptyCommandLines(commandText) > 1 || !extraPreview)) {
-    if (countNonEmptyCommandLines(commandText) > 1) {
-      blocks.push(buildTerminalStream(commandText, 'completed', 120, 16000));
-    }
-  }
-  if (extraPreview) blocks.push(extraPreview);
-  return blocks.join('\n\n').trim();
-};
-
 const buildExecuteCommandResultSummary = (entry: RawEntry): string => {
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
   const resultMeta = asObject(resultObject?.meta);
@@ -1596,24 +1506,6 @@ const buildExecuteCommandResultSummary = (entry: RawEntry): string => {
     },
     { label: t('chat.toolWorkflow.detail.totalBytes'), value: formatByteCountLabel(totalBytes) },
     { label: t('chat.toolWorkflow.detail.omittedBytes'), value: formatByteCountLabel(omittedBytes) }
-  ]);
-};
-
-const buildApplyPatchCallSummary = (entry: RawEntry, patchDiffBlocks: PatchDiffBlock[]): string => {
-  const patchInput = resolvePatchInput(entry.callItem);
-  const fallbackHunks = patchDiffBlocks.reduce(
-    (count, block) => count + block.lines.filter((line) => line.text.startsWith('@@')).length,
-    0
-  );
-  return buildLabeledTextBlock([
-    {
-      label: t('chat.toolWorkflow.detail.changedFiles'),
-      value: countApplyPatchFiles(patchInput, patchDiffBlocks.length) || ''
-    },
-    {
-      label: t('chat.toolWorkflow.detail.hunks'),
-      value: countApplyPatchHunks(patchInput, fallbackHunks) || ''
-    }
   ]);
 };
 
@@ -2005,6 +1897,26 @@ const isSwarmTool = (toolName: string): boolean => {
   return normalized === 'agent_swarm' || normalized === 'swarm_control' || toolName.includes('智能体蜂群');
 };
 
+const isDatabaseQueryTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return (
+    normalized === 'db_query' ||
+    normalized.startsWith('db_query_') ||
+    normalized.endsWith('@db_query') ||
+    normalized.includes('@db_query_')
+  );
+};
+
+const isKnowledgeQueryTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return (
+    normalized === 'kb_query' ||
+    normalized.startsWith('kb_query_') ||
+    normalized.endsWith('@kb_query') ||
+    normalized.includes('@kb_query_')
+  );
+};
+
 const resolveSummaryToolDisplay = (toolName: string, fallback: string): string => {
   if (isSkillCallTool(toolName)) return t('chat.toolWorkflow.toolLabel.skillCall');
   if (isPtcTool(toolName)) return t('chat.toolWorkflow.toolLabel.ptc');
@@ -2015,6 +1927,14 @@ const resolveSummaryToolDisplay = (toolName: string, fallback: string): string =
   if (isListFilesTool(toolName)) return t('chat.toolWorkflow.toolLabel.listFiles');
   if (isSearchContentTool(toolName)) return t('chat.toolWorkflow.toolLabel.searchContent');
   return fallback;
+};
+
+const resolveEntryToolDisplayName = (entry: RawEntry): string => {
+  const configured = pickString(entry.toolDisplayName);
+  return resolveSummaryToolDisplay(
+    entry.toolName,
+    configured || entry.toolName || t('chat.workflow.toolUnknown')
+  );
 };
 
 const isWebFetchTool = (toolName: string): boolean => {
@@ -2253,9 +2173,33 @@ const resolveWebFetchSummaryTitle = (entry: RawEntry, toolDisplay: string): stri
   return truncateSingleLine(`${toolDisplay} ${rawUrl}`, 140);
 };
 
+const resolveQueryToolSummaryTitle = (entry: RawEntry, toolDisplay: string): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const query = pickString(
+    args?.query,
+    args?.question,
+    args?.keyword,
+    args?.keywords,
+    dataObject?.query,
+    resultObject?.query
+  );
+  if (query) {
+    return truncateSingleLine(`${toolDisplay} "${truncateSingleLine(query, 48)}"`, 140);
+  }
+  const sql = pickString(args?.sql, dataObject?.sql, resultObject?.sql);
+  if (sql) {
+    return truncateSingleLine(`${toolDisplay} ${truncateSingleLine(sql, 72)}`, 140);
+  }
+  return truncateSingleLine(toolDisplay);
+};
+
 const resolveFileToolSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
   if (isPtcTool(entry.toolName)) {
     return resolvePtcSummaryTitle(entry, toolDisplay, pathHints);
+  }
+  if (isDatabaseQueryTool(entry.toolName) || isKnowledgeQueryTool(entry.toolName)) {
+    return resolveQueryToolSummaryTitle(entry, toolDisplay);
   }
   if (isWebFetchTool(entry.toolName)) {
     return resolveWebFetchSummaryTitle(entry, toolDisplay);
@@ -2457,7 +2401,7 @@ const buildToolCallDebugText = (entry: RawEntry): string => {
   const callArgs = extractCallArgs(entry.callItem);
   if (callArgs) {
     const normalized = stringifyDebugPayload({
-      tool: entry.toolName,
+      tool: entry.toolFunctionName || entry.toolName,
       arguments: callArgs
     });
     if (normalized) {
@@ -2468,7 +2412,7 @@ const buildToolCallDebugText = (entry: RawEntry): string => {
     const command = pickString(resolveCommandFromCall(entry.callItem));
     if (command) {
       const snapshot = stringifyDebugPayload({
-        tool: entry.toolName,
+        tool: entry.toolFunctionName || entry.toolName,
         arguments: {
           content: command
         }
@@ -2931,236 +2875,6 @@ const buildGenericResultBlock = (
   return blocks.join('\n\n');
 };
 
-const buildResultBlock = (entry: RawEntry): string => {
-  if (!entry.resultItem) return '';
-  if (isApplyPatchTool(entry.toolName)) return '';
-  if (isExecuteCommandTool(entry.toolName)) return '';
-
-  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-
-  if (isReadFileTool(entry.toolName)) {
-    return buildReadFileResultBlock(dataObject);
-  }
-  if (isListFilesTool(entry.toolName)) {
-    return buildListFilesResultBlock(dataObject);
-  }
-  if (isSearchContentTool(entry.toolName)) {
-    return buildSearchResultBlock(dataObject);
-  }
-  if (isWriteFileTool(entry.toolName)) {
-    return buildWriteFileResultBlock(resultObject, dataObject);
-  }
-  return buildGenericResultBlock(resultObject, dataObject, entry.resultItem?.detail);
-};
-
-const buildOutputBlock = (entry: RawEntry, command: string): string => {
-  if (isExecuteCommandTool(entry.toolName)) return '';
-  const outputDetail = String(entry.outputItem?.detail || '').trim();
-  if (outputDetail) {
-    const commandText = extractTaggedSection(outputDetail, 'command');
-    const stdoutText = extractTaggedSection(outputDetail, 'stdout');
-    const stderrText = extractTaggedSection(outputDetail, 'stderr');
-    if (commandText || stdoutText || stderrText) {
-      const blocks: string[] = [];
-      if (commandText && !command) {
-        const preview = buildTextPreview(commandText, 2, 260, '    ');
-        if (preview) blocks.push(`command\n${preview}`);
-      }
-      if (stdoutText) {
-        const preview = buildTextPreview(stdoutText, 8, 1400, '    ');
-        if (preview) blocks.push(`stdout\n${preview}`);
-      }
-      if (stderrText) {
-        const preview = buildTextPreview(stderrText, 6, 1000, '    ');
-        if (preview) blocks.push(`stderr\n${preview}`);
-      }
-      if (blocks.length > 0) return blocks.join('\n\n');
-    }
-    return buildTextPreview(outputDetail, 14, 1800, '    ');
-  }
-
-  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-  const firstResult = Array.isArray(dataObject?.results)
-    ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
-    : undefined;
-  const stdout = pickString(firstResult?.stdout, dataObject?.stdout, resultObject?.stdout);
-  const stderr = pickString(firstResult?.stderr, dataObject?.stderr, resultObject?.stderr);
-  if (stdout || stderr) {
-    const blocks: string[] = [];
-    if (stdout) {
-      const preview = buildTextPreview(stdout, 8, 1400, '    ');
-      if (preview) blocks.push(`stdout\n${preview}`);
-    }
-    if (stderr) {
-      const preview = buildTextPreview(stderr, 6, 1000, '    ');
-      if (preview) blocks.push(`stderr\n${preview}`);
-    }
-    if (blocks.length > 0) return blocks.join('\n\n');
-  }
-
-  if (isApplyPatchTool(entry.toolName)) return '';
-  return '';
-};
-
-const buildObjectPreview = (
-  value: unknown,
-  maxLines = 18,
-  maxChars = 2200
-): string => {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') {
-    return buildTextPreview(value, maxLines, maxChars, '  ');
-  }
-  try {
-    const serialized = JSON.stringify(value, null, 2);
-    if (!serialized || serialized === '{}' || serialized === '[]') {
-      return '';
-    }
-    return buildTextPreview(serialized, maxLines, maxChars, '  ');
-  } catch {
-    return buildTextPreview(String(value), maxLines, maxChars, '  ');
-  }
-};
-
-const omitObjectKeys = (value: UnknownObject | null, keys: string[]): UnknownObject | null => {
-  if (!value) return null;
-  const next = { ...value };
-  keys.forEach((key) => {
-    delete next[key];
-  });
-  return Object.keys(next).length > 0 ? next : null;
-};
-
-// Build a concise view of the model-issued tool call so users can compare it with the result.
-const buildGenericModelCallBlock = (entry: RawEntry, command: string): string => {
-  const args = extractCallArgs(entry.callItem);
-  const blocks: string[] = [];
-  if (command) blocks.push(`$ ${command}`);
-  const argsPreview = buildObjectPreview(
-    omitObjectKeys(args, command ? ['command', 'cmd', 'script', 'raw'] : [])
-  );
-  if (argsPreview) blocks.push(argsPreview);
-  return blocks.join('\n\n').trim();
-};
-
-const buildListFilesCallBlock = (entry: RawEntry): string => {
-  const args = extractCallArgs(entry.callItem);
-  return buildLabeledTextBlock([
-    { label: t('chat.toolWorkflow.detail.path'), value: pickString(args?.path) || '.' },
-    { label: t('chat.toolWorkflow.detail.depth'), value: toInt(args?.max_depth) || '' }
-  ]);
-};
-
-const buildSearchContentCallBlock = (entry: RawEntry): string => {
-  const args = extractCallArgs(entry.callItem);
-  return buildLabeledTextBlock([
-    { label: t('chat.toolWorkflow.detail.query'), value: pickString(args?.query) },
-    { label: t('chat.toolWorkflow.detail.path'), value: pickString(args?.path) || '.' },
-    { label: t('chat.toolWorkflow.detail.pattern'), value: pickString(args?.file_pattern) },
-    {
-      label: t('chat.toolWorkflow.detail.caseMode'),
-      value:
-        args?.case_sensitive === true
-          ? t('chat.toolWorkflow.detail.caseSensitive')
-          : args?.case_sensitive === false
-            ? t('chat.toolWorkflow.detail.caseInsensitive')
-            : ''
-    },
-    { label: t('chat.toolWorkflow.detail.depth'), value: toInt(args?.max_depth) || '' },
-    { label: t('chat.toolWorkflow.detail.maxFiles'), value: toInt(args?.max_files) || '' },
-    {
-      label: t('chat.toolWorkflow.detail.context'),
-      value: formatContextWindowLabel(args?.context_before, args?.context_after)
-    }
-  ]);
-};
-
-const buildReadFileCallBlock = (entry: RawEntry): string => {
-  const args = extractCallArgs(entry.callItem);
-  const targets = collectReadTargetLabels(args);
-  const summaryBlock = buildLabeledTextBlock([
-    { label: t('chat.toolWorkflow.detail.files'), value: targets.length || '' }
-  ]);
-  const targetBlock = buildBulletListBlock(targets, 6, 160);
-  return [summaryBlock, targetBlock].filter(Boolean).join('\n\n');
-};
-
-const buildWriteFileCallBlock = (entry: RawEntry, command: string): string => {
-  const args = extractCallArgs(entry.callItem);
-  const blocks: string[] = [];
-  if (command) blocks.push(`$ ${command}`);
-
-  const path = pickString(
-    args?.path,
-    args?.file,
-    args?.filename,
-    args?.target,
-    args?.target_path,
-    args?.targetPath
-  );
-  const metaBlock = buildLabeledTextBlock([
-    { label: t('chat.toolWorkflow.detail.path'), value: path }
-  ]);
-  if (metaBlock) blocks.push(metaBlock);
-
-  const content = pickString(args?.content, args?.text, args?.input);
-  if (content) {
-    const contentPreview = buildTerminalStream(content, 'completed', 80, 12000);
-    if (contentPreview) blocks.push(contentPreview);
-  }
-
-  const extraArgs = omitObjectKeys(args, [
-    'command',
-    'cmd',
-    'script',
-    'raw',
-    'content',
-    'text',
-    'input',
-    'path',
-    'file',
-    'filename',
-    'target',
-    'target_path',
-    'targetPath'
-  ]);
-  const extraPreview = buildObjectPreview(extraArgs);
-  if (extraPreview) blocks.push(extraPreview);
-
-  return blocks.join('\n\n').trim();
-};
-
-const buildToolResultTextBlock = (entry: RawEntry, command: string, errorText: string): string => {
-  const blocks: string[] = [];
-  const resultBlock = buildResultBlock(entry);
-  const outputBlock = buildOutputBlock(entry, command);
-  if (resultBlock) blocks.push(resultBlock);
-  if (outputBlock) blocks.push(outputBlock);
-  if (errorText) blocks.push(`error: ${errorText}`);
-  return blocks.join('\n\n').trim();
-};
-
-const buildApplyPatchCallLines = (_command: string, patchDiffBlocks: PatchDiffBlock[]): PatchLine[] => {
-  const rows: PatchLine[] = [];
-  let cursor = 0;
-  const push = (kind: PatchLine['kind'], text: string) => {
-    if (!text.trim()) return;
-    rows.push({ key: `patch-call-${cursor}`, kind, text });
-    cursor += 1;
-  };
-
-  patchDiffBlocks.forEach((block) => {
-    push('note', block.title);
-    block.lines.forEach((line) => {
-      if (line.kind === 'add') push('add', line.text);
-      else if (line.kind === 'delete') push('delete', line.text);
-      else push('meta', line.text);
-    });
-  });
-
-  return rows;
-};
-
 const buildApplyPatchResultLines = (patchEntries: PatchEntry[], errorText: string): PatchLine[] => {
   const rows: PatchLine[] = [];
   let cursor = 0;
@@ -3201,24 +2915,6 @@ const buildEmptySection = (key: string, title: string, body: string): ToolWorkfl
 const resolveRawWorkflowDetail = (item: WorkflowItem | null): string =>
   typeof item?.detail === 'string' && item.detail.length > 0 ? item.detail : '';
 
-const buildModelCallSection = (entry: RawEntry): ToolWorkflowDetailSection => {
-  const sectionKey = `${entry.key}-tool-request`;
-  const sectionTitle = t('chat.toolWorkflow.toolRequestSection');
-  const rawRequestDetail = resolveRawWorkflowDetail(entry.callItem);
-  if (rawRequestDetail) {
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'text',
-      body: rawRequestDetail,
-      copyText: rawRequestDetail,
-      commandView: null,
-      patchLines: []
-    };
-  }
-  return buildEmptySection(sectionKey, sectionTitle, t('chat.toolWorkflow.toolRequestMissing'));
-};
-
 const buildToolResultSection = (
   entry: RawEntry,
   status: string,
@@ -3229,7 +2925,6 @@ const buildToolResultSection = (
 
   const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
   const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
-  const rawCallDetail = resolveRawWorkflowDetail(entry.callItem);
   if (compactionDisplay) {
     const detailBody = compactionDisplay.copyBody || compactionDisplay.resultBody;
     return {
@@ -3385,10 +3080,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     resolveCommandFromResult(entry.resultItem)
   );
   const command = isExecuteCommandTool(entry.toolName) ? rawCommand : '';
-  const toolDisplay = resolveSummaryToolDisplay(
-    entry.toolName,
-    entry.toolName || t('chat.workflow.toolUnknown')
-  );
+  const toolDisplay = resolveEntryToolDisplayName(entry);
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
@@ -3599,7 +3291,7 @@ const pendingPlaceholderTitle = computed(() => {
   if (placeholder.kind === 'compaction') {
     return t('chat.toolWorkflow.pendingCompaction');
   }
-  const toolName = String(placeholder.toolName || '').trim();
+  const toolName = String(placeholder.toolDisplayName || placeholder.toolName || '').trim();
   return toolName
     ? t('chat.workflow.toolCall', { tool: toolName })
     : t('chat.toolWorkflow.pendingTool');
@@ -3679,20 +3371,28 @@ const buildWorkflowDebugSnapshot = () => {
 };
 
 const buildPendingEntryView = (
-  placeholder: { kind: 'tool' | 'compaction'; toolName: string; eventType: string } | null
+  placeholder: {
+    kind: 'tool' | 'compaction';
+    toolName: string;
+    toolDisplayName?: string;
+    toolRuntimeName?: string;
+    toolFunctionName?: string;
+    eventType: string;
+  } | null
 ): ToolEntryView | null => {
   if (!placeholder) return null;
   const toolName = String(placeholder.toolName || '').trim();
+  const toolDisplayName = String(placeholder.toolDisplayName || toolName).trim();
   const isCompaction = placeholder.kind === 'compaction';
   const summaryTitle = isCompaction
     ? t('chat.toolWorkflow.pendingCompaction')
-    : toolName
-      ? t('chat.workflow.toolCall', { tool: toolName })
+    : toolDisplayName
+      ? t('chat.workflow.toolCall', { tool: toolDisplayName })
       : t('chat.toolWorkflow.pendingTool');
   return {
     key: `pending:${placeholder.kind}:${toolName || placeholder.eventType || 'unknown'}`,
-    toolLabel: isCompaction ? t('chat.toolWorkflow.pendingCompaction') : toolName || t('chat.toolWorkflow.pendingTool'),
-    summaryBrief: summaryTitle,
+    toolLabel: isCompaction ? t('chat.toolWorkflow.pendingCompaction') : toolDisplayName || t('chat.toolWorkflow.pendingTool'),
+    summaryBrief: '',
     summaryTitle,
     toolCallRawTitle: summaryTitle,
     toolIconClass: resolveToolIconClass(toolName),

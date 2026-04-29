@@ -53,8 +53,15 @@ withDefaults(
   }
 );
 
+const isInternalProtocolName = (value: string): boolean =>
+  /^tool_[a-z0-9]+$/i.test(value) || value.includes('@');
+
 const showProtocolName = (item: PromptToolingPreviewItem): boolean =>
-  Boolean(item.protocolName && item.protocolName !== item.name);
+  Boolean(
+    item.protocolName &&
+      item.protocolName !== item.name &&
+      !isInternalProtocolName(item.protocolName)
+  );
 
 const resolveItemTone = (item: PromptToolingPreviewItem): AbilityVisualTone =>
   resolveAbilityVisual({

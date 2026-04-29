@@ -892,23 +892,56 @@ const buildTokenSeries = (sessions) => {
 // 规范化工具列表，保留类别用于图标选择
 const normalizeAvailableTools = (payload) => {
   const tools = [];
+  const seen = new Set();
   mcpToolNameSet = new Set();
+  const resolveAbilityCategory = (item, fallback) => {
+    const grouped = String(item?.group || "").toLowerCase();
+    const sourced = String(item?.source || "").toLowerCase();
+    const key = `${grouped}:${sourced}`;
+    if (key.includes("mcp")) return "mcp";
+    if (key.includes("knowledge")) return "knowledge";
+    if (key.includes("skill")) return "skill";
+    if (key.includes("a2a")) return "a2a";
+    if (key.includes("shared")) return "shared";
+    return fallback;
+  };
+  const pushTool = (item, category) => {
+    const runtimeName = String(
+      item?.runtime_name ?? item?.runtimeName ?? item?.tool_name ?? item?.toolName ?? item?.name ?? ""
+    ).trim();
+    const displayName = String(
+      item?.display_name ?? item?.displayName ?? item?.title ?? item?.name ?? runtimeName
+    ).trim();
+    const key = runtimeName || displayName;
+    if (!key || seen.has(key)) {
+      return;
+    }
+    const resolvedCategory = resolveAbilityCategory(item, category);
+    tools.push({
+      name: displayName || runtimeName,
+      displayName: displayName || runtimeName,
+      runtimeName: runtimeName || displayName,
+      category: resolvedCategory,
+    });
+    seen.add(key);
+    if (resolvedCategory === "mcp") {
+      mcpToolNameSet.add(runtimeName || displayName);
+      mcpToolNameSet.add(displayName || runtimeName);
+    }
+  };
   const pushList = (items, category) => {
     (Array.isArray(items) ? items : []).forEach((item) => {
-      const name = String(item?.name ?? "").trim();
-      if (!name) {
-        return;
-      }
-      tools.push({ name, category });
-      if (category === "mcp") {
-        mcpToolNameSet.add(name);
-      }
+      pushTool(item, category);
     });
   };
+  pushList(payload?.items, "other");
   pushList(payload?.builtin_tools, "builtin");
   pushList(payload?.mcp_tools, "mcp");
+  pushList(payload?.user_mcp_tools, "mcp");
   pushList(payload?.knowledge_tools, "knowledge");
+  pushList(payload?.user_knowledge_tools, "knowledge");
   pushList(payload?.skills, "skill");
+  pushList(payload?.user_skills, "skill");
   pushList(payload?.user_tools, "user");
   pushList(payload?.shared_tools, "shared");
   return tools;
@@ -1030,9 +1063,12 @@ const matchesToolKeyword = (lowerName, normalizedName, keyword) => {
 };
 
 // 根据工具名称选择更贴合的图标
-const resolveToolIcon = (name, category) => {
+const resolveToolIcon = (name, category, runtimeName = "") => {
   const toolName = String(name || "").trim();
-  const lowerName = toolName.toLowerCase();
+  const runtimeToolName = String(runtimeName || "").trim();
+  const categoryKey = String(category || "").toLowerCase();
+  const matchName = runtimeToolName || toolName;
+  const lowerName = matchName.toLowerCase();
   const normalizedName = normalizeToolMatchKey(lowerName);
   if (lowerName === "wunder@excute" || lowerName.endsWith("@wunder@excute")) {
     return "fa-dragon";
@@ -1040,28 +1076,28 @@ const resolveToolIcon = (name, category) => {
   if (lowerName === "wunder@doc2md" || lowerName.endsWith("@wunder@doc2md")) {
     return "fa-file-lines";
   }
+  if (
+    categoryKey === "mcp" ||
+    mcpToolNameSet.has(runtimeToolName) ||
+    mcpToolNameSet.has(toolName)
+  ) {
+    return "fa-plug";
+  }
   for (const rule of TOOL_HEATMAP_ICON_RULES) {
     if (matchesToolKeyword(lowerName, normalizedName, rule.keyword)) {
       return rule.icon;
     }
   }
-  if (toolName.includes("@")) {
-    const atCount = toolName.split("@").length - 1;
-    if (atCount >= 2 || !mcpToolNameSet.has(toolName)) {
-      return "fa-wrench";
-    }
+  if (runtimeToolName.includes("@") || toolName.includes("@")) {
     return "fa-plug";
   }
-  if (category === "mcp") {
-    return "fa-plug";
-  }
-  if (category === "knowledge") {
+  if (categoryKey === "knowledge") {
     return "fa-database";
   }
-  if (category === "skill") {
+  if (categoryKey === "skill") {
     return "fa-book";
   }
-  if (category === "user" || category === "shared") {
+  if (categoryKey === "user" || categoryKey === "shared") {
     return "fa-wrench";
   }
   if (
@@ -1127,7 +1163,7 @@ const resolveToolIcon = (name, category) => {
   ) {
     return "fa-flag-checkered";
   }
-  if (category === "builtin") {
+  if (categoryKey === "builtin") {
     return "fa-toolbox";
   }
   return "fa-toolbox";
@@ -1147,6 +1183,8 @@ const normalizeToolStats = (toolStats) =>
   (Array.isArray(toolStats) ? toolStats : [])
     .map((item) => ({
       name: String(item?.tool ?? item?.name ?? "").trim(),
+      runtimeName: String(item?.tool_name ?? item?.runtime_name ?? item?.name ?? "").trim(),
+      category: String(item?.category ?? item?.group ?? "").trim(),
       calls: Number(item?.calls ?? item?.count ?? item?.tool_calls ?? 0),
     }))
     .filter((item) => item.name);
@@ -1154,27 +1192,42 @@ const normalizeToolStats = (toolStats) =>
 // 合并工具列表与调用次数，确保未调用工具也展示
 const buildHeatmapItems = (toolStats) => {
   const normalized = normalizeToolStats(toolStats);
-  const callsMap = new Map(normalized.map((item) => [item.name, item.calls]));
+  const statsByRuntime = new Map(normalized.map((item) => [item.runtimeName || item.name, item]));
+  const statsByDisplay = new Map(normalized.map((item) => [item.name, item]));
   const items = [];
   const seen = new Set();
   (state.monitor.availableTools || []).forEach((tool) => {
-    const name = String(tool?.name ?? "").trim();
-    if (!name || seen.has(name)) {
+    const displayName = String(tool?.displayName || tool?.name || "").trim();
+    const runtimeName = String(tool?.runtimeName || tool?.name || displayName).trim();
+    const key = runtimeName || displayName;
+    if (!key || seen.has(key)) {
+      return;
+    }
+    const stat =
+      statsByRuntime.get(runtimeName) ||
+      statsByDisplay.get(displayName) ||
+      statsByDisplay.get(runtimeName);
+    const resolvedRuntimeName = String(stat?.runtimeName || runtimeName || displayName).trim();
+    items.push({
+      name: String(stat?.name || displayName || resolvedRuntimeName).trim(),
+      runtimeName: resolvedRuntimeName,
+      calls: Number(stat?.calls ?? 0),
+      category: stat?.category || tool?.category || "other",
+    });
+    seen.add(key);
+  });
+  normalized.forEach((item) => {
+    const key = item.runtimeName || item.name;
+    if (seen.has(key)) {
       return;
     }
     items.push({
-      name,
-      calls: callsMap.get(name) ?? 0,
-      category: tool?.category || "other",
+      name: item.name,
+      runtimeName: item.runtimeName || item.name,
+      calls: item.calls,
+      category: item.category || "other",
     });
-    seen.add(name);
-  });
-  normalized.forEach((item) => {
-    if (seen.has(item.name)) {
-      return;
-    }
-    items.push({ name: item.name, calls: item.calls, category: "other" });
-    seen.add(item.name);
+    seen.add(key);
   });
   return items;
 };
@@ -1209,7 +1262,7 @@ const renderToolHeatmap = (toolStats) => {
       count: formatHeatmapCount(item.calls),
     });
     const icon = document.createElement("i");
-    const iconToken = resolveToolIcon(item.name, item.category);
+    const iconToken = resolveToolIcon(item.name, item.category, item.runtimeName);
     icon.className = `fa-solid ${iconToken}`;
     const name = document.createElement("span");
     name.className = "tool-heatmap-name";
@@ -1217,7 +1270,7 @@ const renderToolHeatmap = (toolStats) => {
     tile.appendChild(icon);
     tile.appendChild(name);
     tile.addEventListener("click", () => {
-      openMonitorToolModal(item.name);
+      openMonitorToolModal(item.runtimeName || item.name);
     });
     elements.toolHeatmapGrid.appendChild(tile);
   });

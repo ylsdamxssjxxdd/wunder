@@ -1,5 +1,6 @@
 import { formatStructuredErrorText } from './streamError';
 import { isAssistantMessageRunning } from './assistantMessageRuntime';
+import { hasActiveSubagentItems } from './subagentRuntime';
 
 type Translator = (key: string, named?: Record<string, unknown>) => string;
 type UnknownRecord = Record<string, unknown>;
@@ -167,7 +168,7 @@ export const resolveAssistantFailureNotice = (
   t: Translator
 ): AssistantFailureNotice | null => {
   if (String(message?.role || '') !== 'assistant') return null;
-  if (isAssistantMessageRunning(message)) return null;
+  if (isAssistantMessageRunning(message) || hasActiveSubagentItems(message.subagents)) return null;
   const terminal = resolveLatestTerminalWorkflowItem(message);
   if (!terminal) return null;
   if (SUCCESS_STATUSES.has(terminal.status)) return null;

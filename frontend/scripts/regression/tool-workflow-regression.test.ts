@@ -24,8 +24,20 @@ import {
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
+  'chat.toolWorkflow.detail.hit': 'Hit',
   'chat.toolWorkflow.detail.scannedFiles': 'Scanned files',
-  'chat.toolWorkflow.detail.bytes': 'Bytes'
+  'chat.toolWorkflow.detail.bytes': 'Bytes',
+  'chat.toolWorkflow.detail.rows': 'Rows',
+  'chat.toolWorkflow.detail.row': 'Row',
+  'chat.toolWorkflow.detail.columns': 'Columns',
+  'chat.toolWorkflow.detail.table': 'Table',
+  'chat.toolWorkflow.detail.sql': 'SQL',
+  'chat.toolWorkflow.detail.elapsed': 'Elapsed',
+  'chat.toolWorkflow.detail.truncated': 'Truncated',
+  'chat.toolWorkflow.detail.query': 'Query',
+  'chat.toolWorkflow.detail.documents': 'Documents',
+  'chat.toolWorkflow.detail.document': 'Document',
+  'common.yes': 'Yes'
 };
 
 const t = (key: string): string => messages[key] || key;
@@ -82,6 +94,67 @@ test('write structured view reuses call content as result preview', () => {
   const row = view?.groups[0]?.rows[0];
   assert.equal(row?.title, './notes/todo.md');
   assert.equal(row?.body, '# Todo\n- one\n- two');
+});
+
+test('database structured view shows rows without surfacing query_handle', () => {
+  const data = {
+    columns_jsonl: 'total_count',
+    columns_count: 1,
+    rows_count: 1,
+    rows_jsonl: '{"total_count":50000}',
+    elapsed_ms: 40.82,
+    query_handle: 'opaque-handle',
+    truncated: false
+  };
+  const view = buildStructuredToolResultView(
+    'extra_mcp@db_query_company_all_personnel',
+    null,
+    data,
+    t,
+    {
+      sql: 'SELECT COUNT(*) AS total_count FROM `example_table`'
+    }
+  );
+  assert.ok(view);
+  assert.equal(view?.variant, 'database');
+  const serialized = JSON.stringify(view);
+  assert.ok(serialized.includes('total_count: 50000'));
+  assert.ok(!serialized.includes('query_handle'));
+  assert.ok(!serialized.includes('opaque-handle'));
+});
+
+test('knowledge structured view shows query and retrieved chunks', () => {
+  const data = {
+    total: 1,
+    chunks: [
+      {
+        document_name: 'reference.md',
+        content: 'A compact retrieval chunk.',
+        similarity: 0.88
+      }
+    ],
+    documents: [
+      {
+        name: 'reference.md',
+        count: 1
+      }
+    ],
+    elapsed_ms: 18
+  };
+  const view = buildStructuredToolResultView(
+    'extra_mcp@kb_query_product_docs',
+    null,
+    data,
+    t,
+    {
+      query: 'headcount count'
+    }
+  );
+  assert.ok(view);
+  assert.equal(view?.variant, 'knowledge');
+  const serialized = JSON.stringify(view);
+  assert.ok(serialized.includes('headcount count'));
+  assert.ok(serialized.includes('A compact retrieval chunk.'));
 });
 
 test('tool detail formatter pretty prints valid JSON', () => {
@@ -155,6 +228,38 @@ test('tool workflow run model keeps mid-run output and final result on the same 
   assert.equal(rows[0]?.resultItem?.eventType, 'tool_result');
 });
 
+test('tool workflow run model preserves friendly tool identity from MCP events', () => {
+  const rows = buildWorkflowToolRuns([
+    {
+      id: 'call-friendly',
+      eventType: 'tool_call',
+      toolName: 'extra_mcp@kb_query_product_docs',
+      toolDisplayName: '知识库检索（产品文档）',
+      toolRuntimeName: 'extra_mcp@kb_query_product_docs',
+      toolFunctionName: 'tool_2d9e84',
+      toolCallId: 'tool-friendly',
+      status: 'loading',
+      detail: '{"args":{"query":"count","limit":5}}'
+    },
+    {
+      id: 'result-friendly',
+      eventType: 'tool_result',
+      toolName: 'extra_mcp@kb_query_product_docs',
+      tool_display_name: '知识库检索（产品文档）',
+      tool_runtime_name: 'extra_mcp@kb_query_product_docs',
+      tool_function_name: 'tool_2d9e84',
+      tool_call_id: 'tool-friendly',
+      status: 'completed',
+      detail: '{"data":{"text":"ok"}}'
+    }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.toolName, 'extra_mcp@kb_query_product_docs');
+  assert.equal(rows[0]?.toolDisplayName, '知识库检索（产品文档）');
+  assert.equal(rows[0]?.toolRuntimeName, 'extra_mcp@kb_query_product_docs');
+  assert.equal(rows[0]?.toolFunctionName, 'tool_2d9e84');
+});
+
 test('tool workflow run model accepts mixed legacy workflow field names during live updates', () => {
   const rows = buildWorkflowToolRuns([
     {
@@ -203,7 +308,32 @@ test('workflow pending placeholder detects command session activity before tool 
   assert.deepEqual(resolveWorkflowPendingPlaceholder(items), {
     kind: 'tool',
     toolName: 'execute_command',
+    toolDisplayName: '',
+    toolRuntimeName: 'execute_command',
+    toolFunctionName: '',
     eventType: 'command_session_start'
+  });
+});
+
+test('workflow pending placeholder exposes friendly MCP display name', () => {
+  const items = [
+    {
+      event: 'tool_call',
+      tool: 'extra_mcp@db_query_company_all_personnel',
+      tool_display_name: '数据库查询（人员信息）',
+      tool_runtime_name: 'extra_mcp@db_query_company_all_personnel',
+      tool_function_name: 'tool_1b9ae7',
+      tool_call_id: 'call-db',
+      status: 'loading'
+    }
+  ];
+  assert.deepEqual(resolveWorkflowPendingPlaceholder(items), {
+    kind: 'tool',
+    toolName: 'extra_mcp@db_query_company_all_personnel',
+    toolDisplayName: '数据库查询（人员信息）',
+    toolRuntimeName: 'extra_mcp@db_query_company_all_personnel',
+    toolFunctionName: 'tool_1b9ae7',
+    eventType: 'tool_call'
   });
 });
 

@@ -10,7 +10,7 @@
 - MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 对宿主机发布 `${MCP_PORT}` 端口（`MCP_BIND_HOST` 默认 `0.0.0.0`，如需仅本机访问可改为 `127.0.0.1`），人员数据库连接通过 `config/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`config/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准；默认优先读取该路径，不存在时兼容回退到 `extra_mcp/mcp_config.json`。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
-- Database data tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query_*` + `db_export_*` tools. The finest-grained `database.tables[*].name` is used as the public display name and tool-name suffix; if omitted, it defaults to `table`. Each tool is hard-bound to its table; `db_query*` embeds compact schema hints (`column + type`) in description and returns a short opaque `query_handle` token, while `db_export*` writes xlsx/csv directly under the configured export root (`database.export_root`) or, when `path` points to `/workspaces/{user_id}/...`, directly into the current Wunder workspace and returns a lean export payload centered on canonical `path` plus `workspace_relative_path` for follow-up tools. By default `db_export*` rejects SQL/query_handle that still contains `LIMIT/OFFSET`; set `allow_limited_export=true` only for intentional partial exports.
+- Database data tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query_*` + `db_export_*` tools. The finest-grained `database.tables[*].name` is used as the public display name and tool-name suffix; if omitted, it defaults to `table`. Each tool is hard-bound to its table; `db_query*` embeds compact schema hints (`column + type`) in description and returns compact rows/JSONL only, while `db_export*` accepts an explicit read-only SQL query and writes xlsx/csv directly under the configured export root (`database.export_root`) or, when `path` points to `/workspaces/{user_id}/...`, directly into the current Wunder workspace and returns a lean export payload centered on canonical `path` plus `workspace_relative_path` for follow-up tools. By default `db_export*` rejects SQL that still contains `LIMIT/OFFSET`; set `allow_limited_export=true` only for intentional partial exports.
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query_*` 工具；最细粒度 `knowledge.targets[*].name` 用作对外展示名和工具名后缀，未配置时默认使用目标 `key`。向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
@@ -259,7 +259,7 @@
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
 - `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。
 - 新增内置工具 `休眠等待`（英文别名 `sleep`/`sleep_wait`/`pause`），参数 `seconds` 必填；用于主动等待（如 `300` 秒），并自动适配工具超时。
-- 新增内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填、`prompt` 可选；执行成功后会在下一轮自动附加 `image_url` 供模型视觉分析。
+- 新增内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填、`prompt` 可选；支持本地图片、GIF、视频，并可通过 `frame_step` / `frame_rate` 控制 GIF / 视频取帧；执行成功后会在下一轮自动附加视觉消息供模型分析。
 - `读图工具` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中，非视觉模型会自动隐藏并拒绝调用。
 - `桌面控制器/桌面监视器` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
@@ -344,9 +344,11 @@
   - `data.summary.tool_calls`：统计窗口内工具调用次数
   - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/tool_calls`
   - `data.heatmap`：工具调用热力图（`date/max_calls/items[]`）
+  - `data.heatmap.items[]`：按工具运行时名聚合，字段包括 `tool/name/display_name/tool_name/runtime_name/category/hourly_calls/total_calls`；`display_name` 用于界面展示，`runtime_name`/`tool_name` 用于唯一定位与排障。
 - 说明：
   - `consumed_tokens` 按各次请求的 `round_usage.total_tokens` 累加得到。
   - `billed_tokens` 为历史兼容字段，新接入优先使用 `consumed_tokens`。
+  - MCP 工具热力图不再用展示名作为聚合键，避免中文别名与 `server@tool` 运行时名重复显示。
 
 #### `GET /wunder/admin/preset_agents`
 
@@ -1385,7 +1387,7 @@
     + ttft_ms
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
     + decode_tokens/decode_duration_s/decode_speed_tps）
-  - `tool_stats`：工具调用统计列表（tool/calls）
+  - `tool_stats`：工具调用统计列表（tool/tool_name/calls）；`tool` 为展示名，`tool_name` 为真实运行时名。
 
 ### 4.1.8.1 `/wunder/admin/monitor/tool_usage`
 
@@ -1399,6 +1401,7 @@
 - 返回（JSON）：
   - `tool`：工具名称
   - `tool_name`：工具真实名称（用于事件定位）
+  - `runtime_name`：本次查询使用的真实运行时名；当入参为展示名时会反解为运行时名。
   - `sessions`：调用会话列表（session_id/user_id/question/status/stage/start_time/updated_time/elapsed_s/token_usage/tool_calls/last_time
     + ttft_ms
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
@@ -2518,37 +2521,45 @@
 - 说明：
   - 这是聊天域的文档预处理入口，供前端先把文档转成文本型附件，再提交到 `POST /wunder/chat/sessions/{session_id}/messages`
   - 图片一般直接走 `attachments[]`
-  - 音频 / 视频走 `/wunder/chat/attachments/media/process`
+  - 音频 / 视频 / GIF 走 `/wunder/chat/attachments/media/process`
 
 ### `POST /wunder/chat/attachments/media/process`
 
 - 方法：`POST`
 - 鉴权：用户侧 Bearer Token
-- Body：`multipart/form-data`
+  - Body：`multipart/form-data`
   - 首次处理：
-    - `file`：必填，音频或视频文件
+    - `file`：必填，图片 / GIF / 音频 / 视频文件
     - `frame_rate`：可选，视频抽帧频率（FPS），默认 `1`
+    - `frame_step`：可选，GIF 间隔取帧参数；`0` 表示仅首帧，`2` 表示取第 `1/3/5/...` 帧
   - 重新抽帧：
     - `source_public_path`：必填，之前返回的源媒体工作区公共路径
-    - `frame_rate`：必填或可选，视频抽帧频率（FPS）
+    - `frame_rate`：可选，视频抽帧频率（FPS）
+    - `frame_step`：可选，GIF 间隔取帧参数
 - 支持类型：
+  - 图片：`png/jpg/jpeg/webp/bmp/tif/tiff`
+  - GIF：`gif`
   - 音频：`mp3/wav/ogg/opus/aac/flac/m4a/webm(audio/*)`
   - 视频：`mp4/mov/mkv/avi/webm(video/*)/mpeg/mpg/m4v`
 - 返回：`JSON`
-  - `data.kind`：`audio` / `video`
+  - `data.kind`：`image` / `gif` / `audio` / `video`
   - `data.name`：源文件名
   - `data.source_public_path`：源媒体落盘后的 `/workspaces/...` 公共路径，可用于后续重新抽帧
   - `data.duration_ms`：媒体时长（若可探测）
   - `data.requested_frame_rate`：请求的 FPS（仅视频）
   - `data.applied_frame_rate`：实际采用的 FPS（仅视频，超长视频会被自动下调）
-  - `data.frame_count`：返回的图片帧数量（仅视频）
+  - `data.requested_frame_step`：请求的 GIF 间隔取帧参数（仅 GIF）
+  - `data.applied_frame_step`：实际采用的 GIF 间隔取帧参数（仅 GIF）
+  - `data.total_frame_count`：源 GIF / 视频的总帧数（若可探测）
+  - `data.frame_count`：返回的图片帧数量
   - `data.has_audio`：视频是否成功抽取到音轨
   - `data.warnings[]`：降级说明，例如 ASR 未配置、视频无音轨、抽帧被限流
   - `data.attachments[]`：可直接作为聊天附件提交的派生结果
-    - 图片帧：`name/content_type=image/jpeg/public_path`
+    - 图片帧：`name/content_type=image/jpeg|image/png/public_path`
     - 音频结果：`name/content(转写文本或占位文本)/content_type/public_path`
 - 说明：
   - 视频不会直接作为模型输入，而是先拆成图片序列和音轨。
+  - GIF 不会再原样送模型：默认只取首帧；显式提供 `frame_step` 时按间隔抽帧并转成图片序列。
   - 默认每秒抽 `1` 帧，并带总帧数上限保护；超长视频会自动降低实际 FPS。
   - 音频/视频转写复用 `channels.media.asr` 配置；若未启用 ASR，接口仍会成功返回，但会在 `warnings` 中说明，并给音频附件写入占位文本。
   - 运行该接口需要服务端可用的 `ffmpeg/ffprobe`；也可通过环境变量 `WUNDER_FFMPEG_BIN`、`WUNDER_FFPROBE_BIN` 指定路径。

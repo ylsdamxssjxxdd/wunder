@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::schemas::ToolSpec;
+use crate::services::tools::context::ToolContext;
 use crate::skills::SkillRegistry;
 use crate::user_tools::UserToolBindings;
 use anyhow::Result;
@@ -564,7 +565,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": t("tool.spec.read_image.args.path")},
-                    "prompt": {"type": "string", "description": t("tool.spec.read_image.args.prompt")}
+                    "prompt": {"type": "string", "description": t("tool.spec.read_image.args.prompt")},
+                    "frame_rate": {"type": "number", "description": t("tool.spec.read_image.args.frame_rate")},
+                    "frame_step": {"type": "integer", "description": t("tool.spec.read_image.args.frame_step")}
                 },
                 "required": ["path"],
                 "additionalProperties": false
@@ -1161,8 +1164,11 @@ pub fn is_read_image_tool_name(name: &str) -> bool {
     read_image_tool::is_read_image_tool_name(name)
 }
 
-pub async fn build_read_image_followup_user_message(result: &Value) -> Result<Option<Value>> {
-    read_image_tool::build_followup_user_message(result).await
+pub async fn build_read_image_followup_user_message(
+    context: &ToolContext<'_>,
+    result: &Value,
+) -> Result<Option<Value>> {
+    read_image_tool::build_followup_user_message(context, result).await
 }
 
 pub fn is_sleep_tool_name(name: &str) -> bool {
@@ -1497,7 +1503,8 @@ pub fn collect_prompt_tool_specs_with_language(
         })
         .collect();
     for entry in mcp_alias_entries {
-        if !allowed_names.contains(&entry.runtime_name) || !seen.insert(entry.display_name.clone()) {
+        if !allowed_names.contains(&entry.runtime_name) || !seen.insert(entry.display_name.clone())
+        {
             continue;
         }
         let Some((description, input_schema)) = mcp_tool_lookup.get(&entry.runtime_name) else {
@@ -1608,8 +1615,8 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_mcp_tool_alias_entries, builtin_tool_specs_with_language, collect_available_tool_names,
-        resolve_tool_name,
+        build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
+        collect_available_tool_names, resolve_tool_name,
     };
     use crate::config::Config;
     use crate::skills::SkillRegistry;
@@ -1661,7 +1668,7 @@ mod tests {
                 name: "db_query_人员信息".to_string(),
                 title: None,
                 description: String::new(),
-                input_schema: serde_json::json!({}),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
             }],
             ..Default::default()
         }];
@@ -1683,7 +1690,7 @@ mod tests {
                     name: "search".to_string(),
                     title: None,
                     description: String::new(),
-                    input_schema: serde_json::json!({}),
+                    input_schema: serde_yaml::Value::Mapping(Default::default()),
                 }],
                 ..Default::default()
             },
@@ -1695,15 +1702,19 @@ mod tests {
                     name: "search".to_string(),
                     title: None,
                     description: String::new(),
-                    input_schema: serde_json::json!({}),
+                    input_schema: serde_yaml::Value::Mapping(Default::default()),
                 }],
                 ..Default::default()
             },
         ];
         let aliases = build_mcp_tool_alias_entries(&config);
         assert_eq!(aliases.len(), 2);
-        assert!(aliases.iter().any(|item| item.display_name == "search__extra_mcp"));
-        assert!(aliases.iter().any(|item| item.display_name == "search__ragflow"));
+        assert!(aliases
+            .iter()
+            .any(|item| item.display_name == "search__extra_mcp"));
+        assert!(aliases
+            .iter()
+            .any(|item| item.display_name == "search__ragflow"));
     }
 
     #[test]

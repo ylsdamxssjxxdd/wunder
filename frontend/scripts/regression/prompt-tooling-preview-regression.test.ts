@@ -116,6 +116,9 @@ test('prompt tooling preview tolerates display-only llm tool name map entries', 
   const preview = extractPromptToolingPreview({
     tooling_preview: {
       selected_tool_names: ['extra_mcp@kb_query_product_docs'],
+      selected_tool_display_map: {
+        'extra_mcp@kb_query_product_docs': '知识库检索（产品文档）'
+      },
       llm_tools: [
         {
           type: 'function',
@@ -127,7 +130,7 @@ test('prompt tooling preview tolerates display-only llm tool name map entries', 
       ],
       llm_tool_name_map: {
         tool_2d9e84: '知识库检索（产品文档）',
-        extra_mcp@kb_query_product_docs: '知识库检索（产品文档）'
+        'extra_mcp@kb_query_product_docs': '知识库检索（产品文档）'
       }
     }
   });
@@ -139,6 +142,55 @@ test('prompt tooling preview tolerates display-only llm tool name map entries', 
         item.protocolName === 'tool_2d9e84'
     )
   );
+  assert.equal(preview.items.filter((item) => item.name === '知识库检索（产品文档）').length, 1);
+  assert.equal(
+    preview.items.find((item) => item.name === '知识库检索（产品文档）')?.description,
+    'Search product knowledge base.'
+  );
+});
+
+test('prompt tooling preview raw json prefers actual model request payload', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['extra_mcp@db_query_sample'],
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_sample',
+            description: 'Run a sample query.'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        tool_sample: '数据库查询（示例）',
+        'extra_mcp@db_query_sample': '数据库查询（示例）'
+      },
+      model_request: {
+        model: 'sample-model',
+        messages: [
+          {
+            role: 'system',
+            content: 'system prompt'
+          }
+        ],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'tool_sample',
+              description: 'Run a sample query.'
+            }
+          }
+        ]
+      }
+    }
+  });
+
+  const raw = JSON.parse(preview.text) as Record<string, unknown>;
+  assert.equal(raw.model, 'sample-model');
+  assert.ok(Array.isArray(raw.messages));
+  assert.ok(!Object.prototype.hasOwnProperty.call(raw, 'llm_tool_name_map'));
 });
 
 test('agent overview counts only selected structured skills and MCP items', () => {

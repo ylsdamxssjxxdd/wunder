@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct ToolCall {
     pub(super) id: Option<String>,
     pub(super) name: String,
+    pub(super) function_name: Option<String>,
     pub(super) arguments: Value,
 }
 
@@ -15,11 +16,16 @@ pub(super) fn apply_tool_name_map(
     }
     calls
         .into_iter()
-        .map(|call| {
-            let name = map.get(call.name.trim()).cloned().unwrap_or(call.name);
+        .map(|mut call| {
+            let original_name = call.name.trim().to_string();
+            let name = map
+                .get(original_name.as_str())
+                .cloned()
+                .unwrap_or(call.name);
             ToolCall {
                 id: call.id,
                 name,
+                function_name: call.function_name.take().or(Some(original_name)),
                 arguments: call.arguments,
             }
         })
@@ -460,6 +466,7 @@ fn parse_prefixed_tool_calls(
         calls.push(ToolCall {
             id: None,
             name,
+            function_name: None,
             arguments,
         });
         last_end = *end;
@@ -567,6 +574,7 @@ fn normalize_tool_call_with_id(
     Some(ToolCall {
         id,
         name,
+        function_name: None,
         arguments,
     })
 }
@@ -691,6 +699,7 @@ fn parse_qwen_xml_tool_call_payload(payload: &str) -> Option<ToolCall> {
             return Some(ToolCall {
                 id: None,
                 name: function_name,
+                function_name: None,
                 arguments: parsed,
             });
         }
@@ -704,6 +713,7 @@ fn parse_qwen_xml_tool_call_payload(payload: &str) -> Option<ToolCall> {
     Some(ToolCall {
         id: None,
         name: function_name,
+        function_name: None,
         arguments: Value::Object(arguments),
     })
 }
@@ -755,6 +765,7 @@ fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
     Some(ToolCall {
         id: None,
         name,
+        function_name: None,
         arguments,
     })
 }
@@ -913,6 +924,7 @@ fn parse_shell_read_file_fallback(content: &str) -> Vec<ToolCall> {
             calls.push(ToolCall {
                 id: None,
                 name: "read_file".to_string(),
+                function_name: None,
                 arguments: json!({ "path": path }),
             });
         }

@@ -14,6 +14,18 @@ export type WorkflowItem = {
   tool?: string;
   tool_name?: string;
   name?: string;
+  toolDisplayName?: string;
+  tool_display_name?: string;
+  displayName?: string;
+  display_name?: string;
+  toolRuntimeName?: string;
+  tool_runtime_name?: string;
+  runtimeName?: string;
+  runtime_name?: string;
+  toolFunctionName?: string;
+  tool_function_name?: string;
+  functionName?: string;
+  function_name?: string;
   toolCallId?: string | number;
   tool_call_id?: string | number;
   callId?: string | number;
@@ -25,6 +37,9 @@ export type WorkflowItem = {
 export type RawToolRun = {
   key: string;
   toolName: string;
+  toolDisplayName: string;
+  toolRuntimeName: string;
+  toolFunctionName: string;
   callItem: WorkflowItem | null;
   outputItem: WorkflowItem | null;
   resultItem: WorkflowItem | null;
@@ -34,6 +49,9 @@ type ToolEventKind = 'call' | 'output' | 'result';
 export type WorkflowPendingPlaceholder = {
   kind: 'tool' | 'compaction';
   toolName: string;
+  toolDisplayName: string;
+  toolRuntimeName: string;
+  toolFunctionName: string;
   eventType: string;
 };
 
@@ -63,9 +81,37 @@ const resolveWorkflowLinkRef = (item: WorkflowItem): string =>
 const resolveWorkflowEventType = (item: WorkflowItem): string =>
   normalizeWorkflowText(item.eventType ?? item.event ?? item.event_type).toLowerCase();
 
+export const resolveWorkflowToolDisplayName = (item: WorkflowItem): string =>
+  normalizeWorkflowText(
+    item.toolDisplayName
+      ?? item.tool_display_name
+      ?? item.displayName
+      ?? item.display_name
+  );
+
+export const resolveWorkflowToolRuntimeName = (item: WorkflowItem): string =>
+  normalizeWorkflowText(
+    item.toolRuntimeName
+      ?? item.tool_runtime_name
+      ?? item.runtimeName
+      ?? item.runtime_name
+  );
+
+export const resolveWorkflowToolFunctionName = (item: WorkflowItem): string =>
+  normalizeWorkflowText(
+    item.toolFunctionName
+      ?? item.tool_function_name
+      ?? item.functionName
+      ?? item.function_name
+  );
+
 export const resolveWorkflowToolName = (item: WorkflowItem): string => {
   const direct = normalizeWorkflowText(item.toolName ?? item.tool ?? item.tool_name ?? item.name);
   if (direct) return direct;
+  const runtimeName = resolveWorkflowToolRuntimeName(item);
+  if (runtimeName) return runtimeName;
+  const functionName = resolveWorkflowToolFunctionName(item);
+  if (functionName) return functionName;
   const rawTitle = normalizeWorkflowText(item.title);
   return rawTitle
     .replace(/^调用工具[:：]\s*/i, '')
@@ -98,24 +144,47 @@ export const resolveWorkflowPendingPlaceholder = (
     const item = items[index];
     const eventType = resolveWorkflowEventType(item);
     const toolName = resolveWorkflowToolName(item);
+    const toolDisplayName = resolveWorkflowToolDisplayName(item);
+    const toolRuntimeName = resolveWorkflowToolRuntimeName(item) || toolName;
+    const toolFunctionName = resolveWorkflowToolFunctionName(item);
     const kindFromToolEvent = resolveWorkflowToolEventKind(item);
     if (eventType === 'compaction' || eventType === 'compaction_progress') {
-      return { kind: 'compaction', toolName: toolName || '上下文压缩', eventType };
+      return {
+        kind: 'compaction',
+        toolName: toolName || '上下文压缩',
+        toolDisplayName,
+        toolRuntimeName,
+        toolFunctionName,
+        eventType
+      };
     }
     if (kindFromToolEvent) {
       return {
         kind: toolName.trim() === '上下文压缩' ? 'compaction' : 'tool',
         toolName,
+        toolDisplayName,
+        toolRuntimeName,
+        toolFunctionName,
         eventType
       };
     }
     if (COMMAND_SESSION_EVENT_TYPES.has(eventType)) {
-      return { kind: 'tool', toolName, eventType };
+      return {
+        kind: 'tool',
+        toolName,
+        toolDisplayName,
+        toolRuntimeName,
+        toolFunctionName,
+        eventType
+      };
     }
     if (eventType.startsWith('tool_') || eventType.startsWith('subagent_') || eventType.startsWith('team_')) {
       return {
         kind: toolName.trim() === '上下文压缩' ? 'compaction' : 'tool',
         toolName,
+        toolDisplayName,
+        toolRuntimeName,
+        toolFunctionName,
         eventType
       };
     }
@@ -123,6 +192,9 @@ export const resolveWorkflowPendingPlaceholder = (
       return {
         kind: toolName.trim() === '上下文压缩' ? 'compaction' : 'tool',
         toolName,
+        toolDisplayName,
+        toolRuntimeName,
+        toolFunctionName,
         eventType
       };
     }
@@ -213,6 +285,9 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     rows.push({
       key: normalizedRef || fallbackKey,
       toolName,
+      toolDisplayName: '',
+      toolRuntimeName: toolName,
+      toolFunctionName: '',
       callItem: null,
       outputItem: null,
       resultItem: null
@@ -230,6 +305,9 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     if (!kind) return;
 
     const toolName = resolveWorkflowToolName(item);
+    const toolDisplayName = resolveWorkflowToolDisplayName(item);
+    const toolRuntimeName = resolveWorkflowToolRuntimeName(item) || toolName;
+    const toolFunctionName = resolveWorkflowToolFunctionName(item);
     const toolKey = toolName.trim().toLowerCase() || '__unknown__';
     const itemId = resolveWorkflowItemId(item) || `tool-entry-${index}`;
     const toolCallId = resolveWorkflowLinkRef(item);
@@ -240,6 +318,9 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
       if (typeof existingIndex === 'number') {
         rows[existingIndex].callItem = item;
         if (!rows[existingIndex].toolName && toolName) rows[existingIndex].toolName = toolName;
+        if (!rows[existingIndex].toolDisplayName && toolDisplayName) rows[existingIndex].toolDisplayName = toolDisplayName;
+        if (!rows[existingIndex].toolRuntimeName && toolRuntimeName) rows[existingIndex].toolRuntimeName = toolRuntimeName;
+        if (!rows[existingIndex].toolFunctionName && toolFunctionName) rows[existingIndex].toolFunctionName = toolFunctionName;
         rowIndexByCallId.set(itemId, existingIndex);
         if (toolCallId) {
           rowIndexByCallId.set(toolCallId, existingIndex);
@@ -248,7 +329,16 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
           enqueuePending(toolKey, existingIndex);
         }
       } else {
-        rows.push({ key: itemId, toolName, callItem: item, outputItem: null, resultItem: null });
+        rows.push({
+          key: itemId,
+          toolName,
+          toolDisplayName,
+          toolRuntimeName,
+          toolFunctionName,
+          callItem: item,
+          outputItem: null,
+          resultItem: null
+        });
         const rowIndex = rows.length - 1;
         rowIndexByCallId.set(itemId, rowIndex);
         if (toolCallId) {
@@ -268,10 +358,16 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
       if (targetIndex >= 0) {
         rows[targetIndex].outputItem = item;
         if (!rows[targetIndex].toolName && toolName) rows[targetIndex].toolName = toolName;
+        if (!rows[targetIndex].toolDisplayName && toolDisplayName) rows[targetIndex].toolDisplayName = toolDisplayName;
+        if (!rows[targetIndex].toolRuntimeName && toolRuntimeName) rows[targetIndex].toolRuntimeName = toolRuntimeName;
+        if (!rows[targetIndex].toolFunctionName && toolFunctionName) rows[targetIndex].toolFunctionName = toolFunctionName;
       } else {
         rows.push({
           key: itemId,
           toolName,
+          toolDisplayName,
+          toolRuntimeName,
+          toolFunctionName,
           callItem: null,
           outputItem: item,
           resultItem: null
@@ -291,6 +387,9 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     if (targetIndex >= 0) {
       rows[targetIndex].resultItem = item;
       if (!rows[targetIndex].toolName && toolName) rows[targetIndex].toolName = toolName;
+      if (!rows[targetIndex].toolDisplayName && toolDisplayName) rows[targetIndex].toolDisplayName = toolDisplayName;
+      if (!rows[targetIndex].toolRuntimeName && toolRuntimeName) rows[targetIndex].toolRuntimeName = toolRuntimeName;
+      if (!rows[targetIndex].toolFunctionName && toolFunctionName) rows[targetIndex].toolFunctionName = toolFunctionName;
       if (toolCallId) {
         rowIndexByCallId.set(toolCallId, targetIndex);
       }
@@ -298,6 +397,9 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
       rows.push({
         key: itemId,
         toolName,
+        toolDisplayName,
+        toolRuntimeName,
+        toolFunctionName,
         callItem: null,
         outputItem: null,
         resultItem: item

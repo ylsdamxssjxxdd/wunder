@@ -61,12 +61,29 @@
             :disabled="isInteractionDisabled"
           />
         </el-form-item>
-        <el-form-item :label="t('portal.agent.form.tools')" class="messenger-agent-form-item messenger-agent-form-item--tools">
+        <el-form-item class="messenger-agent-form-item messenger-agent-form-item--tools">
+          <template #label>
+            <div class="messenger-agent-tools-head">
+              <span>{{ t('portal.agent.form.tools') }}</span>
+              <el-input
+                v-model="toolSearchKeyword"
+                class="messenger-agent-tools-search"
+                size="small"
+                clearable
+                :placeholder="t('portal.agent.tools.searchPlaceholder')"
+                :disabled="toolLoading || Boolean(toolError)"
+                @click.stop
+              />
+            </div>
+          </template>
           <div class="messenger-tool-picker">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('portal.agent.tools.loading') }}</div>
             <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
             <div v-else-if="!toolSections.length" class="messenger-list-empty">
               {{ t('portal.agent.tools.loadFailed') }}
+            </div>
+            <div v-else-if="toolSearchNormalized && !visibleToolSections.length" class="messenger-list-empty">
+              {{ t('portal.agent.tools.searchEmpty') }}
             </div>
             <el-checkbox-group
               v-else
@@ -74,7 +91,7 @@
               class="messenger-tool-groups"
               :disabled="isInteractionDisabled"
             >
-              <div v-for="section in toolSections" :key="section.key" class="messenger-tool-section">
+              <div v-for="section in visibleToolSections" :key="section.key" class="messenger-tool-section">
                 <div class="messenger-tool-section-title">{{ section.label }}</div>
                 <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
                   <div class="messenger-tool-group-head">
@@ -575,6 +592,7 @@ const beeroomGroupOptions = computed(() =>
 const toolSummary = ref<Record<string, unknown> | null>(null);
 const toolLoading = ref(false);
 const toolError = ref('');
+const toolSearchKeyword = ref('');
 const currentAgent = ref<Record<string, unknown> | null>(null);
 const agentLoading = ref(true);
 const modelLoading = ref(false);
@@ -1002,6 +1020,30 @@ const toolSections = computed<ToolSection[]>(() =>
       .map(({ group }) => group)
   }))
 );
+
+const toolSearchNormalized = computed(() => String(toolSearchKeyword.value || '').trim().toLowerCase());
+
+const isToolOptionMatched = (option: ToolOption, keyword: string): boolean => {
+  if (!keyword) return true;
+  return [option.label, option.value, option.description]
+    .some((field) => String(field || '').toLowerCase().includes(keyword));
+};
+
+const visibleToolSections = computed<ToolSection[]>(() => {
+  const keyword = toolSearchNormalized.value;
+  if (!keyword) return toolSections.value;
+  return toolSections.value
+    .map((section) => ({
+      ...section,
+      groups: section.groups
+        .map((group) => ({
+          ...group,
+          options: group.options.filter((option) => isToolOptionMatched(option, keyword))
+        }))
+        .filter((group) => group.options.length > 0)
+    }))
+    .filter((section) => section.groups.length > 0);
+});
 
 const defaultModelDisplayName = computed(() => {
   const fallback = t('portal.agent.model.defaultName');
@@ -1517,6 +1559,11 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.messenger-agent-form-item--tools :deep(.el-form-item__label) {
+  display: block;
+  width: 100%;
+}
+
 .messenger-agent-base-control :deep(.el-select),
 .messenger-agent-base-control :deep(.el-select__wrapper),
 .messenger-agent-base-control :deep(.beeroom-group-field) {
@@ -1527,6 +1574,25 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+
+.messenger-agent-tools-head {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.messenger-agent-tools-search {
+  width: min(240px, 42vw);
+  flex: 0 1 240px;
+}
+
+.messenger-agent-tools-search :deep(.el-input__wrapper) {
+  min-height: 28px;
+  border-radius: 999px;
 }
 
 .messenger-agent-icon-btn {
@@ -1557,6 +1623,16 @@ onBeforeUnmount(() => {
 @media (max-width: 720px) {
   .messenger-agent-name-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .messenger-agent-tools-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .messenger-agent-tools-search {
+    width: 100%;
+    flex-basis: auto;
   }
 
   .messenger-agent-avatar-trigger {

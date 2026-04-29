@@ -23,6 +23,7 @@
     "../../src/utils/chatCompactionUi.ts",
     "../../src/utils/chatCompactionWorkflow.ts",
     "../../src/utils/assistantMessageRuntime.ts",
+    "../../src/utils/subagentRuntime.ts",
     "../../src/utils/chatSessionRuntime.ts",
     "../../src/utils/messageStats.ts",
     "../../src/utils/messageWorkspacePath.ts",
@@ -43,6 +44,7 @@
     "../../src/views/messenger/interactionBlocker.ts",
     "../../src/views/messenger/realtimePulse.ts",
     "../../src/views/messenger/agentOverviewAbilities.ts",
+    "../../src/utils/runtimeHeatmap.ts",
     "../../src/components/chat/workspacePanelRefreshPlanner.ts",
     "../../src/components/chat/toolWorkflowActionViews.ts",
     "../../src/components/chat/toolWorkflowRunModel.ts",
@@ -85,6 +87,7 @@
     "./tool-workflow-regression.test.ts",
     "./tool-workflow-command-regression.test.ts",
     "./prompt-tooling-preview-regression.test.ts",
+    "./runtime-heatmap-regression.test.ts",
     "./workspace-panel-refresh-regression.test.ts"
   ]
 }

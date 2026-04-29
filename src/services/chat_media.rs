@@ -1,19 +1,22 @@
 use crate::config::{ChannelAsrConfig, Config};
 use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
+use crate::schemas::AttachmentPayload;
 use crate::services::chat_attachments::{
     is_supported_model_image_mime, parse_image_data_url, validate_image_attachment_bytes,
 };
-use crate::schemas::AttachmentPayload;
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use image::codecs::gif::GifDecoder;
+use image::{AnimationDecoder, DynamicImage, ImageFormat};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::process::Command;
@@ -26,6 +29,9 @@ const DEFAULT_VIDEO_FRAME_RATE: f64 = 1.0;
 const MIN_VIDEO_FRAME_RATE: f64 = 0.1;
 const MAX_VIDEO_FRAME_RATE: f64 = 12.0;
 const MAX_VIDEO_FRAMES: usize = 120;
+const DEFAULT_GIF_FRAME_STEP: usize = 0;
+const MIN_GIF_FRAME_STEP: usize = 0;
+const MAX_GIF_FRAME_STEP: usize = 120;
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
 const FFPROBE_BIN_ENV: &str = "WUNDER_FFPROBE_BIN";
@@ -48,6 +54,12 @@ pub struct ChatMediaProcessResult {
     pub requested_frame_rate: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub applied_frame_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_frame_step: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub applied_frame_step: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_frame_count: Option<usize>,
     #[serde(default)]
     pub frame_count: usize,
     #[serde(default)]
@@ -70,6 +82,7 @@ struct MediaProbe {
     duration_ms: Option<u64>,
     has_audio: bool,
     has_video: bool,
+    total_frames: Option<usize>,
 }
 
 pub async fn process_chat_media_upload(
@@ -78,6 +91,7 @@ pub async fn process_chat_media_upload(
     user_id: &str,
     upload: ChatMediaUpload,
     requested_frame_rate: Option<f64>,
+    requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
     let filename = normalize_filename(upload.filename.as_str(), "media");
     let workspace_id = workspace.scoped_user_id_by_container(user_id, USER_PRIVATE_CONTAINER_ID);
@@ -89,13 +103,14 @@ pub async fn process_chat_media_upload(
         upload.bytes.as_slice(),
     )
     .await?;
-    process_chat_media_source_path(
+    process_visual_media_path(
         workspace,
         config,
         &workspace_id,
         &source_path,
         upload.content_type.as_deref(),
         requested_frame_rate,
+        requested_frame_step,
     )
     .await
 }
@@ -106,29 +121,32 @@ pub async fn reprocess_chat_media_source(
     user_id: &str,
     source_public_path: &str,
     requested_frame_rate: Option<f64>,
+    requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
     let workspace_id = workspace.scoped_user_id_by_container(user_id, USER_PRIVATE_CONTAINER_ID);
     workspace.ensure_user_root(&workspace_id)?;
     let source_path =
         resolve_private_media_source_path(workspace, &workspace_id, source_public_path)?;
-    process_chat_media_source_path(
+    process_visual_media_path(
         workspace,
         config,
         &workspace_id,
         &source_path,
         None,
         requested_frame_rate,
+        requested_frame_step,
     )
     .await
 }
 
-async fn process_chat_media_source_path(
+pub async fn process_visual_media_path(
     workspace: &WorkspaceManager,
     config: &Config,
     workspace_id: &str,
     source_path: &Path,
     content_type_hint: Option<&str>,
     requested_frame_rate: Option<f64>,
+    requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
         .file_name()
@@ -140,7 +158,9 @@ async fn process_chat_media_source_path(
     let media_kind = detect_media_kind(filename.as_str(), content_type_hint)
         .ok_or_else(|| anyhow!("unsupported media type, expected image/audio/video"))?;
     match media_kind {
-        MediaKind::Image => process_image_source(workspace, workspace_id, source_path).await,
+        MediaKind::Image => {
+            process_image_source(workspace, workspace_id, source_path, requested_frame_step).await
+        }
         MediaKind::Audio => {
             process_audio_source(config, source_path, filename.as_str(), source_public_path).await
         }
@@ -153,6 +173,7 @@ async fn process_chat_media_source_path(
                 filename.as_str(),
                 source_public_path,
                 requested_frame_rate,
+                requested_frame_step,
             )
             .await
         }
@@ -188,6 +209,9 @@ async fn process_audio_source(
         duration_ms: probe.duration_ms,
         requested_frame_rate: None,
         applied_frame_rate: None,
+        requested_frame_step: None,
+        applied_frame_step: None,
+        total_frame_count: None,
         frame_count: 0,
         has_audio: true,
         attachments: vec![AttachmentPayload {
@@ -204,6 +228,7 @@ async fn process_image_source(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     source_path: &Path,
+    requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
     let filename = source_path
         .file_name()
@@ -212,12 +237,21 @@ async fn process_image_source(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "image".to_string());
     let bytes = fs::read(source_path).await?;
-    let mime_type =
-        detect_supported_image_content_type(source_path, bytes.as_slice()).ok_or_else(|| {
-            anyhow!("unsupported image type, expected png/jpeg/gif/webp/bmp/tiff")
-        })?;
+    let mime_type = detect_supported_image_content_type(source_path, bytes.as_slice())
+        .ok_or_else(|| anyhow!("unsupported image type, expected png/jpeg/gif/webp/bmp/tiff"))?;
     if !validate_image_attachment_bytes(&mime_type, bytes.as_slice()) {
         return Err(anyhow!("image file is invalid or unreadable"));
+    }
+    if mime_type == "image/gif" {
+        return process_gif_source(
+            workspace,
+            workspace_id,
+            source_path,
+            filename.as_str(),
+            bytes.as_slice(),
+            requested_frame_step,
+        )
+        .await;
     }
     let public_path = workspace.display_path(workspace_id, source_path);
     Ok(ChatMediaProcessResult {
@@ -227,6 +261,9 @@ async fn process_image_source(
         duration_ms: None,
         requested_frame_rate: None,
         applied_frame_rate: None,
+        requested_frame_step: None,
+        applied_frame_step: None,
+        total_frame_count: None,
         frame_count: 1,
         has_audio: false,
         attachments: vec![AttachmentPayload {
@@ -239,6 +276,92 @@ async fn process_image_source(
     })
 }
 
+async fn process_gif_source(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_path: &Path,
+    filename: &str,
+    bytes: &[u8],
+    requested_frame_step: Option<usize>,
+) -> Result<ChatMediaProcessResult> {
+    let requested_step = normalize_requested_frame_step(requested_frame_step)?;
+    let decoder = GifDecoder::new(Cursor::new(bytes)).context("failed to decode gif frames")?;
+    let frames = decoder
+        .into_frames()
+        .collect_frames()
+        .context("failed to collect gif frames")?;
+    if frames.is_empty() {
+        return Err(anyhow!("gif contains no readable frames"));
+    }
+    let total_frame_count = frames.len();
+
+    let public_path = workspace.display_path(workspace_id, source_path);
+    if requested_step == 0 {
+        let preview = render_gif_frame_attachment(
+            workspace,
+            workspace_id,
+            filename,
+            frames
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("gif contains no readable frames"))?
+                .into_buffer(),
+            0,
+        )
+        .await?;
+        return Ok(ChatMediaProcessResult {
+            kind: "gif".to_string(),
+            name: filename.to_string(),
+            source_public_path: public_path,
+            duration_ms: None,
+            requested_frame_rate: None,
+            applied_frame_rate: None,
+            requested_frame_step: Some(requested_step),
+            applied_frame_step: Some(0),
+            total_frame_count: Some(total_frame_count),
+            frame_count: 1,
+            has_audio: false,
+            attachments: vec![preview],
+            warnings: Vec::new(),
+        });
+    }
+
+    let mut attachments = Vec::new();
+    for (index, frame) in frames.into_iter().enumerate() {
+        if index % requested_step != 0 {
+            continue;
+        }
+        attachments.push(
+            render_gif_frame_attachment(
+                workspace,
+                workspace_id,
+                filename,
+                frame.into_buffer(),
+                index,
+            )
+            .await?,
+        );
+    }
+    if attachments.is_empty() {
+        return Err(anyhow!("gif frame extraction produced no images"));
+    }
+    Ok(ChatMediaProcessResult {
+        kind: "gif".to_string(),
+        name: filename.to_string(),
+        source_public_path: public_path,
+        duration_ms: None,
+        requested_frame_rate: None,
+        applied_frame_rate: None,
+        requested_frame_step: Some(requested_step),
+        applied_frame_step: Some(requested_step),
+        total_frame_count: Some(total_frame_count),
+        frame_count: attachments.len(),
+        has_audio: false,
+        attachments,
+        warnings: Vec::new(),
+    })
+}
+
 async fn process_video_source(
     workspace: &WorkspaceManager,
     config: &Config,
@@ -247,7 +370,11 @@ async fn process_video_source(
     filename: &str,
     source_public_path: String,
     requested_frame_rate: Option<f64>,
+    requested_frame_step: Option<usize>,
 ) -> Result<ChatMediaProcessResult> {
+    if requested_frame_step.is_some() {
+        return Err(anyhow!("frame_step is only supported for gif uploads"));
+    }
     let probe = probe_media(source_path).await?;
     if !probe.has_video {
         return Err(anyhow!("video track not found in uploaded file"));
@@ -367,6 +494,9 @@ async fn process_video_source(
         duration_ms: probe.duration_ms,
         requested_frame_rate: Some(requested),
         applied_frame_rate: Some(applied),
+        requested_frame_step: None,
+        applied_frame_step: None,
+        total_frame_count: probe.total_frames,
         frame_count,
         has_audio,
         attachments,
@@ -522,7 +652,7 @@ async fn probe_media(source_path: &Path) -> Result<MediaProbe> {
             "-v".to_string(),
             "error".to_string(),
             "-show_entries".to_string(),
-            "format=duration:stream=codec_type".to_string(),
+            "format=duration:stream=codec_type,nb_frames".to_string(),
             "-of".to_string(),
             "json".to_string(),
             source_path.to_string_lossy().to_string(),
@@ -548,6 +678,7 @@ async fn probe_media(source_path: &Path) -> Result<MediaProbe> {
         duration_ms,
         has_audio: false,
         has_video: false,
+        total_frames: None,
     };
     if let Some(streams) = payload.get("streams").and_then(Value::as_array) {
         for stream in streams {
@@ -557,7 +688,16 @@ async fn probe_media(source_path: &Path) -> Result<MediaProbe> {
                 .unwrap_or("")
             {
                 "audio" => probe.has_audio = true,
-                "video" => probe.has_video = true,
+                "video" => {
+                    probe.has_video = true;
+                    if probe.total_frames.is_none() {
+                        probe.total_frames = stream
+                            .get("nb_frames")
+                            .and_then(Value::as_str)
+                            .and_then(|value| value.parse::<usize>().ok())
+                            .filter(|value| *value > 0);
+                    }
+                }
                 _ => {}
             }
         }
@@ -745,16 +885,78 @@ fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<Media
     None
 }
 
-fn detect_supported_image_content_type(path: &Path, bytes: &[u8]) -> Option<String> {
-    let guessed = image::guess_format(bytes).ok().and_then(|format| match format {
-        image::ImageFormat::Png => Some("image/png"),
-        image::ImageFormat::Jpeg => Some("image/jpeg"),
-        image::ImageFormat::Gif => Some("image/gif"),
-        image::ImageFormat::WebP => Some("image/webp"),
-        image::ImageFormat::Bmp => Some("image/bmp"),
-        image::ImageFormat::Tiff => Some("image/tiff"),
+pub fn detect_media_kind_from_path(path: &Path, sample: &[u8]) -> Option<String> {
+    let content_type = detect_supported_image_content_type(path, sample)
+        .or_else(|| detect_video_content_type(path))
+        .or_else(|| detect_audio_content_type_from_path(path));
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let kind = detect_media_kind(filename, content_type.as_deref())?;
+    Some(
+        match kind {
+            MediaKind::Image => {
+                if content_type.as_deref() == Some("image/gif") {
+                    "gif"
+                } else {
+                    "image"
+                }
+            }
+            MediaKind::Audio => "audio",
+            MediaKind::Video => "video",
+        }
+        .to_string(),
+    )
+}
+
+fn detect_video_content_type(path: &Path) -> Option<String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "mp4" | "m4v" => Some("video/mp4".to_string()),
+        "mov" => Some("video/quicktime".to_string()),
+        "mkv" => Some("video/x-matroska".to_string()),
+        "avi" => Some("video/x-msvideo".to_string()),
+        "webm" => Some("video/webm".to_string()),
+        "mpeg" | "mpg" => Some("video/mpeg".to_string()),
         _ => None,
-    });
+    }
+}
+
+fn detect_audio_content_type_from_path(path: &Path) -> Option<String> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "mp3" => Some("audio/mpeg".to_string()),
+        "wav" => Some("audio/wav".to_string()),
+        "ogg" => Some("audio/ogg".to_string()),
+        "opus" => Some("audio/opus".to_string()),
+        "aac" => Some("audio/aac".to_string()),
+        "flac" => Some("audio/flac".to_string()),
+        "m4a" => Some("audio/mp4".to_string()),
+        _ => None,
+    }
+}
+
+fn detect_supported_image_content_type(path: &Path, bytes: &[u8]) -> Option<String> {
+    let guessed = image::guess_format(bytes)
+        .ok()
+        .and_then(|format| match format {
+            image::ImageFormat::Png => Some("image/png"),
+            image::ImageFormat::Jpeg => Some("image/jpeg"),
+            image::ImageFormat::Gif => Some("image/gif"),
+            image::ImageFormat::WebP => Some("image/webp"),
+            image::ImageFormat::Bmp => Some("image/bmp"),
+            image::ImageFormat::Tiff => Some("image/tiff"),
+            _ => None,
+        });
     if guessed.is_some() {
         return guessed.map(|value| value.to_string());
     }
@@ -785,6 +987,48 @@ fn normalize_requested_frame_rate(value: Option<f64>) -> Result<f64> {
         ));
     }
     Ok(requested)
+}
+
+fn normalize_requested_frame_step(value: Option<usize>) -> Result<usize> {
+    let requested = value.unwrap_or(DEFAULT_GIF_FRAME_STEP);
+    if !(MIN_GIF_FRAME_STEP..=MAX_GIF_FRAME_STEP).contains(&requested) {
+        return Err(anyhow!(
+            "frame_step must be between {MIN_GIF_FRAME_STEP} and {MAX_GIF_FRAME_STEP}"
+        ));
+    }
+    Ok(requested)
+}
+
+async fn render_gif_frame_attachment(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_name: &str,
+    image: image::RgbaImage,
+    index: usize,
+) -> Result<AttachmentPayload> {
+    let derived_root = persist_derived_root(workspace, workspace_id, source_name).await?;
+    let output_path = derived_root.join(format!("frame_{:04}.png", index + 1));
+    let output_path_for_write = output_path.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        DynamicImage::ImageRgba8(image)
+            .save_with_format(&output_path_for_write, ImageFormat::Png)
+            .map_err(|err| anyhow!("failed to save gif frame: {err}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| anyhow!("gif frame save task failed: {err}"))??;
+    let public_path = workspace.display_path(workspace_id, &output_path);
+    let name = output_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("frame_{:04}.png", index + 1));
+    Ok(AttachmentPayload {
+        name: Some(name),
+        content: None,
+        content_type: Some("image/png".to_string()),
+        public_path: Some(public_path),
+    })
 }
 
 fn effective_frame_rate(requested: f64, duration_ms: Option<u64>, max_frames: usize) -> f64 {
@@ -896,7 +1140,10 @@ pub async fn load_image_attachment_data_url(
     if let Some((mime_type, bytes)) =
         parse_image_data_url(raw_content, attachment.content_type.as_deref())
     {
-        return Some(format!("data:{mime_type};base64,{}", STANDARD.encode(bytes)));
+        return Some(format!(
+            "data:{mime_type};base64,{}",
+            STANDARD.encode(bytes)
+        ));
     }
     let public_path = attachment.public_path.as_deref()?.trim();
     if public_path.is_empty() {
@@ -924,7 +1171,8 @@ pub async fn load_image_attachment_data_url(
 mod tests {
     use super::{
         effective_frame_rate, extract_workspace_id_from_public_path, normalize_filename,
-        normalize_requested_frame_rate, DEFAULT_VIDEO_FRAME_RATE, MAX_VIDEO_FRAMES,
+        normalize_requested_frame_rate, normalize_requested_frame_step, DEFAULT_VIDEO_FRAME_RATE,
+        MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
 
     #[test]
@@ -954,5 +1202,24 @@ mod tests {
         let capped = effective_frame_rate(1.0, Some(5 * 60 * 1000), MAX_VIDEO_FRAMES);
         assert!(capped < 1.0);
         assert!(capped > 0.0);
+    }
+
+    #[test]
+    fn normalize_requested_frame_step_uses_first_frame_by_default() {
+        let step = normalize_requested_frame_step(None).expect("default frame step");
+        assert_eq!(step, 0);
+    }
+
+    #[test]
+    fn normalize_requested_frame_step_accepts_interval_sampling() {
+        let step = normalize_requested_frame_step(Some(2)).expect("interval frame step");
+        assert_eq!(step, 2);
+    }
+
+    #[test]
+    fn normalize_requested_frame_step_rejects_large_values() {
+        let err = normalize_requested_frame_step(Some(MAX_GIF_FRAME_STEP + 1))
+            .expect_err("frame step beyond max should fail");
+        assert!(err.to_string().contains("frame_step must be between"));
     }
 }

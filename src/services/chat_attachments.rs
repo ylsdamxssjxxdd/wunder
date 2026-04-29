@@ -54,10 +54,7 @@ pub async fn persist_user_chat_attachments(
         if bytes.is_empty() {
             continue;
         }
-        if mime_type
-            .trim()
-            .to_ascii_lowercase()
-            .starts_with("image/")
+        if mime_type.trim().to_ascii_lowercase().starts_with("image/")
             && (!is_supported_model_image_mime(&mime_type)
                 || !validate_image_attachment_bytes(&mime_type, &bytes))
         {
@@ -159,11 +156,7 @@ fn parse_data_url(raw: &str, hint: Option<&str>) -> Option<(String, Vec<u8>)> {
 
 pub fn parse_image_data_url(raw: &str, hint: Option<&str>) -> Option<(String, Vec<u8>)> {
     let (mime_type, bytes) = parse_data_url(raw, hint)?;
-    if !mime_type
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("image/")
-    {
+    if !mime_type.trim().to_ascii_lowercase().starts_with("image/") {
         return None;
     }
     if !is_supported_model_image_mime(&mime_type) {
@@ -178,14 +171,7 @@ pub fn parse_image_data_url(raw: &str, hint: Option<&str>) -> Option<(String, Ve
 pub fn is_supported_model_image_mime(mime_type: &str) -> bool {
     matches!(
         normalize_model_image_mime(mime_type).as_deref(),
-        Some(
-            "image/png"
-                | "image/jpeg"
-                | "image/gif"
-                | "image/webp"
-                | "image/bmp"
-                | "image/tiff"
-        )
+        Some("image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/bmp" | "image/tiff")
     )
 }
 
@@ -357,7 +343,10 @@ mod tests {
 
     #[test]
     fn validate_image_attachment_bytes_rejects_invalid_png_payload() {
-        assert!(!validate_image_attachment_bytes("image/png", b"encrypted payload"));
+        assert!(!validate_image_attachment_bytes(
+            "image/png",
+            b"encrypted payload"
+        ));
     }
 
     #[test]

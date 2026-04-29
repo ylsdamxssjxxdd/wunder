@@ -252,7 +252,7 @@
               :key="resolveMessageKey(message, index)"
             >
             <div
-              v-if="!isHiddenInternalMessage(message) && (!isCompactionMarkerMessage(message) || shouldShowCompactionDivider(message))"
+              v-if="shouldShowMessage(message)"
               :class="[
                 'message',
                 message.role === 'user' ? 'from-user' : 'from-ai',
@@ -817,7 +817,11 @@ import {
   isCompactionOnlyWorkflowItems,
   resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
-import { isAssistantMessageRunning } from '@/utils/assistantMessageRuntime';
+import {
+  hasAssistantWaitingForCurrentOutput,
+  isAssistantMessageRunning
+} from '@/utils/assistantMessageRuntime';
+import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
@@ -1597,6 +1601,21 @@ const shouldShowMessageText = (message) => {
   return Boolean(String(message.content || '').trim());
 };
 
+const shouldShowMessage = (message) => {
+  if (isHiddenInternalMessage(message)) return false;
+  if (isCompactionMarkerMessage(message)) return shouldShowCompactionDivider(message);
+  if (message?.role !== 'assistant') return true;
+  return (
+    shouldShowMessageText(message) ||
+    Boolean(message?.workflowStreaming) ||
+    Boolean(message?.reasoningStreaming) ||
+    Boolean(message?.stream_incomplete) ||
+    Boolean(message?.workflowItems?.length) ||
+    Boolean(message?.subagents?.length) ||
+    hasActiveSubagentItems(message?.subagents)
+  );
+};
+
 const hasPlanSteps = (plan) =>
   Array.isArray(plan?.steps) && plan.steps.length > 0;
 
@@ -1649,7 +1668,8 @@ const markdownCache = new WeakMap();
 const AGENT_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
 const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】」』、]+)?$/;
 
-const isAssistantStreaming = (message) => isAssistantMessageRunning(message);
+const isAssistantStreaming = (message) =>
+  isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message);
 
 const isCompactionMarkerMessage = (message): boolean => {
   if (!message || message.role !== 'assistant') return false;

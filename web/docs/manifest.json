@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-29T00:57:29.018606+00:00",
+  "generated_at": "2026-04-29T12:52:53.253203+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -3864,9 +3864,9 @@
       "language": "zh-CN",
       "title": "读图工具",
       "summary": "`read_image` 的用途与返回结构。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-29",
       "read_when": [
-        "你要把本地图片送入当前模型上下文"
+        "你要把本地视觉媒体送入当前模型上下文"
       ],
       "source_docs": [
         "src/services/tools/read_image_tool.rs"

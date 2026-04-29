@@ -40,7 +40,9 @@ use crate::state::AppState;
 use crate::throughput::{
     ThroughputConfig, ThroughputReport, ThroughputSnapshot, ThroughputStatusResponse,
 };
-use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
+use crate::tools::{
+    build_mcp_tool_alias_entries_for_names, builtin_aliases, builtin_tool_specs, resolve_tool_name,
+};
 use crate::user_store::UserStore;
 use crate::vector_knowledge;
 use crate::{
@@ -3392,8 +3394,11 @@ async fn admin_monitor(
         .get_service_metrics(recent_window_s, service_now);
     let service_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
-    let tool_stats =
-        normalize_tool_stats(state.workspace.get_tool_usage_stats(since_time, until_time));
+    let config = state.config_store.get().await;
+    let tool_stats = normalize_tool_stats(
+        state.workspace.get_tool_usage_stats(since_time, until_time),
+        &config,
+    );
     let tool_stats_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
     let sandbox = state.monitor.get_sandbox_metrics(since_time, until_time);
@@ -3548,9 +3553,26 @@ async fn admin_monitor_tool_usage(
         since_time = Some(now_ts() - hours * 3600.0);
     }
 
+    let config = state.config_store.get().await;
+    let display_map = build_builtin_tool_display_map(&config);
     let canonical = resolve_tool_name(&cleaned);
     let builtin_names = builtin_tool_names();
-    let display_map = build_builtin_tool_display_map();
+    let mut requested_runtime_name = display_map
+        .iter()
+        .find_map(|(runtime_name, display_name)| {
+            if display_name == &cleaned {
+                Some(runtime_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| cleaned.clone());
+    if requested_runtime_name == cleaned {
+        let mcp_alias = build_mcp_tool_alias_entries_for_names([cleaned.as_str()]);
+        if let Some(entry) = mcp_alias.first() {
+            requested_runtime_name = entry.runtime_name.clone();
+        }
+    }
     let mut tool_name = cleaned.clone();
     let usage_records = if builtin_names.contains(&canonical) {
         let mut names = vec![canonical.clone()];
@@ -3572,7 +3594,7 @@ async fn admin_monitor_tool_usage(
     } else {
         state
             .workspace
-            .get_tool_session_usage(&cleaned, since_time, until_time)
+            .get_tool_session_usage(&requested_runtime_name, since_time, until_time)
     };
 
     let display_name = display_map
@@ -3702,6 +3724,7 @@ async fn admin_monitor_tool_usage(
     Ok(Json(json!({
         "tool": display_name,
         "tool_name": tool_name,
+        "runtime_name": requested_runtime_name,
         "sessions": sessions
     })))
 }
@@ -6324,17 +6347,6 @@ fn builtin_tool_names() -> HashSet<String> {
         .collect()
 }
 
-fn build_builtin_aliases_by_name() -> HashMap<String, Vec<String>> {
-    let mut map: HashMap<String, Vec<String>> = HashMap::new();
-    for (alias, canonical) in builtin_aliases() {
-        map.entry(canonical).or_default().push(alias);
-    }
-    for aliases in map.values_mut() {
-        aliases.sort();
-    }
-    map
-}
-
 fn build_builtin_tool_display_map(config: &crate::config::Config) -> HashMap<String, String> {
     crate::tools::build_runtime_tool_display_map(config)
 }
@@ -6343,7 +6355,6 @@ fn normalize_tool_stats(
     tool_stats: Vec<HashMap<String, Value>>,
     config: &crate::config::Config,
 ) -> Vec<HashMap<String, Value>> {
-    let display_map = build_builtin_tool_display_map(config);
     let builtin_names = builtin_tool_names();
     let mut merged: HashMap<String, i64> = HashMap::new();
     for item in tool_stats {
@@ -6381,10 +6392,9 @@ fn normalize_tool_stats(
         .into_iter()
         .map(|(name, calls)| {
             let mut entry = HashMap::new();
-            entry.insert(
-                "tool".to_string(),
-                json!(display_map.get(&name).cloned().unwrap_or(name)),
-            );
+            let display_name = crate::tools::resolve_runtime_tool_display_name(config, &name);
+            entry.insert("tool".to_string(), json!(display_name));
+            entry.insert("tool_name".to_string(), json!(name));
             entry.insert("calls".to_string(), json!(calls));
             entry
         })
