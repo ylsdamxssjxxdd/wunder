@@ -22,6 +22,7 @@
     },
     "tables": {
       "company_all_personnel": {
+        "name": "人员信息",
         "table": "人员信息",
         "description": "公司所有人员信息（全量50000），用于让模型自主筛选符合晋升条件的人选"
       }
@@ -39,12 +40,14 @@
     },
     "targets": {
       "product_docs": {
+        "name": "产品文档",
         "dataset_ids": [
           "089219ce2b7311f19ffc61c96bcdbe56"
         ],
         "description": "学校向量库"
       },
       "hr_docs": {
+        "name": "人资文档",
         "dataset_ids": [
           "64ad8a8c2b7211f19ffc61c96bcdbe56"
         ],

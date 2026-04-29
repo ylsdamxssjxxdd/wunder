@@ -35,7 +35,7 @@ def _normalize_max_rows(value: int) -> int:
 
 
 def _sanitize_tool_suffix(value: str) -> str:
-    normalized = re.sub(r"[^0-9a-zA-Z_]+", "_", value.strip().lower())
+    normalized = re.sub(r"\W+", "_", value.strip().lower(), flags=re.UNICODE)
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     if not normalized:
         normalized = "target"
@@ -45,12 +45,10 @@ def _sanitize_tool_suffix(value: str) -> str:
 
 
 def _build_tool_names(prefix: str, targets: Sequence[DbQueryTarget]) -> list[str]:
-    if len(targets) <= 1:
-        return [prefix]
     names: list[str] = []
     seen: dict[str, int] = {}
     for target in targets:
-        suffix = _sanitize_tool_suffix(target.key)
+        suffix = _sanitize_tool_suffix(target.name or target.table or target.key)
         count = seen.get(suffix, 0) + 1
         seen[suffix] = count
         if count > 1:

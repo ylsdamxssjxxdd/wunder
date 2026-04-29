@@ -215,7 +215,10 @@ fn is_programmatic_tool_name(name: &str) -> bool {
 
 fn is_db_query_tool_name(name: &str) -> bool {
     let cleaned = name.trim().to_ascii_lowercase();
-    cleaned == "db_query" || cleaned.ends_with("@db_query")
+    cleaned == "db_query"
+        || cleaned.starts_with("db_query_")
+        || cleaned.ends_with("@db_query")
+        || cleaned.contains("@db_query_")
 }
 
 fn maybe_rewrite_python_content_args(

@@ -2437,8 +2437,8 @@ const leftRailMainSectionOptions = computed(() =>
     (item) =>
       item.key === 'messages' ||
       item.key === 'agents' ||
-      item.key === 'swarms' ||
-      item.key === 'orchestrations' ||
+      item.key === 'tools' ||
+      item.key === 'files' ||
       item.key === 'plaza'
   )
 );
@@ -2446,10 +2446,10 @@ const leftRailMainSectionOptions = computed(() =>
 const leftRailSocialSectionOptions = computed(() =>
   sectionOptions.value.filter(
     (item) =>
+      item.key === 'swarms' ||
+      item.key === 'orchestrations' ||
       item.key === 'users' ||
-      item.key === 'groups' ||
-      item.key === 'tools' ||
-      item.key === 'files'
+      item.key === 'groups'
   )
 );
 
@@ -2469,6 +2469,10 @@ const resolveLeftNavButtonLabel = (section: MessengerSection): string => {
       return t('messenger.section.orchestrations');
     case 'plaza':
       return t('messenger.section.plaza.short');
+    case 'tools':
+      return t('messenger.section.tools');
+    case 'files':
+      return t('messenger.section.files');
     default:
       return '';
   }
@@ -2736,10 +2740,10 @@ const {
 const isLeftRailMoreActive = computed(
   () =>
     leftRailMoreExpanded.value ||
+    isLeftNavSectionActive('swarms') ||
+    isLeftNavSectionActive('orchestrations') ||
     isLeftNavSectionActive('users') ||
     isLeftNavSectionActive('groups') ||
-    isLeftNavSectionActive('tools') ||
-    isLeftNavSectionActive('files') ||
     isLeftNavSectionActive('more') ||
     isHelperAppsMiddlePaneActive.value
 );

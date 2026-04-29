@@ -64,6 +64,10 @@ import {
   findPendingAssistantMessage,
   stopPendingAssistantMessage
 } from './chatPendingMessage';
+import {
+  captureChatSnapshotScheduleContext,
+  resolveChatSnapshotScheduleSource
+} from './chatSnapshotScheduler';
 import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
 import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
@@ -1602,6 +1606,7 @@ const SNAPSHOT_MESSAGE_LIMIT = 200;
 const MAX_SNAPSHOT_MESSAGES = 50;
 const SNAPSHOT_MATCH_WINDOW_MS = 2000;
 let snapshotTimer = null;
+let pendingSnapshotContext = null;
 let pageUnloading = false;
 
 const getDesktopOverlayBridge = (): DesktopOverlayBridge | null => {
@@ -1969,18 +1974,18 @@ const buildSnapshotMessages = (messages = []) => {
     .filter(Boolean);
 };
 
-const buildChatSnapshot = (storeState) => {
-  const sessionId = String(storeState.activeSessionId || '');
-  if (!sessionId) return null;
-  const sourceMessages = Array.isArray(storeState.messages) ? storeState.messages : [];
+const buildChatSnapshot = (sessionId, sourceMessages = []) => {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) return null;
+  const safeSourceMessages = Array.isArray(sourceMessages) ? sourceMessages : [];
   const trimmed =
-    sourceMessages.length > SNAPSHOT_MESSAGE_LIMIT
-      ? sourceMessages.slice(-SNAPSHOT_MESSAGE_LIMIT)
-      : sourceMessages;
+    safeSourceMessages.length > SNAPSHOT_MESSAGE_LIMIT
+      ? safeSourceMessages.slice(-SNAPSHOT_MESSAGE_LIMIT)
+      : safeSourceMessages;
   const messages = buildSnapshotMessages(trimmed);
   if (!messages.length) return null;
   return {
-    sessionId,
+    sessionId: normalizedSessionId,
     messages,
     updatedAt: Date.now()
   };
@@ -2049,41 +2054,70 @@ const clearAllChatSnapshots = () => {
   }
 };
 
+const flushScheduledChatSnapshot = (storeState, context = null) => {
+  const source = resolveChatSnapshotScheduleSource(storeState, context, (sessionId) => getSessionMessages(sessionId));
+  if (!source) {
+    return;
+  }
+  const snapshot = buildChatSnapshot(source.sessionId, source.messages);
+  if (snapshot) {
+    writeChatSnapshot(snapshot);
+  }
+};
+
 const scheduleChatSnapshot = (storeState, immediate = false) => {
+  pendingSnapshotContext = captureChatSnapshotScheduleContext(storeState);
   const flush = () => {
     if (!chatPerf.enabled()) {
-      const snapshot = buildChatSnapshot(storeState);
-      if (snapshot) {
-        writeChatSnapshot(snapshot);
-      }
+      flushScheduledChatSnapshot(storeState, pendingSnapshotContext);
       return;
     }
     const start = performance.now();
-    const snapshot = buildChatSnapshot(storeState);
-    if (snapshot) {
-      writeChatSnapshot(snapshot);
-    }
+    flushScheduledChatSnapshot(storeState, pendingSnapshotContext);
     chatPerf.recordDuration('chat_snapshot_flush', performance.now() - start, {
       messageCount: Array.isArray(storeState?.messages) ? storeState.messages.length : 0
     });
   };
   if (immediate) {
+    if (snapshotTimer !== null) {
+      clearTimeout(snapshotTimer);
+      snapshotTimer = null;
+    }
     flush();
+    pendingSnapshotContext = null;
     return;
   }
   if (snapshotTimer !== null) return;
   snapshotTimer = setTimeout(() => {
+    const scheduledContext = pendingSnapshotContext;
+    pendingSnapshotContext = null;
     snapshotTimer = null;
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(
         () => {
-          flush();
+          if (!chatPerf.enabled()) {
+            flushScheduledChatSnapshot(storeState, scheduledContext);
+            return;
+          }
+          const start = performance.now();
+          flushScheduledChatSnapshot(storeState, scheduledContext);
+          chatPerf.recordDuration('chat_snapshot_flush', performance.now() - start, {
+            messageCount: Array.isArray(storeState?.messages) ? storeState.messages.length : 0
+          });
         },
         { timeout: SNAPSHOT_IDLE_TIMEOUT_MS }
       );
       return;
     }
-    flush();
+    if (!chatPerf.enabled()) {
+      flushScheduledChatSnapshot(storeState, scheduledContext);
+      return;
+    }
+    const start = performance.now();
+    flushScheduledChatSnapshot(storeState, scheduledContext);
+    chatPerf.recordDuration('chat_snapshot_flush', performance.now() - start, {
+      messageCount: Array.isArray(storeState?.messages) ? storeState.messages.length : 0
+    });
   }, SNAPSHOT_FLUSH_MS);
 };
 
@@ -10908,8 +10942,12 @@ export const useChatStore = defineStore('chat', {
         this.activeSessionId = targetSessionId;
       }
       getHistoryState(targetSessionId, { reset: true });
+      const knownSessionRecord =
+        this.sessions.find((item) => resolveSessionKey(item?.id) === targetSessionId) || null;
       const cachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(targetSessionId));
-      const snapshot = this.getSnapshotForSession(targetSessionId);
+      const snapshot = previousSessionKey && previousSessionKey !== targetSessionId
+        ? null
+        : this.getSnapshotForSession(targetSessionId);
       if (cachedSessionMessages?.length) {
         this.messages = ensureGreetingMessage(cachedSessionMessages, {
           greeting: this.greetingOverride
@@ -10921,6 +10959,12 @@ export const useChatStore = defineStore('chat', {
           .filter(Boolean)
         );
         this.messages = ensureGreetingMessage(cachedMessages, {
+          greeting: this.greetingOverride
+        });
+      } else if (!preserveWatcher) {
+        // Prevent a session switch from momentarily reusing the previous thread's foreground messages.
+        this.messages = ensureGreetingMessage([], {
+          createdAt: knownSessionRecord?.created_at,
           greeting: this.greetingOverride
         });
       }

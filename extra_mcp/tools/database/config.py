@@ -27,6 +27,7 @@ class DbConfig:
 @dataclass(frozen=True)
 class DbQueryTarget:
     key: str
+    name: str
     table: str
     description: str | None
     db_key: str | None
@@ -92,6 +93,7 @@ def _parse_query_target(
         description = description_map.get(key) or description_map.get(table)
         return DbQueryTarget(
             key=key,
+            name=table,
             table=table,
             description=description,
             db_key=None,
@@ -100,13 +102,17 @@ def _parse_query_target(
     if not isinstance(raw, dict):
         raise ValueError("database.tables entries must be strings or objects.")
 
-    table = str(raw.get("table") or raw.get("name") or "").strip()
+    table = str(raw.get("table") or "").strip()
     if not table:
         raise ValueError("database.tables entry is missing table.")
 
     key = str(raw.get("key") or key_hint or table).strip()
     if not key:
         raise ValueError("database.tables entry is missing key.")
+
+    name = str(raw.get("name") or table).strip()
+    if not name:
+        name = table
 
     description = raw.get("description") or raw.get("desc")
     if not description:
@@ -117,6 +123,7 @@ def _parse_query_target(
 
     return DbQueryTarget(
         key=key,
+        name=name,
         table=table,
         description=str(description) if description else None,
         db_key=db_key,

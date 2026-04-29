@@ -30,6 +30,7 @@ REQUEST_KEYS = {
 @dataclass(frozen=True)
 class KnowledgeTargetConfig:
     key: str
+    name: str
     base_url: str
     api_key: str | None
     dataset_ids: list[str]
@@ -128,10 +129,14 @@ def _parse_target_config(
     description_map: dict[str, str],
 ) -> KnowledgeTargetConfig:
     description = description_map.get(key)
+    name = key
     dataset_ids: list[str] = []
     target_request: dict[str, Any] = request_defaults
 
     if isinstance(raw, dict):
+        raw_name = str(raw.get("name") or "").strip()
+        if raw_name:
+            name = raw_name
         dataset_ids = _normalize_dataset_ids(
             raw.get("dataset_ids")
             or raw.get("dataset_id")
@@ -157,6 +162,7 @@ def _parse_target_config(
 
     return KnowledgeTargetConfig(
         key=key,
+        name=name,
         base_url=base_url,
         api_key=str(api_key) if api_key else None,
         dataset_ids=dataset_ids,

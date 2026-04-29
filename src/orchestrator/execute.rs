@@ -2542,7 +2542,10 @@ fn should_allow_extended_db_query_budget(question: &str) -> bool {
 
 fn is_db_query_tool_name(tool_name: &str) -> bool {
     let cleaned = tool_name.trim().to_lowercase();
-    cleaned == "db_query" || cleaned.ends_with("@db_query")
+    cleaned == "db_query"
+        || cleaned.starts_with("db_query_")
+        || cleaned.ends_with("@db_query")
+        || cleaned.contains("@db_query_")
 }
 
 fn is_memory_manager_tool_name(tool_name: &str, memory_manager_tool_name: &str) -> bool {

@@ -17,7 +17,7 @@ def _error_response(exc: Exception) -> dict[str, Any]:
 
 
 def _sanitize_tool_suffix(value: str) -> str:
-    normalized = re.sub(r"[^0-9a-zA-Z_]+", "_", value.strip().lower())
+    normalized = re.sub(r"\W+", "_", value.strip().lower(), flags=re.UNICODE)
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     if not normalized:
         normalized = "target"
@@ -26,13 +26,11 @@ def _sanitize_tool_suffix(value: str) -> str:
     return normalized
 
 
-def _build_tool_names(keys: list[str]) -> list[str]:
-    if len(keys) <= 1:
-        return ["kb_query"]
+def _build_tool_names(targets: list[KnowledgeTargetConfig]) -> list[str]:
     names: list[str] = []
     seen: dict[str, int] = {}
-    for key in keys:
-        suffix = _sanitize_tool_suffix(key)
+    for cfg in targets:
+        suffix = _sanitize_tool_suffix(cfg.name or cfg.key)
         count = seen.get(suffix, 0) + 1
         seen[suffix] = count
         if count > 1:
@@ -143,10 +141,9 @@ def register_tools(mcp: FastMCP) -> None:
         _register_generic_kb_query_tool(mcp)
         return
 
-    keys = list(targets.keys())
-    tool_names = _build_tool_names(keys)
-    for key, tool_name in zip(keys, tool_names):
-        cfg = targets[key]
+    target_list = [targets[key] for key in targets]
+    tool_names = _build_tool_names(target_list)
+    for cfg, tool_name in zip(target_list, tool_names):
         _register_bound_kb_query_tool(
             mcp=mcp,
             tool_name=tool_name,
