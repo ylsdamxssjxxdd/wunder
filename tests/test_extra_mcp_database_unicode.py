@@ -4,7 +4,10 @@ import unittest
 from pathlib import Path
 from uuid import uuid4
 
-import pymysql
+try:
+    import pymysql
+except ImportError:  # pragma: no cover - environment dependent
+    pymysql = None
 
 
 def _install_mcp_stub() -> None:
@@ -66,6 +69,8 @@ CHINESE_ROWS = [
 class ExtraMcpDatabaseUnicodeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        if pymysql is None:
+            raise unittest.SkipTest("pymysql unavailable")
         try:
             cls.cfg = get_db_config(None, "local_hr_mysql")
             cls.connection = pymysql.connect(
@@ -150,6 +155,17 @@ class ExtraMcpDatabaseUnicodeTests(unittest.TestCase):
         self.assertTrue(str(result["rows"][0]["month_label"]))
         self.assertEqual(int(result["rows"][0]["total"]), len(CHINESE_ROWS))
 
+    def test_execute_sql_sync_normalizes_fullwidth_date_format_separator(self) -> None:
+        sql = (
+            "SELECT DATE_FORMAT(CURRENT_DATE()，'%Y-%m') AS month_label, "
+            f"COUNT(*) AS total FROM {self.quoted_table}"
+        )
+        result = execute_sql_sync(self.cfg, sql, None, 10, False)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["columns"], ["month_label", "total"])
+        self.assertEqual(result["row_count"], 1)
+        self.assertEqual(int(result["rows"][0]["total"]), len(CHINESE_ROWS))
+
     def test_schema_helpers_preserve_chinese_column_names(self) -> None:
         described = describe_table_sync(self.cfg, self.table_name)
         compact = get_table_schema_compact_sync(self.cfg, self.table_name)
@@ -205,6 +221,30 @@ class ExtraMcpDatabaseUnicodeTests(unittest.TestCase):
         self.assertEqual(result["row_count"], 1)
         self.assertIn("month_label,total", text)
         self.assertIn(",", text)
+
+    def test_csv_export_normalizes_fullwidth_date_format_separator(self) -> None:
+        export_name = f"unicode_fullwidth_percent_{uuid4().hex}.csv"
+        sql = (
+            "SELECT DATE_FORMAT(CURRENT_DATE()，'%Y-%m') AS month_label, "
+            f"COUNT(*) AS total FROM {self.quoted_table}"
+        )
+        result = export_sql_to_file_sync(
+            self.cfg,
+            sql,
+            None,
+            target=None,
+            path=export_name,
+            export_format="csv",
+            sheet_name=None,
+            overwrite=True,
+        )
+        export_path = get_db_export_config().root / export_name
+        self.addCleanup(export_path.unlink, missing_ok=True)
+        text = export_path.read_text(encoding="utf-8-sig")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["columns"], ["month_label", "total"])
+        self.assertEqual(result["row_count"], 1)
+        self.assertIn("month_label,total", text)
 
     def test_bound_table_validation_accepts_unquoted_chinese_identifier(self) -> None:
         error = validate_sql_against_target_table(

@@ -3976,9 +3976,9 @@ onBeforeUnmount(() => {
 
 .tool-workflow-entry-title {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 1 1 72%;
   display: grid;
-  grid-template-columns: clamp(80px, 20%, 132px) minmax(0, 1fr);
+  grid-template-columns: minmax(104px, 25%) minmax(0, 1fr);
   align-items: center;
   column-gap: 6px;
 }
@@ -4005,7 +4005,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 760px) {
   .tool-workflow-entry-title {
-    grid-template-columns: clamp(72px, 30%, 114px) minmax(0, 1fr);
+    grid-template-columns: minmax(92px, 25%) minmax(0, 1fr);
     column-gap: 5px;
   }
 }
@@ -4110,13 +4110,13 @@ onBeforeUnmount(() => {
 
 .tool-workflow-entry-meta {
   margin-left: auto;
-  flex: 0 0 auto;
+  flex: 0 1 18ch;
   display: grid;
-  grid-template-columns: 12ch 6ch;
+  grid-template-columns: minmax(8ch, 11ch) minmax(4ch, 5ch);
   align-items: center;
   justify-content: end;
   justify-items: end;
-  column-gap: 10px;
+  column-gap: 8px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -4139,8 +4139,9 @@ onBeforeUnmount(() => {
 
 @media (max-width: 760px) {
   .tool-workflow-entry-meta {
-    grid-template-columns: 11ch 5ch;
-    column-gap: 8px;
+    flex-basis: 14ch;
+    grid-template-columns: minmax(7ch, 10ch) minmax(4ch, 5ch);
+    column-gap: 6px;
   }
 }
 

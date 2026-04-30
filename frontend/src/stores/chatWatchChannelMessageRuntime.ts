@@ -1,5 +1,7 @@
 type ChatWatchMessage = Record<string, any>;
 
+import { hasAssistantWaitingForCurrentOutput } from '@/utils/assistantMessageRuntime';
+
 export type ChatWatchChannelMessageRuntimeOptions = {
   messages: ChatWatchMessage[];
   lastEventId: number;
@@ -65,7 +67,8 @@ const isStreamingAssistant = (message: ChatWatchMessage | null | undefined): boo
       (
         normalizeFlag(message?.stream_incomplete) ||
         normalizeFlag(message?.workflowStreaming) ||
-        normalizeFlag(message?.reasoningStreaming)
+        normalizeFlag(message?.reasoningStreaming) ||
+        hasAssistantWaitingForCurrentOutput(message)
       )
   );
 
@@ -112,6 +115,18 @@ const resolvePendingAssistantAnchorIndex = (
     return -1;
   }
   return messages.indexOf(pendingAssistant);
+};
+
+const resolveLatestAssistantAnchor = (
+  messages: ChatWatchMessage[]
+): ChatWatchMessage | null => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'assistant' && !message?.isGreeting) {
+      return message;
+    }
+  }
+  return null;
 };
 
 const normalizeMessageRole = (payload: Record<string, any> | null | undefined): string =>
@@ -237,9 +252,15 @@ export const consumeChatWatchChannelMessage = (
       hiddenInternal: options.hiddenInternalUser === true
     });
     options.assignStreamEventId(userMessage, options.eventId);
-    const anchorIndex = resolvePendingAssistantAnchorIndex(options.messages);
-    if (anchorIndex >= 0) {
-      options.messages.splice(anchorIndex, 0, userMessage);
+    const pendingAnchorIndex = resolvePendingAssistantAnchorIndex(options.messages);
+    const fallbackAssistantAnchor = pendingAnchorIndex >= 0 ? null : resolveLatestAssistantAnchor(options.messages);
+    if (pendingAnchorIndex >= 0) {
+      options.messages.splice(pendingAnchorIndex, 0, userMessage);
+    } else if (fallbackAssistantAnchor) {
+      options.insertWatchUserMessage(content, options.eventTimestampMs, fallbackAssistantAnchor, {
+        hiddenInternal: options.hiddenInternalUser === true
+      });
+      return { handled: true, lastEventId: nextLastEventId, mutated: true };
     } else {
       options.messages.push(userMessage);
     }

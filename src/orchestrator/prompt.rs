@@ -134,15 +134,17 @@ impl Orchestrator {
         let ws_placeholder = "/workspaces/{user_id}/";
         let ws_actual = format!("/workspaces/{workspace_id}/");
         for spec in specs {
-            let preferred = select_preferred_tool_name(&spec.name, &canonical_aliases);
-            let sanitized = sanitize_function_name(&preferred);
-            let function_name =
-                ensure_unique_function_name(&sanitized, &spec.name, &mut used_names);
             let runtime_name = name_map
                 .get(&spec.name)
                 .cloned()
                 .unwrap_or_else(|| spec.name.clone());
-            name_map.insert(function_name.clone(), runtime_name);
+            let function_name = build_model_function_name(
+                &spec.name,
+                &runtime_name,
+                &canonical_aliases,
+                &mut used_names,
+            );
+            name_map.insert(function_name.clone(), runtime_name.clone());
             let display_name = if function_name == spec.name {
                 spec.title
                     .as_deref()
@@ -433,6 +435,36 @@ fn select_preferred_tool_name(
     name.to_string()
 }
 
+fn build_model_function_name(
+    spec_name: &str,
+    runtime_name: &str,
+    canonical_aliases: &HashMap<String, Vec<String>>,
+    used: &mut HashSet<String>,
+) -> String {
+    let runtime_name = runtime_name.trim();
+    let use_runtime_name = should_use_runtime_name_for_model(runtime_name);
+    let preferred = if use_runtime_name {
+        runtime_name.to_string()
+    } else {
+        select_preferred_tool_name(spec_name, canonical_aliases)
+    };
+    let sanitized = if use_runtime_name {
+        sanitize_runtime_function_name(&preferred)
+    } else {
+        sanitize_function_name(&preferred)
+    };
+    let original = if runtime_name.is_empty() {
+        spec_name
+    } else {
+        runtime_name
+    };
+    ensure_unique_function_name(&sanitized, original, used)
+}
+
+fn should_use_runtime_name_for_model(runtime_name: &str) -> bool {
+    runtime_name.contains('@')
+}
+
 fn is_valid_function_name(name: &str) -> bool {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -444,9 +476,29 @@ fn is_valid_function_name(name: &str) -> bool {
 }
 
 fn sanitize_function_name(name: &str) -> String {
+    sanitize_function_name_inner(name, false)
+}
+
+fn sanitize_runtime_function_name(name: &str) -> String {
+    sanitize_function_name_inner(name, true)
+}
+
+fn sanitize_function_name_inner(name: &str, preserve_at_separator: bool) -> String {
     let mut output = String::new();
     let mut last_underscore = false;
     for ch in name.chars() {
+        if preserve_at_separator && ch == '@' {
+            if output.is_empty() {
+                last_underscore = true;
+                continue;
+            }
+            if !output.ends_with('_') {
+                output.push('_');
+            }
+            output.push('_');
+            last_underscore = true;
+            continue;
+        }
         let mapped = if ch.is_ascii_alphanumeric() {
             ch.to_ascii_lowercase()
         } else if ch == '_' || ch == '-' {
@@ -604,6 +656,67 @@ mod tests {
             "C:/workspace/demo",
         );
         assert_eq!(reused, None);
+    }
+
+    #[test]
+    fn model_function_name_uses_readable_runtime_name_for_mcp_tools() {
+        let canonical_aliases = HashMap::new();
+        let mut used = HashSet::new();
+        let function_name = build_model_function_name(
+            "MCP Query (Sample)",
+            "extra_mcp@db_query_sample_table",
+            &canonical_aliases,
+            &mut used,
+        );
+
+        assert_eq!(function_name, "extra_mcp__db_query_sample_table");
+        assert!(!function_name.starts_with("tool_"));
+    }
+
+    #[test]
+    fn model_function_name_map_routes_mcp_safe_name_to_runtime() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            tool_specs: vec![McpToolSpec {
+                name: "db_query_sample_table".to_string(),
+                title: Some("Sample Query".to_string()),
+                description: String::new(),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
+            }],
+            ..Default::default()
+        }];
+        let allowed = HashSet::from(["extra_mcp@db_query_sample_table".to_string()]);
+        let mut name_map = build_prompt_tool_name_map(&config, &allowed);
+        let runtime_name = name_map
+            .get("Sample Query")
+            .cloned()
+            .expect("display alias maps to runtime name");
+        let mut used = HashSet::new();
+        let function_name =
+            build_model_function_name("Sample Query", &runtime_name, &HashMap::new(), &mut used);
+        name_map.insert(function_name.clone(), runtime_name);
+
+        assert_eq!(function_name, "extra_mcp__db_query_sample_table");
+        assert_eq!(
+            name_map
+                .get("extra_mcp__db_query_sample_table")
+                .map(String::as_str),
+            Some("extra_mcp@db_query_sample_table")
+        );
+    }
+
+    #[test]
+    fn model_function_name_keeps_builtin_alias_behavior() {
+        let mut canonical_aliases = HashMap::new();
+        canonical_aliases.insert("读取文件".to_string(), vec!["read_file".to_string()]);
+        let mut used = HashSet::new();
+        let function_name =
+            build_model_function_name("读取文件", "读取文件", &canonical_aliases, &mut used);
+
+        assert_eq!(function_name, "read_file");
     }
 
     #[test]

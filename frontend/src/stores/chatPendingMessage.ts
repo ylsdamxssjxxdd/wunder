@@ -1,3 +1,5 @@
+import { hasAssistantWaitingForCurrentOutput } from '@/utils/assistantMessageRuntime';
+
 type ChatMessage = Record<string, any>;
 
 const normalizeFlag = (value: unknown): boolean => {
@@ -15,7 +17,8 @@ const isAssistantRuntimeMarkedRunning = (message: ChatMessage | null | undefined
     (
       normalizeFlag(message.stream_incomplete) ||
       normalizeFlag(message.workflowStreaming) ||
-      normalizeFlag(message.reasoningStreaming)
+      normalizeFlag(message.reasoningStreaming) ||
+      hasAssistantWaitingForCurrentOutput(message)
     )
   );
 
@@ -31,11 +34,44 @@ const resolveLatestUserIndex = (messages: ChatMessage[]): number => {
 export const isPendingAssistantMessage = (message: ChatMessage | null | undefined): boolean =>
   isAssistantRuntimeMarkedRunning(message);
 
+const ensureAssistantInteractionEnded = (message: ChatMessage): void => {
+  const waitingUpdatedAtMs = Number(
+    message?.waiting_updated_at_ms ??
+      message?.waitingUpdatedAtMs ??
+      message?.stats?.interaction_start_ms ??
+      message?.stats?.interactionStartMs ??
+      0
+  );
+  const terminalAtMs = Number.isFinite(waitingUpdatedAtMs) && waitingUpdatedAtMs > 0
+    ? Math.max(waitingUpdatedAtMs, Date.now())
+    : Date.now();
+  if (!message.stats || typeof message.stats !== 'object') {
+    message.stats = {};
+  }
+  if (!Number.isFinite(Number(message.stats.interaction_start_ms)) && Number.isFinite(waitingUpdatedAtMs) && waitingUpdatedAtMs > 0) {
+    message.stats.interaction_start_ms = waitingUpdatedAtMs;
+  }
+  const currentEndMs = Number(
+    message.stats.interaction_end_ms ??
+      message.stats.interactionEndMs ??
+      message.stats.interaction_end ??
+      message.stats.ended_at ??
+      0
+  );
+  message.stats.interaction_end_ms =
+    Number.isFinite(currentEndMs) && currentEndMs > 0
+      ? Math.max(currentEndMs, terminalAtMs)
+      : terminalAtMs;
+};
+
 export const stopPendingAssistantMessage = (message: ChatMessage | null | undefined): boolean => {
   if (!isAssistantRuntimeMarkedRunning(message)) return false;
   message.stream_incomplete = false;
   message.workflowStreaming = false;
   message.reasoningStreaming = false;
+  if (hasAssistantWaitingForCurrentOutput(message)) {
+    ensureAssistantInteractionEnded(message);
+  }
   return true;
 };
 

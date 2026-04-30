@@ -71,6 +71,7 @@ import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
   findPendingAssistantMessage,
+  isPendingAssistantMessage,
   stopPendingAssistantMessage
 } from './chatPendingMessage';
 import {
@@ -2432,7 +2433,7 @@ const findSnapshotAssistantIndex = (target, targetEntry, snapshotAssistants, cur
     }
   }
   const isPendingTarget =
-    normalizeFlag(target.stream_incomplete) || !normalizeAssistantContent(target.content || '');
+    isPendingAssistantMessage(target) || !normalizeAssistantContent(target.content || '');
   if (isPendingTarget || !Number.isFinite(targetTime)) {
     const fallbackEntry = snapshotAssistants[cursor];
     const fallback = fallbackEntry?.message;
@@ -2445,8 +2446,7 @@ const findSnapshotAssistantIndex = (target, targetEntry, snapshotAssistants, cur
     }
     const fallbackEventId = normalizeStreamEventId(fallback.stream_event_id);
     const fallbackRound = normalizeStreamRound(fallback.stream_round);
-    const fallbackPending =
-      normalizeFlag(fallback.stream_incomplete) || normalizeFlag(fallback.workflowStreaming);
+    const fallbackPending = isPendingAssistantMessage(fallback);
     if (targetEventId !== null && fallbackEventId !== null && targetEventId === fallbackEventId) {
       return cursor;
     }
@@ -2527,7 +2527,7 @@ const findSnapshotAssistantIndexExcluding = (
   }
   // Fallback: for pending / incomplete targets, try the last unmatched position
   const isPendingTarget =
-    normalizeFlag(target.stream_incomplete) || !normalizeAssistantContent(target.content || '');
+    isPendingAssistantMessage(target) || !normalizeAssistantContent(target.content || '');
   if (isPendingTarget || !Number.isFinite(targetTime)) {
     for (let i = snapshotAssistants.length - 1; i >= 0; i -= 1) {
       if (excludedIndices.has(i)) continue;
@@ -2540,8 +2540,7 @@ const findSnapshotAssistantIndexExcluding = (
       if (isCompactionMarkerAssistantMessage(snapshot) !== targetIsCompactionMarker) continue;
       const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
       const snapshotRound = normalizeStreamRound(snapshot.stream_round);
-      const snapshotPending =
-        normalizeFlag(snapshot.stream_incomplete) || normalizeFlag(snapshot.workflowStreaming);
+      const snapshotPending = isPendingAssistantMessage(snapshot);
       if (targetEventId !== null && snapshotEventId !== null && targetEventId === snapshotEventId) {
         return i;
       }
@@ -5124,7 +5123,7 @@ const notifySessionSnapshot = (store, sessionId, messages, immediate = false, op
 const shouldPreferCachedMessages = (cached, server) => {
   if (!Array.isArray(cached) || cached.length === 0) return false;
   if (!Array.isArray(server) || server.length === 0) return true;
-  if (cached.some((message) => message?.stream_incomplete || message?.workflowStreaming)) {
+  if (cached.some((message) => isPendingAssistantMessage(message))) {
     return true;
   }
   const cachedLastAssistant = [...cached].reverse().find((message) => message?.role === 'assistant');
@@ -5181,9 +5180,11 @@ const clearCompletedAssistantStreamingState = (
     ) {
       return;
     }
-    message.workflowStreaming = false;
-    message.stream_incomplete = false;
-    message.reasoningStreaming = false;
+    if (!stopPendingAssistantMessage(message)) {
+      message.workflowStreaming = false;
+      message.stream_incomplete = false;
+      message.reasoningStreaming = false;
+    }
     clearAssistantRetryState(message);
   });
 };
@@ -5194,7 +5195,7 @@ const countAssistantStreamingMessages = (messages) => {
     if (!message || message.role !== 'assistant') {
       return count;
     }
-    return count + (message.workflowStreaming || message.stream_incomplete || message.reasoningStreaming ? 1 : 0);
+    return count + (isPendingAssistantMessage(message) ? 1 : 0);
   }, 0);
 };
 
@@ -5337,11 +5338,7 @@ const isForegroundRealtimeAssistant = (message) =>
     message &&
       message.role === 'assistant' &&
       !message.isGreeting &&
-      (
-        normalizeFlag(message.stream_incomplete) ||
-        normalizeFlag(message.workflowStreaming) ||
-        normalizeFlag(message.reasoningStreaming)
-      )
+      isPendingAssistantMessage(message)
   );
 
 const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages) => {

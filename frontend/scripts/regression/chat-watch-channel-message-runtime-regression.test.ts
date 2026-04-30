@@ -106,6 +106,62 @@ test('watch channel runtime inserts user sideband before a pending assistant she
   assert.equal(messages[3].stream_incomplete, true);
 });
 
+test('watch channel runtime reinserts late user sideband before the latest assistant when no pending shell remains', () => {
+  const messages: Record<string, any>[] = [
+    { role: 'user', content: 'old question', created_at: '2026-04-30T02:11:58.000Z' },
+    { role: 'assistant', content: 'old answer', created_at: '2026-04-30T02:11:59.000Z' },
+    {
+      role: 'assistant',
+      content: '50,000',
+      created_at: '2026-04-30T02:12:05.000Z',
+      stream_event_id: 80,
+      stream_incomplete: false,
+      workflowStreaming: false,
+      reasoningStreaming: false
+    }
+  ];
+  let insertedAnchorRole = '';
+  const result = consumeChatWatchChannelMessage({
+    messages,
+    lastEventId: 80,
+    eventId: 81,
+    eventTimestampMs: Date.parse('2026-04-30T02:12:03.000Z'),
+    payload: { role: 'user', content: '有多少人？' },
+    data: { role: 'user', content: '有多少人？' },
+    normalizeEventId,
+    buildMessage,
+    assignStreamEventId: (message, eventId) => {
+      message.stream_event_id = eventId;
+    },
+    insertWatchUserMessage: (content, timestampMs, anchor, options = {}) => {
+      insertedAnchorRole = String(anchor?.role || '');
+      const userMessage: Record<string, any> = buildMessage('user', content, new Date(Number(timestampMs)).toISOString(), {
+        hiddenInternal: Boolean((options as Record<string, unknown>).hiddenInternal)
+      });
+      userMessage.stream_event_id = 81;
+      const anchorIndex = anchor ? messages.indexOf(anchor) : -1;
+      if (anchorIndex >= 0) {
+        messages.splice(anchorIndex, 0, userMessage);
+      } else {
+        messages.push(userMessage);
+      }
+    },
+    clearSupersededPendingAssistantMessages: () => {},
+    dismissStaleInquiryPanels: () => {},
+    touchUpdatedAt: () => {},
+    notifySnapshot: () => {},
+    dedupeAssistantWindowMs: 2000
+  });
+
+  assert.deepEqual(result, { handled: true, lastEventId: 81, mutated: true });
+  assert.equal(insertedAnchorRole, 'assistant');
+  assert.deepEqual(
+    messages.map((message) => `${message.role}:${message.content}`),
+    ['user:old question', 'assistant:old answer', 'user:有多少人？', 'assistant:50,000']
+  );
+  assert.equal(messages[2].stream_event_id, 81);
+});
+
 test('watch channel runtime dedupes repeated assistant messages without event ids', () => {
   const messages = [
     {

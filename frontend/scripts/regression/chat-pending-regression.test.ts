@@ -97,6 +97,35 @@ test('stops an assistant that only retains workflow and reasoning streaming flag
   assert.equal(pending.reasoningStreaming, false);
 });
 
+test('finds waiting-first-output assistant as pending and stops it with terminal interaction stats', () => {
+  const startedAt = Date.UTC(2026, 3, 30, 2, 12, 0);
+  const pending = {
+    role: 'assistant',
+    content: '',
+    stream_incomplete: false,
+    workflowStreaming: false,
+    reasoningStreaming: false,
+    waiting_updated_at_ms: startedAt,
+    waiting_first_output_at_ms: null,
+    waiting_phase_first_output_at_ms: null,
+    stats: {
+      interaction_start_ms: startedAt,
+      interaction_end_ms: null
+    }
+  };
+  const messages = [
+    { role: 'user', content: 'turn' },
+    pending
+  ];
+  assert.equal(findPendingAssistantMessage(messages), pending);
+  assert.equal(stopPendingAssistantMessage(pending), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+  assert.ok(Number(pending.stats?.interaction_end_ms) >= startedAt);
+  assert.equal(findPendingAssistantMessage(messages), null);
+});
+
 test('clears all trailing pending assistants in current user turn', () => {
   const firstPending = { role: 'assistant', stream_incomplete: true };
   const secondPending = { role: 'assistant', workflowStreaming: true, reasoningStreaming: true };

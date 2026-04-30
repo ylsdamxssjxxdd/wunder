@@ -5,6 +5,13 @@ use crate::schemas::{
 use crate::tools::build_mcp_tool_alias_entries_for_names;
 use std::collections::{HashMap, HashSet};
 
+fn preferred_mcp_tool_display_name(spec: &ToolSpec) -> Option<&str> {
+    spec.title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
 fn ability_source_key(source: AbilitySourceKey) -> &'static str {
     match source {
         AbilitySourceKey::Builtin => "builtin",
@@ -111,9 +118,14 @@ fn push_tool_specs(
             kind,
             owner_id,
             false,
-            display_name_map
-                .and_then(|map| map.get(spec.name.trim()))
-                .map(String::as_str),
+            (matches!(group, AbilityGroupKey::Mcp))
+                .then(|| preferred_mcp_tool_display_name(spec))
+                .flatten()
+                .or_else(|| {
+                    display_name_map
+                        .and_then(|map| map.get(spec.name.trim()))
+                        .map(String::as_str)
+                }),
         );
         if seen_ids.insert(descriptor.id.clone()) {
             items.push(descriptor);
@@ -280,6 +292,40 @@ mod tests {
         assert_eq!(items[0].runtime_name, "extra_mcp@db_query_人员信息");
         assert_eq!(items[0].name, "extra_mcp@db_query_人员信息");
         assert_eq!(items[0].display_name, "db_query_人员信息");
+    }
+
+    #[test]
+    fn build_ability_items_prefers_tool_title_for_mcp_display_name() {
+        let mut spec = sample_spec("extra_mcp@db_query_company_all_personnel");
+        spec.title = Some("数据库查询（人员信息）".to_string());
+        let response = AvailableToolsResponse {
+            builtin_tools: vec![],
+            mcp_tools: vec![spec],
+            a2a_tools: vec![],
+            skills: vec![],
+            knowledge_tools: vec![],
+            user_tools: vec![],
+            admin_builtin_tools: vec![],
+            admin_mcp_tools: vec![],
+            admin_a2a_tools: vec![],
+            admin_skills: vec![],
+            admin_knowledge_tools: vec![],
+            user_mcp_tools: vec![],
+            user_skills: vec![],
+            user_knowledge_tools: vec![],
+            default_agent_tool_names: vec![],
+            shared_tools: vec![],
+            shared_tools_selected: None,
+            items: vec![],
+        };
+
+        let items = build_ability_items(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].runtime_name,
+            "extra_mcp@db_query_company_all_personnel"
+        );
+        assert_eq!(items[0].display_name, "数据库查询（人员信息）");
     }
 
     #[test]

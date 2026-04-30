@@ -149,6 +149,37 @@ test('prompt tooling preview tolerates display-only llm tool name map entries', 
   );
 });
 
+test('prompt tooling preview keeps wrapped MCP tools on plug icon', () => {
+  const preview = extractPromptToolingPreview({
+    tooling_preview: {
+      selected_tool_names: ['extra_mcp@db_export_company_all_personnel'],
+      selected_tool_display_map: {
+        'extra_mcp@db_export_company_all_personnel': '数据库导出（人员信息）'
+      },
+      llm_tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_856773',
+            description: '将表数据导出为 xlsx 或 csv 文件。'
+          }
+        }
+      ],
+      llm_tool_name_map: {
+        tool_856773: '数据库导出（人员信息）',
+        'extra_mcp@db_export_company_all_personnel': '数据库导出（人员信息）'
+      }
+    }
+  });
+
+  const item = preview.items.find((entry) => entry.name === '数据库导出（人员信息）');
+  assert.ok(item);
+  assert.equal(item?.protocolName, 'tool_856773');
+  assert.equal(item?.group, 'mcp');
+  assert.equal(item?.source, 'mcp');
+  assert.equal(resolveAbilityVisual(item || {}).icon, 'fa-plug');
+});
+
 test('prompt tooling preview raw json prefers actual model request payload', () => {
   const preview = extractPromptToolingPreview({
     tooling_preview: {

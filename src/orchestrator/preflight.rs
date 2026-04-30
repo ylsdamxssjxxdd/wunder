@@ -158,7 +158,7 @@ impl Orchestrator {
             return PreflightDecision::Pass;
         }
 
-        if is_db_query_tool_name(tool_name) {
+        if is_database_sql_tool_name(tool_name) {
             if let Some(sql) = extract_text_field(args, "sql") {
                 let normalized = normalize_sql_punctuation(sql);
                 if normalized != sql {
@@ -213,12 +213,16 @@ fn is_programmatic_tool_name(name: &str) -> bool {
         || cleaned == resolve_tool_name("programmatic_tool_call")
 }
 
-fn is_db_query_tool_name(name: &str) -> bool {
+fn is_database_sql_tool_name(name: &str) -> bool {
     let cleaned = name.trim().to_ascii_lowercase();
     cleaned == "db_query"
         || cleaned.starts_with("db_query_")
         || cleaned.ends_with("@db_query")
         || cleaned.contains("@db_query_")
+        || cleaned == "db_export"
+        || cleaned.starts_with("db_export_")
+        || cleaned.ends_with("@db_export")
+        || cleaned.contains("@db_export_")
 }
 
 fn maybe_rewrite_python_content_args(
@@ -551,10 +555,41 @@ fn has_unbalanced_python_brackets(script: &str) -> bool {
 }
 
 fn normalize_sql_punctuation(sql: &str) -> String {
-    sql.replace('\u{FF0C}', ",")
-        .replace('\u{FF1B}', ";")
-        .replace('\u{FF08}', "(")
-        .replace('\u{FF09}', ")")
+    let mut output = String::with_capacity(sql.len());
+    let mut quote: Option<char> = None;
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if let Some(active_quote) = quote {
+            output.push(ch);
+            if ch == '\\' && matches!(active_quote, '\'' | '"') {
+                if let Some(next) = chars.next() {
+                    output.push(next);
+                }
+            } else if ch == active_quote {
+                if chars.peek() == Some(&active_quote) {
+                    if let Some(next) = chars.next() {
+                        output.push(next);
+                    }
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' | '`' => {
+                quote = Some(ch);
+                output.push(ch);
+            }
+            '\u{FF0C}' => output.push(','),
+            '\u{FF1B}' => output.push(';'),
+            '\u{FF08}' => output.push('('),
+            '\u{FF09}' => output.push(')'),
+            _ => output.push(ch),
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -562,7 +597,8 @@ mod tests {
     use super::{
         dedent_common_leading_indent, detect_bad_heredoc_line, detect_large_printf_script,
         detect_non_standard_python_indentation, expand_two_space_indentation,
-        has_unbalanced_python_brackets, normalize_leading_tabs, normalize_sql_punctuation,
+        has_unbalanced_python_brackets, is_database_sql_tool_name, normalize_leading_tabs,
+        normalize_sql_punctuation,
     };
 
     #[test]
@@ -597,6 +633,28 @@ mod tests {
             normalize_sql_punctuation(sql),
             "SELECT a,b FROM t WHERE id(1);"
         );
+    }
+
+    #[test]
+    fn normalizes_fullwidth_sql_punctuation_outside_literals_only() {
+        let sql = "SELECT DATE_FORMAT(d\u{FF0C}'%Y%m%d') AS `列，名` WHERE note = '甲，乙'";
+        assert_eq!(
+            normalize_sql_punctuation(sql),
+            "SELECT DATE_FORMAT(d,'%Y%m%d') AS `列，名` WHERE note = '甲，乙'"
+        );
+    }
+
+    #[test]
+    fn detects_database_sql_tools_for_preflight() {
+        assert!(is_database_sql_tool_name("db_query"));
+        assert!(is_database_sql_tool_name(
+            "extra_mcp@db_query_company_all_personnel"
+        ));
+        assert!(is_database_sql_tool_name("db_export"));
+        assert!(is_database_sql_tool_name(
+            "extra_mcp@db_export_company_all_personnel"
+        ));
+        assert!(!is_database_sql_tool_name("execute_command"));
     }
 
     #[test]

@@ -13,6 +13,12 @@ from .config import DbConfig
 
 READ_ONLY_PREFIXES = ("select", "show", "describe", "explain", "with")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+FULLWIDTH_SQL_PUNCTUATION = {
+    "，": ",",
+    "；": ";",
+    "（": "(",
+    "）": ")",
+}
 
 
 def _is_container_runtime() -> bool:
@@ -111,6 +117,35 @@ def _strip_sql_comments(sql: str) -> str:
             text = "" if end_idx == -1 else text[end_idx + 2 :].lstrip()
             continue
         return text
+
+
+def normalize_sql_punctuation(sql: str) -> str:
+    output: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(sql):
+        char = sql[i]
+        if quote is not None:
+            output.append(char)
+            if char == "\\" and quote in {"'", '"'} and i + 1 < len(sql):
+                i += 1
+                output.append(sql[i])
+            elif char == quote:
+                if i + 1 < len(sql) and sql[i + 1] == quote:
+                    i += 1
+                    output.append(sql[i])
+                else:
+                    quote = None
+            i += 1
+            continue
+
+        if char in {"'", '"', "`"}:
+            quote = char
+            output.append(char)
+        else:
+            output.append(FULLWIDTH_SQL_PUNCTUATION.get(char, char))
+        i += 1
+    return "".join(output)
 
 
 def _has_multiple_statements(sql: str) -> bool:
@@ -858,6 +893,7 @@ def execute_sql_sync(
     max_rows: int,
     allow_write: bool,
 ) -> dict[str, Any]:
+    sql = normalize_sql_punctuation(sql)
     if _has_multiple_statements(sql):
         return {"ok": False, "error": "不允许执行多条 SQL 语句。"}
     if not allow_write and not _is_read_only_sql(sql):

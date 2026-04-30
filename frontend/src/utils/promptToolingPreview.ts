@@ -75,6 +75,7 @@ type ToolMeta = {
   name: string;
   description: string;
   protocolName: string;
+  runtimeName?: string;
   displayOnly?: boolean;
 };
 
@@ -112,13 +113,15 @@ export const inferPromptToolingAbilityMeta = (value: {
   name?: unknown;
   description?: unknown;
   protocolName?: unknown;
+  runtimeName?: unknown;
 }): PromptToolingAbilityMeta => {
   const name = cleanText(value.name);
   const description = cleanText(value.description);
   const protocolName = cleanText(value.protocolName);
-  const text = [name, description, protocolName].filter(Boolean).join(' ');
+  const runtimeName = cleanText(value.runtimeName);
+  const text = [name, description, protocolName, runtimeName].filter(Boolean).join(' ');
 
-  if (protocolName.includes('@') || matchesKeyword(text, MCP_KEYWORDS)) {
+  if (protocolName.includes('@') || runtimeName.includes('@') || matchesKeyword(text, MCP_KEYWORDS)) {
     return {
       kind: 'tool',
       group: 'mcp',
@@ -192,6 +195,33 @@ const resolveSelectedToolMeta = (
   return candidates.find((item) => !item.displayOnly) || candidates[0] || null;
 };
 
+const resolveMappedProtocolNames = (
+  selectedName: string,
+  displayName: string,
+  llmToolNameMap: Record<string, unknown>
+): string[] => {
+  const normalizedSelected = normalizeKey(selectedName);
+  const normalizedDisplay = normalizeKey(displayName);
+  const output: string[] = [];
+  const seen = new Set<string>();
+  Object.entries(llmToolNameMap).forEach(([protocolName, mappedDisplayName]) => {
+    const normalizedProtocol = normalizeKey(protocolName);
+    if (!normalizedProtocol || normalizedProtocol === normalizedSelected) {
+      return;
+    }
+    const normalizedMapped = normalizeKey(mappedDisplayName);
+    if (
+      normalizedMapped &&
+      (normalizedMapped === normalizedDisplay || normalizedMapped === normalizedSelected) &&
+      !seen.has(protocolName)
+    ) {
+      seen.add(protocolName);
+      output.push(protocolName);
+    }
+  });
+  return output;
+};
+
 const buildPromptToolingDebugText = (tooling: Record<string, unknown>): string => {
   const modelRequest = asRecord(tooling.model_request);
   if (Object.keys(modelRequest).length > 0) {
@@ -241,7 +271,7 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
 
   const used = new Set<string>();
   const items: PromptToolingPreviewItem[] = [];
-  const appendItem = (displayName: string, tool?: ToolMeta | null) => {
+  const appendItem = (displayName: string, tool?: ToolMeta | null, runtimeName?: string) => {
     const name = cleanText(displayName) || cleanText(tool?.name) || cleanText(tool?.protocolName);
     if (!name) {
       return;
@@ -257,7 +287,8 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
     const meta = inferPromptToolingAbilityMeta({
       name,
       description: tool?.description,
-      protocolName
+      protocolName,
+      runtimeName: runtimeName || tool?.runtimeName
     });
     items.push({
       key: `${uniqueKey || 'tool'}-${items.length}`,
@@ -272,7 +303,13 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
 
   for (const selectedName of selectedToolNames) {
     const displayName = cleanText(selectedToolDisplayMap[selectedName]) || selectedName;
-    appendItem(displayName, resolveSelectedToolMeta(selectedName, displayName, byName, byProtocol));
+    const tool = resolveSelectedToolMeta(selectedName, displayName, byName, byProtocol);
+    const mappedProtocolNames = resolveMappedProtocolNames(selectedName, displayName, llmToolNameMap);
+    appendItem(
+      displayName,
+      tool ? { ...tool, runtimeName: selectedName } : tool,
+      [selectedName, ...mappedProtocolNames].filter(Boolean).join(' ')
+    );
   }
 
   for (const tool of resolvedTools) {

@@ -8,7 +8,13 @@ from typing import Any, Sequence
 from uuid import uuid4
 
 from .config import DbConfig, DbExportConfig, DbQueryTarget, get_db_export_config
-from .db import _has_multiple_statements, _is_read_only_sql, _normalize_value, open_connection
+from .db import (
+    _has_multiple_statements,
+    _is_read_only_sql,
+    _normalize_value,
+    normalize_sql_punctuation,
+    open_connection,
+)
 
 SUPPORTED_EXPORT_FORMATS = ("xlsx", "csv")
 INVALID_PATH_SEGMENT_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -37,7 +43,7 @@ def resolve_sql_request(
     sql: str | None,
     params: Sequence[Any] | None,
 ) -> tuple[str, list[Any] | None]:
-    sql_text = (sql or "").strip()
+    sql_text = normalize_sql_punctuation((sql or "").strip())
     if not sql_text:
         raise ValueError("SQL statement is required.")
     return sql_text, list(params) if params else None
@@ -333,7 +339,7 @@ def export_sql_to_file_sync(
     allow_limited_export: bool = False,
     allow_write: bool = False,
 ) -> dict[str, Any]:
-    sql_text = sql.strip()
+    sql_text = normalize_sql_punctuation(sql.strip())
     if not sql_text:
         raise ValueError("SQL statement cannot be empty.")
     _validate_export_sql(sql_text, allow_write, allow_limited_export)

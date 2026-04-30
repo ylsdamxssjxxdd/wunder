@@ -10,7 +10,12 @@ from pydantic import Field
 
 from ...common.async_utils import run_in_thread
 from .config import DbQueryTarget, get_db_config, load_db_query_targets
-from .db import execute_sql_sync, get_table_schema_compact_sync, validate_sql_against_target_table
+from .db import (
+    execute_sql_sync,
+    get_table_schema_compact_sync,
+    normalize_sql_punctuation,
+    validate_sql_against_target_table,
+)
 from .exporter import export_sql_to_file_sync, resolve_sql_request
 
 logger = logging.getLogger(__name__)
@@ -273,7 +278,7 @@ def _register_bound_db_query_tool(
         """执行 SQL 查询并返回紧凑结果。"""
         start = time.perf_counter()
         try:
-            sql_text = sql.strip()
+            sql_text = normalize_sql_punctuation(sql.strip())
             if not sql_text:
                 return {"ok": False, "error": "SQL 语句不能为空。"}
             cfg = get_db_config(None, target.db_key)
@@ -427,7 +432,7 @@ def _register_generic_db_query_tool(mcp: FastMCP) -> None:
         """执行 SQL 查询并返回紧凑结果。"""
         start = time.perf_counter()
         try:
-            sql_text = sql.strip()
+            sql_text = normalize_sql_punctuation(sql.strip())
             if not sql_text:
                 return {"ok": False, "error": "SQL 语句不能为空。"}
             cfg = get_db_config(None, None)
