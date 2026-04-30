@@ -1,6 +1,6 @@
 ---
 title: 聊天 WebSocket
-summary: `/wunder/chat/ws` 是 Wunder 聊天主实时通道；实时会话优先 WS，SSE 作为兜底。
+summary: `/wunder/chat/ws` 是 Wunder 聊天唯一实时通道；实时会话不再提供 SSE 兜底。
 read_when:
   - 你在开发聊天 UI 或桌面实时会话
   - 你要处理 start/resume/watch/cancel/approval
@@ -88,12 +88,12 @@ source_docs:
 - `resume`（补事件）和 `watch`（观察会话）不是同一个动作。
 - WS 审批只处理 `source=chat_ws` 的审批项。
 
-## 失败回退
+## 断线恢复
 
-WS 不可用时：
+WS 断线时不要回退到 SSE。客户端应重新连接 `/wunder/chat/ws`，再按场景发送：
 
-- 回退 `POST /wunder`（SSE）
-- 或回退 `GET /wunder/chat/sessions/{session_id}/resume`
+- `resume`：携带最后处理到的事件游标，补齐断线期间事件。
+- `watch`：重新观察当前会话运行态。
 
 ## 延伸阅读
 

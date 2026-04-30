@@ -10,23 +10,19 @@ use crate::schemas::StreamEvent;
 use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::Json;
 use axum::{routing::get, Router};
 use chrono::Utc;
-use futures::{SinkExt, Stream, StreamExt as WsStreamExt};
+use futures::{SinkExt, StreamExt as WsStreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -36,10 +32,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/beeroom/realtime/metrics",
             get(beeroom_realtime_metrics),
-        )
-        .route(
-            "/wunder/beeroom/groups/{group_id}/chat/stream",
-            get(beeroom_chat_stream),
         )
 }
 
@@ -54,18 +46,6 @@ struct WsWatchPayload {
 struct WsCancelPayload {
     #[serde(default)]
     target_request_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BeeroomStreamQuery {
-    #[serde(default)]
-    after_event_id: Option<i64>,
-    #[serde(default)]
-    access_token: Option<String>,
-    #[serde(default)]
-    token: Option<String>,
-    #[serde(default)]
-    user_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -98,116 +78,6 @@ async fn beeroom_ws(
                 connection_id,
             )
         }))
-}
-
-async fn beeroom_chat_stream(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    AxumPath(group_id): AxumPath<String>,
-    Query(query): Query<BeeroomStreamQuery>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, Response> {
-    let BeeroomStreamQuery {
-        after_event_id,
-        access_token,
-        token,
-        user_id,
-    } = query;
-    let auth_headers = apply_ws_auth_headers(
-        &headers,
-        &WsQuery {
-            access_token,
-            token,
-            user_id,
-        },
-    );
-    let resolved = resolve_user(&state, &auth_headers, None).await?;
-    let user_id = resolved.user.user_id;
-    let group = load_group(state.as_ref(), &user_id, &group_id)?;
-    let mut receiver = state
-        .projection
-        .beeroom
-        .subscribe_group(&user_id, &group.hive_id)
-        .await
-        .map_err(|err| {
-            crate::api::errors::error_response(StatusCode::BAD_REQUEST, err.to_string())
-        })?;
-    let current_event_id = resolve_after_event_id(&headers, after_event_id);
-    let normalized_group_id = group.hive_id.clone();
-    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(STREAM_EVENT_QUEUE_SIZE);
-    let state_snapshot = state.clone();
-    let user_snapshot = user_id.clone();
-
-    tokio::spawn(async move {
-        let mut cursor_event_id = current_event_id;
-        if replay_group_events_to_sse(
-            state_snapshot.clone(),
-            &user_snapshot,
-            &normalized_group_id,
-            &mut cursor_event_id,
-            &tx,
-        )
-        .await
-        .is_err()
-        {
-            return;
-        }
-        let watching_event = Event::default().event("watching").data(
-            json!({
-                "group_id": &normalized_group_id,
-                "after_event_id": cursor_event_id,
-            })
-            .to_string(),
-        );
-        if tx.send(Ok(watching_event)).await.is_err() {
-            return;
-        }
-        loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    if !should_forward_projection_event(
-                        &normalized_group_id,
-                        cursor_event_id,
-                        &event,
-                    ) {
-                        continue;
-                    }
-                    cursor_event_id = event.event_id;
-                    state_snapshot
-                        .projection
-                        .beeroom
-                        .record_push_latency_sample(event.created_at);
-                    let stream_event = Event::default()
-                        .event(event.event_type)
-                        .id(event.event_id.to_string())
-                        .data(event.payload.to_string());
-                    if tx.send(Ok(stream_event)).await.is_err() {
-                        return;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    state_snapshot.projection.beeroom.record_lag_recovery();
-                    if replay_group_events_to_sse(
-                        state_snapshot.clone(),
-                        &user_snapshot,
-                        &normalized_group_id,
-                        &mut cursor_event_id,
-                        &tx,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        return;
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    return;
-                }
-            }
-        }
-    });
-
-    Ok(Sse::new(ReceiverStream::new(rx))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
 async fn beeroom_realtime_metrics(
@@ -577,70 +447,6 @@ async fn replay_group_events_to_ws(
     }
 }
 
-async fn replay_group_events_to_sse(
-    state: Arc<AppState>,
-    user_id: &str,
-    group_id: &str,
-    cursor_event_id: &mut i64,
-    tx: &mpsc::Sender<Result<Event, Infallible>>,
-) -> Result<(), ()> {
-    // SSE fallback shares the same cursor-replay semantics as WS.
-    loop {
-        let events = match state
-            .projection
-            .beeroom
-            .list_group_events(
-                user_id,
-                group_id,
-                (*cursor_event_id).max(0),
-                BEEROOM_REPLAY_FETCH_LIMIT,
-            )
-            .await
-        {
-            Ok(events) => events,
-            Err(err) => {
-                state.projection.beeroom.record_replay_failure();
-                let sync_required = Event::default().event("sync_required").data(
-                    json!({
-                        "group_id": group_id,
-                        "reason": "replay_failed",
-                        "after_event_id": *cursor_event_id,
-                        "detail": err.to_string(),
-                    })
-                    .to_string(),
-                );
-                let _ = tx.send(Ok(sync_required)).await;
-                return Err(());
-            }
-        };
-        if events.is_empty() {
-            return Ok(());
-        }
-        state.projection.beeroom.record_replay_batch(events.len());
-        let has_more = events.len() as i64 >= BEEROOM_REPLAY_FETCH_LIMIT;
-        for event in events {
-            if event.event_id <= *cursor_event_id {
-                continue;
-            }
-            *cursor_event_id = event.event_id;
-            state
-                .projection
-                .beeroom
-                .record_push_latency_sample(event.created_at);
-            let stream_event = Event::default()
-                .event(event.event_type)
-                .id(event.event_id.to_string())
-                .data(event.payload.to_string());
-            if tx.send(Ok(stream_event)).await.is_err() {
-                return Err(());
-            }
-        }
-        if !has_more {
-            return Ok(());
-        }
-    }
-}
-
 fn resolve_request_id(value: Option<&str>) -> String {
     value
         .map(str::trim)
@@ -657,24 +463,10 @@ fn should_forward_projection_event(
     event.group_id == expected_group_id && event.event_id > current_event_id
 }
 
-fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>) -> i64 {
-    query_after_event_id
-        .and_then(|value| (value >= 0).then_some(value))
-        .or_else(|| {
-            headers
-                .get("last-event-id")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<i64>().ok())
-                .and_then(|value| (value >= 0).then_some(value))
-        })
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{resolve_after_event_id, should_forward_projection_event};
+    use super::should_forward_projection_event;
     use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
-    use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
 
     fn sample_event(group_id: &str, event_id: i64) -> BeeroomRealtimeEvent {
@@ -686,29 +478,6 @@ mod tests {
             payload: json!({ "ok": true }),
             created_at: 1.0,
         }
-    }
-
-    #[test]
-    fn resolve_after_event_id_prefers_query_value() {
-        let mut headers = HeaderMap::new();
-        headers.insert("last-event-id", HeaderValue::from_static("42"));
-        assert_eq!(resolve_after_event_id(&headers, Some(5)), 5);
-    }
-
-    #[test]
-    fn resolve_after_event_id_uses_header_when_query_absent() {
-        let mut headers = HeaderMap::new();
-        headers.insert("last-event-id", HeaderValue::from_static("9"));
-        assert_eq!(resolve_after_event_id(&headers, None), 9);
-    }
-
-    #[test]
-    fn resolve_after_event_id_rejects_invalid_or_negative_values() {
-        let mut headers = HeaderMap::new();
-        headers.insert("last-event-id", HeaderValue::from_static("-3"));
-        assert_eq!(resolve_after_event_id(&headers, None), 0);
-        headers.insert("last-event-id", HeaderValue::from_static("bad"));
-        assert_eq!(resolve_after_event_id(&headers, None), 0);
     }
 
     #[test]

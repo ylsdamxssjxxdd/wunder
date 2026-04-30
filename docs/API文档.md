@@ -1150,7 +1150,6 @@
 - `GET` 返回：
   - `server.max_active_sessions`：全局最大并发会话数
   - `server.stream_chunk_size`：流式输出分片大小（字节）
-  - `server.chat_stream_channel`：聊天流式通道默认值（`ws`/`sse`）
 - `security.api_key`：API Key（未配置时为 null）
 - `security.external_auth_key`：外部系统嵌入登录密钥（为空时自动回退到 `security.api_key`）
 - `security.external_embed_preset_agent_name`：外链嵌入预制智能体名称（为空表示未配置）
@@ -2484,7 +2483,7 @@
 ### `GET /wunder/beeroom/realtime/metrics`
 
 - 方法：`GET`
-- 鉴权：与 beeroom WS/SSE 保持一致（用户鉴权，支持 query token）
+- 鉴权：与 beeroom WebSocket 保持一致（用户鉴权，支持 query token）
 - 返回（JSON）：
   - `metrics.publish_total`：实时事件发布总数
   - `metrics.replay_batch_total`：回放批次数
@@ -2496,12 +2495,13 @@
   - `metrics.push_latency_max_ms`：推送延迟最大值（ms）
   - `timestamp`：服务端时间（RFC3339）
 
-### beeroom WS/SSE watch 语义更新
+### beeroom WebSocket watch 语义更新
 
 - `watch` 进入后不再只依赖内存广播，先按 `after_event_id` 回放持久化事件，再进入 live push。
 - 当连接出现 `Lagged` 或续传缺口时，服务端优先做 cursor replay 补齐，而不是直接要求前端全量刷新。
 - `sync_required` 仍保留为兜底事件，但主恢复路径已切换为“回放优先”。
 - 前端 beeroom 轮询降级为健康检查（默认 30s），不再作为主实时来源。
+- beeroom 聊天实时入口只保留 `/wunder/beeroom/ws`；旧 beeroom 聊天 SSE 入口已移除。
 
 ### 说明
 

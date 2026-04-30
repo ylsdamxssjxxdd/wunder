@@ -10,11 +10,6 @@ type OpenSocketOptions = {
   params?: QueryParams;
 };
 
-type OpenStreamOptions = {
-  allowQueryToken?: boolean;
-  params?: QueryParams;
-};
-
 const resolveWsBase = (): string => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
   const trimmed = base.replace(/\/$/, '');
@@ -25,19 +20,6 @@ const resolveWsBase = (): string => {
   if (trimmed.startsWith('/')) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}${trimmed}`;
-  }
-  return trimmed;
-};
-
-const resolveHttpBase = (): string => {
-  const base = resolveApiBase() || api.defaults.baseURL || '';
-  const trimmed = base.replace(/\/$/, '');
-  if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
-  }
-  if (trimmed.startsWith('/')) {
-    return `${window.location.origin}${trimmed}`;
   }
   return trimmed;
 };
@@ -65,12 +47,6 @@ const buildWsProtocols = (token: string | null, options: OpenSocketOptions = {})
 
 const buildWsUrl = (path: string, params: URLSearchParams): string => {
   const base = resolveWsBase();
-  const suffix = params.toString();
-  return suffix ? `${base}${path}?${suffix}` : `${base}${path}`;
-};
-
-const buildHttpUrl = (path: string, params: URLSearchParams): string => {
-  const base = resolveHttpBase();
   const suffix = params.toString();
   return suffix ? `${base}${path}?${suffix}` : `${base}${path}`;
 };
@@ -193,23 +169,6 @@ export const openBeeroomSocket = (options: OpenSocketOptions = {}): WebSocket =>
   const protocols = buildWsProtocols(token, options);
   const url = buildWsUrl('/beeroom/ws', params);
   return protocols.length ? new WebSocket(url, protocols) : new WebSocket(url);
-};
-
-export const openBeeroomChatStream = (groupId: ApiId, options: OpenStreamOptions = {}): EventSource => {
-  const normalizedGroupId = encodeURIComponent(String(groupId || '').trim());
-  const token = resolveAccessToken();
-  const params = new URLSearchParams();
-  if (options.allowQueryToken && token) {
-    params.set('access_token', token);
-  }
-  if (options.params) {
-    Object.entries(options.params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      params.set(key, String(value));
-    });
-  }
-  const url = buildHttpUrl(`/beeroom/groups/${normalizedGroupId}/chat/stream`, params);
-  return new EventSource(url);
 };
 
 export type HivePackImportRequest = {

@@ -117,7 +117,7 @@ curl -X POST http://localhost:18000/wunder \
 
 **Characteristics**:
 - Session lifecycle management
-- WebSocket first, SSE as fallback
+- WebSocket is the only real-time chat channel
 - Supports reconnection recovery
 
 **Onboarding flow**:
@@ -144,14 +144,14 @@ curl -X POST http://localhost:18000/wunder \
 
 ---
 
-## Transport Protocol: WebSocket First, SSE as Fallback
+## Transport Protocols
 
 | Protocol | Pros | Cons | Use Case |
 |------|------|------|----------|
-| **WebSocket** | Low latency, bidirectional, real-time | Requires persistent connection | Chat UI, real-time collaboration |
-| **SSE** | Simple, good compatibility | Unidirectional, higher latency | Fallback, simple consumption |
+| **WebSocket** | Low latency, bidirectional, real-time | Requires persistent connection | Chat UI, chat session control, real-time collaboration |
+| **SSE** | Simple, good compatibility | Unidirectional, higher latency | Non-chat compatibility endpoints such as A2A or admin diagnostics |
 
-**Recommendation**: Implement WebSocket first, use SSE as a degradation path.
+**Recommendation**: Use `/wunder/chat/ws` for chat and desktop real-time sessions. Do not implement an SSE fallback for the chat domain.
 
 ---
 
@@ -188,7 +188,7 @@ curl -X POST http://localhost:18000/wunder \
 | Misconception | Correct Understanding |
 |------|----------|
 | `/wunder` can replace the chat domain | `/wunder` is an execution entry, not a complete chat solution |
-| SSE alone is sufficient | WebSocket is recommended first for a better experience |
+| Chat can fall back to SSE | Chat real-time state is WebSocket-only; reconnect and `resume/watch` instead |
 | `workspaces` and `temp_dir` are interchangeable | They serve different purposes with different storage strategies |
 | Users must be registered before calling | user_id can be any virtual identifier |
 

@@ -1,6 +1,6 @@
 ---
 title: Chat WebSocket
-summary: `/wunder/chat/ws` is Wunder's primary real-time chat channel; real-time sessions prefer WS, with SSE as fallback.
+summary: `/wunder/chat/ws` is Wunder's only real-time chat channel; chat SSE fallback is no longer provided.
 read_when:
   - You are developing chat UI or desktop real-time sessions
   - You need to handle start/resume/watch/cancel/approval
@@ -88,12 +88,12 @@ Key server responses: `ready`, `event`, `error`, `pong`
 - `resume` (catch up on events) and `watch` (observe session) are not the same action.
 - WS approval only handles approval items with `source=chat_ws`.
 
-## Fallback on Failure
+## Reconnect Recovery
 
-When WS is unavailable:
+Do not fall back to SSE when WS disconnects. Reconnect to `/wunder/chat/ws`, then send:
 
-- Fallback to `POST /wunder` (SSE)
-- Or fallback to `GET /wunder/chat/sessions/{session_id}/resume`
+- `resume`: provide the last handled event cursor to replay missed events.
+- `watch`: observe the current session runtime again.
 
 ## Further Reading
 

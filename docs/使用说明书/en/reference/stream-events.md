@@ -120,14 +120,15 @@ If you are building a new client, at minimum correctly handle:
 
 This ensures your state machine does not only work on the "happy path."
 
-## SSE vs WebSocket Key Differences
+## Chat WebSocket Boundary
 
-Both try to maintain consistent semantics, but the experience differs:
+For chat sessions, `/wunder/chat/ws` is the realtime authority:
 
-- WebSocket is better suited for long sessions and real-time control
-- SSE is better suited as a compatibility fallback
+- Use WebSocket for `start`, `resume`, `watch`, `cancel`, approval decisions, and realtime status.
+- Do not fall back to SSE when a chat WebSocket disconnects; reconnect and replay with `resume/watch`.
+- Non-chat streaming endpoints, such as `/wunder` or A2A, keep their own protocol semantics.
 
-So "WebSocket by default, SSE as fallback" is not just a marketing line, but an integration strategy.
+This boundary prevents two transport projections from disagreeing about the same chat turn.
 
 ## A Simple Decision Guide
 

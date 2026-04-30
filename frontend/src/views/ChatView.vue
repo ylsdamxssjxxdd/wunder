@@ -248,7 +248,7 @@
               </button>
             </div>
             <template
-              v-for="(message, index) in chatStore.messages"
+              v-for="(message, index) in visibleChatMessages"
               :key="resolveMessageKey(message, index)"
             >
             <div
@@ -817,10 +817,6 @@ import {
   isCompactionOnlyWorkflowItems,
   resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
-import {
-  hasAssistantWaitingForCurrentOutput,
-  isAssistantMessageRunning
-} from '@/utils/assistantMessageRuntime';
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -854,16 +850,19 @@ const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
 const desktopMode = computed(() => basePath.value === '/desktop');
 const desktopLocalMode = computed(() => isDesktopModeEnabled());
-const featureTransport = computed(() => (chatStore.streamTransport === 'sse' ? 'sse' : 'ws'));
-const featureTransportClass = computed(() => (featureTransport.value === 'sse' ? 'sse' : 'ws'));
+const featureTransport = computed(() => 'ws');
+const featureTransportClass = computed(() => 'ws');
 const featureTransportText = computed(() =>
   t('chat.transport.current', {
-    transport: t(featureTransport.value === 'sse' ? 'chat.transport.sse' : 'chat.transport.ws')
+    transport: t('chat.transport.ws')
   })
 );
 const draftKey = ref(0);
 const composerKey = computed(() =>
   chatStore.activeSessionId ? `session-${chatStore.activeSessionId}` : `draft-${draftKey.value}`
+);
+const visibleChatMessages = computed(() =>
+  chatStore.visibleMessages?.(chatStore.activeSessionId) || chatStore.messages
 );
 const composerShellRef = ref(null);
 const composerPaddingPx = ref(176);
@@ -1607,9 +1606,7 @@ const shouldShowMessage = (message) => {
   if (message?.role !== 'assistant') return true;
   return (
     shouldShowMessageText(message) ||
-    Boolean(message?.workflowStreaming) ||
-    Boolean(message?.reasoningStreaming) ||
-    Boolean(message?.stream_incomplete) ||
+    isAssistantStreaming(message) ||
     Boolean(message?.workflowItems?.length) ||
     Boolean(message?.subagents?.length) ||
     hasActiveSubagentItems(message?.subagents)
@@ -1668,8 +1665,22 @@ const markdownCache = new WeakMap();
 const AGENT_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
 const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】」』、]+)?$/;
 
-const isAssistantStreaming = (message) =>
-  isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message);
+const isAssistantStreaming = (message) => {
+  const runtimeStatus = chatStore.messageRuntimeStatus?.(chatStore.activeSessionId, message);
+  if (runtimeStatus) {
+    return (
+      runtimeStatus === 'placeholder' ||
+      runtimeStatus === 'waiting_first_output' ||
+      runtimeStatus === 'streaming' ||
+      runtimeStatus === 'tooling'
+    );
+  }
+  return (
+    Boolean(message?.workflowStreaming) ||
+    Boolean(message?.reasoningStreaming) ||
+    Boolean(message?.stream_incomplete)
+  );
+};
 
 const isCompactionMarkerMessage = (message): boolean => {
   if (!message || message.role !== 'assistant') return false;
@@ -2604,7 +2615,7 @@ const handleCopyMessage = async (message) => {
 
 const shouldShowResumeButton = (message) => {
   if (!message || message.role !== 'assistant') return false;
-  if (message.workflowStreaming) return false;
+  if (isAssistantStreaming(message)) return false;
   return Boolean(message.slow_client || message.resume_available || message.stream_incomplete);
 };
 
@@ -2789,9 +2800,9 @@ const shouldSkipExternalSessionSync = () => {
   const id = String(chatStore.activeSessionId || '').trim();
   if (!id) return false;
   if (isSessionBusy(id)) return true;
-  // Avoid disrupting a locally-initiated stream; wait until it completes.
   const last = chatStore.messages?.[chatStore.messages.length - 1];
-  if (last?.role === 'assistant' && (last.workflowStreaming || last.stream_incomplete)) {
+  // Avoid disrupting a locally-initiated stream; wait until it completes.
+  if (last?.role === 'assistant' && isAssistantStreaming(last)) {
     return true;
   }
   return false;
@@ -2848,7 +2859,7 @@ const runExternalSessionSync = async () => {
       ])
     );
     const agentId = String(activeAgentId.value || '').trim();
-    const sessions = await chatStore.loadSessions({ agent_id: agentId, skipTransportRefresh: true });
+    const sessions = await chatStore.loadSessions({ agent_id: agentId });
     if (!Array.isArray(sessions)) return;
 
     const latestActive = String(chatStore.activeSessionId || '').trim();

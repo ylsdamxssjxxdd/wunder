@@ -117,7 +117,7 @@ curl -X POST http://localhost:18000/wunder \
 
 **特点**：
 - 会话生命周期管理
-- WebSocket 优先，SSE 兜底
+- WebSocket 是聊天唯一实时通道
 - 支持断线恢复
 
 **接入流程**：
@@ -144,14 +144,14 @@ curl -X POST http://localhost:18000/wunder \
 
 ---
 
-## 传输协议：WebSocket 优先，SSE 兜底
+## 传输协议
 
 | 协议 | 优点 | 缺点 | 适用场景 |
 |------|------|------|----------|
-| **WebSocket** | 低延迟、双向、实时 | 需要保持连接 | 聊天 UI、实时协作 |
-| **SSE** | 简单、兼容好 | 单向、延迟较高 | 兜底方案、简单消费 |
+| **WebSocket** | 低延迟、双向、实时 | 需要保持连接 | 聊天 UI、会话控制、实时协作 |
+| **SSE** | 简单、兼容好 | 单向、延迟较高 | A2A、管理员诊断等非聊天兼容接口 |
 
-**建议**：优先实现 WebSocket，SSE 作为降级方案。
+**建议**：聊天和桌面实时会话统一使用 `/wunder/chat/ws`，不要再实现聊天 SSE 降级。
 
 ---
 
@@ -188,7 +188,7 @@ curl -X POST http://localhost:18000/wunder \
 | 误区 | 正确理解 |
 |------|----------|
 | `/wunder` 可以替代聊天域 | ❌ `/wunder` 是执行入口，不是完整聊天方案 |
-| 只接 SSE 就够了 | ❌ 建议 WebSocket 优先，体验更好 |
+| 聊天可以回退到 SSE | ❌ 聊天实时状态只走 WebSocket，断线后应重连并 `resume/watch` |
 | `workspaces` 和 `temp_dir` 可以混用 | ❌ 职责不同，存储策略不同 |
 | 必须先注册用户才能调用 | ❌ user_id 可以是任意虚拟标识 |
 

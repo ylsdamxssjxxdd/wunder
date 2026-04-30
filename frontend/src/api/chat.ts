@@ -2,7 +2,6 @@ import api from './http';
 
 import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
-import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
 type QueryValue = string | number | boolean | null | undefined;
 type QueryParams = Record<string, QueryValue>;
@@ -11,23 +10,9 @@ type SocketProtocolOptions = {
   protocols?: string[] | string;
 };
 
-type StreamRequestOptions = {
-  signal?: AbortSignal;
-  orchestrationSource?: string;
-};
-
-type ResumeRequestOptions = StreamRequestOptions & {
-  afterEventId?: number;
-};
-
 type OpenChatSocketOptions = SocketProtocolOptions & {
   allowQueryToken?: boolean;
   params?: QueryParams;
-};
-
-const buildUrl = (path: string): string => {
-  const base = resolveApiBase() || api.defaults.baseURL || '';
-  return `${base.replace(/\/$/, '')}${path}`;
 };
 
 const resolveWsBase = (): string => {
@@ -79,31 +64,7 @@ const buildWsProtocols = (
   return protocols.length ? protocols : null;
 };
 
-const handleStreamResponse = (response: Response): Response => {
-  if (response.ok) {
-    clearMaintenance();
-    return response;
-  }
-  const status = response.status;
-  if (isMaintenanceStatus(status)) {
-    markMaintenance({ status, reason: 'http' });
-  } else if (status) {
-    clearMaintenance();
-  }
-  return response;
-};
-
-const handleStreamError = (error: unknown): never => {
-  if (error instanceof DOMException && error.name === 'AbortError') {
-    throw error;
-  }
-  const cause = error as { name?: string; message?: string };
-  markMaintenance({ reason: cause?.name || cause?.message || 'network' });
-  throw error;
-};
-
 export const createSession = (payload: unknown) => api.post('/chat/sessions', payload);
-export const fetchChatTransportProfile = () => api.get('/chat/transport');
 export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
 export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}`, options);
@@ -148,50 +109,6 @@ export const convertChatAttachment = (file: File) => {
 
 export const processChatMediaAttachment = (formData: FormData) =>
   api.post('/chat/attachments/media/process', formData);
-
-export const sendMessageStream = (
-  id: string,
-  payload: unknown,
-  options: StreamRequestOptions = {}
-) => {
-  // 浏览器端流式需要使用 fetch 才能读取 SSE 数据
-  const token = resolveAccessToken();
-  return fetch(buildUrl(`/chat/sessions/${id}/messages`), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.orchestrationSource
-        ? { 'x-wunder-orchestration-source': options.orchestrationSource }
-        : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: JSON.stringify(payload),
-    signal: options.signal
-  })
-    .then(handleStreamResponse)
-    .catch(handleStreamError);
-};
-
-export const resumeMessageStream = (id: string, options: ResumeRequestOptions = {}) => {
-  const token = resolveAccessToken();
-  const params = new URLSearchParams();
-  if (Number.isFinite(options.afterEventId) && Number(options.afterEventId) >= 0) {
-    params.set('after_event_id', String(options.afterEventId));
-  }
-  const suffix = params.toString();
-  const url = suffix
-    ? buildUrl(`/chat/sessions/${id}/resume?${suffix}`)
-    : buildUrl(`/chat/sessions/${id}/resume`);
-  return fetch(url, {
-    method: 'GET',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    signal: options.signal
-  })
-    .then(handleStreamResponse)
-    .catch(handleStreamError);
-};
 
 export const cancelMessageStream = (id: string) => api.post(`/chat/sessions/${id}/cancel`);
 export const compactSession = (

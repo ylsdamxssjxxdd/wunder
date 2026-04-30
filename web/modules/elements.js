@@ -233,7 +233,6 @@ export const elements = {
   settingsMonitorInterval: document.getElementById("settingsMonitorInterval"),
   settingsMaxActiveSessions: document.getElementById("settingsMaxActiveSessions"),
   settingsStreamChunkSize: document.getElementById("settingsStreamChunkSize"),
-  settingsChatStreamChannel: document.getElementById("settingsChatStreamChannel"),
   settingsSandboxEnabled: document.getElementById("settingsSandboxEnabled"),
   settingsSandboxEndpoint: document.getElementById("settingsSandboxEndpoint"),
   settingsSandboxContainerRoot: document.getElementById("settingsSandboxContainerRoot"),

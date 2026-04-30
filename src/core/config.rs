@@ -123,8 +123,6 @@ pub struct ServerConfig {
     pub port: u16,
     pub stream_chunk_size: usize,
     pub max_active_sessions: usize,
-    #[serde(default = "default_chat_stream_channel")]
-    pub chat_stream_channel: String,
     #[serde(
         default = "default_tool_failure_guard_threshold",
         deserialize_with = "deserialize_usize_from_any"
@@ -141,26 +139,10 @@ impl Default for ServerConfig {
             port: 8000,
             stream_chunk_size: 1024,
             max_active_sessions: 300,
-            chat_stream_channel: default_chat_stream_channel(),
             tool_failure_guard_threshold: default_tool_failure_guard_threshold(),
             mode: "api".to_string(),
         }
     }
-}
-
-pub const CHAT_STREAM_CHANNEL_WS: &str = "ws";
-pub const CHAT_STREAM_CHANNEL_SSE: &str = "sse";
-
-pub fn normalize_chat_stream_channel(value: &str) -> String {
-    if value.trim().eq_ignore_ascii_case(CHAT_STREAM_CHANNEL_SSE) {
-        CHAT_STREAM_CHANNEL_SSE.to_string()
-    } else {
-        CHAT_STREAM_CHANNEL_WS.to_string()
-    }
-}
-
-fn default_chat_stream_channel() -> String {
-    CHAT_STREAM_CHANNEL_WS.to_string()
 }
 
 fn default_tool_failure_guard_threshold() -> usize {

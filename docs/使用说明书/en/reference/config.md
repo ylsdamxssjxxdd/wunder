@@ -63,7 +63,7 @@ Key takeaway: When troubleshooting configuration issues, first distinguish betwe
 
 ## Items You're Most Likely to Modify First
 
-- Service basics: `server.host`, `server.port`, `server.chat_stream_channel`, `server.max_active_sessions`
+- Service basics: `server.host`, `server.port`, `server.max_active_sessions`
 - Security controls: `security.api_key`, `security.external_auth_key`, `security.allow_commands`, `security.allow_paths`, `security.deny_globs`
   - Note: Setting `security.allow_paths` to `*` opens the entire filesystem; if `deny_globs` is also present, matching paths will still be blocked.
 - MCP: `mcp.timeout_s`, `mcp.servers[]`

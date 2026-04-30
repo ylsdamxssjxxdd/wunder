@@ -28,7 +28,6 @@ When you need session-level capabilities, use `/wunder/chat/sessions/*` as the p
 - `POST /wunder/chat/attachments/media/process`
 - `POST /wunder/chat/sessions/{session_id}/messages`
 - `GET /wunder/chat/sessions/{session_id}/events`
-- `GET /wunder/chat/sessions/{session_id}/resume`
 - `POST /wunder/chat/sessions/{session_id}/cancel`
 - `POST /wunder/chat/sessions/{session_id}/compaction`
 - `POST /wunder/chat/sessions/{session_id}/system-prompt`
@@ -39,7 +38,7 @@ When you need session-level capabilities, use `/wunder/chat/sessions/*` as the p
 2. Document attachments go through `POST /wunder/chat/attachments/convert` first
 3. Audio/video attachments go through `POST /wunder/chat/attachments/media/process` first
 4. `POST /wunder/chat/sessions/{session_id}/messages` to send body text and/or attachments
-5. Use [Chat WebSocket](/docs/en/integration/chat-ws/) or `resume` to consume events
+5. Use [Chat WebSocket](/docs/en/integration/chat-ws/) `start / resume / watch` to consume real-time events
 6. Use `GET /wunder/chat/sessions/{session_id}` to render session details
 7. Call `cancel` or `compaction` when needed
 

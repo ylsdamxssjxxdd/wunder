@@ -1,14 +1,10 @@
 use crate::api::attachment_convert::{build_conversion_payload, convert_multipart_list};
 use crate::api::user_context::resolve_user;
-use crate::config::normalize_chat_stream_channel;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::OrchestratorError;
-use crate::orchestrator_constants::{
-    OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_QUEUE_SIZE,
-    STREAM_EVENT_RESUME_POLL_INTERVAL_S,
-};
-use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
+use crate::orchestrator_constants::{OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT};
+use crate::schemas::{AttachmentPayload, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::chat_media::{
     process_chat_media_upload, reprocess_chat_media_source, ChatMediaUpload,
@@ -29,7 +25,6 @@ use crate::user_store::UserStore;
 use anyhow::Error;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
 use chrono::{DateTime, Local, Utc};
@@ -38,9 +33,6 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::StreamExt;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -49,15 +41,13 @@ const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 const MAX_MEDIA_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
-const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
 const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 const ORCHESTRATION_SOURCE_HEADER: &str = "x-wunder-orchestration-source";
-const ORCHESTRATION_SOURCE_ALLOW: &str = "beeroom_orchestration";
+pub(crate) const ORCHESTRATION_SOURCE_ALLOW: &str = "beeroom_orchestration";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/wunder/chat/transport", get(chat_transport))
         .route(
             "/wunder/chat/sessions",
             post(create_session).get(list_sessions),
@@ -113,10 +103,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/chat/sessions/{session_id}/messages/{history_id}/feedback",
             post(submit_message_feedback),
-        )
-        .route(
-            "/wunder/chat/sessions/{session_id}/resume",
-            get(resume_session),
         )
         .route(
             "/wunder/chat/sessions/{session_id}/cancel",
@@ -200,20 +186,6 @@ pub(crate) struct ChatRequestOverrides {
     pub(crate) debug_payload: bool,
 }
 
-async fn chat_transport(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Result<Json<Value>, Response> {
-    let _resolved = resolve_user(&state, &headers, None).await?;
-    let config = state.config_store.get().await;
-    let chat_stream_channel = normalize_chat_stream_channel(&config.server.chat_stream_channel);
-    Ok(Json(json!({
-        "data": {
-            "chat_stream_channel": chat_stream_channel,
-        }
-    })))
-}
-
 #[derive(Debug, Deserialize)]
 pub(crate) struct ChatAttachment {
     #[serde(default)]
@@ -240,12 +212,6 @@ struct SystemPromptRequest {
 struct SessionDetailQuery {
     #[serde(default)]
     limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResumeQuery {
-    #[serde(default)]
-    after_event_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1361,6 +1327,15 @@ async fn send_message(
     )
     .await?;
     let wants_stream = request.stream;
+    if wants_stream {
+        return Err(orchestrator_error_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "code": "CHAT_WS_REQUIRED",
+                "message": "chat streaming is available only through /wunder/chat/ws",
+            }),
+        ));
+    }
     let outcome = state
         .kernel
         .thread_runtime
@@ -1383,59 +1358,18 @@ async fn send_message(
                 "queue_ahead": info.queue_ahead,
                 "queue_total": info.queue_total,
             });
-            if wants_stream {
-                let mapped = tokio_stream::iter(vec![Ok::<Event, std::convert::Infallible>(
-                    Event::default().event("queued").data(payload.to_string()),
-                )]);
-                let sse = Sse::new(mapped)
-                    .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
-                Ok(sse.into_response())
-            } else {
-                Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
-            }
+            Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
         }
         ThreadSubmitOutcome::Run(request, lease) => {
             let request = *request;
-            if request.stream {
-                let stream = state
-                    .kernel
-                    .orchestrator
-                    .stream(request)
-                    .await
-                    .map_err(map_orchestrator_error)?;
-                let lease_guard = lease;
-                let mapped = stream.map(move |event| {
-                    let _keep = &lease_guard;
-                    match event {
-                        Ok(event) => {
-                            let mut builder = Event::default()
-                                .event(event.event)
-                                .data(event.data.to_string());
-                            if let Some(id) = event.id {
-                                builder = builder.id(id);
-                            }
-                            Ok::<Event, std::convert::Infallible>(builder)
-                        }
-                        Err(err) => {
-                            let payload = json!({ "event": "error", "message": err.to_string() });
-                            Ok::<Event, std::convert::Infallible>(
-                                Event::default().event("error").data(payload.to_string()),
-                            )
-                        }
-                    }
-                });
-                let sse = Sse::new(mapped)
-                    .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
-                Ok(sse.into_response())
-            } else {
-                let response = state
-                    .kernel
-                    .orchestrator
-                    .run(request)
-                    .await
-                    .map_err(map_orchestrator_error)?;
-                Ok(Json(json!({ "data": response })).into_response())
-            }
+            let _lease = lease;
+            let response = state
+                .kernel
+                .orchestrator
+                .run(request)
+                .await
+                .map_err(map_orchestrator_error)?;
+            Ok(Json(json!({ "data": response })).into_response())
         }
     }
 }
@@ -1925,193 +1859,6 @@ fn apply_session_running_state(messages: &mut Vec<Value>, session_running: bool)
     }) {
         map.insert("stream_incomplete".to_string(), json!(true));
     }
-}
-
-async fn resume_session(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    AxumPath(session_id): AxumPath<String>,
-    Query(query): Query<ResumeQuery>,
-) -> Result<Response, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
-    let session_id = session_id.trim().to_string();
-    if session_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let _record = state
-        .user_store
-        .get_chat_session(&resolved.user.user_id, &session_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-
-    if let Some(after_event_id) = query.after_event_id {
-        let workspace = state.workspace.clone();
-        let monitor = state.monitor.clone();
-        let user_store = state.user_store.clone();
-        let session_id = session_id.clone();
-        let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
-        tokio::spawn(async move {
-            let poll_interval =
-                std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-            let heartbeat_interval =
-                std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
-            let mut last_event_id = after_event_id;
-            let mut last_heartbeat = std::time::Instant::now();
-            loop {
-                let session_id_snapshot = session_id.clone();
-                let workspace_snapshot = workspace.clone();
-                let records = tokio::task::spawn_blocking(move || {
-                    workspace_snapshot.load_stream_events(
-                        &session_id_snapshot,
-                        last_event_id,
-                        STREAM_EVENT_FETCH_LIMIT,
-                    )
-                })
-                .await
-                .unwrap_or_default();
-                let mut progressed = false;
-                for record in records {
-                    let Some(event) = map_stream_event(record) else {
-                        continue;
-                    };
-                    let parsed_id = event
-                        .id
-                        .as_ref()
-                        .and_then(|value| value.parse::<i64>().ok())
-                        .unwrap_or(0);
-                    if parsed_id > last_event_id {
-                        last_event_id = parsed_id;
-                    }
-                    let mut builder = Event::default()
-                        .event(event.event)
-                        .data(event.data.to_string());
-                    if let Some(id) = event.id {
-                        builder = builder.id(id);
-                    }
-                    if event_tx.send(builder).await.is_err() {
-                        return;
-                    }
-                    progressed = true;
-                }
-                if !progressed {
-                    let monitor_status = monitor.get_record(&session_id).and_then(|record| {
-                        record
-                            .get("status")
-                            .and_then(Value::as_str)
-                            .map(ToString::to_string)
-                    });
-                    let running = is_session_stream_active_or_queued(
-                        user_store.as_ref(),
-                        monitor_status.as_deref(),
-                        &session_id,
-                    );
-                    if !running {
-                        break;
-                    }
-                    if last_heartbeat.elapsed() >= heartbeat_interval {
-                        let payload = json!({
-                            "ts": Utc::now().to_rfc3339(),
-                            "running": running,
-                        });
-                        let builder = Event::default()
-                            .event("heartbeat")
-                            .data(payload.to_string());
-                        if event_tx.send(builder).await.is_err() {
-                            return;
-                        }
-                        last_heartbeat = std::time::Instant::now();
-                    }
-                    tokio::time::sleep(poll_interval).await;
-                } else {
-                    last_heartbeat = std::time::Instant::now();
-                }
-            }
-        });
-        let stream = ReceiverStream::new(event_rx).map(Ok::<Event, std::convert::Infallible>);
-        let sse = Sse::new(stream)
-            .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
-        return Ok(sse.into_response());
-    }
-
-    let monitor = state.monitor.clone();
-    let user_store = state.user_store.clone();
-    let session_id = session_id.clone();
-    let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
-    tokio::spawn(async move {
-        let mut last_len: usize = 0;
-        let mut initialized = false;
-        let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-        let heartbeat_interval =
-            std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
-        let mut last_heartbeat = std::time::Instant::now();
-        loop {
-            let record = monitor.get_record(&session_id);
-            let status = record
-                .as_ref()
-                .and_then(|value| value.get("status"))
-                .and_then(Value::as_str);
-            let running =
-                is_session_stream_active_or_queued(user_store.as_ref(), status, &session_id);
-            if record.is_none() && !running {
-                break;
-            }
-            let events = record
-                .as_ref()
-                .and_then(|value| value.get("events"))
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            if !initialized {
-                last_len = events.len();
-                initialized = true;
-            } else if events.len() < last_len {
-                last_len = 0;
-            }
-            let mut has_new_events = false;
-            if events.len() > last_len {
-                has_new_events = true;
-                for event in events.iter().skip(last_len) {
-                    let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
-                    if event_type.is_empty() || !is_workflow_event(event_type) {
-                        continue;
-                    }
-                    let data = event.get("data").cloned().unwrap_or(Value::Null);
-                    let builder = Event::default().event(event_type).data(data.to_string());
-                    if event_tx.send(builder).await.is_err() {
-                        return;
-                    }
-                }
-                last_len = events.len();
-            }
-            if !running && !has_new_events {
-                break;
-            }
-            if running && !has_new_events && last_heartbeat.elapsed() >= heartbeat_interval {
-                let payload = json!({
-                    "ts": Utc::now().to_rfc3339(),
-                    "running": running,
-                });
-                let builder = Event::default()
-                    .event("heartbeat")
-                    .data(payload.to_string());
-                if event_tx.send(builder).await.is_err() {
-                    return;
-                }
-                last_heartbeat = std::time::Instant::now();
-            }
-            if has_new_events {
-                last_heartbeat = std::time::Instant::now();
-            }
-            tokio::time::sleep(poll_interval).await;
-        }
-    });
-    let stream = ReceiverStream::new(event_rx).map(Ok::<Event, std::convert::Infallible>);
-    let sse =
-        Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)));
-    Ok(sse.into_response())
 }
 
 async fn cancel_session(
@@ -3002,23 +2749,6 @@ fn normalize_message_content(value: &Value) -> String {
     }
 }
 
-fn map_stream_event(record: Value) -> Option<StreamEvent> {
-    let event_id = record.get("event_id").and_then(Value::as_i64);
-    let event_type = record.get("event").and_then(Value::as_str)?;
-    let data = record.get("data").cloned().unwrap_or(Value::Null);
-    let timestamp = record
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|dt| dt.with_timezone(&Utc));
-    Some(StreamEvent {
-        event: event_type.to_string(),
-        data,
-        id: event_id.map(|value| value.to_string()),
-        timestamp,
-    })
-}
-
 fn resolve_session_main_flag(
     state: &Arc<AppState>,
     user_id: &str,
@@ -3086,7 +2816,7 @@ fn insert_session_orchestration_lock_fields(
     }
 }
 
-fn reject_locked_orchestration_session(
+pub(crate) fn reject_locked_orchestration_session(
     state: &AppState,
     user_id: &str,
     session_id: &str,
@@ -3112,7 +2842,7 @@ fn reject_locked_orchestration_session(
     Ok(())
 }
 
-fn reject_or_repair_orchestration_dispatch(
+pub(crate) fn reject_or_repair_orchestration_dispatch(
     state: &AppState,
     user_id: &str,
     session: &crate::storage::ChatSessionRecord,

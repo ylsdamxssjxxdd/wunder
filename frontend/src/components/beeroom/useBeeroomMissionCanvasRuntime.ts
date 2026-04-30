@@ -6,8 +6,7 @@ import { emitAgentRuntimeRefresh } from '@/utils/workspaceEvents';
 import {
   createSession,
   listSessions,
-  resumeMessageStream,
-  sendMessageStream
+  openChatSocket
 } from '@/api/chat';
 import {
   listRecentBeeroomAgentOutputs,
@@ -79,7 +78,7 @@ import {
   type BeeroomMission,
   useBeeroomStore
 } from '@/stores/beeroom';
-import { consumeSseStream } from '@/utils/sse';
+import { createWsMultiplexer } from '@/utils/ws';
 import {
   DEFAULT_AGENT_AVATAR_IMAGE,
   parseAgentAvatarIconConfig,
@@ -142,6 +141,11 @@ const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_error'
 ]);
 const DEMO_RUNTIME_EVENT_TYPES = new Set(['beeroom_demo_status']);
+const beeroomChatWsClient = createWsMultiplexer(() => openChatSocket(), {
+  idleTimeoutMs: 30000,
+  connectTimeoutMs: 10000,
+  pingIntervalMs: 20000
+});
 
 const clipDebugText = (value: unknown, limit = 180) => {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -2198,10 +2202,34 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
   };
 
-  const consumeDispatchStream = async (response: Response) => {
+  const startDispatchStream = async (
+    mode: 'send' | 'resume',
+    sessionId: string,
+    payload: { content?: string; afterEventId?: number } = {},
+    streamOptions: { onAccepted?: () => void } = {}
+  ) => {
     let finalPayload: Record<string, any> | null = null;
     let streamError = '';
-    await consumeSseStream(response, (eventType, dataText, eventId) => {
+    let queued = false;
+    let accepted = false;
+    if (dispatchStreamController) {
+      dispatchStreamController.abort();
+    }
+    dispatchStopRequested = false;
+    composerSending.value = true;
+    dispatchRuntimeStatus.value = mode === 'resume' ? 'resuming' : 'running';
+    const controller = new AbortController();
+    dispatchStreamController = controller;
+    const requestId = nextManualMessageKey(`dispatch-${mode}`);
+    dispatchRequestId.value = requestId;
+    logBeeroomRuntime('start-dispatch-stream', {
+      mode,
+      sessionId,
+      requestId,
+      afterEventId: Number(payload.afterEventId || 0),
+      contentPreview: clipDebugText(payload.content)
+    });
+    const onEvent = (eventType: string, dataText: string, eventId: string) => {
       updateDispatchLastEventId(eventId);
       const payload = safeJsonParse(dataText);
       const data = payload?.data ?? payload;
@@ -2236,6 +2264,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         return;
       }
       if (eventType === 'queued') {
+        queued = true;
         dispatchRuntimeStatus.value = 'queued';
         logBeeroomRuntime('dispatch-stream:queued', {
           sessionId: dispatchSessionId.value,
@@ -2272,76 +2301,60 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         return;
       }
       dispatchRuntimeStatus.value = 'running';
+    };
+    const acceptDispatch = () => {
+      if (accepted) return;
+      accepted = true;
+      streamOptions.onAccepted?.();
+    };
+    if (mode === 'send') {
+      acceptDispatch();
+    }
+
+    await beeroomChatWsClient.request({
+      requestId,
+      sessionId,
+      message: {
+        type: mode === 'resume' ? 'resume' : 'start',
+        request_id: requestId,
+        session_id: sessionId,
+        payload:
+          mode === 'resume'
+            ? {
+                after_event_id:
+                  Number.isFinite(payload.afterEventId) && Number(payload.afterEventId) > 0
+                    ? Number(payload.afterEventId)
+                    : 0
+              }
+            : {
+                content: String(payload.content || ''),
+                stream: true,
+                orchestration_source: 'beeroom_orchestration'
+              }
+      },
+      onEvent,
+      signal: controller.signal,
+      closeOnFinal: true,
+      resolveOnQueued: mode === 'send'
     });
 
     if (streamError) {
       throw new Error(streamError);
     }
-    return finalPayload;
-  };
-
-  const startDispatchStream = async (
-    mode: 'send' | 'resume',
-    sessionId: string,
-    payload: { content?: string; afterEventId?: number } = {},
-    streamOptions: { onAccepted?: () => void } = {}
-  ) => {
-    if (dispatchStreamController) {
-      dispatchStreamController.abort();
-    }
-    dispatchStopRequested = false;
-    composerSending.value = true;
-    dispatchRuntimeStatus.value = mode === 'resume' ? 'resuming' : 'running';
-    const controller = new AbortController();
-    dispatchStreamController = controller;
-    logBeeroomRuntime('start-dispatch-stream', {
-      mode,
-      sessionId,
-      afterEventId: Number(payload.afterEventId || 0),
-      contentPreview: clipDebugText(payload.content)
-    });
-
-    const response =
-      mode === 'resume'
-        ? await resumeMessageStream(sessionId, {
-            signal: controller.signal,
-            afterEventId:
-              Number.isFinite(payload.afterEventId) && Number(payload.afterEventId) > 0
-                ? Number(payload.afterEventId)
-                : undefined
-          })
-        : await sendMessageStream(
-            sessionId,
-            { content: String(payload.content || ''), stream: true },
-            {
-              signal: controller.signal,
-              orchestrationSource: 'beeroom_orchestration'
-            }
-          );
-
-    if (!response.ok) {
-      const errorText = String(await response.text()).trim();
-      logBeeroomRuntime('start-dispatch-stream:http-error', {
-        mode,
-        sessionId,
-        status: response.status,
-        error: clipDebugText(errorText)
-      });
-      throw new Error(
-        errorText || (mode === 'resume' ? options.t('chat.error.resumeFailed') : options.t('common.requestFailed'))
-      );
-    }
-
-    streamOptions.onAccepted?.();
+    acceptDispatch();
     logBeeroomRuntime('start-dispatch-stream:accepted', {
       mode,
-      sessionId
+      sessionId,
+      requestId
     });
-    return consumeDispatchStream(response);
+    return {
+      finalPayload,
+      queued
+    };
   };
 
   type ComposerSendResult = {
-    status: 'completed' | 'stopped' | 'failed';
+    status: 'completed' | 'queued' | 'stopped' | 'failed';
     error?: string;
   };
 
@@ -2467,7 +2480,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         readDispatchSessionMessages(sessionId),
         sessionId
       );
-      const finalPayload = await startDispatchStream(
+      const streamResult = await startDispatchStream(
         'send',
         sessionId,
         { content: dispatchBody },
@@ -2480,6 +2493,17 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           }
         }
       );
+      if (streamResult.queued) {
+        logBeeroomRuntime('composer-send:queued', {
+          sessionId,
+          targetAgentId: target.agentId
+        });
+        result = {
+          status: 'queued'
+        };
+        return result;
+      }
+      const finalPayload = streamResult.finalPayload;
       const replyText = extractReplyText(finalPayload);
       terminalReplyText = replyText;
       reachedTerminalReply = true;
@@ -2597,9 +2621,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       sessionId
     );
     try {
-      const finalPayload = await startDispatchStream('resume', sessionId, {
+      const streamResult = await startDispatchStream('resume', sessionId, {
         afterEventId: dispatchLastEventId.value
       });
+      const finalPayload = streamResult.finalPayload;
       const replyText = extractReplyText(finalPayload);
       terminalReplyText = replyText;
       reachedTerminalReply = true;
@@ -3236,8 +3261,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     onTransportChange: () => undefined,
     isDisposed: () => false,
     isAuthDenied: () => chatAuthDenied,
-    healthPollIntervalMs: CHAT_HEALTH_POLL_INTERVAL_MS,
-    sseEventTypes: [...DEMO_RUNTIME_EVENT_TYPES, ...TEAM_RUNTIME_EVENT_TYPES]
+    healthPollIntervalMs: CHAT_HEALTH_POLL_INTERVAL_MS
   });
 
   function stopChatRealtimeWatch() {
@@ -3253,7 +3277,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     eventType: string,
     dataText: string,
     _eventId: string,
-    _transport: 'ws' | 'sse' = 'ws'
+    _transport: 'ws' = 'ws'
   ) {
     if (!groupId || groupId !== activeGroupId.value) return;
     const payload = safeJsonParse(dataText);

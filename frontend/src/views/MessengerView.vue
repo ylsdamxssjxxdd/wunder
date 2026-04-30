@@ -10800,7 +10800,7 @@ const handleAgentDeleted = async (deletedAgentId: string) => {
   deletingAgentSelectionSnapshot.value = [];
   const tasks: Promise<unknown>[] = [
     refreshAgentMutationState(),
-    chatStore.loadSessions({ skipTransportRefresh: true }),
+    chatStore.loadSessions(),
     loadRunningAgents({ force: true }),
     loadAgentUserRounds(),
     loadChannelBoundAgentIds({ force: true }),
@@ -12462,10 +12462,7 @@ const loadChannelBoundAgentIds = async (options: { force?: boolean } = {}) => {
 };
 
 const refreshRealtimeChatSessions = async () => {
-  await chatStore.loadSessions({
-    // Realtime pulse only needs session list delta; skip transport profile requests on every tick.
-    skipTransportRefresh: true
-  });
+  await chatStore.loadSessions();
 };
 
 const REALTIME_CONTACT_REFRESH_MIN_MS = 7_000;

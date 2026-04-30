@@ -27,7 +27,7 @@ From the repository layout and the current implementation, wunder can be underst
 The access layer mainly includes:
 
 - the `/wunder` primary interface
-- chat WebSocket and SSE
+- chat WebSocket
 - the user-facing frontend
 - the admin frontend
 - channel entry points
@@ -91,7 +91,7 @@ They share the same underlying capabilities, but each serves a different interac
 - `desktop` is the main delivery form
 - `cli` is the developer and automation entry point
 - the user frontend and admin frontend must remain separate
-- WebSocket comes first, with SSE as fallback
+- chat real-time state is WebSocket-only; non-chat streaming endpoints keep their own protocol boundaries
 
 ## Diagram
 

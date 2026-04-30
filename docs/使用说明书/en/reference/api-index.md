@@ -29,7 +29,6 @@ Recommended reading:
 - `POST /wunder/chat/attachments/convert`
 - `POST /wunder/chat/attachments/media/process`
 - `POST /wunder/chat/sessions/{session_id}/messages`
-- `GET /wunder/chat/sessions/{session_id}/resume`
 - `POST /wunder/chat/sessions/{session_id}/cancel`
 - `GET /wunder/chat/ws`
 

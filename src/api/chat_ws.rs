@@ -65,6 +65,8 @@ struct WsStartPayload {
     approval_mode: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default, alias = "orchestrationSource", alias = "orchestration_source")]
+    orchestration_source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -353,6 +355,55 @@ async fn handle_ws(
                             Some(&request_id),
                             Some(&session_id),
                         );
+                        let allow_orchestration_send = payload
+                            .orchestration_source
+                            .as_deref()
+                            .map(str::trim)
+                            .map(|value| value == crate::api::chat::ORCHESTRATION_SOURCE_ALLOW)
+                            .unwrap_or(false);
+                        let session_record = match state
+                            .user_store
+                            .get_chat_session(&user.user_id, &session_id)
+                        {
+                            Ok(record) => record,
+                            Err(err) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    "BAD_REQUEST",
+                                    err.to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        let orchestration_check = if let Some(record) = session_record.as_ref() {
+                            crate::api::chat::reject_or_repair_orchestration_dispatch(
+                                state.as_ref(),
+                                &user.user_id,
+                                record,
+                                allow_orchestration_send,
+                            )
+                        } else if !allow_orchestration_send {
+                            crate::api::chat::reject_locked_orchestration_session(
+                                state.as_ref(),
+                                &user.user_id,
+                                &session_id,
+                            )
+                        } else {
+                            Ok(())
+                        };
+                        if let Err(response) = orchestration_check {
+                            let error_code = resolve_ws_error_code(&response);
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                Some(&request_id),
+                                error_code.as_str(),
+                                extract_error_message(response),
+                            )
+                            .await;
+                            continue;
+                        }
                         let stream = payload.stream.unwrap_or(true);
                         let mut request = match build_chat_request(
                             &state,

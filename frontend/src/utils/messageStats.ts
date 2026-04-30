@@ -621,7 +621,8 @@ const resolveAssistantStatusEntry = (
     if (latestRequest.index >= 0) {
       return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
     }
-    return buildStatusEntry(t('messenger.messageStatus.running'), 'running', true);
+    // Generic running only drives avatar/composer state; showing it in the bubble causes a visible flash.
+    return null;
   }
 
   return buildStatusEntry(t('messenger.messageStatus.done'), 'success');

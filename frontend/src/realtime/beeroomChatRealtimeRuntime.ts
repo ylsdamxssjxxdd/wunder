@@ -1,9 +1,9 @@
-import { openBeeroomChatStream, openBeeroomSocket } from '@/api/beeroom';
+import { openBeeroomSocket } from '@/api/beeroom';
 import { resolveNextRealtimeCursor } from '@/components/beeroom/beeroomRealtimeCursor';
 import { beeroomRealtimePerf } from '@/utils/beeroomRealtimePerf';
 import { createWsMultiplexer } from '@/utils/ws';
 
-export type BeeroomChatRealtimeTransport = 'none' | 'ws' | 'sse';
+export type BeeroomChatRealtimeTransport = 'none' | 'ws';
 
 export type BeeroomChatRealtimeEvent = {
   groupId: string;
@@ -30,9 +30,7 @@ type BeeroomChatRealtimeRuntimeOptions = {
   isAuthDenied?: () => boolean;
   healthPollIntervalMs?: number;
   wsRetryDelayMs?: number;
-  sseRetryDelayMs?: number;
   triggerDelayMs?: number;
-  sseEventTypes?: string[];
 };
 
 type BeeroomChatRealtimeRuntime = {
@@ -45,7 +43,6 @@ type BeeroomChatRealtimeRuntime = {
 
 const DEFAULT_HEALTH_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_WS_RETRY_DELAY_MS = 1_400;
-const DEFAULT_SSE_RETRY_DELAY_MS = 2_200;
 const DEFAULT_TRIGGER_DELAY_MS = 120;
 
 const normalizeGroupId = (value: unknown): string => String(value || '').trim();
@@ -83,26 +80,15 @@ export const createBeeroomChatRealtimeRuntime = (
     Number(options.healthPollIntervalMs || DEFAULT_HEALTH_POLL_INTERVAL_MS)
   );
   const wsRetryDelayMs = Math.max(200, Number(options.wsRetryDelayMs || DEFAULT_WS_RETRY_DELAY_MS));
-  const sseRetryDelayMs = Math.max(300, Number(options.sseRetryDelayMs || DEFAULT_SSE_RETRY_DELAY_MS));
   const triggerDelayMs = Math.max(60, Number(options.triggerDelayMs || DEFAULT_TRIGGER_DELAY_MS));
-  const sseEventTypes = [
-    'watching',
-    'sync_required',
-    'chat_cleared',
-    'chat_message',
-    ...(options.sseEventTypes || [])
-  ].filter((value, index, source) => source.indexOf(value) === index);
 
   let activeGroupId = '';
   let transport: BeeroomChatRealtimeTransport = 'none';
   let healthPollTimer: number | null = null;
   let healthPollRunning = false;
   let wsRetryTimer: number | null = null;
-  let sseRetryTimer: number | null = null;
   let wsWatchController: AbortController | null = null;
   let wsWatchRequestId = '';
-  let sseSource: EventSource | null = null;
-  let sseGroupId = '';
   let boundVisibilityListener = false;
 
   const isDisposed = () => Boolean(options.isDisposed?.());
@@ -137,14 +123,6 @@ export const createBeeroomChatRealtimeRuntime = (
     }
   };
 
-  const clearSseRetryTimer = () => {
-    if (typeof window === 'undefined') return;
-    if (sseRetryTimer !== null) {
-      window.clearTimeout(sseRetryTimer);
-      sseRetryTimer = null;
-    }
-  };
-
   const stopWsWatch = () => {
     clearWsRetryTimer();
     if (wsWatchController) {
@@ -157,18 +135,8 @@ export const createBeeroomChatRealtimeRuntime = (
     }
   };
 
-  const stopSseWatch = () => {
-    clearSseRetryTimer();
-    if (sseSource) {
-      sseSource.close();
-      sseSource = null;
-    }
-    sseGroupId = '';
-  };
-
   const stopWatchTransport = () => {
     stopWsWatch();
-    stopSseWatch();
     setTransport('none', 'stop');
   };
 
@@ -254,17 +222,6 @@ export const createBeeroomChatRealtimeRuntime = (
     }, wsRetryDelayMs);
   };
 
-  const scheduleSseRetry = (groupId: string) => {
-    if (typeof window === 'undefined' || isDisposed() || isAuthDenied()) return;
-    clearSseRetryTimer();
-    beeroomRealtimePerf.count('beeroom_realtime_sse_retry_scheduled', 1, { groupId });
-    sseRetryTimer = window.setTimeout(() => {
-      sseRetryTimer = null;
-      if (groupId !== activeGroupId) return;
-      startSseWatch(groupId);
-    }, sseRetryDelayMs);
-  };
-
   const handleRealtimeEvent = (
     groupId: string,
     eventType: string,
@@ -289,12 +246,7 @@ export const createBeeroomChatRealtimeRuntime = (
       transport: sourceTransport
     });
     if (normalizedType === 'watching') {
-      if (sourceTransport === 'ws') {
-        stopSseWatch();
-        setTransport('ws', 'watching');
-      } else {
-        setTransport('sse', 'watching');
-      }
+      setTransport('ws', 'watching');
     } else if (normalizedType && normalizedType !== 'heartbeat' && normalizedType !== 'ping') {
       setTransport(sourceTransport, `event:${normalizedType}`);
     }
@@ -311,66 +263,6 @@ export const createBeeroomChatRealtimeRuntime = (
       transport: sourceTransport,
       payload
     });
-  };
-
-  const startSseWatch = (groupId: string) => {
-    const normalizedGroupId = normalizeGroupId(groupId);
-    if (
-      !normalizedGroupId ||
-      typeof window === 'undefined' ||
-      typeof EventSource === 'undefined' ||
-      isDisposed() ||
-      isAuthDenied()
-    ) {
-      return;
-    }
-    if (sseSource && sseGroupId === normalizedGroupId) {
-      return;
-    }
-    stopSseWatch();
-    let source: EventSource;
-    try {
-      source = openBeeroomChatStream(normalizedGroupId, {
-        allowQueryToken: true,
-        params: { after_event_id: options.getCursor() }
-      });
-    } catch (error) {
-      options.onError?.(error);
-      scheduleSseRetry(normalizedGroupId);
-      return;
-    }
-    sseSource = source;
-    sseGroupId = normalizedGroupId;
-    const bindEvent = (eventName: string) => {
-      source.addEventListener(eventName, (event: Event) => {
-        if (sseSource !== source) return;
-        const messageEvent = event as MessageEvent;
-        const dataText =
-          typeof messageEvent.data === 'string'
-            ? messageEvent.data
-            : JSON.stringify(messageEvent.data ?? null);
-        handleRealtimeEvent(
-          normalizedGroupId,
-          eventName,
-          dataText,
-          String(messageEvent.lastEventId || ''),
-          'sse'
-        );
-      });
-    };
-    sseEventTypes.forEach((name) => bindEvent(name));
-    source.onerror = () => {
-      if (sseSource !== source) return;
-      source.close();
-      sseSource = null;
-      sseGroupId = '';
-      beeroomRealtimePerf.count('beeroom_realtime_sse_error', 1, {
-        groupId: normalizedGroupId
-      });
-      setTransport('none', 'sse_error');
-      if (normalizedGroupId !== activeGroupId) return;
-      scheduleSseRetry(normalizedGroupId);
-    };
   };
 
   const startWsWatch = (groupId: string) => {
@@ -405,7 +297,6 @@ export const createBeeroomChatRealtimeRuntime = (
           groupId: normalizedGroupId
         });
         setTransport('none', 'ws_error');
-        startSseWatch(normalizedGroupId);
         scheduleWsRetry(normalizedGroupId);
       })
       .finally(() => {

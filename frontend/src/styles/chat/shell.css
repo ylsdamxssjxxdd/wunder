@@ -115,11 +115,6 @@
   box-shadow: 0 0 8px rgba(var(--chat-primary-rgb), 0.45);
 }
 
-.chat-shell .transport-status.sse .transport-dot {
-  background: var(--chat-accent);
-  box-shadow: 0 0 8px rgba(var(--chat-accent-rgb), 0.45);
-}
-
 .chat-shell .brand-mark {
   width: 40px;
   height: 40px;
@@ -270,11 +265,6 @@
 .chat-shell .topbar-feature-transport.ws .topbar-feature-transport-dot {
   background: var(--chat-primary);
   box-shadow: 0 0 8px rgba(var(--chat-primary-rgb), 0.45);
-}
-
-.chat-shell .topbar-feature-transport.sse .topbar-feature-transport-dot {
-  background: var(--chat-accent);
-  box-shadow: 0 0 8px rgba(var(--chat-accent-rgb), 0.45);
 }
 
 .chat-shell .topbar-feature-item {

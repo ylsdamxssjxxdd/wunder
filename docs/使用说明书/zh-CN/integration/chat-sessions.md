@@ -28,7 +28,6 @@ source_docs:
 - `POST /wunder/chat/attachments/media/process`
 - `POST /wunder/chat/sessions/{session_id}/messages`
 - `GET /wunder/chat/sessions/{session_id}/events`
-- `GET /wunder/chat/sessions/{session_id}/resume`
 - `POST /wunder/chat/sessions/{session_id}/cancel`
 - `POST /wunder/chat/sessions/{session_id}/compaction`
 - `POST /wunder/chat/sessions/{session_id}/system-prompt`
@@ -39,7 +38,7 @@ source_docs:
 2. 文档附件先 `POST /wunder/chat/attachments/convert`
 3. 音频 / 视频附件先 `POST /wunder/chat/attachments/media/process`
 4. `POST /wunder/chat/sessions/{session_id}/messages` 发送正文和 / 或附件
-5. 用 [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) 或 `resume` 消费事件
+5. 用 [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) 的 `start / resume / watch` 消费实时事件
 6. 用 `GET /wunder/chat/sessions/{session_id}` 渲染会话详情
 7. 需要时调用 `cancel` 或 `compaction`
 

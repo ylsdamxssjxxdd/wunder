@@ -7,7 +7,6 @@ import {
   controlSessionSubagents as controlSessionSubagentsApi,
   createSession,
   deleteSession as deleteSessionApi,
-  fetchChatTransportProfile,
   getSession,
   getSessionEvents,
   getSessionHistoryPage,
@@ -16,14 +15,11 @@ import {
   openChatSocket,
   renameSession as renameSessionApi,
   restoreSession as restoreSessionApi,
-  resumeMessageStream,
-  sendMessageStream,
   submitMessageFeedback as submitMessageFeedbackApi,
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
 import { setDefaultSession } from '@/api/agents';
-import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
@@ -35,6 +31,7 @@ import {
   hasRunningAssistantMessage,
   hasStreamingAssistantMessage,
   isSessionBusyFromSignals,
+  isThreadRuntimeBusy,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
 } from '@/utils/chatSessionRuntime';
@@ -60,6 +57,19 @@ import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
+import {
+  createChatRuntimeProjection,
+  applyChatRuntimeEvent
+} from '@/realtime/chat/chatRuntimeReducer';
+import {
+  selectLegacyMessageStatus,
+  selectVisibleMessageProjections,
+  selectSessionBusy,
+  selectSessionBusyReason,
+  selectSessionRuntimeStatus
+} from '@/realtime/chat/chatRuntimeSelectors';
+import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
+import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
   assistantEntriesShareTurnAnchor,
@@ -253,8 +263,6 @@ type DesktopOverlayBridge = {
 };
 
 type LoadSessionsOptions = {
-  skipTransportRefresh?: boolean;
-  refresh_transport?: boolean;
   agent_id?: string | number | boolean | null | undefined;
 };
 
@@ -1241,18 +1249,6 @@ const parseErrorText = (text) => {
     return '';
   }
   return formatStructuredErrorText(text, text);
-};
-
-const readResponseError = async (response) => {
-  if (!response) {
-    return '';
-  }
-  try {
-    const text = await response.text();
-    return parseErrorText(text);
-  } catch (error) {
-    return '';
-  }
 };
 
 const ensureMessageStats = (message) => {
@@ -4967,6 +4963,9 @@ function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread
     runtime.waitingForUserInput = false;
     runtime.threadStatus = 'not_loaded';
   }
+  syncChatRuntimeProjectionStatus(store, targetId, runtime.threadStatus, {
+    eventType: eventType === 'thread_closed' ? 'session_idle' : 'session_runtime'
+  });
   const terminalRuntimeStatus = isTerminalRuntimeStatus(runtime.threadStatus);
   if (terminalRuntimeStatus) {
     // Terminal runtime status is authoritative for this thread; clear stale interactive
@@ -5108,6 +5107,7 @@ const notifySessionSnapshot = (store, sessionId, messages, immediate = false, op
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
   cacheSessionMessages(key, messages);
+  syncChatRuntimeProjectionFromLegacy(store, key, messages);
   const activeKey = resolveSessionKey(store?.activeSessionId);
   if (activeKey && activeKey === key) {
     if (store && typeof store === 'object') {
@@ -5118,6 +5118,75 @@ const notifySessionSnapshot = (store, sessionId, messages, immediate = false, op
     }
     scheduleChatSnapshot(store, immediate);
   }
+};
+
+const ensureChatRuntimeProjectionForStore = (store): ChatRuntimeProjection | null => {
+  if (!store || typeof store !== 'object') return null;
+  if (!store.runtimeProjection) {
+    store.runtimeProjection = createChatRuntimeProjection();
+  }
+  return store.runtimeProjection as ChatRuntimeProjection;
+};
+
+const resolveProjectionAgentId = (store, sessionId): string => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(store?.sessions)) return '';
+  const session = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
+  return String(session?.agent_id || '').trim();
+};
+
+const syncChatRuntimeProjectionFromLegacy = (
+  store,
+  sessionId,
+  messages = null,
+  options: { loading?: boolean; running?: boolean } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const targetMessages = Array.isArray(messages)
+    ? messages
+    : getSessionMessages(key) || (resolveSessionKey(store?.activeSessionId) === key ? store?.messages : []);
+  const runtime = getRuntime(key);
+  const loading =
+    options.loading === undefined
+      ? Boolean(store?.loadingBySession?.[key])
+      : Boolean(options.loading);
+  const running =
+    options.running === undefined
+      ? loading || isThreadRuntimeBusy(runtime?.threadStatus)
+      : Boolean(options.running);
+  applyChatRuntimeEvent(
+    projection,
+    buildLegacyMessagesReconciledEvent({
+      sessionId: key,
+      agentId: resolveProjectionAgentId(store, key),
+      messages: Array.isArray(targetMessages) ? targetMessages : [],
+      loading,
+      running
+    })
+  );
+};
+
+const syncChatRuntimeProjectionStatus = (
+  store,
+  sessionId,
+  status,
+  options: { eventType?: string } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  applyChatRuntimeEvent(projection, {
+    event_type: options.eventType || 'session_runtime',
+    source: 'legacy',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    runtime_status: status
+  });
 };
 
 const shouldPreferCachedMessages = (cached, server) => {
@@ -5509,6 +5578,10 @@ const setSessionLoading = (store, sessionId, value) => {
   } else if (store.loadingBySession[key]) {
     delete store.loadingBySession[key];
   }
+  syncChatRuntimeProjectionFromLegacy(store, key, null, {
+    loading: Boolean(value),
+    running: Boolean(value)
+  });
   if (!runtime) return;
   if (value) {
     runtime.loaded = true;
@@ -6799,26 +6872,8 @@ const startSessionWatcher = (store, sessionId) => {
   };
 
   const baseEventId = lastEventId || 0;
-  const watchWithSse = async () => {
-    // SSE watch may complete on idle; reconnect to keep behavior close to WS watch mode.
-    while (!controller.signal.aborted) {
-      const response = await resumeMessageStream(key, {
-        signal: controller.signal,
-        afterEventId: lastEventId || baseEventId
-      });
-      if (!response.ok) {
-        const errorText = await readResponseError(response);
-        throw new Error(errorText || t('chat.error.resumeFailedWithStatus', { status: response.status }));
-      }
-      await consumeSseStream(response, onEvent);
-      if (controller.signal.aborted) {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 120));
-    }
-  };
-  const watchWithWs = () =>
-    chatWsClient.request({
+  startWatchdog();
+  const watchPromise = chatWsClient.request({
       requestId,
       sessionId: key,
       message: {
@@ -6831,20 +6886,6 @@ const startSessionWatcher = (store, sessionId) => {
       signal: controller.signal,
       closeOnFinal: false
     });
-  const preferredTransport = resolveStreamTransport();
-  store.streamTransport = preferredTransport;
-  startWatchdog();
-  const watchPromise =
-    preferredTransport === 'ws'
-      ? watchWithWs().catch((error) => {
-          if (error?.phase === 'connect') {
-            markWsUnavailable();
-            store.streamTransport = 'sse';
-            return watchWithSse();
-          }
-          throw error;
-        })
-      : watchWithSse();
   watchPromise
     .catch((error) => {
       store.clearPendingApprovals({ requestId, sessionId: key });
@@ -6861,10 +6902,6 @@ const startSessionWatcher = (store, sessionId) => {
       const transient =
         resumeRequired || error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
       if (transient) {
-        if (preferredTransport === 'ws') {
-          markWsUnavailable();
-          store.streamTransport = 'sse';
-        }
         if (perfEnabled) {
           chatPerf.count('chat_watch_interrupted', 1, { sessionId: key });
         }
@@ -6893,37 +6930,16 @@ const startSessionWatcher = (store, sessionId) => {
     });
 };
 
-const DEFAULT_STREAM_TRANSPORT = 'ws';
 const chatWsClient = createWsMultiplexer(() => openChatSocket(), {
   idleTimeoutMs: 30000,
   connectTimeoutMs: 10000,
   pingIntervalMs: 20000
 });
-let wsUnavailableUntil = 0;
 let wsRequestSeq = 0;
 
 const buildWsRequestId = () => {
   wsRequestSeq = (wsRequestSeq + 1) % 1000000;
   return `req_${Date.now().toString(36)}_${wsRequestSeq}`;
-};
-
-const markWsUnavailable = (ttlMs = 15000) => {
-  const now = Date.now();
-  wsUnavailableUntil = now + Math.max(ttlMs, 5000);
-};
-
-const resolveStreamTransport = () => {
-  if (typeof WebSocket === 'undefined') {
-    return 'sse';
-  }
-  if (wsUnavailableUntil && Date.now() < wsUnavailableUntil) {
-    return 'sse';
-  }
-  const stored = localStorage.getItem('chat_stream_transport');
-  if (stored === 'sse' || stored === 'ws') {
-    return stored;
-  }
-  return DEFAULT_STREAM_TRANSPORT;
 };
 
 const abortResumeStream = (sessionId) => {
@@ -7139,6 +7155,51 @@ const resetChatRuntimeState = () => {
     snapshotTimer = null;
   }
   clearAllChatSnapshots();
+};
+
+const resolveLegacyMessageRuntimeStatusFromStore = (store, sessionId, message) => {
+  const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
+  const key = resolveSessionKey(sessionId || store?.activeSessionId);
+  if (!projection || !key || !message) return null;
+  return selectLegacyMessageStatus(projection, key, message);
+};
+
+const resolveProjectedVisibleMessagesFromStore = (store, sessionId) => {
+  const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
+  const key = resolveSessionKey(sessionId || store?.activeSessionId);
+  const sourceMessages = resolveSessionKey(store?.activeSessionId) === key
+    ? store?.messages
+    : getSessionMessages(key);
+  if (!projection || !key || !Array.isArray(sourceMessages)) {
+    return Array.isArray(sourceMessages) ? sourceMessages : [];
+  }
+  const projected = selectVisibleMessageProjections(projection, key);
+  if (!projected.length) {
+    return sourceMessages;
+  }
+  const byRaw = new Map();
+  const used = new Set();
+  sourceMessages.forEach((message) => {
+    if (message && typeof message === 'object') {
+      byRaw.set(message, message);
+    }
+  });
+  const ordered = projected
+    .map((item) => byRaw.get(item.raw))
+    .filter((message) => {
+      if (!message || used.has(message)) return false;
+      used.add(message);
+      return true;
+    });
+  if (!ordered.length) {
+    return sourceMessages;
+  }
+  sourceMessages.forEach((message) => {
+    if (!used.has(message)) {
+      ordered.push(message);
+    }
+  });
+  return ordered;
 };
 
 const scheduleSlowClientResume = (store, sessionId, message, afterEventId) => {
@@ -10257,11 +10318,11 @@ export const useChatStore = defineStore('chat', {
     messages: [],
     messageMutationVersion: 0,
     loadingBySession: {},
+    runtimeProjection: createChatRuntimeProjection() as ChatRuntimeProjection,
     greetingOverride: '',
     draftAgentId: '',
     draftToolOverrides: null,
-    pendingApprovals: [] as PendingApproval[],
-    streamTransport: resolveStreamTransport()
+    pendingApprovals: [] as PendingApproval[]
   }),
   getters: {
     isSessionLoading: (state) => (sessionId) => {
@@ -10272,6 +10333,9 @@ export const useChatStore = defineStore('chat', {
     isSessionBusy: (state) => (sessionId) => {
       const key = resolveSessionKey(sessionId);
       if (!key) return false;
+      if (state.runtimeProjection?.sessions?.[key]) {
+        return selectSessionBusy(state.runtimeProjection, key);
+      }
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
       const runtime = getRuntime(key);
@@ -10302,9 +10366,26 @@ export const useChatStore = defineStore('chat', {
       }
       return busyBySignals;
     },
-    sessionRuntimeStatus: () => (sessionId) => {
-      const runtime = getRuntime(sessionId);
+    sessionRuntimeStatus: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      const projectionStatus = selectSessionRuntimeStatus(
+        state.runtimeProjection,
+        key
+      );
+      if (projectionStatus !== 'not_loaded') return projectionStatus;
+      const runtime = getRuntime(key);
       return normalizeThreadRuntimeStatus(runtime?.threadStatus);
+    },
+    sessionBusyReason: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return null;
+      return selectSessionBusyReason(state.runtimeProjection, key);
+    },
+    messageRuntimeStatus: (state) => (sessionId, message) => {
+      return resolveLegacyMessageRuntimeStatusFromStore(state, sessionId, message);
+    },
+    visibleMessages: (state) => (sessionId = null) => {
+      return resolveProjectedVisibleMessagesFromStore(state, sessionId || state.activeSessionId);
     },
     historyLoading: () => (sessionId) => {
       const state = getHistoryState(sessionId);
@@ -10329,34 +10410,7 @@ export const useChatStore = defineStore('chat', {
       pageUnloading = false;
       resetChatRuntimeState();
       this.$reset();
-    },
-    setStreamTransport(transport) {
-      const next = transport === 'sse' ? 'sse' : 'ws';
-      localStorage.setItem('chat_stream_transport', next);
-      if (next === 'ws') {
-        wsUnavailableUntil = 0;
-      }
-      this.streamTransport = next;
-    },
-    async refreshStreamTransportPolicy() {
-      try {
-        const { data } = await fetchChatTransportProfile();
-        const remote = String(data?.data?.chat_stream_channel || '').trim().toLowerCase();
-        const next = remote === 'sse' ? 'sse' : 'ws';
-        localStorage.setItem('chat_stream_transport', next);
-        if (next === 'ws') {
-          wsUnavailableUntil = 0;
-        }
-        this.streamTransport = resolveStreamTransport();
-        return next;
-      } catch (error) {
-        this.streamTransport = resolveStreamTransport();
-        return this.streamTransport;
-      }
-    },
-    toggleStreamTransport() {
-      const next = this.streamTransport === 'sse' ? 'ws' : 'sse';
-      this.setStreamTransport(next);
+      this.runtimeProjection = createChatRuntimeProjection();
     },
     enqueueApprovalRequest(requestId, sessionId, payload) {
       const approval = normalizePendingApproval(payload, requestId, sessionId);
@@ -10982,11 +11036,6 @@ export const useChatStore = defineStore('chat', {
       return message;
     },
     async loadSessions(options: LoadSessionsOptions = {}) {
-      const shouldRefreshTransport =
-        options.skipTransportRefresh !== true && options.refresh_transport !== false;
-      if (shouldRefreshTransport) {
-        await this.refreshStreamTransportPolicy();
-      }
       const params: { agent_id?: string } = {};
       let requestedAgentId: string | null = null;
 
@@ -12213,7 +12262,7 @@ export const useChatStore = defineStore('chat', {
         };
         chatDebugLog('chat.llm.request', 'submit-start', {
           sessionId,
-          transportHint: runtime?.sendRequestId ? 'ws-or-sse' : 'sse',
+          transportHint: 'ws',
           debugPayloadEnabled,
           approvalMode: approvalMode || null,
           attachmentCount: attachments.length
@@ -12328,57 +12377,25 @@ export const useChatStore = defineStore('chat', {
             before: mutationBaseline
           });
         };
-        const streamWithSse = async () => {
-          const response = await sendMessageStream(sessionId, payload, {
-            signal: runtime?.sendController?.signal
-          });
-          if (!response.ok) {
-            const errorText = await readResponseError(response);
-            throw new Error(
-              errorText || t('chat.error.requestFailedWithStatus', { status: response.status })
-            );
-          }
-          await consumeSseStream(response, onEvent);
-        };
-        const streamWithWs = async () => {
-          const requestId = sendRequestId || buildWsRequestId();
-          sendRequestId = requestId;
-          if (runtime) {
-            runtime.sendRequestId = requestId;
-          }
-          await chatWsClient.request({
-            requestId,
-            sessionId,
-            message: {
-              type: 'start',
-              request_id: requestId,
-              session_id: sessionId,
-              payload
-            },
-            onEvent,
-            signal: runtime?.sendController?.signal,
-            closeOnFinal: true,
-            resolveOnQueued: true
-          });
-        };
-        await this.refreshStreamTransportPolicy();
-        const transport = resolveStreamTransport();
-        this.streamTransport = transport;
-        if (transport === 'ws') {
-          try {
-            await streamWithWs();
-          } catch (error) {
-            if (error?.phase === 'connect') {
-              markWsUnavailable();
-              this.streamTransport = 'sse';
-              await streamWithSse();
-            } else {
-              throw error;
-            }
-          }
-        } else {
-          await streamWithSse();
+        const requestId = sendRequestId || buildWsRequestId();
+        sendRequestId = requestId;
+        if (runtime) {
+          runtime.sendRequestId = requestId;
         }
+        await chatWsClient.request({
+          requestId,
+          sessionId,
+          message: {
+            type: 'start',
+            request_id: requestId,
+            session_id: sessionId,
+            payload
+          },
+          onEvent,
+          signal: runtime?.sendController?.signal,
+          closeOnFinal: true,
+          resolveOnQueued: true
+        });
       } catch (error) {
         if (error?.name === 'AbortError' || runtime?.stopRequested || pageUnloading) {
           interruptedByStop = true;
@@ -12774,62 +12791,26 @@ export const useChatStore = defineStore('chat', {
             before: mutationBaseline
           });
         };
-        const streamWithSse = async () => {
-          const response = await resumeMessageStream(sessionId, {
-            signal: runtime?.resumeController?.signal,
-            afterEventId: resumeAfterEventId
-          });
-          if (!response.ok) {
-            const errorText = await readResponseError(response);
-            throw new Error(
-              errorText || t('chat.error.resumeFailedWithStatus', { status: response.status })
-            );
-          }
-          await consumeSseStream(response, onEvent);
-        };
-        const streamWithWs = async () => {
-          const requestId = resumeRequestId || buildWsRequestId();
-          resumeRequestId = requestId;
-          if (runtime) {
-            runtime.resumeRequestId = requestId;
-          }
-          await chatWsClient.request({
-            requestId,
-            sessionId,
-            message: {
-              type: 'resume',
-              request_id: requestId,
-              session_id: sessionId,
-              payload: {
-                after_event_id: Math.max(afterEventId, 1)
-              }
-            },
-            onEvent,
-            signal: runtime?.resumeController?.signal,
-            closeOnFinal: true
-          });
-        };
-        const hasAfterEventId = Number.isFinite(afterEventId) && afterEventId > 0;
-        if (hasAfterEventId) {
-          await this.refreshStreamTransportPolicy();
+        const requestId = resumeRequestId || buildWsRequestId();
+        resumeRequestId = requestId;
+        if (runtime) {
+          runtime.resumeRequestId = requestId;
         }
-        const transport = hasAfterEventId ? resolveStreamTransport() : 'sse';
-        this.streamTransport = transport;
-        if (transport === 'ws') {
-          try {
-            await streamWithWs();
-          } catch (error) {
-            if (error?.phase === 'connect') {
-              markWsUnavailable();
-              this.streamTransport = 'sse';
-              await streamWithSse();
-            } else {
-              throw error;
+        await chatWsClient.request({
+          requestId,
+          sessionId,
+          message: {
+            type: resumeAfterEventId > 0 ? 'resume' : 'watch',
+            request_id: requestId,
+            session_id: sessionId,
+            payload: {
+              after_event_id: resumeAfterEventId
             }
-          }
-        } else {
-          await streamWithSse();
-        }
+          },
+          onEvent,
+          signal: runtime?.resumeController?.signal,
+          closeOnFinal: resumeAfterEventId > 0
+        });
       } catch (error) {
         if (error?.name === 'AbortError') {
           aborted = true;
