@@ -24,7 +24,25 @@ SCHEMA_HINT_RETRY_DELAYS_S = (0.0, 0.2, 0.5)
 
 
 def _error_response(exc: Exception) -> dict[str, Any]:
-    return {"ok": False, "error": str(exc)}
+    message = str(exc)
+    hint = _database_error_hint(message)
+    if hint:
+        message = f"{message} Hint: {hint}"
+    return {"ok": False, "error": message}
+
+
+def _database_error_hint(message: str) -> str:
+    lower = message.lower()
+    if "you have an error in your sql syntax" not in lower and "sql syntax" not in lower:
+        return ""
+    if "near '" not in lower:
+        return ""
+    return (
+        "If the SELECT list contains Chinese, numeric-prefix, space, or punctuation-heavy "
+        "column names, copy the exact column names from the schema/query result and wrap each "
+        "identifier with backticks in MySQL. For full row exports, prefer SELECT * FROM the "
+        "bound table with a verified WHERE clause instead of hand-writing a long column list."
+    )
 
 
 def _normalize_params(params: Sequence[Any]) -> list[Any] | None:
@@ -209,6 +227,7 @@ def _build_export_description(
         "适合生成 Excel/CSV 交付物，不要把大量分页结果塞进模型上下文。",
         "如果希望文件直接落到当前工作区，请把 path 写成 `/workspaces/{user_id}/exports/...`；返回结果会包含规范化后的 path 和 workspace_relative_path，便于后续工具继续处理。",
         "默认拒绝仍包含 LIMIT/OFFSET 的 SQL；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。",
+        "若需要导出完整行，优先使用 SELECT *；若手写字段清单，必须严格复制字段名，MySQL 中中文/数字开头/含空格或特殊字符的字段请逐个使用反引号。",
     ]
     if target.description:
         parts.append(f"用途：{target.description}。")
@@ -232,6 +251,7 @@ def _build_generic_export_description() -> str:
         "适合生成 Excel/CSV 交付物，不要把大量分页结果塞进模型上下文。"
         "如果希望文件直接落到当前工作区，请把 path 写成 `/workspaces/{user_id}/exports/...`；返回结果会包含规范化后的 path 和 workspace_relative_path，便于后续工具继续处理。"
         "默认拒绝仍包含 LIMIT/OFFSET 的 SQL；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。"
+        "若需要导出完整行，优先使用 SELECT *；若手写字段清单，必须严格复制字段名，MySQL 中中文/数字开头/含空格或特殊字符的字段请逐个使用反引号。"
     )
 
 

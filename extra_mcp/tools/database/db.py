@@ -168,9 +168,10 @@ TABLE_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 DISALLOWED_KEYWORDS_PATTERN = re.compile(
-    r"\b(?:insert|update|delete|replace|alter|drop|truncate|create|grant|revoke|call|set)\b",
+    r"\b(?:insert|update|delete|alter|drop|truncate|create|grant|revoke|call|set)\b",
     re.IGNORECASE,
 )
+REPLACE_INTO_PATTERN = re.compile(r"\breplace\s+(?:low_priority\s+|delayed\s+)?into\b", re.IGNORECASE)
 SYSTEM_SCHEMA_PATTERN = re.compile(
     r"\b(?:information_schema|pg_catalog|mysql\.|performance_schema)\b",
     re.IGNORECASE,
@@ -267,7 +268,7 @@ def _bound_table_reference_hint(cfg: DbConfig, table: str) -> str:
 
 def validate_sql_against_target_table(sql: str, cfg: DbConfig, table: str) -> str | None:
     cleaned = _strip_single_quoted_literals(_strip_sql_comments(sql)).lower()
-    if DISALLOWED_KEYWORDS_PATTERN.search(cleaned):
+    if DISALLOWED_KEYWORDS_PATTERN.search(cleaned) or REPLACE_INTO_PATTERN.search(cleaned):
         return "Only SELECT/EXPLAIN/WITH read-only SQL is allowed."
     if SYSTEM_SCHEMA_PATTERN.search(cleaned):
         return "System schema queries are blocked for table-bound db_query tools."
