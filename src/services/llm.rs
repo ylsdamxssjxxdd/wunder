@@ -2961,119 +2961,7 @@ fn apply_function_delta(slot: &mut StreamToolCall, function: &Value) {
 }
 
 fn merge_stream_text_field(target: &mut String, fragment: &str) {
-    if fragment.is_empty() {
-        return;
-    }
-
-    if target.is_empty() {
-        target.push_str(fragment);
-        return;
-    }
-
-    if target.as_str() == fragment || target.ends_with(fragment) {
-        return;
-    }
-
-    if fragment.starts_with(target.as_str()) {
-        target.clear();
-        target.push_str(fragment);
-        return;
-    }
-
-    if should_replace_empty_json_stream_payload(target, fragment) {
-        target.clear();
-        target.push_str(fragment);
-        return;
-    }
-
-    if should_replace_stream_json_payload(target, fragment) {
-        target.clear();
-        target.push_str(fragment);
-        return;
-    }
-
-    let overlap = stream_text_overlap_len(target, fragment).filter(|overlap| *overlap > 1);
-    let Some(overlap) = overlap else {
-        target.push_str(fragment);
-        return;
-    };
-    target.push_str(&fragment[overlap..]);
-}
-
-fn should_replace_empty_json_stream_payload(current: &str, next: &str) -> bool {
-    let current = current.trim();
-    let next = next.trim();
-    if current != "{}" {
-        return false;
-    }
-    if next.is_empty() {
-        return false;
-    }
-    if next == "{" {
-        return true;
-    }
-    if !next.starts_with('{') {
-        return false;
-    }
-    strict_parse_partial_json_fragment(next)
-}
-
-fn should_replace_stream_json_payload(current: &str, next: &str) -> bool {
-    let current = current.trim();
-    let next = next.trim();
-    if current.is_empty() || next.is_empty() {
-        return false;
-    }
-    serde_json::from_str::<Value>(current).is_ok() && serde_json::from_str::<Value>(next).is_ok()
-}
-
-fn stream_text_overlap_len(target: &str, fragment: &str) -> Option<usize> {
-    let max_len = target.len().min(fragment.len());
-    for len in (1..=max_len).rev() {
-        let target_start = target.len() - len;
-        if !target.is_char_boundary(target_start) || !fragment.is_char_boundary(len) {
-            continue;
-        }
-        if target[target_start..] == fragment[..len] {
-            return Some(len);
-        }
-    }
-    None
-}
-
-fn strict_parse_partial_json_fragment(fragment: &str) -> bool {
-    let mut depth = 0_i32;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for ch in fragment.chars() {
-        if in_string {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            match ch {
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-
-        match ch {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth < 0 {
-                    return false;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    !in_string && depth == 0 && serde_json::from_str::<Value>(fragment).is_ok()
+    target.push_str(fragment);
 }
 
 fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
@@ -3883,7 +3771,7 @@ mod tests {
     }
 
     #[test]
-    fn update_stream_tool_calls_merges_delta_and_snapshot_without_duplicates() {
+    fn update_stream_tool_calls_appends_delta_and_snapshot_verbatim() {
         let mut acc = Vec::new();
         update_stream_tool_calls(
             &mut acc,
@@ -3922,11 +3810,11 @@ mod tests {
             }),
         );
 
-        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "read_file");
+        assert_eq!(acc.len(), 1);
+        assert_eq!(acc[0].name, "read_fileread_file");
         assert_eq!(
-            finalized[0]["function"]["arguments"],
-            "{\"path\":\"demo.txt\"}"
+            acc[0].arguments,
+            "{\"path\":\"demo.txt\"}{\"path\":\"demo.txt\"}"
         );
     }
 
@@ -3965,6 +3853,16 @@ mod tests {
         merge_stream_text_field(&mut merged, "box_inches='tight')");
 
         assert_eq!(merged, "plt.savefig(path, bbox_inches='tight')");
+    }
+
+    #[test]
+    fn merge_stream_text_field_preserves_short_word_boundary_overlap() {
+        let mut merged = String::new();
+        for fragment in ["{\"content\":\"", "for", " i", " in", " range"] {
+            merge_stream_text_field(&mut merged, fragment);
+        }
+
+        assert_eq!(merged, "{\"content\":\"for i in range");
     }
 
     #[test]
@@ -4010,6 +3908,50 @@ mod tests {
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"content\":\"import json\\nfrom datetime import datetime, timedelta\"}"
+        );
+    }
+
+    #[test]
+    fn update_stream_tool_calls_preserves_short_overlap_fragments() {
+        let mut acc = Vec::new();
+        for (index, fragment) in [
+            "{",
+            "\"content\":\"",
+            "for",
+            " i",
+            " in",
+            " range",
+            "(12):",
+            "\\n  ",
+            "  print",
+            "(i)",
+            "\"",
+            ",\"filename\":\"script.py\"",
+            "}",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut function = json!({ "arguments": fragment });
+            if index == 0 {
+                function["name"] = json!("programmatic_tool_call");
+            }
+            update_stream_tool_calls(
+                &mut acc,
+                &json!({
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": function,
+                    }]
+                }),
+            );
+        }
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "programmatic_tool_call");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"content\":\"for i in range(12):\\n    print(i)\",\"filename\":\"script.py\"}"
         );
     }
 
@@ -4119,7 +4061,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_stream_tool_calls_repairs_custom_tool_input_stream() {
+    fn update_responses_tool_call_from_item_appends_custom_tool_fields_verbatim() {
         let mut acc = Vec::new();
         update_responses_tool_call_from_item(
             &mut acc,
@@ -4142,28 +4084,26 @@ mod tests {
             }),
         );
 
-        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "apply_patch");
+        assert_eq!(acc.len(), 1);
+        assert_eq!(acc[0].name, "apply_patchapply_patch");
         assert_eq!(
-            serde_json::from_str::<Value>(
-                finalized[0]["function"]["arguments"].as_str().unwrap_or(""),
-            )
-            .expect("custom tool arguments json"),
-            json!({
-                "input": "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
-            })
+            acc[0].arguments,
+            "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
         );
     }
 
     #[test]
-    fn merge_stream_text_field_replaces_later_complete_json_payload() {
+    fn merge_stream_text_field_appends_later_complete_json_payload() {
         let mut merged = "{\"content\":\"hello\"}".to_string();
         merge_stream_text_field(&mut merged, "{\"content\":\"hello world\"}");
-        assert_eq!(merged, "{\"content\":\"hello world\"}");
+        assert_eq!(
+            merged,
+            "{\"content\":\"hello\"}{\"content\":\"hello world\"}"
+        );
     }
 
     #[test]
-    fn merge_stream_text_field_replaces_empty_json_before_complete_payload() {
+    fn merge_stream_text_field_appends_empty_json_before_complete_payload() {
         let mut merged = "{}".to_string();
         merge_stream_text_field(
             &mut merged,
@@ -4171,12 +4111,12 @@ mod tests {
         );
         assert_eq!(
             merged,
-            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+            "{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
         );
     }
 
     #[test]
-    fn finalize_stream_tool_calls_replaces_empty_json_seed_from_anthropic_tool_use() {
+    fn merge_stream_tool_call_item_appends_empty_json_seed_from_anthropic_tool_use() {
         let mut acc = Vec::new();
         merge_stream_tool_call_item(
             &mut acc,
@@ -4199,16 +4139,16 @@ mod tests {
             }),
         );
 
-        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        assert_eq!(acc.len(), 1);
+        assert_eq!(acc[0].name, "ptc");
         assert_eq!(
-            finalized[0]["function"]["arguments"],
-            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+            acc[0].arguments,
+            "{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
         );
     }
 
     #[test]
-    fn finalize_stream_tool_calls_replaces_empty_json_seed_from_incremental_anthropic_fragments() {
+    fn merge_stream_tool_call_item_appends_empty_json_seed_and_incremental_fragments() {
         let mut acc = Vec::new();
         merge_stream_tool_call_item(
             &mut acc,
@@ -4247,22 +4187,16 @@ mod tests {
             );
         }
 
-        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "ptc");
-        let arguments = finalized[0]["function"]["arguments"]
-            .as_str()
-            .expect("arguments string");
+        assert_eq!(acc.len(), 1);
+        assert_eq!(acc[0].name, "ptc");
         assert_eq!(
-            serde_json::from_str::<Value>(arguments).expect("incremental anthropic args json"),
-            json!({
-                "filename": "demo.py",
-                "content": "print(1)"
-            })
+            acc[0].arguments,
+            "{}{\"filename\": \"demo.py\", \"content\": \"print(1)\"}"
         );
     }
 
     #[tokio::test]
-    async fn process_anthropic_stream_tool_use_replaces_empty_input_seed() {
+    async fn process_anthropic_stream_tool_use_appends_empty_input_seed() {
         let mut combined = String::new();
         let mut reasoning = String::new();
         let mut usage: Option<TokenUsage> = None;
@@ -4293,11 +4227,11 @@ mod tests {
         .expect("process anthropic input json delta");
         assert!(!done);
 
-        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "ptc");
         assert_eq!(
-            finalized[0]["function"]["arguments"],
-            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+            tool_calls[0].arguments,
+            "{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
         );
     }
 

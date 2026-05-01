@@ -651,32 +651,15 @@ fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i
     let mut latest: Option<i64> = None;
     let mut peak = 0_i64;
     for event in events {
-        if event.event_type == "round_usage" {
-            let total_tokens = parse_usage_total_tokens(&event.data);
-            if total_tokens <= 0 {
+        if event.event_type == "context_usage" || event.event_type == "round_usage" {
+            let context_tokens = parse_context_occupancy_tokens(&event.data);
+            if context_tokens <= 0 {
                 continue;
             }
-            latest = Some(total_tokens);
-            if total_tokens > peak {
-                peak = total_tokens;
+            latest = Some(context_tokens);
+            if context_tokens > peak {
+                peak = context_tokens;
             }
-        }
-    }
-    if latest.is_some() {
-        return latest.map(|tokens| (tokens, peak.max(tokens)));
-    }
-
-    for event in events {
-        if event.event_type != "token_usage" {
-            continue;
-        }
-        let total_tokens = parse_usage_total_tokens(&event.data);
-        if total_tokens <= 0 {
-            continue;
-        }
-        latest = Some(total_tokens);
-        if total_tokens > peak {
-            peak = total_tokens;
         }
     }
     latest.map(|tokens| (tokens, peak.max(tokens)))
@@ -2385,28 +2368,20 @@ fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
         .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
 }
 
-fn parse_usage_total_tokens(data: &Value) -> i64 {
-    let direct_total = parse_i64_value(data.get("total_tokens"));
-    let nested_total = data
-        .get("usage")
-        .and_then(|usage| parse_i64_value(usage.get("total_tokens")));
-    if let Some(total) = direct_total.or(nested_total) {
-        return total.max(0);
-    }
-    let direct_input = parse_i64_value(data.get("input_tokens")).unwrap_or(0);
-    let direct_output = parse_i64_value(data.get("output_tokens")).unwrap_or(0);
-    if direct_input > 0 || direct_output > 0 {
-        return direct_input.saturating_add(direct_output).max(0);
-    }
-    let nested_input = data
-        .get("usage")
-        .and_then(|usage| parse_i64_value(usage.get("input_tokens")))
-        .unwrap_or(0);
-    let nested_output = data
-        .get("usage")
-        .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
-        .unwrap_or(0);
-    nested_input.saturating_add(nested_output).max(0)
+fn parse_context_occupancy_tokens(data: &Value) -> i64 {
+    parse_i64_value(data.get("context_occupancy_tokens"))
+        .or_else(|| parse_i64_value(data.get("context_tokens")))
+        .or_else(|| parse_i64_value(data.get("persisted_context_tokens")))
+        .or_else(|| {
+            data.get("context_usage")
+                .and_then(|usage| parse_i64_value(usage.get("context_occupancy_tokens")))
+        })
+        .or_else(|| {
+            data.get("context_usage")
+                .and_then(|usage| parse_i64_value(usage.get("context_tokens")))
+        })
+        .unwrap_or(0)
+        .max(0)
 }
 
 /// Parse billing tokens (input + output) from usage data, ignoring context_occupancy.
@@ -2968,7 +2943,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_effective_context_tokens_prefers_round_usage() {
+    fn derive_effective_context_tokens_prefers_context_occupancy() {
         let mut events = VecDeque::new();
         events.push_back(MonitorEvent {
             event_id: 1,
@@ -2986,13 +2961,21 @@ mod tests {
             event_id: 3,
             timestamp: 3.0,
             event_type: "round_usage".to_string(),
-            data: json!({ "input_tokens": 5750, "output_tokens": 32, "total_tokens": 5782 }),
+            data: json!({
+                "input_tokens": 5750,
+                "output_tokens": 32,
+                "total_tokens": 5782,
+                "context_occupancy_tokens": 291004
+            }),
         });
-        assert_eq!(derive_effective_context_tokens(&events), Some((5782, 5782)));
+        assert_eq!(
+            derive_effective_context_tokens(&events),
+            Some((291004, 291004))
+        );
     }
 
     #[test]
-    fn derive_effective_context_tokens_falls_back_to_token_usage_total() {
+    fn derive_effective_context_tokens_ignores_billing_token_usage_total() {
         let mut events = VecDeque::new();
         events.push_back(MonitorEvent {
             event_id: 1,
@@ -3000,11 +2983,17 @@ mod tests {
             event_type: "token_usage".to_string(),
             data: json!({ "input_tokens": 5620, "output_tokens": 88, "total_tokens": 5708 }),
         });
-        assert_eq!(derive_effective_context_tokens(&events), Some((5708, 5708)));
+        events.push_back(MonitorEvent {
+            event_id: 2,
+            timestamp: 2.0,
+            event_type: "round_usage".to_string(),
+            data: json!({ "input_tokens": 5750, "output_tokens": 32, "total_tokens": 5782 }),
+        });
+        assert_eq!(derive_effective_context_tokens(&events), None);
     }
 
     #[test]
-    fn derive_effective_context_tokens_none_without_usage_events() {
+    fn derive_effective_context_tokens_reads_context_usage_events() {
         let mut events = VecDeque::new();
         events.push_back(MonitorEvent {
             event_id: 1,
@@ -3012,7 +3001,7 @@ mod tests {
             event_type: "context_usage".to_string(),
             data: json!({ "context_tokens": 1234 }),
         });
-        assert_eq!(derive_effective_context_tokens(&events), None);
+        assert_eq!(derive_effective_context_tokens(&events), Some((1234, 1234)));
     }
 
     #[test]

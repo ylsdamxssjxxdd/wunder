@@ -5449,6 +5449,8 @@ const summarizeAssistantMessageForDebug = (message) => {
     reasoningStreaming: normalizeFlag(message.reasoningStreaming),
     contentLength: String(message.content || '').length,
     reasoningLength: String(message.reasoning || '').length,
+    contextTokens: normalizeContextTokens(message.stats?.contextTokens),
+    contextTotalTokens: normalizeContextTotalTokens(message.stats?.contextTotalTokens),
     workflowItemCount: Array.isArray(message.workflowItems) ? message.workflowItems.length : 0,
     workflowTail: summarizeWorkflowItemsForDebug(message.workflowItems),
     questionPanelStatus: String(message?.questionPanel?.status || '').trim() || null,
@@ -6347,6 +6349,7 @@ const startSessionWatcher = (store, sessionId) => {
           {
             streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
             sessionId: key,
+            initialContextTokens: resolveSessionContextTokens(store, key),
             onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
             onContextUsage: (contextTokens, contextTotalTokens) =>
               syncSessionContextTokens(store, key, contextTokens, contextTotalTokens)
@@ -6386,6 +6389,7 @@ const startSessionWatcher = (store, sessionId) => {
       {
         streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
         sessionId: key,
+        initialContextTokens: resolveSessionContextTokens(store, key),
         onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
         onContextUsage: (contextTokens, contextTotalTokens) =>
           syncSessionContextTokens(store, key, contextTokens, contextTotalTokens)
@@ -7768,6 +7772,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
     if (changed || normalizedTotal !== null) {
       options.onContextUsage?.(normalized, stats.contextTotalTokens ?? null);
+      notifySnapshot(true);
     }
   };
 
@@ -8960,6 +8965,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           if (currentTokens === null || estimatedTotal > currentTokens) {
             stats.contextTokens = estimatedTotal;
             options.onContextUsage?.(estimatedTotal, stats.contextTotalTokens ?? null);
+            notifySnapshot(true);
           }
         }
       }

@@ -1434,21 +1434,34 @@ const applyTokenUsageSnapshot = (usage, options = {}) => {
   }
 };
 
+const resolveContextUsageTokens = (payload) =>
+  parseOptionalNumber(
+    payload?.context_occupancy_tokens ??
+      payload?.contextOccupancyTokens ??
+      payload?.context_tokens ??
+      payload?.contextTokens ??
+      payload?.context_tokens_current ??
+      payload?.contextTokensCurrent ??
+      payload?.current_context_tokens ??
+      payload?.currentContextTokens ??
+      payload?.persisted_context_tokens ??
+      payload?.persistedContextTokens
+  );
+
+const resolveContextUsagePeakTokens = (payload) =>
+  parseOptionalNumber(
+    payload?.context_occupancy_tokens_peak ??
+      payload?.contextOccupancyTokensPeak ??
+      payload?.context_tokens_peak ??
+      payload?.contextTokensPeak
+  );
+
 const applyContextUsageSnapshot = (payload) => {
   if (!payload || typeof payload !== "object") {
     return;
   }
-  const currentTokens = parseOptionalNumber(
-    payload.context_tokens ??
-      payload.contextTokens ??
-      payload.total_tokens ??
-      payload.total ??
-      payload.context_tokens_current ??
-      payload.contextTokensCurrent
-  );
-  const peakTokens = parseOptionalNumber(
-    payload.context_tokens_peak ?? payload.contextTokensPeak
-  );
+  const currentTokens = resolveContextUsageTokens(payload);
+  const peakTokens = resolveContextUsagePeakTokens(payload);
   const hasCurrent = Number.isFinite(currentTokens) && currentTokens > 0;
   const hasPeak = Number.isFinite(peakTokens) && peakTokens > 0;
   if (!hasCurrent && !hasPeak) {
@@ -2921,6 +2934,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const stopReasonLabel = resolveStopReasonLabel(stopReason);
     // 最终事件里包含的 usage 也要写入事件日志，避免漏看整体用量
     applyTokenUsageSnapshot(usage, { override: true });
+    applyContextUsageSnapshot(payload.data || payload);
     renderDebugStats();
     const summary = t("debug.event.final");
     const detailPayload = {
@@ -3262,9 +3276,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
     const data = payload.data || payload;
     applyContextUsageSnapshot(data);
     renderDebugStats();
-    const contextTokens = parseOptionalNumber(
-      data?.context_tokens ?? data?.contextTokens ?? data?.total_tokens ?? data?.total
-    );
+    const contextTokens = resolveContextUsageTokens(data);
     const summary = Number.isFinite(contextTokens)
       ? `context_usage: ${contextTokens}`
       : "context_usage";
@@ -3275,6 +3287,7 @@ const handleEvent = (eventType, dataText, options = {}) => {
   if (eventType === "round_usage") {
     const data = payload.data || payload;
     applyTokenUsageSnapshot(data, { override: true });
+    applyContextUsageSnapshot(data);
     renderDebugStats();
     const summary = data?.total_tokens ? `round_usage: ${data.total_tokens}` : "round_usage";
     appendLog(summary, { detail: JSON.stringify(data, null, 2), timestamp: eventTimestamp });
@@ -3757,6 +3770,7 @@ const sendNonStreamRequest = async (endpoint, payload) => {
   }
   markRequestEnd();
   applyTokenUsageSnapshot(result?.usage, { override: true });
+  applyContextUsageSnapshot(result);
   renderDebugStats();
   if (Array.isArray(result?.a2ui)) {
     recordA2uiMessages(
