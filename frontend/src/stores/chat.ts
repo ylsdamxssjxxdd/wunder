@@ -1222,7 +1222,7 @@ const normalizeMessageStats = (stats) => {
   const quotaSnapshot = normalizeQuotaSnapshot(
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
-  const contextTokens = usageContextTokens ?? roundUsageContextTokens ?? explicitContextTokens;
+  const contextTokens = explicitContextTokens ?? roundUsageContextTokens ?? usageContextTokens;
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ??
       stats.context_total_tokens ??
@@ -7776,21 +7776,32 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
   };
 
-  const updateLiveContextUsageFromTokenUsage = (usagePayload) => {
-    const usage = normalizeUsagePayload(usagePayload);
-    if (!usage) return;
-    const baseTokens =
-      Number.isFinite(usage.input) && usage.input > 0
-        ? usage.input
-        : Number.isFinite(usage.total) && usage.total > 0
-          ? usage.total
-          : null;
-    const displayTokens =
-      Number.isFinite(usage.total) && usage.total > 0 ? usage.total : baseTokens;
-    if (baseTokens !== null && baseTokens > 0) {
-      contextEstimateBaseTokens = baseTokens;
-    }
-    syncLiveContextTokens(displayTokens);
+  const resolveExplicitLiveContextTokens = (payload) => {
+    if (!payload || typeof payload !== 'object') return null;
+    return normalizeContextTokens(
+      payload.context_occupancy_tokens ??
+        payload.contextOccupancyTokens ??
+        payload.context_tokens ??
+        payload.contextTokens ??
+        payload.context_usage?.context_tokens ??
+        payload.context_usage?.contextTokens
+    );
+  };
+
+  const updateLiveContextUsageFromTokenUsage = (usagePayload, sourcePayload = usagePayload) => {
+    const explicitContextTokens =
+      resolveExplicitLiveContextTokens(sourcePayload) ??
+      resolveExplicitLiveContextTokens(usagePayload);
+    if (explicitContextTokens === null) return;
+    const contextTotalTokens = normalizeContextTotalTokens(
+      sourcePayload?.max_context ??
+        sourcePayload?.maxContext ??
+        sourcePayload?.context_total_tokens ??
+        sourcePayload?.contextTotalTokens ??
+        sourcePayload?.context_usage?.max_context ??
+        sourcePayload?.context_usage?.context_max_tokens
+    );
+    syncLiveContextTokens(explicitContextTokens, contextTotalTokens);
   };
 
   const updateLiveContextUsageFromRequest = (requestPayload) => {
@@ -7819,7 +7830,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         usagePayload?.context_usage?.max_context ??
         usagePayload?.context_usage?.context_max_tokens
     );
-    const nextContextTokens = usageContextTokens ?? explicitContextTokens;
+    const nextContextTokens = explicitContextTokens ?? usageContextTokens;
     if (nextContextTokens !== null) {
       const existingContextTokens = normalizeContextTokens(stats.contextTokens);
       const changed = existingContextTokens !== nextContextTokens;
@@ -7919,7 +7930,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         payload?.context_usage?.max_context ??
         payload?.context_usage?.context_max_tokens
     );
-    const nextContextTokens = usageContextTokens ?? explicitContextTokens;
+    const nextContextTokens = explicitContextTokens ?? usageContextTokens;
     if (nextContextTokens !== null) {
       stats.contextTokens = nextContextTokens;
       contextEstimateBaseTokens = nextContextTokens;
@@ -10004,7 +10015,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             updateContextFromUsage: false
           }
         );
-        updateLiveContextUsageFromTokenUsage(usagePayload);
+        updateLiveContextUsageFromTokenUsage(usagePayload, data ?? payload ?? {});
         applyModelRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         break;
       }

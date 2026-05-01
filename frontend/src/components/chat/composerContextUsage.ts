@@ -10,6 +10,21 @@ export type ComposerContextUsageSource = {
   runningContextTokens: number | null;
 };
 
+export type ComposerRunningContextDisplayInput = {
+  stableTokens: number | null;
+  baseTokens: number | null;
+  rawBaseTokens: number | null;
+  lastRawTokens: number | null;
+  runningRawTokens: number;
+};
+
+export type ComposerRunningContextDisplayState = {
+  stableTokens: number | null;
+  baseTokens: number | null;
+  rawBaseTokens: number | null;
+  lastRawTokens: number | null;
+};
+
 const normalizeTokenCount = (value: unknown): number | null => {
   if (value === null || value === undefined) {
     return null;
@@ -31,6 +46,43 @@ const normalizePositiveTokenCount = (value: unknown): number | null => {
     return null;
   }
   return normalized;
+};
+
+export const resolveComposerRunningContextDisplayState = (
+  input: ComposerRunningContextDisplayInput
+): ComposerRunningContextDisplayState => {
+  let baseTokens = input.baseTokens;
+  let rawBaseTokens = input.rawBaseTokens;
+  const current = input.stableTokens;
+  const runningRaw = input.runningRawTokens;
+  if (baseTokens === null && current !== null) {
+    baseTokens = current;
+  }
+  if (rawBaseTokens === null) {
+    rawBaseTokens = runningRaw;
+  }
+  if (input.lastRawTokens !== null && runningRaw < input.lastRawTokens && current !== null) {
+    baseTokens = current;
+    rawBaseTokens = runningRaw;
+  }
+  if (baseTokens === null) {
+    return {
+      stableTokens: current === null ? runningRaw : Math.max(current, runningRaw),
+      baseTokens,
+      rawBaseTokens,
+      lastRawTokens: runningRaw
+    };
+  }
+  const displayTokens =
+    runningRaw >= baseTokens
+      ? runningRaw
+      : baseTokens + Math.max(0, runningRaw - rawBaseTokens);
+  return {
+    stableTokens: current === null ? displayTokens : Math.max(current, displayTokens),
+    baseTokens,
+    rawBaseTokens,
+    lastRawTokens: runningRaw
+  };
 };
 
 export const formatContextTokenCount = (value: unknown): string => {

@@ -459,6 +459,7 @@ import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
 import {
   formatContextTokenCount,
+  resolveComposerRunningContextDisplayState,
   resolveComposerContextUsageSource
 } from '@/components/chat/composerContextUsage';
 
@@ -843,6 +844,7 @@ const composerContextUsedTokensStable = ref<number | null>(null);
 const composerContextTotalTokensStable = ref<number | null>(null);
 const composerContextAssistantBaseTokens = ref<number | null>(null);
 const composerContextAssistantRawBaseTokens = ref<number | null>(null);
+const composerContextAssistantLastRawTokens = ref<number | null>(null);
 watch(
   [
     contextDisplaySessionId,
@@ -862,6 +864,7 @@ watch(
       composerContextTotalTokensStable.value = rawTotal;
       composerContextAssistantBaseTokens.value = null;
       composerContextAssistantRawBaseTokens.value = null;
+      composerContextAssistantLastRawTokens.value = null;
       return;
     }
     if (switchedAssistant) {
@@ -872,6 +875,7 @@ watch(
       );
       composerContextAssistantBaseTokens.value = currentUsed;
       composerContextAssistantRawBaseTokens.value = runningRaw;
+      composerContextAssistantLastRawTokens.value = runningRaw;
       const nextUsed =
         rawUsed === null ? currentUsed : currentUsed === null ? rawUsed : Math.max(currentUsed, rawUsed);
       composerContextUsedTokensStable.value = nextUsed;
@@ -888,19 +892,18 @@ watch(
         composerContextUsageSource.value.runningAssistant &&
         runningRaw !== null
       ) {
-        if (composerContextAssistantBaseTokens.value === null && current !== null) {
-          composerContextAssistantBaseTokens.value = current;
-        }
-        if (composerContextAssistantRawBaseTokens.value === null) {
-          composerContextAssistantRawBaseTokens.value = runningRaw;
-        }
-        if (composerContextAssistantBaseTokens.value !== null) {
-          const delta = Math.max(0, runningRaw - composerContextAssistantRawBaseTokens.value);
-          const displayUsed = composerContextAssistantBaseTokens.value + delta;
-          composerContextUsedTokensStable.value =
-            current === null ? displayUsed : Math.max(current, displayUsed);
-          return;
-        }
+        const next = resolveComposerRunningContextDisplayState({
+          stableTokens: current,
+          baseTokens: composerContextAssistantBaseTokens.value,
+          rawBaseTokens: composerContextAssistantRawBaseTokens.value,
+          lastRawTokens: composerContextAssistantLastRawTokens.value,
+          runningRawTokens: runningRaw
+        });
+        composerContextAssistantBaseTokens.value = next.baseTokens;
+        composerContextAssistantRawBaseTokens.value = next.rawBaseTokens;
+        composerContextAssistantLastRawTokens.value = next.lastRawTokens;
+        composerContextUsedTokensStable.value = next.stableTokens;
+        return;
       }
       composerContextUsedTokensStable.value =
         current === null ? rawUsed : Math.max(current, rawUsed);
