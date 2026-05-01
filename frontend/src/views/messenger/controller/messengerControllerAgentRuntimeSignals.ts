@@ -1,0 +1,661 @@
+// @ts-nocheck
+// Cron badges, agent runtime state normalization, hot-state detection, and completion notifications.
+import type { MessengerControllerContext } from './messengerControllerContext';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { createAgent as createAgentApi, deleteAgent as deleteAgentApi, listAgentUserRounds, listRunningAgents } from '@/api/agents';
+import { fetchOrgUnits, updateProfile } from '@/api/auth';
+import { listChannelBindings } from '@/api/channels';
+import {
+  getSession as getChatSessionApi,
+  fetchSessionSystemPrompt,
+  fetchRealtimeSystemPrompt
+} from '@/api/chat';
+import { fetchCronJobs } from '@/api/cron';
+import { fetchDesktopSettings } from '@/api/desktop';
+import { fetchExternalLinks } from '@/api/externalLinks';
+import { downloadUserWorldFile } from '@/api/userWorld';
+import {
+  fetchUserSkillContent,
+  uploadUserSkillZip
+} from '@/api/userTools';
+import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
+import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
+import OrchestrationWorkbench from '@/components/orchestration/OrchestrationWorkbench.vue';
+import AbilityTooltipListItem from '@/components/common/AbilityTooltipListItem.vue';
+import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialog.vue';
+import {
+  scheduleMessengerBootstrapBackgroundTasks,
+  settleMessengerBootstrapTasks,
+  splitMessengerBootstrapTasks
+} from '@/views/messenger/bootstrap';
+import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
+import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
+import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
+import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
+import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
+import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
+import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
+import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
+import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
+import {
+  settleAgentSessionBusyAfterRefresh,
+  type SessionBusyRecoveryStatus
+} from '@/views/messenger/chatRefreshRecovery';
+import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
+import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
+import {
+  filterPlazaItemsByKindAndKeyword,
+  normalizePlazaBrowseKind,
+  resolveRetainedSelectedPlazaItemId,
+  type PlazaBrowseKind
+} from '@/components/messenger/hivePlazaPanelState';
+import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
+import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
+import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
+import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
+import ChatComposer from '@/components/chat/ChatComposer.vue';
+import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
+import {
+  InquiryPanel,
+  MessageCompactionDivider,
+  MessageFeedbackActions,
+  MessageKnowledgeCitation,
+  MessageSubagentPanel,
+  MessageThinking,
+  PlanPanel,
+  ToolApprovalComposer,
+  WorkspacePanel
+} from '@/views/messenger/lazyMessageBlocks';
+import {
+  MessengerFileContainerMenu,
+  MessengerGroupDock,
+  MessengerRightDock,
+  MessengerTimelineDialog
+} from '@/views/messenger/lazyShell';
+import {
+  AgentCronPanel,
+  AgentMemoryPanel,
+  AgentRuntimeRecordsPanel,
+  AgentSettingsPanel,
+  ArchivedThreadManager,
+  DesktopContainerManagerPanel,
+  DesktopSystemSettingsPanel,
+  GlobeAppPanel,
+  MessengerHelpManualPanel,
+  MessengerLocalFileSearchPanel,
+  MessengerSettingsPanel,
+  MessengerWorldComposer,
+  preloadAgentSettingsPanels,
+  preloadMessengerSettingsPanels,
+  UserChannelSettingsPanel,
+  UserPromptSettingsPanel
+} from '@/views/messenger/lazyPanels';
+import {
+  resolveFileContainerLifecycleText,
+  resolveFileWorkspaceEmptyText
+} from '@/views/messenger/fileWorkspacePresentation';
+import { isDesktopModeEnabled } from '@/config/desktop';
+import { getRuntimeConfig } from '@/config/runtime';
+import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
+import { useAgentStore } from '@/stores/agents';
+import { useAuthStore } from '@/stores/auth';
+import { useBeeroomStore, type BeeroomGroup } from '@/stores/beeroom';
+import { useChatStore } from '@/stores/chat';
+import { usePlazaStore } from '@/stores/plaza';
+import { useThemeStore } from '@/stores/theme';
+import {
+  useSessionHubStore,
+  resolveSectionFromRoute,
+  type MessengerSection
+} from '@/stores/sessionHub';
+import { useUserWorldStore } from '@/stores/userWorld';
+import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
+import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
+import { showApiError } from '@/utils/apiError';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
+import WorkerCardImportWaitingOverlay from '@/components/agent/WorkerCardImportWaitingOverlay.vue';
+import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
+import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
+import { copyText } from '@/utils/clipboard';
+import { confirmWithFallback } from '@/utils/confirm';
+import {
+  buildAssistantDisplayContent,
+  resolveAssistantFailureNotice
+} from '@/utils/assistantFailureNotice';
+import {
+  hasAssistantWaitingForCurrentOutput,
+  normalizeAssistantMessageRuntimeState,
+  resolveAssistantMessageRuntimeState
+} from '@/utils/assistantMessageRuntime';
+import {
+  hasActiveSubagentsAfterLatestUser,
+  hasRunningAssistantMessage,
+  hasStreamingAssistantMessage
+} from '@/utils/chatSessionRuntime';
+import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
+import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
+import {
+  isCompactionOnlyWorkflowItems,
+  isCompactionRunningFromWorkflowItems,
+  resolveLatestCompactionSnapshot
+} from '@/utils/chatCompactionWorkflow';
+import {
+  isAudioRecordingSupported,
+  startAudioRecording,
+  type AudioRecordingResult,
+  type AudioRecordingSession
+} from '@/utils/audioRecorder';
+import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
+import {
+  extractPromptToolingPreview,
+  type PromptToolingPreviewItem
+} from '@/utils/promptToolingPreview';
+import { collectAbilityDetails, collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
+import {
+  buildWorkspacePublicPath,
+  normalizeWorkspaceOwnerId,
+  resolveMarkdownWorkspacePath
+} from '@/utils/messageWorkspacePath';
+import {
+  isImagePath,
+  parseWorkspaceResourceUrl
+} from '@/utils/workspaceResources';
+import {
+  clearWorkspaceLoadingLabelTimer,
+  getFilenameFromHeaders,
+  normalizeWorkspaceImageBlob,
+  resetWorkspaceImageCardState,
+  saveObjectUrlAsFile,
+  scheduleWorkspaceLoadingLabel
+} from '@/utils/workspaceResourceCards';
+import {
+  extractWorkspaceRefreshPaths,
+  isWorkspacePathAffected
+} from '@/utils/workspaceRefresh';
+import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import {
+  invalidateAllUserToolsCaches,
+  invalidateUserSkillsCache,
+  invalidateUserToolsCatalogCache,
+  invalidateUserToolsSummaryCache,
+  loadUserSkillsCache,
+  loadUserToolsCatalogCache,
+  loadUserToolsSummaryCache
+} from '@/utils/userToolsCache';
+import {
+  normalizeAvatarColor,
+  normalizeAvatarIcon,
+  normalizeThemePalette,
+  type ThemePalette,
+  type UserAppearancePreferences
+} from '@/utils/userPreferences';
+import {
+  PROFILE_AVATAR_COLORS,
+  PROFILE_AVATAR_IMAGE_KEYS,
+  PROFILE_AVATAR_IMAGE_MAP,
+  PROFILE_AVATAR_OPTION_KEYS
+} from '@/utils/avatarCatalog';
+import {
+  classifyWorldHistoryMessage,
+  normalizeWorldHistoryText,
+  resolveWorldHistoryIcon
+} from '@/views/messenger/worldHistory';
+import { loadUserAppearance, saveUserAppearance } from '@/views/messenger/userAppearanceSync';
+import {
+  defaultMessengerOrderPreferences,
+  loadMessengerOrderPreferences,
+  saveMessengerOrderPreferences,
+  type MessengerOrderPreferences
+} from '@/views/messenger/messengerOrderSync';
+import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
+import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
+import {
+  buildWorldVoicePayloadContent,
+  formatWorldVoiceDuration,
+  isWorldVoiceContentType,
+  parseWorldVoicePayload
+} from '@/views/messenger/worldVoice';
+import {
+  buildAgentApprovalOptions,
+  normalizeAgentApprovalMode,
+  useComposerApprovalMode,
+  type AgentApprovalMode
+} from '@/views/messenger/composerApprovalMode';
+import {
+  buildUnitTreeFromFlat,
+  buildUnitTreeRows,
+  collectUnitNodeIds,
+  flattenUnitNodes,
+  normalizeUnitNode,
+  normalizeUnitShortLabel,
+  normalizeUnitText,
+  resolveUnitIdKey,
+  resolveUnitTreeRowStyle
+} from '@/views/messenger/orgUnits';
+import {
+  AGENT_CONTAINER_IDS,
+  AGENT_MAIN_READ_AT_STORAGE_PREFIX,
+  AGENT_MAIN_UNREAD_STORAGE_PREFIX,
+  AGENT_TOOL_OVERRIDE_NONE,
+  DEFAULT_AGENT_KEY,
+  DISMISSED_AGENT_STORAGE_PREFIX,
+  MESSENGER_RIGHT_DOCK_WIDTH_STORAGE_KEY,
+  MESSENGER_SEND_KEY_STORAGE_KEY,
+  MESSENGER_UI_FONT_SIZE_STORAGE_KEY,
+  USER_CONTAINER_ID,
+  USER_WORLD_UPLOAD_BASE,
+  UNIT_UNGROUPED_ID,
+  WORLD_COMPOSER_HEIGHT_STORAGE_KEY,
+  WORLD_EMOJI_CATALOG,
+  WORLD_QUICK_EMOJI_STORAGE_KEY,
+  WORLD_UPLOAD_SIZE_LIMIT,
+  sectionRouteMap,
+  type AgentFileContainer,
+  type AgentLocalCommand,
+  type AgentOverviewCard,
+  type AgentRuntimeState,
+  type DesktopBridge,
+  type DesktopInstallResult,
+  type DesktopScreenshotResult,
+  type DesktopUpdateState,
+  type FileContainerMenuTarget,
+  type MessengerPerfTrace,
+  type MessengerSendKeyMode,
+  type MixedConversation,
+  type ToolEntry,
+  type UnitTreeNode,
+  type UnitTreeRow,
+  type WorldComposerViewRef,
+  type WorldHistoryCategory,
+  type WorldHistoryRecord
+} from '@/views/messenger/model';
+
+type HelperAppOfflineItem = {
+  key: string;
+  title: string;
+  description: string;
+  icon: string;
+};
+
+type HelperAppExternalItem = {
+  linkId: string;
+  title: string;
+  description: string;
+  url: string;
+  icon: string;
+  sortOrder: number;
+};
+
+type WorldContainerPickerEntry = {
+  path: string;
+  name: string;
+  type: 'dir' | 'file';
+};
+
+type TooltipLike = { updatePopper?: () => void; popperRef?: { update?: () => void } };
+
+type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'archived';
+
+type SettingsPanelMode =
+  | 'general'
+  | 'profile'
+  | 'prompts'
+  | 'help-manual'
+  | 'desktop-models'
+  | 'desktop-lan';
+
+type RightDockSkillItem = {
+  name: string;
+  description: string;
+  enabled: boolean;
+};
+
+type RightDockSkillCatalogItem = {
+  name: string;
+  description: string;
+  path: string;
+  source: string;
+  builtin: boolean;
+  readonly: boolean;
+};
+
+type WorldVoiceRecordingRuntime = {
+  session: AudioRecordingSession;
+  startedAt: number;
+  timerId: number | null;
+  conversationId: string;
+};
+
+type AgentVoiceRecordingRuntime = {
+  session: AudioRecordingSession;
+  startedAt: number;
+  timerId: number | null;
+  draftIdentity: string;
+};
+
+type WorldVoicePlaybackRuntime = {
+  audio: HTMLAudioElement;
+  objectUrlCache: Map<string, string>;
+  currentMessageKey: string;
+  currentResourceKey: string;
+};
+
+type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
+
+type WorkspaceResourceCacheEntry = {
+  objectUrl?: string;
+  filename?: string;
+  promise?: Promise<WorkspaceResourceCachePayload>;
+};
+
+type AttachmentResourceState = {
+  objectUrl?: string;
+  filename?: string;
+  error?: boolean;
+  loading?: boolean;
+};
+
+type MessengerPageWaitingState = {
+  title: string;
+  targetName: string;
+  phaseLabel: string;
+  summaryLabel: string;
+  progress: number;
+};
+
+type AgentMainSessionEntry = {
+  agentId: string;
+  sessionId: string;
+  lastAt: number;
+};
+
+type AgentRenderableMessage = {
+  key: string;
+  sourceIndex: number;
+  message: Record<string, unknown>;
+};
+
+type WorldRenderableMessage = {
+  key: string;
+  sourceIndex: number;
+  domId: string;
+  message: Record<string, unknown>;
+};
+
+type AgentInquiryPanelRoute = { label: string; description?: string };
+
+type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+
+type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
+
+type WorkspaceResolvedResource = ReturnType<typeof parseWorkspaceResourceUrl> & {
+  requestUserId: string | null;
+  requestAgentId: string | null;
+  requestContainerId: number | null;
+  allowed: boolean;
+};
+
+type WorldScreenshotCaptureOption = {
+  hideWindow?: boolean;
+  region?: boolean;
+};
+
+type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
+
+export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerContext): void {
+  ctx.hasCronTask = (agentId: unknown): boolean => ctx.cronAgentIds.value.has(ctx.normalizeAgentId(agentId));
+
+  ctx.normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRuntimeState => normalizeAssistantMessageRuntimeState(state, pendingQuestion) as AgentRuntimeState;
+
+  ctx.setRuntimeStateOverride = (agentId: unknown, state: AgentRuntimeState, ttlMs = 0) => {
+      const key = ctx.normalizeAgentId(agentId);
+      if (ttlMs <= 0) {
+          ctx.runtimeStateOverrides.value.delete(key);
+          ctx.triggerRealtimePulseRefresh?.('runtime-override-clear');
+          return;
+      }
+      ctx.runtimeStateOverrides.value.set(key, {
+          state,
+          expiresAt: Date.now() + ttlMs
+      });
+      ctx.triggerRealtimePulseRefresh?.('runtime-override');
+  };
+
+  ctx.resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
+      const key = ctx.normalizeAgentId(agentId);
+      if (ctx.pendingApprovalAgentIdSet.value.has(key)) {
+          return 'pending';
+      }
+      const inquiryAgentId = ctx.activeAgentInquiryPanel.value
+          ? ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value)
+          : '';
+      if (inquiryAgentId && inquiryAgentId === key) {
+          return 'pending';
+      }
+      if (ctx.streamingAgentIdSet.value.has(key)) {
+          return 'running';
+      }
+      const now = Date.now();
+      const override = ctx.runtimeStateOverrides.value.get(key);
+      if (override && override.expiresAt > now) {
+          return override.state;
+      }
+      if (override && override.expiresAt <= now) {
+          ctx.runtimeStateOverrides.value.delete(key);
+      }
+      return ctx.agentRuntimeStateMap.value.get(key) || 'idle';
+  };
+
+  ctx.hasHotRuntimeState = computed(() => {
+      if (ctx.pendingApprovalAgentIdSet.value.size > 0 || ctx.streamingAgentIdSet.value.size > 0) {
+          return true;
+      }
+      const now = Date.now();
+      for (const state of ctx.agentRuntimeStateMap.value.values()) {
+          if (state === 'running' || state === 'pending') {
+              return true;
+          }
+      }
+      for (const override of ctx.runtimeStateOverrides.value.values()) {
+          if (override.expiresAt <= now) {
+              continue;
+          }
+          if (override.state === 'running' || override.state === 'pending') {
+              return true;
+          }
+      }
+      return false;
+  });
+
+  ctx.isHotBeeroomMissionStatus = (value: unknown): boolean => {
+      const status = String(value || '').trim().toLowerCase();
+      return (status === 'queued' ||
+          status === 'running' ||
+          status === 'awaiting_idle' ||
+          status === 'pending' ||
+          status === 'resuming' ||
+          status === 'merging');
+  };
+
+  ctx.hasHotBeeroomRuntimeState = computed(() => {
+      const activeMissions = Array.isArray(ctx.beeroomStore.activeMissions) ? ctx.beeroomStore.activeMissions : [];
+      if (activeMissions.some((mission) => ctx.isHotBeeroomMissionStatus(mission?.completion_status || mission?.status))) {
+          return true;
+      }
+      if (Number(ctx.beeroomStore.activeGroup?.running_mission_total || 0) > 0) {
+          return true;
+      }
+      const activeOrchestrationSessionId = String(ctx.beeroomStore.activeGroup?.active_orchestration?.mother_session_id || '').trim();
+      if (activeOrchestrationSessionId) {
+          try {
+              if (ctx.chatStore.isSessionBusy(activeOrchestrationSessionId)) {
+                  return true;
+              }
+          }
+          catch {
+          }
+      }
+      const groups = Array.isArray(ctx.beeroomStore.groups) ? ctx.beeroomStore.groups : [];
+      return groups.some((group) => {
+          if (Number(group?.running_mission_total || 0) > 0) {
+              return true;
+          }
+          const motherSessionId = String(group?.active_orchestration?.mother_session_id || '').trim();
+          if (!motherSessionId)
+              return false;
+          try {
+              return ctx.chatStore.isSessionBusy(motherSessionId);
+          }
+          catch {
+              return false;
+          }
+      });
+  });
+
+  ctx.normalizeAgentUserRoundsKey = (value: unknown): string => {
+      const raw = String(value || '').trim();
+      if (!raw)
+          return DEFAULT_AGENT_KEY;
+      return ctx.normalizeAgentId(raw) || DEFAULT_AGENT_KEY;
+  };
+
+  ctx.resolveAgentUserRounds = (agentId: unknown): number => {
+      const key = ctx.normalizeAgentUserRoundsKey(agentId);
+      return ctx.agentUserRoundsMap.value.get(key) ?? 0;
+  };
+
+  ctx.formatUserRounds = (value: number): string => {
+      const normalized = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+      return normalized.toLocaleString();
+  };
+
+  ctx.formatAgentRuntimeState = (state: AgentRuntimeState): string => {
+      if (state === 'running')
+          return ctx.t('portal.card.running');
+      if (state === 'pending')
+          return ctx.t('portal.card.waiting');
+      if (state === 'done')
+          return ctx.t('portal.card.done');
+      if (state === 'error')
+          return ctx.t('portal.card.error');
+      return ctx.t('portal.card.idle');
+  };
+
+  ctx.agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
+
+  ctx.agentRuntimeStateHydrated = false;
+
+  ctx.systemNotificationPermissionRequested = false;
+
+  ctx.resolveAgentDisplayName = (agentId: string): string => {
+      const normalized = ctx.normalizeAgentId(agentId);
+      const agent = ctx.agentMap.value.get(normalized);
+      const name = String(agent?.name || '').trim();
+      if (name)
+          return name;
+      if (normalized === DEFAULT_AGENT_KEY)
+          return ctx.t('messenger.defaultAgent');
+      return normalized || ctx.t('messenger.defaultAgent');
+  };
+
+  ctx.requestSystemNotificationPermission = async (): Promise<NotificationPermission | ''> => {
+      if (ctx.systemNotificationPermissionRequested) {
+          return typeof window !== 'undefined' ? window.Notification?.permission ?? '' : '';
+      }
+      ctx.systemNotificationPermissionRequested = true;
+      if (typeof window === 'undefined' || !('Notification' in window))
+          return '';
+      try {
+          return await window.Notification.requestPermission();
+      }
+      catch {
+          return '';
+      }
+  };
+
+  ctx.sendDesktopNotification = async (title: string, body: string): Promise<boolean> => {
+      const bridge = ctx.getDesktopBridge();
+      if (!bridge || typeof bridge.notify !== 'function')
+          return false;
+      try {
+          const result = await bridge.notify({ title, body });
+          return result === true;
+      }
+      catch {
+          return false;
+      }
+  };
+
+  ctx.sendSystemNotification = async (title: string, body: string): Promise<boolean> => {
+      const desktopNotified = await ctx.sendDesktopNotification(title, body);
+      if (desktopNotified)
+          return true;
+      if (typeof window === 'undefined' || !('Notification' in window))
+          return false;
+      try {
+          if (window.Notification.permission === 'granted') {
+              new window.Notification(title, { body });
+              return true;
+          }
+          if (window.Notification.permission === 'default') {
+              const permission = await ctx.requestSystemNotificationPermission();
+              if (permission === 'granted') {
+                  new window.Notification(title, { body });
+                  return true;
+              }
+          }
+      }
+      catch {
+          return false;
+      }
+      return false;
+  };
+
+  ctx.notifyAgentTaskCompleted = async (agentId: string) => {
+      const title = ctx.t('messenger.agent.taskCompletedTitle');
+      const message = ctx.t('messenger.agent.taskCompleted', { name: ctx.resolveAgentDisplayName(agentId) });
+      if (ctx.agentHeaderModelJumpEnabled.value) {
+          const notified = await ctx.sendSystemNotification(title, message);
+          if (notified)
+              return;
+      }
+      ElMessage.success(message);
+  };
+
+  ctx.shouldNotifyAgentCompletion = (previousState: AgentRuntimeState, nextState: AgentRuntimeState): boolean => {
+      if (nextState === 'done')
+          return previousState !== 'done';
+      if (nextState === 'idle')
+          return previousState === 'running' || previousState === 'pending';
+      return false;
+  };
+
+  ctx.handleAgentRuntimeStateUpdate = (stateMap: Map<string, AgentRuntimeState>) => {
+      if (ctx.agentRuntimeStateHydrated) {
+          const keys = new Set<string>([
+              ...Array.from(ctx.agentRuntimeStateSnapshot.keys()),
+              ...Array.from(stateMap.keys())
+          ]);
+          keys.forEach((agentId) => {
+              const previousState = ctx.agentRuntimeStateSnapshot.get(agentId) ?? 'idle';
+              const nextState = stateMap.get(agentId) ?? 'idle';
+              if (previousState === nextState)
+                  return;
+              if (ctx.shouldNotifyAgentCompletion(previousState, nextState)) {
+                  void ctx.notifyAgentTaskCompleted(agentId);
+              }
+          });
+      }
+      ctx.agentRuntimeStateSnapshot = new Map(stateMap);
+      ctx.agentRuntimeStateHydrated = true;
+      ctx.agentRuntimeStateMap.value = stateMap;
+  };
+}
