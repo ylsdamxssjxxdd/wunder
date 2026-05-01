@@ -356,7 +356,7 @@ test('message stats does not keep retrying status after model output resumes', (
     nowMs
   );
   assert.notEqual(entries[0]?.value, 'Retrying');
-  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(entries[0]?.value, 'Model outputting');
 });
 
 test('message stats does not keep retrying status after a newer model request starts', () => {
@@ -384,6 +384,97 @@ test('message stats does not keep retrying status after a newer model request st
     nowMs
   );
   assert.notEqual(entries[0]?.value, 'Retrying');
+  assert.equal(entries[0]?.value, 'Requesting');
+});
+
+test('message stats keeps requesting during early progress-only stream window', () => {
+  const t = createTranslator();
+  const startMs = Date.UTC(2026, 4, 1, 10, 9, 16);
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      waiting_updated_at_ms: startMs,
+      waiting_first_output_at_ms: null,
+      waiting_phase_first_output_at_ms: null,
+      workflowItems: [
+        {
+          title: 'Progress',
+          status: 'completed'
+        },
+        {
+          title: 'Thread status',
+          status: 'completed'
+        }
+      ],
+      stats: {
+        interaction_start_ms: startMs,
+        interaction_end_ms: null
+      }
+    },
+    t,
+    null,
+    startMs + 600
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+});
+
+test('message stats keeps requesting for bare running assistant placeholder', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      workflowItems: [],
+      stats: {}
+    },
+    t,
+    null,
+    Date.UTC(2026, 4, 1, 10, 39, 46)
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+});
+
+test('message stats keeps requesting when progress updates interaction end before output', () => {
+  const t = createTranslator();
+  const startMs = Date.UTC(2026, 4, 1, 10, 39, 46);
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      waiting_updated_at_ms: startMs + 500,
+      waiting_first_output_at_ms: null,
+      waiting_phase_first_output_at_ms: null,
+      workflowItems: [
+        {
+          title: 'Progress',
+          status: 'completed'
+        },
+        {
+          title: 'Thread status',
+          status: 'completed'
+        }
+      ],
+      stats: {
+        interaction_start_ms: startMs,
+        interaction_end_ms: startMs + 500
+      }
+    },
+    t,
+    null,
+    startMs + 700
+  );
+
+  assert.equal(entries.length, 1);
   assert.equal(entries[0]?.value, 'Requesting');
 });
 

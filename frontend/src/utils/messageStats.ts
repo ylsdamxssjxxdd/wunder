@@ -1,9 +1,10 @@
-import { normalizeChatDurationSeconds } from './chatTiming';
+import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from './chatTiming';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
   hasAssistantPendingQuestion,
   hasAssistantWaitingForCurrentOutput,
-  isAssistantMessageRunning
+  isAssistantMessageRunning,
+  normalizeAssistantMessageRuntimeState
 } from './assistantMessageRuntime';
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
 import { shouldDisplayTransientRetry } from './retryVisibility';
@@ -435,6 +436,45 @@ const hasAssistantActivitySignals = (message: Record<string, any> | null | undef
   );
 };
 
+const hasAssistantUnfinishedWaitingWindow = (
+  message: Record<string, any> | null | undefined
+): boolean => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return false;
+  if (hasAssistantPendingQuestion(message) || hasAssistantVisibleOutput(message)) return false;
+
+  const stats = message.stats && typeof message.stats === 'object'
+    ? (message.stats as Record<string, any>)
+    : null;
+  const waitingUpdatedAtMs = normalizeChatTimestampMs(
+    message.waiting_updated_at_ms ??
+      message.waitingUpdatedAtMs ??
+      stats?.interaction_start_ms ??
+      stats?.interactionStartMs
+  );
+  if (waitingUpdatedAtMs === null || waitingUpdatedAtMs <= 0) return false;
+
+  const waitingFirstOutputAtMs = normalizeChatTimestampMs(
+    message.waiting_phase_first_output_at_ms ??
+      message.waitingPhaseFirstOutputAtMs ??
+      message.waiting_first_output_at_ms ??
+      message.waitingFirstOutputAtMs
+  );
+  if (waitingFirstOutputAtMs !== null && waitingFirstOutputAtMs > 0) return false;
+
+  const interactionEndMs = normalizeChatTimestampMs(
+    stats?.interaction_end_ms ??
+      stats?.interactionEndMs ??
+      stats?.interaction_end ??
+      stats?.ended_at
+  );
+  if (!isAssistantMessageRunning(message) && interactionEndMs !== null && interactionEndMs >= waitingUpdatedAtMs) {
+    return false;
+  }
+
+  const explicitState = normalizeAssistantMessageRuntimeState(message.state, false);
+  return explicitState !== 'done' && explicitState !== 'error' && explicitState !== 'pending';
+};
+
 const isAssistantCompactionMessageRunning = (message: MessageLike | null | undefined): boolean => {
   if (!message || message.role !== 'assistant' || message.isGreeting) return false;
   return isCompactionRunningFromWorkflowItems(message?.workflowItems);
@@ -631,11 +671,10 @@ const resolveAssistantStatusEntry = (
     if (hasAssistantVisibleOutput(message) || latestOutput.index >= 0) {
       return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true, 'fa-solid fa-comment-dots');
     }
-    if (latestRequest.index >= 0) {
+    if (latestRequest.index >= 0 || hasAssistantUnfinishedWaitingWindow(message)) {
       return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
     }
-    // Generic running only drives avatar/composer state; showing it in the bubble causes a visible flash.
-    return null;
+    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
 
   return buildStatusEntry(t('messenger.messageStatus.done'), 'success', false, 'fa-solid fa-check');

@@ -86,6 +86,30 @@ test('assistant runtime does not reopen failed terminal messages from stale wait
   assert.equal(resolveAssistantMessageRuntimeState(message), 'done');
 });
 
+test('assistant runtime keeps waiting current output while progress timestamps advance', () => {
+  const startMs = Date.UTC(2026, 4, 1, 10, 39, 46);
+  const message = {
+    role: 'assistant',
+    workflowStreaming: true,
+    stream_incomplete: true,
+    waiting_updated_at_ms: startMs + 500,
+    waiting_first_output_at_ms: null,
+    waiting_phase_first_output_at_ms: null,
+    workflowItems: [
+      {
+        status: 'completed'
+      }
+    ],
+    stats: {
+      interaction_start_ms: startMs,
+      interaction_end_ms: startMs + 500
+    }
+  };
+
+  assert.equal(hasAssistantWaitingForCurrentOutput(message), true);
+  assert.equal(resolveAssistantMessageRuntimeState(message), 'running');
+});
+
 test('assistant runtime normalizes terminal aliases consistently', () => {
   assert.equal(normalizeAssistantMessageRuntimeState('completed'), 'done');
   assert.equal(normalizeAssistantMessageRuntimeState('cancelled'), 'error');

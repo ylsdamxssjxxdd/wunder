@@ -85,7 +85,7 @@ export const hasAssistantWaitingForCurrentOutput = (
       (message.stats as AssistantMessageLike | null)?.interaction_end ??
       (message.stats as AssistantMessageLike | null)?.ended_at
   );
-  if (interactionEndMs !== null && interactionEndMs >= waitingUpdatedAtMs) {
+  if (!isAssistantMessageRunning(message) && interactionEndMs !== null && interactionEndMs >= waitingUpdatedAtMs) {
     return false;
   }
 
@@ -95,7 +95,11 @@ export const hasAssistantWaitingForCurrentOutput = (
   }
 
   const latestWorkflowStatus = resolveLatestWorkflowStatus(message.workflowItems);
-  if (latestWorkflowStatus && !ACTIVE_WORKFLOW_STATUSES.has(latestWorkflowStatus)) {
+  if (
+    latestWorkflowStatus &&
+    !ACTIVE_WORKFLOW_STATUSES.has(latestWorkflowStatus) &&
+    !isAssistantMessageRunning(message)
+  ) {
     return false;
   }
 

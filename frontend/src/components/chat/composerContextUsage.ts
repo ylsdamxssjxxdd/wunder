@@ -7,6 +7,7 @@ export type ComposerContextUsageSource = {
   contextTotalTokens: number | null;
   assistantSignature: string;
   runningAssistant: boolean;
+  runningContextTokens: number | null;
 };
 
 const normalizeTokenCount = (value: unknown): number | null => {
@@ -97,6 +98,23 @@ export const resolveAssistantContextTokens = (stats: ComposerContextStatsSource)
   );
 };
 
+const resolveAssistantLiveContextTokens = (stats: ComposerContextStatsSource): number | null => {
+  if (!stats) {
+    return null;
+  }
+  const contextUsage = stats.context_usage as Record<string, unknown> | undefined;
+  const explicitContext = normalizePositiveTokenCount(
+    stats.contextTokens ??
+      stats.contextOccupancyTokens ??
+      stats.context_occupancy_tokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      contextUsage?.context_tokens ??
+      contextUsage?.contextTokens
+  );
+  return explicitContext ?? resolveAssistantContextTokens(stats);
+};
+
 export const resolveAssistantContextTotalTokens = (stats: ComposerContextStatsSource): number | null => {
   if (!stats) {
     return null;
@@ -172,9 +190,13 @@ export const resolveComposerContextUsageSource = (
       current.stats && typeof current.stats === 'object'
         ? (current.stats as Record<string, unknown>)
         : null;
-    const assistantContextTokens = resolveAssistantContextTokens(stats);
-    const assistantTotalTokens = resolveAssistantContextTotalTokens(stats);
     const runningAssistant = loading && isAssistantMessageRunning(current);
+    const assistantContextTokens = runningAssistant
+      ? resolveAssistantLiveContextTokens(stats)
+      : resolveAssistantContextTokens(stats);
+    const assistantTotalTokens = resolveAssistantContextTotalTokens(stats);
+    const sessionContextTokens = resolveSessionContextTokens(session);
+    const sessionTotalTokens = resolveSessionContextTotalTokens(session);
     const source = {
       contextTokens: assistantContextTokens,
       contextTotalTokens: assistantTotalTokens,
@@ -182,13 +204,19 @@ export const resolveComposerContextUsageSource = (
         cursor,
         String(current.created_at ?? current.createdAt ?? '')
       ].join(':'),
-      runningAssistant
+      runningAssistant,
+      runningContextTokens: runningAssistant ? assistantContextTokens : null
     };
     if (runningAssistant) {
-      return source;
+      return {
+        ...source,
+        contextTokens: assistantContextTokens ?? sessionContextTokens,
+        contextTotalTokens:
+          assistantTotalTokens !== null && sessionTotalTokens !== null
+            ? Math.max(assistantTotalTokens, sessionTotalTokens)
+            : assistantTotalTokens ?? sessionTotalTokens
+      };
     }
-    const sessionContextTokens = resolveSessionContextTokens(session);
-    const sessionTotalTokens = resolveSessionContextTotalTokens(session);
     return {
       ...source,
       contextTokens:
@@ -205,6 +233,7 @@ export const resolveComposerContextUsageSource = (
     contextTokens: resolveSessionContextTokens(session),
     contextTotalTokens: resolveSessionContextTotalTokens(session),
     assistantSignature: '',
-    runningAssistant: false
+    runningAssistant: false,
+    runningContextTokens: null
   };
 };
