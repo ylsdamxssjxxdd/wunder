@@ -734,7 +734,7 @@ const buildAbilityOption = (item, fallbackKind = "tool") => {
   if (!cleanedRuntimeName) {
     return null;
   }
-  const displayName = item.display_name || item.displayName || cleanedRuntimeName;
+  const displayName = item.display_name || item.displayName || item.title || item.label || cleanedRuntimeName;
   return {
     value: cleanedRuntimeName,
     label: String(displayName || cleanedRuntimeName),

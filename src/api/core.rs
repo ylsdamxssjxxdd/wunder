@@ -12,7 +12,9 @@ use crate::services::abilities::populate_ability_items;
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::skills::load_skills;
 use crate::state::AppState;
-use crate::tools::{a2a_service_schema, builtin_tool_specs};
+use crate::tools::{
+    a2a_service_schema, build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
+};
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
 use anyhow::Error;
@@ -269,6 +271,7 @@ async fn wunder_tools(
             });
         }
     }
+    apply_mcp_tool_display_titles(&mut mcp_tools);
 
     let a2a_tools = config
         .a2a
@@ -572,6 +575,27 @@ fn collect_user_knowledge_tools<F>(
             base.description.clone()
         };
         append(owner_id, name, description, schema.clone());
+    }
+}
+
+fn apply_mcp_tool_display_titles(tools: &mut [ToolSpec]) {
+    let display_names: std::collections::HashMap<String, String> =
+        build_mcp_tool_alias_entries_for_names(tools.iter().map(|item| item.name.as_str()))
+            .into_iter()
+            .map(|entry| (entry.runtime_name, entry.display_name))
+            .collect();
+    for tool in tools {
+        let has_title = tool
+            .title
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if has_title {
+            continue;
+        }
+        if let Some(display_name) = display_names.get(&tool.name) {
+            tool.title = Some(display_name.clone());
+        }
     }
 }
 

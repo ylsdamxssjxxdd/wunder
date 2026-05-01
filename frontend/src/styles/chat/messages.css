@@ -726,12 +726,67 @@
   gap: 2px;
 }
 
+.chat-shell .message-stat.is-status {
+  gap: 6px;
+}
+
+.chat-shell .message-stat.is-status.is-running {
+  color: #2563eb;
+}
+
+.chat-shell .message-stat.is-status.is-warning {
+  color: #d97706;
+}
+
+.chat-shell .message-stat.is-status.is-success {
+  color: #15803d;
+}
+
+.chat-shell .message-stat.is-status.is-error {
+  color: #dc2626;
+}
+
+.chat-shell .message-stat.is-status.is-muted {
+  color: #64748b;
+}
+
+.chat-shell .message-stat-icon {
+  width: 12px;
+  min-width: 12px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  color: currentColor;
+  opacity: 0.9;
+  flex: 0 0 auto;
+}
+
+.chat-shell .message-stat.is-status.is-live .message-stat-icon {
+  animation: chat-message-stat-live 1.2s ease-in-out infinite;
+}
+
 .chat-shell .message-stat-label {
   color: var(--chat-muted);
 }
 
 .chat-shell .message-stat-value {
   color: var(--chat-text);
+}
+
+.chat-shell .message-stat.is-status .message-stat-value {
+  color: currentColor;
+}
+
+@keyframes chat-message-stat-live {
+  0%,
+  100% {
+    transform: translateY(0) scale(0.94);
+    opacity: 0.58;
+  }
+  50% {
+    transform: translateY(-1px) scale(1.08);
+    opacity: 1;
+  }
 }
 
 .chat-shell .message-text .markdown-body {

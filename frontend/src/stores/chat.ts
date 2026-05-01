@@ -195,6 +195,7 @@ type WorkflowProcessorOptions = {
   finalizeWithNow?: boolean;
   streamFlushMs?: number;
   sessionId?: string | null;
+  initialContextTokens?: number | null;
   onThreadControl?: (payload: unknown) => void | Promise<void>;
   onContextUsage?: (contextTokens: number, contextTotalTokens?: number | null) => void;
 };
@@ -1139,6 +1140,63 @@ const estimateStreamOutputTokens = (text) => {
   }
   const estimated = cjkCount + asciiVisible / 4 + otherCount * 0.75;
   return Math.max(0, Math.round(estimated));
+};
+
+const estimateStructuredTextTokens = (value, depth = 0) => {
+  if (value === null || value === undefined || depth > 4) return 0;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return estimateStreamOutputTokens(String(value));
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((total, item) => total + estimateStructuredTextTokens(item, depth + 1), 0);
+  }
+  if (typeof value !== 'object') return 0;
+  const record = value as Record<string, unknown>;
+  let total = 0;
+  for (const key of ['text', 'content', 'input', 'output', 'reasoning', 'reasoning_content']) {
+    total += estimateStructuredTextTokens(record[key], depth + 1);
+  }
+  return total;
+};
+
+const extractRequestMessages = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  const candidates = [
+    record.messages,
+    (record.payload as Record<string, unknown> | undefined)?.messages,
+    (record.request as Record<string, unknown> | undefined)?.messages,
+    ((record.request as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined)?.messages,
+    ((record.data as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined)?.messages
+  ];
+  const messages = candidates.find(Array.isArray);
+  return Array.isArray(messages) ? messages : null;
+};
+
+const extractRequestPayload = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  const candidates = [
+    (record.request as Record<string, unknown> | undefined)?.payload,
+    (record.data as Record<string, unknown> | undefined)?.payload,
+    record.payload
+  ];
+  return candidates.find((item) => item && typeof item === 'object') ?? null;
+};
+
+const estimateRequestMessagesContextTokens = (source) => {
+  const requestPayload = extractRequestPayload(source);
+  const messages = extractRequestMessages(requestPayload ?? source);
+  if (!messages || messages.length === 0) return null;
+  let total = 2;
+  messages.forEach((message) => {
+    if (!message || typeof message !== 'object') return;
+    const record = message as Record<string, unknown>;
+    total += 4;
+    total += estimateStructuredTextTokens(record.content ?? record.text ?? record.message);
+    total += estimateStructuredTextTokens(record.name);
+  });
+  return total > 0 ? total : null;
 };
 
 const normalizeMessageStats = (stats) => {
@@ -5083,6 +5141,22 @@ const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
   session.updated_at = resolved || new Date().toISOString();
 };
 
+const resolveSessionContextTokens = (store, sessionId) => {
+  if (!store || !Array.isArray(store.sessions)) return null;
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  const session = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
+  if (!session || typeof session !== 'object') return null;
+  return normalizeContextTokens(
+    session.contextTokens ??
+      session.context_tokens ??
+      session.contextOccupancyTokens ??
+      session.context_occupancy_tokens ??
+      session.context_usage?.context_tokens ??
+      session.context_usage?.contextTokens
+  );
+};
+
 const syncSessionContextTokens = (store, sessionId, contextTokens, contextTotalTokens = null) => {
   if (!store || !Array.isArray(store.sessions)) return;
   const key = resolveSessionKey(sessionId);
@@ -7316,7 +7390,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       partialConsumedRoundMap.set(seededRound, seededPartialConsumed);
     }
   }
-  let contextEstimateBaseTokens = normalizeContextTokens(stats?.contextTokens);
+  let contextEstimateBaseTokens =
+    normalizeContextTokens(options.initialContextTokens) ?? normalizeContextTokens(stats?.contextTokens);
   const refreshInteractionDuration = () => {
     if (!stats) return;
     const duration = resolveInteractionDuration(
@@ -7677,6 +7752,44 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       recomputeRoundAggregates();
       return;
     }
+  };
+
+  const syncLiveContextTokens = (nextContextTokens, contextTotalTokens = null) => {
+    if (!stats) return;
+    const normalized = normalizeContextTokens(nextContextTokens);
+    if (normalized === null || normalized <= 0) return;
+    const normalizedTotal = normalizeContextTotalTokens(contextTotalTokens);
+    const existingContextTokens = normalizeContextTokens(stats.contextTokens);
+    const changed = existingContextTokens !== normalized;
+    stats.contextTokens = normalized;
+    contextEstimateBaseTokens = normalized;
+    if (normalizedTotal !== null) {
+      stats.contextTotalTokens = normalizedTotal;
+    }
+    if (changed || normalizedTotal !== null) {
+      options.onContextUsage?.(normalized, stats.contextTotalTokens ?? null);
+    }
+  };
+
+  const updateLiveContextUsageFromTokenUsage = (usagePayload) => {
+    const usage = normalizeUsagePayload(usagePayload);
+    if (!usage) return;
+    const baseTokens =
+      Number.isFinite(usage.input) && usage.input > 0
+        ? usage.input
+        : Number.isFinite(usage.total) && usage.total > 0
+          ? usage.total
+          : null;
+    const displayTokens =
+      Number.isFinite(usage.total) && usage.total > 0 ? usage.total : baseTokens;
+    if (baseTokens !== null && baseTokens > 0) {
+      contextEstimateBaseTokens = baseTokens;
+    }
+    syncLiveContextTokens(displayTokens);
+  };
+
+  const updateLiveContextUsageFromRequest = (requestPayload) => {
+    syncLiveContextTokens(estimateRequestMessagesContextTokens(requestPayload));
   };
 
   const updateRoundUsageStats = (usagePayload) => {
@@ -9125,6 +9238,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'llm_request': {
         resetAssistantWaitingOutputPhase(assistantMessage, payload?.timestamp ?? data?.timestamp);
         clearAssistantRetryState(assistantMessage);
+        updateLiveContextUsageFromRequest(data ?? payload ?? {});
         chatDebugLog('chat.llm.request', 'event', {
           sessionId: options.sessionId ?? null,
           round: resolveRound(payload, data),
@@ -9871,9 +9985,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'token_usage': {
         const round = resolveRound(payload, data);
-        updatePartialConsumedFromUsage(data?.usage ?? payload?.usage ?? data, round);
+        const usagePayload = data?.usage ?? payload?.usage ?? data;
+        updatePartialConsumedFromUsage(usagePayload, round);
         updateUsageStats(
-          data?.usage ?? payload?.usage ?? data,
+          usagePayload,
           null,
           null,
           {
@@ -9883,6 +9998,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             updateContextFromUsage: false
           }
         );
+        updateLiveContextUsageFromTokenUsage(usagePayload);
         applyModelRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         break;
       }
@@ -12192,6 +12308,7 @@ export const useChatStore = defineStore('chat', {
       }
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
+      const previousSessionContextTokens = resolveSessionContextTokens(this, sessionId);
       if (!bootstrappingDraftSession) {
         this.messages.push(userMessage);
       }
@@ -12228,6 +12345,7 @@ export const useChatStore = defineStore('chat', {
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
           sessionId,
+          initialContextTokens: previousSessionContextTokens,
           onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
           onContextUsage: (contextTokens, contextTotalTokens) =>
             syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)

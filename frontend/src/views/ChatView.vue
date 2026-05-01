@@ -487,9 +487,21 @@
                     <span
                       v-for="item in buildMessageStatsEntries(message)"
                       :key="item.key || item.label"
-                      :class="['message-stat', item.kind === 'status' ? 'is-status' : 'is-metric']"
+                      :class="[
+                        'message-stat',
+                        item.kind === 'status' ? 'is-status' : 'is-metric',
+                        item.tone ? `is-${item.tone}` : '',
+                        item.live ? 'is-live' : ''
+                      ]"
                     >
                       <template v-if="item.kind === 'status'">
+                        <i
+                          :class="[
+                            item.iconClass || 'fa-solid fa-circle-info',
+                            'message-stat-icon'
+                          ]"
+                          aria-hidden="true"
+                        ></i>
                         <span class="message-stat-value">{{ item.value }}</span>
                       </template>
                       <template v-else>

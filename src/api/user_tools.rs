@@ -20,7 +20,10 @@ use crate::services::skill_archive::{
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
-use crate::tools::{a2a_service_schema, builtin_tool_specs, resolve_tool_name};
+use crate::tools::{
+    a2a_service_schema, build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
+    resolve_tool_name,
+};
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
     UserToolContext,
@@ -2474,6 +2477,7 @@ fn build_user_tools_summary(
             });
         }
     }
+    apply_mcp_tool_display_titles(&mut mcp_tools);
 
     let a2a_tools = config
         .a2a
@@ -2713,6 +2717,27 @@ fn build_user_knowledge_payload(
             UserKnowledgeBasePayload::from_with_root(base, root)
         })
         .collect()
+}
+
+fn apply_mcp_tool_display_titles(tools: &mut [ToolSpec]) {
+    let display_names: HashMap<String, String> =
+        build_mcp_tool_alias_entries_for_names(tools.iter().map(|item| item.name.as_str()))
+            .into_iter()
+            .map(|entry| (entry.runtime_name, entry.display_name))
+            .collect();
+    for tool in tools {
+        let has_title = tool
+            .title
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if has_title {
+            continue;
+        }
+        if let Some(display_name) = display_names.get(&tool.name) {
+            tool.title = Some(display_name.clone());
+        }
+    }
 }
 
 fn collect_removed_vector_bases(

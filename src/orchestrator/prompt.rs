@@ -488,15 +488,12 @@ fn sanitize_function_name_inner(name: &str, preserve_at_separator: bool) -> Stri
     let mut last_underscore = false;
     for ch in name.chars() {
         if preserve_at_separator && ch == '@' {
-            if output.is_empty() {
-                last_underscore = true;
+            if output.is_empty() || output.ends_with('@') {
+                last_underscore = false;
                 continue;
             }
-            if !output.ends_with('_') {
-                output.push('_');
-            }
-            output.push('_');
-            last_underscore = true;
+            output.push('@');
+            last_underscore = false;
             continue;
         }
         let mapped = if ch.is_ascii_alphanumeric() {
@@ -669,12 +666,12 @@ mod tests {
             &mut used,
         );
 
-        assert_eq!(function_name, "extra_mcp__db_query_sample_table");
+        assert_eq!(function_name, "extra_mcp@db_query_sample_table");
         assert!(!function_name.starts_with("tool_"));
     }
 
     #[test]
-    fn model_function_name_map_routes_mcp_safe_name_to_runtime() {
+    fn model_function_name_map_routes_mcp_runtime_name_to_runtime() {
         let mut config = Config::default();
         config.mcp.servers = vec![McpServerConfig {
             name: "extra_mcp".to_string(),
@@ -699,12 +696,45 @@ mod tests {
             build_model_function_name("Sample Query", &runtime_name, &HashMap::new(), &mut used);
         name_map.insert(function_name.clone(), runtime_name);
 
-        assert_eq!(function_name, "extra_mcp__db_query_sample_table");
+        assert_eq!(function_name, "extra_mcp@db_query_sample_table");
         assert_eq!(
             name_map
-                .get("extra_mcp__db_query_sample_table")
+                .get("extra_mcp@db_query_sample_table")
                 .map(String::as_str),
             Some("extra_mcp@db_query_sample_table")
+        );
+    }
+
+    #[test]
+    fn model_function_name_preserves_mcp_runtime_separator() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![McpServerConfig {
+            name: "server-alpha".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            tool_specs: vec![McpToolSpec {
+                name: "tool_alpha".to_string(),
+                title: None,
+                description: String::new(),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
+            }],
+            ..Default::default()
+        }];
+        let allowed = HashSet::from(["server-alpha@tool_alpha".to_string()]);
+        let mut name_map = build_prompt_tool_name_map(&config, &allowed);
+        let runtime_name = name_map
+            .get("tool_alpha")
+            .cloned()
+            .expect("short MCP alias maps to runtime name");
+        let mut used = HashSet::new();
+        let function_name =
+            build_model_function_name("tool_alpha", &runtime_name, &HashMap::new(), &mut used);
+        name_map.insert(function_name.clone(), runtime_name);
+
+        assert_eq!(function_name, "server-alpha@tool_alpha");
+        assert_eq!(
+            name_map.get("server-alpha@tool_alpha").map(String::as_str),
+            Some("server-alpha@tool_alpha")
         );
     }
 

@@ -257,6 +257,9 @@ const renderPromptToolList = (container, items, emptyText) => {
   items.forEach((item) => {
     const row = document.createElement("div");
     row.className = "tool-item";
+    const displayName = String(
+      item?.display_name || item?.displayName || item?.title || item?.label || item?.name || ""
+    ).trim() || item.name;
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = state.toolSelection.selected.has(item.name);
@@ -289,8 +292,18 @@ const renderPromptToolList = (container, items, emptyText) => {
     if (item.owner_id) {
       metaParts.push(t("tools.owner", { owner: item.owner_id }));
     }
-    const description = metaParts.length ? `<span class="muted">${metaParts.join(" · ")}</span>` : "";
-    label.innerHTML = `<strong>${item.name}</strong>${description}`;
+    const nameNode = document.createElement("strong");
+    nameNode.textContent = displayName;
+    label.appendChild(nameNode);
+    if (metaParts.length) {
+      const description = document.createElement("span");
+      description.className = "muted";
+      description.textContent = metaParts.join(" · ");
+      label.appendChild(description);
+    }
+    if (displayName !== item.name) {
+      label.title = item.name;
+    }
     row.appendChild(checkbox);
     row.appendChild(label);
     container.appendChild(row);

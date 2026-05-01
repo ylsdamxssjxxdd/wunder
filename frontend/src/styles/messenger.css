@@ -2334,12 +2334,18 @@ button.messenger-chat-header-model {
   color: #2f2f2f;
 }
 
-.messenger-message-stat-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.88;
+.messenger-message-stat.is-status .messenger-message-stat-value {
+  color: currentColor;
+}
+
+.messenger-message-stat-icon {
+  width: 12px;
+  min-width: 12px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  color: currentColor;
+  opacity: 0.9;
   flex: 0 0 auto;
 }
 
@@ -2373,7 +2379,7 @@ button.messenger-chat-header-model {
   background: rgba(248, 250, 252, 0.92);
 }
 
-.messenger-message-stat.is-status.is-live .messenger-message-stat-dot {
+.messenger-message-stat.is-status.is-live .messenger-message-stat-icon {
   animation: messenger-message-stat-live 1.2s ease-in-out infinite;
 }
 
@@ -2394,11 +2400,11 @@ button.messenger-chat-header-model {
 @keyframes messenger-message-stat-live {
   0%,
   100% {
-    transform: scale(0.9);
-    opacity: 0.48;
+    transform: translateY(0) scale(0.94);
+    opacity: 0.58;
   }
   50% {
-    transform: scale(1.2);
+    transform: translateY(-1px) scale(1.08);
     opacity: 1;
   }
 }

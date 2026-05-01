@@ -16,6 +16,7 @@ export type MessageStatsEntry = {
   kind?: 'status' | 'metric';
   tone?: 'running' | 'warning' | 'success' | 'error' | 'muted';
   live?: boolean;
+  iconClass?: string;
 };
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
@@ -477,14 +478,16 @@ const hasConversationCompactionRunning = (
 const buildStatusEntry = (
   value: string,
   tone: NonNullable<MessageStatsEntry['tone']>,
-  live = false
+  live = false,
+  iconClass = 'fa-solid fa-circle-info'
 ): MessageStatsEntry => ({
   key: 'status',
   label: '',
   value,
   kind: 'status',
   tone,
-  live
+  live,
+  iconClass
 });
 
 const resolveAssistantStatusEntry = (
@@ -496,11 +499,11 @@ const resolveAssistantStatusEntry = (
   if (!hasAssistantActivitySignals(message)) return null;
 
   if (resolveAssistantFailureNotice(message, t)) {
-    return buildStatusEntry(t('messenger.messageStatus.error'), 'error');
+    return buildStatusEntry(t('messenger.messageStatus.error'), 'error', false, 'fa-solid fa-triangle-exclamation');
   }
 
   if (hasAssistantPendingQuestion(message)) {
-    return buildStatusEntry(t('messenger.messageStatus.waitingInput'), 'warning', true);
+    return buildStatusEntry(t('messenger.messageStatus.waitingInput'), 'warning', true, 'fa-solid fa-circle-question');
   }
 
   const workflowItems = Array.isArray(message?.workflowItems)
@@ -564,7 +567,7 @@ const resolveAssistantStatusEntry = (
     nowMs
   );
   if (message?.resume_available && !isAssistantMessageRunning(message)) {
-    return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
+    return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning', false, 'fa-solid fa-rotate-right');
   }
   if (
     shouldShowRetryState &&
@@ -580,10 +583,20 @@ const resolveAssistantStatusEntry = (
       )
     )
   ) {
-    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
+    return buildStatusEntry(
+      buildRetryStatusValue(message, latestRetry.item, t, nowMs),
+      'warning',
+      true,
+      'fa-solid fa-plug-circle-bolt'
+    );
   }
   if (message?.slow_client && !hasAssistantVisibleOutput(message)) {
-    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
+    return buildStatusEntry(
+      buildRetryStatusValue(message, latestRetry.item, t, nowMs),
+      'warning',
+      true,
+      'fa-solid fa-plug-circle-bolt'
+    );
   }
   if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
     const queueAhead = resolveQueueAheadCount(latestQueue.item);
@@ -591,41 +604,41 @@ const resolveAssistantStatusEntry = (
       queueAhead !== null
         ? t('messenger.messageStatus.queuedAhead', { count: queueAhead })
         : t('messenger.messageStatus.queued');
-    return buildStatusEntry(queuedLabel, 'muted', true);
+    return buildStatusEntry(queuedLabel, 'muted', true, 'fa-solid fa-clock');
   }
   if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
-    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
+    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true, 'fa-solid fa-compress');
   }
   if (hasActiveSubagentItems(message?.subagents)) {
-    return buildStatusEntry(t('messenger.messageStatus.subagentRunning'), 'running', true);
+    return buildStatusEntry(t('messenger.messageStatus.subagentRunning'), 'running', true, 'fa-solid fa-diagram-project');
   }
   if (
     (isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message) || latestRequest.index >= 0) &&
     hasConversationCompactionRunning(message, allMessages)
   ) {
-    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
+    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true, 'fa-solid fa-compress');
   }
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
-    return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
+    return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true, 'fa-solid fa-screwdriver-wrench');
   }
   if (hasAssistantWaitingForCurrentOutput(message)) {
-    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
+    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
   if (isAssistantMessageRunning(message)) {
     if (latestActiveModelOutput.index >= 0 || message?.reasoningStreaming) {
-      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true);
+      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true, 'fa-solid fa-comment-dots');
     }
     if (hasAssistantVisibleOutput(message) || latestOutput.index >= 0) {
-      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true);
+      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true, 'fa-solid fa-comment-dots');
     }
     if (latestRequest.index >= 0) {
-      return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
+      return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
     }
     // Generic running only drives avatar/composer state; showing it in the bubble causes a visible flash.
     return null;
   }
 
-  return buildStatusEntry(t('messenger.messageStatus.done'), 'success');
+  return buildStatusEntry(t('messenger.messageStatus.done'), 'success', false, 'fa-solid fa-check');
 };
 
 export const buildAssistantMessageStatsEntries = (

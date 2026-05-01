@@ -1218,7 +1218,13 @@
                       ]"
                     >
                       <template v-if="entry.kind === 'status'">
-                        <span class="messenger-message-stat-dot" aria-hidden="true"></span>
+                        <i
+                          :class="[
+                            entry.iconClass || 'fa-solid fa-circle-info',
+                            'messenger-message-stat-icon'
+                          ]"
+                          aria-hidden="true"
+                        ></i>
                         <span class="messenger-message-stat-value">{{ entry.value }}</span>
                       </template>
                       <template v-else>

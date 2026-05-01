@@ -921,6 +921,21 @@ const resolveLatestContextTotalTokensFromMessages = (messages: unknown[]): numbe
   }
   return null;
 };
+const resolveLatestAssistantContextSignature = (messages: unknown[]): string => {
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    const current =
+      messages[cursor] && typeof messages[cursor] === 'object'
+        ? (messages[cursor] as Record<string, unknown>)
+        : null;
+    if (!current) continue;
+    if (String(current.role || '').trim().toLowerCase() !== 'assistant') continue;
+    return [
+      cursor,
+      String(current.created_at ?? current.createdAt ?? '')
+    ].join(':');
+  }
+  return '';
+};
 const formatContextTokenCount = (value: unknown): string => {
   const normalized = normalizeTokenCount(value);
   if (normalized === null) return '--';
@@ -985,21 +1000,30 @@ const composerContextTotalTokensRaw = computed(() => {
   const normalizedPreset = normalizeTokenCount(fromPreset);
   return normalizedPreset !== null && normalizedPreset > 0 ? normalizedPreset : null;
 });
+const contextDisplayAssistantSignature = computed(() => {
+  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  return resolveLatestAssistantContextSignature(messages);
+});
 const contextDisplaySessionId = computed(() => String(chatStore.activeSessionId || '').trim());
 const lastContextDisplaySessionId = ref<string>(contextDisplaySessionId.value);
+const lastContextDisplayAssistantSignature = ref<string>(contextDisplayAssistantSignature.value);
 const composerContextUsedTokensStable = ref<number | null>(null);
 const composerContextTotalTokensStable = ref<number | null>(null);
 watch(
   [
     contextDisplaySessionId,
+    contextDisplayAssistantSignature,
     () => Boolean(props.loading),
     composerContextUsedTokensRaw,
     composerContextTotalTokensRaw
   ],
-  ([sessionId, loading, rawUsed, rawTotal]) => {
+  ([sessionId, assistantSignature, loading, rawUsed, rawTotal]) => {
     const switchedSession = sessionId !== lastContextDisplaySessionId.value;
+    const switchedAssistant =
+      assistantSignature !== lastContextDisplayAssistantSignature.value;
     lastContextDisplaySessionId.value = sessionId;
-    if (switchedSession || !loading) {
+    lastContextDisplayAssistantSignature.value = assistantSignature;
+    if (switchedSession || switchedAssistant || !loading) {
       composerContextUsedTokensStable.value = rawUsed;
       composerContextTotalTokensStable.value = rawTotal;
       return;

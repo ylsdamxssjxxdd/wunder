@@ -925,9 +925,10 @@ const buildToolOptions = (list) =>
       if (!item) return null;
       const name = item.name || item.tool_name || item.toolName;
       if (!name) return null;
+      const label = item.display_name || item.displayName || item.title || item.label || name;
       return {
         value: String(name),
-        label: String(name),
+        label: String(label || name),
         description: String(item.description || ""),
       };
     })
