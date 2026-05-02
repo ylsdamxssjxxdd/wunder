@@ -2667,7 +2667,7 @@
               <i class="fa-solid fa-floppy-disk"></i><span data-i18n="llm.action.save">保存配置</span>
             </button>
           </div>
-          <div class="tips" data-i18n="llm.tip">配置模型服务地址、密钥与生成参数，保存后立即生效。</div>
+          <div class="tips" data-i18n="llm.tip">配置对话、嵌入、语音与绘图模型。不同类型只展示实际需要的参数。</div>
           <div class="management-layout llm-layout">
             <div class="management-list llm-list">
               <div class="list-header">
@@ -2712,6 +2712,8 @@
                     <select id="llmModelType">
                       <option value="llm" data-i18n="llm.modelType.llm">LLM</option>
                       <option value="embedding" data-i18n="llm.modelType.embedding">Embedding</option>
+                      <option value="tts" data-i18n="llm.modelType.tts">TTS</option>
+                      <option value="image" data-i18n="llm.modelType.image">Image</option>
                     </select>
                   </div>
                   <div class="grid">
@@ -2740,9 +2742,9 @@
                     <input id="llmApiKey" type="text" placeholder="sk-..." />
                   </div>
                 </div>
-                <div class="llm-card">
+                <div id="llmGenerationCard" class="llm-card">
                   <div class="llm-card-title">
-                    <i class="fa-solid fa-sliders"></i><span data-i18n="llm.section.generation">生成参数</span>
+                    <i class="fa-solid fa-sliders"></i><span id="llmGenerationTitle" data-i18n="llm.section.generation">生成参数</span>
                   </div>
                   <div class="grid">
                     <div id="llmTemperatureRow" class="form-row">
@@ -2808,6 +2810,77 @@
                         <i class="fa-solid fa-magnifying-glass"></i><span data-i18n="llm.action.probeContext">自动探测</span>
                       </button>
                     </div>
+                  </div>
+                  <div id="llmTtsRows">
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmTtsVoice" data-i18n="llm.field.ttsVoice">音色</label>
+                        <input
+                          id="llmTtsVoice"
+                          type="text"
+                          placeholder="留空使用模型默认"
+                          data-i18n-placeholder="llm.placeholder.ttsVoice"
+                        />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmTtsResponseFormat" data-i18n="llm.field.ttsResponseFormat">音频格式</label>
+                        <select id="llmTtsResponseFormat">
+                          <option value="wav">wav</option>
+                          <option value="mp3">mp3</option>
+                          <option value="flac">flac</option>
+                          <option value="aac">aac</option>
+                          <option value="opus">opus</option>
+                          <option value="pcm">pcm</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-row">
+                      <label for="llmTtsSpeed" data-i18n="llm.field.ttsSpeed">语速</label>
+                      <input id="llmTtsSpeed" type="number" min="0.25" max="4" step="0.05" />
+                    </div>
+                    <div class="form-row">
+                      <label for="llmTtsInstructions" data-i18n="llm.field.ttsInstructions">语音风格</label>
+                      <textarea id="llmTtsInstructions" rows="2"></textarea>
+                    </div>
+                  </div>
+                  <div id="llmImageRows">
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmImageSize" data-i18n="llm.field.imageSize">图片尺寸</label>
+                        <input
+                          id="llmImageSize"
+                          type="text"
+                          placeholder="例如：1024x1024"
+                          data-i18n-placeholder="llm.placeholder.imageSize"
+                        />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmImageOutputFormat" data-i18n="llm.field.imageOutputFormat">输出格式</label>
+                        <select id="llmImageOutputFormat">
+                          <option value="" data-i18n="llm.option.modelDefault">模型默认</option>
+                          <option value="png">png</option>
+                          <option value="jpeg">jpeg</option>
+                          <option value="webp">webp</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmImageSteps" data-i18n="llm.field.imageSteps">采样步数</label>
+                        <input id="llmImageSteps" type="number" min="1" max="200" step="1" />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmImageGuidanceScale" data-i18n="llm.field.imageGuidanceScale">引导系数</label>
+                        <input id="llmImageGuidanceScale" type="number" min="0" max="20" step="0.1" />
+                      </div>
+                    </div>
+                    <div class="form-row">
+                      <label for="llmImageNegativePrompt" data-i18n="llm.field.imageNegativePrompt">负向提示词</label>
+                      <textarea id="llmImageNegativePrompt" rows="2"></textarea>
+                    </div>
+                  </div>
+                  <div id="llmConnectionOnlyHint" class="muted" data-i18n="llm.section.connectionOnly">
+                    该类型只需要基础连接配置。
                   </div>
                 </div>
                 <div id="llmCapabilitiesCard" class="llm-card">

@@ -12,6 +12,7 @@ use crate::services::chat_media::{
 use crate::services::llm::{
     build_llm_client, is_llm_model, resolve_tool_call_mode, ChatMessage, ToolCallMode,
 };
+use crate::services::multimodal_models::{self, SpeechSynthesisRequest};
 use crate::services::orchestration_context::{
     active_orchestration_for_agent, build_locked_thread_message, load_round_state,
     load_session_context, repair_orchestration_session_main_thread,
@@ -23,8 +24,9 @@ use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
 use anyhow::Error;
+use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::get, routing::post, Json, Router};
 use chrono::{DateTime, Local, Utc};
@@ -41,6 +43,7 @@ const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 const MAX_MEDIA_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
+const MAX_TTS_INPUT_CHARS: usize = 8_000;
 const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 const ORCHESTRATION_SOURCE_HEADER: &str = "x-wunder-orchestration-source";
@@ -113,6 +116,7 @@ pub fn router() -> Router<Arc<AppState>> {
             post(compact_session),
         )
         .route("/wunder/chat/system-prompt", post(system_prompt))
+        .route("/wunder/chat/tts", post(synthesize_chat_tts))
         .route(
             "/wunder/chat/sessions/{session_id}/system-prompt",
             post(session_system_prompt),
@@ -178,6 +182,22 @@ struct SendMessageRequest {
         alias = "permission_level"
     )]
     approval_mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatTtsRequest {
+    #[serde(default)]
+    text: String,
+    #[serde(default, alias = "modelName", alias = "model_name")]
+    model_name: Option<String>,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    instructions: Option<String>,
+    #[serde(default, alias = "responseFormat", alias = "response_format")]
+    response_format: Option<String>,
+    #[serde(default)]
+    speed: Option<f32>,
 }
 
 pub(crate) struct ChatRequestOverrides {
@@ -2260,6 +2280,57 @@ async fn chat_attachment_media_process(
     })))
 }
 
+async fn synthesize_chat_tts(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ChatTtsRequest>,
+) -> Result<Response, Response> {
+    let _resolved = resolve_user(&state, &headers, None).await?;
+    let text = payload.text.trim();
+    if text.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    if text.chars().count() > MAX_TTS_INPUT_CHARS {
+        return Err(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!("tts input exceeds {MAX_TTS_INPUT_CHARS} characters"),
+        ));
+    }
+
+    let config = state.config_store.get().await;
+    let result = multimodal_models::synthesize_speech(
+        &config,
+        SpeechSynthesisRequest {
+            text: text.to_string(),
+            model_name: payload.model_name,
+            voice: payload.voice,
+            instructions: payload.instructions,
+            response_format: payload.response_format,
+            speed: payload.speed,
+        },
+    )
+    .await
+    .map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            format!("tts request failed: {err}"),
+        )
+    })?;
+
+    let mut response = Response::new(Body::from(result.bytes));
+    if let Ok(value) = HeaderValue::from_str(&result.content_type) {
+        response.headers_mut().insert(header::CONTENT_TYPE, value);
+    }
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store, max-age=0"),
+    );
+    Ok(response)
+}
+
 async fn parse_chat_media_process_multipart(
     mut multipart: Multipart,
 ) -> Result<ChatMediaProcessFields, Response> {
@@ -2921,17 +2992,21 @@ fn insert_session_runtime_fields(
 fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {
     let default_key = config.llm.default.trim();
     if !default_key.is_empty() {
-        if let Some(model) = config
-            .llm
-            .models
-            .get(default_key)
-            .and_then(|cfg| cfg.model.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(model.to_string());
+        if let Some(cfg) = config.llm.models.get(default_key) {
+            if is_llm_model(cfg) {
+                if let Some(model) = cfg
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    return Some(model.to_string());
+                }
+                return Some(default_key.to_string());
+            }
+        } else {
+            return Some(default_key.to_string());
         }
-        return Some(default_key.to_string());
     }
     for (key, cfg) in config.llm.models.iter() {
         if !is_llm_model(cfg) {
@@ -2974,7 +3049,7 @@ fn resolve_chat_model_name(
 
 fn resolve_default_model_key(config: &crate::config::Config) -> Option<String> {
     let default_key = config.llm.default.trim();
-    if !default_key.is_empty() {
+    if !default_key.is_empty() && config.llm.models.get(default_key).is_some_and(is_llm_model) {
         return Some(default_key.to_string());
     }
     for (key, cfg) in config.llm.models.iter() {

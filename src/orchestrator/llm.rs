@@ -182,13 +182,15 @@ impl Orchestrator {
         let name = model_name
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(config.llm.default.as_str());
-        if let Some(configured) = config
-            .llm
-            .models
-            .get(name)
-            .filter(|model| is_llm_model(model))
-        {
-            return Ok((name.to_string(), configured.clone()));
+        if !name.trim().is_empty() {
+            if let Some(configured) = config
+                .llm
+                .models
+                .get(name)
+                .filter(|model| is_llm_model(model))
+            {
+                return Ok((name.to_string(), configured.clone()));
+            }
         }
         if let Some((fallback_name, fallback)) = config
             .llm

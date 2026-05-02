@@ -157,13 +157,15 @@ pub fn resolve_llm_config(config: &Config, model_name: Option<&str>) -> Option<L
     let name = model_name
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(config.llm.default.as_str());
-    if let Some(model) = config
-        .llm
-        .models
-        .get(name)
-        .filter(|model| is_llm_model(model))
-    {
-        return Some(model.clone());
+    if !name.trim().is_empty() {
+        if let Some(model) = config
+            .llm
+            .models
+            .get(name)
+            .filter(|model| is_llm_model(model))
+        {
+            return Some(model.clone());
+        }
     }
     config
         .llm

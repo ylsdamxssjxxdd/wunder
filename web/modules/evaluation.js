@@ -59,7 +59,30 @@ function normalizeModelType(value) {
   if (!raw) {
     return "llm";
   }
-  return raw === "embedding" || raw === "embed" || raw === "embeddings" ? "embedding" : "llm";
+  const normalized = raw.replace(/[\s-]+/g, "_");
+  if (normalized === "embedding" || normalized === "embed" || normalized === "emb" || normalized === "embeddings") {
+    return "embedding";
+  }
+  if (
+    normalized === "tts" ||
+    normalized === "speech" ||
+    normalized === "text_to_speech" ||
+    normalized === "text2speech" ||
+    normalized === "audio_speech"
+  ) {
+    return "tts";
+  }
+  if (
+    normalized === "image" ||
+    normalized === "draw" ||
+    normalized === "drawing" ||
+    normalized === "text_to_image" ||
+    normalized === "text2image" ||
+    normalized === "image_generation"
+  ) {
+    return "image";
+  }
+  return "llm";
 }
 
 function getLlmModelNames() {

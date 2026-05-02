@@ -1571,6 +1571,7 @@ mod tests {
                 model_type: None,
                 stop: None,
                 mock_if_unconfigured: None,
+                ..Default::default()
             },
         );
 

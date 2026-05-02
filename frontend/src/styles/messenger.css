@@ -2438,6 +2438,20 @@ button.messenger-chat-header-model {
   color: var(--hula-accent);
 }
 
+.messenger-message-footer-copy.is-active {
+  opacity: 1;
+  pointer-events: auto;
+  border-color: rgba(var(--ui-accent-rgb), 0.48);
+  background: var(--ui-accent-soft-5);
+  color: var(--hula-accent);
+}
+
+.messenger-message-footer-copy:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  pointer-events: auto;
+}
+
 .messenger-message-feedback-actions {
   display: inline-flex;
   align-items: center;

@@ -908,6 +908,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.worldQuickPanelMode.value = '';
           void ctx.cancelWorldVoiceRecording();
           ctx.disposeWorldVoicePlayback();
+          ctx.disposeMessageTtsPlayback();
       }
   });
 
@@ -918,8 +919,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       String(ctx.chatStore.activeSessionId || '').trim(),
       ctx.showChatSettingsView.value
   ] as const, ([active, desktop, _agentId, _sessionId, showingSettings], previous) => {
+      if (previous && (previous[2] !== _agentId || previous[3] !== _sessionId)) {
+          ctx.disposeMessageTtsPlayback();
+      }
       if (!active) {
           void ctx.cancelAgentVoiceRecording();
+          ctx.disposeMessageTtsPlayback();
           return;
       }
       const forceRefresh = Boolean(previous?.[4] && !showingSettings);
@@ -946,6 +951,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       if (previousConversationId && previousConversationId !== nextConversationId) {
           void ctx.cancelWorldVoiceRecording();
           ctx.disposeWorldVoicePlayback();
+          ctx.disposeMessageTtsPlayback();
       }
       if (previousConversationId) {
           ctx.writeWorldDraft(previousConversationId, ctx.worldDraft.value);
@@ -1116,6 +1122,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       void ctx.cancelAgentVoiceRecording();
       void ctx.cancelWorldVoiceRecording();
       ctx.disposeWorldVoicePlayback();
+      ctx.disposeMessageTtsPlayback();
       ctx.messageViewportRuntime?.dispose();
       if (typeof window !== 'undefined' && ctx.contactVirtualFrame !== null) {
           window.cancelAnimationFrame(ctx.contactVirtualFrame);

@@ -176,6 +176,12 @@ pub struct LlmConfig {
     #[serde(default)]
     pub default: String,
     #[serde(default)]
+    pub default_embedding: Option<String>,
+    #[serde(default)]
+    pub default_tts: Option<String>,
+    #[serde(default)]
+    pub default_image: Option<String>,
+    #[serde(default)]
     pub models: HashMap<String, LlmModelConfig>,
 }
 
@@ -302,7 +308,7 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
     Vec::new()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmModelConfig {
     #[serde(default, alias = "enabled")]
     pub enable: Option<bool>,
@@ -344,6 +350,26 @@ pub struct LlmModelConfig {
     pub stop: Option<Vec<String>>,
     #[serde(default)]
     pub mock_if_unconfigured: Option<bool>,
+    #[serde(default)]
+    pub tts_voice: Option<String>,
+    #[serde(default)]
+    pub tts_instructions: Option<String>,
+    #[serde(default)]
+    pub tts_response_format: Option<String>,
+    #[serde(default)]
+    pub tts_speed: Option<f32>,
+    #[serde(default)]
+    pub image_size: Option<String>,
+    #[serde(default)]
+    pub image_response_format: Option<String>,
+    #[serde(default)]
+    pub image_output_format: Option<String>,
+    #[serde(default)]
+    pub image_negative_prompt: Option<String>,
+    #[serde(default)]
+    pub image_num_inference_steps: Option<u32>,
+    #[serde(default)]
+    pub image_guidance_scale: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

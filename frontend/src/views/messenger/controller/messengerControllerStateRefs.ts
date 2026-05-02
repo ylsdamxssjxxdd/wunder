@@ -348,6 +348,12 @@ type WorldVoicePlaybackRuntime = {
   currentResourceKey: string;
 };
 
+type MessageTtsPlaybackRuntime = {
+  audio: HTMLAudioElement;
+  objectUrlCache: Map<string, string>;
+  currentMessageKey: string;
+};
+
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 
 type WorkspaceResourceCacheEntry = {
@@ -539,6 +545,10 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
   ctx.worldVoicePlayingMessageKey = ref('');
 
   ctx.worldVoiceLoadingMessageKey = ref('');
+
+  ctx.messageTtsPlayingKey = ref('');
+
+  ctx.messageTtsLoadingKey = ref('');
 
   ctx.worldComposerHeight = ref(188);
 
@@ -922,6 +932,8 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
   ctx.agentVoiceRecordingRuntime = null;
 
   ctx.worldVoicePlaybackRuntime = null;
+
+  ctx.messageTtsPlaybackRuntime = null;
 
   ctx.runningAgentsLoadVersion = 0;
 

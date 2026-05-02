@@ -1345,10 +1345,14 @@ async fn user_knowledge_get(
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>();
     embedding_models.sort();
+    let tts_models = crate::multimodal_models::list_tts_model_names(&config);
+    let image_models = crate::multimodal_models::list_image_model_names(&config);
     Ok(Json(json!({
         "data": {
             "knowledge": { "bases": bases },
-            "embedding_models": embedding_models
+            "embedding_models": embedding_models,
+            "tts_models": tts_models,
+            "image_models": image_models
         }
     })))
 }

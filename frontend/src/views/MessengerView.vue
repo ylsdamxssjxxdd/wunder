@@ -1256,6 +1256,26 @@
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
+                  <button
+                    class="messenger-message-footer-copy"
+                    :class="{ 'is-active': isMessageTtsPlaying(item.message, item.sourceIndex, 'agent') }"
+                    type="button"
+                    :disabled="isMessageTtsLoading(item.message, item.sourceIndex, 'agent')"
+                    :title="resolveMessageTtsActionLabel(item.message, item.sourceIndex, 'agent')"
+                    :aria-label="resolveMessageTtsActionLabel(item.message, item.sourceIndex, 'agent')"
+                    @click="toggleMessageTtsPlayback(item.message, item.sourceIndex, 'agent')"
+                  >
+                    <i
+                      v-if="isMessageTtsLoading(item.message, item.sourceIndex, 'agent')"
+                      class="fa-solid fa-spinner fa-spin"
+                      aria-hidden="true"
+                    ></i>
+                    <i
+                      v-else
+                      :class="isMessageTtsPlaying(item.message, item.sourceIndex, 'agent') ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
+                      aria-hidden="true"
+                    ></i>
+                  </button>
                 </div>
                 </template>
               </div>
@@ -1362,6 +1382,26 @@
                     @click="copyMessageContent(item.message)"
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    class="messenger-message-footer-copy"
+                    :class="{ 'is-active': isMessageTtsPlaying(item.message, item.sourceIndex, 'world') }"
+                    type="button"
+                    :disabled="isMessageTtsLoading(item.message, item.sourceIndex, 'world')"
+                    :title="resolveMessageTtsActionLabel(item.message, item.sourceIndex, 'world')"
+                    :aria-label="resolveMessageTtsActionLabel(item.message, item.sourceIndex, 'world')"
+                    @click="toggleMessageTtsPlayback(item.message, item.sourceIndex, 'world')"
+                  >
+                    <i
+                      v-if="isMessageTtsLoading(item.message, item.sourceIndex, 'world')"
+                      class="fa-solid fa-spinner fa-spin"
+                      aria-hidden="true"
+                    ></i>
+                    <i
+                      v-else
+                      :class="isMessageTtsPlaying(item.message, item.sourceIndex, 'world') ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
+                      aria-hidden="true"
+                    ></i>
                   </button>
                 </div>
               </div>
@@ -1896,6 +1936,10 @@ const contactVirtualTopPadding = controller.contactVirtualTopPadding;
 const contactVirtualViewportHeight = controller.contactVirtualViewportHeight;
 const copyMessageContent = controller.copyMessageContent;
 const copyText = controller.copyText;
+const isMessageTtsLoading = controller.isMessageTtsLoading;
+const isMessageTtsPlaying = controller.isMessageTtsPlaying;
+const resolveMessageTtsActionLabel = controller.resolveMessageTtsActionLabel;
+const toggleMessageTtsPlayback = controller.toggleMessageTtsPlayback;
 const createAgentApi = controller.createAgentApi;
 const createAgentQuickly = controller.createAgentQuickly;
 const createBeeroomRealtimeSync = controller.createBeeroomRealtimeSync;

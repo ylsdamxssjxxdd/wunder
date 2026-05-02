@@ -33,7 +33,7 @@
 - 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的主线程。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
-- 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
+- 模型配置支持 `model_type=llm|embedding|tts|image`；向量知识库依赖 embedding 模型调用 `/v1/embeddings`，聊天页语音播放通过 TTS 模型代理 `/v1/audio/speech`。
 - 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|beeroom|plaza|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时统一承载消息页与智能体页主内容，并隐藏左/中栏。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
@@ -508,6 +508,8 @@
 - `GET` 返回（JSON）：
   - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
   - `embedding_models`：可用嵌入模型名称列表（仅包含 model_type=embedding）
+  - `tts_models`：可用语音模型名称列表（仅包含 model_type=tts）
+  - `image_models`：可用绘图模型名称列表（仅包含 model_type=image）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
   - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
@@ -1111,13 +1113,19 @@
 
 - 方法：`GET/POST`
 - `GET` 返回：
-  - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop/enable/mock_if_unconfigured）
+  - `llm.default`：默认对话模型配置名称
+  - `llm.default_embedding`：默认嵌入模型配置名称（可选）
+  - `llm.default_tts`：默认语音模型配置名称（可选）
+  - `llm.default_image`：默认绘图模型配置名称（可选）
+- `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
   - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
-  - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
+  - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
+  - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
+  - 说明：`model_type=tts` 表示语音模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
+  - 说明：`model_type=image` 表示绘图模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为真实用户消息窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
@@ -1127,7 +1135,8 @@
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
 - `POST` 入参：
-  - `llm.default`：默认模型配置名称
+  - `llm.default`：默认对话模型配置名称
+  - `llm.default_embedding/default_tts/default_image`：默认嵌入/语音/绘图模型配置名称（可选）
   - `llm.models`：模型配置映射，用于保存与下发
 
 ### 4.1.6.1 `/wunder/admin/llm/context_window`
@@ -2563,6 +2572,20 @@
   - 默认每秒抽 `1` 帧，并带总帧数上限保护；超长视频会自动降低实际 FPS。
   - 音频/视频转写复用 `channels.media.asr` 配置；若未启用 ASR，接口仍会成功返回，但会在 `warnings` 中说明，并给音频附件写入占位文本。
   - 运行该接口需要服务端可用的 `ffmpeg/ffprobe`；也可通过环境变量 `WUNDER_FFMPEG_BIN`、`WUNDER_FFPROBE_BIN` 指定路径。
+
+### `POST /wunder/chat/tts`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 请求体（JSON）：
+  - `text`：必填，需要合成语音的文本，当前最大 8000 字符
+  - `model_name` / `modelName`：可选，指定 `model_type=tts` 的模型配置名称；未指定时优先使用 `llm.default_tts`，再回退到第一个 TTS 模型
+  - `voice`：可选，音色/说话人名称；不填时优先使用模型配置 `tts_voice`，再交由上游 TTS 服务使用默认值
+  - `instructions`：可选，语音风格提示；不填时使用模型配置 `tts_instructions`
+  - `response_format` / `responseFormat`：可选，`wav|pcm|flac|mp3|aac|opus`；不填时使用模型配置 `tts_response_format`，再默认 `wav`
+  - `speed`：可选，语速；不填时使用模型配置 `tts_speed`，服务端会限制在 `0.25..4.0`
+- 返回：音频二进制流，`Content-Type` 优先使用上游响应，缺省按请求格式推断。
+- 说明：服务端代理到所选模型配置的 OpenAI 兼容 `/v1/audio/speech`，避免在浏览器暴露模型 API Key。
 
 ### 聊天消息提交补充
 

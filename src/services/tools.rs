@@ -10349,6 +10349,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         }
     }
 

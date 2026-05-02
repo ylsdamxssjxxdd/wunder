@@ -10,7 +10,8 @@ import { listChannelBindings } from '@/api/channels';
 import {
   getSession as getChatSessionApi,
   fetchSessionSystemPrompt,
-  fetchRealtimeSystemPrompt
+  fetchRealtimeSystemPrompt,
+  synthesizeChatTts
 } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchDesktopSettings } from '@/api/desktop';
@@ -560,6 +561,139 @@ export function installMessengerControllerMessageMarkdownVoice(ctx: MessengerCon
       }
       else {
           ElMessage.warning(ctx.t('chat.message.copyFailed'));
+      }
+  };
+
+  ctx.resolveMessageTtsText = (message: Record<string, unknown>): string => prepareMessageMarkdownContent(message?.content, message).trim();
+
+  ctx.resolveMessageTtsKey = (message: Record<string, unknown>, index = 0, scope = 'agent'): string => {
+      const sourceIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+      if (scope === 'world') {
+          return `world:${ctx.resolveWorldMessageKey(message)}:${sourceIndex}`;
+      }
+      return `agent:${ctx.resolveAgentMessageKey(message, sourceIndex)}`;
+  };
+
+  ctx.isMessageTtsPlaying = (message: Record<string, unknown>, index = 0, scope = 'agent'): boolean => ctx.messageTtsPlayingKey.value === ctx.resolveMessageTtsKey(message, index, scope);
+
+  ctx.isMessageTtsLoading = (message: Record<string, unknown>, index = 0, scope = 'agent'): boolean => ctx.messageTtsLoadingKey.value === ctx.resolveMessageTtsKey(message, index, scope);
+
+  ctx.resolveMessageTtsActionLabel = (message: Record<string, unknown>, index = 0, scope = 'agent'): string => {
+      if (ctx.isMessageTtsLoading(message, index, scope))
+          return ctx.t('chat.message.ttsLoading');
+      if (ctx.isMessageTtsPlaying(message, index, scope))
+          return ctx.t('chat.message.pauseVoice');
+      return ctx.t('chat.message.playVoice');
+  };
+
+  ctx.ensureMessageTtsPlaybackRuntime = () => {
+      if (typeof Audio === 'undefined')
+          return null;
+      if (ctx.messageTtsPlaybackRuntime)
+          return ctx.messageTtsPlaybackRuntime;
+      const audio = new Audio();
+      audio.preload = 'none';
+      audio.addEventListener('ended', () => {
+          ctx.messageTtsPlayingKey.value = '';
+          if (ctx.messageTtsPlaybackRuntime) {
+              ctx.messageTtsPlaybackRuntime.currentMessageKey = '';
+          }
+      });
+      audio.addEventListener('pause', () => {
+          if (audio.ended)
+              return;
+          ctx.messageTtsPlayingKey.value = '';
+          if (ctx.messageTtsPlaybackRuntime) {
+              ctx.messageTtsPlaybackRuntime.currentMessageKey = '';
+          }
+      });
+      ctx.messageTtsPlaybackRuntime = {
+          audio,
+          objectUrlCache: new Map<string, string>(),
+          currentMessageKey: ''
+      };
+      return ctx.messageTtsPlaybackRuntime;
+  };
+
+  ctx.stopMessageTtsPlayback = () => {
+      const runtime = ctx.messageTtsPlaybackRuntime;
+      if (!runtime)
+          return;
+      runtime.audio.pause();
+      runtime.audio.removeAttribute('src');
+      try {
+          runtime.audio.load();
+      }
+      catch {
+      }
+      runtime.currentMessageKey = '';
+      ctx.messageTtsPlayingKey.value = '';
+      ctx.messageTtsLoadingKey.value = '';
+  };
+
+  ctx.disposeMessageTtsPlayback = () => {
+      const runtime = ctx.messageTtsPlaybackRuntime;
+      if (!runtime) {
+          ctx.messageTtsPlayingKey.value = '';
+          ctx.messageTtsLoadingKey.value = '';
+          return;
+      }
+      ctx.stopMessageTtsPlayback();
+      runtime.objectUrlCache.forEach((objectUrl) => URL.revokeObjectURL(objectUrl));
+      runtime.objectUrlCache.clear();
+      ctx.messageTtsPlaybackRuntime = null;
+  };
+
+  ctx.toggleMessageTtsPlayback = async (message: Record<string, unknown>, index = 0, scope = 'agent') => {
+      const messageKey = ctx.resolveMessageTtsKey(message, index, scope);
+      if (!messageKey || ctx.messageTtsLoadingKey.value === messageKey)
+          return;
+      const runtime = ctx.ensureMessageTtsPlaybackRuntime();
+      if (!runtime) {
+          ElMessage.warning(ctx.t('chat.message.ttsUnsupported'));
+          return;
+      }
+      if (runtime.currentMessageKey === messageKey && !runtime.audio.paused) {
+          runtime.audio.pause();
+          return;
+      }
+      const text = ctx.resolveMessageTtsText(message);
+      if (!text) {
+          ElMessage.warning(ctx.t('chat.message.ttsEmpty'));
+          return;
+      }
+      ctx.messageTtsLoadingKey.value = messageKey;
+      try {
+          let objectUrl = runtime.objectUrlCache.get(messageKey);
+          if (!objectUrl) {
+              const response = await synthesizeChatTts({
+                  text,
+                  response_format: 'wav'
+              });
+              const blob = response?.data as Blob;
+              if (!(blob instanceof Blob) || blob.size <= 0) {
+                  throw new Error(ctx.t('chat.message.ttsFailed'));
+              }
+              objectUrl = URL.createObjectURL(blob);
+              runtime.objectUrlCache.set(messageKey, objectUrl);
+          }
+          if (runtime.audio.src !== objectUrl) {
+              runtime.audio.pause();
+              runtime.audio.src = objectUrl;
+          }
+          runtime.currentMessageKey = messageKey;
+          await runtime.audio.play();
+          ctx.messageTtsPlayingKey.value = messageKey;
+      }
+      catch (error) {
+          console.error(error);
+          ctx.messageTtsPlayingKey.value = '';
+          ElMessage.error(ctx.t('chat.message.ttsFailed'));
+      }
+      finally {
+          if (ctx.messageTtsLoadingKey.value === messageKey) {
+              ctx.messageTtsLoadingKey.value = '';
+          }
       }
   };
 

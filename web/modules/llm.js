@@ -137,16 +137,36 @@ const normalizeReasoningEffort = (value) => {
   return "";
 };
 
-const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding"]);
+const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding", "tts", "image"]);
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) {
     return "llm";
   }
-  if (raw === "embed" || raw === "embeddings") {
+  const normalized = raw.replace(/[\s-]+/g, "_");
+  if (normalized === "embed" || normalized === "emb" || normalized === "embeddings") {
     return "embedding";
   }
-  return MODEL_TYPE_OPTIONS.has(raw) ? raw : "llm";
+  if (
+    normalized === "tts" ||
+    normalized === "speech" ||
+    normalized === "text_to_speech" ||
+    normalized === "text2speech" ||
+    normalized === "audio_speech"
+  ) {
+    return "tts";
+  }
+  if (
+    normalized === "image" ||
+    normalized === "draw" ||
+    normalized === "drawing" ||
+    normalized === "text_to_image" ||
+    normalized === "text2image" ||
+    normalized === "image_generation"
+  ) {
+    return "image";
+  }
+  return MODEL_TYPE_OPTIONS.has(normalized) ? normalized : "llm";
 };
 
 const isLlmConfig = (config) => normalizeModelType(config?.model_type) === "llm";
@@ -158,6 +178,19 @@ const resolveDefaultLlmName = (desiredName, models, order) => {
   }
   const fallback = order.find((name) => isLlmConfig(models[name]));
   return fallback || "";
+};
+
+const resolveDefaultModelNameByType = (desiredName, modelType, models, order) => {
+  const normalizedType = normalizeModelType(modelType);
+  const desired = String(desiredName || "").trim();
+  if (
+    desired &&
+    models[desired] &&
+    normalizeModelType(models[desired]?.model_type) === normalizedType
+  ) {
+    return desired;
+  }
+  return order.find((name) => normalizeModelType(models[name]?.model_type) === normalizedType) || "";
 };
 
 const renderProviderOptions = (activeProvider) => {
@@ -250,6 +283,26 @@ const parseFloatInput = (input, fallback) => {
   return roundFloat(parsed);
 };
 
+const parseOptionalIntInput = (input) => {
+  const parsed = Number.parseInt(input?.value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const parseOptionalFloatInput = (input) => {
+  const parsed = Number.parseFloat(input?.value);
+  return Number.isFinite(parsed) && parsed > 0 ? roundFloat(parsed) : null;
+};
+
+const normalizeTtsResponseFormat = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  return ["wav", "mp3", "flac", "aac", "opus", "pcm"].includes(raw) ? raw : "wav";
+};
+
+const normalizeImageOutputFormat = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  return ["png", "jpeg", "webp"].includes(raw) ? raw : "";
+};
+
 // 规范化 LLM 配置，避免空值影响展示。
 const normalizeLlmConfig = (raw) => {
   const provider = normalizeProviderId(raw?.provider || DEFAULT_PROVIDER_ID);
@@ -257,34 +310,58 @@ const normalizeLlmConfig = (raw) => {
     enable: raw?.enable !== false,
     model_type: normalizeModelType(raw?.model_type),
     provider,
-  base_url: raw?.base_url || "",
-  api_key: raw?.api_key || "",
-  model: raw?.model || "",
-  temperature:
-    typeof raw?.temperature === "number" && !Number.isNaN(raw.temperature) ? raw.temperature : 0.7,
-  timeout_s:
-    typeof raw?.timeout_s === "number" && !Number.isNaN(raw.timeout_s) ? raw.timeout_s : 120,
-  max_rounds:
-    typeof raw?.max_rounds === "number" && !Number.isNaN(raw.max_rounds) ? raw.max_rounds : 1000,
-  max_context:
-    typeof raw?.max_context === "number" && !Number.isNaN(raw.max_context) ? raw.max_context : null,
-  max_output:
-    typeof raw?.max_output === "number" && !Number.isNaN(raw.max_output) ? raw.max_output : null,
-  thinking_token_budget:
-    typeof raw?.thinking_token_budget === "number" && !Number.isNaN(raw.thinking_token_budget)
-      ? raw.thinking_token_budget
-      : null,
-  support_vision: raw?.support_vision === true,
-  support_hearing: raw?.support_hearing === true,
-  stream: raw?.stream === true,
-  stream_include_usage: raw?.stream_include_usage !== false,
-  tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode, provider),
-  reasoning_effort: normalizeReasoningEffort(raw?.reasoning_effort),
-  history_compaction_ratio:
-    typeof raw?.history_compaction_ratio === "number" && !Number.isNaN(raw.history_compaction_ratio)
-      ? raw.history_compaction_ratio
-      : 0.9,
-  mock_if_unconfigured: raw?.mock_if_unconfigured !== false,
+    base_url: raw?.base_url || "",
+    api_key: raw?.api_key || "",
+    model: raw?.model || "",
+    temperature:
+      typeof raw?.temperature === "number" && !Number.isNaN(raw.temperature)
+        ? raw.temperature
+        : 0.7,
+    timeout_s:
+      typeof raw?.timeout_s === "number" && !Number.isNaN(raw.timeout_s) ? raw.timeout_s : 120,
+    max_rounds:
+      typeof raw?.max_rounds === "number" && !Number.isNaN(raw.max_rounds)
+        ? raw.max_rounds
+        : 1000,
+    max_context:
+      typeof raw?.max_context === "number" && !Number.isNaN(raw.max_context)
+        ? raw.max_context
+        : null,
+    max_output:
+      typeof raw?.max_output === "number" && !Number.isNaN(raw.max_output)
+        ? raw.max_output
+        : null,
+    thinking_token_budget:
+      typeof raw?.thinking_token_budget === "number" && !Number.isNaN(raw.thinking_token_budget)
+        ? raw.thinking_token_budget
+        : null,
+    support_vision: raw?.support_vision === true,
+    support_hearing: raw?.support_hearing === true,
+    stream: raw?.stream === true,
+    stream_include_usage: raw?.stream_include_usage !== false,
+    tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode, provider),
+    reasoning_effort: normalizeReasoningEffort(raw?.reasoning_effort),
+    history_compaction_ratio:
+      typeof raw?.history_compaction_ratio === "number" &&
+      !Number.isNaN(raw.history_compaction_ratio)
+        ? raw.history_compaction_ratio
+        : 0.9,
+    tts_voice: raw?.tts_voice || "",
+    tts_instructions: raw?.tts_instructions || "",
+    tts_response_format: normalizeTtsResponseFormat(raw?.tts_response_format),
+    tts_speed: typeof raw?.tts_speed === "number" && !Number.isNaN(raw.tts_speed) ? raw.tts_speed : 1,
+    image_size: raw?.image_size || "",
+    image_output_format: normalizeImageOutputFormat(raw?.image_output_format),
+    image_negative_prompt: raw?.image_negative_prompt || "",
+    image_num_inference_steps:
+      typeof raw?.image_num_inference_steps === "number" && !Number.isNaN(raw.image_num_inference_steps)
+        ? raw.image_num_inference_steps
+        : null,
+    image_guidance_scale:
+      typeof raw?.image_guidance_scale === "number" && !Number.isNaN(raw.image_guidance_scale)
+        ? raw.image_guidance_scale
+        : null,
+    mock_if_unconfigured: raw?.mock_if_unconfigured !== false,
   };
 };
 
@@ -307,7 +384,32 @@ const normalizeLlmSet = (raw) => {
     defaultName = "";
   }
   defaultName = resolveDefaultLlmName(defaultName, normalizedModels, order);
-  return { defaultName, models: normalizedModels, order };
+  const defaultEmbeddingName = resolveDefaultModelNameByType(
+    llm.default_embedding,
+    "embedding",
+    normalizedModels,
+    order
+  );
+  const defaultTtsName = resolveDefaultModelNameByType(
+    llm.default_tts,
+    "tts",
+    normalizedModels,
+    order
+  );
+  const defaultImageName = resolveDefaultModelNameByType(
+    llm.default_image,
+    "image",
+    normalizedModels,
+    order
+  );
+  return {
+    defaultName,
+    defaultEmbeddingName,
+    defaultTtsName,
+    defaultImageName,
+    models: normalizedModels,
+    order,
+  };
 };
 
 const getDisplayName = (name) => state.llm.nameEdits?.[name] || name;
@@ -352,6 +454,15 @@ const clearLlmForm = () => {
     elements.llmReasoningEffort.value = "";
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.9, 0.9);
+  if (elements.llmTtsVoice) elements.llmTtsVoice.value = "";
+  if (elements.llmTtsInstructions) elements.llmTtsInstructions.value = "";
+  if (elements.llmTtsResponseFormat) elements.llmTtsResponseFormat.value = "wav";
+  if (elements.llmTtsSpeed) elements.llmTtsSpeed.value = formatFloatForInput(1, 1);
+  if (elements.llmImageSize) elements.llmImageSize.value = "";
+  if (elements.llmImageOutputFormat) elements.llmImageOutputFormat.value = "";
+  if (elements.llmImageSteps) elements.llmImageSteps.value = "";
+  if (elements.llmImageGuidanceScale) elements.llmImageGuidanceScale.value = "";
+  if (elements.llmImageNegativePrompt) elements.llmImageNegativePrompt.value = "";
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
   lastProviderSelection = DEFAULT_PROVIDER_ID;
   updateLlmTypeVisibility("llm");
@@ -359,20 +470,37 @@ const clearLlmForm = () => {
 
 const updateLlmTypeVisibility = (modelType) => {
   const normalized = normalizeModelType(modelType || elements.llmModelType?.value || "llm");
-  const isEmbedding = normalized === "embedding";
+  const isLlm = normalized === "llm";
+  const isTts = normalized === "tts";
+  const isImage = normalized === "image";
+  const showGeneration = true;
   const toggle = (element, visible) => {
     if (!element) {
       return;
     }
     element.style.display = visible ? "" : "none";
   };
-  toggle(elements.llmTemperatureRow, !isEmbedding);
-  toggle(elements.llmMaxOutputRow, !isEmbedding);
-  toggle(elements.llmThinkingTokenBudgetRow, !isEmbedding);
-  toggle(elements.llmMaxRoundsRow, !isEmbedding);
-  toggle(elements.llmMaxContextRow, !isEmbedding);
-  toggle(elements.llmCapabilitiesCard, !isEmbedding);
-  toggle(elements.llmCompactionCard, !isEmbedding);
+  toggle(elements.llmGenerationCard, showGeneration);
+  toggle(elements.llmTemperatureRow, isLlm);
+  toggle(elements.llmTimeout?.closest(".form-row"), isLlm);
+  toggle(elements.llmMaxOutputRow, isLlm);
+  toggle(elements.llmThinkingTokenBudgetRow, isLlm);
+  toggle(elements.llmMaxRoundsRow, isLlm);
+  toggle(elements.llmMaxContextRow, isLlm);
+  toggle(elements.llmTtsRows, isTts);
+  toggle(elements.llmImageRows, isImage);
+  toggle(elements.llmConnectionOnlyHint, !showGeneration);
+  toggle(elements.llmCapabilitiesCard, isLlm);
+  toggle(elements.llmCompactionCard, isLlm);
+  if (elements.llmGenerationTitle && showGeneration) {
+    const titleKey =
+      normalized === "tts"
+        ? "llm.section.tts"
+        : normalized === "image"
+          ? "llm.section.image"
+          : "llm.section.generation";
+    elements.llmGenerationTitle.textContent = t(titleKey);
+  }
 };
 
 // 将 LLM 配置渲染到表单。
@@ -414,6 +542,27 @@ const applyLlmConfigToForm = (name, config) => {
     llm.history_compaction_ratio ?? 0.9,
     0.9
   );
+  if (elements.llmTtsVoice) elements.llmTtsVoice.value = llm.tts_voice || "";
+  if (elements.llmTtsInstructions) {
+    elements.llmTtsInstructions.value = llm.tts_instructions || "";
+  }
+  if (elements.llmTtsResponseFormat) {
+    elements.llmTtsResponseFormat.value = normalizeTtsResponseFormat(llm.tts_response_format);
+  }
+  if (elements.llmTtsSpeed) {
+    elements.llmTtsSpeed.value = formatFloatForInput(llm.tts_speed ?? 1, 1);
+  }
+  if (elements.llmImageSize) elements.llmImageSize.value = llm.image_size || "";
+  if (elements.llmImageOutputFormat) {
+    elements.llmImageOutputFormat.value = normalizeImageOutputFormat(llm.image_output_format);
+  }
+  if (elements.llmImageSteps) elements.llmImageSteps.value = llm.image_num_inference_steps ?? "";
+  if (elements.llmImageGuidanceScale) {
+    elements.llmImageGuidanceScale.value = llm.image_guidance_scale ?? "";
+  }
+  if (elements.llmImageNegativePrompt) {
+    elements.llmImageNegativePrompt.value = llm.image_negative_prompt || "";
+  }
   updateLlmTypeVisibility(llm.model_type);
   applyProviderDefaults(llm.provider, {
     forceBaseUrl: !llm.base_url,
@@ -459,9 +608,9 @@ const updateDetailHeader = () => {
     elements.llmDetailMeta.textContent = parts.join(" · ") || t("llm.detail.selected");
   }
   if (elements.llmSetDefaultBtn) {
-    const isEmbedding = normalizeModelType(config?.model_type) === "embedding";
-    const isDefault = activeName === state.llm.defaultName && !isEmbedding;
-    elements.llmSetDefaultBtn.disabled = isDefault || isEmbedding;
+    const isChatModel = normalizeModelType(config?.model_type) === "llm";
+    const isDefault = activeName === state.llm.defaultName && isChatModel;
+    elements.llmSetDefaultBtn.disabled = isDefault || !isChatModel;
     elements.llmSetDefaultBtn.classList.toggle("llm-default-btn", isDefault);
   }
   if (elements.llmDeleteBtn) {
@@ -492,9 +641,15 @@ const renderLlmList = () => {
     title.className = "llm-list-item-title";
     const modelType = normalizeModelType(config?.model_type);
     const icon = document.createElement("i");
-    icon.className = `fa-solid ${
-      modelType === "embedding" ? "fa-cube" : "fa-robot"
-    } llm-type-icon ${modelType === "embedding" ? "is-embedding" : "is-llm"}`;
+    const iconClass =
+      modelType === "embedding"
+        ? "fa-cube"
+        : modelType === "tts"
+          ? "fa-volume-high"
+          : modelType === "image"
+            ? "fa-image"
+            : "fa-robot";
+    icon.className = `fa-solid ${iconClass} llm-type-icon is-${modelType}`;
     const titleText = document.createElement("span");
     titleText.className = "llm-list-item-name";
     titleText.textContent = getDisplayName(name);
@@ -545,37 +700,40 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const reasoningEffort = normalizeReasoningEffort(
     elements.llmReasoningEffort?.value || base.reasoning_effort
   );
-  if (modelType === "embedding") {
-    return {
-      enable: base.enable,
-      model_type: modelType,
-      provider,
-      base_url: baseUrl,
-      api_key: apiKey,
-      model,
-      temperature: null,
-      timeout_s: timeoutValue,
-      max_rounds: null,
-      max_context: null,
-      max_output: null,
-      thinking_token_budget: null,
-      support_vision: false,
-      support_hearing: false,
-      stream: false,
-      stream_include_usage: false,
-      tool_call_mode: null,
-      reasoning_effort: null,
-      history_compaction_ratio: null,
-      mock_if_unconfigured: base.mock_if_unconfigured,
-    };
-  }
-  return {
+  const commonConfig = {
     enable: base.enable,
     model_type: modelType,
     provider,
     base_url: baseUrl,
     api_key: apiKey,
     model,
+    mock_if_unconfigured: base.mock_if_unconfigured,
+  };
+  if (modelType === "embedding") {
+    return commonConfig;
+  }
+  if (modelType === "tts") {
+    return {
+      ...commonConfig,
+      tts_voice: elements.llmTtsVoice?.value.trim() || undefined,
+      tts_instructions: elements.llmTtsInstructions?.value.trim() || undefined,
+      tts_response_format: normalizeTtsResponseFormat(elements.llmTtsResponseFormat?.value),
+      tts_speed: parseOptionalFloatInput(elements.llmTtsSpeed) ?? 1,
+    };
+  }
+  if (modelType === "image") {
+    return {
+      ...commonConfig,
+      image_size: elements.llmImageSize?.value.trim() || undefined,
+      image_output_format:
+        normalizeImageOutputFormat(elements.llmImageOutputFormat?.value) || undefined,
+      image_negative_prompt: elements.llmImageNegativePrompt?.value.trim() || undefined,
+      image_num_inference_steps: parseOptionalIntInput(elements.llmImageSteps) || undefined,
+      image_guidance_scale: parseOptionalFloatInput(elements.llmImageGuidanceScale) || undefined,
+    };
+  }
+  return {
+    ...commonConfig,
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
     timeout_s: timeoutValue,
     max_rounds: Number.isFinite(maxRounds) && maxRounds > 0 ? maxRounds : base.max_rounds ?? 1000,
@@ -596,7 +754,64 @@ const buildLlmConfigFromForm = (baseConfig) => {
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
         ? historyCompactionRatio
         : base.history_compaction_ratio ?? 0.9,
-    mock_if_unconfigured: base.mock_if_unconfigured,
+  };
+};
+
+const buildLlmConfigForPayload = (rawConfig) => {
+  const config = normalizeLlmConfig(rawConfig || {});
+  const commonConfig = {
+    enable: config.enable,
+    model_type: normalizeModelType(config.model_type),
+    provider: normalizeProviderId(config.provider),
+    base_url: config.base_url || undefined,
+    api_key: config.api_key || undefined,
+    model: config.model || undefined,
+    mock_if_unconfigured: config.mock_if_unconfigured,
+  };
+  if (commonConfig.model_type === "embedding") {
+    return commonConfig;
+  }
+  if (commonConfig.model_type === "tts") {
+    return {
+      ...commonConfig,
+      tts_voice: config.tts_voice || undefined,
+      tts_instructions: config.tts_instructions || undefined,
+      tts_response_format: normalizeTtsResponseFormat(config.tts_response_format),
+      tts_speed: Number.isFinite(config.tts_speed) && config.tts_speed > 0 ? config.tts_speed : 1,
+    };
+  }
+  if (commonConfig.model_type === "image") {
+    return {
+      ...commonConfig,
+      image_size: config.image_size || undefined,
+      image_output_format: config.image_output_format || undefined,
+      image_negative_prompt: config.image_negative_prompt || undefined,
+      image_num_inference_steps:
+        Number.isFinite(config.image_num_inference_steps) && config.image_num_inference_steps > 0
+          ? config.image_num_inference_steps
+          : undefined,
+      image_guidance_scale:
+        Number.isFinite(config.image_guidance_scale) && config.image_guidance_scale > 0
+          ? config.image_guidance_scale
+          : undefined,
+    };
+  }
+  return {
+    ...commonConfig,
+    api_mode: config.api_mode || undefined,
+    temperature: config.temperature,
+    timeout_s: config.timeout_s,
+    max_rounds: config.max_rounds,
+    max_context: config.max_context || undefined,
+    max_output: config.max_output || undefined,
+    thinking_token_budget: config.thinking_token_budget || undefined,
+    support_vision: config.support_vision,
+    support_hearing: config.support_hearing,
+    stream: config.stream,
+    stream_include_usage: config.stream_include_usage,
+    tool_call_mode: config.tool_call_mode,
+    reasoning_effort: config.reasoning_effort || undefined,
+    history_compaction_ratio: config.history_compaction_ratio,
   };
 };
 
@@ -624,7 +839,7 @@ const selectLlmConfig = (name) => {
 // 构建模型上下文探测请求体。
 const buildContextProbePayload = () => {
   const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
-  if (modelType === "embedding") {
+  if (modelType !== "llm") {
     return null;
   }
   const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
@@ -780,6 +995,9 @@ const applyLlmSet = (raw, options = {}) => {
   state.llm.configs = normalized.models;
   state.llm.order = normalized.order;
   state.llm.defaultName = normalized.defaultName;
+  state.llm.defaultEmbeddingName = normalized.defaultEmbeddingName;
+  state.llm.defaultTtsName = normalized.defaultTtsName;
+  state.llm.defaultImageName = normalized.defaultImageName;
   state.llm.loaded = true;
   state.llm.nameEdits = {};
   const desiredActive = state.llm.activeName;
@@ -862,6 +1080,15 @@ const commitActiveConfigEdits = () => {
     if (state.llm.defaultName === activeName) {
       state.llm.defaultName = desiredName;
     }
+    if (state.llm.defaultEmbeddingName === activeName) {
+      state.llm.defaultEmbeddingName = desiredName;
+    }
+    if (state.llm.defaultTtsName === activeName) {
+      state.llm.defaultTtsName = desiredName;
+    }
+    if (state.llm.defaultImageName === activeName) {
+      state.llm.defaultImageName = desiredName;
+    }
     delete state.llm.nameEdits[activeName];
   } else {
     state.llm.configs[activeName] = currentConfig;
@@ -875,6 +1102,24 @@ const commitActiveConfigEdits = () => {
     state.llm.configs,
     state.llm.order
   );
+  state.llm.defaultEmbeddingName = resolveDefaultModelNameByType(
+    state.llm.defaultEmbeddingName,
+    "embedding",
+    state.llm.configs,
+    state.llm.order
+  );
+  state.llm.defaultTtsName = resolveDefaultModelNameByType(
+    state.llm.defaultTtsName,
+    "tts",
+    state.llm.configs,
+    state.llm.order
+  );
+  state.llm.defaultImageName = resolveDefaultModelNameByType(
+    state.llm.defaultImageName,
+    "image",
+    state.llm.configs,
+    state.llm.order
+  );
   state.llm.activeName = desiredName;
 };
 
@@ -882,7 +1127,7 @@ const buildLlmPayload = () => {
   const models = {};
   state.llm.order.forEach((name) => {
     if (state.llm.configs[name]) {
-      models[name] = state.llm.configs[name];
+      models[name] = buildLlmConfigForPayload(state.llm.configs[name]);
     }
   });
   const defaultName = resolveDefaultLlmName(
@@ -891,7 +1136,34 @@ const buildLlmPayload = () => {
     state.llm.order
   );
   state.llm.defaultName = defaultName;
-  return { default: defaultName, models };
+  const defaultEmbeddingName = resolveDefaultModelNameByType(
+    state.llm.defaultEmbeddingName,
+    "embedding",
+    state.llm.configs,
+    state.llm.order
+  );
+  const defaultTtsName = resolveDefaultModelNameByType(
+    state.llm.defaultTtsName,
+    "tts",
+    state.llm.configs,
+    state.llm.order
+  );
+  const defaultImageName = resolveDefaultModelNameByType(
+    state.llm.defaultImageName,
+    "image",
+    state.llm.configs,
+    state.llm.order
+  );
+  state.llm.defaultEmbeddingName = defaultEmbeddingName;
+  state.llm.defaultTtsName = defaultTtsName;
+  state.llm.defaultImageName = defaultImageName;
+  return {
+    default: defaultName,
+    default_embedding: defaultEmbeddingName || undefined,
+    default_tts: defaultTtsName || undefined,
+    default_image: defaultImageName || undefined,
+    models,
+  };
 };
 
 // 保存 LLM 配置。
@@ -955,6 +1227,30 @@ const handleDeleteConfig = () => {
   if (state.llm.defaultName === activeName) {
     state.llm.defaultName = resolveDefaultLlmName("", state.llm.configs, state.llm.order);
   }
+  if (state.llm.defaultEmbeddingName === activeName) {
+    state.llm.defaultEmbeddingName = resolveDefaultModelNameByType(
+      "",
+      "embedding",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
+  if (state.llm.defaultTtsName === activeName) {
+    state.llm.defaultTtsName = resolveDefaultModelNameByType(
+      "",
+      "tts",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
+  if (state.llm.defaultImageName === activeName) {
+    state.llm.defaultImageName = resolveDefaultModelNameByType(
+      "",
+      "image",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
   state.llm.activeName = state.llm.defaultName || state.llm.order[0] || "";
   resetProbeState();
   renderLlmList();
@@ -973,7 +1269,7 @@ const handleSetDefault = () => {
     return;
   }
   const activeConfig = state.llm.configs[activeName];
-  if (normalizeModelType(activeConfig?.model_type) === "embedding") {
+  if (normalizeModelType(activeConfig?.model_type) !== "llm") {
     return;
   }
   state.llm.defaultName = activeName;
@@ -1001,14 +1297,15 @@ const handleNameEdit = () => {
 const handleModelTypeChange = () => {
   const activeName = state.llm.activeName;
   const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
-  updateLlmTypeVisibility(modelType);
   if (!activeName) {
+    updateLlmTypeVisibility(modelType);
     return;
   }
   syncActiveConfigToState();
-  if (modelType === "embedding" && state.llm.defaultName === activeName) {
+  if (modelType !== "llm" && state.llm.defaultName === activeName) {
     state.llm.defaultName = resolveDefaultLlmName("", state.llm.configs, state.llm.order);
   }
+  applyLlmConfigToForm(activeName, state.llm.configs[activeName]);
   renderLlmList();
   updateDetailHeader();
   renderDebugModelOptions();

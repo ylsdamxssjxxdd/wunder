@@ -473,10 +473,30 @@ const normalizeModelType = (value) => {
   if (!raw) {
     return "llm";
   }
-  if (raw === "embed" || raw === "embeddings") {
+  const normalized = raw.replace(/[\s-]+/g, "_");
+  if (normalized === "embed" || normalized === "emb" || normalized === "embeddings") {
     return "embedding";
   }
-  return raw === "embedding" ? "embedding" : "llm";
+  if (
+    normalized === "tts" ||
+    normalized === "speech" ||
+    normalized === "text_to_speech" ||
+    normalized === "text2speech" ||
+    normalized === "audio_speech"
+  ) {
+    return "tts";
+  }
+  if (
+    normalized === "image" ||
+    normalized === "draw" ||
+    normalized === "drawing" ||
+    normalized === "text_to_image" ||
+    normalized === "text2image" ||
+    normalized === "image_generation"
+  ) {
+    return "image";
+  }
+  return normalized === "embedding" ? "embedding" : "llm";
 };
 
 const resolveDefaultModelDisplayName = () => {

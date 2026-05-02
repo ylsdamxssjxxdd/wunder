@@ -3921,6 +3921,7 @@ mod tests {
             model_type: None,
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let mut function_call_config = base_config();
         function_call_config.tool_call_mode = Some("function_call".to_string());

@@ -55,6 +55,9 @@ export type DesktopLlmContextProbePayload = {
 
 export type DesktopLlmConfig = {
   default: string;
+  default_embedding?: string;
+  default_tts?: string;
+  default_image?: string;
   models: Record<string, Record<string, unknown>>;
 };
 

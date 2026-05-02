@@ -51,6 +51,8 @@ const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 4] = [
 pub enum ModelType {
     Llm,
     Embedding,
+    Tts,
+    Image,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +75,10 @@ pub fn normalize_model_type(value: Option<&str>) -> ModelType {
     }
     match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "embedding" | "embed" | "emb" => ModelType::Embedding,
+        "tts" | "speech" | "text_to_speech" | "text2speech" | "audio_speech" => ModelType::Tts,
+        "image" | "draw" | "drawing" | "text_to_image" | "text2image" | "image_generation" => {
+            ModelType::Image
+        }
         _ => ModelType::Llm,
     }
 }
@@ -82,7 +88,15 @@ pub fn is_embedding_model(config: &LlmModelConfig) -> bool {
 }
 
 pub fn is_llm_model(config: &LlmModelConfig) -> bool {
-    !is_embedding_model(config)
+    normalize_model_type(config.model_type.as_deref()) == ModelType::Llm
+}
+
+pub fn is_tts_model(config: &LlmModelConfig) -> bool {
+    normalize_model_type(config.model_type.as_deref()) == ModelType::Tts
+}
+
+pub fn is_image_model(config: &LlmModelConfig) -> bool {
+    normalize_model_type(config.model_type.as_deref()) == ModelType::Image
 }
 
 pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
@@ -1084,6 +1098,18 @@ pub fn is_llm_configured(config: &LlmModelConfig) -> bool {
 
 pub fn is_embedding_configured(config: &LlmModelConfig) -> bool {
     is_llm_configured(config)
+}
+
+pub fn resolve_model_base_url(config: &LlmModelConfig) -> Option<String> {
+    resolve_base_url(config)
+}
+
+pub fn build_openai_model_resource_endpoint(base_url: &str, resource: &str) -> Option<String> {
+    build_openai_resource_endpoint(base_url, resource)
+}
+
+pub fn build_model_auth_headers(api_key: &str) -> HeaderMap {
+    build_headers(api_key)
 }
 
 pub async fn embed_texts(
@@ -3480,6 +3506,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let headers = LlmClient::new(Client::new(), config).headers();
         let auth = headers
@@ -3558,6 +3585,7 @@ mod tests {
             model_type: Some("embedding".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let outputs = embed_texts(&config, &["hello".to_string()], 10)
             .await
@@ -4424,6 +4452,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let messages = vec![ChatMessage {
@@ -4533,6 +4562,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let messages = vec![ChatMessage {
@@ -4695,6 +4725,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -4741,6 +4772,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -4784,6 +4816,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -4829,6 +4862,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -4874,6 +4908,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -4919,6 +4954,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -4964,6 +5000,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -5007,6 +5044,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         let client = LlmClient::new(Client::new(), config);
         let payload = client.build_request_payload(
@@ -5050,6 +5088,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         assert_eq!(resolve_tool_call_mode(&config), ToolCallMode::FreeformCall);
 
@@ -5082,6 +5121,7 @@ mod tests {
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         };
         assert_eq!(resolve_openai_api_mode(&config), OpenAiApiMode::Responses);
     }

@@ -66,11 +66,7 @@
                 {{ row.key || t('desktop.system.modelUnnamed') }}
               </span>
               <span class="desktop-system-settings-model-item-type">
-                {{
-                  row.model_type === 'embedding'
-                    ? t('desktop.system.modelTypeEmbedding')
-                    : t('desktop.system.modelTypeLlm')
-                }}
+                {{ modelTypeLabel(row.model_type) }}
               </span>
             </div>
             <div class="desktop-system-settings-model-item-meta">
@@ -136,6 +132,8 @@
               >
                 <el-option :label="t('desktop.system.modelTypeLlm')" value="llm" />
                 <el-option :label="t('desktop.system.modelTypeEmbedding')" value="embedding" />
+                <el-option :label="t('desktop.system.modelTypeTts')" value="tts" />
+                <el-option :label="t('desktop.system.modelTypeImage')" value="image" />
               </el-select>
             </label>
             <label class="desktop-system-settings-field">
@@ -196,21 +194,17 @@
           <div class="desktop-system-settings-section-head">
             <div class="desktop-system-settings-section-title">
               <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-              <span>{{ t('desktop.system.section.generation') }}</span>
+              <span>{{ modelParameterSectionTitle }}</span>
             </div>
           </div>
-          <div class="desktop-system-settings-model-grid">
+          <div v-if="selectedModel.model_type !== 'embedding'" class="desktop-system-settings-model-grid">
             <label v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.temperature') }}</span>
               <el-input v-model="selectedModel.temperature" />
             </label>
-            <label class="desktop-system-settings-field">
+            <label v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.timeout') }}</span>
               <el-input v-model="selectedModel.timeout_s" />
-            </label>
-            <label class="desktop-system-settings-field">
-              <span class="desktop-system-settings-field-label">{{ t('desktop.system.retry') }}</span>
-              <el-input v-model="selectedModel.retry" />
             </label>
             <label v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.maxOutput') }}</span>
@@ -233,6 +227,69 @@
                 </el-button>
               </div>
             </label>
+            <template v-if="selectedModel.model_type === 'tts'">
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.ttsVoice') }}</span>
+                <el-input v-model="selectedModel.tts_voice" :placeholder="t('desktop.system.ttsVoicePlaceholder')" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.ttsResponseFormat') }}</span>
+                <el-select
+                  v-model="selectedModel.tts_response_format"
+                  class="desktop-system-settings-input"
+                  popper-class="desktop-system-settings-popper"
+                >
+                  <el-option label="wav" value="wav" />
+                  <el-option label="mp3" value="mp3" />
+                  <el-option label="flac" value="flac" />
+                  <el-option label="aac" value="aac" />
+                  <el-option label="opus" value="opus" />
+                  <el-option label="pcm" value="pcm" />
+                </el-select>
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.ttsSpeed') }}</span>
+                <el-input v-model="selectedModel.tts_speed" />
+              </label>
+              <label class="desktop-system-settings-field desktop-system-settings-field--full">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.ttsInstructions') }}</span>
+                <el-input v-model="selectedModel.tts_instructions" type="textarea" :rows="2" />
+              </label>
+            </template>
+            <template v-if="selectedModel.model_type === 'image'">
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.imageSize') }}</span>
+                <el-input v-model="selectedModel.image_size" :placeholder="t('desktop.system.imageSizePlaceholder')" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.imageOutputFormat') }}</span>
+                <el-select
+                  v-model="selectedModel.image_output_format"
+                  class="desktop-system-settings-input"
+                  popper-class="desktop-system-settings-popper"
+                >
+                  <el-option :label="t('desktop.system.modelDefaultOption')" value="" />
+                  <el-option label="png" value="png" />
+                  <el-option label="jpeg" value="jpeg" />
+                  <el-option label="webp" value="webp" />
+                </el-select>
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.imageSteps') }}</span>
+                <el-input v-model="selectedModel.image_num_inference_steps" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.imageGuidanceScale') }}</span>
+                <el-input v-model="selectedModel.image_guidance_scale" />
+              </label>
+              <label class="desktop-system-settings-field desktop-system-settings-field--full">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.imageNegativePrompt') }}</span>
+                <el-input v-model="selectedModel.image_negative_prompt" type="textarea" :rows="2" />
+              </label>
+            </template>
+          </div>
+          <div v-else class="desktop-system-settings-section-empty">
+            {{ t('desktop.system.sectionConnectionOnly') }}
           </div>
         </div>
 
@@ -458,7 +515,7 @@ import {
   resolveProviderModelPresetMaxContext
 } from '@/views/messenger/providerModelPresets';
 
-type ModelType = 'llm' | 'embedding';
+type ModelType = 'llm' | 'embedding' | 'tts' | 'image';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type SelectedModelPreference = {
@@ -475,7 +532,6 @@ type ModelRow = {
   model: string;
   temperature: string;
   timeout_s: string;
-  retry: string;
   max_rounds: string;
   max_output: string;
   max_context: string;
@@ -485,10 +541,21 @@ type ModelRow = {
   tool_call_mode: ToolCallMode;
   reasoning_effort: ReasoningEffort;
   history_compaction_ratio: string;
+  tts_voice: string;
+  tts_instructions: string;
+  tts_response_format: string;
+  tts_speed: string;
+  image_size: string;
+  image_output_format: string;
+  image_negative_prompt: string;
+  image_num_inference_steps: string;
+  image_guidance_scale: string;
   raw: Record<string, unknown>;
 };
 
 const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_model';
+const TTS_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_tts_model';
+const IMAGE_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_image_model';
 
 const props = withDefaults(
   defineProps<{
@@ -511,6 +578,8 @@ const probingContext = ref(false);
 const resettingWorkState = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
+const defaultTtsModel = ref('');
+const defaultImageModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
 const savingLan = ref(false);
@@ -600,7 +669,12 @@ const embeddingModelRows = computed(() =>
 const isDefaultModelRow = (row: ModelRow): boolean => {
   const key = String(row?.key || '').trim();
   if (!key) return false;
-  return key === defaultModel.value.trim() || key === defaultEmbeddingModel.value.trim();
+  return (
+    key === defaultModel.value.trim() ||
+    key === defaultEmbeddingModel.value.trim() ||
+    key === defaultTtsModel.value.trim() ||
+    key === defaultImageModel.value.trim()
+  );
 };
 const modelRowsForList = computed(() =>
   [...modelRows.value].sort((a, b) => {
@@ -610,7 +684,9 @@ const modelRowsForList = computed(() =>
       if (!key) return 5;
       if (key === defaultModel.value.trim() && modelType === 'llm') return 0;
       if (key === defaultEmbeddingModel.value.trim() && modelType === 'embedding') return 1;
-      return 3;
+      if (key === defaultTtsModel.value.trim() && modelType === 'tts') return 2;
+      if (key === defaultImageModel.value.trim() && modelType === 'image') return 3;
+      return 4;
     };
     const rankDiff = rank(keyA, a.model_type) - rank(keyB, b.model_type);
     if (rankDiff !== 0) return rankDiff;
@@ -673,9 +749,27 @@ const modelBaseUrlPlaceholder = computed(() => {
 const setCurrentDefaultLabel = computed(() => {
   const current = selectedModel.value;
   if (!current) return t('desktop.system.setDefaultChatModel');
-  return normalizeModelType(current.model_type) === 'embedding'
-    ? t('desktop.system.setDefaultEmbeddingModel')
-    : t('desktop.system.setDefaultChatModel');
+  switch (normalizeModelType(current.model_type)) {
+    case 'embedding':
+      return t('desktop.system.setDefaultEmbeddingModel');
+    case 'tts':
+      return t('desktop.system.setDefaultTtsModel');
+    case 'image':
+      return t('desktop.system.setDefaultImageModel');
+    default:
+      return t('desktop.system.setDefaultChatModel');
+  }
+});
+const modelParameterSectionTitle = computed(() => {
+  const current = selectedModel.value;
+  switch (normalizeModelType(current?.model_type)) {
+    case 'tts':
+      return t('desktop.system.section.tts');
+    case 'image':
+      return t('desktop.system.section.image');
+    default:
+      return t('desktop.system.section.generation');
+  }
 });
 
 const normalizeModelType = (value: unknown): ModelType => {
@@ -683,7 +777,26 @@ const normalizeModelType = (value: unknown): ModelType => {
   if (raw === 'embedding' || raw === 'embed' || raw === 'embeddings') {
     return 'embedding';
   }
+  if (raw === 'tts' || raw === 'speech' || raw === 'text_to_speech' || raw === 'text-to-speech') {
+    return 'tts';
+  }
+  if (raw === 'image' || raw === 'draw' || raw === 'drawing' || raw === 'text_to_image' || raw === 'text-to-image') {
+    return 'image';
+  }
   return 'llm';
+};
+
+const modelTypeLabel = (value: unknown): string => {
+  switch (normalizeModelType(value)) {
+    case 'embedding':
+      return t('desktop.system.modelTypeEmbedding');
+    case 'tts':
+      return t('desktop.system.modelTypeTts');
+    case 'image':
+      return t('desktop.system.modelTypeImage');
+    default:
+      return t('desktop.system.modelTypeLlm');
+  }
 };
 
 const normalizeProviderId = (value: unknown): string => {
@@ -747,6 +860,16 @@ const normalizeReasoningEffort = (value: unknown): ReasoningEffort => {
     return 'xhigh';
   }
   return '';
+};
+
+const normalizeTtsResponseFormat = (value: unknown): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  return ['wav', 'mp3', 'flac', 'aac', 'opus', 'pcm'].includes(raw) ? raw : 'wav';
+};
+
+const normalizeImageOutputFormat = (value: unknown): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  return ['png', 'jpeg', 'webp'].includes(raw) ? raw : '';
 };
 
 const applyModelPresetContext = (row: ModelRow, force = true) => {
@@ -842,7 +965,6 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     model: String(raw.model || ''),
     temperature: formatFloatForInput(raw.temperature, 0.7),
     timeout_s: raw.timeout_s == null ? '120' : String(raw.timeout_s),
-    retry: raw.retry == null ? '1' : String(raw.retry),
     max_rounds: raw.max_rounds == null ? '1000' : String(raw.max_rounds),
     max_output: raw.max_output == null ? '' : String(raw.max_output),
     max_context: raw.max_context == null ? '' : String(raw.max_context),
@@ -852,6 +974,16 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode, raw.provider),
     reasoning_effort: normalizeReasoningEffort(raw.reasoning_effort),
     history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.9),
+    tts_voice: String(raw.tts_voice || ''),
+    tts_instructions: String(raw.tts_instructions || ''),
+    tts_response_format: normalizeTtsResponseFormat(raw.tts_response_format),
+    tts_speed: formatFloatForInput(raw.tts_speed, 1),
+    image_size: String(raw.image_size || ''),
+    image_output_format: normalizeImageOutputFormat(raw.image_output_format),
+    image_negative_prompt: String(raw.image_negative_prompt || ''),
+    image_num_inference_steps:
+      raw.image_num_inference_steps == null ? '' : String(raw.image_num_inference_steps),
+    image_guidance_scale: raw.image_guidance_scale == null ? '' : String(raw.image_guidance_scale),
     raw: { ...raw }
   }));
 
@@ -911,21 +1043,38 @@ const findDefaultModelKeyByType = (
   return rows.find((item) => normalizeModelType(item.model_type) === modelType)?.key.trim() || '';
 };
 
-const readDefaultEmbeddingModel = (): string => {
+const defaultModelStorageKeyByType = (modelType: ModelType): string => {
+  switch (modelType) {
+    case 'embedding':
+      return EMBEDDING_DEFAULT_MODEL_STORAGE_KEY;
+    case 'tts':
+      return TTS_DEFAULT_MODEL_STORAGE_KEY;
+    case 'image':
+      return IMAGE_DEFAULT_MODEL_STORAGE_KEY;
+    default:
+      return '';
+  }
+};
+
+const readStoredDefaultModel = (modelType: ModelType): string => {
+  const storageKey = defaultModelStorageKeyByType(modelType);
+  if (!storageKey) return '';
   try {
-    return String(localStorage.getItem(EMBEDDING_DEFAULT_MODEL_STORAGE_KEY) || '').trim();
+    return String(localStorage.getItem(storageKey) || '').trim();
   } catch {
     return '';
   }
 };
 
-const writeDefaultEmbeddingModel = (modelName: string): void => {
+const writeStoredDefaultModel = (modelType: ModelType, modelName: string): void => {
+  const storageKey = defaultModelStorageKeyByType(modelType);
+  if (!storageKey) return;
   const normalized = String(modelName || '').trim();
   try {
     if (normalized) {
-      localStorage.setItem(EMBEDDING_DEFAULT_MODEL_STORAGE_KEY, normalized);
+      localStorage.setItem(storageKey, normalized);
     } else {
-      localStorage.removeItem(EMBEDDING_DEFAULT_MODEL_STORAGE_KEY);
+      localStorage.removeItem(storageKey);
     }
   } catch {
     // ignore localStorage failures
@@ -943,7 +1092,6 @@ const addModel = (modelType: ModelType = 'llm') => {
     model: '',
     temperature: modelType === 'llm' ? '0.7' : '',
     timeout_s: '120',
-    retry: '1',
     max_rounds: modelType === 'llm' ? '1000' : '',
     max_output: '',
     max_context: '',
@@ -953,6 +1101,15 @@ const addModel = (modelType: ModelType = 'llm') => {
     tool_call_mode: resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID),
     reasoning_effort: '',
     history_compaction_ratio: modelType === 'llm' ? '0.9' : '',
+    tts_voice: '',
+    tts_instructions: '',
+    tts_response_format: 'wav',
+    tts_speed: '1',
+    image_size: '',
+    image_output_format: '',
+    image_negative_prompt: '',
+    image_num_inference_steps: '',
+    image_guidance_scale: '',
     raw: {}
   };
   modelRows.value.push(row);
@@ -974,16 +1131,29 @@ const setCurrentAsDefault = async () => {
   }
   const previousDefaultModel = defaultModel.value;
   const previousDefaultEmbeddingModel = defaultEmbeddingModel.value;
+  const previousDefaultTtsModel = defaultTtsModel.value;
+  const previousDefaultImageModel = defaultImageModel.value;
   const modelType = normalizeModelType(current.model_type);
-  if (modelType === 'embedding') {
-    defaultEmbeddingModel.value = key;
-  } else {
-    defaultModel.value = key;
+  switch (modelType) {
+    case 'embedding':
+      defaultEmbeddingModel.value = key;
+      break;
+    case 'tts':
+      defaultTtsModel.value = key;
+      break;
+    case 'image':
+      defaultImageModel.value = key;
+      break;
+    default:
+      defaultModel.value = key;
+      break;
   }
   const saved = await saveModelSettings();
   if (!saved) {
     defaultModel.value = previousDefaultModel;
     defaultEmbeddingModel.value = previousDefaultEmbeddingModel;
+    defaultTtsModel.value = previousDefaultTtsModel;
+    defaultImageModel.value = previousDefaultImageModel;
   }
 };
 
@@ -995,11 +1165,17 @@ const removeModel = (target: ModelRow) => {
     'embedding',
     defaultEmbeddingModel.value
   );
+  defaultTtsModel.value = findDefaultModelKeyByType(modelRows.value, 'tts', defaultTtsModel.value);
+  defaultImageModel.value = findDefaultModelKeyByType(
+    modelRows.value,
+    'image',
+    defaultImageModel.value
+  );
   ensureSelectedModel();
 };
 
 const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
-  const output: Record<string, unknown> = { ...row.raw };
+  const output: Record<string, unknown> = {};
 
   const setText = (key: string, value: string) => {
     const cleaned = String(value || '').trim();
@@ -1043,10 +1219,9 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
   setText('base_url', row.base_url);
   setText('api_key', row.api_key);
   setText('model', row.model);
-  setInt('timeout_s', row.timeout_s);
-  setInt('retry', row.retry);
 
   if (row.model_type === 'llm') {
+    setInt('timeout_s', row.timeout_s);
     setFloat('temperature', row.temperature);
     setInt('max_rounds', row.max_rounds);
     setInt('max_output', row.max_output);
@@ -1057,17 +1232,17 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     setText('tool_call_mode', row.tool_call_mode);
     setText('reasoning_effort', normalizeReasoningEffort(row.reasoning_effort));
     setFloat('history_compaction_ratio', row.history_compaction_ratio);
-  } else {
-    delete output.temperature;
-    delete output.max_rounds;
-    delete output.max_output;
-    delete output.max_context;
-    delete output.support_vision;
-    delete output.support_hearing;
-    delete output.stream_include_usage;
-    delete output.tool_call_mode;
-    delete output.reasoning_effort;
-    delete output.history_compaction_ratio;
+  } else if (row.model_type === 'tts') {
+    setText('tts_voice', row.tts_voice);
+    setText('tts_instructions', row.tts_instructions);
+    setText('tts_response_format', normalizeTtsResponseFormat(row.tts_response_format));
+    setFloat('tts_speed', row.tts_speed);
+  } else if (row.model_type === 'image') {
+    setText('image_size', row.image_size);
+    setText('image_output_format', normalizeImageOutputFormat(row.image_output_format));
+    setText('image_negative_prompt', row.image_negative_prompt);
+    setInt('image_num_inference_steps', row.image_num_inference_steps);
+    setFloat('image_guidance_scale', row.image_guidance_scale);
   }
 
   return output;
@@ -1166,7 +1341,17 @@ const applySettingsData = (
   defaultEmbeddingModel.value = findDefaultModelKeyByType(
     modelRows.value,
     'embedding',
-    readDefaultEmbeddingModel()
+    String(llm.default_embedding || '').trim() || readStoredDefaultModel('embedding')
+  );
+  defaultTtsModel.value = findDefaultModelKeyByType(
+    modelRows.value,
+    'tts',
+    String(llm.default_tts || '').trim() || readStoredDefaultModel('tts')
+  );
+  defaultImageModel.value = findDefaultModelKeyByType(
+    modelRows.value,
+    'image',
+    String(llm.default_image || '').trim() || readStoredDefaultModel('image')
   );
 
   ensureSelectedModel(preferredSelection);
@@ -1293,16 +1478,41 @@ const saveModelSettings = async (): Promise<boolean> => {
     return false;
   }
 
+  const currentDefaultTts = findDefaultModelKeyByType(
+    modelRows.value,
+    'tts',
+    defaultTtsModel.value.trim()
+  );
+  if (currentDefaultTts && !models[currentDefaultTts]) {
+    ElMessage.warning(t('desktop.system.defaultTtsModelMissing'));
+    return false;
+  }
+
+  const currentDefaultImage = findDefaultModelKeyByType(
+    modelRows.value,
+    'image',
+    defaultImageModel.value.trim()
+  );
+  if (currentDefaultImage && !models[currentDefaultImage]) {
+    ElMessage.warning(t('desktop.system.defaultImageModelMissing'));
+    return false;
+  }
+
   savingModel.value = true;
   try {
     const response = await updateDesktopSettings({
       llm: {
         default: currentDefaultModel,
+        default_embedding: currentDefaultEmbedding || undefined,
+        default_tts: currentDefaultTts || undefined,
+        default_image: currentDefaultImage || undefined,
         models
       }
     });
     const data = (response?.data?.data || {}) as Record<string, any>;
-    writeDefaultEmbeddingModel(currentDefaultEmbedding);
+    writeStoredDefaultModel('embedding', currentDefaultEmbedding);
+    writeStoredDefaultModel('tts', currentDefaultTts);
+    writeStoredDefaultModel('image', currentDefaultImage);
     applySettingsData(data, preferredSelection);
     emit('desktop-model-meta-changed');
     ElMessage.success(t('desktop.common.saveSuccess'));

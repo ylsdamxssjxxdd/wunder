@@ -343,6 +343,36 @@
                       <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
                       <span>{{ t('chat.message.copy') }}</span>
                     </button>
+                    <button
+                      class="message-copy-btn message-tts-btn"
+                      :class="{ 'is-active': isMessageTtsPlaying(message, index) }"
+                      type="button"
+                      :disabled="isMessageTtsLoading(message, index)"
+                      :title="resolveMessageTtsActionLabel(message, index)"
+                      :aria-label="resolveMessageTtsActionLabel(message, index)"
+                      @click="handleToggleMessageTts(message, index)"
+                    >
+                      <i
+                        v-if="isMessageTtsLoading(message, index)"
+                        class="fa-solid fa-spinner fa-spin message-copy-icon"
+                        aria-hidden="true"
+                      ></i>
+                      <i
+                        v-else
+                        :class="isMessageTtsPlaying(message, index) ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
+                        class="message-copy-icon"
+                        aria-hidden="true"
+                      ></i>
+                      <span>
+                        {{
+                          isMessageTtsLoading(message, index)
+                            ? t('chat.message.ttsLoading')
+                            : isMessageTtsPlaying(message, index)
+                              ? t('chat.message.pauseVoice')
+                              : t('chat.message.playVoice')
+                        }}
+                      </span>
+                    </button>
                   </div>
                   <div v-else class="message-actions">
                     <div class="message-time">{{ formatTime(message.created_at) }}</div>
@@ -355,6 +385,36 @@
                     >
                       <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
                       <span>{{ t('chat.message.copy') }}</span>
+                    </button>
+                    <button
+                      class="message-copy-btn message-tts-btn"
+                      :class="{ 'is-active': isMessageTtsPlaying(message, index) }"
+                      type="button"
+                      :disabled="isMessageTtsLoading(message, index)"
+                      :title="resolveMessageTtsActionLabel(message, index)"
+                      :aria-label="resolveMessageTtsActionLabel(message, index)"
+                      @click="handleToggleMessageTts(message, index)"
+                    >
+                      <i
+                        v-if="isMessageTtsLoading(message, index)"
+                        class="fa-solid fa-spinner fa-spin message-copy-icon"
+                        aria-hidden="true"
+                      ></i>
+                      <i
+                        v-else
+                        :class="isMessageTtsPlaying(message, index) ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
+                        class="message-copy-icon"
+                        aria-hidden="true"
+                      ></i>
+                      <span>
+                        {{
+                          isMessageTtsLoading(message, index)
+                            ? t('chat.message.ttsLoading')
+                            : isMessageTtsPlaying(message, index)
+                              ? t('chat.message.pauseVoice')
+                              : t('chat.message.playVoice')
+                        }}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -768,7 +828,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch }
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
-import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt } from '@/api/chat';
+import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt, synthesizeChatTts } from '@/api/chat';
 import { downloadWunderWorkspaceFile } from '@/api/workspace';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
@@ -2625,6 +2685,112 @@ const handleCopyMessage = async (message) => {
   }
 };
 
+const messageTtsPlayingKey = ref('');
+const messageTtsLoadingKey = ref('');
+const messageTtsAudio = typeof Audio === 'undefined' ? null : new Audio();
+const messageTtsObjectUrls = new Map();
+
+if (messageTtsAudio) {
+  messageTtsAudio.preload = 'none';
+  messageTtsAudio.addEventListener('ended', () => {
+    messageTtsPlayingKey.value = '';
+  });
+  messageTtsAudio.addEventListener('pause', () => {
+    if (messageTtsAudio.ended) return;
+    messageTtsPlayingKey.value = '';
+  });
+}
+
+const resolveMessageTtsKey = (message, index) => resolveMessageKey(message, index);
+
+const resolveMessageTtsText = (message): string =>
+  prepareMessageMarkdownContent(
+    normalizeChatMessageContentForMarkdown(message?.content),
+    message
+  ).trim();
+
+const isMessageTtsPlaying = (message, index): boolean =>
+  messageTtsPlayingKey.value === resolveMessageTtsKey(message, index);
+
+const isMessageTtsLoading = (message, index): boolean =>
+  messageTtsLoadingKey.value === resolveMessageTtsKey(message, index);
+
+const resolveMessageTtsActionLabel = (message, index): string => {
+  if (isMessageTtsLoading(message, index)) return t('chat.message.ttsLoading');
+  if (isMessageTtsPlaying(message, index)) return t('chat.message.pauseVoice');
+  return t('chat.message.playVoice');
+};
+
+const stopMessageTtsPlayback = () => {
+  if (messageTtsAudio) {
+    messageTtsAudio.pause();
+    messageTtsAudio.removeAttribute('src');
+    try {
+      messageTtsAudio.load();
+    } catch {
+      // ignore audio reset failures
+    }
+  }
+  messageTtsPlayingKey.value = '';
+  messageTtsLoadingKey.value = '';
+};
+
+const disposeMessageTtsPlayback = () => {
+  stopMessageTtsPlayback();
+  messageTtsObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  messageTtsObjectUrls.clear();
+};
+
+const handleToggleMessageTts = async (message, index) => {
+  const messageKey = resolveMessageTtsKey(message, index);
+  if (!messageKey || messageTtsLoadingKey.value === messageKey) return;
+  if (!messageTtsAudio) {
+    ElMessage.warning(t('chat.message.ttsUnsupported'));
+    return;
+  }
+  if (messageTtsPlayingKey.value === messageKey && !messageTtsAudio.paused) {
+    messageTtsAudio.pause();
+    return;
+  }
+
+  const text = resolveMessageTtsText(message);
+  if (!text) {
+    ElMessage.warning(t('chat.message.ttsEmpty'));
+    return;
+  }
+
+  messageTtsLoadingKey.value = messageKey;
+  try {
+    let objectUrl = messageTtsObjectUrls.get(messageKey);
+    if (!objectUrl) {
+      const response = await synthesizeChatTts({
+        text,
+        response_format: 'wav'
+      });
+      const blob = response?.data as Blob;
+      if (!(blob instanceof Blob) || blob.size <= 0) {
+        throw new Error(t('chat.message.ttsFailed'));
+      }
+      objectUrl = URL.createObjectURL(blob);
+      messageTtsObjectUrls.set(messageKey, objectUrl);
+    }
+    if (messageTtsAudio.src !== objectUrl) {
+      messageTtsAudio.pause();
+      messageTtsAudio.src = objectUrl;
+    }
+    await messageTtsAudio.play();
+    messageTtsPlayingKey.value = messageKey;
+  } catch (error) {
+    console.error(error);
+    messageTtsPlayingKey.value = '';
+    ElMessage.error(t('chat.message.ttsFailed'));
+  } finally {
+    if (messageTtsLoadingKey.value === messageKey) {
+      messageTtsLoadingKey.value = '';
+    }
+  }
+};
+
 const shouldShowResumeButton = (message) => {
   if (!message || message.role !== 'assistant') return false;
   if (isAssistantStreaming(message)) return false;
@@ -3296,6 +3462,7 @@ onBeforeUnmount(() => {
     stopWorkspaceRefreshListener = null;
   }
   clearWorkspaceResourceCache();
+  disposeMessageTtsPlayback();
 });
 
 watch(
@@ -3308,6 +3475,7 @@ watch(
       manualDraftPending.value = false;
     }
     if (value !== oldValue) {
+      disposeMessageTtsPlayback();
       clearWorkspaceResourceCache();
       scheduleWorkspaceResourceHydration();
       planExpanded.value = false;
