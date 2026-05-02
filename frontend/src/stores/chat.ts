@@ -43,6 +43,7 @@ import {
   normalizeSubagentRuntimeStatus
 } from '@/utils/subagentRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import { estimateChatTextTokens, estimateRequestContextTokens } from '@/utils/chatContextEstimate';
 import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
@@ -726,6 +727,39 @@ const normalizeContextTotalTokens = (value) => {
   return normalized;
 };
 
+const resolveContextUsageRecord = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  const value = record.context_usage ?? record.contextUsage;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+};
+
+const resolveExplicitContextTokens = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  const contextUsage = resolveContextUsageRecord(record);
+  const directContextUsage =
+    record.contextUsage !== null &&
+    record.contextUsage !== undefined &&
+    typeof record.contextUsage !== 'object'
+      ? record.contextUsage
+      : null;
+  return normalizeContextTokens(
+    record.contextTokens ??
+      record.contextOccupancyTokens ??
+      record.context_occupancy_tokens ??
+      record.context_tokens ??
+      record.context_tokens_total ??
+      directContextUsage ??
+      contextUsage?.context_occupancy_tokens ??
+      contextUsage?.contextOccupancyTokens ??
+      contextUsage?.context_tokens ??
+      contextUsage?.contextTokens
+  );
+};
+
 const normalizeDurationValue = (value) => {
   return normalizeChatDurationSeconds(value);
 };
@@ -1115,89 +1149,7 @@ const resolveUsageContextTokens = (usage: NormalizedUsagePayload | null): number
   return null;
 };
 
-const estimateStreamOutputTokens = (text) => {
-  if (!text) return 0;
-  const source = String(text);
-  let asciiVisible = 0;
-  let cjkCount = 0;
-  let otherCount = 0;
-  for (const char of source) {
-    if (!char || /\s/.test(char)) continue;
-    const code = char.charCodeAt(0);
-    if (code <= 0x7f) {
-      asciiVisible += 1;
-      continue;
-    }
-    if (
-      (code >= 0x4e00 && code <= 0x9fff) ||
-      (code >= 0x3400 && code <= 0x4dbf) ||
-      (code >= 0xf900 && code <= 0xfaff)
-    ) {
-      cjkCount += 1;
-      continue;
-    }
-    otherCount += 1;
-  }
-  const estimated = cjkCount + asciiVisible / 4 + otherCount * 0.75;
-  return Math.max(0, Math.round(estimated));
-};
-
-const estimateStructuredTextTokens = (value, depth = 0) => {
-  if (value === null || value === undefined || depth > 4) return 0;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return estimateStreamOutputTokens(String(value));
-  }
-  if (Array.isArray(value)) {
-    return value.reduce((total, item) => total + estimateStructuredTextTokens(item, depth + 1), 0);
-  }
-  if (typeof value !== 'object') return 0;
-  const record = value as Record<string, unknown>;
-  let total = 0;
-  for (const key of ['text', 'content', 'input', 'output', 'reasoning', 'reasoning_content']) {
-    total += estimateStructuredTextTokens(record[key], depth + 1);
-  }
-  return total;
-};
-
-const extractRequestMessages = (source) => {
-  if (!source || typeof source !== 'object') return null;
-  const record = source as Record<string, unknown>;
-  const candidates = [
-    record.messages,
-    (record.payload as Record<string, unknown> | undefined)?.messages,
-    (record.request as Record<string, unknown> | undefined)?.messages,
-    ((record.request as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined)?.messages,
-    ((record.data as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined)?.messages
-  ];
-  const messages = candidates.find(Array.isArray);
-  return Array.isArray(messages) ? messages : null;
-};
-
-const extractRequestPayload = (source) => {
-  if (!source || typeof source !== 'object') return null;
-  const record = source as Record<string, unknown>;
-  const candidates = [
-    (record.request as Record<string, unknown> | undefined)?.payload,
-    (record.data as Record<string, unknown> | undefined)?.payload,
-    record.payload
-  ];
-  return candidates.find((item) => item && typeof item === 'object') ?? null;
-};
-
-const estimateRequestMessagesContextTokens = (source) => {
-  const requestPayload = extractRequestPayload(source);
-  const messages = extractRequestMessages(requestPayload ?? source);
-  if (!messages || messages.length === 0) return null;
-  let total = 2;
-  messages.forEach((message) => {
-    if (!message || typeof message !== 'object') return;
-    const record = message as Record<string, unknown>;
-    total += 4;
-    total += estimateStructuredTextTokens(record.content ?? record.text ?? record.message);
-    total += estimateStructuredTextTokens(record.name);
-  });
-  return total > 0 ? total : null;
-};
+const estimateStreamOutputTokens = estimateChatTextTokens;
 
 const normalizeMessageStats = (stats) => {
   if (!stats || typeof stats !== 'object') {
@@ -1207,22 +1159,11 @@ const normalizeMessageStats = (stats) => {
   const normalizedRoundUsage = normalizeUsagePayload(
     stats.roundUsage ?? stats.round_usage ?? stats.round_usage_total ?? stats.billedUsage
   );
-  const roundUsageContextTokens = resolveUsageContextTokens(normalizedRoundUsage);
-  const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
-  const explicitContextTokens = normalizeContextTokens(
-    stats.contextTokens ??
-      stats.contextOccupancyTokens ??
-      stats.context_occupancy_tokens ??
-      stats.context_tokens ??
-      stats.context_tokens_total ??
-      stats.contextUsage ??
-      stats.context_usage?.context_tokens ??
-      stats.context_usage?.contextTokens
-  );
+  const explicitContextTokens = resolveExplicitContextTokens(stats);
   const quotaSnapshot = normalizeQuotaSnapshot(
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
-  const contextTokens = explicitContextTokens ?? roundUsageContextTokens ?? usageContextTokens;
+  const contextTokens = explicitContextTokens;
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ??
       stats.context_total_tokens ??
@@ -1346,10 +1287,11 @@ const mergeMessageStats = (base, incoming) => {
       right.interaction_duration_s ?? left.interaction_duration_s
     );
   const quotaSnapshot = right.quotaSnapshot || left.quotaSnapshot;
+  const incomingExplicitContextTokens = resolveExplicitContextTokens(incoming);
   const contextTokens =
-    right.contextTokens === null || right.contextTokens === undefined
+    incomingExplicitContextTokens === null || incomingExplicitContextTokens === undefined
       ? left.contextTokens
-      : right.contextTokens;
+      : incomingExplicitContextTokens;
   const contextTotalTokens =
     right.contextTotalTokens === null || right.contextTotalTokens === undefined
       ? left.contextTotalTokens
@@ -7709,7 +7651,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     const shouldUpdateUsage = Boolean(normalizedUsage && usageOptions.updateUsage !== false);
-    const shouldUpdateContextFromUsage = usageOptions.updateContextFromUsage !== false;
+    const shouldUpdateContextFromUsage = usageOptions.updateContextFromUsage === true;
     const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
     const existingContextTokens = normalizeContextTokens(stats.contextTokens);
     if (shouldUpdateUsage) {
@@ -7777,15 +7719,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   const resolveExplicitLiveContextTokens = (payload) => {
-    if (!payload || typeof payload !== 'object') return null;
-    return normalizeContextTokens(
-      payload.context_occupancy_tokens ??
-        payload.contextOccupancyTokens ??
-        payload.context_tokens ??
-        payload.contextTokens ??
-        payload.context_usage?.context_tokens ??
-        payload.context_usage?.contextTokens
-    );
+    return resolveExplicitContextTokens(payload);
   };
 
   const updateLiveContextUsageFromTokenUsage = (usagePayload, sourcePayload = usagePayload) => {
@@ -7805,7 +7739,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   const updateLiveContextUsageFromRequest = (requestPayload) => {
-    syncLiveContextTokens(estimateRequestMessagesContextTokens(requestPayload));
+    syncLiveContextTokens(estimateRequestContextTokens(requestPayload));
   };
 
   const updateRoundUsageStats = (usagePayload) => {
@@ -7813,15 +7747,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const normalizedUsage = normalizeUsagePayload(usagePayload?.usage ?? usagePayload);
     if (!normalizedUsage) return;
     stats.roundUsage = normalizedUsage;
-    const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
-    const explicitContextTokens = normalizeContextTokens(
-      usagePayload?.context_occupancy_tokens ??
-        usagePayload?.contextOccupancyTokens ??
-        usagePayload?.context_tokens ??
-        usagePayload?.contextTokens ??
-        usagePayload?.context_usage?.context_tokens ??
-        usagePayload?.context_usage?.contextTokens
-    );
+    const explicitContextTokens = resolveExplicitContextTokens(usagePayload);
     const explicitContextTotalTokens = normalizeContextTotalTokens(
       usagePayload?.max_context ??
         usagePayload?.maxContext ??
@@ -7830,17 +7756,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         usagePayload?.context_usage?.max_context ??
         usagePayload?.context_usage?.context_max_tokens
     );
-    const nextContextTokens = explicitContextTokens ?? usageContextTokens;
-    if (nextContextTokens !== null) {
+    if (explicitContextTokens !== null) {
       const existingContextTokens = normalizeContextTokens(stats.contextTokens);
-      const changed = existingContextTokens !== nextContextTokens;
-      stats.contextTokens = nextContextTokens;
-      contextEstimateBaseTokens = nextContextTokens;
+      const changed = existingContextTokens !== explicitContextTokens;
+      stats.contextTokens = explicitContextTokens;
+      contextEstimateBaseTokens = explicitContextTokens;
       if (explicitContextTotalTokens !== null) {
         stats.contextTotalTokens = explicitContextTotalTokens;
       }
       if (changed) {
-        options.onContextUsage?.(nextContextTokens, stats.contextTotalTokens ?? null);
+        options.onContextUsage?.(explicitContextTokens, stats.contextTotalTokens ?? null);
       }
     } else if (explicitContextTotalTokens !== null) {
       stats.contextTotalTokens = explicitContextTotalTokens;
@@ -7908,19 +7833,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const updateContextUsage = (payload) => {
     if (!stats) return;
-    const usageContextTokens = resolveUsageContextTokens(
-      normalizeUsagePayload(payload?.usage ?? payload?.roundUsage ?? payload?.round_usage)
-    );
-    const explicitContextTokens = normalizeContextTokens(
-      payload?.context_occupancy_tokens ??
-        payload?.contextOccupancyTokens ??
-        payload?.context_tokens ??
-        payload?.contextTokens ??
-        payload?.context ??
-        payload?.contextUsage ??
-        payload?.context_usage?.context_tokens ??
-        payload?.context_usage?.contextTokens
-    );
+    const explicitContextTokens =
+      resolveExplicitContextTokens(payload) ?? normalizeContextTokens(payload?.context);
     const contextTotalTokens = normalizeContextTotalTokens(
       payload?.max_context ??
         payload?.maxContext ??
@@ -7930,14 +7844,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         payload?.context_usage?.max_context ??
         payload?.context_usage?.context_max_tokens
     );
-    const nextContextTokens = explicitContextTokens ?? usageContextTokens;
-    if (nextContextTokens !== null) {
-      stats.contextTokens = nextContextTokens;
-      contextEstimateBaseTokens = nextContextTokens;
+    if (explicitContextTokens !== null) {
+      stats.contextTokens = explicitContextTokens;
+      contextEstimateBaseTokens = explicitContextTokens;
       if (contextTotalTokens !== null) {
         stats.contextTotalTokens = contextTotalTokens;
       }
-      options.onContextUsage?.(nextContextTokens, contextTotalTokens);
+      options.onContextUsage?.(explicitContextTokens, contextTotalTokens);
     } else if (contextTotalTokens !== null) {
       stats.contextTotalTokens = contextTotalTokens;
     }
@@ -10350,6 +10263,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     syncReasoningToMessage();
+    const finalContextTokens =
+      resolveUsageContextTokens(normalizeUsagePayload(stats?.usage)) ??
+      resolveUsageContextTokens(normalizeUsagePayload(stats?.roundUsage));
+    if (finalContextTokens !== null) {
+      options.onContextUsage?.(finalContextTokens, stats?.contextTotalTokens ?? null);
+    }
     if (
       !normalizeFlag(assistantMessage.workflowStreaming)
       && !normalizeFlag(assistantMessage.stream_incomplete)

@@ -48,6 +48,74 @@ const normalizePositiveTokenCount = (value: unknown): number | null => {
   return normalized;
 };
 
+const resolveContextUsageRecord = (source: Record<string, unknown>): Record<string, unknown> | null => {
+  const value = source.context_usage ?? source.contextUsage;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+};
+
+const resolveExplicitAssistantContextTokens = (stats: ComposerContextStatsSource): number | null => {
+  if (!stats) {
+    return null;
+  }
+  const contextUsage = resolveContextUsageRecord(stats);
+  const directContextUsage =
+    stats.contextUsage !== null &&
+    stats.contextUsage !== undefined &&
+    typeof stats.contextUsage !== 'object'
+      ? stats.contextUsage
+      : null;
+  return normalizePositiveTokenCount(
+    stats.contextTokens ??
+      stats.contextOccupancyTokens ??
+      stats.context_occupancy_tokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      directContextUsage ??
+      contextUsage?.context_occupancy_tokens ??
+      contextUsage?.contextOccupancyTokens ??
+      contextUsage?.context_tokens ??
+      contextUsage?.contextTokens
+  );
+};
+
+const resolveUsageContextTokens = (usage: unknown): number | null => {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
+    return null;
+  }
+  const record = usage as Record<string, unknown>;
+  return normalizePositiveTokenCount(
+    record.total ??
+      record.total_tokens ??
+      record.totalTokens ??
+      record.input ??
+      record.input_tokens ??
+      record.inputTokens
+  );
+};
+
+const resolveFinalAssistantContextTokens = (stats: ComposerContextStatsSource): number | null => {
+  if (!stats) {
+    return null;
+  }
+  return (
+    resolveUsageContextTokens(stats.usage) ??
+    resolveUsageContextTokens(stats.roundUsage ?? stats.round_usage) ??
+    resolveExplicitAssistantContextTokens(stats)
+  );
+};
+
+const resolveFinalAssistantUsageTokens = (stats: ComposerContextStatsSource): number | null => {
+  if (!stats) {
+    return null;
+  }
+  return (
+    resolveUsageContextTokens(stats.usage) ??
+    resolveUsageContextTokens(stats.roundUsage ?? stats.round_usage)
+  );
+};
+
 export const resolveComposerRunningContextDisplayState = (
   input: ComposerRunningContextDisplayInput
 ): ComposerRunningContextDisplayState => {
@@ -95,83 +163,21 @@ export const resolveAssistantContextTokens = (stats: ComposerContextStatsSource)
   if (!stats) {
     return null;
   }
-  const usage = stats.usage as Record<string, unknown> | undefined;
-  const roundUsage = stats.roundUsage as Record<string, unknown> | undefined;
-  const roundUsageSnake = stats.round_usage as Record<string, unknown> | undefined;
-  const contextUsage = stats.context_usage as Record<string, unknown> | undefined;
-  const usageTotal = normalizePositiveTokenCount(usage?.total ?? usage?.total_tokens ?? usage?.totalTokens);
-  if (usageTotal !== null) {
-    return usageTotal;
-  }
-  const usageInput = normalizePositiveTokenCount(usage?.input ?? usage?.input_tokens ?? usage?.inputTokens);
-  if (usageInput !== null) {
-    return usageInput;
-  }
-  const roundUsageTotal = normalizePositiveTokenCount(
-    roundUsage?.total ??
-      roundUsage?.total_tokens ??
-      roundUsage?.totalTokens ??
-      roundUsageSnake?.total ??
-      roundUsageSnake?.total_tokens ??
-      roundUsageSnake?.totalTokens
-  );
-  if (roundUsageTotal !== null) {
-    return roundUsageTotal;
-  }
-  const roundUsageInput = normalizePositiveTokenCount(
-    roundUsage?.input ??
-      roundUsage?.input_tokens ??
-      roundUsage?.inputTokens ??
-      roundUsageSnake?.input ??
-      roundUsageSnake?.input_tokens ??
-      roundUsageSnake?.inputTokens
-  );
-  if (roundUsageInput !== null) {
-    return roundUsageInput;
-  }
-  const explicitContext = normalizePositiveTokenCount(
-    stats.contextTokens ??
-      stats.contextOccupancyTokens ??
-      stats.context_occupancy_tokens ??
-      stats.context_tokens ??
-      stats.context_tokens_total ??
-      contextUsage?.context_tokens ??
-      contextUsage?.contextTokens
-  );
-  if (explicitContext !== null) {
-    return explicitContext;
-  }
-  return normalizePositiveTokenCount(
-    contextUsage?.context_tokens ??
-      contextUsage?.contextTokens ??
-      usage?.total ??
-      usage?.total_tokens ??
-      usage?.totalTokens
-  );
+  return resolveFinalAssistantContextTokens(stats);
 };
 
 const resolveAssistantLiveContextTokens = (stats: ComposerContextStatsSource): number | null => {
   if (!stats) {
     return null;
   }
-  const contextUsage = stats.context_usage as Record<string, unknown> | undefined;
-  const explicitContext = normalizePositiveTokenCount(
-    stats.contextTokens ??
-      stats.contextOccupancyTokens ??
-      stats.context_occupancy_tokens ??
-      stats.context_tokens ??
-      stats.context_tokens_total ??
-      contextUsage?.context_tokens ??
-      contextUsage?.contextTokens
-  );
-  return explicitContext ?? resolveAssistantContextTokens(stats);
+  return resolveExplicitAssistantContextTokens(stats);
 };
 
 export const resolveAssistantContextTotalTokens = (stats: ComposerContextStatsSource): number | null => {
   if (!stats) {
     return null;
   }
-  const contextUsage = stats.context_usage as Record<string, unknown> | undefined;
+  const contextUsage = resolveContextUsageRecord(stats);
   return normalizePositiveTokenCount(
     stats.contextTotalTokens ??
       stats.context_total_tokens ??
@@ -188,7 +194,7 @@ export const resolveSessionContextTokens = (session: ComposerContextSessionSourc
   if (!session) {
     return null;
   }
-  const contextUsage = session.context_usage as Record<string, unknown> | undefined;
+  const contextUsage = resolveContextUsageRecord(session);
   return normalizePositiveTokenCount(
     session.contextTokens ??
       session.context_tokens ??
@@ -203,7 +209,7 @@ export const resolveSessionContextTotalTokens = (session: ComposerContextSession
   if (!session) {
     return null;
   }
-  const contextUsage = session.context_usage as Record<string, unknown> | undefined;
+  const contextUsage = resolveContextUsageRecord(session);
   return normalizePositiveTokenCount(
     session.contextTotalTokens ??
       session.context_total_tokens ??
@@ -243,6 +249,9 @@ export const resolveComposerContextUsageSource = (
         ? (current.stats as Record<string, unknown>)
         : null;
     const runningAssistant = loading && isAssistantMessageRunning(current);
+    const assistantFinalUsageTokens = runningAssistant
+      ? null
+      : resolveFinalAssistantUsageTokens(stats);
     const assistantContextTokens = runningAssistant
       ? resolveAssistantLiveContextTokens(stats)
       : resolveAssistantContextTokens(stats);
@@ -263,6 +272,16 @@ export const resolveComposerContextUsageSource = (
       return {
         ...source,
         contextTokens: assistantContextTokens ?? sessionContextTokens,
+        contextTotalTokens:
+          assistantTotalTokens !== null && sessionTotalTokens !== null
+            ? Math.max(assistantTotalTokens, sessionTotalTokens)
+            : assistantTotalTokens ?? sessionTotalTokens
+      };
+    }
+    if (assistantFinalUsageTokens !== null) {
+      return {
+        ...source,
+        contextTokens: assistantFinalUsageTokens,
         contextTotalTokens:
           assistantTotalTokens !== null && sessionTotalTokens !== null
             ? Math.max(assistantTotalTokens, sessionTotalTokens)

@@ -88,7 +88,7 @@ test('message stats shows backend average decode speed even when usage is absent
   assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
-test('message stats context uses latest usage.total_tokens before round usage snapshots', () => {
+test('message stats context uses final usage total before explicit occupancy snapshots', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -111,7 +111,7 @@ test('message stats context uses latest usage.total_tokens before round usage sn
   assert.equal(findEntryValue(entries, 'Context'), '4080');
 });
 
-test('message stats context prefers latest usage totals over explicit occupancy aliases', () => {
+test('message stats context prefers final usage total over stale explicit occupancy aliases', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -135,7 +135,7 @@ test('message stats context prefers latest usage totals over explicit occupancy 
   assert.equal(findEntryValue(entries, 'Context'), '7300');
 });
 
-test('message stats context falls back to usage.total_tokens when explicit context is absent', () => {
+test('message stats context falls back to final usage total when explicit context is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -153,7 +153,7 @@ test('message stats context falls back to usage.total_tokens when explicit conte
   assert.equal(findEntryValue(entries, 'Context'), '9268');
 });
 
-test('message stats context falls back to usage.input_tokens when total is absent', () => {
+test('message stats context falls back to final usage input when total is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
