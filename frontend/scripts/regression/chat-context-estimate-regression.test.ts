@@ -3,12 +3,8 @@ import assert from 'node:assert/strict';
 
 import { estimateRequestContextTokens } from '../../src/utils/chatContextEstimate';
 
-test('request context estimate includes tool specs instead of only messages', () => {
-  const messages = [
-    { role: 'system', content: 'short system prompt' },
-    { role: 'user', content: 'hello' }
-  ];
-  const tools = Array.from({ length: 46 }, (_, index) => ({
+const buildHeavyToolSpecs = (count = 46) =>
+  Array.from({ length: count }, (_, index) => ({
     type: 'function',
     function: {
       name: `tool_${index}`,
@@ -26,6 +22,13 @@ test('request context estimate includes tool specs instead of only messages', ()
     }
   }));
 
+test('request context estimate includes tool specs instead of only messages', () => {
+  const messages = [
+    { role: 'system', content: 'short system prompt' },
+    { role: 'user', content: 'hello' }
+  ];
+  const tools = buildHeavyToolSpecs();
+
   const estimate = estimateRequestContextTokens({
     request: {
       payload: {
@@ -39,6 +42,36 @@ test('request context estimate includes tool specs instead of only messages', ()
 
   assert.ok(estimate !== null);
   assert.ok(estimate > 12000, `estimate should include large tool specs, got ${estimate}`);
+});
+
+test('request context estimate stays near real debug scale for system prompt and many tools', () => {
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'You are an agent that must use available tools when needed.',
+        'Follow environment, safety, workflow, and formatting rules carefully.'
+      ].join('\n').repeat(80)
+    },
+    { role: 'user', content: 'hello' }
+  ];
+  const tools = buildHeavyToolSpecs();
+
+  const estimate = estimateRequestContextTokens({
+    request: {
+      payload: {
+        model: 'test-model',
+        messages,
+        tools,
+        tool_choice: 'auto',
+        chat_template_kwargs: { enable_thinking: false },
+        stream_options: { include_usage: true }
+      }
+    }
+  });
+
+  assert.ok(estimate !== null);
+  assert.ok(estimate > 20000, `estimate should not regress to a few thousand tokens, got ${estimate}`);
 });
 
 test('request context estimate still works for message-only payloads', () => {
@@ -67,4 +100,21 @@ test('request context estimate handles summary-only payloads conservatively', ()
 
   assert.ok(estimate !== null);
   assert.ok(estimate > 18000, `summary-only estimate should not collapse to message-only size, got ${estimate}`);
+});
+
+test('request context estimate finds nested summary-only payloads', () => {
+  const estimate = estimateRequestContextTokens({
+    data: {
+      request: {
+        payload_omitted: true,
+        payload_summary: {
+          messages: { count: 2 },
+          tools: { count: 46, truncated: true }
+        }
+      }
+    }
+  });
+
+  assert.ok(estimate !== null);
+  assert.ok(estimate > 18000, `nested summary-only estimate should include tool scale, got ${estimate}`);
 });

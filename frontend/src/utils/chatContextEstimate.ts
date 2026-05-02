@@ -151,6 +151,32 @@ const collectModelPayloadCandidates = (
   nestedKeys.forEach((key) => collectModelPayloadCandidates(record[key], output, seen, depth + 1));
 };
 
+const collectPayloadSummaryCandidates = (
+  value: unknown,
+  output: UnknownRecord[],
+  seen: Set<UnknownRecord>,
+  depth = 0
+): void => {
+  if (depth > 4) return;
+  const record = asRecord(value);
+  if (!record || seen.has(record)) return;
+  seen.add(record);
+  const summary = asRecord(record.payload_summary ?? record.payloadSummary);
+  if (summary) {
+    output.push(summary);
+  }
+  const nestedKeys = [
+    'payload',
+    'request',
+    'data',
+    'model_request',
+    'modelRequest',
+    'request_payload',
+    'requestPayload'
+  ];
+  nestedKeys.forEach((key) => collectPayloadSummaryCandidates(record[key], output, seen, depth + 1));
+};
+
 const resolveBestModelPayload = (source: unknown): UnknownRecord | null => {
   const candidates: UnknownRecord[] = [];
   collectModelPayloadCandidates(source, candidates, new Set());
@@ -189,17 +215,12 @@ export const estimateChatTextTokens = (text: unknown): number => {
 
 export const estimateRequestContextTokens = (source: unknown): number | null => {
   const payload = resolveBestModelPayload(source);
-  const sourceRecord = asRecord(source);
+  const summaryCandidates: UnknownRecord[] = [];
+  collectPayloadSummaryCandidates(source, summaryCandidates, new Set());
   const summaryEstimate =
-    estimatePayloadSummaryTokens(sourceRecord?.payload_summary ?? sourceRecord?.payloadSummary) ??
-    estimatePayloadSummaryTokens(
-      asRecord(sourceRecord?.request)?.payload_summary ??
-        asRecord(sourceRecord?.request)?.payloadSummary
-    ) ??
-    estimatePayloadSummaryTokens(
-      asRecord(sourceRecord?.data)?.payload_summary ??
-        asRecord(sourceRecord?.data)?.payloadSummary
-    );
+    summaryCandidates.length > 0
+      ? Math.max(...summaryCandidates.map((candidate) => estimatePayloadSummaryTokens(candidate) ?? 0))
+      : null;
   if (!payload) return summaryEstimate;
   const messageEstimate = estimateRequestMessagesTokens(payload.messages);
   const serializedEstimate = estimateSerializedPayloadTokens(payload);

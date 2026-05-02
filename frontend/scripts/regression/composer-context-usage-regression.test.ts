@@ -5,6 +5,27 @@ import {
   resolveComposerContextUsageSource,
   resolveComposerRunningContextDisplayState
 } from '../../src/components/chat/composerContextUsage';
+import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
+
+const createTranslator = () => {
+  const table: Record<string, string> = {
+    'chat.stats.duration': 'Duration',
+    'chat.stats.speed': 'Speed',
+    'chat.stats.contextTokens': 'Context',
+    'chat.stats.quota': 'Quota',
+    'chat.stats.toolCalls': 'Tools',
+    'messenger.messageStatus.done': 'Done'
+  };
+  return (key: string) => table[key] || key;
+};
+
+const findEntryValue = (
+  entries: Array<{ label: string; value: string }>,
+  label: string
+): string | null => {
+  const matched = entries.find((item) => item.label === label);
+  return matched ? String(matched.value || '') : null;
+};
 
 test('composer context usage exposes running assistant raw value before display stabilization', () => {
   const source = resolveComposerContextUsageSource(
@@ -332,6 +353,40 @@ test('composer context usage replaces completed request estimates with final bub
 
   assert.equal(source.runningAssistant, false);
   assert.equal(source.contextTokens, 25810);
+});
+
+test('composer context usage and bubble stats align on completed final usage', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      created_at: '2026-05-01T00:00:00.000Z',
+      stream_incomplete: false,
+      workflowStreaming: false,
+      stats: {
+        contextTokens: 21024,
+        usage: {
+          input_tokens: 25725,
+          output_tokens: 85,
+          total_tokens: 25810
+        }
+      }
+    }
+  ];
+  const composerSource = resolveComposerContextUsageSource(
+    messages,
+    {
+      context_tokens: 21024
+    },
+    false
+  );
+  const bubbleEntries = buildAssistantMessageStatsEntries(
+    messages[0],
+    createTranslator(),
+    messages
+  );
+
+  assert.equal(composerSource.contextTokens, 25810);
+  assert.equal(findEntryValue(bubbleEntries, 'Context'), '25810');
 });
 
 test('composer context usage keeps post-tool raw context resets visually monotonic', () => {
