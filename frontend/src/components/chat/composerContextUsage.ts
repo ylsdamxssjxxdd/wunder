@@ -119,36 +119,26 @@ const resolveFinalAssistantUsageTokens = (stats: ComposerContextStatsSource): nu
 export const resolveComposerRunningContextDisplayState = (
   input: ComposerRunningContextDisplayInput
 ): ComposerRunningContextDisplayState => {
-  let baseTokens = input.baseTokens;
-  let rawBaseTokens = input.rawBaseTokens;
   const current = input.stableTokens;
   const runningRaw = input.runningRawTokens;
-  if (baseTokens === null && current !== null) {
-    baseTokens = current;
-  }
-  if (rawBaseTokens === null) {
-    rawBaseTokens = runningRaw;
-  }
-  if (input.lastRawTokens !== null && runningRaw < input.lastRawTokens && current !== null) {
-    baseTokens = current;
-    rawBaseTokens = runningRaw;
-  }
-  if (baseTokens === null) {
+
+  // When the assistant is running, runningRawTokens is already the cumulative
+  // context token count from the streaming event. We should use it directly
+  // as the display value, ensuring it doesn't go below the stable baseline.
+  if (current !== null) {
     return {
-      stableTokens: current === null ? runningRaw : Math.max(current, runningRaw),
-      baseTokens,
-      rawBaseTokens,
+      stableTokens: Math.max(current, runningRaw),
+      baseTokens: current,
+      rawBaseTokens: runningRaw,
       lastRawTokens: runningRaw
     };
   }
-  const displayTokens =
-    runningRaw >= baseTokens
-      ? runningRaw
-      : baseTokens + Math.max(0, runningRaw - rawBaseTokens);
+
+  // No stable baseline yet, use the running value directly.
   return {
-    stableTokens: current === null ? displayTokens : Math.max(current, displayTokens),
-    baseTokens,
-    rawBaseTokens,
+    stableTokens: runningRaw,
+    baseTokens: null,
+    rawBaseTokens: runningRaw,
     lastRawTokens: runningRaw
   };
 };
