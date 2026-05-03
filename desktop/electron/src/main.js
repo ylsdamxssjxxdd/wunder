@@ -1210,6 +1210,22 @@ const resolveFrontendRoot = () => {
   return path.join(localResourcesRoot, 'frontend-dist')
 }
 
+const resolveBundledSkillsRoot = () => {
+  const searchRoots = []
+  if (app.isPackaged && process.resourcesPath) {
+    searchRoots.push(process.resourcesPath)
+  }
+  searchRoots.push(localResourcesRoot)
+  searchRoots.push(path.join(repoRoot, 'config'))
+  for (const root of searchRoots) {
+    const candidate = path.join(root, 'skills')
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return ''
+}
+
 const resolveWindowIcon = () => {
   const iconNames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico']
   const searchRoots = []
@@ -2464,9 +2480,15 @@ const startBridge = async () => {
     args.push('--frontend-root', frontendRoot)
   }
 
+  const bridgeEnv = { ...process.env }
+  const bundledSkillsRoot = resolveBundledSkillsRoot()
+  if (bundledSkillsRoot && !bridgeEnv.WUNDER_BUILTIN_SKILLS_ROOT) {
+    bridgeEnv.WUNDER_BUILTIN_SKILLS_ROOT = bundledSkillsRoot
+  }
+
   const bridgeSpawnNs = process.hrtime.bigint()
   bridgeProcess = spawn(bridgePath, args, {
-    env: { ...process.env },
+    env: bridgeEnv,
     stdio: ['ignore', 'pipe', 'pipe']
   })
   logStartupSegment('electron', 'bridge_spawn_process', bridgeSpawnNs, {

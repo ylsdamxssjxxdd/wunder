@@ -635,6 +635,15 @@ fn resolve_enabled_global_skill_spec(config: &Config, name: &str) -> Option<Skil
     registry.get(cleaned)
 }
 
+fn load_desktop_builtin_skill_catalog_specs(config: &Config) -> Vec<SkillSpec> {
+    if !is_desktop_mode(config) {
+        return Vec::new();
+    }
+    load_builtin_skill_registry(config)
+        .map(|registry| registry.list_specs())
+        .unwrap_or_default()
+}
+
 fn load_builtin_skill_registry(config: &Config) -> Option<SkillRegistry> {
     let builtin_root = resolve_builtin_skills_root()?;
     Some(load_skill_registry_for_root(config, &builtin_root))
@@ -841,10 +850,7 @@ fn build_visible_user_skills_payload(
     for spec in user_registry.list_specs() {
         let source = resolve_user_skill_source(skill_root, &spec, &builtin_catalog);
         if source.is_builtin() {
-            if desktop_mode
-                && builtin_enabled_set.contains(&spec.name)
-                && seen.insert(spec.name.clone())
-            {
+            if desktop_mode && seen.insert(spec.name.clone()) {
                 skills.push(user_skill_to_value(
                     spec,
                     &enabled_set,
@@ -868,9 +874,10 @@ fn build_visible_user_skills_payload(
         }
     }
 
-    if desktop_mode && !builtin_enabled_set.is_empty() {
+    if desktop_mode && !builtin_catalog.names.is_empty() {
         if let Some(builtin_registry) = load_builtin_skill_registry(config) {
-            let mut ordered_builtin_names = builtin_enabled_set.iter().cloned().collect::<Vec<_>>();
+            let mut ordered_builtin_names =
+                builtin_catalog.names.iter().cloned().collect::<Vec<_>>();
             ordered_builtin_names.sort();
             for name in ordered_builtin_names {
                 if !seen.insert(name.clone()) {
@@ -2514,6 +2521,22 @@ fn build_user_tools_summary(
             input_schema: spec.input_schema,
         })
         .collect::<Vec<_>>();
+    let mut skills = skills;
+    if include_unavailable_user_skills {
+        let mut seen_skill_names: HashSet<String> =
+            skills.iter().map(|spec| spec.name.clone()).collect();
+        for spec in load_desktop_builtin_skill_catalog_specs(config) {
+            if !seen_skill_names.insert(spec.name.clone()) {
+                continue;
+            }
+            skills.push(ToolSpec {
+                name: spec.name,
+                title: None,
+                description: spec.description,
+                input_schema: spec.input_schema,
+            });
+        }
+    }
 
     let mut blocked_names: HashSet<String> = builtin_tools
         .iter()
@@ -3573,7 +3596,7 @@ mod tests {
     use crate::services::skill_archive::uploaded_skill_archive_top_dir;
     use crate::services::user_access::UserToolContext;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
-    use crate::skills::SkillRegistry;
+    use crate::skills::{SkillRegistry, SkillSpec};
     use crate::storage::{SqliteStorage, StorageBackend};
     use crate::user_tools::UserToolsPayload;
     use serde_json::json;
@@ -3689,7 +3712,73 @@ mod tests {
     }
 
     #[test]
-    fn desktop_visible_skill_payload_includes_enabled_builtin_without_user_copy() {
+    fn desktop_catalog_includes_all_builtin_skills_for_agent_settings() {
+        let _guard = builtin_skills_env_lock()
+            .lock()
+            .expect("lock builtin skills env");
+        let dir = tempdir().expect("tempdir");
+        let builtin_root = tempdir().expect("builtin root");
+        let db_path = dir.path().join("desktop-catalog-skills.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        write_test_skill(
+            builtin_root.path(),
+            "builtin_skill_a",
+            "enabled builtin skill",
+        );
+        write_test_skill(
+            builtin_root.path(),
+            "builtin_skill_b",
+            "available builtin skill",
+        );
+
+        let previous = std::env::var(BUILTIN_SKILLS_ROOT_ENV).ok();
+        std::env::set_var(BUILTIN_SKILLS_ROOT_ENV, builtin_root.path());
+
+        let mut config = Config::default();
+        config.server.mode = "desktop".to_string();
+        config.skills.enabled = vec!["builtin_skill_a".to_string()];
+        let mut skills = SkillRegistry::default();
+        skills.add_spec_for_test(SkillSpec {
+            name: "builtin_skill_a".to_string(),
+            description: "enabled builtin skill".to_string(),
+            path: builtin_root
+                .path()
+                .join("builtin_skill_a")
+                .join("SKILL.md")
+                .to_string_lossy()
+                .to_string(),
+            input_schema: json!({ "type": "object" }),
+            frontmatter: String::new(),
+            root: builtin_root.path().join("builtin_skill_a"),
+            entrypoint: None,
+        });
+        let context = UserToolContext {
+            config,
+            skills,
+            bindings: UserToolBindings::default(),
+            tool_access: None,
+        };
+        let allowed = HashSet::from(["builtin_skill_a".to_string()]);
+
+        let summary_with_catalog =
+            build_user_tools_summary("alice", &allowed, &context, true, storage.as_ref());
+        let names = summary_with_catalog
+            .admin_skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["builtin_skill_a", "builtin_skill_b"]);
+
+        if let Some(value) = previous {
+            std::env::set_var(BUILTIN_SKILLS_ROOT_ENV, value);
+        } else {
+            std::env::remove_var(BUILTIN_SKILLS_ROOT_ENV);
+        }
+    }
+
+    #[test]
+    fn desktop_visible_skill_payload_includes_all_builtin_without_user_copy() {
         let _guard = builtin_skills_env_lock()
             .lock()
             .expect("lock builtin skills env");
@@ -3713,7 +3802,7 @@ mod tests {
             .iter()
             .filter_map(|item| item.get("name").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["内置技能A"]);
+        assert_eq!(names, vec!["内置技能A", "内置技能B"]);
         assert_eq!(enabled, vec!["内置技能A"]);
         assert!(shared.is_empty());
         assert_eq!(
@@ -3725,6 +3814,18 @@ mod tests {
                 .get("readonly")
                 .and_then(serde_json::Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            skills[0]
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            skills[1]
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
         );
 
         if let Some(value) = previous {

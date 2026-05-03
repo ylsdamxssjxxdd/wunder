@@ -38,6 +38,11 @@ impl SkillRegistry {
     pub fn get(&self, name: &str) -> Option<SkillSpec> {
         self.specs.iter().find(|spec| spec.name == name).cloned()
     }
+
+    #[cfg(test)]
+    pub fn add_spec_for_test(&mut self, spec: SkillSpec) {
+        self.specs.push(spec);
+    }
 }
 
 pub fn load_skills(

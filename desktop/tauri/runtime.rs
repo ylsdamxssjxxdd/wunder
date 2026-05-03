@@ -1193,7 +1193,7 @@ fn apply_desktop_defaults(
         .into_iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect();
-    for required in ["技能创建器", "公文写作", "大数据处理"] {
+    for required in resolve_desktop_builtin_skill_names(&config, repo_root) {
         if !config
             .skills
             .enabled
@@ -1256,6 +1256,79 @@ fn resolve_desktop_preset_worker_cards_root(
     } else {
         None
     }
+}
+
+fn resolve_desktop_builtin_skill_names(config: &Config, repo_root: &Path) -> Vec<String> {
+    let mut skill_roots = vec![repo_assets::builtin_skills_root(repo_root)];
+    for raw_path in &config.skills.paths {
+        let cleaned = raw_path.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        skill_roots.push(resolve_maybe_relative_path(cleaned, repo_root, repo_root));
+    }
+
+    let mut seen = HashSet::new();
+    let mut names = Vec::new();
+    for root in dedupe_paths(skill_roots) {
+        if !root.is_dir() {
+            continue;
+        }
+        for name in read_skill_names_from_root(&root) {
+            if seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+fn read_skill_names_from_root(root: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        let skill_file = entry.path().join("SKILL.md");
+        if !skill_file.is_file() {
+            continue;
+        }
+        if let Some(name) = read_skill_name_from_file(&skill_file) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn read_skill_name_from_file(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let normalized = content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim_start_matches('\u{feff}')
+        .to_string();
+    let mut lines = normalized.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    let mut body_lines = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        body_lines.push(line);
+    }
+    let meta: HashMap<String, serde_yaml::Value> =
+        serde_yaml::from_str(&body_lines.join("\n")).ok()?;
+    for key in ["name", "名称", "技能名称"] {
+        if let Some(name) = meta.get(key).and_then(serde_yaml::Value::as_str) {
+            let cleaned = name.trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn ensure_desktop_builtin_tool(enabled: &mut Vec<String>, required: &str) {

@@ -433,8 +433,7 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
   ctx.leftRailMainSectionOptions = computed(() => ctx.sectionOptions.value.filter((item) => item.key === 'messages' ||
       item.key === 'agents' ||
       item.key === 'tools' ||
-      item.key === 'files' ||
-      item.key === 'plaza'));
+      item.key === 'files'));
 
   ctx.leftRailSocialSectionOptions = computed(() => ctx.sectionOptions.value.filter((item) => item.key === 'swarms' ||
       item.key === 'orchestrations' ||

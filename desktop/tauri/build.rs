@@ -29,6 +29,10 @@ fn icons_need_sync(manifest_dir: &Path, icon_source_path: &Path) -> bool {
 
 #[cfg(feature = "desktop")]
 fn resolve_icon_source(manifest_dir: &Path) -> Option<std::path::PathBuf> {
+    let png = manifest_dir.join("images/eva01-head.png");
+    if png.exists() {
+        return Some(png);
+    }
     let ico = manifest_dir.join("images/eva01-head.ico");
     if ico.exists() {
         return Some(ico);
@@ -64,9 +68,11 @@ fn sync_icons_if_needed(repo_root: &Path) {
         None => return,
     };
     let icon_sync_script = repo_root.join("desktop/electron/scripts/sync-icons.js");
+    let icon_source_png = repo_root.join("images/eva01-head.png");
     let icon_source_svg = repo_root.join("images/eva01-head.svg");
     let icon_source_ico = repo_root.join("images/eva01-head.ico");
 
+    println!("cargo:rerun-if-changed={}", icon_source_png.display());
     println!("cargo:rerun-if-changed={}", icon_source_svg.display());
     println!("cargo:rerun-if-changed={}", icon_source_ico.display());
     println!("cargo:rerun-if-changed={}", icon_sync_script.display());
