@@ -411,6 +411,8 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerShellLayoutState(ctx: MessengerControllerContext): void {
+  ctx.desktopMode = computed(() => isDesktopModeEnabled());
+
   ctx.sectionOptions = computed(() => {
       return [
           { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: ctx.t('messenger.section.messages') },
@@ -438,7 +440,8 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
   ctx.leftRailSocialSectionOptions = computed(() => ctx.sectionOptions.value.filter((item) => item.key === 'swarms' ||
       item.key === 'orchestrations' ||
       item.key === 'users' ||
-      item.key === 'groups'));
+      item.key === 'groups' ||
+      (!ctx.desktopMode.value && item.key === 'plaza')));
 
   ctx.isLeftNavSectionActive = (section: MessengerSection): boolean => {
       return ctx.isSectionButtonActive(section);
@@ -505,8 +508,6 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
       }).wunderDesktop;
       return candidate && typeof candidate === 'object' ? candidate : null;
   };
-
-  ctx.desktopMode = computed(() => isDesktopModeEnabled());
 
   ctx.desktopLocalMode = computed(() => ctx.desktopMode.value);
 
@@ -748,6 +749,7 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
       ctx.isLeftNavSectionActive('orchestrations') ||
       ctx.isLeftNavSectionActive('users') ||
       ctx.isLeftNavSectionActive('groups') ||
+      (!ctx.desktopMode.value && ctx.isLeftNavSectionActive('plaza')) ||
       ctx.isLeftNavSectionActive('more') ||
       ctx.isHelperAppsMiddlePaneActive.value);
 
