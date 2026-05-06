@@ -227,3 +227,23 @@ export const estimateRequestContextTokens = (source: unknown): number | null => 
   const estimate = Math.max(messageEstimate ?? 0, serializedEstimate ?? 0, summaryEstimate ?? 0);
   return estimate > 0 ? estimate : null;
 };
+
+const normalizePositiveTokenCount = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  const normalizedValue = typeof value === 'string' ? value.trim() : value;
+  if (normalizedValue === '') return null;
+  const parsed = Number(normalizedValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed);
+};
+
+export const resolveRequestContextPreviewTokens = (
+  requestEstimateTokens: unknown,
+  confirmedContextTokens: unknown
+): number | null => {
+  const confirmed = normalizePositiveTokenCount(confirmedContextTokens);
+  if (confirmed !== null) {
+    return null;
+  }
+  return normalizePositiveTokenCount(requestEstimateTokens);
+};

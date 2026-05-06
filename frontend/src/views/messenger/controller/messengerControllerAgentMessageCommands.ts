@@ -655,7 +655,9 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       const cachedGoal = typeof ctx.chatStore.sessionGoal === 'function' ? ctx.chatStore.sessionGoal(sessionId) : null;
       ctx.goalDialogSessionId.value = sessionId;
       ctx.goalDialogObjective.value = trimmedInitial || String(cachedGoal?.objective || '');
-      ctx.goalDialogVisible.value = true;
+      ctx.agentGoalComposerObjective.value = ctx.goalDialogObjective.value;
+      ctx.agentGoalComposerRequested.value = true;
+      ctx.agentGoalComposerVisible.value = true;
       ctx.goalDialogLoading.value = !trimmedInitial && !cachedGoal;
       if (trimmedInitial || cachedGoal) {
           ctx.goalDialogLoading.value = false;
@@ -667,7 +669,9 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               return;
           }
           if (ctx.goalDialogObjective.value === trimmedInitial) {
-              ctx.goalDialogObjective.value = String(goal?.objective || '');
+              const nextObjective = String(goal?.objective || '');
+              ctx.goalDialogObjective.value = nextObjective;
+              ctx.agentGoalComposerObjective.value = nextObjective;
           }
       }
       catch (error) {
@@ -684,7 +688,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
 
   ctx.submitGoalDialog = async () => {
       const sessionId = String(ctx.goalDialogSessionId.value || ctx.chatStore.activeSessionId || '').trim();
-      const objective = String(ctx.goalDialogObjective.value || '').trim();
+      const objective = String(ctx.agentGoalComposerObjective.value || ctx.goalDialogObjective.value || '').trim();
       if (!sessionId) {
           ElMessage.warning(ctx.t('chat.command.goalMissingSession'));
           return;
@@ -702,10 +706,20 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           if (originalSessionId !== sessionId) {
               throw new Error(ctx.t('chat.goal.sessionChanged'));
           }
+          const currentGoal = typeof ctx.chatStore.sessionGoal === 'function'
+              ? ctx.chatStore.sessionGoal(sessionId)
+              : null;
+          const currentObjective = String(currentGoal?.objective || '').trim();
+          const currentStatus = String(currentGoal?.status || '').trim().toLowerCase();
+          if (currentStatus === 'active' && currentObjective && currentObjective !== objective) {
+              await ctx.chatStore.stopStream();
+          }
           const result = await ctx.chatStore.setSessionGoal(sessionId, { objective });
           const savedObjective = String(result?.goal?.objective || objective).trim();
-          ctx.goalDialogVisible.value = false;
           ctx.goalDialogObjective.value = savedObjective;
+          ctx.agentGoalComposerObjective.value = savedObjective;
+          ctx.agentGoalComposerRequested.value = false;
+          ctx.agentGoalComposerVisible.value = true;
           ElMessage.success(ctx.t('chat.command.goalSet', { objective: savedObjective }));
       }
       catch (error) {
@@ -714,6 +728,24 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       finally {
           ctx.goalDialogSubmitting.value = false;
       }
+  };
+
+  ctx.cancelGoalComposer = () => {
+      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      const currentGoal = sessionId && typeof ctx.chatStore.sessionGoal === 'function'
+          ? ctx.chatStore.sessionGoal(sessionId)
+          : null;
+      if (currentGoal?.objective) {
+          ctx.agentGoalComposerObjective.value = String(currentGoal.objective || '').trim();
+          ctx.goalDialogObjective.value = ctx.agentGoalComposerObjective.value;
+          ctx.agentGoalComposerRequested.value = false;
+          ctx.agentGoalComposerVisible.value = true;
+          return;
+      }
+      ctx.agentGoalComposerRequested.value = false;
+      ctx.agentGoalComposerVisible.value = false;
+      ctx.agentGoalComposerObjective.value = '';
+      ctx.goalDialogObjective.value = '';
   };
 
   ctx.handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: string) => {
@@ -745,6 +777,10 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               return;
           }
           const cancelled = await ctx.chatStore.stopStream();
+          if (cancelled) {
+              ctx.agentGoalComposerRequested.value = false;
+              ctx.agentGoalComposerVisible.value = false;
+          }
           ctx.appendAgentLocalCommandMessages(rawText, cancelled ? ctx.t('chat.command.stopRequested') : ctx.t('chat.command.stopNoRunning'));
           await ctx.scrollMessagesToBottom();
           return;
@@ -782,6 +818,10 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       content?: string;
       attachments?: unknown[];
   }) => {
+      if (ctx.agentGoalComposerVisible.value) {
+          await ctx.submitGoalDialog();
+          return;
+      }
       if (ctx.isMessengerInteractionBlocked.value) {
           chatDebugLog('messenger.send', 'blocked-send-during-interaction-lock', ctx.buildActiveSessionBusyDebugSnapshot());
           return;
@@ -889,6 +929,9 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       ctx.pendingAssistantCenterCount = 0;
       try {
           await ctx.chatStore.stopStream();
+          ctx.agentGoalComposerRequested.value = false;
+          ctx.agentGoalComposerVisible.value = false;
+          ctx.agentGoalComposerObjective.value = '';
       }
       catch {
       }

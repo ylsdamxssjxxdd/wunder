@@ -450,7 +450,13 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
               (identity.id.startsWith('draft:')
                   ? identity.id.slice('draft:'.length)
                   : ctx.chatStore.sessions.find((session) => String(session?.id || '') === identity.id)?.agent_id));
-          return currentAgentId === item.agentId;
+          if (currentAgentId !== item.agentId)
+              return false;
+          const goalLockedSessionId = ctx.resolveAgentGoalLockedSessionId(item.agentId);
+          if (goalLockedSessionId) {
+              return String(identity.id || ctx.chatStore.activeSessionId || '').trim() === goalLockedSessionId;
+          }
+          return true;
       }
       return identity.kind === item.kind && identity.id === item.sourceId;
   };
@@ -504,6 +510,9 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       const sourceId = String(item?.sourceId || '').trim();
       if (!sourceId)
           return;
+      if (item?.kind === 'agent' && ctx.blockWhenAgentGoalLocked(item.agentId)) {
+          return;
+      }
       const confirmed = await confirmWithFallback(ctx.t('chat.history.confirmDelete'), ctx.t('chat.history.confirmTitle'), {
           type: 'warning',
           confirmButtonText: ctx.t('common.confirm'),
@@ -555,10 +564,6 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       helperWorkspace?: boolean;
       settingsPanelMode?: string;
   } = {}) => {
-      if (ctx.activeSessionGoalLocked?.value && section !== 'messages') {
-          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
-          return;
-      }
       const preserveHelperWorkspace = options.preserveHelperWorkspace === true;
       const panelHint = String(options.panelHint || '').trim().toLowerCase();
       const explicitSettingsPanelMode = ctx.normalizeSettingsPanelMode(options.settingsPanelMode);
@@ -751,10 +756,6 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
   };
 
   ctx.openSettingsPage = () => {
-      if (ctx.activeSessionGoalLocked?.value) {
-          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
-          return;
-      }
       ctx.activateSettingsPanel('general');
   };
 
@@ -782,10 +783,6 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
   };
 
   ctx.openProfilePage = () => {
-      if (ctx.activeSessionGoalLocked?.value) {
-          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
-          return;
-      }
       ctx.closeFileContainerMenu();
       ctx.activateSettingsPanel('profile');
   };

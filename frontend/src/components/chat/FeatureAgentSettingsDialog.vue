@@ -178,6 +178,7 @@ import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
 import {
   buildAgentToolSections,
+  filterUserAgentToolNames,
   type AgentToolGroup
 } from '@/utils/agentToolCatalog';
 import {
@@ -216,6 +217,9 @@ const showApprovalModeSetting = computed(
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
+  hideAutoInjectedGoalTools: true
+});
 
 const visible = computed({
   get: () => props.modelValue,
@@ -327,7 +331,7 @@ const normalizeToolOption = (item) => {
 };
 
 const toolSections = computed(() =>
-  buildAgentToolSections(toolSummary.value, t, normalizeToolOption)
+  buildAgentToolSections(toolSummary.value, t, normalizeToolOption, USER_AGENT_TOOL_CATALOG_OPTIONS)
 );
 
 const defaultModelDisplayName = computed(() => {
@@ -358,7 +362,7 @@ const dependencyStatus = computed(() =>
 
 const ignoreMissingDependencies = () => {
   const payload = buildIgnoredMissingDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
-  form.tool_names = Array.isArray(payload.tool_names) ? [...payload.tool_names] : [];
+  form.tool_names = filterUserAgentToolNames(payload.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
   currentAgent.value = currentAgent.value
     ? {
         ...currentAgent.value,
@@ -384,7 +388,7 @@ const selectToolGroup = (group: AgentToolGroup<any>) => {
   } else {
     group.options.forEach((option) => next.add(option.value));
   }
-  form.tool_names = Array.from(next);
+  form.tool_names = filterUserAgentToolNames(Array.from(next), USER_AGENT_TOOL_CATALOG_OPTIONS);
 };
 
 const loadToolSummary = async () => {
@@ -439,7 +443,7 @@ const loadAgent = async () => {
     form.is_shared = false;
     form.system_prompt = agent.system_prompt || '';
     form.model_name = resolveConfiguredModelName(currentAgent.value);
-    form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
+    form.tool_names = filterUserAgentToolNames(agent.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(
       agent.hive_id,
@@ -469,7 +473,10 @@ const saveAgent = async () => {
       name,
       description: form.description || '',
       is_shared: false,
-      tool_names: dependencyPayload.tool_names,
+      tool_names: filterUserAgentToolNames(
+        dependencyPayload.tool_names,
+        USER_AGENT_TOOL_CATALOG_OPTIONS
+      ),
       declared_tool_names: dependencyPayload.declared_tool_names,
       declared_skill_names: dependencyPayload.declared_skill_names,
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
@@ -505,7 +512,10 @@ const exportWorkerCard = () => {
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
-    tool_names: dependencyPayload.tool_names,
+    tool_names: filterUserAgentToolNames(
+      dependencyPayload.tool_names,
+      USER_AGENT_TOOL_CATALOG_OPTIONS
+    ),
     declared_tool_names: dependencyPayload.declared_tool_names,
     declared_skill_names: dependencyPayload.declared_skill_names,
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),

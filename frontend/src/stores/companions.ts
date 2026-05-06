@@ -47,10 +47,17 @@ export type CompanionMessage = {
   visibleUntil: number;
 };
 
+export type AgentCompanionOverride = {
+  show?: boolean;
+  scale?: number;
+  updatedAt: number;
+};
+
 const DB_NAME = 'wunder-companions';
 const DB_VERSION = 1;
 const STORE_NAME = 'companions';
 const SETTINGS_KEY = 'wunder_companion_settings';
+const AGENT_OVERRIDE_KEY = 'wunder_agent_companion_overrides';
 const DEFAULT_POSITION: CompanionPosition = { x: 28, y: 28 };
 const DEFAULT_SCALE = 1;
 
@@ -74,7 +81,7 @@ const normalizeSettings = (value: unknown): CompanionSettings => {
     selectedId: String(source.selectedId || '').trim(),
     enabled: source.enabled === true,
     position: normalizePosition(source.position),
-    scale: Math.min(1.6, Math.max(0.7, scale)),
+    scale: Math.min(1.6, Math.max(0.5, scale)),
     messageHintsEnabled: source.messageHintsEnabled !== false
   };
 };
@@ -91,6 +98,20 @@ const normalizeCompanionMessage = (value: unknown): CompanionMessage | null => {
     kind: kind === 'success' || kind === 'warning' ? kind : 'info',
     visibleUntil: Math.max(0, normalizeNumber(source.visibleUntil, Date.now()))
   };
+};
+
+const normalizeAgentCompanionOverride = (value: unknown): AgentCompanionOverride | null => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const output: AgentCompanionOverride = {
+    updatedAt: Math.max(0, normalizeNumber(source.updatedAt, Date.now()))
+  };
+  if ('show' in source) {
+    output.show = source.show === true;
+  }
+  if ('scale' in source) {
+    output.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(source.scale, DEFAULT_SCALE)));
+  }
+  return 'show' in output || 'scale' in output ? output : null;
 };
 
 const normalizeRecord = (value: unknown): CompanionPackageRecord | null => {
@@ -185,6 +206,35 @@ const saveSettings = (settings: CompanionSettings): void => {
   }
 };
 
+const loadAgentOverrides = (): Record<string, AgentCompanionOverride> => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AGENT_OVERRIDE_KEY) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    const output: Record<string, AgentCompanionOverride> = {};
+    Object.entries(parsed as Record<string, unknown>).forEach(([key, value]) => {
+      const normalizedKey = String(key || '').trim();
+      if (!normalizedKey) return;
+      const normalized = normalizeAgentCompanionOverride(value);
+      if (normalized) {
+        output[normalizedKey] = normalized;
+      }
+    });
+    return output;
+  } catch {
+    return {};
+  }
+};
+
+const saveAgentOverrides = (overrides: Record<string, AgentCompanionOverride>): void => {
+  try {
+    localStorage.setItem(AGENT_OVERRIDE_KEY, JSON.stringify(overrides));
+  } catch {
+    // Ignore storage failures; the current session still keeps state.
+  }
+};
+
 const downloadBlob = (blob: Blob, filename: string): void => {
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -232,6 +282,16 @@ const requestGlobalCompanions = async (): Promise<CompanionPackageRecord[]> => {
     .filter((item: CompanionPackageRecord | null): item is CompanionPackageRecord => Boolean(item));
 };
 
+const requestGlobalCompanionPackage = async (id: string): Promise<Blob> => {
+  const response = await api.get(`/companions/global/${encodeURIComponent(id)}/package`, {
+    responseType: 'blob',
+    headers: {
+      'Cache-Control': 'no-store'
+    }
+  });
+  return response.data as Blob;
+};
+
 const getDesktopBridge = (): Record<string, unknown> | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -246,6 +306,7 @@ export const useCompanionStore = defineStore('companions', () => {
   const companions = ref<CompanionPackageRecord[]>([]);
   const globalCompanions = ref<CompanionPackageRecord[]>([]);
   const settings = ref<CompanionSettings>(loadSettings());
+  const agentOverrides = ref<Record<string, AgentCompanionOverride>>(loadAgentOverrides());
   const message = ref<CompanionMessage | null>(null);
   const hydrated = ref(false);
   const loading = ref(false);
@@ -263,6 +324,10 @@ export const useCompanionStore = defineStore('companions', () => {
     saveSettings(settings.value);
   };
 
+  const persistAgentOverrides = () => {
+    saveAgentOverrides(agentOverrides.value);
+  };
+
   const applyDesktopState = (value: unknown): void => {
     const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
     const selectedId = String(source.selectedId || source.selected_id || '').trim();
@@ -278,7 +343,7 @@ export const useCompanionStore = defineStore('companions', () => {
         : normalizePosition({ x: source.x, y: source.y });
     }
     if ('scale' in source) {
-      settings.value.scale = Math.min(1.6, Math.max(0.7, normalizeNumber(source.scale, DEFAULT_SCALE)));
+      settings.value.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(source.scale, DEFAULT_SCALE)));
     }
     if ('messageHintsEnabled' in source || 'message_hints_enabled' in source) {
       settings.value.messageHintsEnabled = source.messageHintsEnabled !== false && source.message_hints_enabled !== false;
@@ -407,6 +472,23 @@ export const useCompanionStore = defineStore('companions', () => {
     downloadBlob(blob, buildCompanionPackageFilename(target.id));
   };
 
+  const exportCompanion = async (scope: 'private' | 'global', id: string): Promise<void> => {
+    const cleaned = String(id || '').trim();
+    if (!cleaned) {
+      return;
+    }
+    if (scope === 'global') {
+      const target = globalCompanions.value.find((item) => item.id === cleaned);
+      if (!target) {
+        return;
+      }
+      const blob = await requestGlobalCompanionPackage(cleaned);
+      downloadBlob(blob, buildCompanionPackageFilename(target.id));
+      return;
+    }
+    await exportPackage(cleaned);
+  };
+
   const removeCompanion = async (id: string): Promise<void> => {
     await removeStoredCompanion(id);
     companions.value = companions.value.filter((item) => item.id !== id);
@@ -436,7 +518,7 @@ export const useCompanionStore = defineStore('companions', () => {
   };
 
   const setScale = (value: number): void => {
-    settings.value.scale = Math.min(1.6, Math.max(0.7, normalizeNumber(value, DEFAULT_SCALE)));
+    settings.value.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(value, DEFAULT_SCALE)));
     persistSettings();
   };
 
@@ -464,7 +546,47 @@ export const useCompanionStore = defineStore('companions', () => {
     message.value = null;
   };
 
+  const getAgentOverride = (agentId: string): AgentCompanionOverride | null => {
+    const key = String(agentId || '').trim();
+    if (!key) return null;
+    return agentOverrides.value[key] || null;
+  };
+
+  const setAgentOverride = (
+    agentId: string,
+    patch: Partial<Pick<AgentCompanionOverride, 'show' | 'scale'>>
+  ): void => {
+    const key = String(agentId || '').trim();
+    if (!key) return;
+    const current = agentOverrides.value[key] || { updatedAt: Date.now() };
+    const next: AgentCompanionOverride = {
+      ...current,
+      updatedAt: Date.now()
+    };
+    if ('show' in patch) {
+      next.show = patch.show === true;
+    }
+    if ('scale' in patch) {
+      next.scale = Math.min(1.6, Math.max(0.5, normalizeNumber(patch.scale, DEFAULT_SCALE)));
+    }
+    agentOverrides.value = {
+      ...agentOverrides.value,
+      [key]: next
+    };
+    persistAgentOverrides();
+  };
+
+  const clearAgentOverride = (agentId: string): void => {
+    const key = String(agentId || '').trim();
+    if (!key || !agentOverrides.value[key]) return;
+    const next = { ...agentOverrides.value };
+    delete next[key];
+    agentOverrides.value = next;
+    persistAgentOverrides();
+  };
+
   return {
+    agentOverrides,
     companions,
     enabled,
     featureEnabled,
@@ -477,13 +599,17 @@ export const useCompanionStore = defineStore('companions', () => {
     selectedCompanion,
     settings,
     clearMessage,
+    clearAgentOverride,
+    exportCompanion,
     exportPackage,
+    getAgentOverride,
     hydrate,
     importPackage,
     findCompanion,
     loadGlobalCompanions,
     removeCompanion,
     selectCompanion,
+    setAgentOverride,
     setEnabled,
     setMessageHintsEnabled,
     setPosition,

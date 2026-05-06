@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { estimateRequestContextTokens } from '../../src/utils/chatContextEstimate';
+import {
+  estimateRequestContextTokens,
+  resolveRequestContextPreviewTokens
+} from '../../src/utils/chatContextEstimate';
 
 const buildHeavyToolSpecs = (count = 46) =>
   Array.from({ length: count }, (_, index) => ({
@@ -117,4 +120,14 @@ test('request context estimate finds nested summary-only payloads', () => {
 
   assert.ok(estimate !== null);
   assert.ok(estimate > 18000, `nested summary-only estimate should include tool scale, got ${estimate}`);
+});
+
+test('request context preview does not override a confirmed context baseline', () => {
+  const preview = resolveRequestContextPreviewTokens(6202, 5670);
+  assert.equal(preview, null);
+});
+
+test('request context preview falls back to estimate only when no confirmed baseline exists', () => {
+  const preview = resolveRequestContextPreviewTokens(6202, null);
+  assert.equal(preview, 6202);
 });

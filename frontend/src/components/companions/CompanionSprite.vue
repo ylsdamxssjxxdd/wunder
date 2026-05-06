@@ -53,6 +53,7 @@ const rootSize = ref({ width: 0, height: 0 });
 let animationTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeListenerAttached = false;
+let animationSignature = '';
 
 const normalizedScale = computed(() => Math.min(1.8, Math.max(0.5, Number(props.scale) || 1)));
 const stateConfig = computed(() => STATE_CONFIG[props.state] || STATE_CONFIG.idle);
@@ -69,6 +70,7 @@ const fitScale = computed(() => {
 });
 const renderedScale = computed(() => normalizedScale.value * (props.fit ? fitScale.value : 1));
 const fitReady = computed(() => !props.fit || (rootSize.value.width > 0 && rootSize.value.height > 0));
+const stableRenderedScale = computed(() => Math.round(renderedScale.value * 1000) / 1000);
 
 const rootStyle = computed(() => ({
   width: props.fit ? '100%' : `${FRAME_WIDTH * normalizedScale.value}px`,
@@ -84,8 +86,8 @@ const sheetStyle = computed<CSSProperties>(() => ({
   top: props.fit ? '50%' : '0',
   transformOrigin: props.fit ? 'center center' : 'left top',
   transform: props.fit
-    ? `translate(-50%, -50%) scale(${renderedScale.value})`
-    : `scale(${renderedScale.value})`,
+    ? `translate(-50%, -50%) scale(${stableRenderedScale.value})`
+    : `scale(${stableRenderedScale.value})`,
   visibility: fitReady.value ? 'visible' : 'hidden'
 }));
 
@@ -148,12 +150,23 @@ const startAnimation = () => {
   }, frameMs);
 };
 
+const refreshAnimationIfNeeded = () => {
+  const nextSignature = [
+    props.state,
+    props.source,
+    props.paused ? 'paused' : 'playing'
+  ].join('|');
+  if (nextSignature === animationSignature) {
+    return;
+  }
+  animationSignature = nextSignature;
+  frameIndex.value = 0;
+  startAnimation();
+};
+
 watch(
   () => [props.state, props.source, props.paused] as const,
-  () => {
-    frameIndex.value = 0;
-    startAnimation();
-  },
+  refreshAnimationIfNeeded,
   { immediate: true }
 );
 
@@ -186,6 +199,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  animationSignature = '';
   stopAnimation();
   stopResizeTracking();
 });

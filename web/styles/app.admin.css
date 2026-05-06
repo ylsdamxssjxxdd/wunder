@@ -119,6 +119,7 @@
 .companion-admin-preview {
   min-height: 160px;
   margin: 16px;
+  margin-bottom: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -127,11 +128,51 @@
   background: #f8fafc;
 }
 
+.companion-admin-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px 12px;
+  flex-wrap: wrap;
+}
+
+.companion-admin-preview-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.companion-admin-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.companion-admin-preview-action {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+}
+
+.companion-admin-preview-action.is-active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .companion-admin-sprite {
   position: relative;
   display: inline-block;
   overflow: hidden;
   flex: 0 0 auto;
+}
+
+.companion-admin-sprite--detail {
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+  box-shadow: inset 0 0 0 1px rgba(191, 219, 254, 0.8);
 }
 
 .companion-admin-sprite-sheet {

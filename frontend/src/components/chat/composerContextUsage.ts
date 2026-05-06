@@ -67,37 +67,31 @@ const resolveExplicitAssistantContextTokens = (stats: ComposerContextStatsSource
       ? stats.contextUsage
       : null;
   return normalizePositiveTokenCount(
-    stats.contextOccupancyTokens ??
+    stats.contextTokens ??
+      stats.contextOccupancyTokens ??
       stats.context_occupancy_tokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      directContextUsage ??
       contextUsage?.context_occupancy_tokens ??
       contextUsage?.contextOccupancyTokens ??
-      stats.contextTokens ??
-      stats.context_tokens ??
-      directContextUsage ??
       contextUsage?.context_tokens ??
       contextUsage?.contextTokens
   );
 };
 
-const resolveExplicitContextOccupancyAliasTokens = (
-  source: ComposerContextStatsSource
-): number | null => {
-  if (!source) {
+const resolveUsageContextTokens = (usage: unknown): number | null => {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
     return null;
   }
-  const contextUsage = resolveContextUsageRecord(source);
-  const directContextUsage =
-    source.contextUsage !== null &&
-    source.contextUsage !== undefined &&
-    typeof source.contextUsage !== 'object'
-      ? source.contextUsage
-      : null;
+  const record = usage as Record<string, unknown>;
   return normalizePositiveTokenCount(
-    source.contextOccupancyTokens ??
-      source.context_occupancy_tokens ??
-      contextUsage?.context_occupancy_tokens ??
-      contextUsage?.contextOccupancyTokens ??
-      directContextUsage
+    record.total ??
+      record.total_tokens ??
+      record.totalTokens ??
+      record.input ??
+      record.input_tokens ??
+      record.inputTokens
   );
 };
 
@@ -105,17 +99,56 @@ const resolveFinalAssistantContextTokens = (stats: ComposerContextStatsSource): 
   if (!stats) {
     return null;
   }
-  return resolveExplicitAssistantContextTokens(stats);
+  return (
+    resolveUsageContextTokens(stats.usage) ??
+    resolveUsageContextTokens(stats.roundUsage ?? stats.round_usage) ??
+    resolveExplicitAssistantContextTokens(stats)
+  );
+};
+
+const resolveFinalAssistantUsageTokens = (stats: ComposerContextStatsSource): number | null => {
+  if (!stats) {
+    return null;
+  }
+  return (
+    resolveUsageContextTokens(stats.usage) ??
+    resolveUsageContextTokens(stats.roundUsage ?? stats.round_usage)
+  );
 };
 
 export const resolveComposerRunningContextDisplayState = (
   input: ComposerRunningContextDisplayInput
 ): ComposerRunningContextDisplayState => {
+  let baseTokens = input.baseTokens;
+  let rawBaseTokens = input.rawBaseTokens;
+  const current = input.stableTokens;
   const runningRaw = input.runningRawTokens;
+  if (baseTokens === null && current !== null) {
+    baseTokens = current;
+  }
+  if (rawBaseTokens === null) {
+    rawBaseTokens = runningRaw;
+  }
+  if (input.lastRawTokens !== null && runningRaw < input.lastRawTokens && current !== null) {
+    baseTokens = current;
+    rawBaseTokens = runningRaw;
+  }
+  if (baseTokens === null) {
+    return {
+      stableTokens: current === null ? runningRaw : Math.max(current, runningRaw),
+      baseTokens,
+      rawBaseTokens,
+      lastRawTokens: runningRaw
+    };
+  }
+  const displayTokens =
+    runningRaw >= baseTokens
+      ? runningRaw
+      : baseTokens + Math.max(0, runningRaw - rawBaseTokens);
   return {
-    stableTokens: runningRaw,
-    baseTokens: input.baseTokens,
-    rawBaseTokens: input.rawBaseTokens ?? runningRaw,
+    stableTokens: current === null ? displayTokens : Math.max(current, displayTokens),
+    baseTokens,
+    rawBaseTokens,
     lastRawTokens: runningRaw
   };
 };
@@ -163,12 +196,10 @@ export const resolveSessionContextTokens = (session: ComposerContextSessionSourc
   }
   const contextUsage = resolveContextUsageRecord(session);
   return normalizePositiveTokenCount(
-    session.contextOccupancyTokens ??
-      session.context_occupancy_tokens ??
-      contextUsage?.context_occupancy_tokens ??
-      contextUsage?.contextOccupancyTokens ??
-      session.contextTokens ??
+    session.contextTokens ??
       session.context_tokens ??
+      session.contextOccupancyTokens ??
+      session.context_occupancy_tokens ??
       contextUsage?.context_tokens ??
       contextUsage?.contextTokens
   );
@@ -218,13 +249,14 @@ export const resolveComposerContextUsageSource = (
         ? (current.stats as Record<string, unknown>)
         : null;
     const runningAssistant = loading && isAssistantMessageRunning(current);
+    const assistantFinalUsageTokens = runningAssistant
+      ? null
+      : resolveFinalAssistantUsageTokens(stats);
     const assistantContextTokens = runningAssistant
       ? resolveAssistantLiveContextTokens(stats)
       : resolveAssistantContextTokens(stats);
-    const assistantOccupancyTokens = resolveExplicitContextOccupancyAliasTokens(stats);
     const assistantTotalTokens = resolveAssistantContextTotalTokens(stats);
     const sessionContextTokens = resolveSessionContextTokens(session);
-    const sessionOccupancyTokens = resolveExplicitContextOccupancyAliasTokens(session);
     const sessionTotalTokens = resolveSessionContextTotalTokens(session);
     const source = {
       contextTokens: assistantContextTokens,
@@ -246,13 +278,22 @@ export const resolveComposerContextUsageSource = (
             : assistantTotalTokens ?? sessionTotalTokens
       };
     }
+    if (assistantFinalUsageTokens !== null) {
+      return {
+        ...source,
+        contextTokens: assistantFinalUsageTokens,
+        contextTotalTokens:
+          assistantTotalTokens !== null && sessionTotalTokens !== null
+            ? Math.max(assistantTotalTokens, sessionTotalTokens)
+            : assistantTotalTokens ?? sessionTotalTokens
+      };
+    }
     return {
       ...source,
       contextTokens:
-        assistantOccupancyTokens ??
-        sessionOccupancyTokens ??
-        assistantContextTokens ??
-        sessionContextTokens,
+        assistantContextTokens !== null && sessionContextTokens !== null
+          ? Math.max(assistantContextTokens, sessionContextTokens)
+          : assistantContextTokens ?? sessionContextTokens,
       contextTotalTokens:
         assistantTotalTokens !== null && sessionTotalTokens !== null
           ? Math.max(assistantTotalTokens, sessionTotalTokens)

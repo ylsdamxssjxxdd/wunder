@@ -179,7 +179,7 @@
   - CLI / TUI：`/goal` 查看当前目标，`/goal <objective>` 创建或替换当前目标并进入 `active`，`/goal --tokens <n> <objective>` 可设置可选 token 预算。
 - 网页端 Messenger 不再由 `/goal` 直接触发智能体动作；退出统一通过聊天页终止按钮完成，终止会调用会话 cancel 并清除目标。
 - 模型侧暴露 `get_goal / create_goal / update_goal` 三个内置工具；`update_goal` 只允许 `status=complete`，模型不能暂停、恢复或清除目标。
-- 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，并锁定当前会话，只允许通过聊天页终止按钮退出目标态。
+- 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，并仅锁定该智能体聊天页内的新建/切换/发送等线程操作，其他智能体、联系人、群聊、设置与资料页仍可正常使用；退出统一通过聊天页终止按钮完成。
 - `GET /wunder/chat/sessions/{session_id}/events` 返回 `data.goal` 目标快照，便于 watch / resume / reload 恢复。
 - 目标管理接口：
   - `GET /wunder/chat/sessions/{session_id}/goal`：返回 `{ data: { goal } }`，无目标时 `goal=null`。

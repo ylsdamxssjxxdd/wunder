@@ -789,6 +789,9 @@ const syncSettingsTarget = (user) => {
   elements.userAccountQuotaInput.value = Number.isFinite(user.token_balance) ? user.token_balance : "";
   elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
   elements.userAccountTokenAdjustInput.value = "";
+  if (elements.userAccountSettingsPasswordUsername) {
+    elements.userAccountSettingsPasswordUsername.value = user.username || user.id || "";
+  }
   elements.userAccountSettingsPasswordInput.value = "";
   syncUnitSelect(elements.userAccountSettingsUnitSelect, user.unit_id || "");
   elements.userAccountSettingsRolesInput.value = resolveRoleSelection(user.roles);

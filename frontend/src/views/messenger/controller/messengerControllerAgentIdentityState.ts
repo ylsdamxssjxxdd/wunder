@@ -1038,6 +1038,15 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
       return Boolean(sessionId && ctx.chatStore.isSessionGoalLocked?.(sessionId));
   });
 
+  ctx.activeSessionGoal = computed(() => {
+      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (!sessionId)
+          return null;
+      return typeof ctx.chatStore.sessionGoal === 'function'
+          ? ctx.chatStore.sessionGoal(sessionId)
+          : null;
+  });
+
   ctx.isAgentOrchestrationActive = (agentId: unknown): boolean => {
       const normalizedAgentId = ctx.normalizeAgentId(agentId);
       if (!normalizedAgentId)

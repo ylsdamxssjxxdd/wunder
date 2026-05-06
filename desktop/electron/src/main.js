@@ -650,16 +650,17 @@ const createCompanionHtml = () => `<!doctype html>
     position: relative;
     width: 100%;
     height: 100%;
-    cursor: grab;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
+    cursor: default;
   }
   #root.dragging { cursor: grabbing; }
   #bubble {
-    max-width: 260px;
-    margin-bottom: 4px;
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% - 4px);
+    transform: translateX(-50%);
+    width: max-content;
+    min-width: 88px;
+    max-width: min(320px, calc(100vw - 24px));
     padding: 8px 10px;
     border: 1px solid rgba(37, 99, 235, 0.22);
     border-radius: 8px;
@@ -669,8 +670,11 @@ const createCompanionHtml = () => `<!doctype html>
     font-size: 13px;
     line-height: 1.45;
     text-align: center;
+    white-space: normal;
     overflow-wrap: anywhere;
     box-sizing: border-box;
+    pointer-events: none;
+    z-index: 1;
   }
   #bubble.success {
     border-color: rgba(20, 184, 166, 0.28);
@@ -681,10 +685,14 @@ const createCompanionHtml = () => `<!doctype html>
     color: #92400e;
   }
   #sprite {
-    position: relative;
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    transform: translateX(-50%);
     overflow: hidden;
-    flex: 0 0 auto;
+    cursor: pointer;
   }
+  #root.dragging #sprite { cursor: grabbing; }
   #sheet {
     position: absolute;
     left: 0;
@@ -725,6 +733,7 @@ const createCompanionHtml = () => `<!doctype html>
     let frame = 0;
     let timer = null;
     let drag = null;
+    let animationSignature = '';
 
     const normalizeState = (value) => states[value] ? value : 'idle';
     const applyFrame = () => {
@@ -743,13 +752,24 @@ const createCompanionHtml = () => `<!doctype html>
         applyFrame();
       }, frameMs);
     };
+    const refreshAnimationIfNeeded = () => {
+      const nextSignature = [
+        normalizeState(payload.state),
+        String(payload.spritesheetDataUrl || '')
+      ].join('|');
+      if (nextSignature === animationSignature) {
+        return;
+      }
+      animationSignature = nextSignature;
+      startAnimation();
+    };
     const render = (next) => {
       payload = Object.assign({}, payload, next || {});
       const scale = Math.min(1.6, Math.max(0.7, Number(payload.scale || 1)));
       sprite.style.width = Math.round(frameWidth * scale) + 'px';
       sprite.style.height = Math.round(frameHeight * scale) + 'px';
       sheet.style.backgroundImage = payload.spritesheetDataUrl ? 'url("' + payload.spritesheetDataUrl + '")' : '';
-      sheet.style.transform = 'scale(' + scale + ')';
+      sheet.style.transform = 'scale(' + Math.round(scale * 1000) / 1000 + ')';
       const text = String(payload.message || '').trim();
       if (text && payload.messageVisible) {
         bubble.textContent = text;
@@ -758,7 +778,7 @@ const createCompanionHtml = () => `<!doctype html>
         bubble.textContent = '';
         bubble.className = 'hidden';
       }
-      startAnimation();
+      refreshAnimationIfNeeded();
     };
     ipcRenderer.on('wunder:companion-render', (event, next) => render(next));
     root.addEventListener('pointerdown', (event) => {
@@ -790,8 +810,9 @@ const resolveCompanionWindowSize = (state) => {
   const scale = Number(state?.scale || 1)
   const safeScale = Number.isFinite(scale) ? Math.min(1.6, Math.max(0.7, scale)) : 1
   const bubbleHeight = state?.messageVisible && String(state?.message || '').trim() ? 70 : 0
+  const bubbleWidth = state?.messageVisible && String(state?.message || '').trim() ? 320 : 0
   return {
-    width: Math.max(220, Math.round(192 * safeScale) + 36),
+    width: Math.max(220, Math.round(192 * safeScale) + 36, bubbleWidth),
     height: Math.max(220, Math.round(208 * safeScale) + bubbleHeight + 16)
   }
 }

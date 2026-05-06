@@ -15,6 +15,7 @@ const REQUIRED_KEYS = [
   "companionAdminDetailTitle",
   "companionAdminDetailMeta",
   "companionAdminPreview",
+  "companionAdminPreviewActions",
   "companionAdminName",
   "companionAdminDescription",
   "companionAdminSaveBtn",
@@ -25,6 +26,19 @@ const REQUIRED_KEYS = [
 const FRAME_WIDTH = 192;
 const FRAME_HEIGHT = 208;
 const SPRITE_SCALE = 0.46;
+const PREVIEW_ACTIONS = [
+  { id: "idle", row: 0, frames: 6, duration: 1100 },
+  { id: "running-right", row: 1, frames: 8, duration: 1060 },
+  { id: "running-left", row: 2, frames: 8, duration: 1060 },
+  { id: "waving", row: 3, frames: 4, duration: 700 },
+  { id: "jumping", row: 4, frames: 5, duration: 840 },
+  { id: "failed", row: 5, frames: 8, duration: 1220 },
+  { id: "waiting", row: 6, frames: 6, duration: 1010 },
+  { id: "running", row: 7, frames: 6, duration: 820 },
+  { id: "review", row: 8, frames: 6, duration: 1030 },
+];
+
+let previewAnimationTimer = null;
 
 const ensureState = () => {
   if (!state.companions) {
@@ -33,6 +47,7 @@ const ensureState = () => {
       selectedId: "",
       search: "",
       loading: false,
+      previewAction: "idle",
     };
   }
   if (!state.panelLoaded) {
@@ -118,6 +133,13 @@ const formatTime = (value) => {
   }
 };
 
+const stopPreviewAnimation = () => {
+  if (previewAnimationTimer !== null && typeof window !== "undefined") {
+    window.clearInterval(previewAnimationTimer);
+  }
+  previewAnimationTimer = null;
+};
+
 const renderSpritePreview = (container, item) => {
   container.textContent = "";
   if (!item?.spritesheet_data_url) {
@@ -136,6 +158,59 @@ const renderSpritePreview = (container, item) => {
   sheet.style.transform = `scale(${SPRITE_SCALE})`;
   viewport.appendChild(sheet);
   container.appendChild(viewport);
+};
+
+const renderPreviewSprite = (container, item, actionId) => {
+  stopPreviewAnimation();
+  container.textContent = "";
+  if (!item?.spritesheet_data_url) {
+    return;
+  }
+  const action = PREVIEW_ACTIONS.find((entry) => entry.id === actionId) || PREVIEW_ACTIONS[0];
+  const viewport = document.createElement("span");
+  viewport.className = "companion-admin-sprite companion-admin-sprite--detail";
+  viewport.style.width = `${FRAME_WIDTH * 0.9}px`;
+  viewport.style.height = `${FRAME_HEIGHT * 0.9}px`;
+  const sheet = document.createElement("span");
+  sheet.className = "companion-admin-sprite-sheet";
+  sheet.style.width = `${FRAME_WIDTH}px`;
+  sheet.style.height = `${FRAME_HEIGHT}px`;
+  sheet.style.backgroundImage = `url("${item.spritesheet_data_url}")`;
+  sheet.style.backgroundPosition = `0 -${action.row * FRAME_HEIGHT}px`;
+  sheet.style.transform = "scale(0.9)";
+  viewport.appendChild(sheet);
+  container.appendChild(viewport);
+  if (typeof window === "undefined" || action.frames <= 1) {
+    return;
+  }
+  let frameIndex = 0;
+  const frameMs = Math.max(50, Math.round(action.duration / Math.max(1, action.frames)));
+  previewAnimationTimer = window.setInterval(() => {
+    frameIndex = (frameIndex + 1) % action.frames;
+    sheet.style.backgroundPosition = `-${frameIndex * FRAME_WIDTH}px -${action.row * FRAME_HEIGHT}px`;
+  }, frameMs);
+};
+
+const renderPreviewActions = () => {
+  const container = elements.companionAdminPreviewActions;
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  const fragment = document.createDocumentFragment();
+  PREVIEW_ACTIONS.forEach((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary companion-admin-preview-action";
+    button.classList.toggle("is-active", entry.id === state.companions.previewAction);
+    button.textContent = t(`companions.state.${entry.id}`);
+    button.addEventListener("click", () => {
+      state.companions.previewAction = entry.id;
+      renderDetail();
+    });
+    fragment.appendChild(button);
+  });
+  container.appendChild(fragment);
 };
 
 const renderList = () => {
@@ -192,7 +267,11 @@ const renderDetail = () => {
   elements.companionAdminSaveBtn.disabled = !hasItem || state.companions.loading;
   elements.companionAdminExportBtn.disabled = !hasItem || state.companions.loading;
   elements.companionAdminDeleteBtn.disabled = !hasItem || state.companions.loading;
-  renderSpritePreview(elements.companionAdminPreview, item);
+  if (!hasItem) {
+    stopPreviewAnimation();
+  }
+  renderPreviewSprite(elements.companionAdminPreview, item, state.companions.previewAction);
+  renderPreviewActions();
 };
 
 const renderAll = () => {

@@ -3598,7 +3598,7 @@ mod tests {
     };
     use crate::services::user_access::UserToolContext;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
-    use crate::skills::{SkillRegistry, SkillSpec};
+    use crate::skills::{load_skills, SkillRegistry, SkillSpec};
     use crate::storage::{SqliteStorage, StorageBackend};
     use crate::user_tools::UserToolsPayload;
     use serde_json::json;
@@ -3701,6 +3701,28 @@ mod tests {
         assert!(err
             .to_string()
             .contains("top-level skill directory"));
+    }
+
+    #[test]
+    fn load_skills_accepts_skill_markdown_without_frontmatter() {
+        let dir = tempdir().expect("tempdir");
+        let skill_dir = dir.path().join("plain-skill");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "# 数据库校验技能2\n\n本技能用于对数据库表中的数据进行规则校验。\n",
+        )
+        .expect("write skill file");
+
+        let mut config = Config::default();
+        config.skills.paths = vec![dir.path().to_string_lossy().to_string()];
+
+        let registry = load_skills(&config, false, false, false);
+        let specs = registry.list_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "数据库校验技能2");
+        assert_eq!(specs[0].description, "本技能用于对数据库表中的数据进行规则校验。");
+        assert!(specs[0].frontmatter.is_empty());
     }
 
     #[test]

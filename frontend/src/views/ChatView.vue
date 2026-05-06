@@ -334,16 +334,6 @@
                       <MessageFeedbackActions :message="message" />
                     </template>
                     <button
-                      class="message-copy-btn"
-                      type="button"
-                      :title="t('chat.message.copy')"
-                      :aria-label="t('chat.message.copy')"
-                      @click="handleCopyMessage(message)"
-                    >
-                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
-                      <span>{{ t('chat.message.copy') }}</span>
-                    </button>
-                    <button
                       class="message-copy-btn message-tts-btn"
                       :class="{ 'is-active': isMessageTtsPlaying(message, index) }"
                       type="button"
@@ -372,21 +362,21 @@
                               : t('chat.message.playVoice')
                         }}
                       </span>
+                    </button>
+                    <button
+                      class="message-copy-btn"
+                      type="button"
+                      :title="t('chat.message.copy')"
+                      :aria-label="t('chat.message.copy')"
+                      @click="handleCopyMessage(message)"
+                    >
+                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
+                      <span>{{ t('chat.message.copy') }}</span>
                     </button>
                   </div>
                   <div v-else class="message-actions">
                     <div class="message-time">{{ formatTime(message.created_at) }}</div>
                     <button
-                      class="message-copy-btn"
-                      type="button"
-                      :title="t('chat.message.copy')"
-                      :aria-label="t('chat.message.copy')"
-                      @click="handleCopyMessage(message)"
-                    >
-                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
-                      <span>{{ t('chat.message.copy') }}</span>
-                    </button>
-                    <button
                       class="message-copy-btn message-tts-btn"
                       :class="{ 'is-active': isMessageTtsPlaying(message, index) }"
                       type="button"
@@ -415,6 +405,16 @@
                               : t('chat.message.playVoice')
                         }}
                       </span>
+                    </button>
+                    <button
+                      class="message-copy-btn"
+                      type="button"
+                      :title="t('chat.message.copy')"
+                      :aria-label="t('chat.message.copy')"
+                      @click="handleCopyMessage(message)"
+                    >
+                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
+                      <span>{{ t('chat.message.copy') }}</span>
                     </button>
                   </div>
                 </div>
@@ -565,7 +565,15 @@
                         <span class="message-stat-value">{{ item.value }}</span>
                       </template>
                       <template v-else>
-                        <span class="message-stat-label">{{ item.label }}：</span>
+                        <i
+                          :class="[
+                            item.iconClass || 'fa-solid fa-circle-info',
+                            'message-stat-icon'
+                          ]"
+                          :title="item.label"
+                          :aria-label="item.label"
+                          aria-hidden="true"
+                        ></i>
                         <span class="message-stat-value">{{ item.value }}</span>
                       </template>
                     </span>

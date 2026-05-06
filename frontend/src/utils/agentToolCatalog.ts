@@ -17,6 +17,10 @@ export type AgentToolSection<T extends ToolOptionLike = ToolOptionLike> = {
   groups: AgentToolGroup<T>[];
 };
 
+export type AgentToolCatalogOptions = {
+  hideAutoInjectedGoalTools?: boolean;
+};
+
 const DEFAULT_AGENT_TOOL_NAME_FALLBACKS = new Set([
   '最终回复',
   'final_response',
@@ -59,43 +63,65 @@ const normalizeNameList = (list: unknown): string[] => {
   return output;
 };
 
+const AUTO_INJECTED_GOAL_TOOL_NAMES = new Set([
+  'get_goal',
+  'create_goal',
+  'update_goal'
+]);
+
+const shouldKeepToolName = (
+  name: string,
+  options?: AgentToolCatalogOptions
+): boolean => {
+  if (!options?.hideAutoInjectedGoalTools) {
+    return true;
+  }
+  return !AUTO_INJECTED_GOAL_TOOL_NAMES.has(String(name || '').trim());
+};
+
 const normalizeToolList = <T extends ToolOptionLike>(
   list: unknown,
-  normalizeOption: (item: unknown) => T | null
+  normalizeOption: (item: unknown) => T | null,
+  options?: AgentToolCatalogOptions
 ): T[] => {
   if (!Array.isArray(list)) return [];
-  return list.map((item) => normalizeOption(item)).filter(Boolean) as T[];
+  return list
+    .map((item) => normalizeOption(item))
+    .filter((item): item is T => Boolean(item))
+    .filter((item) => shouldKeepToolName(item.value, options));
 };
 
 const buildGroup = <T extends ToolOptionLike>(
   key: string,
   label: string,
   list: unknown,
-  normalizeOption: (item: unknown) => T | null
+  normalizeOption: (item: unknown) => T | null,
+  options?: AgentToolCatalogOptions
 ): AgentToolGroup<T> => ({
   key,
   label,
-  options: normalizeToolList(list, normalizeOption)
+  options: normalizeToolList(list, normalizeOption, options)
 });
 
 export const buildAgentToolSections = <T extends ToolOptionLike>(
   payload: Record<string, unknown> | null | undefined,
   t: (key: string) => string,
-  normalizeOption: (item: unknown) => T | null
+  normalizeOption: (item: unknown) => T | null,
+  options?: AgentToolCatalogOptions
 ): AgentToolSection<T>[] => {
   const source = payload || {};
   const adminGroups = [
-    buildGroup('builtin', t('portal.agent.tools.group.builtin'), source.admin_builtin_tools ?? source.builtin_tools, normalizeOption),
-    buildGroup('mcp', t('portal.agent.tools.group.mcp'), source.admin_mcp_tools ?? source.mcp_tools, normalizeOption),
-    buildGroup('a2a', t('portal.agent.tools.group.a2a'), source.admin_a2a_tools ?? source.a2a_tools, normalizeOption),
-    buildGroup('skills', t('portal.agent.tools.group.skills'), source.admin_skills ?? source.skills, normalizeOption),
-    buildGroup('knowledge', t('portal.agent.tools.group.knowledge'), source.admin_knowledge_tools ?? source.knowledge_tools, normalizeOption)
+    buildGroup('builtin', t('portal.agent.tools.group.builtin'), source.admin_builtin_tools ?? source.builtin_tools, normalizeOption, options),
+    buildGroup('mcp', t('portal.agent.tools.group.mcp'), source.admin_mcp_tools ?? source.mcp_tools, normalizeOption, options),
+    buildGroup('a2a', t('portal.agent.tools.group.a2a'), source.admin_a2a_tools ?? source.a2a_tools, normalizeOption, options),
+    buildGroup('skills', t('portal.agent.tools.group.skills'), source.admin_skills ?? source.skills, normalizeOption, options),
+    buildGroup('knowledge', t('portal.agent.tools.group.knowledge'), source.admin_knowledge_tools ?? source.knowledge_tools, normalizeOption, options)
   ].filter((group) => group.options.length > 0);
 
   const userGroups = [
-    buildGroup('user-mcp', t('portal.agent.tools.group.mcp'), source.user_mcp_tools, normalizeOption),
-    buildGroup('user-skills', t('portal.agent.tools.group.skills'), source.user_skills, normalizeOption),
-    buildGroup('user-knowledge', t('portal.agent.tools.group.knowledge'), source.user_knowledge_tools, normalizeOption)
+    buildGroup('user-mcp', t('portal.agent.tools.group.mcp'), source.user_mcp_tools, normalizeOption, options),
+    buildGroup('user-skills', t('portal.agent.tools.group.skills'), source.user_skills, normalizeOption, options),
+    buildGroup('user-knowledge', t('portal.agent.tools.group.knowledge'), source.user_knowledge_tools, normalizeOption, options)
   ].filter((group) => group.options.length > 0);
 
   if (!userGroups.length) {
@@ -103,7 +129,8 @@ export const buildAgentToolSections = <T extends ToolOptionLike>(
       'user',
       t('portal.agent.tools.group.user'),
       source.user_tools,
-      normalizeOption
+      normalizeOption,
+      options
     );
     if (legacyUserGroup.options.length) {
       userGroups.push(legacyUserGroup);
@@ -135,14 +162,21 @@ export const collectToolValuesFromSections = <T extends ToolOptionLike>(
 
 export const resolveDefaultAgentToolNames = <T extends ToolOptionLike>(
   payload: Record<string, unknown> | null | undefined,
-  sections: AgentToolSection<T>[]
+  sections: AgentToolSection<T>[],
+  options?: AgentToolCatalogOptions
 ): string[] => {
   const available = new Set(collectToolValuesFromSections(sections));
   const configured = normalizeNameList(payload?.default_agent_tool_names).filter((name) =>
-    available.has(name)
+    available.has(name) && shouldKeepToolName(name, options)
   );
   if (configured.length) {
     return configured;
   }
   return Array.from(available).filter((name) => DEFAULT_AGENT_TOOL_NAME_FALLBACKS.has(name));
 };
+
+export const filterUserAgentToolNames = (
+  toolNames: unknown,
+  options?: AgentToolCatalogOptions
+): string[] =>
+  normalizeNameList(toolNames).filter((name) => shouldKeepToolName(name, options));

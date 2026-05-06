@@ -792,10 +792,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           return 'running';
       if (hasAssistantWaitingForCurrentOutput(message))
           return 'running';
-      const runtimeState = resolveAssistantMessageRuntimeState(
-          message,
-          ctx.chatStore.messages as Record<string, unknown>[]
-      ) as AgentRuntimeState;
+      const runtimeState = resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
       if (runtimeState === 'done' &&
           ctx.isAgentConversationActive.value &&
           ctx.activeMessengerSessionBusy.value &&

@@ -733,7 +733,7 @@
 .chat-shell .message-stat {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 
 .chat-shell .message-stat.is-status {
@@ -773,10 +773,6 @@
 
 .chat-shell .message-stat.is-status.is-live .message-stat-icon {
   animation: chat-message-stat-live 1.2s ease-in-out infinite;
-}
-
-.chat-shell .message-stat-label {
-  color: var(--chat-muted);
 }
 
 .chat-shell .message-stat-value {

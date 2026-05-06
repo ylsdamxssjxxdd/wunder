@@ -5,7 +5,6 @@ import {
   hasAssistantPendingQuestion,
   hasAssistantWaitingForCurrentOutput,
   isAssistantMessageRunning,
-  isLatestAssistantPlaceholderWaiting,
   normalizeAssistantMessageRuntimeState,
   resolveAssistantMessageRuntimeState
 } from '../../src/utils/assistantMessageRuntime';
@@ -41,27 +40,6 @@ test('assistant runtime treats compaction progress as a running message', () => 
 
 test('assistant runtime falls back to done for completed assistant bubbles without explicit state', () => {
   assert.equal(resolveAssistantMessageRuntimeState({ role: 'assistant', content: 'finished' }), 'done');
-});
-
-test('assistant runtime keeps latest empty assistant placeholder running after a user turn', () => {
-  const messages = [
-    {
-      role: 'user',
-      content: 'continue'
-    },
-    {
-      role: 'assistant',
-      content: '',
-      reasoning: '',
-      workflowItems: [],
-      stream_incomplete: false,
-      workflowStreaming: false,
-      reasoningStreaming: false
-    }
-  ];
-
-  assert.equal(isLatestAssistantPlaceholderWaiting(messages[1], messages), true);
-  assert.equal(resolveAssistantMessageRuntimeState(messages[1], messages), 'running');
 });
 
 test('assistant runtime treats local waiting placeholder before first output as waiting current output', () => {

@@ -67,6 +67,8 @@ const companionRecord = computed(() =>
     : null
 );
 const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || '');
+// The companion display scale is only for the floating character layer.
+// Agent avatars should stay visually stable inside message/list UI.
 const companionSpriteScale = computed(() => 1);
 const avatarImageUrl = computed(
   () =>

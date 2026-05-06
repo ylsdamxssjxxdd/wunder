@@ -2555,7 +2555,4 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   transform-origin: center;
 }
 
-.messenger-conversation-item.is-goal-locked {
-  box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.82);
-}
 </style>

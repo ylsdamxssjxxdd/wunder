@@ -884,6 +884,10 @@
                       <i class="fa-solid fa-download"></i>
                       <span data-i18n="companionsAdmin.export">导出</span>
                     </button>
+                    <button id="companionAdminSaveBtn" class="btn-with-icon" type="button">
+                      <i class="fa-solid fa-floppy-disk"></i>
+                      <span data-i18n="common.save">保存</span>
+                    </button>
                     <button id="companionAdminDeleteBtn" class="danger btn-with-icon" type="button">
                       <i class="fa-solid fa-trash-can"></i>
                       <span data-i18n="common.delete">删除</span>
@@ -891,6 +895,10 @@
                   </div>
                 </div>
                 <div id="companionAdminPreview" class="companion-admin-preview"></div>
+                <div class="companion-admin-preview-toolbar">
+                  <div class="companion-admin-preview-label" data-i18n="companionsAdmin.previewLabel">动作预览</div>
+                  <div id="companionAdminPreviewActions" class="companion-admin-preview-actions"></div>
+                </div>
                 <div class="form-section">
                   <div class="form-row">
                     <label for="companionAdminName" data-i18n="companionsAdmin.name">名称</label>
@@ -900,12 +908,6 @@
                     <label for="companionAdminDescription" data-i18n="companionsAdmin.description">说明</label>
                     <textarea id="companionAdminDescription" rows="3"></textarea>
                   </div>
-                </div>
-                <div class="detail-actions">
-                  <button id="companionAdminSaveBtn" class="btn-with-icon" type="button">
-                    <i class="fa-solid fa-floppy-disk"></i>
-                    <span data-i18n="common.save">保存</span>
-                  </button>
                 </div>
               </section>
             </div>
@@ -4574,7 +4576,7 @@
           </div>
           <div class="form-row">
             <label for="userAccountFormEmail" data-i18n="userAccounts.modal.create.email">邮箱</label>
-            <input id="userAccountFormEmail" type="email" />
+            <input id="userAccountFormEmail" type="email" autocomplete="email" />
           </div>
           <div class="form-row">
             <label for="userAccountFormPassword" data-i18n="userAccounts.modal.create.password">密码</label>
@@ -4680,7 +4682,15 @@
             <label for="userAccountSettingsPasswordInput" data-i18n="userAccounts.modal.settings.password.label">
               重置密码
             </label>
-            <form class="form-row-inline" autocomplete="off" onsubmit="return false;">
+            <form class="form-row-inline" onsubmit="return false;">
+              <input
+                id="userAccountSettingsPasswordUsername"
+                class="sr-only"
+                type="text"
+                autocomplete="username"
+                tabindex="-1"
+                aria-hidden="true"
+              />
               <input id="userAccountSettingsPasswordInput" type="password" autocomplete="new-password" />
               <button id="userAccountSettingsPasswordSave" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-key"></i><span data-i18n="userAccounts.modal.settings.password.action">重置</span>

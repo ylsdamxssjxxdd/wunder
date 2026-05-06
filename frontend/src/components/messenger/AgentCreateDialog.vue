@@ -191,6 +191,7 @@ import { useI18n } from '@/i18n';
 import {
   buildAgentToolSections,
   collectToolValuesFromSections,
+  filterUserAgentToolNames,
   resolveDefaultAgentToolNames,
   type AgentToolGroup,
   type AgentToolSection
@@ -247,6 +248,9 @@ const showApprovalModeSetting = computed(
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
+  hideAutoInjectedGoalTools: true
+});
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 const approvalModeOptions = computed(() => [
@@ -344,7 +348,7 @@ const normalizeOption = (item: unknown): ToolOption | null => {
 };
 
 const toolSections = computed<ToolSection[]>(() =>
-  buildAgentToolSections(toolSummary.value, t, normalizeOption)
+  buildAgentToolSections(toolSummary.value, t, normalizeOption, USER_AGENT_TOOL_CATALOG_OPTIONS)
 );
 
 const defaultModelDisplayName = computed(() => {
@@ -380,7 +384,11 @@ const resetForm = () => {
   form.group = createBeeroomGroupDraft(String(props.defaultBeeroomGroupId || '').trim()) as BeeroomGroupDraft;
   form.system_prompt = '';
   form.model_name = '';
-  form.tool_names = resolveDefaultAgentToolNames(toolSummary.value, toolSections.value);
+  form.tool_names = resolveDefaultAgentToolNames(
+    toolSummary.value,
+    toolSections.value,
+    USER_AGENT_TOOL_CATALOG_OPTIONS
+  );
   form.preset_questions = [];
   form.is_shared = false;
   form.sandbox_container_id = 1;
@@ -433,7 +441,7 @@ const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
   } else {
     group.options.forEach((option) => selected.add(option.value));
   }
-  form.tool_names = Array.from(selected);
+  form.tool_names = filterUserAgentToolNames(Array.from(selected), USER_AGENT_TOOL_CATALOG_OPTIONS);
 };
 
 const normalizeSandboxContainerId = (value: unknown): number => {
@@ -466,7 +474,7 @@ const handleSave = async () => {
       ...buildBeeroomGroupPayload(form.group, props.beeroomGroups),
       system_prompt: String(form.system_prompt || ''),
       model_name: String(form.model_name || '').trim(),
-      tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      tool_names: filterUserAgentToolNames(form.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS),
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       is_shared: false,
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
@@ -498,7 +506,11 @@ watch(
   () => {
     if (!visible.value) return;
     if (form.tool_names.length === 0) {
-      form.tool_names = resolveDefaultAgentToolNames(toolSummary.value, toolSections.value);
+      form.tool_names = resolveDefaultAgentToolNames(
+        toolSummary.value,
+        toolSections.value,
+        USER_AGENT_TOOL_CATALOG_OPTIONS
+      );
     }
   }
 );

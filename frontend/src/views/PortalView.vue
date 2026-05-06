@@ -431,6 +431,7 @@ import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
 import {
   buildAgentToolSections,
   collectToolValuesFromSections,
+  filterUserAgentToolNames,
   resolveDefaultAgentToolNames
 } from '@/utils/agentToolCatalog';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
@@ -456,6 +457,9 @@ const desktopLocalMode = computed(() => isDesktopModeEnabled());
 const showApprovalModeSetting = computed(() => desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
+  hideAutoInjectedGoalTools: true
+});
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const PORTAL_PREFETCH_HOVER_DELAY_MS = 120;
@@ -1135,7 +1139,7 @@ const normalizeToolOption = (item) => {
 };
 
 const toolSections = computed(() =>
-  buildAgentToolSections(toolCatalog.value, t, normalizeToolOption)
+  buildAgentToolSections(toolCatalog.value, t, normalizeToolOption, USER_AGENT_TOOL_CATALOG_OPTIONS)
 );
 
 const allToolValues = computed(() => {
@@ -1143,7 +1147,11 @@ const allToolValues = computed(() => {
 });
 
 const applyDefaultTools = () => {
-  form.tool_names = resolveDefaultAgentToolNames(toolCatalog.value, toolSections.value);
+  form.tool_names = resolveDefaultAgentToolNames(
+    toolCatalog.value,
+    toolSections.value,
+    USER_AGENT_TOOL_CATALOG_OPTIONS
+  );
 };
 
 const isToolGroupFullySelected = (group) => {
@@ -1161,7 +1169,7 @@ const selectToolGroup = (group) => {
   } else {
     group.options.forEach((option) => next.add(option.value));
   }
-  form.tool_names = Array.from(next);
+  form.tool_names = filterUserAgentToolNames(Array.from(next), USER_AGENT_TOOL_CATALOG_OPTIONS);
 };
 
 const resetForm = () => {
@@ -1550,7 +1558,7 @@ const saveAgent = async () => {
       description: form.description || '',
       is_shared: false,
       copy_from_agent_id: String(form.copy_from_agent_id || DEFAULT_AGENT_KEY).trim() || DEFAULT_AGENT_KEY,
-      tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      tool_names: filterUserAgentToolNames(form.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS),
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       ...buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value),
       system_prompt: form.system_prompt || '',

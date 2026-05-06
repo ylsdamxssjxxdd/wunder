@@ -1,5 +1,29 @@
 <template>
   <div class="input-container" :class="{ 'input-container--world': worldStyle }">
+    <ChatGoalComposer
+      v-if="goalEditorVisible"
+      :visible="goalEditorVisible"
+      :objective="goalObjective"
+      :loading="goalLoading"
+      :submitting="goalSubmitting"
+      :active="goalActive"
+      :status="goalStatus"
+      @update:objective="emit('update:goal-objective', $event)"
+      @submit="emit('submit-goal')"
+      @stop="emit('stop')"
+      @cancel="emit('cancel-goal-editor')"
+    />
+    <div
+      v-if="goalEditorVisible && composerContextUsageDisplay"
+      class="chat-goal-context-usage"
+      :class="composerContextUsageClass"
+      :style="composerContextUsageStyle"
+      :title="composerContextUsageTooltip"
+      :aria-label="composerContextUsageTooltip"
+    >
+      {{ composerContextUsageDisplay }}
+    </div>
+    <template v-else>
     <div v-if="showUploadArea" class="upload-preview">
       <div class="upload-preview-list">
         <div
@@ -440,12 +464,14 @@
         </button>
       </div>
     </Teleport>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
+import ChatGoalComposer from '@/components/chat/ChatGoalComposer.vue';
 
 import { convertChatAttachment, processChatMediaAttachment } from '@/api/chat';
 import {
@@ -554,6 +580,30 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  goalEditorVisible: {
+    type: Boolean,
+    default: false
+  },
+  goalObjective: {
+    type: String,
+    default: ''
+  },
+  goalLoading: {
+    type: Boolean,
+    default: false
+  },
+  goalSubmitting: {
+    type: Boolean,
+    default: false
+  },
+  goalActive: {
+    type: Boolean,
+    default: false
+  },
+  goalStatus: {
+    type: String,
+    default: ''
+  },
   presetQuestions: {
     type: Array,
     default: () => []
@@ -565,8 +615,16 @@ const emit = defineEmits([
   'stop',
   'toggle-voice-record',
   'open-model-settings',
-  'update:approval-mode'
+  'update:approval-mode',
+  'update:goal-objective',
+  'submit-goal',
+  'cancel-goal-editor'
 ]);
+
+const normalizeOptionalNumber = (value: unknown): number | null => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
 
 const inputText = ref('');
 const inputRef = ref(null);
@@ -874,14 +932,17 @@ watch(
       return;
     }
     if (switchedAssistant) {
+      const currentUsed = composerContextUsedTokensStable.value;
       const currentTotal = composerContextTotalTokensStable.value;
       const runningRaw = normalizePositiveTokenCount(
         composerContextUsageSource.value.runningContextTokens
       );
-      composerContextAssistantBaseTokens.value = rawUsed;
+      composerContextAssistantBaseTokens.value = currentUsed;
       composerContextAssistantRawBaseTokens.value = runningRaw;
       composerContextAssistantLastRawTokens.value = runningRaw;
-      composerContextUsedTokensStable.value = rawUsed;
+      const nextUsed =
+        rawUsed === null ? currentUsed : currentUsed === null ? rawUsed : Math.max(currentUsed, rawUsed);
+      composerContextUsedTokensStable.value = nextUsed;
       composerContextTotalTokensStable.value =
         rawTotal === null ? currentTotal : currentTotal === null ? rawTotal : Math.max(currentTotal, rawTotal);
       return;
@@ -908,7 +969,8 @@ watch(
         composerContextUsedTokensStable.value = next.stableTokens;
         return;
       }
-      composerContextUsedTokensStable.value = rawUsed;
+      composerContextUsedTokensStable.value =
+        current === null ? rawUsed : Math.max(current, rawUsed);
     }
     if (rawTotal !== null) {
       const current = composerContextTotalTokensStable.value;
@@ -1066,6 +1128,7 @@ const sendShortcutHint = computed(() => {
   if (props.sendKey === 'enter') return t('chat.input.sendHintEnterAlt');
   return '';
 });
+const goalEditorVisible = computed(() => Boolean(props.goalEditorVisible));
 const inputPlaceholder = computed(() => {
   const base = props.inquiryActive
     ? t('chat.input.inquiryPlaceholder')
@@ -1485,7 +1548,7 @@ const syncCaretPosition = () => {
 };
 
 const handleInput = () => {
-  if (props.goalLocked) {
+  if (props.goalLocked || goalEditorVisible.value) {
     inputText.value = '';
     return;
   }
@@ -1556,6 +1619,9 @@ const applyCommandSuggestion = (index = commandMenuIndex.value) => {
 };
 
 const handleInputKeydown = async (event) => {
+  if (goalEditorVisible.value) {
+    return;
+  }
   if (isEnterKeyboardEvent(event)) {
     await handleEnterKeydown(event);
     return;
@@ -1799,7 +1865,7 @@ const handleEnterKeydown = async (event) => {
   if (event.isComposing) {
     return;
   }
-  if (props.goalLocked) {
+  if (props.goalLocked || goalEditorVisible.value) {
     return;
   }
   const mode = resolveSendKeyMode();
@@ -1839,7 +1905,7 @@ const resetInputHeight = () => {
 };
 
 const triggerUpload = () => {
-  if (stopButtonActive.value) return;
+  if (stopButtonActive.value || goalEditorVisible.value) return;
   if (!uploadInputRef.value) return;
   closeScreenshotMenu();
   uploadInputRef.value.value = '';
@@ -1849,7 +1915,7 @@ const triggerUpload = () => {
 const hasFileDrag = (event) => Array.from(event?.dataTransfer?.types || []).includes('Files');
 
 const handleDragEnter = (event) => {
-  if (stopButtonActive.value) return;
+  if (stopButtonActive.value || goalEditorVisible.value) return;
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   dragCounter.value += 1;
@@ -1860,7 +1926,7 @@ const handleDragEnter = (event) => {
 };
 
 const handleDragOver = (event) => {
-  if (stopButtonActive.value) return;
+  if (stopButtonActive.value || goalEditorVisible.value) return;
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   if (event.dataTransfer) {
@@ -1877,7 +1943,7 @@ const handleDragLeave = (event) => {
 };
 
 const handleDrop = async (event) => {
-  if (stopButtonActive.value) return;
+  if (stopButtonActive.value || goalEditorVisible.value) return;
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   dragCounter.value = 0;
@@ -2388,6 +2454,7 @@ const handleApprovalModeChange = (event: Event) => {
 };
 
 const sendQuickCommand = async (command: string) => {
+  if (goalEditorVisible.value) return;
   closeWorldCommandPanel();
   closeScreenshotMenu();
   if (!command) return;
@@ -2410,6 +2477,7 @@ const sendQuickCommand = async (command: string) => {
 };
 
 const applyPresetQuestion = (question: string) => {
+  if (goalEditorVisible.value) return;
   closeWorldCommandPanel();
   closeScreenshotMenu();
   const preset = String(question || '').trim();
@@ -2433,7 +2501,7 @@ const applyPresetQuestion = (question: string) => {
 };
 
 const handleSend = async () => {
-  if (stopButtonActive.value) return;
+  if (stopButtonActive.value || goalEditorVisible.value) return;
   if (voiceRecording.value) return;
   closeScreenshotMenu();
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
@@ -2457,6 +2525,10 @@ const handleSend = async () => {
 };
 
 const handleSendOrStop = async () => {
+  if (goalEditorVisible.value) {
+    emit('submit-goal');
+    return;
+  }
   if (stopButtonActive.value) {
     emit('stop');
     return;
@@ -2654,4 +2726,29 @@ watch(
     });
   }
 );
+
+watch(
+  () => goalEditorVisible.value,
+  (visible) => {
+    if (!visible) return;
+    inputText.value = '';
+    clearAttachments();
+    closeScreenshotMenu();
+    closeWorldCommandPanel();
+    commandMenuDismissed.value = false;
+    caretPosition.value = 0;
+  }
+);
 </script>
+
+<style scoped>
+.chat-goal-context-usage {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  min-height: 20px;
+  margin: 2px 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+</style>

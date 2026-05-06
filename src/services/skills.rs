@@ -98,10 +98,8 @@ pub fn load_skills(
                 Ok(content) => content,
                 Err(_) => continue,
             };
-            let Some((meta, frontmatter)) = parse_frontmatter(&content) else {
-                continue;
-            };
-            let name = extract_meta_name(&meta);
+            let (meta, frontmatter) = parse_frontmatter(&content).unwrap_or_default();
+            let name = extract_skill_name(&meta, &content, &skill_dir);
             if name.is_empty() {
                 continue;
             }
@@ -111,7 +109,7 @@ pub fn load_skills(
             if !seen_names.insert(name.clone()) {
                 continue;
             }
-            let description = extract_meta_description(&meta);
+            let description = extract_skill_description(&meta, &content);
             let input_schema = build_input_schema(&meta);
             let entrypoint = if load_entrypoints {
                 find_entrypoint(&skill_dir)
@@ -292,6 +290,24 @@ fn extract_meta_name(meta: &HashMap<String, YamlValue>) -> String {
     "".to_string()
 }
 
+fn extract_skill_name(meta: &HashMap<String, YamlValue>, content: &str, skill_dir: &Path) -> String {
+    let meta_name = extract_meta_name(meta);
+    if !meta_name.is_empty() {
+        return meta_name;
+    }
+    let heading_name = extract_first_heading(content);
+    if !heading_name.is_empty() {
+        return heading_name;
+    }
+    skill_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_default()
+}
+
 fn extract_meta_description(meta: &HashMap<String, YamlValue>) -> String {
     for key in ["description", "描述", "技能描述"] {
         if let Some(value) = meta.get(key).and_then(|value| value.as_str()) {
@@ -302,6 +318,72 @@ fn extract_meta_description(meta: &HashMap<String, YamlValue>) -> String {
         }
     }
     i18n::t("skill.description.missing")
+}
+
+fn extract_skill_description(meta: &HashMap<String, YamlValue>, content: &str) -> String {
+    let missing = i18n::t("skill.description.missing");
+    let meta_description = extract_meta_description(meta);
+    if meta_description != missing {
+        return meta_description;
+    }
+    let body_description = extract_first_body_paragraph(content);
+    if !body_description.is_empty() {
+        return body_description;
+    }
+    missing
+}
+
+fn extract_first_heading(content: &str) -> String {
+    let normalized = content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let trimmed = normalized.trim_start_matches('\u{feff}');
+    for line in trimmed.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix('#') {
+            let heading = value.trim_start_matches('#').trim();
+            if !heading.is_empty() {
+                return heading.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+fn extract_first_body_paragraph(content: &str) -> String {
+    let normalized = content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim_start_matches('\u{feff}')
+        .to_string();
+    let mut lines = normalized.lines().peekable();
+    if matches!(lines.peek().map(|line| line.trim()), Some("---")) {
+        lines.next();
+        while let Some(line) = lines.next() {
+            if line.trim() == "---" {
+                break;
+            }
+        }
+    }
+
+    let mut paragraph = String::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !paragraph.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if !paragraph.is_empty() {
+            paragraph.push(' ');
+        }
+        paragraph.push_str(trimmed);
+    }
+    paragraph
 }
 
 fn build_input_schema(meta: &HashMap<String, YamlValue>) -> Value {

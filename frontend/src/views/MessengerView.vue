@@ -362,9 +362,8 @@
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
-            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
+            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
             type="button"
-            :disabled="activeSessionGoalLocked"
             :title="t('chat.history')"
             :aria-label="t('chat.history')"
             @click="timelineDialogVisible = true"
@@ -1230,7 +1229,15 @@
                         <span class="messenger-message-stat-value">{{ entry.value }}</span>
                       </template>
                       <template v-else>
-                        <span class="messenger-message-stat-label">{{ entry.label }}:</span>
+                        <i
+                          :class="[
+                            entry.iconClass || 'fa-solid fa-circle-info',
+                            'messenger-message-stat-icon'
+                          ]"
+                          :title="entry.label"
+                          :aria-label="entry.label"
+                          aria-hidden="true"
+                        ></i>
                         <span class="messenger-message-stat-value">{{ entry.value }}</span>
                       </template>
                     </span>
@@ -1251,15 +1258,6 @@
                   />
                   <button
                     class="messenger-message-footer-copy"
-                    type="button"
-                    :title="t('chat.message.copy')"
-                    :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(item.message)"
-                  >
-                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
-                  </button>
-                  <button
-                    class="messenger-message-footer-copy"
                     :class="{ 'is-active': isMessageTtsPlaying(item.message, item.sourceIndex, 'agent') }"
                     type="button"
                     :disabled="isMessageTtsLoading(item.message, item.sourceIndex, 'agent')"
@@ -1277,6 +1275,15 @@
                       :class="isMessageTtsPlaying(item.message, item.sourceIndex, 'agent') ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
                       aria-hidden="true"
                     ></i>
+                  </button>
+                  <button
+                    class="messenger-message-footer-copy"
+                    type="button"
+                    :title="t('chat.message.copy')"
+                    :aria-label="t('chat.message.copy')"
+                    @click="copyMessageContent(item.message)"
+                  >
+                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
                 </template>
@@ -1378,15 +1385,6 @@
                 >
                   <button
                     class="messenger-message-footer-copy"
-                    type="button"
-                    :title="t('chat.message.copy')"
-                    :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(item.message)"
-                  >
-                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
-                  </button>
-                  <button
-                    class="messenger-message-footer-copy"
                     :class="{ 'is-active': isMessageTtsPlaying(item.message, item.sourceIndex, 'world') }"
                     type="button"
                     :disabled="isMessageTtsLoading(item.message, item.sourceIndex, 'world')"
@@ -1404,6 +1402,15 @@
                       :class="isMessageTtsPlaying(item.message, item.sourceIndex, 'world') ? 'fa-solid fa-pause' : 'fa-solid fa-volume-high'"
                       aria-hidden="true"
                     ></i>
+                  </button>
+                  <button
+                    class="messenger-message-footer-copy"
+                    type="button"
+                    :title="t('chat.message.copy')"
+                    :aria-label="t('chat.message.copy')"
+                    @click="copyMessageContent(item.message)"
+                  >
+                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
@@ -1470,12 +1477,21 @@
             :model-name="agentHeaderModelDisplayName"
             :context-total-tokens="activeAgentUsingDesktopDefaultModel ? desktopDefaultModelMaxContext : null"
             :goal-locked="activeSessionGoalLocked"
+            :goal-editor-visible="agentGoalComposerVisible"
+            :goal-objective="agentGoalComposerObjective"
+            :goal-loading="goalDialogLoading"
+            :goal-submitting="goalDialogSubmitting"
+            :goal-active="activeSessionGoalLocked"
+            :goal-status="String(activeSessionGoal?.status || '')"
             :model-jump-enabled="agentHeaderModelJumpEnabled"
             :model-jump-hint="t('messenger.agent.openSettings')"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
             @toggle-voice-record="toggleAgentVoiceRecord"
             @update:approval-mode="updateComposerApprovalMode"
+            @update:goal-objective="agentGoalComposerObjective = $event"
+            @submit-goal="submitGoalDialog"
+            @cancel-goal-editor="cancelGoalComposer"
             @open-model-settings="openDesktopModelSettingsFromHeader"
           />
         </div>
@@ -1588,10 +1604,6 @@
       :locate-world-history-message="locateWorldHistoryMessage"
       v-model:timeline-detail-dialog-visible="timelineDetailDialogVisible"
       :timeline-detail-session-id="timelineDetailSessionId"
-      v-model:goal-dialog-visible="goalDialogVisible"
-      v-model:goal-dialog-objective="goalDialogObjective"
-      :goal-dialog-loading="goalDialogLoading"
-      :goal-dialog-submitting="goalDialogSubmitting"
       v-model:world-container-picker-visible="worldContainerPickerVisible"
       :world-container-picker-loading="worldContainerPickerLoading"
       :world-container-picker-path="worldContainerPickerPath"
@@ -1621,14 +1633,13 @@
       :group-creating="groupCreating"
       :filtered-group-create-contacts="filteredGroupCreateContacts"
       :resolve-unit-label="resolveUnitLabel"
-      :submit-goal-dialog="submitGoalDialog"
       :submit-group-create="submitGroupCreate"
     />
     <MessengerTimelineDialog
       v-model:visible="timelineDialogVisible"
       :active-session-id="String(chatStore.activeSessionId || '')"
       :session-history="rightPanelSessionHistory"
-      :timeline-readonly="activeSessionOrchestrationLocked || activeSessionGoalLocked"
+      :timeline-readonly="activeSessionOrchestrationLocked"
       @activate-session="handleTimelineDialogActivateSession"
       @open-session-detail="openTimelineSessionDetail"
       @archive-session="archiveTimelineSession"
@@ -1696,7 +1707,11 @@
       :current="workerCardImportOverlayCurrent"
       :total="workerCardImportOverlayTotal"
     />
-    <CompanionFloatingLayer :desktop-mode="desktopMode" />
+    <CompanionFloatingLayer
+      :desktop-mode="desktopMode"
+      :resolve-agent-runtime-state="resolveAgentRuntimeState"
+      :open-agent-by-id="openAgentById"
+    />
   </div>
 </template>
 
@@ -1739,6 +1754,7 @@ const activeSessionApproval = controller.activeSessionApproval;
 const activeSessionOrchestrationLock = controller.activeSessionOrchestrationLock;
 const activeSessionOrchestrationLocked = controller.activeSessionOrchestrationLocked;
 const activeSessionGoalLocked = controller.activeSessionGoalLocked;
+const activeSessionGoal = controller.activeSessionGoal;
 const activeSessionRecord = controller.activeSessionRecord;
 const activeWorldConversationId = controller.activeWorldConversationId;
 const activeWorldGroupId = controller.activeWorldGroupId;
@@ -2812,6 +2828,9 @@ const submitAgentCreate = controller.submitAgentCreate;
 const submitAgentQuickCreate = controller.submitAgentQuickCreate;
 const submitGroupCreate = controller.submitGroupCreate;
 const submitGoalDialog = controller.submitGoalDialog;
+const cancelGoalComposer = controller.cancelGoalComposer;
+const agentGoalComposerVisible = controller.agentGoalComposerVisible;
+const agentGoalComposerObjective = controller.agentGoalComposerObjective;
 const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = controller.SUPPORTED_SKILL_ARCHIVE_SUFFIXES;
 const suppressMessengerPageWaitingOverlay = controller.suppressMessengerPageWaitingOverlay;
 const switchSection = controller.switchSection;
@@ -2827,8 +2846,6 @@ const TERMINAL_RUNTIME_STATUS_SET = controller.TERMINAL_RUNTIME_STATUS_SET;
 const themeStore = controller.themeStore;
 const timelineDetailDialogVisible = controller.timelineDetailDialogVisible;
 const timelineDetailSessionId = controller.timelineDetailSessionId;
-const goalDialogVisible = controller.goalDialogVisible;
-const goalDialogObjective = controller.goalDialogObjective;
 const goalDialogLoading = controller.goalDialogLoading;
 const goalDialogSubmitting = controller.goalDialogSubmitting;
 const timelineDialogVisible = controller.timelineDialogVisible;

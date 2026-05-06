@@ -485,6 +485,9 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
   ctx.goalDialogLoading = ref(false);
 
   ctx.goalDialogSubmitting = ref(false);
+  ctx.agentGoalComposerVisible = ref(false);
+  ctx.agentGoalComposerObjective = ref('');
+  ctx.agentGoalComposerRequested = ref(false);
 
   ctx.workerCardImportInputRef = ref<HTMLInputElement | null>(null);
 

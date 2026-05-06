@@ -383,28 +383,42 @@
           <template v-else>
             <div class="messenger-agent-companion-head">
               <div class="messenger-settings-label">{{ t('portal.agent.companion.dynamicLibrary') }}</div>
-              <button
-                class="messenger-settings-action ghost compact"
-                type="button"
-                :disabled="companionStore.saving"
-                @click="openPrivateCompanionImportPicker"
-              >
-                <i class="fa-solid fa-file-import" aria-hidden="true"></i>
-                <span>{{ t('companions.import') }}</span>
-              </button>
+              <div class="messenger-agent-companion-head-actions">
+                <button
+                  class="messenger-settings-action ghost compact"
+                  type="button"
+                  :disabled="companionStore.saving"
+                  @click="openPrivateCompanionImportPicker"
+                >
+                  <i class="fa-solid fa-file-import" aria-hidden="true"></i>
+                  <span>{{ t('companions.import') }}</span>
+                </button>
+                <button
+                  class="messenger-settings-action ghost compact"
+                  type="button"
+                  :disabled="!avatarDialogCompanion"
+                  @click="exportSelectedCompanion"
+                >
+                  <i class="fa-solid fa-download" aria-hidden="true"></i>
+                  <span>{{ t('companions.export') }}</span>
+                </button>
+              </div>
             </div>
             <div v-if="avatarDialogCompanionLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
             <div v-else-if="!avatarDialogCompanionOptions.length" class="messenger-list-empty">
               {{ t('portal.agent.companion.dynamicEmpty') }}
             </div>
             <div v-else class="messenger-agent-companion-list">
-              <button
+              <div
                 v-for="item in avatarDialogCompanionOptions"
                 :key="`${item.scope || 'private'}:${item.id}`"
                 class="messenger-agent-companion-option"
                 :class="{ active: isAvatarDialogCompanionSelected(item) }"
-                type="button"
+                role="button"
+                tabindex="0"
                 @click="selectAvatarDialogCompanion(item)"
+                @keydown.enter.prevent="selectAvatarDialogCompanion(item)"
+                @keydown.space.prevent="selectAvatarDialogCompanion(item)"
               >
                 <span class="messenger-agent-companion-option-preview" aria-hidden="true">
                   <CompanionSprite :source="item.spritesheetDataUrl" state="idle" fit paused />
@@ -424,27 +438,38 @@
                     {{ item.description || t('companions.noDescription') }}
                   </span>
                 </span>
-              </button>
+                <button
+                  v-if="(item.scope || 'private') === 'private'"
+                  class="messenger-agent-companion-option-remove"
+                  type="button"
+                  :title="t('common.delete')"
+                  :aria-label="t('common.delete')"
+                  @click.stop="removePrivateCompanion(item)"
+                >
+                  <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                </button>
+              </div>
             </div>
             <div class="messenger-agent-companion-control-row">
               <label class="messenger-agent-companion-display-control">
                 <span>
                   <strong>{{ t('portal.agent.companion.show') }}</strong>
-                  <small>{{ t('portal.agent.companion.showHint') }}</small>
                 </span>
                 <el-switch v-model="avatarDialogCompanionShow" />
               </label>
               <div class="messenger-agent-companion-scale-control">
-                <span class="messenger-settings-label">{{ t('companions.scale') }}</span>
-                <el-slider
-                  v-model="avatarDialogCompanionScale"
-                  class="messenger-agent-companion-scale-slider"
-                  :min="0.7"
-                  :max="1.6"
-                  :step="0.1"
-                  :show-tooltip="false"
-                />
-                <span class="messenger-settings-hint">{{ avatarDialogCompanionScale.toFixed(1) }}x</span>
+                <span class="messenger-settings-label messenger-settings-label--nowrap">{{ t('companions.scale') }}</span>
+                <div class="messenger-agent-companion-scale-inputs">
+                  <el-input-number
+                    v-model="avatarDialogCompanionScale"
+                    class="messenger-agent-companion-scale-number"
+                    :min="0.5"
+                    :max="1.6"
+                    :step="0.1"
+                    :precision="1"
+                    controls-position="right"
+                  />
+                </div>
               </div>
             </div>
             <input
@@ -527,6 +552,7 @@ import { useBeeroomStore } from '@/stores/beeroom';
 import { useCompanionStore, type CompanionPackageRecord } from '@/stores/companions';
 import {
   buildAgentToolSections,
+  filterUserAgentToolNames,
   type AgentToolGroup,
   type AgentToolSection
 } from '@/utils/agentToolCatalog';
@@ -665,6 +691,9 @@ const showApprovalModeSetting = computed(
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
+  hideAutoInjectedGoalTools: true
+});
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 const approvalModeOptions = computed(() => [
@@ -741,6 +770,7 @@ const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
 const avatarDialogCompanionScope = ref<'global' | 'private'>('global');
 const avatarDialogCompanionId = ref('');
 const avatarDialogCompanionShow = ref(true);
+const avatarDialogCompanionMessageHints = ref(true);
 const avatarDialogCompanionScale = ref(1);
 const avatarPage = ref(1);
 const privateCompanionInputRef = ref<HTMLInputElement | null>(null);
@@ -898,7 +928,7 @@ const normalizeCompanionScale = (value: unknown): number => {
   if (!Number.isFinite(numeric)) {
     return 1;
   }
-  return Math.min(1.6, Math.max(0.7, Number(numeric.toFixed(1))));
+  return Math.min(1.6, Math.max(0.5, Number(numeric.toFixed(1))));
 };
 
 const buildCurrentIconConfig = (): AgentAvatarIconConfig => {
@@ -1033,13 +1063,15 @@ const resolveAvatarPageByKey = (key: string): number => {
 };
 
 const openAvatarDialog = () => {
+  const override = companionStore.getAgentOverride(normalizedAgentId.value);
   avatarDialogKind.value = normalizeAvatarKind(form.icon_kind);
   avatarDialogIcon.value = normalizeAgentAvatarName(form.icon_name);
   avatarDialogColor.value = normalizeAgentAvatarColor(form.icon_color);
   avatarDialogCompanionScope.value = normalizeCompanionScope(form.companion_scope);
   avatarDialogCompanionId.value = String(form.companion_id || '').trim();
-  avatarDialogCompanionShow.value = form.companion_show !== false;
-  avatarDialogCompanionScale.value = normalizeCompanionScale(form.companion_scale);
+  avatarDialogCompanionShow.value = override?.show ?? (form.companion_show !== false);
+  avatarDialogCompanionMessageHints.value = form.companion_message_hints !== false;
+  avatarDialogCompanionScale.value = normalizeCompanionScale(override?.scale ?? form.companion_scale);
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
   avatarDialogVisible.value = true;
   void companionStore.hydrate().catch(() => undefined);
@@ -1057,6 +1089,7 @@ const resetAvatarDialog = () => {
   avatarDialogCompanionScope.value = 'global';
   avatarDialogCompanionId.value = '';
   avatarDialogCompanionShow.value = true;
+  avatarDialogCompanionMessageHints.value = true;
   avatarDialogCompanionScale.value = 1;
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
 };
@@ -1076,7 +1109,7 @@ const applyAvatarDialog = () => {
   form.companion_scope = normalizeCompanionScope(avatarDialogCompanionScope.value);
   form.companion_id = avatarDialogKind.value === 'companion' ? String(avatarDialogCompanionId.value || '').trim() : '';
   form.companion_show = avatarDialogCompanionShow.value !== false;
-  form.companion_message_hints = avatarDialogCompanionShow.value !== false;
+  form.companion_message_hints = avatarDialogCompanionMessageHints.value !== false;
   form.companion_scale = normalizeCompanionScale(avatarDialogCompanionScale.value);
   avatarDialogVisible.value = false;
 };
@@ -1149,6 +1182,40 @@ const handlePrivateCompanionFileChange = async (event: Event) => {
   }
 };
 
+const removePrivateCompanion = async (item: CompanionPackageRecord) => {
+  const name = String(item.displayName || item.id || '').trim();
+  try {
+    await ElMessageBox.confirm(t('companions.deleteConfirm', { name }), t('common.delete'), {
+      type: 'warning'
+    });
+  } catch {
+    return;
+  }
+  try {
+    await companionStore.removeCompanion(item.id);
+    if (isAvatarDialogCompanionSelected(item)) {
+      ensureAvatarDialogCompanionSelection();
+    }
+    companionStore.showMessage(t('companions.deleted'), { kind: 'success' });
+    ElMessage.success(t('companions.deleted'));
+  } catch (error) {
+    showApiError(error, t('common.deleteFailed'));
+  }
+};
+
+const exportSelectedCompanion = async () => {
+  const item = avatarDialogCompanion.value;
+  if (!item) {
+    return;
+  }
+  try {
+    await companionStore.exportCompanion((item.scope || 'private') === 'global' ? 'global' : 'private', item.id);
+    ElMessage.success(t('companions.export'));
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
+};
+
 const normalizeStringArrayForSnapshot = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   const unique = new Set<string>();
@@ -1168,7 +1235,9 @@ const buildFormSnapshot = (): AgentFormSnapshot => {
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
-    tool_names: normalizeStringArrayForSnapshot(form.tool_names),
+    tool_names: normalizeStringArrayForSnapshot(
+      filterUserAgentToolNames(form.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS)
+    ),
     declared_tool_names: normalizeStringArrayForSnapshot(currentAgent.value?.declared_tool_names),
     declared_skill_names: normalizeStringArrayForSnapshot(currentAgent.value?.declared_skill_names),
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
@@ -1312,7 +1381,12 @@ const resolveToolGroupDisplayOrder = (key: string): number => {
 };
 
 const toolSections = computed<ToolSection[]>(() =>
-  buildAgentToolSections(toolSummary.value, t, normalizeOption).map((section) => ({
+  buildAgentToolSections(
+    toolSummary.value,
+    t,
+    normalizeOption,
+    USER_AGENT_TOOL_CATALOG_OPTIONS
+  ).map((section) => ({
     ...section,
     groups: section.groups
       .map((group, index) => ({ group, index }))
@@ -1377,7 +1451,7 @@ const dependencyStatus = computed(() =>
 
 const ignoreMissingDependencies = (): void => {
   const payload = buildIgnoredMissingDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
-  form.tool_names = [...payload.tool_names];
+  form.tool_names = filterUserAgentToolNames(payload.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
   currentAgent.value = currentAgent.value
     ? {
         ...currentAgent.value,
@@ -1457,7 +1531,7 @@ const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
   } else {
     group.options.forEach((option) => selected.add(option.value));
   }
-  form.tool_names = Array.from(selected);
+  form.tool_names = filterUserAgentToolNames(Array.from(selected), USER_AGENT_TOOL_CATALOG_OPTIONS);
 };
 
 const loadToolSummary = async (options: { force?: boolean } = {}) => {
@@ -1519,7 +1593,7 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     form.is_shared = false;
     form.system_prompt = String(agent.system_prompt || '');
     form.model_name = resolveConfiguredModelName(currentAgent.value);
-    form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
+    form.tool_names = filterUserAgentToolNames(agent.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(
       agent.hive_id,
@@ -1581,7 +1655,10 @@ const saveAgent = async () => {
       name,
       description: String(form.description || '').trim(),
       is_shared: false,
-      tool_names: dependencyPayload.tool_names,
+      tool_names: filterUserAgentToolNames(
+        dependencyPayload.tool_names,
+        USER_AGENT_TOOL_CATALOG_OPTIONS
+      ),
       declared_tool_names: dependencyPayload.declared_tool_names,
       declared_skill_names: dependencyPayload.declared_skill_names,
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
@@ -1599,6 +1676,7 @@ const saveAgent = async () => {
     if (!payload.hive_description) delete payload.hive_description;
     const updated = await agentStore.updateAgent(normalizedAgentId.value, payload);
     currentAgent.value = (updated as Record<string, unknown> | null) || currentAgent.value;
+    companionStore.clearAgentOverride(normalizedAgentId.value);
     markFormClean();
     await beeroomStore.loadGroups().catch(() => null);
     ElMessage.success(t('portal.agent.updateSuccess'));
@@ -1620,7 +1698,10 @@ const exportWorkerCard = () => {
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
     icon: stringifyAgentAvatarIconConfig(buildCurrentIconConfig()),
-    tool_names: dependencyPayload.tool_names,
+    tool_names: filterUserAgentToolNames(
+      dependencyPayload.tool_names,
+      USER_AGENT_TOOL_CATALOG_OPTIONS
+    ),
     declared_tool_names: dependencyPayload.declared_tool_names,
     declared_skill_names: dependencyPayload.declared_skill_names,
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
@@ -1961,19 +2042,27 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.messenger-agent-companion-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .messenger-agent-companion-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 260px;
-  overflow: auto;
-  padding-right: 2px;
+  max-height: min(320px, 38vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .messenger-agent-companion-option {
   width: 100%;
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
@@ -1983,11 +2072,17 @@ onBeforeUnmount(() => {
   color: inherit;
   text-align: left;
   cursor: pointer;
+  outline: none;
 }
 
 .messenger-agent-companion-option.active {
   border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.42);
   background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.08);
+}
+
+.messenger-agent-companion-option:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.42);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb, 59, 130, 246), 0.14);
 }
 
 .messenger-agent-companion-option-preview {
@@ -2003,6 +2098,33 @@ onBeforeUnmount(() => {
 
 .messenger-agent-companion-option-preview :deep(.companion-sprite) {
   flex: 0 0 auto;
+}
+
+.messenger-agent-companion-option-remove {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(248, 113, 113, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #dc2626;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.messenger-agent-companion-option:hover .messenger-agent-companion-option-remove,
+.messenger-agent-companion-option:focus-visible .messenger-agent-companion-option-remove,
+.messenger-agent-companion-option:focus-within .messenger-agent-companion-option-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messenger-agent-companion-option-remove:hover {
+  border-color: rgba(220, 38, 38, 0.36);
+  background: rgba(254, 242, 242, 0.98);
 }
 
 .messenger-agent-companion-option-main {
@@ -2074,21 +2196,48 @@ onBeforeUnmount(() => {
   color: #0f172a;
 }
 
-.messenger-agent-companion-display-control small {
-  display: block;
-  margin-top: 2px;
-  color: #64748b;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .messenger-agent-companion-scale-control {
   min-width: 0;
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.messenger-settings-label--nowrap {
+  white-space: nowrap;
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.messenger-agent-companion-scale-inputs {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: visible;
 }
 
 .messenger-agent-companion-scale-slider {
   flex: 1 1 auto;
-  min-width: 90px;
+  min-width: 0;
+}
+
+.messenger-agent-companion-scale-number {
+  flex: 0 0 112px;
+  min-width: 112px;
+}
+
+.messenger-agent-companion-scale-number :deep(.el-input-number),
+.messenger-agent-companion-scale-number :deep(.el-input__wrapper),
+.messenger-agent-companion-scale-number :deep(.el-input),
+.messenger-agent-companion-scale-number :deep(.el-input-number__decrease),
+.messenger-agent-companion-scale-number :deep(.el-input-number__increase) {
+  max-width: 100%;
+}
+
+.messenger-agent-companion-scale-number :deep(.el-input-number) {
+  width: 100%;
 }
 
 .messenger-agent-avatar-dialog-sprite {

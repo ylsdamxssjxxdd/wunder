@@ -3,9 +3,7 @@ import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
   hasAssistantPendingQuestion,
   hasAssistantWaitingForCurrentOutput,
-  isLatestAssistantPlaceholderWaiting,
   isAssistantMessageRunning,
-  resolveAssistantMessageRuntimeState,
   normalizeAssistantMessageRuntimeState
 } from './assistantMessageRuntime';
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
@@ -111,15 +109,10 @@ const isMeaningfulConsumedTokens = (value: number | null): value is number =>
 const resolveUsageConsumedTokens = (value: unknown): number | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, any>;
-  const total = parsePositiveInteger(record.total ?? record.total_tokens ?? record.totalTokens);
-  if (total !== null) {
-    return total;
-  }
-  const input = parsePositiveInteger(record.input ?? record.input_tokens ?? record.inputTokens) ?? 0;
-  const output =
-    parsePositiveInteger(record.output ?? record.output_tokens ?? record.outputTokens) ?? 0;
-  const fallback = input + output;
-  return fallback > 0 ? fallback : null;
+  return (
+    parsePositiveInteger(record.total ?? record.total_tokens ?? record.totalTokens) ??
+    parsePositiveInteger(record.input ?? record.input_tokens ?? record.inputTokens)
+  );
 };
 
 const resolveQuotaConsumedValue = (value: unknown): number | null => {
@@ -181,12 +174,13 @@ const resolvePartialConsumedTokens = (source: Record<string, any> | null | undef
 const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
   return parsePositiveInteger(
-    stats.contextOccupancyTokens ??
+    stats.contextTokens ??
+      stats.contextOccupancyTokens ??
       stats.context_occupancy_tokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
       stats.context_usage?.context_occupancy_tokens ??
       stats.context_usage?.contextOccupancyTokens ??
-      stats.contextTokens ??
-      stats.context_tokens ??
       stats.context_usage?.context_tokens ??
       stats.context_usage?.contextTokens
   );
@@ -194,7 +188,11 @@ const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefi
 
 const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
-  return resolveExplicitContextTokens(stats);
+  return (
+    resolveUsageConsumedTokens(stats.usage) ??
+    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
+    resolveExplicitContextTokens(stats)
+  );
 };
 
 const resolveAssistantTurnConsumedTokens = (
@@ -246,9 +244,7 @@ const resolveAssistantConsumedTokens = (
     resolveRoundConsumedTokens(stats) ??
     resolveRoundConsumedTokens(message) ??
     resolvePartialConsumedTokens(stats) ??
-    resolvePartialConsumedTokens(message) ??
-    resolveUsageConsumedTokens(stats?.usage) ??
-    resolveUsageConsumedTokens(message?.usage);
+    resolvePartialConsumedTokens(message);
   const explicitConsumedTokens = aggregatedTurnConsumedTokens ?? directConsumedTokens;
   if (isMeaningfulConsumedTokens(explicitConsumedTokens)) {
     return explicitConsumedTokens;
@@ -508,6 +504,32 @@ const resolveMessageIndex = (message: MessageLike, allMessages: MessageLike[]): 
   return -1;
 };
 
+const resolveAssistantUserRound = (
+  message: MessageLike,
+  allMessages?: MessageLike[] | null
+): number | null => {
+  if (Array.isArray(allMessages) && allMessages.length > 0) {
+    const currentIndex = resolveMessageIndex(message, allMessages);
+    if (currentIndex >= 0) {
+      let userRound = 0;
+      for (let index = 0; index <= currentIndex; index += 1) {
+        if (allMessages[index]?.role === 'user') {
+          userRound += 1;
+        }
+      }
+      if (userRound > 0) {
+        return userRound;
+      }
+    }
+  }
+  return parsePositiveInteger(
+    message?.user_round ??
+      message?.userRound ??
+      message?.stream_round ??
+      message?.streamRound
+  );
+};
+
 const hasConversationCompactionRunning = (
   message: MessageLike,
   allMessages: MessageLike[] | null | undefined
@@ -533,6 +555,19 @@ const buildStatusEntry = (
   kind: 'status',
   tone,
   live,
+  iconClass
+});
+
+const buildMetricEntry = (
+  key: string,
+  label: string,
+  value: string,
+  iconClass: string
+): MessageStatsEntry => ({
+  key,
+  label,
+  value,
+  kind: 'metric',
   iconClass
 });
 
@@ -682,11 +717,14 @@ const resolveAssistantStatusEntry = (
     }
     return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
-  if (isLatestAssistantPlaceholderWaiting(message, allMessages)) {
-    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
-  }
 
-  return buildStatusEntry(t('messenger.messageStatus.done'), 'success', false, 'fa-solid fa-check');
+  const userRound = resolveAssistantUserRound(message, allMessages);
+  return buildStatusEntry(
+    userRound ? t('chat.stats.userRoundStatus', { round: userRound }) : t('messenger.messageStatus.done'),
+    'success',
+    false,
+    'fa-solid fa-hashtag'
+  );
 };
 
 export const buildAssistantMessageStatsEntries = (
@@ -704,7 +742,6 @@ export const buildAssistantMessageStatsEntries = (
   if (
     isAssistantMessageRunning(message) ||
     hasAssistantWaitingForCurrentOutput(message) ||
-    resolveAssistantMessageRuntimeState(message, allMessages) === 'running' ||
     hasActiveSubagentItems(message?.subagents)
   ) {
     return statusEntry ? [statusEntry] : [];
@@ -727,21 +764,26 @@ export const buildAssistantMessageStatsEntries = (
     entries.push(statusEntry);
   }
   entries.push(
-    { key: 'duration', label: t('chat.stats.duration'), value: formatDuration(durationSeconds), kind: 'metric' },
-    { key: 'speed', label: t('chat.stats.speed'), value: formatSpeed(speed), kind: 'metric' },
-    {
-      key: 'contextTokens',
-      label: t('chat.stats.contextTokens'),
-      value: formatCount(contextTokens),
-      kind: 'metric'
-    },
-    {
-      key: 'quota',
-      label: t('chat.stats.quota'),
-      value: formatCount(effectiveQuotaConsumedTokens),
-      kind: 'metric'
-    },
-    { key: 'toolCalls', label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls), kind: 'metric' }
+    buildMetricEntry('duration', t('chat.stats.duration'), formatDuration(durationSeconds), 'fa-solid fa-stopwatch'),
+    buildMetricEntry('speed', t('chat.stats.speed'), formatSpeed(speed), 'fa-solid fa-gauge-high'),
+    buildMetricEntry(
+      'contextTokens',
+      t('chat.stats.contextTokens'),
+      formatCount(contextTokens),
+      'fa-solid fa-layer-group'
+    ),
+    buildMetricEntry(
+      'quota',
+      t('chat.stats.quota'),
+      formatCount(effectiveQuotaConsumedTokens),
+      'fa-solid fa-coins'
+    ),
+    buildMetricEntry(
+      'toolCalls',
+      t('chat.stats.toolCalls'),
+      formatCount(stats?.toolCalls),
+      'fa-solid fa-screwdriver-wrench'
+    )
   );
   return entries;
 };
