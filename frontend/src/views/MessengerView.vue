@@ -1588,6 +1588,10 @@
       :locate-world-history-message="locateWorldHistoryMessage"
       v-model:timeline-detail-dialog-visible="timelineDetailDialogVisible"
       :timeline-detail-session-id="timelineDetailSessionId"
+      v-model:goal-dialog-visible="goalDialogVisible"
+      v-model:goal-dialog-objective="goalDialogObjective"
+      :goal-dialog-loading="goalDialogLoading"
+      :goal-dialog-submitting="goalDialogSubmitting"
       v-model:world-container-picker-visible="worldContainerPickerVisible"
       :world-container-picker-loading="worldContainerPickerLoading"
       :world-container-picker-path="worldContainerPickerPath"
@@ -1617,6 +1621,7 @@
       :group-creating="groupCreating"
       :filtered-group-create-contacts="filteredGroupCreateContacts"
       :resolve-unit-label="resolveUnitLabel"
+      :submit-goal-dialog="submitGoalDialog"
       :submit-group-create="submitGroupCreate"
     />
     <MessengerTimelineDialog
@@ -2806,6 +2811,7 @@ const streamingAgentIdSet = controller.streamingAgentIdSet;
 const submitAgentCreate = controller.submitAgentCreate;
 const submitAgentQuickCreate = controller.submitAgentQuickCreate;
 const submitGroupCreate = controller.submitGroupCreate;
+const submitGoalDialog = controller.submitGoalDialog;
 const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = controller.SUPPORTED_SKILL_ARCHIVE_SUFFIXES;
 const suppressMessengerPageWaitingOverlay = controller.suppressMessengerPageWaitingOverlay;
 const switchSection = controller.switchSection;
@@ -2821,6 +2827,10 @@ const TERMINAL_RUNTIME_STATUS_SET = controller.TERMINAL_RUNTIME_STATUS_SET;
 const themeStore = controller.themeStore;
 const timelineDetailDialogVisible = controller.timelineDetailDialogVisible;
 const timelineDetailSessionId = controller.timelineDetailSessionId;
+const goalDialogVisible = controller.goalDialogVisible;
+const goalDialogObjective = controller.goalDialogObjective;
+const goalDialogLoading = controller.goalDialogLoading;
+const goalDialogSubmitting = controller.goalDialogSubmitting;
 const timelineDialogVisible = controller.timelineDialogVisible;
 const timelinePrefetchTimer = controller.timelinePrefetchTimer;
 const timelinePreviewLoadingSet = controller.timelinePreviewLoadingSet;

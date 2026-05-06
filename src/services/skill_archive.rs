@@ -1,9 +1,9 @@
 use crate::services::archive_extract::extract_archive_bytes;
 use anyhow::{anyhow, Context, Result};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
@@ -68,6 +68,13 @@ pub struct ImportedSkillArchive {
     pub top_level_dirs: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ImportedArchiveEntry {
+    source_relative: PathBuf,
+    destination_relative: PathBuf,
+    top_level_dir: String,
+}
+
 pub fn import_skill_archive(
     filename: &str,
     data: &[u8],
@@ -78,9 +85,7 @@ pub fn import_skill_archive(
     fs::create_dir_all(&temp_root)?;
     let result = (|| -> Result<ImportedSkillArchive> {
         let _ = extract_archive_bytes(filename, data, &temp_root)?;
-        let mut extracted = 0usize;
-        let mut top_level_dirs = BTreeSet::new();
-        let mut files = Vec::new();
+        let mut discovered_files = Vec::new();
         for entry in WalkDir::new(&temp_root).into_iter().filter_map(Result::ok) {
             let path = entry.path();
             if path == temp_root {
@@ -90,19 +95,13 @@ pub fn import_skill_archive(
             if entry.file_type().is_dir() {
                 continue;
             }
-            let top_dir = uploaded_skill_archive_top_dir(&relative)?;
-            if reserved_top_dirs.contains(&top_dir) {
-                return Err(anyhow!(
-                    "skill archive conflicts with builtin skill directory"
-                ));
-            }
-            top_level_dirs.insert(top_dir);
-            files.push(relative);
-            extracted += 1;
+            discovered_files.push(relative);
         }
-        for relative in files {
-            let source = temp_root.join(&relative);
-            let destination = target_root.join(&relative);
+        let entries = normalize_imported_skill_entries(&discovered_files, reserved_top_dirs)?;
+        let mut top_level_dirs = BTreeSet::new();
+        for entry in entries {
+            let source = temp_root.join(&entry.source_relative);
+            let destination = target_root.join(&entry.destination_relative);
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -113,9 +112,10 @@ pub fn import_skill_archive(
                     destination.display()
                 )
             })?;
+            top_level_dirs.insert(entry.top_level_dir);
         }
         Ok(ImportedSkillArchive {
-            extracted,
+            extracted: discovered_files.len(),
             top_level_dirs: top_level_dirs.into_iter().collect(),
         })
     })();
@@ -123,25 +123,118 @@ pub fn import_skill_archive(
     result
 }
 
-pub fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String> {
-    let mut components = path.components();
-    let top = components
-        .next()
-        .ok_or_else(|| anyhow!("skill archive entry is empty"))?;
-    if components.next().is_none() {
+fn normalize_imported_skill_entries(
+    files: &[PathBuf],
+    reserved_top_dirs: &HashSet<String>,
+) -> Result<Vec<ImportedArchiveEntry>> {
+    let mut direct_entries = Vec::with_capacity(files.len());
+    let mut direct_top_dirs = BTreeSet::new();
+    let mut nested_groups: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
+    let mut nested_wrappers = BTreeSet::new();
+
+    for relative in files {
+        let components = normalized_path_components(relative)?;
+        if components.len() < 2 {
+            return Err(anyhow!(
+                "skill archive must contain a dedicated top-level directory"
+            ));
+        }
+        if components.len() == 2 {
+            let top_dir = components[0].clone();
+            ensure_skill_top_dir_allowed(&top_dir, reserved_top_dirs)?;
+            direct_top_dirs.insert(top_dir.clone());
+            direct_entries.push(ImportedArchiveEntry {
+                source_relative: relative.clone(),
+                destination_relative: relative.clone(),
+                top_level_dir: top_dir,
+            });
+            continue;
+        }
+
+        let wrapper = components[0].clone();
+        let nested_top_dir = components[1].clone();
+        ensure_skill_top_dir_allowed(&nested_top_dir, reserved_top_dirs)?;
+        nested_wrappers.insert(wrapper.clone());
+        let destination_relative = build_relative_path(&components[1..]);
+        nested_groups
+            .entry(wrapper)
+            .or_default()
+            .push((relative.clone(), destination_relative));
+    }
+
+    if direct_entries.is_empty() && nested_groups.len() == 1 && nested_wrappers.len() == 1 {
+        let mut output = Vec::with_capacity(files.len());
+        for (_, items) in nested_groups {
+            for (source_relative, destination_relative) in items {
+                let top_level_dir = uploaded_skill_archive_top_dir(&destination_relative)?;
+                output.push(ImportedArchiveEntry {
+                    source_relative,
+                    destination_relative,
+                    top_level_dir,
+                });
+            }
+        }
+        return Ok(output);
+    }
+
+    if !nested_groups.is_empty() {
+        return Err(anyhow!(
+            "skill archive must place files under a top-level skill directory"
+        ));
+    }
+
+    if direct_top_dirs.is_empty() {
         return Err(anyhow!(
             "skill archive must contain a dedicated top-level directory"
         ));
     }
-    match top {
-        std::path::Component::Normal(value) => {
-            let text = value.to_string_lossy().trim().to_string();
-            if text.is_empty() {
-                Err(anyhow!("skill archive top-level directory is empty"))
-            } else {
-                Ok(text)
-            }
-        }
-        _ => Err(anyhow!("skill archive top-level path is invalid")),
+
+    Ok(direct_entries)
+}
+
+fn ensure_skill_top_dir_allowed(top_dir: &str, reserved_top_dirs: &HashSet<String>) -> Result<()> {
+    if reserved_top_dirs.contains(top_dir) {
+        return Err(anyhow!(
+            "skill archive conflicts with builtin skill directory"
+        ));
     }
+    Ok(())
+}
+
+fn normalized_path_components(path: &Path) -> Result<Vec<String>> {
+    let mut output = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => {
+                let text = value.to_string_lossy().trim().to_string();
+                if text.is_empty() {
+                    return Err(anyhow!("skill archive top-level directory is empty"));
+                }
+                output.push(text);
+            }
+            _ => return Err(anyhow!("skill archive top-level path is invalid")),
+        }
+    }
+    if output.is_empty() {
+        return Err(anyhow!("skill archive entry is empty"));
+    }
+    Ok(output)
+}
+
+fn build_relative_path(components: &[String]) -> PathBuf {
+    let mut path = PathBuf::new();
+    for component in components {
+        path.push(component);
+    }
+    path
+}
+
+pub fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String> {
+    let components = normalized_path_components(path)?;
+    if components.len() < 2 {
+        return Err(anyhow!(
+            "skill archive must contain a dedicated top-level directory"
+        ));
+    }
+    Ok(components[0].clone())
 }

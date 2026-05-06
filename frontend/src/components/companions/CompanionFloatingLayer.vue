@@ -137,7 +137,7 @@ const visibleEntries = computed<FloatingEntry[]>(() =>
       const key = `${agentId}:${config.scope || 'global'}:${config.id || config.name}`;
       const scale = Number(config.scale || 1);
       const position = positions.value[key] || defaultPosition(index);
-      const message = config.messageHints === false ? null : currentMessage.value;
+      const message = currentMessage.value;
       return {
         key,
         agentId,

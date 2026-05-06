@@ -21,12 +21,12 @@ use crate::path_utils::{
 use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
 };
-use crate::services::default_agent_sync::{
-    self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
-};
 use crate::services::companions::{
     content_hash, delete_global_companion, export_global_companion, import_global_companion,
     list_global_companions, load_global_companion, update_global_companion,
+};
+use crate::services::default_agent_sync::{
+    self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
 };
 use crate::services::inner_visible::build_worker_card;
 use crate::services::preset_worker_cards;
@@ -57,7 +57,7 @@ use crate::{
     },
 };
 use anyhow::anyhow;
-use axum::extract::{Multipart, Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, HeaderValue as AxumHeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -83,6 +83,7 @@ use walkdir::WalkDir;
 
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_COMPANION_UPLOAD_BYTES: usize = 24 * 1024 * 1024;
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
 const ADMIN_MONITOR_TIMING_INFO_MS: u128 = 200;
@@ -325,7 +326,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/admin/agent_avatars", get(admin_agent_avatars_list))
         .route(
             "/wunder/admin/companions",
-            get(admin_companions_list).post(admin_companions_import),
+            get(admin_companions_list)
+                .post(admin_companions_import)
+                .layer(DefaultBodyLimit::max(MAX_COMPANION_UPLOAD_BYTES)),
         )
         .route(
             "/wunder/admin/companions/{id}",
@@ -4521,7 +4524,8 @@ async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, R
     let record = load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let icon = crate::services::worker_card_settings::normalize_icon_payload(record.icon.as_deref());
+    let icon =
+        crate::services::worker_card_settings::normalize_icon_payload(record.icon.as_deref());
     let (icon_name, icon_color) = normalize_preset_icon_parts(Some(&icon));
     Ok(json!({
         "preset_id": DEFAULT_AGENT_ID_ALIAS,
@@ -4727,8 +4731,8 @@ async fn admin_agent_avatars_list(
 async fn admin_companions_list(
     State(_state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, Response> {
-    let items =
-        list_global_companions().map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let items = list_global_companions()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({ "data": { "items": items } })))
 }
 
@@ -4736,10 +4740,13 @@ async fn admin_companion_get(
     State(_state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let Some(item) =
-        load_global_companion(&id).map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    let Some(item) = load_global_companion(&id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     else {
-        return Err(error_response(StatusCode::NOT_FOUND, "companion not found".to_string()));
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "companion not found".to_string(),
+        ));
     };
     Ok(Json(json!({ "data": item })))
 }
@@ -4772,7 +4779,9 @@ async fn admin_companions_import(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "item": item, "sha256": checksum } })))
+    Ok(Json(
+        json!({ "data": { "item": item, "sha256": checksum } }),
+    ))
 }
 
 async fn admin_companion_update(
@@ -4793,8 +4802,8 @@ async fn admin_companion_delete(
     State(_state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let deleted =
-        delete_global_companion(&id).map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let deleted = delete_global_companion(&id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({ "data": { "id": id, "deleted": deleted } })))
 }
 
@@ -4802,8 +4811,8 @@ async fn admin_companion_export(
     State(_state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Response, Response> {
-    let (filename, bytes) =
-        export_global_companion(&id).map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (filename, bytes) = export_global_companion(&id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut response = Response::new(axum::body::Body::from(bytes.clone()));
     *response.status_mut() = StatusCode::OK;
     response.headers_mut().insert(
@@ -4819,7 +4828,13 @@ async fn admin_companion_export(
         "attachment; filename=\"{}\"",
         filename
             .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' { ch } else { '_' })
+            .map(
+                |ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                    ch
+                } else {
+                    '_'
+                }
+            )
             .collect::<String>()
     );
     if let Ok(value) = AxumHeaderValue::from_str(&disposition) {

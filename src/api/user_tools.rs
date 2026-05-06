@@ -3593,7 +3593,9 @@ mod tests {
     };
     use crate::config::Config;
     use crate::core::schemas::ToolSpec;
-    use crate::services::skill_archive::uploaded_skill_archive_top_dir;
+    use crate::services::skill_archive::{
+        import_skill_archive, uploaded_skill_archive_top_dir,
+    };
     use crate::services::user_access::UserToolContext;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::{SkillRegistry, SkillSpec};
@@ -3605,6 +3607,8 @@ mod tests {
     use std::path::Path;
     use std::sync::{Arc, Mutex, OnceLock};
     use tempfile::tempdir;
+    use zip::write::FileOptions;
+    use zip::{CompressionMethod, ZipWriter};
 
     fn builtin_skills_env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -3640,6 +3644,63 @@ mod tests {
 
         let root_script = Path::new("run.py");
         assert!(uploaded_skill_archive_top_dir(root_script).is_err());
+    }
+
+    fn build_skill_archive(entries: &[(&str, &str)]) -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(cursor);
+        let options = FileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        for (path, content) in entries {
+            writer
+                .start_file(path.replace('\\', "/"), options)
+                .expect("start archive file");
+            std::io::Write::write_all(&mut writer, content.as_bytes()).expect("write archive file");
+        }
+        writer.finish().expect("finish archive").into_inner()
+    }
+
+    #[test]
+    fn import_skill_archive_accepts_single_wrapper_directory() {
+        let dir = tempdir().expect("tempdir");
+        let archive = build_skill_archive(&[
+            (
+                "package-root/demo-skill/SKILL.md",
+                "---\nname: demo-skill\ndescription: demo\n---\n",
+            ),
+            ("package-root/demo-skill/run.py", "print('ok')\n"),
+        ]);
+        let imported =
+            import_skill_archive("demo-skill.zip", &archive, dir.path(), &HashSet::new())
+                .expect("import wrapped archive");
+
+        assert_eq!(imported.extracted, 2);
+        assert_eq!(imported.top_level_dirs, vec!["demo-skill".to_string()]);
+        assert!(dir.path().join("demo-skill").join("SKILL.md").is_file());
+        assert!(dir.path().join("demo-skill").join("run.py").is_file());
+        assert!(!dir.path().join("package-root").exists());
+    }
+
+    #[test]
+    fn import_skill_archive_rejects_mixed_wrapped_and_direct_layouts() {
+        let dir = tempdir().expect("tempdir");
+        let archive = build_skill_archive(&[
+            (
+                "package-root/demo-skill/SKILL.md",
+                "---\nname: demo-skill\ndescription: demo\n---\n",
+            ),
+            (
+                "other-skill/SKILL.md",
+                "---\nname: other-skill\ndescription: demo\n---\n",
+            ),
+        ]);
+        let err = import_skill_archive("mixed.zip", &archive, dir.path(), &HashSet::new())
+            .expect_err("mixed archive should be rejected");
+
+        assert!(err
+            .to_string()
+            .contains("top-level skill directory"));
     }
 
     #[test]

@@ -149,9 +149,16 @@ export const useAgentStore = defineStore('agents', {
     },
 
     async updateAgent(id, payload) {
+      const key = String(id || '').trim();
       const { data } = await updateAgentApi(id, payload);
       const agent = data?.data;
+      if (key && agent) {
+        this.agentMap = { ...this.agentMap, [key]: agent };
+      }
       await this.loadAgents();
+      if (key && agent) {
+        this.agentMap = { ...this.agentMap, [key]: agent };
+      }
       return agent;
     },
 

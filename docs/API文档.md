@@ -175,10 +175,9 @@
 
 - 目标态绑定 `session_id`，当前每个会话最多保留一个目标；目标状态包括 `active / paused / budget_limited / complete`，与线程运行态分离。
 - 用户侧 `/goal` 命令已支持：
-  - `/goal`：查看当前目标
-  - `/goal <objective>`：创建或替换当前目标并进入 `active`
-  - `/goal --tokens <n> <objective>`：创建目标并设置可选 token 预算
-- 网页端 Messenger 进入目标态后只保留 `/goal` 查看与 `/goal <objective>` 创建/替换；退出统一通过聊天页终止按钮完成，终止会调用会话 cancel 并清除目标。
+  - 网页端 Messenger：`/goal` 打开目标编辑器并预填当前目标；`/goal <objective>` 打开目标编辑器并预填传入目标，用户点击开始后才创建或替换目标并进入 `active`。
+  - CLI / TUI：`/goal` 查看当前目标，`/goal <objective>` 创建或替换当前目标并进入 `active`，`/goal --tokens <n> <objective>` 可设置可选 token 预算。
+- 网页端 Messenger 不再由 `/goal` 直接触发智能体动作；退出统一通过聊天页终止按钮完成，终止会调用会话 cancel 并清除目标。
 - 模型侧暴露 `get_goal / create_goal / update_goal` 三个内置工具；`update_goal` 只允许 `status=complete`，模型不能暂停、恢复或清除目标。
 - 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，并锁定当前会话，只允许通过聊天页终止按钮退出目标态。
 - `GET /wunder/chat/sessions/{session_id}/events` 返回 `data.goal` 目标快照，便于 watch / resume / reload 恢复。
@@ -380,7 +379,7 @@
 #### `GET /wunder/companions/global`
 
 - 方法：`GET`
-- 鉴权：用户端 Bearer Token；`user_id` 可省略，服务端默认按当前登录用户解析。
+- 鉴权：无。该接口只读返回管理员发布的全局形象资源，供登录前后用户侧形象选择器与预设智能体预览复用。
 - 返回（JSON）：`data.items[]`
   - `id`：全局形象 ID
   - `display_name`：显示名称
@@ -393,13 +392,13 @@
 #### `GET /wunder/companions/global/{id}`
 
 - 方法：`GET`
-- 鉴权：用户端 Bearer Token。
+- 鉴权：无。
 - 返回（JSON）：`data` 为单个全局形象记录；不存在时返回 `404`。
 
 #### `GET /wunder/companions/global/{id}/package`
 
 - 方法：`GET`
-- 鉴权：用户端 Bearer Token。
+- 鉴权：无。
 - 返回：`application/zip` 标准形象包，用于需要复用全局形象包的客户端下载。
 
 #### `GET /wunder/admin/preset_agents`

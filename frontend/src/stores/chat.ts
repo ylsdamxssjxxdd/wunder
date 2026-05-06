@@ -45,7 +45,6 @@ import {
   normalizeSubagentRuntimeStatus
 } from '@/utils/subagentRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
-import { estimateChatTextTokens, estimateRequestContextTokens } from '@/utils/chatContextEstimate';
 import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
@@ -205,7 +204,6 @@ type WorkflowProcessorOptions = {
 
 type UsageStatsOptions = {
   updateUsage?: boolean;
-  updateContextFromUsage?: boolean;
   round?: number | null;
   accumulateDurations?: boolean;
   includeInRoundAverage?: boolean;
@@ -765,16 +763,34 @@ const resolveExplicitContextTokens = (source) => {
       ? record.contextUsage
       : null;
   return normalizeContextTokens(
-    record.contextTokens ??
-      record.contextOccupancyTokens ??
+    record.contextOccupancyTokens ??
       record.context_occupancy_tokens ??
-      record.context_tokens ??
-      record.context_tokens_total ??
-      directContextUsage ??
       contextUsage?.context_occupancy_tokens ??
       contextUsage?.contextOccupancyTokens ??
+      record.contextTokens ??
+      record.context_tokens ??
+      directContextUsage ??
       contextUsage?.context_tokens ??
       contextUsage?.contextTokens
+  );
+};
+
+const resolveExplicitContextTotalTokens = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  const contextUsage = resolveContextUsageRecord(record);
+  return normalizeContextTotalTokens(
+    record.contextTotalTokens ??
+      record.context_total_tokens ??
+      record.context_max_tokens ??
+      record.context_window ??
+      record.max_context ??
+      record.maxContext ??
+      record.contextUsageTotal ??
+      contextUsage?.max_context ??
+      contextUsage?.maxContext ??
+      contextUsage?.context_max_tokens ??
+      contextUsage?.contextMaxTokens
   );
 };
 
@@ -1156,19 +1172,6 @@ const normalizeUsagePayload = (payload) => {
   } satisfies NormalizedUsagePayload;
 };
 
-const resolveUsageContextTokens = (usage: NormalizedUsagePayload | null): number | null => {
-  if (!usage) return null;
-  if (Number.isFinite(usage.total) && usage.total > 0) {
-    return usage.total;
-  }
-  if (Number.isFinite(usage.input) && usage.input > 0) {
-    return usage.input;
-  }
-  return null;
-};
-
-const estimateStreamOutputTokens = estimateChatTextTokens;
-
 const normalizeMessageStats = (stats) => {
   if (!stats || typeof stats !== 'object') {
     return null;
@@ -1182,17 +1185,7 @@ const normalizeMessageStats = (stats) => {
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
   const contextTokens = explicitContextTokens;
-  const contextTotalTokens = normalizeContextTotalTokens(
-    stats.contextTotalTokens ??
-      stats.context_total_tokens ??
-      stats.context_max_tokens ??
-      stats.context_window ??
-      stats.max_context ??
-      stats.maxContext ??
-      stats.contextUsageTotal ??
-      stats.context_usage?.max_context ??
-      stats.context_usage?.context_max_tokens
-  );
+  const contextTotalTokens = resolveExplicitContextTotalTokens(stats);
   const interactionStartMs = normalizeInteractionTimestamp(
     stats.interaction_start_ms ?? stats.interactionStartMs ?? stats.interaction_start ?? stats.started_at
   );
@@ -1707,6 +1700,42 @@ const syncGoalsFromSessionList = (store, sessions) => {
   });
 };
 
+const normalizeSessionRuntimeNumber = (value): number | null => {
+  const parsed = parseOptionalCount(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+};
+
+const applySessionContextRuntimeAliases = (session: Record<string, unknown>): Record<string, unknown> => {
+  const contextUsage = resolveContextUsageRecord(session);
+  const contextTokens = normalizeSessionRuntimeNumber(
+    session.contextOccupancyTokens ??
+      session.context_occupancy_tokens ??
+      contextUsage?.context_occupancy_tokens ??
+      contextUsage?.contextOccupancyTokens ??
+      session.contextTokens ??
+      session.context_tokens ??
+      contextUsage?.context_tokens ??
+      contextUsage?.contextTokens
+  );
+  const contextTotalTokens = resolveExplicitContextTotalTokens(session);
+  if (contextTokens === null && contextTotalTokens === null) {
+    return session;
+  }
+  const next = { ...session };
+  if (contextTokens !== null) {
+    next.context_tokens = contextTokens;
+    next.context_occupancy_tokens = contextTokens;
+    next.contextTokens = contextTokens;
+    next.contextOccupancyTokens = contextTokens;
+  }
+  if (contextTotalTokens !== null) {
+    next.context_max_tokens = contextTotalTokens;
+    next.context_total_tokens = contextTotalTokens;
+    next.contextTotalTokens = contextTotalTokens;
+  }
+  return next;
+};
+
 const applyGoalStreamEvent = (store, sessionId, eventType, payload): boolean => {
   const normalizedEventType = String(eventType || '').trim();
   if (
@@ -1733,7 +1762,12 @@ const patchSessionRuntimeFields = (session) => {
   if (!session || typeof session !== 'object') {
     return session;
   }
-  let next: Record<string, unknown> | null = null;
+  let next: Record<string, unknown> | null = applySessionContextRuntimeAliases(
+    session as Record<string, unknown>
+  );
+  if (next === session) {
+    next = null;
+  }
   const normalizedLock = normalizeSessionOrchestrationLock(
     (session as Record<string, unknown>).orchestration_lock
   );
@@ -5252,10 +5286,12 @@ const resolveSessionContextTokens = (store, sessionId) => {
   const session = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
   if (!session || typeof session !== 'object') return null;
   return normalizeContextTokens(
-    session.contextTokens ??
-      session.context_tokens ??
-      session.contextOccupancyTokens ??
+    session.contextOccupancyTokens ??
       session.context_occupancy_tokens ??
+      session.context_usage?.context_occupancy_tokens ??
+      session.context_usage?.contextOccupancyTokens ??
+      session.contextTokens ??
+      session.context_tokens ??
       session.context_usage?.context_tokens ??
       session.context_usage?.contextTokens
   );
@@ -5273,7 +5309,16 @@ const syncSessionContextTokens = (store, sessionId, contextTokens, contextTotalT
   const next = {
     ...current,
     context_tokens: normalized,
-    ...(normalizedTotal !== null ? { context_max_tokens: normalizedTotal } : {})
+    context_occupancy_tokens: normalized,
+    contextTokens: normalized,
+    contextOccupancyTokens: normalized,
+    ...(normalizedTotal !== null
+      ? {
+          context_max_tokens: normalizedTotal,
+          context_total_tokens: normalizedTotal,
+          contextTotalTokens: normalizedTotal
+        }
+      : {})
   };
   store.sessions[index] = next;
   const agentId = String(next.agent_id || '').trim();
@@ -7816,20 +7861,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     const shouldUpdateUsage = Boolean(normalizedUsage && usageOptions.updateUsage !== false);
-    const shouldUpdateContextFromUsage = usageOptions.updateContextFromUsage === true;
-    const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
     const existingContextTokens = normalizeContextTokens(stats.contextTokens);
     if (shouldUpdateUsage) {
       stats.usage = normalizedUsage;
     }
-    if (shouldUpdateContextFromUsage && usageContextTokens !== null) {
-      const changed = existingContextTokens !== usageContextTokens;
-      stats.contextTokens = usageContextTokens;
-      contextEstimateBaseTokens = usageContextTokens;
-      if (changed) {
-        options.onContextUsage?.(usageContextTokens, stats.contextTotalTokens ?? null);
-      }
-    } else if (existingContextTokens !== null && existingContextTokens > 0) {
+    if (existingContextTokens !== null && existingContextTokens > 0) {
       contextEstimateBaseTokens = existingContextTokens;
     }
     const prefill = normalizeDurationValue(prefillDuration);
@@ -7904,7 +7940,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   const updateLiveContextUsageFromRequest = (requestPayload) => {
-    syncLiveContextTokens(estimateRequestContextTokens(requestPayload));
+    updateLiveContextUsageFromTokenUsage(null, requestPayload);
   };
 
   const updateRoundUsageStats = (usagePayload) => {
@@ -9042,23 +9078,6 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       assistantMessage.content = outputContent;
       outputState.streaming = true;
     }
-    if (hasContentDelta && stats) {
-      const baseTokens =
-        normalizeContextTokens(contextEstimateBaseTokens) ??
-        normalizeContextTokens(stats.contextTokens);
-      if (baseTokens !== null && baseTokens > 0) {
-        const estimatedOutputTokens = estimateStreamOutputTokens(outputContent);
-        if (estimatedOutputTokens > 0) {
-          const estimatedTotal = baseTokens + estimatedOutputTokens;
-          const currentTokens = normalizeContextTokens(stats.contextTokens);
-          if (currentTokens === null || estimatedTotal > currentTokens) {
-            stats.contextTokens = estimatedTotal;
-            options.onContextUsage?.(estimatedTotal, stats.contextTotalTokens ?? null);
-            notifySnapshot(true);
-          }
-        }
-      }
-    }
     syncReasoningToMessage();
     if (hasContentDelta || hasReasoningDelta) {
       markAssistantWaitingOutputVisible(assistantMessage);
@@ -9996,7 +10015,6 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             round,
             accumulateDurations: true,
             includeInRoundAverage: true,
-            updateContextFromUsage: false
           }
         );
         if (round !== null) {
@@ -10089,8 +10107,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           {
             round,
             updateUsage: true,
-            includeInRoundAverage: true,
-            updateContextFromUsage: false
+            includeInRoundAverage: true
           }
         );
         updateLiveContextUsageFromTokenUsage(usagePayload, data ?? payload ?? {});
@@ -10108,7 +10125,6 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           {
             round,
             updateUsage: !stats?.usage,
-            updateContextFromUsage: false,
             includeInRoundAverage: false
           }
         );
@@ -10428,9 +10444,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     syncReasoningToMessage();
-    const finalContextTokens =
-      resolveUsageContextTokens(normalizeUsagePayload(stats?.usage)) ??
-      resolveUsageContextTokens(normalizeUsagePayload(stats?.roundUsage));
+    const finalContextTokens = resolveExplicitContextTokens(stats);
     if (finalContextTokens !== null) {
       options.onContextUsage?.(finalContextTokens, stats?.contextTotalTokens ?? null);
     }

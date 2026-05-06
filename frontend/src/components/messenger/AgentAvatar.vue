@@ -7,6 +7,7 @@
         :source="companionSpriteUrl"
         state="idle"
         :scale="companionSpriteScale"
+        fit
         paused
       />
       <img v-else-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
@@ -66,10 +67,7 @@ const companionRecord = computed(() =>
     : null
 );
 const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || '');
-const companionSpriteScale = computed(() => {
-  const size = Number(String(props.size || 'md') === 'lg' ? 0.18 : String(props.size || 'md') === 'sm' ? 0.16 : 0.17);
-  return size;
-});
+const companionSpriteScale = computed(() => 1);
 const avatarImageUrl = computed(
   () =>
     String(props.imageUrl || '').trim() ||
@@ -150,7 +148,7 @@ const statusIconClass = computed(() => {
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -49%);
+  transform: translate(-50%, -50%);
 }
 
 .messenger-agent-avatar-initial {

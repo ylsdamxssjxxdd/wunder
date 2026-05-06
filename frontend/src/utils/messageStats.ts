@@ -3,7 +3,9 @@ import { resolveAssistantFailureNotice } from './assistantFailureNotice';
 import {
   hasAssistantPendingQuestion,
   hasAssistantWaitingForCurrentOutput,
+  isLatestAssistantPlaceholderWaiting,
   isAssistantMessageRunning,
+  resolveAssistantMessageRuntimeState,
   normalizeAssistantMessageRuntimeState
 } from './assistantMessageRuntime';
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
@@ -109,10 +111,15 @@ const isMeaningfulConsumedTokens = (value: number | null): value is number =>
 const resolveUsageConsumedTokens = (value: unknown): number | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, any>;
-  return (
-    parsePositiveInteger(record.total ?? record.total_tokens ?? record.totalTokens) ??
-    parsePositiveInteger(record.input ?? record.input_tokens ?? record.inputTokens)
-  );
+  const total = parsePositiveInteger(record.total ?? record.total_tokens ?? record.totalTokens);
+  if (total !== null) {
+    return total;
+  }
+  const input = parsePositiveInteger(record.input ?? record.input_tokens ?? record.inputTokens) ?? 0;
+  const output =
+    parsePositiveInteger(record.output ?? record.output_tokens ?? record.outputTokens) ?? 0;
+  const fallback = input + output;
+  return fallback > 0 ? fallback : null;
 };
 
 const resolveQuotaConsumedValue = (value: unknown): number | null => {
@@ -174,11 +181,12 @@ const resolvePartialConsumedTokens = (source: Record<string, any> | null | undef
 const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
   return parsePositiveInteger(
-    stats.contextTokens ??
-      stats.contextOccupancyTokens ??
+    stats.contextOccupancyTokens ??
       stats.context_occupancy_tokens ??
+      stats.context_usage?.context_occupancy_tokens ??
+      stats.context_usage?.contextOccupancyTokens ??
+      stats.contextTokens ??
       stats.context_tokens ??
-      stats.context_tokens_total ??
       stats.context_usage?.context_tokens ??
       stats.context_usage?.contextTokens
   );
@@ -186,11 +194,7 @@ const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefi
 
 const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
-  return (
-    resolveUsageConsumedTokens(stats.usage) ??
-    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
-    resolveExplicitContextTokens(stats)
-  );
+  return resolveExplicitContextTokens(stats);
 };
 
 const resolveAssistantTurnConsumedTokens = (
@@ -242,7 +246,9 @@ const resolveAssistantConsumedTokens = (
     resolveRoundConsumedTokens(stats) ??
     resolveRoundConsumedTokens(message) ??
     resolvePartialConsumedTokens(stats) ??
-    resolvePartialConsumedTokens(message);
+    resolvePartialConsumedTokens(message) ??
+    resolveUsageConsumedTokens(stats?.usage) ??
+    resolveUsageConsumedTokens(message?.usage);
   const explicitConsumedTokens = aggregatedTurnConsumedTokens ?? directConsumedTokens;
   if (isMeaningfulConsumedTokens(explicitConsumedTokens)) {
     return explicitConsumedTokens;
@@ -676,6 +682,9 @@ const resolveAssistantStatusEntry = (
     }
     return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
+  if (isLatestAssistantPlaceholderWaiting(message, allMessages)) {
+    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
+  }
 
   return buildStatusEntry(t('messenger.messageStatus.done'), 'success', false, 'fa-solid fa-check');
 };
@@ -695,6 +704,7 @@ export const buildAssistantMessageStatsEntries = (
   if (
     isAssistantMessageRunning(message) ||
     hasAssistantWaitingForCurrentOutput(message) ||
+    resolveAssistantMessageRuntimeState(message, allMessages) === 'running' ||
     hasActiveSubagentItems(message?.subagents)
   ) {
     return statusEntry ? [statusEntry] : [];

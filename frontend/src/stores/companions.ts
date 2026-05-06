@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 
-import { resolveApiBase } from '@/config/runtime';
+import api from '@/api/http';
 import {
   buildCompanionPackageBlob,
   buildCompanionPackageFilename,
@@ -110,7 +110,8 @@ const normalizeRecord = (value: unknown): CompanionPackageRecord | null => {
     spritesheetDataUrl,
     spritesheetMime: String(source.spritesheetMime || 'image/webp').trim(),
     importedAt: Math.max(0, normalizeNumber(source.importedAt, Date.now())),
-    updatedAt: Math.max(0, normalizeNumber(source.updatedAt, Date.now()))
+    updatedAt: Math.max(0, normalizeNumber(source.updatedAt, Date.now())),
+    scope: 'private'
   };
 };
 
@@ -219,14 +220,12 @@ const normalizeGlobalRecord = (value: unknown): CompanionPackageRecord | null =>
 };
 
 const requestGlobalCompanions = async (): Promise<CompanionPackageRecord[]> => {
-  const base = resolveApiBase().replace(/\/+$/, '') || '/wunder';
-  const response = await fetch(`${base}/companions/global`, { cache: 'no-store' });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message =
-      payload?.error?.message || payload?.detail?.message || payload?.detail || payload?.message || String(response.status);
-    throw new Error(message);
-  }
+  const response = await api.get('/companions/global', {
+    headers: {
+      'Cache-Control': 'no-store'
+    }
+  });
+  const payload = response.data || {};
   const items = Array.isArray(payload?.data?.items) ? payload.data.items : [];
   return items
     .map((item: unknown) => normalizeGlobalRecord(item))

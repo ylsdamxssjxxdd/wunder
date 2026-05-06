@@ -874,17 +874,14 @@ watch(
       return;
     }
     if (switchedAssistant) {
-      const currentUsed = composerContextUsedTokensStable.value;
       const currentTotal = composerContextTotalTokensStable.value;
       const runningRaw = normalizePositiveTokenCount(
         composerContextUsageSource.value.runningContextTokens
       );
-      composerContextAssistantBaseTokens.value = currentUsed;
+      composerContextAssistantBaseTokens.value = rawUsed;
       composerContextAssistantRawBaseTokens.value = runningRaw;
       composerContextAssistantLastRawTokens.value = runningRaw;
-      const nextUsed =
-        rawUsed === null ? currentUsed : currentUsed === null ? rawUsed : Math.max(currentUsed, rawUsed);
-      composerContextUsedTokensStable.value = nextUsed;
+      composerContextUsedTokensStable.value = rawUsed;
       composerContextTotalTokensStable.value =
         rawTotal === null ? currentTotal : currentTotal === null ? rawTotal : Math.max(currentTotal, rawTotal);
       return;
@@ -911,8 +908,7 @@ watch(
         composerContextUsedTokensStable.value = next.stableTokens;
         return;
       }
-      composerContextUsedTokensStable.value =
-        current === null ? rawUsed : Math.max(current, rawUsed);
+      composerContextUsedTokensStable.value = rawUsed;
     }
     if (rawTotal !== null) {
       const current = composerContextTotalTokensStable.value;

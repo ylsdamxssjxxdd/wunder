@@ -20,6 +20,16 @@
     @update:visible="updateTimelineDetailDialogVisible"
   />
 
+  <MessengerGoalDialog
+    :visible="goalDialogVisible"
+    :objective="goalDialogObjective"
+    :loading="goalDialogLoading"
+    :submitting="goalDialogSubmitting"
+    @update:visible="updateGoalDialogVisible"
+    @update:objective="updateGoalDialogObjective"
+    @start="submitGoalDialog"
+  />
+
   <el-dialog
     :model-value="worldContainerPickerVisible"
     class="messenger-dialog messenger-world-file-picker-dialog"
@@ -138,6 +148,7 @@
 import { useI18n } from '@/i18n';
 import {
   MessengerGroupCreateDialog,
+  MessengerGoalDialog,
   MessengerImagePreviewDialog,
   MessengerPromptPreviewDialog,
   MessengerTimelineDetailDialog,
@@ -164,6 +175,10 @@ const {
   locateWorldHistoryMessage,
   timelineDetailDialogVisible,
   timelineDetailSessionId,
+  goalDialogVisible,
+  goalDialogObjective,
+  goalDialogLoading,
+  goalDialogSubmitting,
   worldContainerPickerVisible,
   worldContainerPickerLoading,
   worldContainerPickerPath,
@@ -193,6 +208,7 @@ const {
   groupCreating,
   filteredGroupCreateContacts,
   resolveUnitLabel,
+  submitGoalDialog,
   submitGroupCreate
 } = defineProps<{
   worldHistoryDialogVisible: boolean;
@@ -205,6 +221,10 @@ const {
   locateWorldHistoryMessage: (record: WorldHistoryRecord) => void | Promise<void>;
   timelineDetailDialogVisible: boolean;
   timelineDetailSessionId: string;
+  goalDialogVisible: boolean;
+  goalDialogObjective: string;
+  goalDialogLoading: boolean;
+  goalDialogSubmitting: boolean;
   worldContainerPickerVisible: boolean;
   worldContainerPickerLoading: boolean;
   worldContainerPickerPath: string;
@@ -234,6 +254,7 @@ const {
   groupCreating: boolean;
   filteredGroupCreateContacts: unknown[];
   resolveUnitLabel: (unitId: unknown) => string;
+  submitGoalDialog: () => void | Promise<void>;
   submitGroupCreate: () => void | Promise<void>;
 }>();
 
@@ -243,6 +264,8 @@ const emit = defineEmits<{
   (event: 'update:worldHistoryActiveTab', value: WorldHistoryCategory): void;
   (event: 'update:worldHistoryDateRange', value: [string, string] | []): void;
   (event: 'update:timelineDetailDialogVisible', value: boolean): void;
+  (event: 'update:goalDialogVisible', value: boolean): void;
+  (event: 'update:goalDialogObjective', value: string): void;
   (event: 'update:worldContainerPickerVisible', value: boolean): void;
   (event: 'update:worldContainerPickerKeyword', value: string): void;
   (event: 'update:agentPromptPreviewVisible', value: boolean): void;
@@ -270,6 +293,14 @@ const updateWorldHistoryDateRange = (value: [string, string] | []) => {
 
 const updateTimelineDetailDialogVisible = (value: boolean) => {
   emit('update:timelineDetailDialogVisible', value);
+};
+
+const updateGoalDialogVisible = (value: boolean) => {
+  emit('update:goalDialogVisible', value);
+};
+
+const updateGoalDialogObjective = (value: string) => {
+  emit('update:goalDialogObjective', value);
 };
 
 const updateWorldContainerPickerVisible = (value: boolean) => {

@@ -35,7 +35,7 @@
                   class="messenger-agent-avatar-trigger-sprite"
                   :source="formCompanionRecord.spritesheetDataUrl"
                   state="idle"
-                  :scale="0.13"
+                  fit
                   paused
                 />
                 <img
@@ -287,7 +287,8 @@
                 class="messenger-agent-avatar-dialog-sprite"
                 :source="avatarDialogCompanion.spritesheetDataUrl"
                 state="idle"
-                :scale="0.24"
+                :scale="avatarDialogCompanionScale"
+                fit
                 paused
               />
               <img
@@ -307,25 +308,17 @@
               class="messenger-agent-avatar-mode-tab"
               :class="{ active: avatarDialogKind === 'static' }"
               type="button"
-              @click="avatarDialogKind = 'static'"
+              @click="setAvatarDialogKind('static')"
             >
               {{ t('portal.agent.companion.staticTab') }}
             </button>
             <button
               class="messenger-agent-avatar-mode-tab"
-              :class="{ active: avatarDialogKind === 'companion' && avatarDialogCompanionScope === 'global' }"
+              :class="{ active: avatarDialogKind === 'companion' }"
               type="button"
-              @click="setAvatarDialogCompanionScope('global')"
+              @click="setAvatarDialogKind('companion')"
             >
-              {{ t('portal.agent.companion.globalTab') }}
-            </button>
-            <button
-              class="messenger-agent-avatar-mode-tab"
-              :class="{ active: avatarDialogKind === 'companion' && avatarDialogCompanionScope === 'private' }"
-              type="button"
-              @click="setAvatarDialogCompanionScope('private')"
-            >
-              {{ t('portal.agent.companion.privateTab') }}
+              {{ t('portal.agent.companion.dynamicTab') }}
             </button>
           </div>
 
@@ -389,15 +382,8 @@
 
           <template v-else>
             <div class="messenger-agent-companion-head">
-              <div class="messenger-settings-label">
-                {{
-                  avatarDialogCompanionScope === 'global'
-                    ? t('portal.agent.companion.globalLibrary')
-                    : t('portal.agent.companion.privateLibrary')
-                }}
-              </div>
+              <div class="messenger-settings-label">{{ t('portal.agent.companion.dynamicLibrary') }}</div>
               <button
-                v-if="avatarDialogCompanionScope === 'private'"
                 class="messenger-settings-action ghost compact"
                 type="button"
                 :disabled="companionStore.saving"
@@ -409,58 +395,57 @@
             </div>
             <div v-if="avatarDialogCompanionLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
             <div v-else-if="!avatarDialogCompanionOptions.length" class="messenger-list-empty">
-              {{
-                avatarDialogCompanionScope === 'global'
-                  ? t('portal.agent.companion.globalEmpty')
-                  : t('portal.agent.companion.privateEmpty')
-              }}
+              {{ t('portal.agent.companion.dynamicEmpty') }}
             </div>
             <div v-else class="messenger-agent-companion-list">
               <button
                 v-for="item in avatarDialogCompanionOptions"
-                :key="`${item.scope || avatarDialogCompanionScope}:${item.id}`"
+                :key="`${item.scope || 'private'}:${item.id}`"
                 class="messenger-agent-companion-option"
-                :class="{ active: avatarDialogCompanionId === item.id }"
+                :class="{ active: isAvatarDialogCompanionSelected(item) }"
                 type="button"
-                @click="avatarDialogCompanionId = item.id"
+                @click="selectAvatarDialogCompanion(item)"
               >
                 <span class="messenger-agent-companion-option-preview" aria-hidden="true">
-                  <CompanionSprite :source="item.spritesheetDataUrl" state="idle" :scale="0.14" paused />
+                  <CompanionSprite :source="item.spritesheetDataUrl" state="idle" fit paused />
                 </span>
                 <span class="messenger-agent-companion-option-main">
-                  <span class="messenger-agent-companion-option-name">{{ item.displayName }}</span>
+                  <span class="messenger-agent-companion-option-title">
+                    <span class="messenger-agent-companion-option-name">{{ item.displayName }}</span>
+                    <span class="messenger-agent-companion-option-scope">
+                      {{
+                        (item.scope || 'private') === 'global'
+                          ? t('portal.agent.companion.sourceGlobal')
+                          : t('portal.agent.companion.sourcePrivate')
+                      }}
+                    </span>
+                  </span>
                   <span class="messenger-agent-companion-option-desc">
                     {{ item.description || t('companions.noDescription') }}
                   </span>
                 </span>
               </button>
             </div>
-            <div class="messenger-agent-companion-switches">
-              <label class="messenger-agent-companion-switch-row">
+            <div class="messenger-agent-companion-control-row">
+              <label class="messenger-agent-companion-display-control">
                 <span>
                   <strong>{{ t('portal.agent.companion.show') }}</strong>
                   <small>{{ t('portal.agent.companion.showHint') }}</small>
                 </span>
                 <el-switch v-model="avatarDialogCompanionShow" />
               </label>
-              <label class="messenger-agent-companion-switch-row">
-                <span>
-                  <strong>{{ t('portal.agent.companion.messageHints') }}</strong>
-                  <small>{{ t('portal.agent.companion.messageHintsHint') }}</small>
-                </span>
-                <el-switch v-model="avatarDialogCompanionMessageHints" />
-              </label>
-            </div>
-            <div class="messenger-settings-row messenger-settings-row--compact">
-              <div class="messenger-settings-label">{{ t('companions.scale') }}</div>
-              <el-slider
-                v-model="avatarDialogCompanionScale"
-                :min="0.7"
-                :max="1.6"
-                :step="0.1"
-                :show-tooltip="false"
-              />
-              <span class="messenger-settings-hint">{{ avatarDialogCompanionScale.toFixed(1) }}x</span>
+              <div class="messenger-agent-companion-scale-control">
+                <span class="messenger-settings-label">{{ t('companions.scale') }}</span>
+                <el-slider
+                  v-model="avatarDialogCompanionScale"
+                  class="messenger-agent-companion-scale-slider"
+                  :min="0.7"
+                  :max="1.6"
+                  :step="0.1"
+                  :show-tooltip="false"
+                />
+                <span class="messenger-settings-hint">{{ avatarDialogCompanionScale.toFixed(1) }}x</span>
+              </div>
             </div>
             <input
               ref="privateCompanionInputRef"
@@ -756,7 +741,6 @@ const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
 const avatarDialogCompanionScope = ref<'global' | 'private'>('global');
 const avatarDialogCompanionId = ref('');
 const avatarDialogCompanionShow = ref(true);
-const avatarDialogCompanionMessageHints = ref(true);
 const avatarDialogCompanionScale = ref(1);
 const avatarPage = ref(1);
 const privateCompanionInputRef = ref<HTMLInputElement | null>(null);
@@ -976,19 +960,26 @@ const formCompanionRecord = computed(() =>
     ? companionStore.findCompanion(form.companion_scope, form.companion_id)
     : null
 );
-const avatarDialogCompanionOptions = computed<CompanionPackageRecord[]>(() =>
-  (avatarDialogCompanionScope.value === 'global'
-    ? companionStore.globalCompanions
-    : companionStore.companions
-  ).filter((item) => Boolean(item))
-);
+const avatarDialogCompanionOptions = computed<CompanionPackageRecord[]>(() => {
+  const seen = new Set<string>();
+  return [...companionStore.globalCompanions, ...companionStore.companions]
+    .filter((item) => Boolean(item))
+    .filter((item) => {
+      const key = `${item.scope || 'private'}:${item.id}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+});
 const avatarDialogCompanion = computed(() =>
   avatarDialogKind.value === 'companion'
-    ? avatarDialogCompanionOptions.value.find((item) => item.id === avatarDialogCompanionId.value) || null
+    ? avatarDialogCompanionOptions.value.find((item) => isAvatarDialogCompanionSelected(item)) || null
     : null
 );
 const avatarDialogCompanionLoading = computed(() =>
-  companionStore.loading || (avatarDialogCompanionScope.value === 'global' && !companionStore.globalCompanions.length && !companionStore.hydrated)
+  companionStore.loading || (!companionStore.hydrated && !companionStore.globalCompanions.length && !companionStore.companions.length)
 );
 const agentAvatarPreviewImageUrl = computed(() =>
   formCompanionRecord.value ? '' : resolveAvatarOptionImage(form.icon_name)
@@ -1048,7 +1039,6 @@ const openAvatarDialog = () => {
   avatarDialogCompanionScope.value = normalizeCompanionScope(form.companion_scope);
   avatarDialogCompanionId.value = String(form.companion_id || '').trim();
   avatarDialogCompanionShow.value = form.companion_show !== false;
-  avatarDialogCompanionMessageHints.value = form.companion_message_hints !== false;
   avatarDialogCompanionScale.value = normalizeCompanionScale(form.companion_scale);
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
   avatarDialogVisible.value = true;
@@ -1067,9 +1057,16 @@ const resetAvatarDialog = () => {
   avatarDialogCompanionScope.value = 'global';
   avatarDialogCompanionId.value = '';
   avatarDialogCompanionShow.value = true;
-  avatarDialogCompanionMessageHints.value = true;
   avatarDialogCompanionScale.value = 1;
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
+};
+
+const setAvatarDialogKind = (kind: 'static' | 'companion') => {
+  avatarDialogKind.value = kind;
+  if (kind === 'companion') {
+    ensureAvatarDialogCompanionSelection();
+    void companionStore.loadGlobalCompanions().catch(() => undefined);
+  }
 };
 
 const applyAvatarDialog = () => {
@@ -1079,33 +1076,45 @@ const applyAvatarDialog = () => {
   form.companion_scope = normalizeCompanionScope(avatarDialogCompanionScope.value);
   form.companion_id = avatarDialogKind.value === 'companion' ? String(avatarDialogCompanionId.value || '').trim() : '';
   form.companion_show = avatarDialogCompanionShow.value !== false;
-  form.companion_message_hints = avatarDialogCompanionMessageHints.value !== false;
+  form.companion_message_hints = avatarDialogCompanionShow.value !== false;
   form.companion_scale = normalizeCompanionScale(avatarDialogCompanionScale.value);
   avatarDialogVisible.value = false;
 };
 
-const setAvatarDialogCompanionScope = (scope: 'global' | 'private') => {
+const isAvatarDialogCompanionSelected = (item: CompanionPackageRecord): boolean =>
+  String(item.id || '').trim() === avatarDialogCompanionId.value &&
+  normalizeCompanionScope(item.scope) === normalizeCompanionScope(avatarDialogCompanionScope.value);
+
+const selectAvatarDialogCompanion = (item: CompanionPackageRecord): void => {
   avatarDialogKind.value = 'companion';
-  avatarDialogCompanionScope.value = scope;
-  const options = scope === 'global' ? companionStore.globalCompanions : companionStore.companions;
-  if (!options.some((item) => item.id === avatarDialogCompanionId.value)) {
-    avatarDialogCompanionId.value = options[0]?.id || '';
+  avatarDialogCompanionScope.value = normalizeCompanionScope(item.scope);
+  avatarDialogCompanionId.value = String(item.id || '').trim();
+};
+
+const ensureAvatarDialogCompanionSelection = (): void => {
+  if (avatarDialogKind.value !== 'companion') {
+    return;
   }
-  if (scope === 'global') {
-    void companionStore.loadGlobalCompanions().catch(() => undefined);
+  const matched = avatarDialogCompanionOptions.value.find((item) => isAvatarDialogCompanionSelected(item));
+  if (matched) {
+    return;
   }
+  const fallback =
+    avatarDialogCompanionOptions.value.find(
+      (item) => String(item.id || '').trim() === avatarDialogCompanionId.value
+    ) || avatarDialogCompanionOptions.value[0];
+  if (fallback) {
+    selectAvatarDialogCompanion(fallback);
+    return;
+  }
+  avatarDialogCompanionScope.value = 'global';
+  avatarDialogCompanionId.value = '';
 };
 
 watch(
-  () => [avatarDialogKind.value, avatarDialogCompanionScope.value, avatarDialogCompanionOptions.value] as const,
+  () => [avatarDialogKind.value, avatarDialogCompanionOptions.value] as const,
   () => {
-    if (avatarDialogKind.value !== 'companion') {
-      return;
-    }
-    const matched = avatarDialogCompanionOptions.value.find((item) => item.id === avatarDialogCompanionId.value);
-    if (!matched) {
-      avatarDialogCompanionId.value = avatarDialogCompanionOptions.value[0]?.id || '';
-    }
+    ensureAvatarDialogCompanionSelection();
   },
   { immediate: true }
 );
@@ -2003,25 +2012,52 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 
+.messenger-agent-companion-option-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
 .messenger-agent-companion-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   font-weight: 600;
   color: #0f172a;
+}
+
+.messenger-agent-companion-option-scope {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.2;
 }
 
 .messenger-agent-companion-option-desc {
   font-size: 12px;
   color: #64748b;
   line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.messenger-agent-companion-switches {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.messenger-agent-companion-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: stretch;
+  gap: 10px;
 }
 
-.messenger-agent-companion-switch-row {
+.messenger-agent-companion-display-control,
+.messenger-agent-companion-scale-control {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2032,18 +2068,27 @@ onBeforeUnmount(() => {
   background: rgba(248, 250, 252, 0.9);
 }
 
-.messenger-agent-companion-switch-row strong {
+.messenger-agent-companion-display-control strong {
   display: block;
   font-size: 13px;
   color: #0f172a;
 }
 
-.messenger-agent-companion-switch-row small {
+.messenger-agent-companion-display-control small {
   display: block;
   margin-top: 2px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.messenger-agent-companion-scale-control {
+  min-width: 0;
+}
+
+.messenger-agent-companion-scale-slider {
+  flex: 1 1 auto;
+  min-width: 90px;
 }
 
 .messenger-agent-avatar-dialog-sprite {
@@ -2073,10 +2118,13 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .messenger-agent-companion-head,
-  .messenger-agent-companion-switch-row {
+  .messenger-agent-companion-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .messenger-agent-companion-control-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>
