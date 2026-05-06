@@ -275,7 +275,8 @@
         class="messenger-dialog messenger-avatar-dialog"
         :title="t('portal.agent.avatarTitle')"
         width="420px"
-        :close-on-click-modal="false"
+        :close-on-click-modal="true"
+        :close-on-press-escape="true"
         append-to-body
         destroy-on-close
       >
@@ -458,7 +459,6 @@
                 <el-switch v-model="avatarDialogCompanionShow" />
               </label>
               <div class="messenger-agent-companion-scale-control">
-                <span class="messenger-settings-label messenger-settings-label--nowrap">{{ t('companions.scale') }}</span>
                 <div class="messenger-agent-companion-scale-inputs">
                   <el-input-number
                     v-model="avatarDialogCompanionScale"
