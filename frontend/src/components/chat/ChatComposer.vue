@@ -134,6 +134,7 @@
             class="messenger-world-tool-btn"
             type="button"
             :class="{ active: worldCommandPanelVisible }"
+            :disabled="stopButtonActive"
             :title="t('chat.commandMenu.quick')"
             :aria-label="t('chat.commandMenu.quick')"
             @click.prevent="openWorldCommandPanel"
@@ -181,7 +182,7 @@
           type="button"
           :title="t('chat.attachments.upload')"
           :aria-label="t('chat.attachments.upload')"
-          :disabled="attachmentBusy > 0 || voiceRecording"
+          :disabled="attachmentBusy > 0 || voiceRecording || stopButtonActive"
           @click="triggerUpload"
         >
           <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
@@ -194,7 +195,7 @@
           }"
           :title="voiceButtonTitle"
           :aria-label="voiceButtonTitle"
-          :disabled="attachmentBusy > 0 || loading"
+          :disabled="attachmentBusy > 0 || stopButtonActive"
           @click="handleToggleVoiceRecord"
         >
           <i
@@ -218,7 +219,7 @@
             :title="t('chat.attachments.screenshot')"
             :aria-label="t('chat.attachments.screenshot')"
             :aria-expanded="screenshotMenuVisible"
-            :disabled="attachmentBusy > 0 || voiceRecording"
+            :disabled="attachmentBusy > 0 || voiceRecording || stopButtonActive"
             @click.stop.prevent="toggleScreenshotMenu"
           >
             <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
@@ -235,6 +236,7 @@
         ref="inputRef"
         :class="{ 'chat-composer-input--world': worldStyle }"
         :placeholder="inputPlaceholder"
+        :readonly="goalLocked"
         rows="1"
         @input="handleInput"
         @click="syncCaretPosition"
@@ -341,13 +343,13 @@
               class="messenger-world-send-main"
               type="button"
               :disabled="!canSendOrStop"
-              :title="loading ? t('common.stop') : t('chat.input.send')"
-              :aria-label="loading ? t('common.stop') : t('chat.input.send')"
+              :title="stopButtonActive ? t('common.stop') : t('chat.input.send')"
+              :aria-label="stopButtonActive ? t('common.stop') : t('chat.input.send')"
               @keydown="handleSendButtonKeydown"
               @click="handleSendOrStop"
             >
               <i
-                v-if="loading"
+                v-if="stopButtonActive"
                 class="fa-solid fa-stop input-icon chat-composer-world-send-stop-icon"
                 aria-hidden="true"
               ></i>
@@ -364,7 +366,7 @@
           type="button"
           :title="t('chat.attachments.upload')"
           :aria-label="t('chat.attachments.upload')"
-          :disabled="attachmentBusy > 0"
+          :disabled="attachmentBusy > 0 || stopButtonActive"
           @click="triggerUpload"
         >
           <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
@@ -381,7 +383,7 @@
             :aria-label="t('chat.attachments.screenshot')"
             :aria-expanded="screenshotMenuVisible"
             :class="{ active: screenshotMenuVisible }"
-            :disabled="attachmentBusy > 0"
+            :disabled="attachmentBusy > 0 || stopButtonActive"
             @click.stop.prevent="toggleScreenshotMenu"
           >
             <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
@@ -392,13 +394,13 @@
           class="input-icon-btn send-btn"
           type="button"
           :disabled="!canSendOrStop"
-          :title="loading ? t('common.stop') : t('chat.input.send')"
-          :aria-label="loading ? t('common.stop') : t('chat.input.send')"
+          :title="stopButtonActive ? t('common.stop') : t('chat.input.send')"
+          :aria-label="stopButtonActive ? t('common.stop') : t('chat.input.send')"
           @keydown="handleSendButtonKeydown"
           @click="handleSendOrStop"
         >
           <i
-            v-if="loading"
+            v-if="stopButtonActive"
             class="fa-solid fa-stop input-icon input-icon-fill"
             aria-hidden="true"
           ></i>
@@ -547,6 +549,10 @@ const props = defineProps({
   contextTotalTokens: {
     type: [Number, String],
     default: null
+  },
+  goalLocked: {
+    type: Boolean,
+    default: false
   },
   presetQuestions: {
     type: Array,
@@ -1136,9 +1142,10 @@ const showApprovalLabel = computed(
 );
 const voiceSupported = computed(() => props.worldStyle && props.voiceSupported);
 const voiceRecording = computed(() => props.worldStyle && props.voiceRecording);
+const stopButtonActive = computed(() => Boolean(props.loading || props.goalLocked));
 const canSendOrStop = computed(() => {
 
-  if (props.loading) return true;
+  if (stopButtonActive.value) return true;
   if (attachmentBusy.value > 0) return false;
   return (
     Boolean(inputText.value.trim()) ||
@@ -1150,6 +1157,7 @@ const canSendOrStop = computed(() => {
 const slashCommandDefinitions: SlashCommandDefinition[] = [
   { command: '/new', aliases: ['/reset'], descriptionKey: 'chat.commandMenu.new' },
   { command: '/stop', aliases: ['/cancel'], descriptionKey: 'chat.commandMenu.stop' },
+  { command: '/goal', aliases: [], descriptionKey: 'chat.commandMenu.goal' },
   { command: '/compact', aliases: [], descriptionKey: 'chat.commandMenu.compact' },
   { command: '/help', aliases: ['/?'], descriptionKey: 'chat.commandMenu.help' }
 ];
@@ -1198,7 +1206,7 @@ const commandSuggestionsVisible = computed(
 );
 
 const quickCommandItems = computed(() =>
-  slashCommandDefinitions.map((item) => ({
+  slashCommandDefinitions.filter((item) => !props.goalLocked || item.command === '/stop').map((item) => ({
     command: item.command,
     description: t(item.descriptionKey)
   }))
@@ -1481,6 +1489,10 @@ const syncCaretPosition = () => {
 };
 
 const handleInput = () => {
+  if (props.goalLocked) {
+    inputText.value = '';
+    return;
+  }
   if (worldCommandPanelVisible.value) {
     closeWorldCommandPanel();
   }
@@ -1791,6 +1803,9 @@ const handleEnterKeydown = async (event) => {
   if (event.isComposing) {
     return;
   }
+  if (props.goalLocked) {
+    return;
+  }
   const mode = resolveSendKeyMode();
   if (mode === 'none') {
     return;
@@ -1828,6 +1843,7 @@ const resetInputHeight = () => {
 };
 
 const triggerUpload = () => {
+  if (stopButtonActive.value) return;
   if (!uploadInputRef.value) return;
   closeScreenshotMenu();
   uploadInputRef.value.value = '';
@@ -1837,6 +1853,7 @@ const triggerUpload = () => {
 const hasFileDrag = (event) => Array.from(event?.dataTransfer?.types || []).includes('Files');
 
 const handleDragEnter = (event) => {
+  if (stopButtonActive.value) return;
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   dragCounter.value += 1;
@@ -1847,6 +1864,7 @@ const handleDragEnter = (event) => {
 };
 
 const handleDragOver = (event) => {
+  if (stopButtonActive.value) return;
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   if (event.dataTransfer) {
@@ -1863,6 +1881,7 @@ const handleDragLeave = (event) => {
 };
 
 const handleDrop = async (event) => {
+  if (stopButtonActive.value) return;
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   dragCounter.value = 0;
@@ -2075,6 +2094,7 @@ const applyGifFrameStep = async (attachmentId: string) => {
 
 // 附件处理遵循 Wunder 调试面板：图片走 data URL，文件先转 Markdown
 const handleAttachmentSelection = async (file) => {
+  if (stopButtonActive.value) return;
   if (!file) return;
   const filename = file.name || 'upload';
   attachmentBusy.value += 1;
@@ -2157,6 +2177,7 @@ const handleAttachmentSelection = async (file) => {
 };
 
 const handleUploadInput = async (event) => {
+  if (stopButtonActive.value) return;
   const files = Array.from(event.target.files || []);
   if (!files.length) return;
   for (const file of files) {
@@ -2183,6 +2204,7 @@ const closeScreenshotMenu = () => {
 };
 
 const toggleScreenshotMenu = () => {
+  if (stopButtonActive.value) return;
   if (attachmentBusy.value > 0) {
     ElMessage.warning(t('chat.attachments.busy'));
     return;
@@ -2204,6 +2226,7 @@ const appendFileNameSuffix = (fileName: string, suffix: string): string => {
 };
 
 const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOption) => {
+  if (stopButtonActive.value) return;
   closeScreenshotMenu();
   const bridge = getDesktopScreenshotBridge();
   if (!bridge || typeof bridge.captureScreenshot !== 'function') {
@@ -2313,6 +2336,7 @@ const scheduleWorldCommandPanelClose = () => {
 };
 
 const openWorldCommandPanel = () => {
+  if (stopButtonActive.value) return;
   closeScreenshotMenu();
   clearWorldCommandPanelCloseTimer();
   worldCommandPanelVisible.value = true;
@@ -2371,7 +2395,7 @@ const sendQuickCommand = async (command: string) => {
   closeWorldCommandPanel();
   closeScreenshotMenu();
   if (!command) return;
-  if (props.loading) {
+  if (stopButtonActive.value) {
     if (command === '/stop') {
       emit('stop');
     }
@@ -2413,7 +2437,7 @@ const applyPresetQuestion = (question: string) => {
 };
 
 const handleSend = async () => {
-  if (props.loading) return;
+  if (stopButtonActive.value) return;
   if (voiceRecording.value) return;
   closeScreenshotMenu();
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
@@ -2437,7 +2461,7 @@ const handleSend = async () => {
 };
 
 const handleSendOrStop = async () => {
-  if (props.loading) {
+  if (stopButtonActive.value) {
     emit('stop');
     return;
   }
@@ -2445,7 +2469,7 @@ const handleSendOrStop = async () => {
 };
 
 const handleSendButtonKeydown = (event: KeyboardEvent) => {
-  if (!props.loading) {
+  if (!stopButtonActive.value) {
     return;
   }
   if (event.key === 'Enter' || event.key === ' ') {
@@ -2456,6 +2480,7 @@ const handleSendButtonKeydown = (event: KeyboardEvent) => {
 };
 
 const handleToggleVoiceRecord = () => {
+  if (stopButtonActive.value) return;
   closeScreenshotMenu();
   closeWorldCommandPanel();
   emit('toggle-voice-record');
@@ -2615,5 +2640,22 @@ watch(
     });
   },
   { immediate: true }
+);
+
+watch(
+  () => Boolean(props.goalLocked),
+  (locked) => {
+    if (!locked) return;
+    inputText.value = '';
+    clearAttachments();
+    closeScreenshotMenu();
+    closeWorldCommandPanel();
+    commandMenuDismissed.value = false;
+    caretPosition.value = 0;
+    void nextTick(() => {
+      resizeInput();
+      syncCaretPosition();
+    });
+  }
 );
 </script>

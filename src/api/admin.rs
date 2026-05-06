@@ -24,6 +24,10 @@ use crate::performance::{
 use crate::services::default_agent_sync::{
     self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
 };
+use crate::services::companions::{
+    content_hash, delete_global_companion, export_global_companion, import_global_companion,
+    list_global_companions, load_global_companion, update_global_companion,
+};
 use crate::services::inner_visible::build_worker_card;
 use crate::services::preset_worker_cards;
 use crate::services::skill_archive::{import_skill_archive, is_supported_skill_archive_filename};
@@ -33,7 +37,7 @@ use crate::services::user_agent_presets::{
 };
 use crate::services::worker_card_settings::{
     canonicalize_preset_config, collect_configured_skill_names, normalize_preset_icon_color,
-    normalize_preset_icon_name, normalize_preset_icon_parts,
+    normalize_preset_icon_name, normalize_preset_icon_parts, normalize_preset_icon_payload,
 };
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
@@ -54,7 +58,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
-use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
+use axum::http::{HeaderMap as AxumHeaderMap, HeaderValue as AxumHeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
@@ -319,6 +323,20 @@ pub fn router() -> Router<Arc<AppState>> {
             post(admin_preset_agents_sync),
         )
         .route("/wunder/admin/agent_avatars", get(admin_agent_avatars_list))
+        .route(
+            "/wunder/admin/companions",
+            get(admin_companions_list).post(admin_companions_import),
+        )
+        .route(
+            "/wunder/admin/companions/{id}",
+            get(admin_companion_get)
+                .patch(admin_companion_update)
+                .delete(admin_companion_delete),
+        )
+        .route(
+            "/wunder/admin/companions/{id}/package",
+            get(admin_companion_export),
+        )
         .route(
             "/wunder/admin/external_links/{link_id}",
             delete(admin_external_links_delete),
@@ -4503,7 +4521,8 @@ async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, R
     let record = load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let (icon_name, icon_color) = normalize_preset_icon_parts(record.icon.as_deref());
+    let icon = crate::services::worker_card_settings::normalize_icon_payload(record.icon.as_deref());
+    let (icon_name, icon_color) = normalize_preset_icon_parts(Some(&icon));
     Ok(json!({
         "preset_id": DEFAULT_AGENT_ID_ALIAS,
         "revision": 1,
@@ -4512,6 +4531,7 @@ async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, R
         "system_prompt": record.system_prompt.trim(),
         "preview_skill": record.preview_skill,
         "model_name": Value::Null,
+        "icon": icon,
         "icon_name": icon_name,
         "icon_color": icon_color,
         "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
@@ -4702,6 +4722,112 @@ async fn admin_agent_avatars_list(
             "extension_map": extension_map
         }
     })))
+}
+
+async fn admin_companions_list(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let items =
+        list_global_companions().map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_companion_get(
+    State(_state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let Some(item) =
+        load_global_companion(&id).map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    else {
+        return Err(error_response(StatusCode::NOT_FOUND, "companion not found".to_string()));
+    };
+    Ok(Json(json!({ "data": item })))
+}
+
+async fn admin_companions_import(
+    State(_state): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, Response> {
+    let mut filename = String::new();
+    let mut data = Vec::new();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        if let Some(field_name) = field.name() {
+            if field_name != "file" && field.file_name().is_none() {
+                continue;
+            }
+        }
+        filename = field.file_name().unwrap_or("companion.zip").to_string();
+        data = field
+            .bytes()
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .to_vec();
+    }
+    let checksum = content_hash(&data);
+    let item = tokio::task::spawn_blocking(move || import_global_companion(&filename, &data))
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "item": item, "sha256": checksum } })))
+}
+
+async fn admin_companion_update(
+    State(_state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Json(payload): Json<CompanionUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let item = update_global_companion(
+        &id,
+        payload.display_name.as_deref().or(payload.name.as_deref()),
+        payload.description.as_deref(),
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": item })))
+}
+
+async fn admin_companion_delete(
+    State(_state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let deleted =
+        delete_global_companion(&id).map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "id": id, "deleted": deleted } })))
+}
+
+async fn admin_companion_export(
+    State(_state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Response, Response> {
+    let (filename, bytes) =
+        export_global_companion(&id).map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut response = Response::new(axum::body::Body::from(bytes.clone()));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        AxumHeaderValue::from_static("application/zip"),
+    );
+    if let Ok(value) = AxumHeaderValue::from_str(&bytes.len().to_string()) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_LENGTH, value);
+    }
+    let disposition = format!(
+        "attachment; filename=\"{}\"",
+        filename
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' { ch } else { '_' })
+            .collect::<String>()
+    );
+    if let Ok(value) = AxumHeaderValue::from_str(&disposition) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_DISPOSITION, value);
+    }
+    Ok(response)
 }
 
 async fn admin_user_accounts_list(
@@ -6022,6 +6148,7 @@ fn preset_agent_payload(
         system_prompt,
         preview_skill,
         model_name,
+        icon,
         icon_name,
         icon_color,
         sandbox_container_id,
@@ -6041,6 +6168,7 @@ fn preset_agent_payload(
         "system_prompt": system_prompt.trim(),
         "preview_skill": preview_skill,
         "model_name": user_agent_presets::normalize_optional_model_name(model_name.as_deref()),
+        "icon": icon.unwrap_or_else(|| normalize_preset_icon_payload(None, Some(icon_name.as_str()), Some(icon_color.as_str()))),
         "icon_name": normalize_preset_icon_name(Some(icon_name.as_str())),
         "icon_color": normalize_preset_icon_color(Some(icon_color.as_str())),
         "sandbox_container_id": crate::storage::normalize_sandbox_container_id(sandbox_container_id),
@@ -6107,6 +6235,11 @@ fn normalize_preset_agents(
                 model_name: user_agent_presets::normalize_optional_model_name(
                     item.model_name.as_deref(),
                 ),
+                icon: Some(normalize_preset_icon_payload(
+                    item.icon.as_deref(),
+                    item.icon_name.as_deref(),
+                    item.icon_color.as_deref(),
+                )),
                 icon_name: normalize_preset_icon_name(item.icon_name.as_deref()),
                 icon_color: normalize_preset_icon_color(item.icon_color.as_deref()),
                 sandbox_container_id: crate::storage::normalize_sandbox_container_id(
@@ -7378,6 +7511,8 @@ struct PresetAgentUpsertItem {
     #[serde(default, alias = "modelName", alias = "model_name")]
     model_name: Option<String>,
     #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
     icon_name: Option<String>,
     #[serde(default)]
     icon_color: Option<String>,
@@ -7395,6 +7530,16 @@ struct PresetAgentUpsertItem {
     approval_mode: Option<String>,
     #[serde(default)]
     status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompanionUpdateRequest {
+    #[serde(default, alias = "displayName", alias = "display_name")]
+    display_name: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

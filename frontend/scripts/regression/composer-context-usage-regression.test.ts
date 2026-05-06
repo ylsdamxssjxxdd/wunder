@@ -389,6 +389,20 @@ test('composer context usage and bubble stats align on completed final usage', (
   assert.equal(findEntryValue(bubbleEntries, 'Context'), '25810');
 });
 
+test('composer context usage keeps session max context after reload', () => {
+  const source = resolveComposerContextUsageSource(
+    [],
+    {
+      context_tokens: 3210,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 3210);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
 test('composer context usage keeps post-tool raw context resets visually monotonic', () => {
   let state = resolveComposerRunningContextDisplayState({
     stableTokens: 26716,

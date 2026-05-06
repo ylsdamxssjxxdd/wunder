@@ -8,6 +8,7 @@ import {
   createSession,
   deleteSession as deleteSessionApi,
   getSession,
+  getSessionGoal,
   getSessionEvents,
   getSessionHistoryPage,
   getSessionSubagents,
@@ -15,6 +16,7 @@ import {
   openChatSocket,
   renameSession as renameSessionApi,
   restoreSession as restoreSessionApi,
+  setSessionGoal as setSessionGoalApi,
   submitMessageFeedback as submitMessageFeedbackApi,
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
@@ -321,6 +323,22 @@ type SessionOrchestrationLock = {
   run_id: string;
   mother_agent_id: string;
   role: string;
+};
+
+type SessionGoal = {
+  goal_id: string;
+  session_id: string;
+  user_id: string;
+  objective: string;
+  status: string;
+  token_budget: number | null;
+  tokens_used: number;
+  time_used_seconds: number;
+  created_at: number | null;
+  updated_at: number | null;
+  completed_at: number | null;
+  last_continued_at: number | null;
+  source: string;
 };
 
 const buildMessageStats = () => ({
@@ -1575,25 +1593,169 @@ const normalizeSessionOrchestrationLock = (value): SessionOrchestrationLock | nu
   };
 };
 
-const patchSessionOrchestrationLock = (session) => {
+const normalizeGoalNumber = (value): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeSessionGoal = (value): SessionGoal | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const source = value as Record<string, unknown>;
+  const goalId = String(source.goal_id ?? source.goalId ?? '').trim();
+  const objective = String(source.objective ?? '').trim();
+  const status = String(source.status ?? '').trim().toLowerCase();
+  if (!goalId || !objective || !status) {
+    return null;
+  }
+  return {
+    goal_id: goalId,
+    session_id: String(source.session_id ?? source.sessionId ?? '').trim(),
+    user_id: String(source.user_id ?? source.userId ?? '').trim(),
+    objective,
+    status,
+    token_budget: normalizeGoalNumber(source.token_budget ?? source.tokenBudget),
+    tokens_used: Math.max(0, Math.trunc(normalizeGoalNumber(source.tokens_used ?? source.tokensUsed) ?? 0)),
+    time_used_seconds: Math.max(
+      0,
+      Math.trunc(normalizeGoalNumber(source.time_used_seconds ?? source.timeUsedSeconds) ?? 0)
+    ),
+    created_at: normalizeGoalNumber(source.created_at ?? source.createdAt),
+    updated_at: normalizeGoalNumber(source.updated_at ?? source.updatedAt),
+    completed_at: normalizeGoalNumber(source.completed_at ?? source.completedAt),
+    last_continued_at: normalizeGoalNumber(source.last_continued_at ?? source.lastContinuedAt),
+    source: String(source.source ?? '').trim()
+  };
+};
+
+const isGoalActiveForLock = (goal): boolean => {
+  const status = String(goal?.status || '').trim().toLowerCase();
+  return status === 'active' || status === 'paused';
+};
+
+const goalSessionIdFromPayload = (value, fallback = ''): string => {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return resolveSessionKey(
+    source.session_id ?? source.sessionId ?? source.id ?? fallback
+  );
+};
+
+const writeSessionGoalState = (
+  store,
+  sessionId,
+  goal,
+  options: { clear?: boolean } = {}
+): SessionGoal | null => {
+  if (!store || typeof store !== 'object') {
+    return null;
+  }
+  const key = resolveSessionKey(sessionId) || goalSessionIdFromPayload(goal);
+  if (!key) {
+    return null;
+  }
+  const normalizedGoal = normalizeSessionGoal(goal);
+  if (!store.sessionGoals || typeof store.sessionGoals !== 'object') {
+    store.sessionGoals = {};
+  }
+  if (!normalizedGoal || options.clear === true) {
+    delete store.sessionGoals[key];
+  } else {
+    store.sessionGoals[key] = {
+      ...normalizedGoal,
+      session_id: normalizedGoal.session_id || key
+    };
+  }
+  if (Array.isArray(store.sessions)) {
+    const index = store.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
+    if (index >= 0) {
+      const current = store.sessions[index] || {};
+      const next =
+        normalizedGoal && options.clear !== true
+          ? { ...current, goal: store.sessionGoals[key] }
+          : { ...current };
+      if (!normalizedGoal || options.clear === true) {
+        delete next.goal;
+      }
+      store.sessions[index] = patchSessionRuntimeFields(next);
+      const agentId = String(store.sessions[index]?.agent_id || '').trim();
+      writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+    }
+  }
+  syncDemoChatCache({ sessions: Array.isArray(store.sessions) ? store.sessions : [] });
+  return normalizedGoal && options.clear !== true ? store.sessionGoals[key] : null;
+};
+
+const syncGoalFromSessionRecord = (store, session): SessionGoal | null => {
+  const key = resolveSessionKey(session?.id ?? session?.session_id ?? session?.sessionId);
+  if (!key) {
+    return null;
+  }
+  if (Object.prototype.hasOwnProperty.call(session || {}, 'goal')) {
+    return writeSessionGoalState(store, key, session?.goal, { clear: !session?.goal });
+  }
+  return null;
+};
+
+const syncGoalsFromSessionList = (store, sessions) => {
+  (Array.isArray(sessions) ? sessions : []).forEach((session) => {
+    syncGoalFromSessionRecord(store, session);
+  });
+};
+
+const applyGoalStreamEvent = (store, sessionId, eventType, payload): boolean => {
+  const normalizedEventType = String(eventType || '').trim();
+  if (
+    normalizedEventType !== 'goal_updated' &&
+    normalizedEventType !== 'goal_continuation_started' &&
+    normalizedEventType !== 'goal_budget_limited' &&
+    normalizedEventType !== 'goal_cleared'
+  ) {
+    return false;
+  }
+  const data =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const goal = data.goal ?? (data.data as Record<string, unknown> | undefined)?.goal;
+  const key = resolveSessionKey(sessionId) || goalSessionIdFromPayload(goal);
+  writeSessionGoalState(store, key, goal, {
+    clear: normalizedEventType === 'goal_cleared'
+  });
+  return true;
+};
+
+const patchSessionRuntimeFields = (session) => {
   if (!session || typeof session !== 'object') {
     return session;
   }
+  let next: Record<string, unknown> | null = null;
   const normalizedLock = normalizeSessionOrchestrationLock(
     (session as Record<string, unknown>).orchestration_lock
   );
   if (!normalizedLock) {
     if (Object.prototype.hasOwnProperty.call(session, 'orchestration_lock')) {
-      const next = { ...(session as Record<string, unknown>) };
+      next = { ...(session as Record<string, unknown>) };
       delete next.orchestration_lock;
-      return next;
     }
-    return session;
+  } else {
+    next = { ...(session as Record<string, unknown>), orchestration_lock: normalizedLock };
   }
-  return {
-    ...(session as Record<string, unknown>),
-    orchestration_lock: normalizedLock
-  };
+  const source = (next || session) as Record<string, unknown>;
+  const normalizedGoal = normalizeSessionGoal(source.goal);
+  if (!normalizedGoal) {
+    if (Object.prototype.hasOwnProperty.call(source, 'goal')) {
+      next = { ...source };
+      delete next.goal;
+    }
+  } else {
+    next = { ...source, goal: normalizedGoal };
+  }
+  return next || session;
 };
 
 const resolveErrorCode = (error) =>
@@ -2659,7 +2821,7 @@ const resolveSessionActivityTime = (session) =>
 
 const sortSessionsByActivity = (sessions = []) =>
   (Array.isArray(sessions) ? sessions.slice() : [])
-    .map((session, index) => ({ session: patchSessionOrchestrationLock(session), index }))
+    .map((session, index) => ({ session: patchSessionRuntimeFields(session), index }))
     .sort((a, b) => {
       const aTime = resolveSessionActivityTime(a.session);
       const bTime = resolveSessionActivityTime(b.session);
@@ -4603,14 +4765,14 @@ const applyThreadControlSessionPatch = (store, session, options: { allowArchived
   );
   if (index >= 0) {
     const current = store.sessions[index] || {};
-    store.sessions[index] = patchSessionOrchestrationLock({
+    store.sessions[index] = patchSessionRuntimeFields({
       ...current,
       ...normalized,
       id: targetId
     });
     return store.sessions[index];
   }
-  const merged = patchSessionOrchestrationLock({ ...normalized, id: targetId });
+  const merged = patchSessionRuntimeFields({ ...normalized, id: targetId });
   store.sessions.unshift(merged);
   return merged;
 };
@@ -6658,6 +6820,9 @@ const startSessionWatcher = (store, sessionId) => {
     const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
     if (normalizedEventType !== 'heartbeat' && normalizedEventType !== 'ping') {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
+    }
+    if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) {
+      return;
     }
     if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
       const normalizedEventId = normalizeStreamEventId(eventId);
@@ -10370,6 +10535,7 @@ export const useChatStore = defineStore('chat', {
     messages: [],
     messageMutationVersion: 0,
     loadingBySession: {},
+    sessionGoals: {} as Record<string, SessionGoal>,
     runtimeProjection: createChatRuntimeProjection() as ChatRuntimeProjection,
     greetingOverride: '',
     draftAgentId: '',
@@ -10432,6 +10598,16 @@ export const useChatStore = defineStore('chat', {
       const key = resolveSessionKey(sessionId);
       if (!key) return null;
       return selectSessionBusyReason(state.runtimeProjection, key);
+    },
+    sessionGoal: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return null;
+      return state.sessionGoals[key] || null;
+    },
+    isSessionGoalLocked: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return false;
+      return isGoalActiveForLock(state.sessionGoals[key]);
     },
     messageRuntimeStatus: (state) => (sessionId, message) => {
       return resolveLegacyMessageRuntimeStatusFromStore(state, sessionId, message);
@@ -10576,7 +10752,7 @@ export const useChatStore = defineStore('chat', {
         id: targetSessionId,
         agent_id: targetAgentId
       };
-      const patchedSession = patchSessionOrchestrationLock(nextSession) as Record<string, unknown>;
+      const patchedSession = patchSessionRuntimeFields(nextSession) as Record<string, unknown>;
       const targetIndex = this.sessions.findIndex((item) => resolveSessionKey(item?.id) === targetSessionId);
       if (targetIndex >= 0) {
         this.sessions[targetIndex] = {
@@ -10742,6 +10918,7 @@ export const useChatStore = defineStore('chat', {
         const payload = sessionRes?.data;
         const sessionDetail = payload?.data || null;
         cacheSessionDetailSnapshot(targetId, sessionDetail);
+        syncGoalFromSessionRecord(this, sessionDetail);
         const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
         hydrateSessionCommandSessions(
           targetId,
@@ -11097,6 +11274,7 @@ export const useChatStore = defineStore('chat', {
       }
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
       this.sessions = sortSessionsByActivity(data.data.items || []);
+      syncGoalsFromSessionList(this, this.sessions);
       if (requestedAgentId !== null) {
         writeSessionListCache(requestedAgentId, this.sessions);
       }
@@ -11133,8 +11311,9 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(this.activeSessionId);
       clearSessionWatcher();
       const { data } = await createSession(payload);
-      const session = patchSessionOrchestrationLock(data.data);
+      const session = patchSessionRuntimeFields(data.data);
       this.sessions.unshift(session);
+      syncGoalFromSessionRecord(this, session);
       if (session?.is_main === true) {
         this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);
       }
@@ -11292,6 +11471,7 @@ export const useChatStore = defineStore('chat', {
         throw error;
       }
       const data = sessionRes?.data;
+      syncGoalFromSessionRecord(this, sessionDetail);
       const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
       hydrateSessionCommandSessions(
         targetSessionId,
@@ -11320,9 +11500,9 @@ export const useChatStore = defineStore('chat', {
       if (sessionDetail?.id) {
         const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
         if (index >= 0) {
-          this.sessions[index] = { ...this.sessions[index], ...sessionDetail };
+          this.sessions[index] = patchSessionRuntimeFields({ ...this.sessions[index], ...sessionDetail });
         } else {
-          this.sessions.unshift(sessionDetail);
+          this.sessions.unshift(patchSessionRuntimeFields(sessionDetail));
         }
       }
       const resolvedAgentId =
@@ -11829,6 +12009,32 @@ export const useChatStore = defineStore('chat', {
       }
       return overrides;
     },
+    syncSessionGoal(sessionId, goal = null) {
+      const targetId = resolveSessionKey(sessionId) || goalSessionIdFromPayload(goal);
+      if (!targetId) return null;
+      return writeSessionGoalState(this, targetId, goal, { clear: !goal });
+    },
+    async refreshSessionGoal(sessionId = null) {
+      const targetId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetId) return null;
+      const { data } = await getSessionGoal(targetId);
+      return this.syncSessionGoal(targetId, data?.data?.goal ?? null);
+    },
+    async setSessionGoal(sessionId = null, payload: Record<string, unknown> = {}) {
+      const targetId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetId) {
+        throw new Error(t('chat.command.goalMissingSession'));
+      }
+      const { data } = await setSessionGoalApi(targetId, payload || {});
+      const goal = this.syncSessionGoal(targetId, data?.data?.goal ?? null);
+      if (data?.data?.continuation?.should_start === true) {
+        startSessionWatcher(this, targetId);
+      }
+      return {
+        goal,
+        continuation: data?.data?.continuation ?? null
+      };
+    },
     async compactSession(sessionId, payload: Record<string, unknown> = {}) {
       const targetId = String(sessionId || this.activeSessionId || '').trim();
       if (!targetId) {
@@ -12326,6 +12532,9 @@ export const useChatStore = defineStore('chat', {
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+          if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
+            return;
+          }
           handleApprovalEvent(
             this,
             normalizedEventType || eventType,
@@ -12592,6 +12801,10 @@ export const useChatStore = defineStore('chat', {
       try {
         const { data } = await cancelMessageStream(targetSessionId);
         cancelled = Boolean(data?.data?.cancelled);
+        if (data?.data?.goal_cleared === true) {
+          writeSessionGoalState(this, targetSessionId, null, { clear: true });
+          cancelled = true;
+        }
       } catch (error) {
         // Ignore cancel API failures; local stop behavior still applies.
       }
@@ -12701,6 +12914,9 @@ export const useChatStore = defineStore('chat', {
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+          if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
+            return;
+          }
           if (perfEnabled) {
             chatPerf.count('chat_resume_event', 1, { eventType: normalizedEventType || eventType, sessionId });
           }

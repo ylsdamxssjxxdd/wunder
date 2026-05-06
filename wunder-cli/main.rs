@@ -46,11 +46,12 @@ use wunder_server::llm::{is_openai_compatible_provider, probe_openai_context_win
 use wunder_server::path_utils::is_within_root;
 use wunder_server::schemas::{AttachmentPayload, WunderRequest};
 use wunder_server::skills::{load_skills, SkillSpec};
-use wunder_server::storage::ChatSessionRecord;
+use wunder_server::storage::{ChatSessionRecord, SessionGoalRecord};
 use wunder_server::tools::{
     build_tool_roots, collect_available_tool_names, execute_tool, resolve_tool_name, ToolContext,
 };
 use wunder_server::user_tools::UserMcpServer;
+use wunder_server::{goal, goal::GoalCommand};
 use zip::ZipArchive;
 
 const CLI_MIN_MAX_ROUNDS: u32 = 8;
@@ -540,6 +541,17 @@ async fn handle_chat_slash_command(
                 session_id.as_str(),
                 command.args,
                 agent_id_override.as_deref(),
+            ))
+            .await?;
+            Ok(false)
+        }
+        SlashCommand::Goal => {
+            Box::pin(handle_slash_goal(
+                runtime,
+                global,
+                session_id.as_str(),
+                agent_id_override.as_deref(),
+                command.args,
             ))
             .await?;
             Ok(false)
@@ -3391,6 +3403,119 @@ async fn handle_slash_plan(
     )
     .await?;
     Ok(())
+}
+
+async fn handle_slash_goal(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    session_id: &str,
+    agent_id_override: Option<&str>,
+    args: &str,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let command = goal::parse_goal_command(args)?;
+    goal::ensure_session(
+        runtime.state.storage.clone(),
+        &runtime.user_id,
+        session_id,
+        agent_id_override,
+    )
+    .await?;
+    match command {
+        GoalCommand::Show => {
+            let record =
+                goal::get_goal(runtime.state.storage.clone(), &runtime.user_id, session_id).await?;
+            print_goal_record(language.as_str(), record.as_ref());
+        }
+        GoalCommand::Set {
+            objective,
+            token_budget,
+        } => {
+            let record = goal::set_goal(
+                runtime.state.storage.clone(),
+                &runtime.user_id,
+                session_id,
+                &objective,
+                token_budget,
+                goal::SOURCE_CLI,
+            )
+            .await?;
+            print_goal_record(language.as_str(), Some(&record));
+            println!(
+                "{}",
+                locale::tr(
+                    language.as_str(),
+                    "目标态已启动，会持续推进直到完成或暂停。",
+                    "goal mode started; it will keep working until complete or paused."
+                )
+            );
+            let _ = runtime
+                .state
+                .kernel
+                .thread_runtime
+                .submit_goal_continuation(&runtime.user_id, session_id)
+                .await;
+        }
+        GoalCommand::Pause => {
+            let record = goal::set_goal_status(
+                runtime.state.storage.clone(),
+                &runtime.user_id,
+                session_id,
+                goal::GoalStatus::Paused,
+                goal::SOURCE_CLI,
+            )
+            .await?;
+            print_goal_record(language.as_str(), Some(&record));
+        }
+        GoalCommand::Resume => {
+            let record = goal::set_goal_status(
+                runtime.state.storage.clone(),
+                &runtime.user_id,
+                session_id,
+                goal::GoalStatus::Active,
+                goal::SOURCE_CLI,
+            )
+            .await?;
+            print_goal_record(language.as_str(), Some(&record));
+            let _ = runtime
+                .state
+                .kernel
+                .thread_runtime
+                .submit_goal_continuation(&runtime.user_id, session_id)
+                .await;
+        }
+        GoalCommand::Clear => {
+            let deleted =
+                goal::clear_goal(runtime.state.storage.clone(), &runtime.user_id, session_id)
+                    .await?;
+            println!(
+                "{}",
+                if deleted {
+                    locale::tr(language.as_str(), "目标已清除", "goal cleared")
+                } else {
+                    locale::tr(language.as_str(), "当前没有目标", "no goal set")
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_goal_record(language: &str, record: Option<&SessionGoalRecord>) {
+    let Some(record) = record else {
+        println!("{}", locale::tr(language, "当前没有目标", "no goal set"));
+        return;
+    };
+    if locale::is_zh_language(language) {
+        println!("- 目标: {}", record.objective);
+        println!("- 状态: {}", record.status);
+    } else {
+        println!("- goal: {}", record.objective);
+        println!("- status: {}", record.status);
+    }
+    if let Some(budget) = record.token_budget {
+        println!("- tokens: {}/{}", record.tokens_used, budget);
+    }
 }
 
 fn init_agents_template_text(language: &str) -> String {
@@ -6659,14 +6784,28 @@ async fn run_prompt_once(
     let language = locale::resolve_cli_language(global);
     let mut renderer = StreamRenderer::new(global.json, language.as_str());
     let mut final_event = FinalEvent::default();
+    let mut goal_continue_ready = false;
     while let Some(item) = stream.next().await {
         let event = item.expect("infallible stream event");
+        if event.event == "goal_continuation_ready" {
+            goal_continue_ready = true;
+        }
         if let Some(final_payload) = renderer.render_event(&event)? {
             final_event = final_payload;
         }
     }
     renderer.finish();
     emit_turn_complete_notification(runtime, session_id, &final_event, "line-chat", None);
+    if goal_continue_ready {
+        runtime
+            .state
+            .kernel
+            .thread_runtime
+            .spawn_goal_continuation_after_cooldown(
+                runtime.user_id.clone(),
+                session_id.to_string(),
+            );
+    }
     Ok(final_event)
 }
 

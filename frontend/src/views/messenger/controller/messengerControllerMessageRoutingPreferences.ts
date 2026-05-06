@@ -555,6 +555,10 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       helperWorkspace?: boolean;
       settingsPanelMode?: string;
   } = {}) => {
+      if (ctx.activeSessionGoalLocked?.value && section !== 'messages') {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return;
+      }
       const preserveHelperWorkspace = options.preserveHelperWorkspace === true;
       const panelHint = String(options.panelHint || '').trim().toLowerCase();
       const explicitSettingsPanelMode = ctx.normalizeSettingsPanelMode(options.settingsPanelMode);
@@ -747,6 +751,10 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
   };
 
   ctx.openSettingsPage = () => {
+      if (ctx.activeSessionGoalLocked?.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return;
+      }
       ctx.activateSettingsPanel('general');
   };
 
@@ -774,6 +782,10 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
   };
 
   ctx.openProfilePage = () => {
+      if (ctx.activeSessionGoalLocked?.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return;
+      }
       ctx.closeFileContainerMenu();
       ctx.activateSettingsPanel('profile');
   };

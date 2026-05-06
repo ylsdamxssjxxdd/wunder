@@ -30,8 +30,16 @@
               @click.prevent="openAvatarDialog"
             >
               <span class="messenger-agent-avatar-trigger-preview" :style="agentAvatarPreviewStyle" aria-hidden="true">
+                <CompanionSprite
+                  v-if="formCompanionRecord"
+                  class="messenger-agent-avatar-trigger-sprite"
+                  :source="formCompanionRecord.spritesheetDataUrl"
+                  state="idle"
+                  :scale="0.13"
+                  paused
+                />
                 <img
-                  v-if="agentAvatarPreviewImageUrl"
+                  v-else-if="agentAvatarPreviewImageUrl"
                   class="messenger-settings-profile-avatar-image"
                   :src="agentAvatarPreviewImageUrl"
                   decoding="async"
@@ -274,8 +282,16 @@
         <div class="messenger-avatar-dialog-body">
           <div class="messenger-avatar-dialog-preview">
             <div class="messenger-settings-profile-avatar messenger-settings-profile-avatar--dialog" :style="avatarDialogPreviewStyle">
+              <CompanionSprite
+                v-if="avatarDialogCompanion"
+                class="messenger-agent-avatar-dialog-sprite"
+                :source="avatarDialogCompanion.spritesheetDataUrl"
+                state="idle"
+                :scale="0.24"
+                paused
+              />
               <img
-                v-if="avatarDialogImageUrl"
+                v-else-if="avatarDialogImageUrl"
                 class="messenger-settings-profile-avatar-image"
                 :src="avatarDialogImageUrl"
                 decoding="async"
@@ -283,63 +299,177 @@
               />
               <span v-else>{{ agentAvatarInitial }}</span>
             </div>
-            <div class="messenger-settings-hint">{{ t('profile.avatar.tip') }}</div>
+            <div class="messenger-settings-hint">{{ t('portal.agent.companion.tip') }}</div>
           </div>
-          <div class="messenger-settings-label">{{ t('portal.agent.avatarIcon') }}</div>
-          <div class="messenger-settings-avatar-icon-grid">
+
+          <div class="messenger-agent-avatar-mode-tabs">
             <button
-              v-for="item in pagedAvatarOptions"
-              :key="item.key"
-              class="messenger-settings-avatar-icon-btn"
-              :class="{ active: avatarDialogIcon === item.key }"
+              class="messenger-agent-avatar-mode-tab"
+              :class="{ active: avatarDialogKind === 'static' }"
               type="button"
-              :title="item.label"
-              :aria-label="item.label"
-              @click="avatarDialogIcon = item.key"
+              @click="avatarDialogKind = 'static'"
             >
-              <img
-                v-if="item.image"
-                class="messenger-settings-avatar-option-image"
-                :src="item.image"
-                loading="lazy"
-                decoding="async"
-                alt=""
-              />
-              <span v-else>{{ agentAvatarInitial }}</span>
+              {{ t('portal.agent.companion.staticTab') }}
+            </button>
+            <button
+              class="messenger-agent-avatar-mode-tab"
+              :class="{ active: avatarDialogKind === 'companion' && avatarDialogCompanionScope === 'global' }"
+              type="button"
+              @click="setAvatarDialogCompanionScope('global')"
+            >
+              {{ t('portal.agent.companion.globalTab') }}
+            </button>
+            <button
+              class="messenger-agent-avatar-mode-tab"
+              :class="{ active: avatarDialogKind === 'companion' && avatarDialogCompanionScope === 'private' }"
+              type="button"
+              @click="setAvatarDialogCompanionScope('private')"
+            >
+              {{ t('portal.agent.companion.privateTab') }}
             </button>
           </div>
-          <div v-if="avatarPageCount > 1" class="messenger-avatar-dialog-pager">
-            <button
-              class="messenger-settings-action ghost compact"
-              type="button"
-              :disabled="avatarPage <= 1"
-              @click="avatarPage = Math.max(1, avatarPage - 1)"
-            >
-              {{ t('profile.avatar.pagePrev') }}
-            </button>
-            <span class="messenger-settings-hint">
-              {{ t('profile.avatar.pageIndicator', { current: avatarPage, total: avatarPageCount }) }}
-            </span>
-            <button
-              class="messenger-settings-action ghost compact"
-              type="button"
-              :disabled="avatarPage >= avatarPageCount"
-              @click="avatarPage = Math.min(avatarPageCount, avatarPage + 1)"
-            >
-              {{ t('profile.avatar.pageNext') }}
-            </button>
-          </div>
-          <div class="messenger-settings-row messenger-settings-row--compact">
-            <div class="messenger-settings-label">{{ t('portal.agent.avatarColor') }}</div>
-            <div class="messenger-settings-avatar-color-select-wrap">
-              <span class="messenger-settings-avatar-color-chip" :style="{ '--avatar-color': avatarDialogColor }"></span>
-              <select v-model="avatarDialogColor" class="messenger-settings-select messenger-settings-select--avatar">
-                <option v-for="item in avatarColorOptions" :key="item.value" :value="item.value">
-                  {{ item.label }}
-                </option>
-              </select>
+
+          <template v-if="avatarDialogKind === 'static'">
+            <div class="messenger-settings-label">{{ t('portal.agent.avatarIcon') }}</div>
+            <div class="messenger-settings-avatar-icon-grid">
+              <button
+                v-for="item in pagedAvatarOptions"
+                :key="item.key"
+                class="messenger-settings-avatar-icon-btn"
+                :class="{ active: avatarDialogIcon === item.key }"
+                type="button"
+                :title="item.label"
+                :aria-label="item.label"
+                @click="avatarDialogIcon = item.key"
+              >
+                <img
+                  v-if="item.image"
+                  class="messenger-settings-avatar-option-image"
+                  :src="item.image"
+                  loading="lazy"
+                  decoding="async"
+                  alt=""
+                />
+                <span v-else>{{ agentAvatarInitial }}</span>
+              </button>
             </div>
-          </div>
+            <div v-if="avatarPageCount > 1" class="messenger-avatar-dialog-pager">
+              <button
+                class="messenger-settings-action ghost compact"
+                type="button"
+                :disabled="avatarPage <= 1"
+                @click="avatarPage = Math.max(1, avatarPage - 1)"
+              >
+                {{ t('profile.avatar.pagePrev') }}
+              </button>
+              <span class="messenger-settings-hint">
+                {{ t('profile.avatar.pageIndicator', { current: avatarPage, total: avatarPageCount }) }}
+              </span>
+              <button
+                class="messenger-settings-action ghost compact"
+                type="button"
+                :disabled="avatarPage >= avatarPageCount"
+                @click="avatarPage = Math.min(avatarPageCount, avatarPage + 1)"
+              >
+                {{ t('profile.avatar.pageNext') }}
+              </button>
+            </div>
+            <div class="messenger-settings-row messenger-settings-row--compact">
+              <div class="messenger-settings-label">{{ t('portal.agent.avatarColor') }}</div>
+              <div class="messenger-settings-avatar-color-select-wrap">
+                <span class="messenger-settings-avatar-color-chip" :style="{ '--avatar-color': avatarDialogColor }"></span>
+                <select v-model="avatarDialogColor" class="messenger-settings-select messenger-settings-select--avatar">
+                  <option v-for="item in avatarColorOptions" :key="item.value" :value="item.value">
+                    {{ item.label }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="messenger-agent-companion-head">
+              <div class="messenger-settings-label">
+                {{
+                  avatarDialogCompanionScope === 'global'
+                    ? t('portal.agent.companion.globalLibrary')
+                    : t('portal.agent.companion.privateLibrary')
+                }}
+              </div>
+              <button
+                v-if="avatarDialogCompanionScope === 'private'"
+                class="messenger-settings-action ghost compact"
+                type="button"
+                :disabled="companionStore.saving"
+                @click="openPrivateCompanionImportPicker"
+              >
+                <i class="fa-solid fa-file-import" aria-hidden="true"></i>
+                <span>{{ t('companions.import') }}</span>
+              </button>
+            </div>
+            <div v-if="avatarDialogCompanionLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+            <div v-else-if="!avatarDialogCompanionOptions.length" class="messenger-list-empty">
+              {{
+                avatarDialogCompanionScope === 'global'
+                  ? t('portal.agent.companion.globalEmpty')
+                  : t('portal.agent.companion.privateEmpty')
+              }}
+            </div>
+            <div v-else class="messenger-agent-companion-list">
+              <button
+                v-for="item in avatarDialogCompanionOptions"
+                :key="`${item.scope || avatarDialogCompanionScope}:${item.id}`"
+                class="messenger-agent-companion-option"
+                :class="{ active: avatarDialogCompanionId === item.id }"
+                type="button"
+                @click="avatarDialogCompanionId = item.id"
+              >
+                <span class="messenger-agent-companion-option-preview" aria-hidden="true">
+                  <CompanionSprite :source="item.spritesheetDataUrl" state="idle" :scale="0.14" paused />
+                </span>
+                <span class="messenger-agent-companion-option-main">
+                  <span class="messenger-agent-companion-option-name">{{ item.displayName }}</span>
+                  <span class="messenger-agent-companion-option-desc">
+                    {{ item.description || t('companions.noDescription') }}
+                  </span>
+                </span>
+              </button>
+            </div>
+            <div class="messenger-agent-companion-switches">
+              <label class="messenger-agent-companion-switch-row">
+                <span>
+                  <strong>{{ t('portal.agent.companion.show') }}</strong>
+                  <small>{{ t('portal.agent.companion.showHint') }}</small>
+                </span>
+                <el-switch v-model="avatarDialogCompanionShow" />
+              </label>
+              <label class="messenger-agent-companion-switch-row">
+                <span>
+                  <strong>{{ t('portal.agent.companion.messageHints') }}</strong>
+                  <small>{{ t('portal.agent.companion.messageHintsHint') }}</small>
+                </span>
+                <el-switch v-model="avatarDialogCompanionMessageHints" />
+              </label>
+            </div>
+            <div class="messenger-settings-row messenger-settings-row--compact">
+              <div class="messenger-settings-label">{{ t('companions.scale') }}</div>
+              <el-slider
+                v-model="avatarDialogCompanionScale"
+                :min="0.7"
+                :max="1.6"
+                :step="0.1"
+                :show-tooltip="false"
+              />
+              <span class="messenger-settings-hint">{{ avatarDialogCompanionScale.toFixed(1) }}x</span>
+            </div>
+            <input
+              ref="privateCompanionInputRef"
+              type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
+              style="display: none"
+              @change="handlePrivateCompanionFileChange"
+            />
+          </template>
         </div>
         <template #footer>
           <div class="messenger-avatar-dialog-footer">
@@ -402,12 +532,14 @@ import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue'
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
+import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
+import { useCompanionStore, type CompanionPackageRecord } from '@/stores/companions';
 import {
   buildAgentToolSections,
   type AgentToolGroup,
@@ -436,7 +568,9 @@ import {
   resolveAgentAvatarImageByKey
 } from '@/utils/agentAvatarCatalog';
 import {
+  type AgentAvatarIconConfig,
   parseAgentAvatarIconConfig,
+  resolveAgentAvatarCompanionId,
   resolveAgentAvatarInitial,
   stringifyAgentAvatarIconConfig
 } from '@/utils/agentAvatar';
@@ -494,8 +628,14 @@ type AgentFormSnapshot = {
   hive_description: string;
   sandbox_container_id: number;
   approval_mode: string;
+  icon_kind: 'static' | 'companion';
   icon_name: string;
   icon_color: string;
+  companion_scope: 'global' | 'private';
+  companion_id: string;
+  companion_show: boolean;
+  companion_message_hints: boolean;
+  companion_scale: number;
   preview_skill: boolean;
   silent: boolean;
   prefer_mother: boolean;
@@ -531,6 +671,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const agentStore = useAgentStore();
 const beeroomStore = useBeeroomStore();
+const companionStore = useCompanionStore();
 const desktopLocalMode = computed(
   () => isDesktopModeEnabled()
 );
@@ -576,8 +717,14 @@ const form = reactive({
   preview_skill: false,
   silent: false,
   prefer_mother: false,
+  icon_kind: 'static' as 'static' | 'companion',
   icon_name: DEFAULT_AGENT_AVATAR_IMAGE_KEY,
-  icon_color: DEFAULT_AVATAR_COLOR
+  icon_color: DEFAULT_AVATAR_COLOR,
+  companion_scope: 'global' as 'global' | 'private',
+  companion_id: '',
+  companion_show: true,
+  companion_message_hints: true,
+  companion_scale: 1
 });
 
 const saving = ref(false);
@@ -603,9 +750,16 @@ const presetQuestionsFieldRef = ref<{ addQuestion: () => void } | null>(null);
 const panelMounted = ref(false);
 const loadedSnapshot = ref<AgentFormSnapshot | null>(null);
 const avatarDialogVisible = ref(false);
+const avatarDialogKind = ref<'static' | 'companion'>('static');
 const avatarDialogIcon = ref(DEFAULT_AGENT_AVATAR_IMAGE_KEY);
 const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
+const avatarDialogCompanionScope = ref<'global' | 'private'>('global');
+const avatarDialogCompanionId = ref('');
+const avatarDialogCompanionShow = ref(true);
+const avatarDialogCompanionMessageHints = ref(true);
+const avatarDialogCompanionScale = ref(1);
 const avatarPage = ref(1);
+const privateCompanionInputRef = ref<HTMLInputElement | null>(null);
 let panelDisposed = false;
 let latestAgentLoadRequestId = 0;
 let lastHandledFocusToken = 0;
@@ -749,6 +903,41 @@ const normalizeAgentAvatarName = (value: unknown): string => {
 
 const normalizeAgentAvatarColor = (value: unknown): string => normalizeAvatarColor(value || DEFAULT_AVATAR_COLOR);
 
+const normalizeAvatarKind = (value: unknown): 'static' | 'companion' =>
+  String(value || '').trim().toLowerCase() === 'companion' ? 'companion' : 'static';
+
+const normalizeCompanionScope = (value: unknown): 'global' | 'private' =>
+  String(value || '').trim().toLowerCase() === 'private' ? 'private' : 'global';
+
+const normalizeCompanionScale = (value: unknown): number => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 1;
+  }
+  return Math.min(1.6, Math.max(0.7, Number(numeric.toFixed(1))));
+};
+
+const buildCurrentIconConfig = (): AgentAvatarIconConfig => {
+  const color = normalizeAgentAvatarColor(form.icon_color);
+  if (form.icon_kind === 'companion' && String(form.companion_id || '').trim()) {
+    return {
+      kind: 'companion',
+      name: normalizeAgentAvatarName(form.icon_name),
+      color,
+      scope: normalizeCompanionScope(form.companion_scope),
+      id: String(form.companion_id || '').trim(),
+      show: form.companion_show !== false,
+      messageHints: form.companion_message_hints !== false,
+      scale: normalizeCompanionScale(form.companion_scale)
+    };
+  }
+  return {
+    kind: 'static',
+    name: normalizeAgentAvatarName(form.icon_name),
+    color
+  };
+};
+
 const buildAgentAvatarOptionLabel = (key: string): string => {
   const match = String(key || '').trim().match(/^avatar-(\d{3})$/);
   if (match) {
@@ -782,13 +971,36 @@ const avatarOptions = computed<ProfileAvatarOption[]>(() =>
 const resolveAvatarOptionImage = (key: unknown): string =>
   resolveAgentAvatarImageByKey(normalizeAgentAvatarName(key));
 
-const agentAvatarPreviewImageUrl = computed(() => resolveAvatarOptionImage(form.icon_name));
-const avatarDialogImageUrl = computed(() => resolveAvatarOptionImage(avatarDialogIcon.value));
+const formCompanionRecord = computed(() =>
+  form.icon_kind === 'companion'
+    ? companionStore.findCompanion(form.companion_scope, form.companion_id)
+    : null
+);
+const avatarDialogCompanionOptions = computed<CompanionPackageRecord[]>(() =>
+  (avatarDialogCompanionScope.value === 'global'
+    ? companionStore.globalCompanions
+    : companionStore.companions
+  ).filter((item) => Boolean(item))
+);
+const avatarDialogCompanion = computed(() =>
+  avatarDialogKind.value === 'companion'
+    ? avatarDialogCompanionOptions.value.find((item) => item.id === avatarDialogCompanionId.value) || null
+    : null
+);
+const avatarDialogCompanionLoading = computed(() =>
+  companionStore.loading || (avatarDialogCompanionScope.value === 'global' && !companionStore.globalCompanions.length && !companionStore.hydrated)
+);
+const agentAvatarPreviewImageUrl = computed(() =>
+  formCompanionRecord.value ? '' : resolveAvatarOptionImage(form.icon_name)
+);
+const avatarDialogImageUrl = computed(() =>
+  avatarDialogKind.value === 'companion' ? '' : resolveAvatarOptionImage(avatarDialogIcon.value)
+);
 const agentAvatarPreviewStyle = computed(() => ({
-  background: agentAvatarPreviewImageUrl.value ? 'transparent' : normalizeAgentAvatarColor(form.icon_color)
+  background: agentAvatarPreviewImageUrl.value || formCompanionRecord.value ? 'transparent' : normalizeAgentAvatarColor(form.icon_color)
 }));
 const avatarDialogPreviewStyle = computed(() => ({
-  background: avatarDialogImageUrl.value ? 'transparent' : normalizeAgentAvatarColor(avatarDialogColor.value)
+  background: avatarDialogImageUrl.value || avatarDialogCompanion.value ? 'transparent' : normalizeAgentAvatarColor(avatarDialogColor.value)
 }));
 const agentAvatarInitial = computed(() =>
   resolveAgentAvatarInitial(String(form.name || '').trim() || normalizedAgentId.value || t('messenger.defaultAgent'))
@@ -830,10 +1042,18 @@ const resolveAvatarPageByKey = (key: string): number => {
 };
 
 const openAvatarDialog = () => {
+  avatarDialogKind.value = normalizeAvatarKind(form.icon_kind);
   avatarDialogIcon.value = normalizeAgentAvatarName(form.icon_name);
   avatarDialogColor.value = normalizeAgentAvatarColor(form.icon_color);
+  avatarDialogCompanionScope.value = normalizeCompanionScope(form.companion_scope);
+  avatarDialogCompanionId.value = String(form.companion_id || '').trim();
+  avatarDialogCompanionShow.value = form.companion_show !== false;
+  avatarDialogCompanionMessageHints.value = form.companion_message_hints !== false;
+  avatarDialogCompanionScale.value = normalizeCompanionScale(form.companion_scale);
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
   avatarDialogVisible.value = true;
+  void companionStore.hydrate().catch(() => undefined);
+  void companionStore.loadGlobalCompanions().catch(() => undefined);
 };
 
 const closeAvatarDialog = () => {
@@ -841,15 +1061,83 @@ const closeAvatarDialog = () => {
 };
 
 const resetAvatarDialog = () => {
+  avatarDialogKind.value = 'static';
   avatarDialogIcon.value = DEFAULT_AGENT_AVATAR_IMAGE_KEY;
   avatarDialogColor.value = DEFAULT_AVATAR_COLOR;
+  avatarDialogCompanionScope.value = 'global';
+  avatarDialogCompanionId.value = '';
+  avatarDialogCompanionShow.value = true;
+  avatarDialogCompanionMessageHints.value = true;
+  avatarDialogCompanionScale.value = 1;
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
 };
 
 const applyAvatarDialog = () => {
+  form.icon_kind = avatarDialogKind.value;
   form.icon_name = normalizeAgentAvatarName(avatarDialogIcon.value);
   form.icon_color = normalizeAgentAvatarColor(avatarDialogColor.value);
+  form.companion_scope = normalizeCompanionScope(avatarDialogCompanionScope.value);
+  form.companion_id = avatarDialogKind.value === 'companion' ? String(avatarDialogCompanionId.value || '').trim() : '';
+  form.companion_show = avatarDialogCompanionShow.value !== false;
+  form.companion_message_hints = avatarDialogCompanionMessageHints.value !== false;
+  form.companion_scale = normalizeCompanionScale(avatarDialogCompanionScale.value);
   avatarDialogVisible.value = false;
+};
+
+const setAvatarDialogCompanionScope = (scope: 'global' | 'private') => {
+  avatarDialogKind.value = 'companion';
+  avatarDialogCompanionScope.value = scope;
+  const options = scope === 'global' ? companionStore.globalCompanions : companionStore.companions;
+  if (!options.some((item) => item.id === avatarDialogCompanionId.value)) {
+    avatarDialogCompanionId.value = options[0]?.id || '';
+  }
+  if (scope === 'global') {
+    void companionStore.loadGlobalCompanions().catch(() => undefined);
+  }
+};
+
+watch(
+  () => [avatarDialogKind.value, avatarDialogCompanionScope.value, avatarDialogCompanionOptions.value] as const,
+  () => {
+    if (avatarDialogKind.value !== 'companion') {
+      return;
+    }
+    const matched = avatarDialogCompanionOptions.value.find((item) => item.id === avatarDialogCompanionId.value);
+    if (!matched) {
+      avatarDialogCompanionId.value = avatarDialogCompanionOptions.value[0]?.id || '';
+    }
+  },
+  { immediate: true }
+);
+
+const resetPrivateCompanionInput = () => {
+  if (privateCompanionInputRef.value) {
+    privateCompanionInputRef.value.value = '';
+  }
+};
+
+const openPrivateCompanionImportPicker = () => {
+  privateCompanionInputRef.value?.click();
+};
+
+const handlePrivateCompanionFileChange = async (event: Event) => {
+  const source = event.target as HTMLInputElement | null;
+  const file = source?.files?.[0] || null;
+  resetPrivateCompanionInput();
+  if (!file) {
+    return;
+  }
+  try {
+    const record = await companionStore.importPackage(file);
+    avatarDialogKind.value = 'companion';
+    avatarDialogCompanionScope.value = 'private';
+    avatarDialogCompanionId.value = record.id;
+    companionStore.showMessage(t('companions.importSuccess', { name: record.displayName }), { kind: 'success' });
+    ElMessage.success(t('companions.importSuccess', { name: record.displayName }));
+  } catch (error) {
+    const message = String((error as { message?: string })?.message || error || '').trim();
+    ElMessage.error(t('companions.importFailed', { message }));
+  }
 };
 
 const normalizeStringArrayForSnapshot = (value: unknown): string[] => {
@@ -865,6 +1153,7 @@ const normalizeStringArrayForSnapshot = (value: unknown): string[] => {
 
 const buildFormSnapshot = (): AgentFormSnapshot => {
   const groupPayload = buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value);
+  const iconConfig = buildCurrentIconConfig();
   return {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
@@ -879,8 +1168,14 @@ const buildFormSnapshot = (): AgentFormSnapshot => {
     hive_description: String(groupPayload.hive_description || '').trim(),
     sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
     approval_mode: normalizeApprovalMode(form.approval_mode),
-    icon_name: normalizeAgentAvatarName(form.icon_name),
-    icon_color: normalizeAgentAvatarColor(form.icon_color),
+    icon_kind: iconConfig.kind,
+    icon_name: normalizeAgentAvatarName(iconConfig.name),
+    icon_color: normalizeAgentAvatarColor(iconConfig.color),
+    companion_scope: normalizeCompanionScope(iconConfig.scope),
+    companion_id: iconConfig.kind === 'companion' ? resolveAgentAvatarCompanionId(iconConfig) : '',
+    companion_show: iconConfig.show !== false,
+    companion_message_hints: iconConfig.messageHints !== false,
+    companion_scale: normalizeCompanionScale(iconConfig.scale),
     preview_skill: Boolean(form.preview_skill),
     silent: Boolean(form.silent),
     prefer_mother: Boolean(form.prefer_mother)
@@ -1226,8 +1521,14 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     form.preview_skill = Boolean((agent as Record<string, unknown>).preview_skill);
     form.silent = Boolean(agent.silent);
     form.prefer_mother = Boolean(agent.prefer_mother);
+    form.icon_kind = avatarConfig.kind;
     form.icon_name = normalizeAgentAvatarName(avatarConfig.name);
     form.icon_color = normalizeAgentAvatarColor(avatarConfig.color);
+    form.companion_scope = normalizeCompanionScope(avatarConfig.scope);
+    form.companion_id = avatarConfig.kind === 'companion' ? resolveAgentAvatarCompanionId(avatarConfig) : '';
+    form.companion_show = avatarConfig.show !== false;
+    form.companion_message_hints = avatarConfig.messageHints !== false;
+    form.companion_scale = normalizeCompanionScale(avatarConfig.scale);
     markFormClean();
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
@@ -1283,10 +1584,7 @@ const saveAgent = async () => {
       preview_skill: Boolean(form.preview_skill),
       silent: Boolean(form.silent),
       prefer_mother: Boolean(form.prefer_mother),
-      icon: stringifyAgentAvatarIconConfig({
-        name: form.icon_name,
-        color: form.icon_color
-      })
+      icon: stringifyAgentAvatarIconConfig(buildCurrentIconConfig())
     };
     if (!payload.hive_name) delete payload.hive_name;
     if (!payload.hive_description) delete payload.hive_description;
@@ -1312,10 +1610,7 @@ const exportWorkerCard = () => {
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
-    icon: stringifyAgentAvatarIconConfig({
-      name: form.icon_name,
-      color: form.icon_color
-    }),
+    icon: stringifyAgentAvatarIconConfig(buildCurrentIconConfig()),
     tool_names: dependencyPayload.tool_names,
     declared_tool_names: dependencyPayload.declared_tool_names,
     declared_skill_names: dependencyPayload.declared_skill_names,
@@ -1387,6 +1682,8 @@ defineExpose({
 onMounted(() => {
   emit('panel-mounted');
   panelMounted.value = true;
+  void companionStore.hydrate().catch(() => undefined);
+  void companionStore.loadGlobalCompanions().catch(() => undefined);
   stopUnsavedGuard = registerUnsavedChangesGuard('messenger-agent-settings', confirmDiscardChanges);
   stopUserToolsUpdatedListener = onUserToolsUpdated((event) => {
     const detail = event?.detail || {};
@@ -1497,6 +1794,10 @@ onBeforeUnmount(() => {
   font-weight: 700;
   line-height: 1;
   text-transform: uppercase;
+}
+
+.messenger-agent-avatar-trigger-sprite {
+  flex: 0 0 auto;
 }
 
 .messenger-agent-avatar-trigger-text {
@@ -1620,6 +1921,135 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
+.messenger-agent-avatar-mode-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.messenger-agent-avatar-mode-tab {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.messenger-agent-avatar-mode-tab.active {
+  border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.42);
+  background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.1);
+  color: var(--ui-accent-deep, #2563eb);
+}
+
+.messenger-agent-companion-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.messenger-agent-companion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.messenger-agent-companion-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.messenger-agent-companion-option.active {
+  border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.42);
+  background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.08);
+}
+
+.messenger-agent-companion-option-preview {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.messenger-agent-companion-option-preview :deep(.companion-sprite) {
+  flex: 0 0 auto;
+}
+
+.messenger-agent-companion-option-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.messenger-agent-companion-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.messenger-agent-companion-option-desc {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.messenger-agent-companion-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.messenger-agent-companion-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.messenger-agent-companion-switch-row strong {
+  display: block;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.messenger-agent-companion-switch-row small {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.messenger-agent-avatar-dialog-sprite {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 720px) {
   .messenger-agent-name-row {
     grid-template-columns: minmax(0, 1fr);
@@ -1641,6 +2071,12 @@ onBeforeUnmount(() => {
 
   .messenger-agent-base {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .messenger-agent-companion-head,
+  .messenger-agent-companion-switch-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

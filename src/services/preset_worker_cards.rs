@@ -300,6 +300,7 @@ mod tests {
             system_prompt: "prompt".to_string(),
             preview_skill: false,
             model_name: Some("gpt-5".to_string()),
+            icon: None,
             icon_name: "spark".to_string(),
             icon_color: "#ABC".to_string(),
             sandbox_container_id: 4,

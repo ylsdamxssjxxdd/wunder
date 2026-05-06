@@ -79,6 +79,9 @@ impl TuiApp {
             SlashCommand::Plan => {
                 self.handle_plan_slash(command.args).await?;
             }
+            SlashCommand::Goal => {
+                self.handle_goal_slash(command.args).await?;
+            }
             SlashCommand::Personality => {
                 self.handle_personality_slash(command.args).await?;
             }
@@ -939,6 +942,146 @@ impl TuiApp {
             format!("/plan {cleaned}")
         };
         self.start_stream_request(prompt, user_echo, None).await
+    }
+
+    async fn handle_goal_slash(&mut self, args: &str) -> Result<()> {
+        let command = wunder_server::goal::parse_goal_command(args)?;
+        wunder_server::goal::ensure_session(
+            self.runtime.state.storage.clone(),
+            &self.runtime.user_id,
+            &self.session_id,
+            self.agent_id_override.as_deref(),
+        )
+        .await?;
+        match command {
+            wunder_server::goal::GoalCommand::Show => {
+                let record = wunder_server::goal::get_goal(
+                    self.runtime.state.storage.clone(),
+                    &self.runtime.user_id,
+                    &self.session_id,
+                )
+                .await?;
+                self.push_goal_log(record.as_ref());
+            }
+            wunder_server::goal::GoalCommand::Set {
+                objective,
+                token_budget,
+            } => {
+                let record = wunder_server::goal::set_goal(
+                    self.runtime.state.storage.clone(),
+                    &self.runtime.user_id,
+                    &self.session_id,
+                    &objective,
+                    token_budget,
+                    wunder_server::goal::SOURCE_CLI,
+                )
+                .await?;
+                self.push_goal_log(Some(&record));
+                self.push_log(
+                    LogKind::Info,
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "目标态已启动，会持续推进直到完成或暂停。",
+                        "goal mode started; it will keep working until complete or paused.",
+                    )
+                    .to_string(),
+                );
+                let _ = self
+                    .runtime
+                    .state
+                    .kernel
+                    .thread_runtime
+                    .submit_goal_continuation(&self.runtime.user_id, &self.session_id)
+                    .await;
+            }
+            wunder_server::goal::GoalCommand::Pause => {
+                let record = wunder_server::goal::set_goal_status(
+                    self.runtime.state.storage.clone(),
+                    &self.runtime.user_id,
+                    &self.session_id,
+                    wunder_server::goal::GoalStatus::Paused,
+                    wunder_server::goal::SOURCE_CLI,
+                )
+                .await?;
+                self.push_goal_log(Some(&record));
+            }
+            wunder_server::goal::GoalCommand::Resume => {
+                let record = wunder_server::goal::set_goal_status(
+                    self.runtime.state.storage.clone(),
+                    &self.runtime.user_id,
+                    &self.session_id,
+                    wunder_server::goal::GoalStatus::Active,
+                    wunder_server::goal::SOURCE_CLI,
+                )
+                .await?;
+                self.push_goal_log(Some(&record));
+                let _ = self
+                    .runtime
+                    .state
+                    .kernel
+                    .thread_runtime
+                    .submit_goal_continuation(&self.runtime.user_id, &self.session_id)
+                    .await;
+            }
+            wunder_server::goal::GoalCommand::Clear => {
+                let deleted = wunder_server::goal::clear_goal(
+                    self.runtime.state.storage.clone(),
+                    &self.runtime.user_id,
+                    &self.session_id,
+                )
+                .await?;
+                self.push_log(
+                    LogKind::Info,
+                    if deleted {
+                        crate::locale::tr(
+                            self.display_language.as_str(),
+                            "目标已清除",
+                            "goal cleared",
+                        )
+                    } else {
+                        crate::locale::tr(
+                            self.display_language.as_str(),
+                            "当前没有目标",
+                            "no goal set",
+                        )
+                    }
+                    .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn push_goal_log(&mut self, record: Option<&wunder_server::storage::SessionGoalRecord>) {
+        let Some(record) = record else {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "当前没有目标",
+                    "no goal set",
+                )
+                .to_string(),
+            );
+            return;
+        };
+        let mut lines = if self.is_zh_language() {
+            vec![
+                format!("- 目标: {}", record.objective),
+                format!("- 状态: {}", record.status),
+            ]
+        } else {
+            vec![
+                format!("- goal: {}", record.objective),
+                format!("- status: {}", record.status),
+            ]
+        };
+        if let Some(budget) = record.token_budget {
+            lines.push(format!("- tokens: {}/{}", record.tokens_used, budget));
+        }
+        for line in lines {
+            self.push_log(LogKind::Info, line);
+        }
     }
 
     async fn handle_personality_slash(&mut self, args: &str) -> Result<()> {

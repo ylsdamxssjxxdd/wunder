@@ -37,6 +37,7 @@ pub struct PresetAgent {
     pub system_prompt: String,
     pub preview_skill: bool,
     pub model_name: Option<String>,
+    pub icon: String,
     pub icon_name: String,
     pub icon_color: String,
     pub sandbox_container_id: i32,
@@ -119,10 +120,6 @@ pub fn normalize_agent_status(raw: Option<&str>) -> String {
     shared_normalize_agent_status(raw)
 }
 
-pub fn build_icon_payload(name: &str, color: &str) -> String {
-    worker_card_settings::build_icon_payload(name, color)
-}
-
 pub fn filter_allowed_tools(values: &[String], allowed: &HashSet<String>) -> Vec<String> {
     values
         .iter()
@@ -159,8 +156,8 @@ fn preset_from_config_with_skill_names(
     let preset_id = resolve_preset_id(&config.preset_id, &config.name);
     let normalized = canonicalize_preset_config(config, &preset_id, skill_name_keys)?;
     let update = preset_update_from_config(&normalized, skill_name_keys)?;
-    let (icon_name, icon_color) =
-        worker_card_settings::normalize_preset_icon_parts(update.icon.as_deref());
+    let icon = worker_card_settings::normalize_icon_payload(update.icon.as_deref());
+    let (icon_name, icon_color) = worker_card_settings::normalize_preset_icon_parts(Some(&icon));
     Some(PresetAgent {
         preset_id,
         revision: normalized.revision.max(1),
@@ -169,6 +166,7 @@ fn preset_from_config_with_skill_names(
         system_prompt: update.system_prompt,
         preview_skill: normalized.preview_skill,
         model_name: normalize_optional_model_name(update.model_name.as_deref()),
+        icon,
         icon_name,
         icon_color,
         sandbox_container_id: normalize_sandbox_container_id(update.sandbox_container_id),
@@ -252,7 +250,7 @@ fn build_target_snapshot_from_context(
                 preset_questions: preset.preset_questions.clone(),
                 approval_mode: preset.approval_mode.clone(),
                 is_shared: false,
-                icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
+                icon: Some(preset.icon.clone()),
                 hive_id: DEFAULT_HIVE_ID.to_string(),
                 silent: false,
                 prefer_mother: false,

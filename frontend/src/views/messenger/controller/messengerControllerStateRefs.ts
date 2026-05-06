@@ -540,6 +540,8 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.desktopDefaultModelDisplayName = ref('');
 
+  ctx.desktopDefaultModelMaxContext = ref<number | null>(null);
+
   ctx.serverDefaultModelDisplayName = ref('');
 
   ctx.worldVoicePlayingMessageKey = ref('');

@@ -735,28 +735,46 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
   ctx.resolveDesktopDefaultModelMeta = (settings: unknown): {
       hearingSupported: boolean;
       modelDisplayName: string;
+      maxContext: number | null;
   } => {
+      const normalizePositiveInteger = (value: unknown): number | null => {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null;
+      };
       const root = ctx.asObjectRecord(settings);
       const llm = ctx.asObjectRecord(root.llm);
       const defaultModelKey = String(llm.default || '').trim();
       const models = ctx.asObjectRecord(llm.models);
       const currentModel = ctx.asObjectRecord(defaultModelKey ? models[defaultModelKey] : null);
       const configuredModelName = String(currentModel.model || currentModel.model_name || currentModel.name || '').trim();
+      const maxContext = normalizePositiveInteger(
+          currentModel.max_context ??
+              currentModel.maxContext ??
+              currentModel.context_max_tokens ??
+              currentModel.contextMaxTokens ??
+              currentModel.context_total_tokens ??
+              currentModel.contextTotalTokens ??
+              currentModel.context_window ??
+              currentModel.contextWindow
+      );
       const supportHearing = currentModel.support_hearing;
       return {
           hearingSupported: supportHearing === false ? false : true,
-          modelDisplayName: configuredModelName || defaultModelKey
+          modelDisplayName: configuredModelName || defaultModelKey,
+          maxContext
       };
   };
 
   ctx.readDesktopDefaultModelMeta = async (force = false): Promise<{
       hearingSupported: boolean;
       modelDisplayName: string;
+      maxContext: number | null;
   }> => {
       if (!ctx.desktopMode.value) {
           ctx.agentVoiceModelHearingSupported.value = true;
           ctx.desktopDefaultModelDisplayName.value = '';
-          return { hearingSupported: true, modelDisplayName: '' };
+          ctx.desktopDefaultModelMaxContext.value = null;
+          return { hearingSupported: true, modelDisplayName: '', maxContext: null };
       }
       const now = Date.now();
       if (!force &&
@@ -764,7 +782,8 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           now - ctx.agentVoiceModelSupportCheckedAt <= ctx.AGENT_VOICE_MODEL_SUPPORT_CACHE_MS) {
           return {
               hearingSupported: ctx.agentVoiceModelHearingSupported.value,
-              modelDisplayName: String(ctx.desktopDefaultModelDisplayName.value || '').trim()
+              modelDisplayName: String(ctx.desktopDefaultModelDisplayName.value || '').trim(),
+              maxContext: ctx.desktopDefaultModelMaxContext.value
           };
       }
       if (ctx.desktopDefaultModelMetaFetchPromise) {
@@ -777,12 +796,14 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
               const meta = ctx.resolveDesktopDefaultModelMeta(settings);
               ctx.agentVoiceModelHearingSupported.value = meta.hearingSupported;
               ctx.desktopDefaultModelDisplayName.value = meta.modelDisplayName;
+              ctx.desktopDefaultModelMaxContext.value = meta.maxContext;
               return meta;
           }
           catch {
               ctx.agentVoiceModelHearingSupported.value = null;
               ctx.desktopDefaultModelDisplayName.value = '';
-              return { hearingSupported: true, modelDisplayName: '' };
+              ctx.desktopDefaultModelMaxContext.value = null;
+              return { hearingSupported: true, modelDisplayName: '', maxContext: null };
           }
           finally {
               ctx.agentVoiceModelSupportCheckedAt = Date.now();

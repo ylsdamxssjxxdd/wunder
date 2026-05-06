@@ -543,16 +543,21 @@ export function installMessengerControllerHiveMixedLists(ctx: MessengerControlle
           const title = String((agent as Record<string, unknown> | null)?.name ||
               (agentId === DEFAULT_AGENT_KEY ? ctx.t('messenger.defaultAgent') : agentId));
           const preview = ctx.resolveSessionTimelinePreview((latest?.session || main?.session || {}) as Record<string, unknown>);
+          const mainSessionId = String(main?.session?.id || '').trim();
+          const goal = mainSessionId ? ctx.chatStore.sessionGoal?.(mainSessionId) : null;
+          const goalLocked = mainSessionId ? Boolean(ctx.chatStore.isSessionGoalLocked?.(mainSessionId)) : false;
           return {
               key: `agent:${agentId}`,
               kind: 'agent',
-              sourceId: String(main?.session?.id || ''),
+              sourceId: mainSessionId,
               agentId,
               icon: ctx.resolveAgentIconForDisplay(agentId, agent as Record<string, unknown> | null),
               title,
               preview,
               unread: Math.max(0, Math.floor(Number(ctx.agentMainUnreadCountMap.value[agentId] || 0))),
-              lastAt: Number(latest?.lastAt || main?.lastAt || 0)
+              lastAt: Number(latest?.lastAt || main?.lastAt || 0),
+              goalLocked,
+              goalStatus: String(goal?.status || '')
           } as MixedConversation;
       })
           .filter((item) => ctx.agentMap.value.has(item.agentId))

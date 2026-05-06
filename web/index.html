@@ -86,6 +86,10 @@
                 <i class="fa-solid fa-layer-group"></i>
                 <span data-i18n="panel.presetAgents">预设智能体</span>
               </button>
+              <button id="navCompanions" class="nav-btn">
+                <i class="fa-solid fa-mask"></i>
+                <span data-i18n="panel.companions">形象管理</span>
+              </button>
               <button id="navBuiltin" class="nav-btn">
                 <i class="fa-solid fa-toolbox"></i>
                 <span data-i18n="panel.toolManager">工具管理</span>
@@ -779,6 +783,14 @@
                 <span id="presetAgentAvatarModalPreview" class="preset-agent-avatar-modal-preview" aria-hidden="true"></span>
                 <span class="muted" data-i18n="presetAgents.avatarModal.previewHint">预览</span>
               </div>
+              <div class="preset-agent-avatar-mode-tabs" role="tablist" aria-label="Preset agent companion mode">
+                <button id="presetAgentAvatarStaticTab" class="preset-agent-avatar-mode-tab" type="button" role="tab">
+                  <span data-i18n="presetAgents.avatarModal.staticTab">Static</span>
+                </button>
+                <button id="presetAgentAvatarGlobalTab" class="preset-agent-avatar-mode-tab" type="button" role="tab">
+                  <span data-i18n="presetAgents.avatarModal.globalTab">Global Companion</span>
+                </button>
+              </div>
               <div class="form-row">
                 <label data-i18n="presetAgents.avatarModal.icons">头像库</label>
                 <div
@@ -823,6 +835,82 @@
             </div>
           </div>
         </div>
+        <section id="companionsPanel" class="panel">
+          <div class="companion-admin">
+            <div class="list-header">
+              <div>
+                <h1 data-i18n="companionsAdmin.title">形象管理</h1>
+                <div class="tips" data-i18n="companionsAdmin.tip">管理可供所有用户和预设智能体使用的全局动态形象。</div>
+              </div>
+              <div class="header-actions">
+                <button id="companionAdminRefreshBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                  <span data-i18n="common.refresh">刷新</span>
+                </button>
+                <button id="companionAdminImportBtn" class="btn-with-icon" type="button">
+                  <i class="fa-solid fa-file-import"></i>
+                  <span data-i18n="companionsAdmin.import">导入形象</span>
+                </button>
+                <input
+                  id="companionAdminImportInput"
+                  type="file"
+                  accept=".zip,application/zip,application/x-zip-compressed"
+                  hidden
+                />
+              </div>
+            </div>
+            <div class="companion-admin-layout">
+              <aside class="companion-admin-list-card">
+                <div class="companion-admin-list-head">
+                  <strong data-i18n="companionsAdmin.listTitle">全局形象</strong>
+                  <input
+                    id="companionAdminSearch"
+                    type="search"
+                    data-i18n-placeholder="companionsAdmin.search"
+                    placeholder="搜索形象"
+                  />
+                </div>
+                <div id="companionAdminList" class="companion-admin-list"></div>
+                <div id="companionAdminEmpty" class="muted companion-admin-empty" data-i18n="companionsAdmin.empty">暂无全局形象</div>
+              </aside>
+              <section class="companion-admin-detail-card">
+                <div class="companion-admin-detail-head">
+                  <div>
+                    <div id="companionAdminDetailTitle" class="detail-title" data-i18n="companionsAdmin.detailEmpty">未选择形象</div>
+                    <div id="companionAdminDetailMeta" class="muted"></div>
+                  </div>
+                  <div class="detail-actions">
+                    <button id="companionAdminExportBtn" class="secondary btn-with-icon" type="button">
+                      <i class="fa-solid fa-download"></i>
+                      <span data-i18n="companionsAdmin.export">导出</span>
+                    </button>
+                    <button id="companionAdminDeleteBtn" class="danger btn-with-icon" type="button">
+                      <i class="fa-solid fa-trash-can"></i>
+                      <span data-i18n="common.delete">删除</span>
+                    </button>
+                  </div>
+                </div>
+                <div id="companionAdminPreview" class="companion-admin-preview"></div>
+                <div class="form-section">
+                  <div class="form-row">
+                    <label for="companionAdminName" data-i18n="companionsAdmin.name">名称</label>
+                    <input id="companionAdminName" type="text" />
+                  </div>
+                  <div class="form-row">
+                    <label for="companionAdminDescription" data-i18n="companionsAdmin.description">说明</label>
+                    <textarea id="companionAdminDescription" rows="3"></textarea>
+                  </div>
+                </div>
+                <div class="detail-actions">
+                  <button id="companionAdminSaveBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span data-i18n="common.save">保存</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
         <section id="userAccountsPanel" class="panel">
           <div class="user-management user-account-management">
             <div class="list-header">

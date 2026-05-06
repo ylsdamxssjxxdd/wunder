@@ -344,10 +344,12 @@ impl PromptComposer {
             return HashSet::new();
         }
         let available = collect_available_tool_names(config, skills, user_tool_bindings);
-        selected
+        let mut resolved = selected
             .into_iter()
             .filter(|name| available.contains(name))
-            .collect()
+            .collect::<HashSet<_>>();
+        resolved = crate::services::goal::inject_goal_tools(resolved);
+        resolved
     }
 
     fn get_cached_prompt(&self, key: &str, now: f64) -> Option<String> {

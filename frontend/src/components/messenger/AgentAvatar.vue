@@ -1,7 +1,15 @@
 <template>
   <span class="messenger-agent-avatar" :class="[sizeClass, stateClass]" :title="title">
     <span class="messenger-agent-avatar-image-shell" :style="avatarFaceStyle" aria-hidden="true">
-      <img v-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
+      <CompanionSprite
+        v-if="companionSpriteUrl"
+        class="messenger-agent-avatar-sprite"
+        :source="companionSpriteUrl"
+        state="idle"
+        :scale="companionSpriteScale"
+        paused
+      />
+      <img v-else-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
       <span v-else class="messenger-agent-avatar-initial">{{ avatarInitial }}</span>
     </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
@@ -17,6 +25,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import CompanionSprite from '@/components/companions/CompanionSprite.vue';
+import { useCompanionStore } from '@/stores/companions';
 import {
   parseAgentAvatarIconConfig,
   resolveAgentAvatarImageByConfig,
@@ -48,12 +58,26 @@ const sizeClass = computed(() => `size-${props.size}`);
 const stateClass = computed(() => `state-${props.state}`);
 const isRunning = computed(() => props.state === 'running');
 const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
+const companionStore = useCompanionStore();
+void companionStore.hydrate().catch(() => undefined);
+const companionRecord = computed(() =>
+  avatarConfig.value.kind === 'companion'
+    ? companionStore.findCompanion(avatarConfig.value.scope || 'global', avatarConfig.value.id || avatarConfig.value.name)
+    : null
+);
+const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || '');
+const companionSpriteScale = computed(() => {
+  const size = Number(String(props.size || 'md') === 'lg' ? 0.18 : String(props.size || 'md') === 'sm' ? 0.16 : 0.17);
+  return size;
+});
 const avatarImageUrl = computed(
-  () => String(props.imageUrl || '').trim() || resolveAgentAvatarImageByConfig(avatarConfig.value)
+  () =>
+    String(props.imageUrl || '').trim() ||
+    (avatarConfig.value.kind === 'companion' ? '' : resolveAgentAvatarImageByConfig(avatarConfig.value))
 );
 const avatarInitial = computed(() => resolveAgentAvatarInitial(props.name || props.title));
 const avatarFaceStyle = computed(() => ({
-  background: avatarImageUrl.value ? 'transparent' : avatarConfig.value.color
+  background: avatarImageUrl.value || companionSpriteUrl.value ? 'transparent' : avatarConfig.value.color
 }));
 const statusIconClass = computed(() => {
   switch (props.state) {
@@ -112,6 +136,7 @@ const statusIconClass = computed(() => {
   overflow: hidden;
   display: block;
   background: #ffffff;
+  position: relative;
 }
 
 .messenger-agent-avatar-image {
@@ -119,6 +144,13 @@ const statusIconClass = computed(() => {
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.messenger-agent-avatar-sprite {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -49%);
 }
 
 .messenger-agent-avatar-initial {

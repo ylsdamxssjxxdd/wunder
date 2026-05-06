@@ -62,6 +62,7 @@ fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelCon
         model_type: Some(model_type.to_string()),
         stop: None,
         mock_if_unconfigured: None,
+        ..Default::default()
     }
 }
 
@@ -74,6 +75,7 @@ fn build_preset_config(preset_id: &str, model_name: Option<&str>) -> UserAgentPr
         system_prompt: "You are a preset agent.".to_string(),
         preview_skill: false,
         model_name: model_name.map(str::to_string),
+        icon: None,
         icon_name: "spark".to_string(),
         icon_color: "#94a3b8".to_string(),
         sandbox_container_id: 2,

@@ -6,6 +6,7 @@ pub enum SlashCommand {
     ToolCallMode,
     Approvals,
     Plan,
+    Goal,
     Personality,
     Edit,
     Init,
@@ -53,7 +54,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 36] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 37] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -73,6 +74,11 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 36] = [
         command: SlashCommand::Plan,
         usage: "/plan [topic]",
         description: "ask model for a step-by-step plan first",
+    },
+    SlashCommandDoc {
+        command: SlashCommand::Goal,
+        usage: "/goal [pause|resume|clear|--tokens <n> <objective>|<objective>]",
+        description: "enter or manage persistent goal mode",
     },
     SlashCommandDoc {
         command: SlashCommand::Personality,
@@ -253,6 +259,7 @@ impl SlashCommand {
                 | SlashCommand::Ps
                 | SlashCommand::Clean
                 | SlashCommand::Backtrack
+                | SlashCommand::Goal
                 | SlashCommand::Personality
                 | SlashCommand::Edit
                 | SlashCommand::Attach
@@ -286,6 +293,7 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "tool-call-mode" | "mode" => (SlashCommand::ToolCallMode, remaining),
         "approvals" => (SlashCommand::Approvals, remaining),
         "plan" => (SlashCommand::Plan, remaining),
+        "goal" => (SlashCommand::Goal, remaining),
         "personality" | "style" => (SlashCommand::Personality, remaining),
         "edit" => (SlashCommand::Edit, remaining),
         "init" => (SlashCommand::Init, remaining),
@@ -399,6 +407,7 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "tool-call-mode" | "mode" => SlashCommand::ToolCallMode,
         "approvals" => SlashCommand::Approvals,
         "plan" => SlashCommand::Plan,
+        "goal" => SlashCommand::Goal,
         "personality" | "style" => SlashCommand::Personality,
         "edit" => SlashCommand::Edit,
         "init" => SlashCommand::Init,
@@ -484,6 +493,7 @@ fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
         SlashCommand::ToolCallMode => "切换工具调用协议（别名：/mode）",
         SlashCommand::Approvals => "查看或切换审批模式",
         SlashCommand::Plan => "先让模型输出步骤化执行计划",
+        SlashCommand::Goal => "进入或管理持续目标态",
         SlashCommand::Personality => "查看或切换回答风格偏好",
         SlashCommand::Edit => "用外部编辑器编辑并回填输入草稿",
         SlashCommand::Init => "在当前目录生成 AGENTS.md 模板",

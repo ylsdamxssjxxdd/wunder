@@ -151,6 +151,7 @@
           :resolve-external-host="resolveExternalHost"
           :filtered-mixed-conversations="filteredMixedConversations"
           :is-agent-orchestration-active="isAgentOrchestrationActive"
+          :is-agent-goal-active="isAgentGoalActive"
           :is-mixed-conversation-active="isMixedConversationActive"
           :open-mixed-conversation="openMixedConversation"
           :preload-mixed-conversation="preloadMixedConversation"
@@ -348,9 +349,9 @@
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn messenger-header-btn--text"
-            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
+            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
             type="button"
-            :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy || activeSessionOrchestrationLocked"
+            :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy || activeSessionOrchestrationLocked || activeSessionGoalLocked"
             :title="t('chat.newConversation')"
             :aria-label="t('chat.newConversation')"
             @click="startNewSession"
@@ -361,8 +362,9 @@
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
-            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
+            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
             type="button"
+            :disabled="activeSessionGoalLocked"
             :title="t('chat.history')"
             :aria-label="t('chat.history')"
             @click="timelineDialogVisible = true"
@@ -1449,7 +1451,7 @@
           <ChatComposer
             v-else
             world-style
-            :class="{ 'messenger-agent-composer-lock': activeSessionOrchestrationLocked }"
+            :class="{ 'messenger-agent-composer-lock': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
             :loading="agentSessionLoading"
             :send-key="messengerSendKey"
             :draft-key="agentComposerDraftKey"
@@ -1466,6 +1468,8 @@
             :approval-mode-editable="showAgentComposerApprovalSelector"
             :approval-mode-syncing="composerApprovalModeSyncing"
             :model-name="agentHeaderModelDisplayName"
+            :context-total-tokens="activeAgentUsingDesktopDefaultModel ? desktopDefaultModelMaxContext : null"
+            :goal-locked="activeSessionGoalLocked"
             :model-jump-enabled="agentHeaderModelJumpEnabled"
             :model-jump-hint="t('messenger.agent.openSettings')"
             @send="sendAgentMessage"
@@ -1619,7 +1623,7 @@
       v-model:visible="timelineDialogVisible"
       :active-session-id="String(chatStore.activeSessionId || '')"
       :session-history="rightPanelSessionHistory"
-      :timeline-readonly="activeSessionOrchestrationLocked"
+      :timeline-readonly="activeSessionOrchestrationLocked || activeSessionGoalLocked"
       @activate-session="handleTimelineDialogActivateSession"
       @open-session-detail="openTimelineSessionDetail"
       @archive-session="archiveTimelineSession"
@@ -1687,10 +1691,12 @@
       :current="workerCardImportOverlayCurrent"
       :total="workerCardImportOverlayTotal"
     />
+    <CompanionFloatingLayer :desktop-mode="desktopMode" />
   </div>
 </template>
 
 <script setup lang="ts">
+import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 
 const controller = useMessengerViewController();
@@ -1727,6 +1733,7 @@ const activeSectionTitle = controller.activeSectionTitle;
 const activeSessionApproval = controller.activeSessionApproval;
 const activeSessionOrchestrationLock = controller.activeSessionOrchestrationLock;
 const activeSessionOrchestrationLocked = controller.activeSessionOrchestrationLocked;
+const activeSessionGoalLocked = controller.activeSessionGoalLocked;
 const activeSessionRecord = controller.activeSessionRecord;
 const activeWorldConversationId = controller.activeWorldConversationId;
 const activeWorldGroupId = controller.activeWorldGroupId;
@@ -1978,6 +1985,7 @@ const DesktopContainerManagerPanel = controller.DesktopContainerManagerPanel;
 const desktopContainerManagerPanelRef = controller.desktopContainerManagerPanelRef;
 const desktopContainerRootMap = controller.desktopContainerRootMap;
 const desktopDefaultModelDisplayName = controller.desktopDefaultModelDisplayName;
+const desktopDefaultModelMaxContext = controller.desktopDefaultModelMaxContext;
 const desktopDefaultModelMetaFetchPromise = controller.desktopDefaultModelMetaFetchPromise;
 const desktopFirstLaunchDefaultAgentHintAt = controller.desktopFirstLaunchDefaultAgentHintAt;
 const desktopInitialSectionPinned = controller.desktopInitialSectionPinned;
@@ -2177,6 +2185,7 @@ const invalidateUserToolsSummaryCache = controller.invalidateUserToolsSummaryCac
 const isAdminUser = controller.isAdminUser;
 const isAgentConversationActive = controller.isAgentConversationActive;
 const isAgentOrchestrationActive = controller.isAgentOrchestrationActive;
+const isAgentGoalActive = controller.isAgentGoalActive;
 const isAudioPath = controller.isAudioPath;
 const isAudioRecordingSupported = controller.isAudioRecordingSupported;
 const isAuthDeniedStatus = controller.isAuthDeniedStatus;

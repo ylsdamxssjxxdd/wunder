@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::schemas::ToolSpec;
+use crate::services::goal;
 use crate::services::tools::context::ToolContext;
 use crate::skills::SkillRegistry;
 use crate::user_tools::UserToolBindings;
@@ -169,7 +170,7 @@ pub fn build_mcp_tool_alias_entries(config: &Config) -> Vec<McpToolAliasEntry> {
 
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
-    vec![
+    let mut specs = vec![
         ToolSpec {
             name: "最终回复".to_string(),
             title: Some("???????????".to_string()),
@@ -992,7 +993,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "additionalProperties": false
             }),
         },
-    ]
+    ];
+    specs.extend(goal::goal_tool_specs());
+    specs
 }
 
 pub fn builtin_tool_specs() -> Vec<ToolSpec> {
@@ -1046,6 +1049,9 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     );
     map.insert("memory_manager".to_string(), "记忆管理".to_string());
     map.insert("memory_manage".to_string(), "记忆管理".to_string());
+    for name in goal::goal_tool_names() {
+        map.insert(name.to_string(), name.to_string());
+    }
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -1361,6 +1367,10 @@ pub fn collect_available_tool_names(
         // a duplicated entry in tools.builtin.enabled.
         enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
         names.insert(browser_tool::TOOL_BROWSER.to_string());
+    }
+    for name in goal::goal_tool_names() {
+        enabled_builtin.insert(name.to_string());
+        names.insert(name.to_string());
     }
     for server in &config.mcp.servers {
         if !server.enabled {

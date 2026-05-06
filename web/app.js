@@ -45,6 +45,7 @@ import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=202
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260215-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260215-01";
+import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
 import { initBridgeCenterPanel, loadBridgeCenters } from "./modules/bridge-center.js?v=20260324-06";
@@ -157,6 +158,7 @@ const panelMap = {
   userAccounts: { panel: elements.userAccountsPanel, nav: elements.navUserAccounts },
   externalLinks: { panel: elements.externalLinksPanel, nav: elements.navExternalLinks },
   presetAgents: { panel: elements.presetAgentsPanel, nav: elements.navPresetAgents },
+  companions: { panel: elements.companionsPanel, nav: elements.navCompanions },
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
@@ -473,6 +475,20 @@ const bindNavigation = () => {
           state.panelLoaded.presetAgents = true;
         } catch (error) {
           appendLog(t("app.panelLoadFailed", { panel: t("panel.presetAgents"), message: error.message }));
+        }
+      }
+    });
+  }
+
+  if (elements.navCompanions) {
+    elements.navCompanions.addEventListener("click", async () => {
+      switchPanel("companions");
+      if (!state.panelLoaded.companions) {
+        try {
+          await loadCompanions({ silent: true });
+          state.panelLoaded.companions = true;
+        } catch (error) {
+          appendLog(t("app.panelLoadFailed", { panel: t("panel.companions"), message: error.message }));
         }
       }
     });
@@ -1193,6 +1209,7 @@ const bootstrap = async () => {
   initUserAccountsPanel();
   initExternalLinksPanel();
   initPresetAgentsPanel();
+  initCompanionsPanel();
   initOrgUnitsPanel();
   initChannelsPanel();
   initBridgeCenterPanel();
@@ -1272,6 +1289,15 @@ const bootstrap = async () => {
         t("app.panelLoadFailed", { panel: t("panel.performance"), message: error.message })
       );
     }
+  }
+  if (initialPanel === "companions" && !state.panelLoaded.companions) {
+    loadCompanions({ silent: true })
+      .then(() => {
+        state.panelLoaded.companions = true;
+      })
+      .catch((error) => {
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.companions"), message: error.message }));
+      });
   }
 
   if (initialPanel === "simLab" && !state.panelLoaded.simLab) {

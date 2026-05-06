@@ -16,6 +16,7 @@ use super::{
 };
 use crate::cron::{handle_cron_action, CronActionRequest};
 use crate::i18n;
+use crate::services::goal;
 use crate::skills::execute_skill;
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
@@ -56,6 +57,9 @@ pub async fn execute_builtin_tool(
 ) -> Result<Value> {
     let canonical = resolve_tool_name(name);
     match canonical.as_str() {
+        goal::TOOL_GET_GOAL | goal::TOOL_CREATE_GOAL | goal::TOOL_UPDATE_GOAL => {
+            goal::execute_goal_tool(context, &canonical, args).await
+        }
         self_status_tool::TOOL_SELF_STATUS => {
             self_status_tool::execute_self_status_tool(context, args).await
         }

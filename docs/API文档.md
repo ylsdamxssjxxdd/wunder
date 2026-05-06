@@ -34,7 +34,7 @@
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置支持 `model_type=llm|embedding|tts|image`；向量知识库依赖 embedding 模型调用 `/v1/embeddings`，聊天页语音播放通过 TTS 模型代理 `/v1/audio/speech`。
-- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|beeroom|plaza|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时统一承载消息页与智能体页主内容，并隐藏左/中栏。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
+- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|beeroom|plaza|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。形象能力并入智能体设置页的“形象”配置，不再提供独立用户侧形象库路由。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时统一承载消息页与智能体页主内容，并隐藏左/中栏。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
 - QQ Bot 渠道支持两种入站模式：`/wunder/channel/qqbot/webhook` 回调模式，以及账号级长连接模式（`qqbot.long_connection_enabled=true`，默认开启）；凭证可使用 `qqbot.app_id + qqbot.client_secret` 或 `qqbot.token=appId:clientSecret`；未显式配置 `qqbot.intents` 时长连接会按 `full -> group+channel -> channel-only` 自动降级重试，并写入渠道运行日志事件。
@@ -45,6 +45,7 @@
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的主线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
+- 智能体形象能力统一复用智能体 `icon` 字段：静态头像保存为 `{"kind":"static","name":"avatar-046","color":"#94a3b8"}`，动态形象保存为 `{"kind":"companion","scope":"global|private","id":"...","color":"#94a3b8","show":true,"messageHints":true,"scale":1}`。标准形象包为 zip，根目录包含 `pet.json` 与 `spritesheetPath` 指向的帧图；用户私有形象仅保存在浏览器 IndexedDB，管理员全局形象由 `/wunder/admin/companions*` 管理并通过 `/wunder/companions/global*` 供用户侧读取。Electron 桌面壳通过 `window.wunderDesktop.showCompanion/updateCompanion/hideCompanion/getCompanionState/onCompanionStateChanged` 同步透明桌面浮窗状态；Web/Tauri 不支持独立桌面浮窗时回退为浏览器内可拖动浮层。
 - Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
 - 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
 - Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
@@ -169,6 +170,26 @@
 - `context_usage` 事件在模型配置存在有效上下文上限时会额外附带 `max_context`，用于前端展示“上下文占用/上限”。
 - 审批作用域：待审批请求现在由共享注册表统一管理，但 `chat/ws` 的 `approval` 与 `cancel` 只会消费 `source=chat_ws` 的待审批项，不会误清理渠道侧审批；渠道内回复 `1/2/3` 也只会作用于 `source=channel` 的审批上下文。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
+
+### 4.x 目标态系统
+
+- 目标态绑定 `session_id`，当前每个会话最多保留一个目标；目标状态包括 `active / paused / budget_limited / complete`，与线程运行态分离。
+- 用户侧 `/goal` 命令已支持：
+  - `/goal`：查看当前目标
+  - `/goal <objective>`：创建或替换当前目标并进入 `active`
+  - `/goal --tokens <n> <objective>`：创建目标并设置可选 token 预算
+- 网页端 Messenger 进入目标态后只保留 `/goal` 查看与 `/goal <objective>` 创建/替换；退出统一通过聊天页终止按钮完成，终止会调用会话 cancel 并清除目标。
+- 模型侧暴露 `get_goal / create_goal / update_goal` 三个内置工具；`update_goal` 只允许 `status=complete`，模型不能暂停、恢复或清除目标。
+- 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，并锁定当前会话，只允许通过聊天页终止按钮退出目标态。
+- `GET /wunder/chat/sessions/{session_id}/events` 返回 `data.goal` 目标快照，便于 watch / resume / reload 恢复。
+- 目标管理接口：
+  - `GET /wunder/chat/sessions/{session_id}/goal`：返回 `{ data: { goal } }`，无目标时 `goal=null`。
+  - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑。
+  - `DELETE /wunder/chat/sessions/{session_id}/goal`：清除当前目标。
+- `chat/ws` 新增 `goal.get / goal.set / goal` 消息类型；响应类型为 `goal`。
+- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。
+- 目标事件：`goal_updated / goal_cleared / goal_continuation_started / goal_budget_limited / goal_continuation_ready`。
+- 目标续跑通过隐藏内部用户消息触发，不改写 frozen system prompt；目标在 `paused / budget_limited / complete` 状态下停止自动续跑。
 
 ### 4.1.1 `/wunder/system_prompt`
 
@@ -297,6 +318,10 @@
   - `abilities.items`：与 `ability_items` 等价的嵌套兼容字段
   - `tool_names`：当前运行时启用的能力名列表（兼容字段）
   - `declared_tool_names` / `declared_skill_names`：仅表示 worker-card 导入时声明的工具/技能依赖；普通智能体不要求写入
+- 与形象相关字段：
+  - `icon`：智能体形象主字段，推荐写完整 JSON 字符串；静态头像为 `kind=static`，动态形象为 `kind=companion`
+  - 动态形象的 `scope=global` 表示管理员全局形象，`scope=private` 表示当前用户本地上传形象；管理员预设智能体只能选择全局形象
+  - `show=false` 时仅保留头像预览，不在浏览器/桌面浮层显示动态形象；`messageHints=false` 时不显示必要消息气泡
 
 #### `POST /wunder/agents`
 
@@ -311,6 +336,7 @@
   - `declared_skill_names`：工蜂卡声明的技能依赖（可选）
   - `silent`：静默模式（可选，兼容 `silentMode` / `silent_mode`）
   - `prefer_mother`：优先母蜂（可选，兼容 `preferMother` / `prefer_mother`）
+  - `icon`：智能体形象 JSON 字符串（可选），支持静态头像或动态形象
   - 其余字段同现有智能体创建接口（如 `description/system_prompt/tool_names/...`）
 - 说明：
   - 工蜂卡导入/导出时，技能声明应落在 `declared_skill_names`，不要混入 `declared_tool_names`
@@ -327,6 +353,7 @@
 - 入参（JSON）：
   - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示清除显式配置并回退默认模型）
   - `ability_items` / `abilities.items`：结构化能力列表（可选，增量更新时可单独提交）
+  - `icon`：智能体形象 JSON 字符串（可选），支持静态头像或动态形象
   - 其余字段按需增量更新
 - 说明：预设智能体实例使用稳定 `preset_binding` 跟踪模板关系；用户侧重命名不会丢失绑定，也不会触发同名预设副本再次自动补种。
 - 工蜂卡相关说明：
@@ -350,6 +377,31 @@
   - `billed_tokens` 为历史兼容字段，新接入优先使用 `consumed_tokens`。
   - MCP 工具热力图不再用展示名作为聚合键，避免中文别名与 `server@tool` 运行时名重复显示。
 
+#### `GET /wunder/companions/global`
+
+- 方法：`GET`
+- 鉴权：用户端 Bearer Token；`user_id` 可省略，服务端默认按当前登录用户解析。
+- 返回（JSON）：`data.items[]`
+  - `id`：全局形象 ID
+  - `display_name`：显示名称
+  - `description`：说明
+  - `spritesheet_path`：形象包内帧图路径
+  - `spritesheet_mime`：帧图 MIME
+  - `spritesheet_data_url`：帧图 data URL，前端用于预览和浮层渲染
+  - `imported_at/updated_at`：导入与更新时间戳（秒）
+
+#### `GET /wunder/companions/global/{id}`
+
+- 方法：`GET`
+- 鉴权：用户端 Bearer Token。
+- 返回（JSON）：`data` 为单个全局形象记录；不存在时返回 `404`。
+
+#### `GET /wunder/companions/global/{id}/package`
+
+- 方法：`GET`
+- 鉴权：用户端 Bearer Token。
+- 返回：`application/zip` 标准形象包，用于需要复用全局形象包的客户端下载。
+
 #### `GET /wunder/admin/preset_agents`
 
 - 方法：`GET`
@@ -365,11 +417,23 @@
 - 入参（JSON）：`items[]`
 - 预设项新增字段：
   - `model_name`：预设智能体默认模型配置名（可选，支持 `modelName`/`model_name`）
+  - `icon`：预设智能体形象 JSON 字符串（可选）；管理员侧可选择静态头像或 `scope=global` 的动态形象
 - 说明：
   - 管理端预设保存后，模板用户同名智能体会同步该 `model_name`。
   - 新注册用户或存量同步时，若该字段非空，会将该模型配置下发到用户智能体。
+  - 预设智能体保存、同步与工蜂卡导出均以 `icon` 为主字段，`icon_name/icon_color` 只作为兼容静态头像旧字段。
   - 若提交项中包含 `preset_id="__default__"` 的默认智能体特殊项，服务端会忽略该项，避免将默认智能体误写成普通预设。
   - 预设工蜂卡目录与管理员导出文件名默认只使用名称，`preset_id` 仍只作为后端模板绑定键；卡片协议中对应的内部稳定标识改为 `metadata.agent_id`，值继续统一使用 `preset_<stable-hash>` 形态，不作为用户可见文件名前缀；预设版本与启停状态写入卡片顶层 `preset.{revision,status}`，不再放在 `extensions`。
+
+#### `/wunder/admin/companions*`
+
+- 说明：管理员全局形象管理接口。全局形象供所有用户和管理员预设智能体选择；用户私有形象不经过这些接口。
+- `GET /wunder/admin/companions`：返回 `data.items[]` 全局形象列表，字段同 `/wunder/companions/global`。
+- `POST /wunder/admin/companions`：使用 multipart 表单字段 `file` 上传标准形象 zip 包；返回 `data.item` 与 `data.sha256`。
+- `GET /wunder/admin/companions/{id}`：读取单个全局形象。
+- `PATCH /wunder/admin/companions/{id}`：更新 `display_name`/`name` 与 `description`。
+- `DELETE /wunder/admin/companions/{id}`：删除全局形象，返回 `data.deleted`。
+- `GET /wunder/admin/companions/{id}/package`：导出标准形象 zip 包。
 
 #### `POST /wunder/admin/preset_agents/sync`
 

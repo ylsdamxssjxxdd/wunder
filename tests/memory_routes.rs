@@ -140,6 +140,7 @@ async fn build_test_context_with_mock_llm_and_tool_mode(
                 model_type: None,
                 stop: None,
                 mock_if_unconfigured: None,
+                ..Default::default()
             },
         );
     })

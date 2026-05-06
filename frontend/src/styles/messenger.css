@@ -992,7 +992,8 @@
 }
 
 .messenger-conversation-item,
-.messenger-swarm-item {
+.messenger-swarm-item,
+.messenger-companion-item {
   position: relative;
   align-items: center;
 }
@@ -1104,7 +1105,8 @@
 }
 
 .messenger-conversation-item .messenger-list-main,
-.messenger-swarm-item .messenger-list-main {
+.messenger-swarm-item .messenger-list-main,
+.messenger-companion-item .messenger-list-main {
   padding-right: 0;
   transition: padding-right 0.15s ease;
 }
@@ -1119,7 +1121,9 @@
 }
 
 .messenger-swarm-item:hover .messenger-list-main,
-.messenger-swarm-item:focus-within .messenger-list-main {
+.messenger-swarm-item:focus-within .messenger-list-main,
+.messenger-companion-item:hover .messenger-list-main,
+.messenger-companion-item:focus-within .messenger-list-main {
   padding-right: 56px;
 }
 
@@ -1146,7 +1150,9 @@
 .messenger-conversation-item:hover .messenger-list-item-action,
 .messenger-conversation-item:focus-within .messenger-list-item-action,
 .messenger-swarm-item:hover .messenger-list-item-action,
-.messenger-swarm-item:focus-within .messenger-list-item-action {
+.messenger-swarm-item:focus-within .messenger-list-item-action,
+.messenger-companion-item:hover .messenger-list-item-action,
+.messenger-companion-item:focus-within .messenger-list-item-action {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1171,7 +1177,9 @@
 }
 
 .messenger-swarm-item:hover .messenger-list-item-actions,
-.messenger-swarm-item:focus-within .messenger-list-item-actions {
+.messenger-swarm-item:focus-within .messenger-list-item-actions,
+.messenger-companion-item:hover .messenger-list-item-actions,
+.messenger-companion-item:focus-within .messenger-list-item-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -2332,6 +2340,31 @@ button.messenger-chat-header-model {
 
 .messenger-message-stat-value {
   color: #2f2f2f;
+}
+
+.messenger-companion-avatar {
+  overflow: hidden;
+  border-radius: 10px;
+  background: rgba(var(--ui-accent-rgb), 0.1);
+}
+
+.messenger-companion-avatar .companion-sprite {
+  margin-left: 1px;
+  margin-top: -1px;
+}
+
+.messenger-list-item.active .messenger-companion-avatar {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.messenger-companion-selected {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--ui-accent-deep);
+}
+
+.messenger-list-item.active .messenger-companion-selected {
+  color: #ffffff;
 }
 
 .messenger-message-stat.is-status .messenger-message-stat-value {

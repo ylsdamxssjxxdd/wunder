@@ -325,6 +325,23 @@ pub struct ChatSessionRecord {
     pub spawned_by: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionGoalRecord {
+    pub goal_id: String,
+    pub session_id: String,
+    pub user_id: String,
+    pub objective: String,
+    pub status: String,
+    pub token_budget: Option<i64>,
+    pub tokens_used: i64,
+    pub time_used_seconds: i64,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub completed_at: Option<f64>,
+    pub last_continued_at: Option<f64>,
+    pub source: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct UserWorldConversationRecord {
     pub conversation_id: String,
@@ -1247,6 +1264,26 @@ pub trait StorageBackend: Send + Sync {
         last_message_at: f64,
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()>;
+    fn get_session_goal(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<Option<SessionGoalRecord>>;
+    fn list_session_goals(
+        &self,
+        user_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<SessionGoalRecord>>;
+    fn delete_session_goal(&self, user_id: &str, session_id: &str) -> Result<i64>;
+    fn account_session_goal_usage(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tokens_delta: i64,
+        time_delta_seconds: i64,
+        updated_at: f64,
+    ) -> Result<Option<SessionGoalRecord>>;
 
     fn resolve_or_create_user_world_direct_conversation(
         &self,

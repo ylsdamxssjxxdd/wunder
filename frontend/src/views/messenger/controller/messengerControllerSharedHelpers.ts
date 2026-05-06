@@ -888,6 +888,10 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
           ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
           return 'noop';
       }
+      if (ctx.activeSessionGoalLocked.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return 'noop';
+      }
       if (ctx.activeMessengerSessionBusy.value) {
           void ctx.refreshActiveAgentConversation();
           ElMessage.info(ctx.t('chat.session.running'));

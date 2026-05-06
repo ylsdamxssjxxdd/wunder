@@ -75,6 +75,117 @@ pub fn build_icon_payload(name: &str, color: &str) -> String {
     serde_json::json!({ "name": name, "color": color }).to_string()
 }
 
+fn normalize_icon_payload_value(value: serde_json::Value) -> Option<String> {
+    let object = value.as_object()?;
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("static")
+        .trim()
+        .to_ascii_lowercase();
+    if kind == "companion" {
+        let id = object
+            .get("id")
+            .or_else(|| object.get("companion_id"))
+            .or_else(|| object.get("companionId"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if id.is_empty() {
+            return None;
+        }
+        let scope = object
+            .get("scope")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .unwrap_or("global");
+        let scope = if scope.eq_ignore_ascii_case("private") {
+            "private"
+        } else {
+            "global"
+        };
+        let color = object
+            .get("color")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(
+                || normalize_preset_icon_color(None),
+                |value| normalize_preset_icon_color(Some(value)),
+            );
+        let show = object
+            .get("show")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        let message_hints = object
+            .get("messageHints")
+            .or_else(|| object.get("message_hints"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        let scale = object
+            .get("scale")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(1.0)
+            .clamp(0.5, 1.8);
+        return Some(
+            serde_json::json!({
+                "kind": "companion",
+                "scope": scope,
+                "id": id,
+                "color": color,
+                "show": show,
+                "messageHints": message_hints,
+                "scale": scale
+            })
+            .to_string(),
+        );
+    }
+    let name = normalize_preset_icon_name(
+        object
+            .get("name")
+            .or_else(|| object.get("icon"))
+            .or_else(|| object.get("avatar_icon"))
+            .or_else(|| object.get("avatarIcon"))
+            .and_then(serde_json::Value::as_str),
+    );
+    let color = object
+        .get("color")
+        .or_else(|| object.get("avatar_color"))
+        .or_else(|| object.get("avatarColor"))
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(
+            || normalize_preset_icon_color(None),
+            |value| normalize_preset_icon_color(Some(value)),
+        );
+    Some(
+        serde_json::json!({
+            "kind": "static",
+            "name": name,
+            "color": color
+        })
+        .to_string(),
+    )
+}
+
+pub fn normalize_icon_payload(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or_default().trim();
+    if cleaned.is_empty() {
+        return build_icon_payload(
+            &normalize_preset_icon_name(None),
+            &normalize_preset_icon_color(None),
+        );
+    }
+    if cleaned.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(cleaned) {
+            if let Some(payload) = normalize_icon_payload_value(value) {
+                return payload;
+            }
+        }
+    }
+    build_icon_payload(
+        &normalize_preset_icon_name(Some(cleaned)),
+        &normalize_preset_icon_color(None),
+    )
+}
+
 pub fn normalize_preset_icon_name(raw: Option<&str>) -> String {
     let cleaned = raw.unwrap_or_default().trim();
     if cleaned.is_empty() {
@@ -131,6 +242,21 @@ pub fn normalize_preset_icon_parts(raw: Option<&str>) -> (String, String) {
     (
         normalize_preset_icon_name(Some(cleaned)),
         normalize_preset_icon_color(None),
+    )
+}
+
+pub fn normalize_preset_icon_payload(
+    icon: Option<&str>,
+    icon_name: Option<&str>,
+    icon_color: Option<&str>,
+) -> String {
+    let cleaned = icon.unwrap_or_default().trim();
+    if !cleaned.is_empty() {
+        return normalize_icon_payload(Some(cleaned));
+    }
+    build_icon_payload(
+        &normalize_preset_icon_name(icon_name),
+        &normalize_preset_icon_color(icon_color),
     )
 }
 
@@ -351,7 +477,11 @@ pub fn preset_update_from_config(
             preset_questions: normalize_preset_questions(config.preset_questions.clone()),
             approval_mode: normalize_agent_approval_mode(Some(&config.approval_mode)),
             is_shared: false,
-            icon: Some(build_icon_payload(&config.icon_name, &config.icon_color)),
+            icon: Some(normalize_preset_icon_payload(
+                config.icon.as_deref(),
+                Some(&config.icon_name),
+                Some(&config.icon_color),
+            )),
             hive_id: DEFAULT_HIVE_ID.to_string(),
             silent: false,
             prefer_mother: false,
@@ -367,7 +497,8 @@ pub fn preset_config_from_update(
     status: &str,
     update: &WorkerCardRecordUpdate,
 ) -> UserAgentPresetConfig {
-    let (icon_name, icon_color) = normalize_preset_icon_parts(update.icon.as_deref());
+    let icon = normalize_icon_payload(update.icon.as_deref());
+    let (icon_name, icon_color) = normalize_preset_icon_parts(Some(&icon));
     UserAgentPresetConfig {
         preset_id: preset_id.trim().to_string(),
         revision: revision.max(1),
@@ -376,6 +507,7 @@ pub fn preset_config_from_update(
         system_prompt: update.system_prompt.clone(),
         preview_skill: update.preview_skill,
         model_name: normalize_optional_model_name(update.model_name.as_deref()),
+        icon: Some(icon),
         icon_name,
         icon_color,
         sandbox_container_id: normalize_sandbox_container_id(update.sandbox_container_id),
@@ -498,6 +630,7 @@ mod tests {
             system_prompt: "prompt".to_string(),
             preview_skill: false,
             model_name: Some("model-a".to_string()),
+            icon: None,
             icon_name: "spark".to_string(),
             icon_color: "#ABC".to_string(),
             sandbox_container_id: 99,
@@ -536,6 +669,7 @@ mod tests {
             system_prompt: "prompt".to_string(),
             preview_skill: false,
             model_name: Some("model-a".to_string()),
+            icon: None,
             icon_name: "spark".to_string(),
             icon_color: "#ABC".to_string(),
             sandbox_container_id: 2,
@@ -571,6 +705,7 @@ mod tests {
             system_prompt: "prompt".to_string(),
             preview_skill: false,
             model_name: Some("model-a".to_string()),
+            icon: None,
             icon_name: "spark".to_string(),
             icon_color: "#ABC".to_string(),
             sandbox_container_id: 2,
@@ -631,6 +766,7 @@ mod tests {
             system_prompt: String::new(),
             preview_skill: false,
             model_name: None,
+            icon: None,
             icon_name: "spark".to_string(),
             icon_color: "#123456".to_string(),
             sandbox_container_id: 1,

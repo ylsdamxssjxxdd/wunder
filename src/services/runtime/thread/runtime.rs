@@ -3,6 +3,7 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
+use crate::services::goal;
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, UpdateAgentTaskStatusParams,
@@ -38,6 +39,13 @@ pub struct QueueInfo {
     pub session_id: String,
     pub queue_ahead: usize,
     pub queue_total: usize,
+}
+
+#[derive(Debug)]
+pub enum GoalContinuationSubmission {
+    Started { session_id: String, goal_id: String },
+    Queued(QueueInfo),
+    Skipped,
 }
 
 #[derive(Debug)]
@@ -204,6 +212,98 @@ impl ThreadRuntime {
         }
 
         Ok(ThreadSubmitOutcome::Run(Box::new(request), lease))
+    }
+
+    pub async fn submit_goal_continuation(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<GoalContinuationSubmission> {
+        let session = self
+            .user_store
+            .get_chat_session(user_id, session_id)?
+            .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        let Some(mut continuation) = goal::build_continuation_request_from_session(
+            self.user_store.storage_backend(),
+            user_id,
+            &session,
+        )
+        .await?
+        else {
+            return Ok(GoalContinuationSubmission::Skipped);
+        };
+        let Some(goal_record) = goal::mark_goal_continuation_started(
+            self.user_store.storage_backend(),
+            user_id,
+            &session.session_id,
+        )
+        .await?
+        else {
+            return Ok(GoalContinuationSubmission::Skipped);
+        };
+        continuation.goal = goal_record;
+        match self.submit_user_request(continuation.request).await? {
+            ThreadSubmitOutcome::Queued(info) => Ok(GoalContinuationSubmission::Queued(info)),
+            ThreadSubmitOutcome::Run(request, lease) => {
+                let orchestrator = self.orchestrator.clone();
+                let runtime = self.clone();
+                let user_id = user_id.trim().to_string();
+                let session_id = session.session_id.clone();
+                tokio::spawn(async move {
+                    let _lease = lease;
+                    match orchestrator.stream(*request).await {
+                        Ok(stream) => {
+                            tokio::pin!(stream);
+                            let mut goal_continue_ready = false;
+                            while let Some(item) = stream.next().await {
+                                match item {
+                                    Ok(event) => {
+                                        if event.event == "goal_continuation_ready" {
+                                            goal_continue_ready = true;
+                                        }
+                                    }
+                                    Err(err) => match err {},
+                                }
+                                // Drain the background goal continuation stream; clients can resume
+                                // persisted stream events through the normal session event channel.
+                            }
+                            if goal_continue_ready {
+                                runtime.spawn_goal_continuation_after_cooldown(user_id, session_id);
+                            }
+                        }
+                        Err(err) => {
+                            warn!("goal continuation stream failed: {err}");
+                        }
+                    }
+                });
+                Ok(GoalContinuationSubmission::Started {
+                    session_id: session.session_id,
+                    goal_id: continuation.goal.goal_id,
+                })
+            }
+        }
+    }
+
+    pub fn spawn_goal_continuation_after_cooldown(&self, user_id: String, session_id: String) {
+        let runtime = self.clone();
+        tokio::spawn(async move {
+            let delay =
+                match goal::get_goal(runtime.user_store.storage_backend(), &user_id, &session_id)
+                    .await
+                {
+                    Ok(Some(record)) => goal::continuation_delay_seconds(&record, false),
+                    _ => None,
+                };
+            let Some(delay) = delay else {
+                return;
+            };
+            if delay > f64::EPSILON {
+                tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
+            }
+            let _ = runtime
+                .submit_goal_continuation(&user_id, &session_id)
+                .await;
+        });
     }
 
     pub async fn resolve_main_session_id(
@@ -908,7 +1008,16 @@ impl ThreadRuntime {
         match self.orchestrator.stream(request).await {
             Ok(stream) => {
                 let mut stream = Box::pin(stream);
-                while let Some(_item) = stream.next().await {
+                let mut goal_continue_ready = false;
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(event) => {
+                            if event.event == "goal_continuation_ready" {
+                                goal_continue_ready = true;
+                            }
+                        }
+                        Err(err) => match err {},
+                    }
                     // drain
                 }
                 let finished_at = now_ts();
@@ -945,6 +1054,12 @@ impl ThreadRuntime {
                     }),
                 )
                 .await;
+                if goal_continue_ready {
+                    self.spawn_goal_continuation_after_cooldown(
+                        task.user_id.clone(),
+                        task.session_id.clone(),
+                    );
+                }
             }
             Err(err) => {
                 let is_busy = err

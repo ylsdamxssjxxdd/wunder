@@ -411,7 +411,18 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerConversationOpenActions(ctx: MessengerControllerContext): void {
+  const blockWhenGoalLocked = (): boolean => {
+      if (!ctx.activeSessionGoalLocked?.value) {
+          return false;
+      }
+      ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+      return true;
+  };
+
   ctx.handleSearchCreateAction = async (command?: string) => {
+      if (blockWhenGoalLocked()) {
+          return;
+      }
       if (ctx.sessionHub.activeSection === 'groups') {
           if (ctx.userWorldPermissionDenied.value) {
               ElMessage.warning(ctx.t('auth.login.noPermission'));
@@ -441,6 +452,9 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       if (ctx.sessionHub.activeSection === 'messages' &&
           !ctx.showChatSettingsView.value &&
           ctx.isMixedConversationActive(item)) {
+          return;
+      }
+      if (blockWhenGoalLocked()) {
           return;
       }
       if (item.kind === 'agent') {
@@ -561,6 +575,9 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
   };
 
   ctx.openWorldConversation = async (conversationId: string, kind: 'direct' | 'group', mode: 'detail' | 'messages' = 'detail') => {
+      if (blockWhenGoalLocked()) {
+          return;
+      }
       if (ctx.userWorldPermissionDenied.value)
           return;
       if (!conversationId)
@@ -617,6 +634,9 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
   };
 
   ctx.openAgentById = async (agentId: unknown) => {
+      if (blockWhenGoalLocked()) {
+          return;
+      }
       const normalized = ctx.normalizeAgentId(agentId);
       ctx.clearAgentConversationDismissed(normalized);
       ctx.selectedAgentId.value = normalized;
@@ -640,6 +660,9 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
   };
 
   ctx.openAgentDraftSession = (agentId: unknown) => {
+      if (blockWhenGoalLocked()) {
+          return;
+      }
       const normalized = ctx.normalizeAgentId(agentId);
       ctx.chatStore.openDraftSession({ agent_id: normalized === DEFAULT_AGENT_KEY ? '' : normalized });
       ctx.clearMiddlePaneOverlayHide();
@@ -704,6 +727,9 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
   ctx.openActiveAgentSettings = (optionsOrEvent: {
       focusSection?: '' | 'model';
   } | Event = {}) => {
+      if (blockWhenGoalLocked()) {
+          return;
+      }
       const options = optionsOrEvent instanceof Event
           ? {}
           : optionsOrEvent;
@@ -1188,6 +1214,11 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       const normalizedSessionId = String(sessionId || '').trim();
       if (!normalizedSessionId)
           return;
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (ctx.activeSessionGoalLocked?.value && activeSessionId && normalizedSessionId !== activeSessionId) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return;
+      }
       const perfTrace = ctx.startMessengerPerfTrace('openAgentSession', { sessionId: normalizedSessionId, agentId });
       ctx.clearMiddlePaneOverlayHide();
       ctx.middlePaneOverlayVisible.value = false;

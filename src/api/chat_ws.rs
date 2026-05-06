@@ -1,4 +1,5 @@
 use crate::api::chat::{build_chat_request, ChatAttachment, ChatRequestOverrides};
+use crate::api::chat_goal::apply_goal_command;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
@@ -20,6 +21,7 @@ use crate::core::approval_registry::{
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
+use crate::services::goal::{self, GoalCommand};
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -96,6 +98,18 @@ struct WsApprovalPayload {
     decision: String,
     #[serde(default)]
     session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WsGoalPayload {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    action: Option<String>,
+    #[serde(default)]
+    objective: Option<String>,
+    #[serde(default, alias = "tokenBudget", alias = "token_budget")]
+    token_budget: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -179,6 +193,7 @@ async fn handle_ws(
         resume: true,
         watch: true,
         ping_pong: true,
+        goal: true,
     };
     let ready_payload = WsReadyPayload {
         connection_id: connection_id.clone(),
@@ -483,6 +498,7 @@ async fn handle_ws(
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
                         let approval_registry_snapshot = approval_registry.clone();
+                        let user_id_snapshot = user.user_id.clone();
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), true)
                                 .await;
@@ -501,6 +517,7 @@ async fn handle_ws(
                             match state_snapshot.kernel.orchestrator.stream(request).await {
                                 Ok(stream) => {
                                     tokio::pin!(stream);
+                                    let mut goal_continue_ready = false;
                                     loop {
                                         tokio::select! {
                                             _ = cancel.cancelled() => {
@@ -514,6 +531,9 @@ async fn handle_ws(
                                                     Ok(event) => event,
                                                     Err(_) => continue,
                                                 };
+                                                if event.event == "goal_continuation_ready" {
+                                                    goal_continue_ready = true;
+                                                }
                                                 if send_ws_event(
                                                     &ws_tx_snapshot,
                                                     Some(&request_id_cleanup),
@@ -526,6 +546,16 @@ async fn handle_ws(
                                                 }
                                             }
                                         }
+                                    }
+                                    if goal_continue_ready && !cancel.is_cancelled() {
+                                        let session_id_for_goal = session_id_cleanup.clone();
+                                        state_snapshot
+                                            .kernel
+                                            .thread_runtime
+                                            .spawn_goal_continuation_after_cooldown(
+                                                user_id_snapshot,
+                                                session_id_for_goal,
+                                            );
                                     }
                                 }
                                 Err(err) => {
@@ -780,7 +810,151 @@ async fn handle_ws(
                         .await;
                         if let Some(session_id) = cancel_session_id {
                             if session_exists(&state, &user.user_id, &session_id) {
+                                let _ =
+                                    goal::clear_goal(state.storage.clone(), &user.user_id, &session_id)
+                                        .await;
                                 let _ = state.monitor.cancel(&session_id);
+                            }
+                        }
+                    }
+                    "goal.get" | "goal.set" | "goal" => {
+                        let request_id = resolve_request_id(envelope.request_id.as_deref());
+                        let payload = match parse_payload::<WsGoalPayload>(envelope.payload) {
+                            Ok(payload) => payload,
+                            Err(err) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    err.code(),
+                                    err.message(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        let session_id =
+                            resolve_session_id(envelope.session_id, payload.session_id);
+                        let Some(session_id) = session_id.filter(|value| !value.trim().is_empty())
+                        else {
+                            let _ = send_ws_error(
+                                &ws_tx,
+                                Some(&request_id),
+                                "SESSION_REQUIRED",
+                                i18n::t("error.param_required"),
+                            )
+                            .await;
+                            continue;
+                        };
+                        log_ws_message(
+                            WS_ENDPOINT,
+                            &connection_id,
+                            &user.user_id,
+                            kind.as_str(),
+                            Some(&request_id),
+                            Some(&session_id),
+                        );
+                        let session_record = match state
+                            .user_store
+                            .get_chat_session(&user.user_id, &session_id)
+                        {
+                            Ok(Some(record)) => record,
+                            Ok(None) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    "SESSION_NOT_FOUND",
+                                    i18n::t("error.session_not_found"),
+                                )
+                                .await;
+                                continue;
+                            }
+                            Err(err) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    "BAD_REQUEST",
+                                    err.to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        let action = payload
+                            .action
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or(match kind.as_str() {
+                                "goal.get" => "get",
+                                "goal.set" => "set",
+                                _ => "get",
+                            });
+                        let command = match action {
+                            "get" | "show" => GoalCommand::Show,
+                            "set" | "create" => {
+                                let Some(objective) = payload
+                                    .objective
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                else {
+                                    let _ = send_ws_error(
+                                        &ws_tx,
+                                        Some(&request_id),
+                                        "OBJECTIVE_REQUIRED",
+                                        i18n::t("error.content_required"),
+                                    )
+                                    .await;
+                                    continue;
+                                };
+                                GoalCommand::Set {
+                                    objective: objective.to_string(),
+                                    token_budget: payload.token_budget.filter(|value| *value > 0),
+                                }
+                            }
+                            "resume" => GoalCommand::Resume,
+                            _ => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    "INVALID_GOAL_ACTION",
+                                    "invalid goal action".to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        };
+                        let result = apply_goal_command(
+                            &state,
+                            &user.user_id,
+                            &session_id,
+                            command,
+                            session_record.agent_id.as_deref(),
+                        )
+                        .await;
+                        match result {
+                            Ok((goal_record, continuation)) => {
+                                let _ = crate::api::ws_helpers::send_ws_message(
+                                    &ws_tx,
+                                    "goal",
+                                    Some(&request_id),
+                                    Some(json!({
+                                        "data": {
+                                            "goal": goal_record.as_ref().map(goal::goal_payload),
+                                            "continuation": continuation
+                                        }
+                                    })),
+                                )
+                                .await;
+                            }
+                            Err(response) => {
+                                let _ = send_ws_error(
+                                    &ws_tx,
+                                    Some(&request_id),
+                                    resolve_ws_error_code(&response).as_str(),
+                                    extract_error_message(response),
+                                )
+                                .await;
                             }
                         }
                     }

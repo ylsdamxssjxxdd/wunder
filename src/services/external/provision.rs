@@ -101,21 +101,19 @@ pub async fn ensure_external_embed_agent_with_runtime(
         .collect::<Vec<_>>();
     tool_names.sort();
 
-    let icon_name = if preset.icon_name.trim().is_empty() {
-        "spark".to_string()
-    } else {
-        preset.icon_name.trim().to_string()
-    };
-    let icon_color = if preset.icon_color.trim().is_empty() {
-        "#94a3b8".to_string()
-    } else {
-        preset.icon_color.trim().to_string()
-    };
-    let icon = json!({
-        "name": icon_name,
-        "color": icon_color
-    })
-    .to_string();
+    let icon = preset
+        .icon
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            json!({
+                "name": "spark",
+                "color": "#94a3b8"
+            })
+            .to_string()
+        });
     let now = now_ts();
     let created = UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),

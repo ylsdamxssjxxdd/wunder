@@ -40,6 +40,7 @@ export const state = {
     userAccounts: false,
     externalLinks: false,
     presetAgents: false,
+    companions: false,
     orgUnits: false,
     memory: false,
     channels: false,
@@ -56,6 +57,12 @@ export const state = {
     skills: false,
     knowledge: false,
     llm: false,
+  },
+  companions: {
+    items: [],
+    selectedId: "",
+    search: "",
+    loading: false,
   },
   performance: {
     running: false,

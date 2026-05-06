@@ -623,6 +623,8 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           return 'help';
       if (token === 'compact')
           return 'compact';
+      if (token === 'goal')
+          return 'goal';
       return '';
   };
 
@@ -676,6 +678,41 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           await ctx.scrollMessagesToBottom();
           return;
       }
+      if (command === 'goal') {
+          const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+          if (!sessionId) {
+              ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.goalMissingSession'));
+              await ctx.scrollMessagesToBottom();
+              return;
+          }
+          const args = rawText.replace(/^\/+goal\b/i, '').trim();
+          try {
+              if (!args) {
+                  const goal = await ctx.chatStore.refreshSessionGoal(sessionId);
+                  ctx.appendAgentLocalCommandMessages(rawText, goal
+                      ? ctx.t('chat.command.goalCurrent', { objective: String(goal.objective || '') })
+                      : ctx.t('chat.command.goalEmpty'));
+                  await ctx.scrollMessagesToBottom();
+                  return;
+              }
+              const action = args.split(/\s+/, 1)[0].trim().toLowerCase();
+              if (action === 'pause' || action === 'resume' || action === 'clear') {
+                  ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.goalExitViaStop'));
+                  await ctx.scrollMessagesToBottom();
+                  return;
+              }
+              const result = await ctx.chatStore.setSessionGoal(sessionId, {
+                  objective: args
+              });
+              const objective = String(result?.goal?.objective || args).trim();
+              ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.goalSet', { objective }));
+          }
+          catch (error) {
+              ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.goalFailed', { message: ctx.resolveCommandErrorMessage(error) }));
+          }
+          await ctx.scrollMessagesToBottom();
+          return;
+      }
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (!sessionId) {
           ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.compactMissingSession'));
@@ -698,10 +735,6 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           chatDebugLog('messenger.send', 'blocked-send-during-interaction-lock', ctx.buildActiveSessionBusyDebugSnapshot());
           return;
       }
-      if (ctx.activeSessionOrchestrationLocked.value) {
-          ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
-          return;
-      }
       const content = String(payload?.content || '').trim();
       const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
       const activeInquiry = ctx.activeAgentInquiryPanel.value;
@@ -720,8 +753,26 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               await ctx.scrollMessagesToBottom();
               return;
           }
+          if (ctx.activeSessionOrchestrationLocked.value && localCommand !== 'stop') {
+              ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
+              ctx.agentInquirySelection.value = [];
+              return;
+          }
+          if (ctx.activeSessionGoalLocked.value && localCommand !== 'stop') {
+              ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+              ctx.agentInquirySelection.value = [];
+              return;
+          }
           await ctx.handleAgentLocalCommand(localCommand, content);
           ctx.agentInquirySelection.value = [];
+          return;
+      }
+      if (ctx.activeSessionOrchestrationLocked.value) {
+          ElMessage.warning(ctx.t('orchestration.chat.lockedInMessenger'));
+          return;
+      }
+      if (ctx.activeSessionGoalLocked.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
           return;
       }
       let finalContent = content;

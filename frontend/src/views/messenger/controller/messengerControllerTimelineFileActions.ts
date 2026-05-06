@@ -414,6 +414,10 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
   ctx.restoreTimelineSession = async (sessionId: string) => {
       if (!sessionId)
           return;
+      if (ctx.activeSessionGoalLocked?.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return;
+      }
       await ctx.openAgentSession(sessionId);
   };
 
@@ -435,6 +439,10 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
       const targetId = String(sessionId || '').trim();
       if (!targetId)
           return false;
+      if (ctx.activeSessionGoalLocked?.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return false;
+      }
       const targetSession = ctx.chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId);
       const targetLock = targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
           ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)
@@ -460,6 +468,10 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
       const targetId = String(sessionId || '').trim();
       if (!targetId)
           return;
+      if (ctx.activeSessionGoalLocked?.value) {
+          ElMessage.warning(ctx.t('chat.goal.lockedInMessenger'));
+          return;
+      }
       const targetSession = ctx.chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId);
       const targetLock = targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
           ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)

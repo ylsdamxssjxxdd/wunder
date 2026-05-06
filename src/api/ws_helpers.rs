@@ -113,6 +113,7 @@ pub(crate) struct WsFeatures {
     pub resume: bool,
     pub watch: bool,
     pub ping_pong: bool,
+    pub goal: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]

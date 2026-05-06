@@ -242,6 +242,21 @@ let updateState = createUpdateSnapshot()
 
 let overlayWindow = null
 let overlayHideTimer = null
+let companionWindow = null
+let companionState = {
+  enabled: false,
+  selectedId: '',
+  displayName: '',
+  description: '',
+  spritesheetDataUrl: '',
+  state: 'idle',
+  scale: 1,
+  x: 28,
+  y: 28,
+  message: '',
+  messageKind: 'info',
+  messageVisible: false
+}
 
 const createOverlayHtml = () => `<!doctype html>
 <html>
@@ -616,6 +631,304 @@ const showMonitorOverlay = (payload) => {
   return true
 }
 
+const createCompanionHtml = () => `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    user-select: none;
+  }
+  #root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  #root.dragging { cursor: grabbing; }
+  #bubble {
+    max-width: 260px;
+    margin-bottom: 4px;
+    padding: 8px 10px;
+    border: 1px solid rgba(37, 99, 235, 0.22);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+    color: #1f2937;
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: center;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
+  }
+  #bubble.success {
+    border-color: rgba(20, 184, 166, 0.28);
+    color: #0f766e;
+  }
+  #bubble.warning {
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #92400e;
+  }
+  #sprite {
+    position: relative;
+    overflow: hidden;
+    flex: 0 0 auto;
+  }
+  #sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 192px;
+    height: 208px;
+    background-repeat: no-repeat;
+    transform-origin: left top;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <div id="root">
+    <div id="bubble" class="hidden"></div>
+    <div id="sprite"><div id="sheet"></div></div>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    const root = document.getElementById('root');
+    const bubble = document.getElementById('bubble');
+    const sprite = document.getElementById('sprite');
+    const sheet = document.getElementById('sheet');
+    const frameWidth = 192;
+    const frameHeight = 208;
+    const states = {
+      idle: { row: 0, frames: 6, duration: 1100 },
+      'running-right': { row: 1, frames: 8, duration: 1060 },
+      'running-left': { row: 2, frames: 8, duration: 1060 },
+      waving: { row: 3, frames: 4, duration: 700 },
+      jumping: { row: 4, frames: 5, duration: 840 },
+      failed: { row: 5, frames: 8, duration: 1220 },
+      waiting: { row: 6, frames: 6, duration: 1010 },
+      running: { row: 7, frames: 6, duration: 820 },
+      review: { row: 8, frames: 6, duration: 1030 }
+    };
+    let payload = {};
+    let frame = 0;
+    let timer = null;
+    let drag = null;
+
+    const normalizeState = (value) => states[value] ? value : 'idle';
+    const applyFrame = () => {
+      const stateKey = normalizeState(payload.state);
+      const state = states[stateKey];
+      sheet.style.backgroundPosition = '-' + (frame * frameWidth) + 'px -' + (state.row * frameHeight) + 'px';
+    };
+    const startAnimation = () => {
+      if (timer) clearInterval(timer);
+      frame = 0;
+      applyFrame();
+      const state = states[normalizeState(payload.state)];
+      const frameMs = Math.max(50, Math.round(state.duration / Math.max(1, state.frames)));
+      timer = setInterval(() => {
+        frame = (frame + 1) % state.frames;
+        applyFrame();
+      }, frameMs);
+    };
+    const render = (next) => {
+      payload = Object.assign({}, payload, next || {});
+      const scale = Math.min(1.6, Math.max(0.7, Number(payload.scale || 1)));
+      sprite.style.width = Math.round(frameWidth * scale) + 'px';
+      sprite.style.height = Math.round(frameHeight * scale) + 'px';
+      sheet.style.backgroundImage = payload.spritesheetDataUrl ? 'url("' + payload.spritesheetDataUrl + '")' : '';
+      sheet.style.transform = 'scale(' + scale + ')';
+      const text = String(payload.message || '').trim();
+      if (text && payload.messageVisible) {
+        bubble.textContent = text;
+        bubble.className = String(payload.messageKind || 'info').trim();
+      } else {
+        bubble.textContent = '';
+        bubble.className = 'hidden';
+      }
+      startAnimation();
+    };
+    ipcRenderer.on('wunder:companion-render', (event, next) => render(next));
+    root.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      drag = { x: event.screenX, y: event.screenY };
+      root.classList.add('dragging');
+      root.setPointerCapture(event.pointerId);
+    });
+    root.addEventListener('pointermove', (event) => {
+      if (!drag) return;
+      const dx = event.screenX - drag.x;
+      const dy = event.screenY - drag.y;
+      drag = { x: event.screenX, y: event.screenY };
+      ipcRenderer.invoke('wunder:companion-drag', { dx, dy }).catch(() => {});
+    });
+    const stopDrag = (event) => {
+      if (!drag) return;
+      drag = null;
+      root.classList.remove('dragging');
+      try { root.releasePointerCapture(event.pointerId); } catch {}
+    };
+    root.addEventListener('pointerup', stopDrag);
+    root.addEventListener('pointercancel', stopDrag);
+  </script>
+</body>
+</html>`
+
+const resolveCompanionWindowSize = (state) => {
+  const scale = Number(state?.scale || 1)
+  const safeScale = Number.isFinite(scale) ? Math.min(1.6, Math.max(0.7, scale)) : 1
+  const bubbleHeight = state?.messageVisible && String(state?.message || '').trim() ? 70 : 0
+  return {
+    width: Math.max(220, Math.round(192 * safeScale) + 36),
+    height: Math.max(220, Math.round(208 * safeScale) + bubbleHeight + 16)
+  }
+}
+
+const clampCompanionBounds = (x, y, size) => {
+  const bounds = getVirtualDisplayBounds()
+  const minX = bounds.x + 8
+  const minY = bounds.y + 8
+  const maxX = Math.max(minX, bounds.x + bounds.width - size.width - 8)
+  const maxY = Math.max(minY, bounds.y + bounds.height - size.height - 8)
+  return {
+    x: Math.min(Math.max(minX, Math.round(x)), maxX),
+    y: Math.min(Math.max(minY, Math.round(y)), maxY)
+  }
+}
+
+const ensureCompanionWindow = () => {
+  if (companionWindow && !companionWindow.isDestroyed()) {
+    return companionWindow
+  }
+  const size = resolveCompanionWindowSize(companionState)
+  const point = clampCompanionBounds(companionState.x, companionState.y, size)
+  companionWindow = new BrowserWindow({
+    x: point.x,
+    y: point.y,
+    width: size.width,
+    height: size.height,
+    frame: false,
+    show: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    fullscreen: false,
+    fullscreenable: false,
+    focusable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      sandbox: false,
+      devTools: false,
+      backgroundThrottling: false
+    }
+  })
+  companionWindow.setMenuBarVisibility(false)
+  companionWindow.setAlwaysOnTop(true, 'screen-saver')
+  companionWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  companionWindow.on('closed', () => {
+    companionWindow = null
+  })
+  companionWindow.webContents.once('did-finish-load', () => {
+    renderCompanionWindow()
+  })
+  companionWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createCompanionHtml())}`)
+  return companionWindow
+}
+
+const renderCompanionWindow = () => {
+  if (!companionState.enabled || !companionState.spritesheetDataUrl) {
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.hide()
+    }
+    return false
+  }
+  const window = ensureCompanionWindow()
+  if (!window || window.isDestroyed()) {
+    return false
+  }
+  const size = resolveCompanionWindowSize(companionState)
+  const point = clampCompanionBounds(companionState.x, companionState.y, size)
+  window.setBounds({ ...point, ...size }, false)
+  saveCompanionState({ x: point.x, y: point.y })
+  if (window.webContents.isLoading()) {
+    return true
+  }
+  window.webContents.send('wunder:companion-render', companionState)
+  if (!window.isVisible()) {
+    window.showInactive()
+  }
+  return true
+}
+
+const showCompanion = (payload) => {
+  const next = normalizeCompanionState({
+    ...companionState,
+    selectedId: payload?.id || payload?.selectedId || companionState.selectedId,
+    displayName: payload?.displayName || companionState.displayName,
+    description: payload?.description || companionState.description,
+    spritesheetDataUrl: payload?.spritesheetDataUrl || companionState.spritesheetDataUrl,
+    state: payload?.state || companionState.state,
+    scale: payload?.scale ?? companionState.scale,
+    x: payload?.x ?? companionState.x,
+    y: payload?.y ?? companionState.y,
+    message: payload?.message || '',
+    messageKind: payload?.messageKind || 'info',
+    messageVisible: payload?.messageVisible === true,
+    enabled: true
+  })
+  saveCompanionState(next)
+  return renderCompanionWindow()
+}
+
+const updateCompanion = (payload) => showCompanion(payload)
+
+const hideCompanion = (payload = {}) => {
+  if (payload?.persistEnabled === true) {
+    saveCompanionState({ enabled: false })
+  }
+  if (companionWindow && !companionWindow.isDestroyed()) {
+    companionWindow.hide()
+  }
+  if (payload?.persistEnabled === true && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('wunder:companion-state-changed', companionState)
+  }
+  return true
+}
+
+const moveCompanionBy = (payload) => {
+  if (!companionWindow || companionWindow.isDestroyed()) {
+    return false
+  }
+  const bounds = companionWindow.getBounds()
+  const dx = Number(payload?.dx || 0)
+  const dy = Number(payload?.dy || 0)
+  const point = clampCompanionBounds(bounds.x + dx, bounds.y + dy, bounds)
+  companionWindow.setBounds({ ...bounds, ...point }, false)
+  saveCompanionState({ x: point.x, y: point.y })
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('wunder:companion-state-changed', companionState)
+  }
+  return true
+}
+
 const chromiumLogLevel = process.env.WUNDER_CHROMIUM_LOG_LEVEL || (suppressGpuWarnings ? '3' : '2')
 app.commandLine.appendSwitch('log-level', chromiumLogLevel)
 if (process.platform === 'linux') {
@@ -648,6 +961,7 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..')
 const localResourcesRoot = path.resolve(__dirname, '..', 'resources')
 const desktopAppId = 'com.wunder.desktop'
 const closePreferenceFileName = 'window-close-preference.json'
+const companionStateFileName = 'desktop-companion-state.json'
 const closeBehaviorValues = new Set(['ask', 'tray', 'quit'])
 
 const supportsLaunchAtLogin = () => process.platform === 'win32' || process.platform === 'darwin'
@@ -711,6 +1025,33 @@ const resolveDesktopSettingsPath = () => {
     return manual
   }
   return path.join(app.getPath('userData'), 'WUNDER_TEMPD', 'config', 'desktop.settings.json')
+}
+
+const resolveCompanionStatePath = () => path.join(app.getPath('userData'), companionStateFileName)
+
+const readJsonFile = (filePath, fallback = {}) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return fallback
+    }
+    const raw = fs.readFileSync(filePath, 'utf8')
+    if (!raw.trim()) {
+      return fallback
+    }
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const writeJsonFile = (filePath, value) => {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  } catch {
+    // Ignore desktop preference persistence failures.
+  }
 }
 
 const resolveExistingFilePath = (value, appDir) => {
@@ -2429,6 +2770,62 @@ const requestMediaAccess = async (kind) => {
   return true
 }
 
+const normalizeCompanionState = (value) => {
+  const source = value && typeof value === 'object' ? value : {}
+  const enabled = source.enabled === true
+  const selectedId = String(source.selectedId || source.selected_id || '').trim()
+  const displayName = String(source.displayName || source.display_name || '').trim()
+  const description = String(source.description || '').trim()
+  const spritesheetDataUrl = String(source.spritesheetDataUrl || source.spritesheet_data_url || '').trim()
+  const state = String(source.state || '').trim().toLowerCase() || 'idle'
+  const scale = Number(source.scale)
+  const x = Number(source.x)
+  const y = Number(source.y)
+  const message = String(source.message || '').trim()
+  const messageKind = String(source.messageKind || source.message_kind || '').trim().toLowerCase()
+  const messageVisible = source.messageVisible === true || source.message_visible === true
+  return {
+    enabled,
+    selectedId,
+    displayName,
+    description,
+    spritesheetDataUrl,
+    state,
+    scale: Number.isFinite(scale) ? Math.min(1.6, Math.max(0.7, scale)) : 1,
+    x: Number.isFinite(x) ? Math.max(0, Math.round(x)) : 28,
+    y: Number.isFinite(y) ? Math.max(0, Math.round(y)) : 28,
+    message,
+    messageKind: messageKind === 'success' || messageKind === 'warning' ? messageKind : 'info',
+    messageVisible
+  }
+}
+
+const serializeCompanionState = (value) => {
+  const normalized = normalizeCompanionState(value)
+  return {
+    enabled: normalized.enabled,
+    selectedId: normalized.selectedId,
+    displayName: normalized.displayName,
+    description: normalized.description,
+    state: normalized.state,
+    scale: normalized.scale,
+    x: normalized.x,
+    y: normalized.y
+  }
+}
+
+const loadCompanionState = () => {
+  const persisted = readJsonFile(resolveCompanionStatePath(), {})
+  companionState = normalizeCompanionState({ ...companionState, ...persisted, message: '', messageVisible: false })
+  return companionState
+}
+
+const saveCompanionState = (patch) => {
+  companionState = normalizeCompanionState({ ...companionState, ...(patch && typeof patch === 'object' ? patch : {}) })
+  writeJsonFile(resolveCompanionStatePath(), serializeCompanionState(companionState))
+  return companionState
+}
+
 const parseBridgePort = (line) => {
   const trimmed = line.trim()
   const match = trimmed.match(/- web_base:\s*(https?:\/\/\S+)/)
@@ -2940,6 +3337,9 @@ if (!gotLock) {
       screen.on('display-added', updateOverlayBounds)
       screen.on('display-removed', updateOverlayBounds)
       screen.on('display-metrics-changed', updateOverlayBounds)
+      screen.on('display-added', renderCompanionWindow)
+      screen.on('display-removed', renderCompanionWindow)
+      screen.on('display-metrics-changed', renderCompanionWindow)
       const registerIpcNs = process.hrtime.bigint()
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
@@ -3061,6 +3461,11 @@ if (!gotLock) {
         hideOverlayNow()
         return true
       })
+      ipcMain.handle('wunder:companion-show', (_event, payload) => showCompanion(payload))
+      ipcMain.handle('wunder:companion-update', (_event, payload) => updateCompanion(payload))
+      ipcMain.handle('wunder:companion-hide', (_event, payload) => hideCompanion(payload))
+      ipcMain.handle('wunder:companion-state', () => loadCompanionState())
+      ipcMain.handle('wunder:companion-drag', (_event, payload) => moveCompanionBy(payload))
       logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)
       createTray()
@@ -3080,6 +3485,7 @@ if (!gotLock) {
 
 app.on('before-quit', () => {
   app.isQuitting = true
+  hideCompanion()
   destroyTray()
   stopBridge()
 })

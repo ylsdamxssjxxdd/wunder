@@ -260,6 +260,8 @@ pub struct UserAgentPresetConfig {
     pub preview_skill: bool,
     #[serde(default)]
     pub model_name: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
     #[serde(default = "default_user_agent_preset_icon_name")]
     pub icon_name: String,
     #[serde(default = "default_user_agent_preset_icon_color")]

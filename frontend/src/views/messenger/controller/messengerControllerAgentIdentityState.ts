@@ -1033,6 +1033,11 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
 
   ctx.activeSessionOrchestrationLocked = computed(() => Boolean(ctx.activeSessionOrchestrationLock.value));
 
+  ctx.activeSessionGoalLocked = computed(() => {
+      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      return Boolean(sessionId && ctx.chatStore.isSessionGoalLocked?.(sessionId));
+  });
+
   ctx.isAgentOrchestrationActive = (agentId: unknown): boolean => {
       const normalizedAgentId = ctx.normalizeAgentId(agentId);
       if (!normalizedAgentId)
@@ -1046,6 +1051,20 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
               ? (session.orchestration_lock as Record<string, unknown> | null | undefined)
               : null;
           return Boolean(lock && typeof lock === 'object' && !Array.isArray(lock) && lock.active === true);
+      });
+  };
+
+  ctx.isAgentGoalActive = (agentId: unknown): boolean => {
+      const normalizedAgentId = ctx.normalizeAgentId(agentId);
+      if (!normalizedAgentId)
+          return false;
+      return (Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions : []).some((sessionRaw) => {
+          const session = (sessionRaw || {}) as Record<string, unknown>;
+          if (ctx.normalizeAgentId(session?.agent_id || (session?.is_default === true ? DEFAULT_AGENT_KEY : '')) !== normalizedAgentId) {
+              return false;
+          }
+          const sessionId = String(session?.id || session?.session_id || '').trim();
+          return Boolean(sessionId && ctx.chatStore.isSessionGoalLocked?.(sessionId));
       });
   };
 

@@ -149,6 +149,7 @@ async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
                 model_type: Some("llm".to_string()),
                 stop: None,
                 mock_if_unconfigured: None,
+                ..Default::default()
             },
         );
         config.llm.models.insert(
@@ -176,6 +177,7 @@ async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
                 model_type: Some("llm".to_string()),
                 stop: None,
                 mock_if_unconfigured: None,
+                ..Default::default()
             },
         );
         config.llm.models.insert(
@@ -203,6 +205,7 @@ async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
                 model_type: Some("embedding".to_string()),
                 stop: None,
                 mock_if_unconfigured: None,
+                ..Default::default()
             },
         );
     })

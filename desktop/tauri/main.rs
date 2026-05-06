@@ -95,6 +95,10 @@ const DESKTOP_WINDOW_BRIDGE_SCRIPT: &str = r#"
   api.closeWindow = () => call('desktop_window_close');
   api.isWindowMaximized = () => call('desktop_window_is_maximized');
   api.startWindowDrag = () => call('desktop_window_start_dragging');
+  api.showCompanion = () => Promise.resolve(false);
+  api.updateCompanion = () => Promise.resolve(false);
+  api.hideCompanion = () => Promise.resolve(true);
+  api.getCompanionState = () => Promise.resolve({});
   window.wunderDesktop = api;
 })();
 "#;

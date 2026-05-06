@@ -237,6 +237,7 @@ pub struct TuiApp {
     config_wizard: Option<ConfigWizardState>,
     stream_saw_output: bool,
     stream_saw_final: bool,
+    stream_goal_continue_ready: bool,
     stream_received_content_delta: bool,
     stream_tool_markup_open: bool,
     turn_final_answer: String,
@@ -348,6 +349,7 @@ impl TuiApp {
             config_wizard: None,
             stream_saw_output: false,
             stream_saw_final: false,
+            stream_goal_continue_ready: false,
             stream_received_content_delta: false,
             stream_tool_markup_open: false,
             turn_final_answer: String::new(),
@@ -4782,6 +4784,7 @@ impl TuiApp {
                 self.approval_selected_index = 0;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
+                self.stream_goal_continue_ready = false;
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
                 self.turn_final_answer.clear();
@@ -4791,6 +4794,7 @@ impl TuiApp {
                 self.refresh_workspace_context();
             }
             StreamMessage::Done => {
+                let should_continue_goal = self.stream_goal_continue_ready;
                 self.finalize_all_markdown_streams();
                 self.maybe_emit_tool_only_final_summary();
                 if !self.stream_saw_output && !self.stream_saw_final {
@@ -4818,6 +4822,7 @@ impl TuiApp {
                 self.approval_selected_index = 0;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
+                self.stream_goal_continue_ready = false;
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
                 self.turn_final_answer.clear();
@@ -4825,6 +4830,18 @@ impl TuiApp {
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
                 self.refresh_workspace_context();
+                if should_continue_goal {
+                    let runtime = self.runtime.clone();
+                    let user_id = self.runtime.user_id.clone();
+                    let session_id = self.session_id.clone();
+                    tokio::spawn(async move {
+                        runtime
+                            .state
+                            .kernel
+                            .thread_runtime
+                            .spawn_goal_continuation_after_cooldown(user_id, session_id);
+                    });
+                }
             }
         }
     }
@@ -4873,6 +4890,9 @@ impl TuiApp {
     fn apply_stream_event(&mut self, event: StreamEvent) {
         let payload = event_payload(&event.data);
         match event.event.as_str() {
+            "goal_continuation_ready" => {
+                self.stream_goal_continue_ready = true;
+            }
             "llm_output_delta" => {
                 if let Some(reasoning_delta) =
                     payload.get("reasoning_delta").and_then(Value::as_str)

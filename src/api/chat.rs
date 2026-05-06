@@ -49,6 +49,13 @@ const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 const ORCHESTRATION_SOURCE_HEADER: &str = "x-wunder-orchestration-source";
 pub(crate) const ORCHESTRATION_SOURCE_ALLOW: &str = "beeroom_orchestration";
 
+#[derive(Debug, Clone)]
+struct SessionModelRuntime {
+    config_key: Option<String>,
+    display_name: Option<String>,
+    max_context: Option<u32>,
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -349,7 +356,8 @@ async fn create_session(
             ));
         }
     }
-    fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
     let record = crate::storage::ChatSessionRecord {
         session_id: session_id.clone(),
         user_id: resolved.user.user_id.clone(),
@@ -385,7 +393,12 @@ async fn create_session(
         .await
         .is_ok();
     let config = state.config_store.get().await;
-    let model_name = resolve_default_model_name(&config);
+    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let goal =
+        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .ok()
+            .flatten();
     let mut payload = session_payload_with_main(&record, is_main);
     insert_session_orchestration_lock_fields(
         &mut payload,
@@ -393,9 +406,10 @@ async fn create_session(
         &resolved.user.user_id,
         &session_id,
     );
+    insert_session_goal_payload(&mut payload, goal.as_ref());
     insert_session_runtime_fields(
         &mut payload,
-        model_name.as_deref(),
+        runtime.as_ref(),
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
@@ -445,33 +459,55 @@ async fn list_sessions(
         main_map.insert(agent_key, main);
     }
     let config = state.config_store.get().await;
-    let model_name = resolve_default_model_name(&config);
-    let items = sessions
+    let mut agent_record_map: HashMap<String, Option<crate::storage::UserAgentRecord>> =
+        HashMap::new();
+    let session_ids = sessions
         .iter()
-        .map(|record| {
-            let agent_key = record.agent_id.clone().unwrap_or_default();
-            let is_main = main_map
-                .get(&agent_key)
-                .and_then(|value| value.as_ref())
-                .map(|session_id| session_id == &record.session_id)
-                .unwrap_or(false);
-            let mut payload = session_payload_with_main(record, is_main);
-            insert_session_orchestration_lock_fields(
-                &mut payload,
-                &state,
-                &resolved.user.user_id,
-                &record.session_id,
-            );
-            insert_session_runtime_fields(
-                &mut payload,
-                model_name.as_deref(),
-                state
-                    .workspace
-                    .load_session_context_tokens(&resolved.user.user_id, &record.session_id),
-            );
-            payload
-        })
+        .map(|record| record.session_id.clone())
         .collect::<Vec<_>>();
+    let goal_map = crate::services::goal::list_goals(
+        state.storage.clone(),
+        &resolved.user.user_id,
+        &session_ids,
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .into_iter()
+    .map(|record| (record.session_id.clone(), record))
+    .collect::<HashMap<_, _>>();
+    let mut items = Vec::with_capacity(sessions.len());
+    for record in &sessions {
+        let agent_key = record.agent_id.clone().unwrap_or_default();
+        let is_main = main_map
+            .get(&agent_key)
+            .and_then(|value| value.as_ref())
+            .map(|session_id| session_id == &record.session_id)
+            .unwrap_or(false);
+        let mut payload = session_payload_with_main(record, is_main);
+        insert_session_orchestration_lock_fields(
+            &mut payload,
+            &state,
+            &resolved.user.user_id,
+            &record.session_id,
+        );
+        insert_session_goal_payload(&mut payload, goal_map.get(&record.session_id));
+        let runtime = resolve_cached_session_model_runtime(
+            &config,
+            &mut agent_record_map,
+            &state,
+            &resolved.user,
+            record.agent_id.as_deref(),
+        )
+        .await?;
+        insert_session_runtime_fields(
+            &mut payload,
+            runtime.as_ref(),
+            state
+                .workspace
+                .load_session_context_tokens(&resolved.user.user_id, &record.session_id),
+        );
+        items.push(payload);
+    }
     Ok(Json(json!({ "data": { "total": total, "items": items } })))
 }
 
@@ -585,11 +621,19 @@ async fn get_session(
     apply_session_running_state(&mut messages, session_running);
 
     let config = state.config_store.get().await;
-    let model_name = resolve_default_model_name(&config);
+    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
     let context_tokens = state
         .workspace
         .load_session_context_tokens(&resolved.user.user_id, &session_id)
         .max(0);
+    let goal = crate::services::goal::get_goal(
+        state.storage.clone(),
+        &resolved.user.user_id,
+        &session_id,
+    )
+    .await
+    .ok()
+    .flatten();
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
@@ -602,7 +646,11 @@ async fn get_session(
             "tool_overrides": record.tool_overrides,
             "history_incomplete": history_incomplete,
             "messages": messages,
-            "model_name": model_name,
+            "model_name": runtime.as_ref().and_then(|runtime| runtime.display_name.clone()),
+            "model_key": runtime.as_ref().and_then(|runtime| runtime.config_key.clone()),
+            "context_max_tokens": runtime.as_ref().and_then(|runtime| runtime.max_context),
+            "context_total_tokens": runtime.as_ref().and_then(|runtime| runtime.max_context),
+            "goal": goal.as_ref().map(crate::services::goal::goal_payload),
             "context_tokens": context_tokens,
             "context_occupancy_tokens": context_tokens,
             "history_has_more": history_has_more,
@@ -713,6 +761,11 @@ async fn get_session_events(
             .and_then(Value::as_str)
             .map(ToString::to_string)
     });
+    let goal =
+        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .ok()
+            .flatten();
     let runtime = state
         .kernel
         .orchestrator
@@ -737,6 +790,7 @@ async fn get_session_events(
             "rounds": rounds,
             "running": running,
             "last_event_id": last_event_id,
+            "goal": goal.as_ref().map(crate::services::goal::goal_payload),
             "runtime": runtime,
             "command_sessions": command_sessions
         }
@@ -1035,6 +1089,9 @@ async fn delete_session(
         .storage
         .delete_cron_jobs_by_session(&resolved.user.user_id, &session_id);
     let _ = state
+        .storage
+        .delete_session_goal(&resolved.user.user_id, &session_id);
+    let _ = state
         .memory
         .delete_record(&resolved.user.user_id, &session_id);
     let _ = state.monitor.purge_session(&session_id);
@@ -1091,7 +1148,14 @@ async fn update_session_title(
         &session_id,
     );
     let config = state.config_store.get().await;
-    let model_name = resolve_default_model_name(&config);
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let goal =
+        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .ok()
+            .flatten();
     let mut payload = session_payload_with_main(&record, is_main);
     insert_session_orchestration_lock_fields(
         &mut payload,
@@ -1099,9 +1163,10 @@ async fn update_session_title(
         &resolved.user.user_id,
         &session_id,
     );
+    insert_session_goal_payload(&mut payload, goal.as_ref());
     insert_session_runtime_fields(
         &mut payload,
-        model_name.as_deref(),
+        runtime.as_ref(),
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
@@ -1178,7 +1243,14 @@ async fn archive_session(
         &session_id,
     );
     let config = state.config_store.get().await;
-    let model_name = resolve_default_model_name(&config);
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let goal =
+        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .ok()
+            .flatten();
     let mut payload = session_payload_with_main(&record, is_main);
     insert_session_orchestration_lock_fields(
         &mut payload,
@@ -1186,9 +1258,10 @@ async fn archive_session(
         &resolved.user.user_id,
         &session_id,
     );
+    insert_session_goal_payload(&mut payload, goal.as_ref());
     insert_session_runtime_fields(
         &mut payload,
-        model_name.as_deref(),
+        runtime.as_ref(),
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
@@ -1272,7 +1345,14 @@ async fn restore_session(
         &session_id,
     );
     let config = state.config_store.get().await;
-    let model_name = resolve_default_model_name(&config);
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
+    let goal =
+        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .ok()
+            .flatten();
     let mut payload = session_payload_with_main(&record, is_main);
     insert_session_orchestration_lock_fields(
         &mut payload,
@@ -1282,11 +1362,12 @@ async fn restore_session(
     );
     insert_session_runtime_fields(
         &mut payload,
-        model_name.as_deref(),
+        runtime.as_ref(),
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
     );
+    insert_session_goal_payload(&mut payload, goal.as_ref());
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -1383,12 +1464,25 @@ async fn send_message(
         ThreadSubmitOutcome::Run(request, lease) => {
             let request = *request;
             let _lease = lease;
+            let user_id_for_goal = request.user_id.clone();
+            let session_id_for_goal = request.session_id.clone();
             let response = state
                 .kernel
                 .orchestrator
                 .run(request)
                 .await
                 .map_err(map_orchestrator_error)?;
+            if response.stop_reason.as_deref() != Some("question_panel") {
+                if let Some(session_id) = session_id_for_goal.as_deref() {
+                    state
+                        .kernel
+                        .thread_runtime
+                        .spawn_goal_continuation_after_cooldown(
+                            user_id_for_goal,
+                            session_id.to_string(),
+                        );
+                }
+            }
             Ok(Json(json!({ "data": response })).into_response())
         }
     }
@@ -1899,8 +1993,12 @@ async fn cancel_session(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let goal_cleared =
+        crate::services::goal::clear_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .unwrap_or(false);
     let cancelled = state.monitor.cancel(&session_id);
-    Ok(Json(json!({ "data": { "cancelled": cancelled } })))
+    Ok(Json(json!({ "data": { "cancelled": cancelled, "goal_cleared": goal_cleared } })))
 }
 
 async fn compact_session(
@@ -2887,6 +2985,20 @@ fn insert_session_orchestration_lock_fields(
     }
 }
 
+fn insert_session_goal_payload(
+    payload: &mut Value,
+    goal: Option<&crate::storage::SessionGoalRecord>,
+) {
+    let Value::Object(map) = payload else {
+        return;
+    };
+    map.insert(
+        "goal".to_string(),
+        goal.map(crate::services::goal::goal_payload)
+            .unwrap_or(Value::Null),
+    );
+}
+
 pub(crate) fn reject_locked_orchestration_session(
     state: &AppState,
     user_id: &str,
@@ -2972,14 +3084,31 @@ pub(crate) fn reject_or_repair_orchestration_dispatch(
 
 fn insert_session_runtime_fields(
     payload: &mut Value,
-    model_name: Option<&str>,
+    runtime: Option<&SessionModelRuntime>,
     context_tokens: i64,
 ) {
     let Value::Object(map) = payload else {
         return;
     };
-    if let Some(model_name) = model_name.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(model_name) = runtime
+        .and_then(|runtime| runtime.display_name.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         map.insert("model_name".to_string(), json!(model_name));
+    }
+    if let Some(model_key) = runtime
+        .and_then(|runtime| runtime.config_key.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        map.insert("model_key".to_string(), json!(model_key));
+    }
+    if let Some(max_context) = runtime.and_then(|runtime| runtime.max_context).filter(|value| *value > 0)
+    {
+        map.insert("context_max_tokens".to_string(), json!(max_context));
+        map.insert("context_total_tokens".to_string(), json!(max_context));
+        map.insert("max_context".to_string(), json!(max_context));
     }
     let context_tokens = context_tokens.max(0);
     map.insert("context_tokens".to_string(), json!(context_tokens));
@@ -2989,43 +3118,49 @@ fn insert_session_runtime_fields(
     );
 }
 
-fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {
-    let default_key = config.llm.default.trim();
-    if !default_key.is_empty() {
-        if let Some(cfg) = config.llm.models.get(default_key) {
-            if is_llm_model(cfg) {
-                if let Some(model) = cfg
-                    .model
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    return Some(model.to_string());
-                }
-                return Some(default_key.to_string());
-            }
-        } else {
-            return Some(default_key.to_string());
-        }
+fn resolve_session_model_runtime(
+    config: &crate::config::Config,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+) -> Option<SessionModelRuntime> {
+    let config_key = resolve_chat_model_name(config, agent_record)?;
+    let model_config = config.llm.models.get(&config_key)?;
+    if !is_llm_model(model_config) {
+        return None;
     }
-    for (key, cfg) in config.llm.models.iter() {
-        if !is_llm_model(cfg) {
-            continue;
-        }
-        if let Some(model) = cfg
-            .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Some(model.to_string());
-        }
-        let trimmed = key.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
+    let display_name = model_config
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(config_key.as_str())
+        .to_string();
+    Some(SessionModelRuntime {
+        config_key: Some(config_key),
+        display_name: Some(display_name),
+        max_context: model_config.max_context.filter(|value| *value > 0),
+    })
+}
+
+async fn resolve_cached_session_model_runtime(
+    config: &crate::config::Config,
+    cache: &mut HashMap<String, Option<crate::storage::UserAgentRecord>>,
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+    agent_id: Option<&str>,
+) -> Result<Option<SessionModelRuntime>, Response> {
+    let agent_key = agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("__default__")
+        .to_string();
+    if !cache.contains_key(&agent_key) {
+        let record = fetch_agent_record(state, user, agent_id, true).await?;
+        cache.insert(agent_key.clone(), record);
     }
-    None
+    Ok(resolve_session_model_runtime(
+        config,
+        cache.get(&agent_key).and_then(|record| record.as_ref()),
+    ))
 }
 
 fn resolve_chat_model_name(

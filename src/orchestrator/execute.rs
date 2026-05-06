@@ -13,6 +13,7 @@ use crate::core::approval::{
 };
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
 use crate::services::chat_attachments::persist_user_chat_attachments;
+use crate::services::goal;
 use crate::services::orchestration_context::session_orchestration_run_root;
 use crate::services::subagents;
 use crate::services::tools::sessions_yield_tool;
@@ -191,6 +192,7 @@ impl Orchestrator {
             prepared.config_overrides.as_ref(),
             subagents::SKIP_AUTO_MEMORY_CONFIG_KEY,
         );
+        let goal_continuation_turn = goal::is_goal_continuation(prepared.config_overrides.as_ref());
         let display_question = display_question_override
             .clone()
             .unwrap_or_else(|| question.clone());
@@ -431,6 +433,7 @@ impl Orchestrator {
                 ))
             };
             let mut reached_max_rounds = false;
+            let goal_turn_started_at = Instant::now();
             let mut round_usage = TokenUsage {
                 input: 0,
                 output: 0,
@@ -1804,6 +1807,38 @@ impl Orchestrator {
                 },
             )
             .await;
+            let goal_usage_record = if goal_continuation_turn {
+                let elapsed_seconds = goal_turn_started_at.elapsed().as_secs().max(1) as i64;
+                goal::account_turn_usage(
+                    self.storage.clone(),
+                    &user_id,
+                    &session_id,
+                    round_usage.total,
+                    elapsed_seconds,
+                )
+                .await
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+            let goal_record = match goal_usage_record {
+                Some(record) => Some(record),
+                None => goal::get_goal(self.storage.clone(), &user_id, &session_id)
+                    .await
+                    .ok()
+                    .flatten(),
+            };
+            if let Some(record) = goal_record.as_ref() {
+                if goal::should_continue_goal(record, waiting_question_panel) {
+                    emitter
+                        .emit(
+                            "goal_continuation_ready",
+                            json!({ "goal": goal::goal_payload(record) }),
+                        )
+                        .await;
+                }
+            }
             if let Some(turn_id) = active_turn_id.as_deref() {
                 self.finish_active_turn(
                     &session_id,

@@ -70,6 +70,11 @@ export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =
   api.get(`/chat/sessions/${id}`, options);
 export const getSessionEvents = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/events`, options);
+export const getSessionGoal = (id: string, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${id}/goal`, options);
+export const setSessionGoal = (id: string, payload: unknown) =>
+  api.put(`/chat/sessions/${id}/goal`, payload);
+export const clearSessionGoal = (id: string) => api.delete(`/chat/sessions/${id}/goal`);
 export const getSessionCommandSessions = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/command-sessions`, options);
 export const getSessionCommandSession = (

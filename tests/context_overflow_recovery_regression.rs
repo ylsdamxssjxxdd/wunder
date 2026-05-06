@@ -117,6 +117,7 @@ async fn build_test_context_with_compaction_and_mock_limit(
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
+            ..Default::default()
         },
     );
 

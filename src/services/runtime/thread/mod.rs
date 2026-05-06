@@ -1,3 +1,3 @@
 mod runtime;
 
-pub use runtime::{ThreadRuntime, ThreadSubmitOutcome};
+pub use runtime::{GoalContinuationSubmission, ThreadRuntime, ThreadSubmitOutcome};

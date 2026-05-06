@@ -4,6 +4,7 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260414-01";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20260414-01";
+import { listGlobalCompanions } from "./companions.js?v=20260506-01";
 
 const TAB_KEYS = ["preset", "cron", "channels"];
 const DEFAULT_AGENT_ID_ALIAS = "__default__";
@@ -116,8 +117,11 @@ const normalizeAgentAvatarSequenceKey = (rawValue) => {
 };
 
 const avatarModalState = {
+  kind: "static",
   iconName: DEFAULT_PRESET_AVATAR_ICON_NAME,
   color: "#94a3b8",
+  companionScope: "global",
+  companionId: "",
   page: 1,
 };
 
@@ -135,6 +139,7 @@ const ensureState = () => {
       toolGroups: [],
       modelOptions: [],
       defaultModelName: "",
+      companions: [],
       cronJobs: [],
       channelAccounts: [],
       supportedChannels: [],
@@ -191,6 +196,8 @@ const REQUIRED_KEYS = [
   "presetAgentAvatarModalApply",
   "presetAgentAvatarModalReset",
   "presetAgentAvatarModalPreview",
+  "presetAgentAvatarStaticTab",
+  "presetAgentAvatarGlobalTab",
   "presetAgentAvatarPicker",
   "presetAgentAvatarPager",
   "presetAgentAvatarPagePrev",
@@ -370,6 +377,122 @@ const normalizeIconColor = (value) => {
     hex = hex.split("").map((part) => part + part).join("");
   }
   return "#" + hex;
+};
+
+const tryParseIconObject = (value) => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  const text = String(value || "").trim();
+  if (!text || !text.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const normalizeIconKind = (value) =>
+  String(value || "").trim().toLowerCase() === "companion" ? "companion" : "static";
+
+const normalizeCompanionScope = (value) =>
+  String(value || "").trim().toLowerCase() === "private" ? "private" : "global";
+
+const normalizeCompanionScale = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 1;
+  }
+  return Math.min(1.6, Math.max(0.7, Number(numeric.toFixed(1))));
+};
+
+const parseIconConfig = (value, fallback = {}) => {
+  const parsed = tryParseIconObject(value);
+  const source = parsed || {};
+  const rawName = parsed
+    ? source.name || source.icon || source.avatar_icon || source.avatarIcon || ""
+    : String(value || "").trim();
+  const rawColor = parsed ? source.color || source.avatar_color || source.avatarColor || "" : "";
+  const rawKind = normalizeIconKind(parsed ? source.kind || source.type : "");
+  const companionId = String(
+    parsed ? source.id || source.companion_id || source.companionId || "" : ""
+  ).trim();
+  const fallbackName = fallback.icon_name || fallback.iconName || DEFAULT_PRESET_AVATAR_ICON_NAME;
+  const fallbackColor = fallback.icon_color || fallback.iconColor || "#94a3b8";
+  const iconName = normalizeIconName(rawName || companionId || fallbackName, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  const kind = rawKind === "companion" || companionId ? "companion" : "static";
+  return {
+    kind,
+    name: iconName,
+    color: normalizeIconColor(rawColor || fallbackColor),
+    scope: normalizeCompanionScope(parsed ? source.scope : "global"),
+    id: companionId,
+    show: parsed && "show" in source ? source.show !== false : true,
+    messageHints:
+      parsed && ("messageHints" in source || "message_hints" in source)
+        ? source.messageHints !== false && source.message_hints !== false
+        : true,
+    scale: normalizeCompanionScale(parsed ? source.scale : 1),
+  };
+};
+
+const stringifyIconConfig = (config) => {
+  const icon = parseIconConfig(config);
+  if (icon.kind === "companion" && icon.id) {
+    return JSON.stringify({
+      kind: "companion",
+      scope: normalizeCompanionScope(icon.scope),
+      id: icon.id,
+      color: normalizeIconColor(icon.color),
+      show: icon.show !== false,
+      messageHints: icon.messageHints !== false,
+      scale: normalizeCompanionScale(icon.scale),
+    });
+  }
+  return JSON.stringify({
+    kind: "static",
+    name: normalizeIconName(icon.name),
+    color: normalizeIconColor(icon.color),
+  });
+};
+
+const normalizeCompanionRecord = (item) => ({
+  id: String(item?.id || "").trim(),
+  display_name: String(item?.display_name || item?.displayName || item?.name || "").trim(),
+  description: String(item?.description || "").trim(),
+  spritesheet_data_url: String(item?.spritesheet_data_url || item?.spritesheetDataUrl || "").trim(),
+});
+
+const buildDefaultStaticIconConfig = () => ({
+  kind: "static",
+  name: DEFAULT_PRESET_AVATAR_ICON_NAME,
+  color: "#94a3b8",
+});
+
+const deriveLegacyIconParts = (icon) => {
+  const config = parseIconConfig(icon);
+  return {
+    icon_name: normalizeIconName(config.kind === "static" ? config.name : config.name || DEFAULT_PRESET_AVATAR_ICON_NAME),
+    icon_color: normalizeIconColor(config.color),
+  };
+};
+
+const assignIconConfig = (target, icon) => {
+  if (!target || typeof target !== "object") {
+    return parseIconConfig(icon);
+  }
+  const normalizedIcon = stringifyIconConfig(icon);
+  const legacy = deriveLegacyIconParts(normalizedIcon);
+  target.icon = normalizedIcon;
+  target.icon_name = legacy.icon_name;
+  target.icon_color = legacy.icon_color;
+  return parseIconConfig(normalizedIcon);
 };
 
 const normalizeQuestionDrafts = (values) =>
@@ -558,31 +681,38 @@ const renderModelOptions = (selectedModelName = "") => {
   }
 };
 
-const normalizePreset = (item) => ({
-  preset_id: String(item?.preset_id || "").trim(),
-  is_default_agent: item?.is_default_agent === true,
-  revision: Number.isFinite(Number(item?.revision)) ? Number(item.revision) : 1,
-  name: String(item?.name || "").trim(),
-  description: String(item?.description || "").trim(),
-  system_prompt: String(item?.system_prompt || "").trim(),
-  preview_skill: item?.preview_skill === true,
-  model_name: normalizeOptionalModelName(item?.model_name || item?.modelName),
-  icon_name: normalizeIconName(item?.icon_name),
-  icon_color: normalizeIconColor(item?.icon_color),
-  sandbox_container_id: Number.isFinite(Number(item?.sandbox_container_id)) ? Number(item.sandbox_container_id) : 1,
-  tool_names: Array.isArray(item?.tool_names)
-    ? item.tool_names.map((value) => String(value || "").trim()).filter(Boolean)
-    : [],
-  declared_tool_names: Array.isArray(item?.declared_tool_names)
-    ? item.declared_tool_names.map((value) => String(value || "").trim()).filter(Boolean)
-    : [],
-  declared_skill_names: Array.isArray(item?.declared_skill_names)
-    ? item.declared_skill_names.map((value) => String(value || "").trim()).filter(Boolean)
-    : [],
-  preset_questions: normalizeQuestionList(item?.preset_questions),
-  approval_mode: String(item?.approval_mode || "full_auto").trim() || "full_auto",
-  status: String(item?.status || "active").trim() || "active",
-});
+const normalizePreset = (item) => {
+  const icon = parseIconConfig(item?.icon, {
+    icon_name: item?.icon_name,
+    icon_color: item?.icon_color,
+  });
+  return {
+    preset_id: String(item?.preset_id || "").trim(),
+    is_default_agent: item?.is_default_agent === true,
+    revision: Number.isFinite(Number(item?.revision)) ? Number(item.revision) : 1,
+    name: String(item?.name || "").trim(),
+    description: String(item?.description || "").trim(),
+    system_prompt: String(item?.system_prompt || "").trim(),
+    preview_skill: item?.preview_skill === true,
+    model_name: normalizeOptionalModelName(item?.model_name || item?.modelName),
+    icon: stringifyIconConfig(icon),
+    icon_name: normalizeIconName(icon.kind === "static" ? icon.name : DEFAULT_PRESET_AVATAR_ICON_NAME),
+    icon_color: normalizeIconColor(icon.color),
+    sandbox_container_id: Number.isFinite(Number(item?.sandbox_container_id)) ? Number(item.sandbox_container_id) : 1,
+    tool_names: Array.isArray(item?.tool_names)
+      ? item.tool_names.map((value) => String(value || "").trim()).filter(Boolean)
+      : [],
+    declared_tool_names: Array.isArray(item?.declared_tool_names)
+      ? item.declared_tool_names.map((value) => String(value || "").trim()).filter(Boolean)
+      : [],
+    declared_skill_names: Array.isArray(item?.declared_skill_names)
+      ? item.declared_skill_names.map((value) => String(value || "").trim()).filter(Boolean)
+      : [],
+    preset_questions: normalizeQuestionList(item?.preset_questions),
+    approval_mode: String(item?.approval_mode || "full_auto").trim() || "full_auto",
+    status: String(item?.status || "active").trim() || "active",
+  };
+};
 
 const normalizePresetItems = (items) =>
   (Array.isArray(items) ? items : []).map(normalizePreset).filter((item) => item.name);
@@ -666,7 +796,10 @@ const normalizeUserAgent = (item) => ({
   preset_questions: normalizeQuestionList(item?.preset_questions),
   approval_mode: String(item?.approval_mode || "full_auto").trim() || "full_auto",
   status: String(item?.status || "active").trim() || "active",
-  icon: item?.icon || null,
+  icon: stringifyIconConfig(parseIconConfig(item?.icon, {
+    icon_name: item?.icon_name,
+    icon_color: item?.icon_color,
+  })),
   sandbox_container_id: Number.isFinite(Number(item?.sandbox_container_id)) ? Number(item.sandbox_container_id) : 1,
   updated_at: item?.updated_at || "",
 });
@@ -1029,11 +1162,16 @@ const buildEffectivePreset = (preset) => {
     return preset;
   }
   const configuredModelName = normalizeOptionalModelName(agent.configured_model_name);
+  const effectiveIcon = agent.icon || preset.icon;
+  const legacyIconParts = deriveLegacyIconParts(effectiveIcon);
   return {
     ...preset,
     description: agent.description,
     system_prompt: agent.system_prompt,
     model_name: configuredModelName || normalizeOptionalModelName(preset.model_name),
+    icon: effectiveIcon,
+    icon_name: legacyIconParts.icon_name,
+    icon_color: legacyIconParts.icon_color,
     sandbox_container_id: Number.isFinite(Number(agent.sandbox_container_id))
       ? Number(agent.sandbox_container_id)
       : preset.sandbox_container_id,
@@ -1054,7 +1192,17 @@ const buildEffectivePreset = (preset) => {
 
 const effectiveSelectedPreset = () => buildEffectivePreset(selectedPreset());
 
-const resolveAvatarPageCount = () => Math.max(1, Math.ceil(PRESET_AVATAR_OPTIONS.length / AVATAR_PAGE_SIZE));
+const staticAvatarItems = () =>
+  PRESET_AVATAR_OPTIONS.map((item) => ({ ...item, kind: "static" }));
+
+const globalCompanionItems = () =>
+  (Array.isArray(state.presetAgents.companions) ? state.presetAgents.companions : [])
+    .map((item) => ({ ...item, kind: "companion" }));
+
+const avatarPickerItems = () =>
+  avatarModalState.kind === "companion" ? globalCompanionItems() : staticAvatarItems();
+
+const resolveAvatarPageCount = () => Math.max(1, Math.ceil(avatarPickerItems().length / AVATAR_PAGE_SIZE));
 
 const normalizeAvatarPage = (value) => {
   const pageCount = resolveAvatarPageCount();
@@ -1075,6 +1223,38 @@ const resolveAvatarPageByKey = (key) => {
     return 1;
   }
   return Math.floor(index / AVATAR_PAGE_SIZE) + 1;
+};
+
+const resolveCompanionPageById = (id) => {
+  const cleaned = String(id || "").trim();
+  const items = globalCompanionItems();
+  const index = items.findIndex((item) => item.id === cleaned);
+  if (index < 0) {
+    return 1;
+  }
+  return Math.floor(index / AVATAR_PAGE_SIZE) + 1;
+};
+
+const buildIconFromAvatarModalState = () => {
+  if (avatarModalState.kind === "companion" && avatarModalState.companionId) {
+    return {
+      kind: "companion",
+      scope: "global",
+      id: String(avatarModalState.companionId || "").trim(),
+      color: normalizeIconColor(avatarModalState.color),
+      show: true,
+      messageHints: true,
+      scale: 1,
+    };
+  }
+  return {
+    kind: "static",
+    name: normalizeIconName(avatarModalState.iconName, {
+      fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+      fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+    }),
+    color: normalizeIconColor(avatarModalState.color),
+  };
 };
 
 const ensureAvatarFace = (container) => {
@@ -1123,19 +1303,53 @@ const renderAvatarFace = (container, { iconName, color, initial, imageClass = ""
   target.appendChild(label);
 };
 
-const renderPresetAvatarTrigger = (preset) => {
-  const iconName = normalizeIconName(preset?.icon_name, {
-    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
-    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
-  });
-  const color = normalizeIconColor(preset?.icon_color);
-  const initial = resolveAvatarInitial(preset?.name);
-  renderAvatarFace(elements.presetAgentAvatarPreview, {
-    iconName,
-    color,
+const renderCompanionFace = (container, companion) => {
+  const target = ensureAvatarFace(container);
+  if (!target) {
+    return;
+  }
+  target.textContent = "";
+  target.style.background = "transparent";
+  const source = String(companion?.spritesheet_data_url || "").trim();
+  if (!source) {
+    const fallback = document.createElement("span");
+    fallback.className = "preset-agent-avatar-option-initial";
+    fallback.textContent = resolveAvatarInitial(companion?.display_name || selectedPreset()?.name);
+    fallback.style.background = normalizeIconColor(avatarModalState.color);
+    target.appendChild(fallback);
+    return;
+  }
+  const viewport = document.createElement("span");
+  viewport.className = "preset-agent-avatar-companion-preview";
+  const sheet = document.createElement("span");
+  sheet.className = "preset-agent-avatar-companion-sheet";
+  sheet.style.backgroundImage = `url("${source}")`;
+  viewport.appendChild(sheet);
+  target.appendChild(viewport);
+};
+
+const findGlobalCompanion = (id) =>
+  (Array.isArray(state.presetAgents.companions) ? state.presetAgents.companions : [])
+    .find((item) => item.id === String(id || "").trim()) || null;
+
+const renderPresetIconFace = (container, icon, initial) => {
+  const config = parseIconConfig(icon);
+  if (config.kind === "companion") {
+    const companion = findGlobalCompanion(config.id);
+    renderCompanionFace(container, companion || { display_name: config.id });
+    return;
+  }
+  renderAvatarFace(container, {
+    iconName: config.name,
+    color: config.color,
     initial,
     initialClass: "preset-agent-avatar-option-initial",
   });
+};
+
+const renderPresetAvatarTrigger = (preset) => {
+  const initial = resolveAvatarInitial(preset?.name);
+  renderPresetIconFace(elements.presetAgentAvatarPreview, preset?.icon, initial);
   elements.presetAgentAvatarTrigger.disabled = !selectedPreset();
 };
 
@@ -1175,21 +1389,42 @@ const renderPresetAvatarPicker = () => {
   const pageCount = resolveAvatarPageCount();
   avatarModalState.page = normalizeAvatarPage(avatarModalState.page);
   const start = (avatarModalState.page - 1) * AVATAR_PAGE_SIZE;
-  const items = PRESET_AVATAR_OPTIONS.slice(start, start + AVATAR_PAGE_SIZE);
+  const items = avatarPickerItems().slice(start, start + AVATAR_PAGE_SIZE);
   picker.textContent = "";
   const fragment = document.createDocumentFragment();
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "preset-agent-avatar-empty";
+    empty.textContent = avatarModalState.kind === "companion"
+      ? t("presetAgents.avatarModal.globalEmpty")
+      : t("presetAgents.avatarModal.staticEmpty");
+    fragment.appendChild(empty);
+  }
 
   items.forEach((item) => {
     const option = document.createElement("button");
     option.type = "button";
     option.className = "preset-agent-avatar-option";
-    option.classList.toggle("is-active", item.key === avatarModalState.iconName);
-    option.dataset.avatarKey = item.key;
-    const label = item.key === "initial" ? t("presetAgents.avatarModal.initial") : item.label;
+    const optionKey = item.kind === "companion" ? item.id : item.key;
+    option.classList.toggle(
+      "is-active",
+      item.kind === "companion"
+        ? item.id === avatarModalState.companionId
+        : item.key === avatarModalState.iconName
+    );
+    option.dataset.avatarKey = optionKey;
+    const label = item.kind === "companion"
+      ? item.display_name
+      : item.key === "initial"
+        ? t("presetAgents.avatarModal.initial")
+        : item.label;
     option.title = label;
     option.setAttribute("aria-label", label);
 
-    if (item.imageCandidates?.length) {
+    if (item.kind === "companion") {
+      renderCompanionFace(option, item);
+    } else if (item.imageCandidates?.length) {
       const image = document.createElement("img");
       image.className = "preset-agent-avatar-option-image";
       image.alt = "";
@@ -1211,8 +1446,16 @@ const renderPresetAvatarPicker = () => {
     }
 
     option.addEventListener("click", () => {
-      avatarModalState.iconName = item.key;
-      avatarModalState.page = resolveAvatarPageByKey(item.key);
+      if (item.kind === "companion") {
+        avatarModalState.kind = "companion";
+        avatarModalState.companionScope = "global";
+        avatarModalState.companionId = item.id;
+        avatarModalState.page = resolveCompanionPageById(item.id);
+      } else {
+        avatarModalState.kind = "static";
+        avatarModalState.iconName = item.key;
+        avatarModalState.page = resolveAvatarPageByKey(item.key);
+      }
       renderPresetAvatarModalState();
     });
     fragment.appendChild(option);
@@ -1229,6 +1472,9 @@ const renderPresetAvatarPicker = () => {
 };
 
 const renderPresetAvatarModalState = () => {
+  const kind = avatarModalState.kind === "companion" ? "companion" : "static";
+  avatarModalState.kind = kind;
+  const companions = globalCompanionItems();
   const iconName = normalizeIconName(avatarModalState.iconName, {
     fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
     fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
@@ -1236,16 +1482,42 @@ const renderPresetAvatarModalState = () => {
   const color = normalizeIconColor(avatarModalState.color);
   avatarModalState.iconName = iconName;
   avatarModalState.color = color;
+  avatarModalState.companionScope = "global";
+  if (kind === "companion" && !companions.some((item) => item.id === avatarModalState.companionId)) {
+    avatarModalState.companionId = companions[0]?.id || "";
+  }
+  if (kind === "companion") {
+    avatarModalState.page = normalizeAvatarPage(avatarModalState.page || resolveCompanionPageById(avatarModalState.companionId));
+  }
 
-  renderAvatarFace(elements.presetAgentAvatarModalPreview, {
-    iconName,
-    color,
-    initial: resolveAvatarInitial(selectedPreset()?.name),
-    initialClass: "preset-agent-avatar-option-initial",
-  });
-  const hasImage = resolveAvatarImageCandidatesByKey(iconName).length > 0;
+  if (kind === "companion") {
+    renderCompanionFace(elements.presetAgentAvatarModalPreview, findGlobalCompanion(avatarModalState.companionId));
+  } else {
+    renderAvatarFace(elements.presetAgentAvatarModalPreview, {
+      iconName,
+      color,
+      initial: resolveAvatarInitial(selectedPreset()?.name),
+      initialClass: "preset-agent-avatar-option-initial",
+    });
+  }
+  if (kind === "companion" && !avatarModalState.companionId) {
+    elements.presetAgentAvatarModalApply.disabled = true;
+  } else {
+    elements.presetAgentAvatarModalApply.disabled = false;
+  }
+  const hasImage = kind === "companion" || resolveAvatarImageCandidatesByKey(iconName).length > 0;
   elements.presetAgentAvatarColorRow.style.display = hasImage ? "none" : "";
   syncPresetAvatarColorControl();
+  elements.presetAgentAvatarStaticTab.classList.toggle("is-active", kind === "static");
+  elements.presetAgentAvatarGlobalTab.classList.toggle("is-active", kind === "companion");
+  elements.presetAgentAvatarStaticTab.setAttribute("aria-selected", kind === "static" ? "true" : "false");
+  elements.presetAgentAvatarGlobalTab.setAttribute("aria-selected", kind === "companion" ? "true" : "false");
+  const label = elements.presetAgentAvatarModal.querySelector('[data-i18n="presetAgents.avatarModal.icons"]');
+  if (label) {
+    label.textContent = kind === "companion"
+      ? t("presetAgents.avatarModal.globalTab")
+      : t("presetAgents.avatarModal.icons");
+  }
   renderPresetAvatarPicker();
 };
 
@@ -1254,40 +1526,51 @@ const closePresetAvatarModal = () => {
 };
 
 const openPresetAvatarModal = () => {
-  const preset = selectedPreset();
+  const preset = effectiveSelectedPreset() || selectedPreset();
   if (!preset) {
     return;
   }
-  avatarModalState.iconName = normalizeIconName(preset.icon_name, {
+  const icon = parseIconConfig(preset.icon, {
+    icon_name: preset.icon_name,
+    icon_color: preset.icon_color,
+  });
+  avatarModalState.kind = icon.kind === "companion" && icon.id ? "companion" : "static";
+  avatarModalState.iconName = normalizeIconName(icon.name, {
     fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
     fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
   });
-  avatarModalState.color = normalizeIconColor(preset.icon_color);
-  avatarModalState.page = resolveAvatarPageByKey(avatarModalState.iconName);
+  avatarModalState.color = normalizeIconColor(icon.color);
+  avatarModalState.companionScope = "global";
+  avatarModalState.companionId = icon.kind === "companion" ? String(icon.id || "").trim() : "";
+  avatarModalState.page = avatarModalState.kind === "companion"
+    ? resolveCompanionPageById(avatarModalState.companionId)
+    : resolveAvatarPageByKey(avatarModalState.iconName);
   renderPresetAvatarColorOptions();
   renderPresetAvatarModalState();
   elements.presetAgentAvatarModal.classList.add("active");
 };
 
 const resetPresetAvatarModal = () => {
+  avatarModalState.kind = "static";
   avatarModalState.iconName = DEFAULT_PRESET_AVATAR_ICON_NAME;
   avatarModalState.color = normalizeIconColor("#94a3b8");
+  avatarModalState.companionScope = "global";
+  avatarModalState.companionId = "";
   avatarModalState.page = resolveAvatarPageByKey(avatarModalState.iconName);
   renderPresetAvatarModalState();
 };
 
 const applyPresetAvatarModal = () => {
-  const preset = selectedPreset();
-  if (!preset) {
+  const rawPreset = selectedPreset();
+  if (!rawPreset) {
     closePresetAvatarModal();
     return;
   }
-  preset.icon_name = normalizeIconName(avatarModalState.iconName, {
-    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
-    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
-  });
-  preset.icon_color = normalizeIconColor(avatarModalState.color);
-  renderPresetAvatarTrigger(effectiveSelectedPreset() || preset);
+  assignIconConfig(rawPreset, buildIconFromAvatarModalState());
+  if (isDefaultPreset(rawPreset) && state.presetAgents.userAgent) {
+    assignIconConfig(state.presetAgents.userAgent, rawPreset.icon);
+  }
+  renderPresetAvatarTrigger(effectiveSelectedPreset() || rawPreset);
   markPresetDraftDirty();
   closePresetAvatarModal();
 };
@@ -1709,7 +1992,11 @@ const ensureAgentForPreset = async (preset) => {
     status: preset.status || "active",
     is_shared: false,
     hive_id: DEFAULT_HIVE_ID,
-    icon: JSON.stringify({ name: normalizeIconName(preset.icon_name), color: normalizeIconColor(preset.icon_color) }),
+    icon: stringifyIconConfig(preset.icon || {
+      kind: "static",
+      name: preset.icon_name,
+      color: preset.icon_color,
+    }),
     sandbox_container_id: Number.isFinite(Number(preset.sandbox_container_id)) ? Number(preset.sandbox_container_id) : 1,
   };
   const created = await requestJson("/agents", { method: "POST", query: { user_id: TEMPLATE_USER_ID }, body: payload });
@@ -1738,6 +2025,17 @@ const loadToolCatalog = async () => {
   const source = payload?.data && typeof payload.data === "object" ? payload.data : payload || {};
   state.presetAgents.toolGroups = buildToolGroups(source);
   renderToolSelector(selectedAbilityNamesFromPreset(effectiveSelectedPreset()));
+};
+
+const loadGlobalCompanionsForPresetAgents = async ({ silent = false } = {}) => {
+  try {
+    state.presetAgents.companions = (await listGlobalCompanions()).map(normalizeCompanionRecord);
+  } catch (error) {
+    state.presetAgents.companions = [];
+    if (!silent) {
+      notify(t("companionsAdmin.toast.refreshFailed", { message: error.message || "-" }), "error");
+    }
+  }
 };
 
 const loadCronJobs = async () => {
@@ -1896,6 +2194,11 @@ const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {})
         description: item.description,
         system_prompt: item.system_prompt,
         model_name: normalizeOptionalModelName(item.model_name),
+        icon: stringifyIconConfig(item.icon || {
+          kind: "static",
+          name: item.icon_name,
+          color: item.icon_color,
+        }),
         icon_name: item.icon_name,
         icon_color: item.icon_color,
         sandbox_container_id: item.sandbox_container_id,
@@ -1950,6 +2253,7 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
       next.status = agentPayload.status || effective.status || current.status || "active";
       next.model_name = normalizeOptionalModelName(agentPayload.model_name);
       next.sandbox_container_id = agentPayload.sandbox_container_id;
+      assignIconConfig(next, agentPayload.icon || effective.icon || current.icon);
       setStatus(t("presetAgents.status.saving"), "warning");
       renderPresetActionState();
       renderSyncSummary();
@@ -2048,6 +2352,7 @@ const createPreset = () => {
     index += 1;
     candidate = `${baseName}${index}`;
   }
+  const createdIcon = stringifyIconConfig(buildDefaultStaticIconConfig());
   const createdPreset = {
     preset_id: "",
     revision: 1,
@@ -2055,8 +2360,8 @@ const createPreset = () => {
     description: "",
     system_prompt: "",
     model_name: "",
-    icon_name: DEFAULT_PRESET_AVATAR_ICON_NAME,
-    icon_color: "#94a3b8",
+    icon: createdIcon,
+    ...deriveLegacyIconParts(createdIcon),
     sandbox_container_id: 1,
     tool_names: [],
     declared_tool_names: [],
@@ -2118,6 +2423,11 @@ const collectAgentForm = () => {
   const tool_names = normalizeNameList(selectedAbilities.map((item) => item.name));
   const { declared_tool_names, declared_skill_names } = splitSelectedAbilityNames(selectedAbilities);
   const preset = effectiveSelectedPreset() || selectedPreset();
+  const icon = stringifyIconConfig(preset?.icon || {
+    kind: "static",
+    name: preset?.icon_name,
+    color: preset?.icon_color,
+  });
   return {
     name,
     description: String(elements.presetAgentFormDescription.value || "").trim(),
@@ -2135,10 +2445,7 @@ const collectAgentForm = () => {
     status: String(effectiveSelectedPreset()?.status || "active").trim() || "active",
     is_shared: false,
     hive_id: DEFAULT_HIVE_ID,
-    icon: JSON.stringify({
-      name: normalizeIconName(preset?.icon_name),
-      color: normalizeIconColor(preset?.icon_color),
-    }),
+    icon,
   };
 };
 
@@ -2377,7 +2684,10 @@ export const loadPresetAgents = async ({
   }
   state.presetAgents.loading = true;
   try {
-    await loadModelCatalog({ silent: true });
+    await Promise.all([
+      loadModelCatalog({ silent: true }),
+      loadGlobalCompanionsForPresetAgents({ silent: true }),
+    ]);
     const payload = await requestJson("/admin/preset_agents");
     state.presetAgents.presets = stabilizePresetListOrder(payload?.data?.items, state.presetAgents.presets);
 
@@ -2464,6 +2774,20 @@ const bindPresetAvatarControls = () => {
   elements.presetAgentAvatarModalCancel.addEventListener("click", closePresetAvatarModal);
   elements.presetAgentAvatarModalApply.addEventListener("click", applyPresetAvatarModal);
   elements.presetAgentAvatarModalReset.addEventListener("click", resetPresetAvatarModal);
+  elements.presetAgentAvatarStaticTab.addEventListener("click", () => {
+    avatarModalState.kind = "static";
+    avatarModalState.page = resolveAvatarPageByKey(avatarModalState.iconName);
+    renderPresetAvatarModalState();
+  });
+  elements.presetAgentAvatarGlobalTab.addEventListener("click", () => {
+    avatarModalState.kind = "companion";
+    avatarModalState.companionScope = "global";
+    if (!avatarModalState.companionId) {
+      avatarModalState.companionId = globalCompanionItems()[0]?.id || "";
+    }
+    avatarModalState.page = resolveCompanionPageById(avatarModalState.companionId);
+    renderPresetAvatarModalState();
+  });
 
   elements.presetAgentAvatarModal.addEventListener("click", (event) => {
     if (event.target === elements.presetAgentAvatarModal) {
@@ -2575,7 +2899,10 @@ export const initPresetAgentsPanel = async () => {
     return;
   }
   // Load avatar config from backend first
-  await loadPresetAvatars();
+  await Promise.all([
+    loadPresetAvatars(),
+    loadGlobalCompanionsForPresetAgents({ silent: true }),
+  ]);
   bindTabs();
   bindPresetDraftFields();
   bindActions();

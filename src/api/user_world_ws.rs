@@ -131,6 +131,7 @@ async fn handle_ws(
             resume: true,
             watch: true,
             ping_pong: true,
+            goal: false,
         },
     };
     let _ = send_ws_ready(&ws_tx, None, ready_payload.clone()).await;

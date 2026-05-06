@@ -51,6 +51,62 @@ export type DesktopBridge = {
   }) => Promise<boolean> | boolean;
   showMonitorCountdown?: (payload: { waitMs: number }) => Promise<boolean> | boolean;
   hideOverlay?: () => Promise<boolean> | boolean;
+  showCompanion?: (payload: {
+    id?: string;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  }) => Promise<boolean> | boolean;
+  updateCompanion?: (payload: {
+    id?: string;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  }) => Promise<boolean> | boolean;
+  hideCompanion?: (payload?: { persistEnabled?: boolean }) => Promise<boolean> | boolean;
+  getCompanionState?: () => Promise<{
+    enabled?: boolean;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  }> | {
+    enabled?: boolean;
+    selectedId?: string;
+    displayName?: string;
+    description?: string;
+    spritesheetDataUrl?: string;
+    state?: string;
+    scale?: number;
+    x?: number;
+    y?: number;
+    message?: string;
+    messageKind?: 'info' | 'success' | 'warning';
+    messageVisible?: boolean;
+  };
 };
 
 export const DEFAULT_AGENT_KEY = '__default__';
@@ -117,7 +173,7 @@ export const AGENT_MAIN_READ_AT_STORAGE_PREFIX = 'messenger_agent_main_read_at';
 export const AGENT_MAIN_UNREAD_STORAGE_PREFIX = 'messenger_agent_main_unread';
 export const UNIT_UNGROUPED_ID = '__ungrouped__';
 
-export type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact';
+export type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact' | 'goal';
 
 export type MixedConversation = {
   key: string;
@@ -129,6 +185,8 @@ export type MixedConversation = {
   preview: string;
   unread: number;
   lastAt: number;
+  goalLocked?: boolean;
+  goalStatus?: string;
 };
 
 export type ToolEntry = {

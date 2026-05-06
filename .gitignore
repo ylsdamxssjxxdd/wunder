@@ -80,3 +80,4 @@ config/preset_worker_cards
 config/mcp_config.json
 config/org_units.json
 exports/
+形象/

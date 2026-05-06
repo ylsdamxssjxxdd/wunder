@@ -34,5 +34,17 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
     ipcRenderer.invoke('wunder:overlay-controller-done', payload || {}),
   showMonitorCountdown: (payload) =>
     ipcRenderer.invoke('wunder:overlay-monitor-countdown', payload || {}),
-  hideOverlay: () => ipcRenderer.invoke('wunder:overlay-hide')
+  hideOverlay: () => ipcRenderer.invoke('wunder:overlay-hide'),
+  showCompanion: (payload) => ipcRenderer.invoke('wunder:companion-show', payload || {}),
+  updateCompanion: (payload) => ipcRenderer.invoke('wunder:companion-update', payload || {}),
+  hideCompanion: (payload) => ipcRenderer.invoke('wunder:companion-hide', payload || {}),
+  getCompanionState: () => ipcRenderer.invoke('wunder:companion-state'),
+  onCompanionStateChanged: (listener) => {
+    if (typeof listener !== 'function') {
+      return () => {};
+    }
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('wunder:companion-state-changed', wrapped);
+    return () => ipcRenderer.removeListener('wunder:companion-state-changed', wrapped);
+  }
 })

@@ -197,6 +197,7 @@
             : isMixedConversationActive(item),
           'messenger-conversation-item--guided': isGuidedDefaultConversation(item),
           'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running',
+          'is-goal-locked': item.kind === 'agent' && isAgentConversationGoalActive(item),
           'is-dragging': dragState.section === 'messages' && dragState.key === resolveConversationItemKey(item),
           'is-drag-origin-hidden': isDragOriginHidden('messages', resolveConversationItemKey(item)),
           'is-drop-before': isDropBefore('messages', index),
@@ -222,6 +223,13 @@
           :title="t('orchestration.chat.timelineBadge')"
         >
           {{ t('orchestration.chat.timelineBadge') }}
+        </span>
+        <span
+          v-if="item.kind === 'agent' && isAgentConversationGoalActive(item)"
+          class="messenger-goal-bookmark"
+          :title="t('chat.goal.timelineBadge')"
+        >
+          {{ t('chat.goal.timelineBadge') }}
         </span>
         <AgentAvatar
           v-if="item.kind === 'agent'"
@@ -1047,6 +1055,7 @@ const {
   resolveExternalHost,
   filteredMixedConversations,
   isAgentOrchestrationActive,
+  isAgentGoalActive,
   isMixedConversationActive,
   openMixedConversation,
   preloadMixedConversation,
@@ -1138,6 +1147,7 @@ const {
   resolveExternalHost: (url: string) => string;
   filteredMixedConversations: Array<Record<string, any>>;
   isAgentOrchestrationActive: (agentId: unknown) => boolean;
+  isAgentGoalActive: (agentId: unknown) => boolean;
   isMixedConversationActive: (item: any) => boolean;
   openMixedConversation: (item: any) => void | Promise<void>;
   preloadMixedConversation: (item: any) => void;
@@ -1254,7 +1264,14 @@ const selectedAgentHiveGroupLabel = computed(() => {
   return String(matched?.label || t('messenger.agents.hiveAll')).trim();
 });
 
-const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'orchestrations', 'agents']);
+const middlePaneSearchableSections = new Set([
+  'messages',
+  'users',
+  'groups',
+  'swarms',
+  'orchestrations',
+  'agents'
+]);
 const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
 );
@@ -1315,6 +1332,12 @@ const resolveConversationItemKey = (item: Record<string, unknown> | null | undef
 const isAgentConversationOrchestrationActive = (item: Record<string, unknown> | null | undefined): boolean => {
   if (!item || String(item?.kind || '').trim() !== 'agent') return false;
   return isAgentOrchestrationActive(item?.agentId);
+};
+
+const isAgentConversationGoalActive = (item: Record<string, unknown> | null | undefined): boolean => {
+  if (!item || String(item?.kind || '').trim() !== 'agent') return false;
+  if (item.goalLocked === true) return true;
+  return isAgentGoalActive(item?.agentId);
 };
 
 const resolveSwarmDragKey = (group: Record<string, unknown> | null | undefined): string =>
@@ -2492,6 +2515,47 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   transform: translateX(-50%) rotate(-45deg);
   transform-origin: center;
 }
+
+.messenger-goal-bookmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: -1px;
+  right: 12px;
+  z-index: 3;
+  min-width: 26px;
+  height: 34px;
+  padding: 0 8px 6px;
+  border-radius: 0 0 11px 11px;
+  border: 1px solid rgba(20, 184, 166, 0.32);
+  border-top: 0;
+  background: linear-gradient(180deg, rgba(204, 251, 241, 0.98), rgba(153, 246, 228, 0.94));
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 8px 18px rgba(13, 148, 136, 0.14);
+}
+
+.messenger-goal-bookmark::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  background: inherit;
+  border-left: 1px solid rgba(20, 184, 166, 0.32);
+  border-bottom: 1px solid rgba(20, 184, 166, 0.32);
+  transform: translateX(-50%) rotate(-45deg);
+  transform-origin: center;
+}
+
+.messenger-conversation-item.is-goal-locked {
+  box-shadow: inset 3px 0 0 rgba(20, 184, 166, 0.82);
+}
 </style>
-
-
