@@ -105,7 +105,9 @@ import {
   shouldKeepForegroundLiveMessages,
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
+import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
 import {
+  dedupeTerminalCompactionMarkersInPlace,
   isCompactionMarkerAssistantMessage,
   isSupersededRunningManualCompactionMarker,
   mergeCompactionMarkersIntoMessages,
@@ -5348,6 +5350,7 @@ const syncSessionContextTokens = (store, sessionId, contextTokens, contextTotalT
 const notifySessionSnapshot = (store, sessionId, messages, immediate = false, options: { skipWindowing?: boolean } = {}) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
+  dedupeTerminalCompactionMarkersInPlace(messages);
   cacheSessionMessages(key, messages);
   syncChatRuntimeProjectionFromLegacy(store, key, messages);
   const activeKey = resolveSessionKey(store?.activeSessionId);
@@ -9414,19 +9417,22 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'llm_request': {
         resetAssistantWaitingOutputPhase(assistantMessage, payload?.timestamp ?? data?.timestamp);
         clearAssistantRetryState(assistantMessage);
-        updateLiveContextUsageFromRequest(data ?? payload ?? {});
+        const requestPayload = data ?? payload ?? {};
+        const requestPurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
+        if (!isCompactionSummaryEvent('llm_request', requestPayload)) {
+          updateLiveContextUsageFromRequest(requestPayload);
+        }
         chatDebugLog('chat.llm.request', 'event', {
           sessionId: options.sessionId ?? null,
           round: resolveRound(payload, data),
-          purpose: String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase(),
-          payloadOmitted: Boolean((data ?? payload ?? {})?.payload_omitted),
-          request: data ?? payload ?? {}
+          purpose: requestPurpose,
+          payloadOmitted: Boolean(requestPayload?.payload_omitted),
+          request: requestPayload
         });
-        const requestPurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
         if (requestPurpose === 'compaction_summary') {
           chatDebugLog('chat.compaction.event', 'llm-request-compaction-summary', {
             sessionId: options.sessionId ?? null,
-            payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
+            payload: cloneCompactionDebugPayload(requestPayload, {})
           });
           break;
         }
@@ -10179,6 +10185,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'round_usage': {
+        if (isCompactionSummaryEvent('llm_output', data ?? payload ?? {})) {
+          break;
+        }
         const round = resolveRound(payload, data);
         updateRoundUsageStats(data ?? payload ?? {});
         updateUsageStats(
@@ -10197,6 +10206,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'context_usage': {
+        if (isCompactionSummaryEvent('llm_output', data ?? payload ?? {})) {
+          break;
+        }
         updateContextUsage(data ?? payload ?? {});
         if (activeCompactionWorkflowRef || compactionProgressItemMap.size > 0) {
           chatDebugLog('chat.compaction.event', 'context-usage', {

@@ -5,6 +5,7 @@
 // Do not add new tool business logic directly in `tools.rs`.
 // Implement new capabilities in dedicated modules/files and only wire them here.
 mod apply_patch_tool;
+mod apply_patch_update;
 mod browser_tool;
 mod catalog;
 mod channel_tool;

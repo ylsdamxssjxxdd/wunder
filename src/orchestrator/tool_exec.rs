@@ -1767,12 +1767,38 @@ fn should_skip_event_payload_truncation(tool_name: &str) -> bool {
 }
 
 fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
-    if should_skip_tool_truncation(tool_name) {
-        return;
-    }
     let Some(map) = payload.as_object_mut() else {
         return;
     };
+    let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    if matches!(canonical.as_str(), "apply_patch" | "搴旂敤琛ヤ竵") {
+        let maybe_compacted = map
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(compact_apply_patch_observation_data);
+        if let Some(mut compacted_data) = maybe_compacted {
+            let observation_truncated = truncate_observation_data(
+                &mut compacted_data,
+                OBSERVATION_HEAD_CHARS,
+                OBSERVATION_TAIL_CHARS,
+                TOOL_RESULT_TRUNCATION_MARKER,
+            );
+            let observation_output_chars = estimate_tool_result_chars(&compacted_data);
+            map.insert("data".to_string(), compacted_data);
+            map.remove("meta");
+            if observation_truncated {
+                map.insert("truncated".to_string(), Value::Bool(true));
+                map.insert(
+                    "observation_output_chars".to_string(),
+                    json!(observation_output_chars),
+                );
+            }
+            return;
+        }
+    }
+    if should_skip_tool_truncation(tool_name) {
+        return;
+    }
     if compact_failure_observation_payload(map) {
         return;
     }
@@ -2250,6 +2276,54 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
         }
     }
     fit_read_file_content_to_observation_budget(&mut compacted);
+    Some(Value::Object(compacted))
+}
+
+fn compact_apply_patch_observation_data(map: &Map<String, Value>) -> Option<Value> {
+    if !map.contains_key("changed_files")
+        && !map.contains_key("files")
+        && !map.contains_key("hunks_applied")
+    {
+        return None;
+    }
+    let mut compacted = Map::new();
+    for key in [
+        "dry_run",
+        "changed_files",
+        "added",
+        "updated",
+        "deleted",
+        "moved",
+        "hunks_applied",
+        "no_effect_updates",
+    ] {
+        if let Some(value) = map.get(key) {
+            compacted.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(files) = map.get("files").and_then(Value::as_array) {
+        let mut compacted_files = Vec::new();
+        for file in files.iter().take(12) {
+            let Some(file_obj) = file.as_object() else {
+                continue;
+            };
+            let mut item = Map::new();
+            for key in ["action", "path", "to_path", "hunks"] {
+                if let Some(value) = file_obj.get(key) {
+                    item.insert(key.to_string(), value.clone());
+                }
+            }
+            if !item.is_empty() {
+                compacted_files.push(Value::Object(item));
+            }
+        }
+        if files.len() > 12 {
+            compacted_files.push(build_omitted_items_marker(files.len().saturating_sub(12)));
+        }
+        if !compacted_files.is_empty() {
+            compacted.insert("files".to_string(), Value::Array(compacted_files));
+        }
+    }
     Some(Value::Object(compacted))
 }
 
@@ -3897,5 +3971,59 @@ mod tests {
             MarkdownPathWrapper::None,
         );
         assert_eq!(formatted, "/charts/right.png");
+    }
+
+    #[test]
+    fn test_compact_observation_payload_compacts_apply_patch_files_without_diff_blocks() {
+        let mut payload = json!({
+            "tool": "apply_patch",
+            "ok": true,
+            "data": {
+                "changed_files": 1,
+                "added": 0,
+                "updated": 1,
+                "deleted": 0,
+                "moved": 0,
+                "hunks_applied": 1,
+                "files": [
+                    {
+                        "action": "update",
+                        "path": "src/main.rs",
+                        "to_path": null,
+                        "hunks": 1,
+                        "diff_blocks": [
+                            {
+                                "header": "@@ -1,1 +1,1 @@",
+                                "lines": [
+                                    { "kind": "delete", "old_line": 1, "new_line": null, "text": "old" },
+                                    { "kind": "add", "old_line": null, "new_line": 1, "text": "new" }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        compact_observation_payload(&mut payload, "apply_patch");
+
+        let data = payload
+            .get("data")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let files = data
+            .get("files")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let first = files
+            .first()
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(first.get("path").and_then(Value::as_str), Some("src/main.rs"));
+        assert_eq!(first.get("hunks").and_then(Value::as_u64), Some(1));
+        assert!(first.get("diff_blocks").is_none());
     }
 }

@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -91,6 +92,7 @@ pub struct ThreadRuntime {
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
     running_threads: Arc<Mutex<HashSet<String>>>,
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
+    pending_goal_continuations: Arc<StdMutex<std::collections::HashMap<String, CancellationToken>>>,
 }
 
 impl ThreadRuntime {
@@ -112,6 +114,7 @@ impl ThreadRuntime {
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             running_threads: Arc::new(Mutex::new(HashSet::new())),
             pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
+            pending_goal_continuations: Arc::new(StdMutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -182,6 +185,10 @@ impl ThreadRuntime {
         }
 
         if let Some(session_id) = session_id.as_ref() {
+            if !goal::is_goal_continuation(request.config_overrides.as_ref()) {
+                self.cancel_pending_goal_continuation(session_id);
+                self.cancel_queued_goal_continuations(session_id)?;
+            }
             if set_as_main {
                 let _ = self
                     .set_main_session(&user_id, &agent_id, session_id, "user_message")
@@ -286,6 +293,16 @@ impl ThreadRuntime {
 
     pub fn spawn_goal_continuation_after_cooldown(&self, user_id: String, session_id: String) {
         let runtime = self.clone();
+        let token = CancellationToken::new();
+        {
+            let mut guard = match runtime.pending_goal_continuations.lock() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            };
+            if let Some(existing) = guard.insert(session_id.clone(), token.clone()) {
+                existing.cancel();
+            }
+        }
         tokio::spawn(async move {
             let delay =
                 match goal::get_goal(runtime.user_store.storage_backend(), &user_id, &session_id)
@@ -295,15 +312,74 @@ impl ThreadRuntime {
                     _ => None,
                 };
             let Some(delay) = delay else {
+                runtime.clear_pending_goal_continuation(&session_id, &token);
                 return;
             };
             if delay > f64::EPSILON {
-                tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        runtime.clear_pending_goal_continuation(&session_id, &token);
+                        return;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs_f64(delay)) => {}
+                }
+            }
+            if token.is_cancelled() {
+                runtime.clear_pending_goal_continuation(&session_id, &token);
+                return;
             }
             let _ = runtime
                 .submit_goal_continuation(&user_id, &session_id)
                 .await;
+            runtime.clear_pending_goal_continuation(&session_id, &token);
         });
+    }
+
+    fn clear_pending_goal_continuation(&self, session_id: &str, token: &CancellationToken) {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.pending_goal_continuations.lock() {
+            let should_remove = guard
+                .get(cleaned)
+                .map(|current| current.is_cancelled() || token.is_cancelled())
+                .unwrap_or(false);
+            if should_remove {
+                guard.remove(cleaned);
+            }
+        }
+    }
+
+    fn cancel_pending_goal_continuation(&self, session_id: &str) {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.pending_goal_continuations.lock() {
+            if let Some(token) = guard.remove(cleaned) {
+                token.cancel();
+            }
+        }
+    }
+
+    fn cancel_queued_goal_continuations(&self, session_id: &str) -> Result<()> {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let thread_id = format!("thread_{cleaned}");
+        let tasks = self.user_store.list_agent_tasks_by_thread(&thread_id, None, 32)?;
+        for task in tasks {
+            let is_pending = task.status == TASK_STATUS_PENDING || task.status == TASK_STATUS_RETRY;
+            if !is_pending {
+                continue;
+            }
+            if goal::is_goal_continuation(task.request_payload.get("config_overrides")) {
+                let _ = self.cancel_task(&task.task_id);
+            }
+        }
+        Ok(())
     }
 
     pub async fn resolve_main_session_id(

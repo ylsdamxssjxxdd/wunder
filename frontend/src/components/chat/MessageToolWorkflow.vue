@@ -120,6 +120,7 @@ import {
   type RawToolRun as RawEntry,
   type WorkflowItem
 } from './toolWorkflowRunModel';
+import { shouldRenderWorkflowShell } from './toolWorkflowVisibility';
 import {
   formatWorkflowConsumedTokensLabel,
   resolveWorkflowEntryConsumedTokenResolution
@@ -3310,7 +3311,13 @@ const pendingEntry = computed<ToolEntryView | null>(() =>
 const displayEntries = computed<ToolEntryView[]>(() =>
   entries.value.length > 0 ? entries.value : pendingEntry.value ? [pendingEntry.value] : []
 );
-const shouldRender = computed(() => props.visible && displayEntries.value.length > 0);
+const shouldRender = computed(() =>
+  shouldRenderWorkflowShell({
+    visible: props.visible,
+    entryCount: displayEntries.value.length,
+    hasPendingPlaceholder: Boolean(pendingPlaceholder.value)
+  })
+);
 
 const buildUnparsedWorkflowItemSamples = () => {
   if (!Array.isArray(props.items) || props.items.length === 0) {

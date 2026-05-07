@@ -10,6 +10,18 @@ export type WorkflowCompactionSnapshot = {
   detail: UnknownObject | null;
 };
 
+export const isCompactionSummaryEvent = (eventType: unknown, payload: unknown): boolean => {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  if (normalizedEventType !== 'llm_request' && normalizedEventType !== 'llm_output') {
+    return false;
+  }
+  const source = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as UnknownObject)
+    : null;
+  const purpose = String(source?.purpose || source?.intent || '').trim().toLowerCase();
+  return purpose === 'compaction_summary';
+};
+
 export type CompactionDividerStatus =
   | 'running'
   | 'completed'

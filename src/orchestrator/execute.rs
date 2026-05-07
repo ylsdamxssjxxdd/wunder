@@ -1,5 +1,4 @@
 use super::context_compactor::ContextCompactor;
-use super::preflight::{build_preflight_rewrite_summary, PreflightDecision};
 use super::retry_governor::RetryGovernor;
 use super::thread_runtime::{
     thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
@@ -1999,114 +1998,8 @@ impl Orchestrator {
                 let recovered_args =
                     crate::core::tool_args::recover_tool_args_value_with_meta(&call.arguments);
                 call.arguments = recovered_args.value.clone();
-                let mut args = call.arguments.clone();
+                let args = call.arguments.clone();
                 let args_repair = recovered_args.repair.clone();
-                let mut preflight_meta: Option<Value> = None;
-                match orchestrator.run_tool_preflight(&name, &args) {
-                    PreflightDecision::Pass => {}
-                    PreflightDecision::Rewrite {
-                        code,
-                        args: rewritten_args,
-                        diagnostics,
-                    } => {
-                        let (rewrite_summary, rewrite_changes) =
-                            build_preflight_rewrite_summary(&diagnostics);
-                        let diagnostics = diagnostics
-                            .into_iter()
-                            .map(|item| item.to_value())
-                            .collect::<Vec<_>>();
-                        let mut rewrite_payload = json!({
-                            "stage": "tool_preflight_rewrite",
-                            "summary": rewrite_summary,
-                            "tool": name.clone(),
-                            "code": code,
-                            "changes": rewrite_changes,
-                            "diagnostics": diagnostics,
-                        });
-                        if let Value::Object(ref mut map) = rewrite_payload {
-                            round_info.insert_into(map);
-                        }
-                        emitter.emit("progress", rewrite_payload).await;
-                        args = rewritten_args;
-                        call.arguments = args.clone();
-                        preflight_meta = Some(json!({
-                            "status": "rewrite",
-                            "code": code,
-                            "summary": rewrite_summary,
-                            "changes": rewrite_changes,
-                            "diagnostics": diagnostics,
-                        }));
-                    }
-                    PreflightDecision::Reject {
-                        code,
-                        message,
-                        diagnostics,
-                    } => {
-                        let diagnostics = diagnostics
-                            .into_iter()
-                            .map(|item| item.to_value())
-                            .collect::<Vec<_>>();
-                        let preflight = json!({
-                            "status": "reject",
-                            "code": code,
-                            "summary": message,
-                            "diagnostics": diagnostics,
-                        });
-                        let hint = preflight
-                            .get("diagnostics")
-                            .and_then(Value::as_array)
-                            .and_then(|items| {
-                                items.iter().find_map(|item| {
-                                    item.get("hint")
-                                        .and_then(Value::as_str)
-                                        .map(str::trim)
-                                        .filter(|value| !value.is_empty())
-                                        .map(ToString::to_string)
-                                })
-                            });
-                        let mut reject_payload = json!({
-                            "stage": "tool_preflight_reject",
-                            "summary": "Tool preflight blocked execution due to deterministic failure pattern.",
-                            "tool": name.clone(),
-                            "code": code,
-                            "diagnostics": preflight
-                                .get("diagnostics")
-                                .cloned()
-                                .unwrap_or_else(|| Value::Array(Vec::new())),
-                        });
-                        if let Value::Object(ref mut map) = reject_payload {
-                            round_info.insert_into(map);
-                        }
-                        emitter.emit("progress", reject_payload).await;
-                        let data = with_error_meta(
-                            json!({
-                                "tool": name.clone(),
-                                "preflight": preflight.clone(),
-                            }),
-                            ToolErrorMeta::new(code, hint, false, None),
-                        );
-                        let mut rejected = ToolResultPayload::error(message, data);
-                        rejected.insert_meta(
-                            "preflight",
-                            preflight,
-                        );
-                        if let Some(repair) = args_repair.clone() {
-                            rejected.insert_meta("repair", repair);
-                        }
-                        let started_at = Instant::now();
-                        rejected = orchestrator.normalize_tool_result_payload(&name, rejected);
-                        rejected = orchestrator.finalize_tool_result(
-                            &name,
-                            rejected,
-                            started_at,
-                        );
-                        return Ok(ToolExecutionOutcome {
-                            call,
-                            name,
-                            result: rejected,
-                        });
-                    }
-                }
                 let workspace_version_before = scoped_tool_context
                     .workspace
                     .get_tree_version(scoped_tool_context.workspace_id);
@@ -2433,9 +2326,6 @@ impl Orchestrator {
                         },
                     }),
                 );
-                if let Some(preflight) = preflight_meta {
-                    result.insert_meta("preflight", preflight);
-                }
                 if let Some(repair) = args_repair.clone() {
                     result.insert_meta("repair", repair);
                 }
@@ -2939,7 +2829,7 @@ fn build_tool_failure_reroute_model_notice(
             Value::String(next_step)
         },
         "instruction": if tool_name == resolve_tool_name("apply_patch") {
-            Value::String("Do not emit another broad apply_patch attempt. Read the latest file, keep the next patch to a small batch (a few files, a few hunks), and if that still fails switch to write_file for a full rewrite.".to_string())
+            Value::String("Do not emit another broad apply_patch attempt. Read the latest file, keep the next patch to a small batch, and after @@ write each line explicitly as space-context / -old / +new instead of pasting raw target lines. If that still fails, switch to write_file for a full rewrite.".to_string())
         } else {
             Value::String("Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy.".to_string())
         },
@@ -2981,7 +2871,7 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
                 | "PATCH_CONTEXT_AMBIGUOUS"
                 | "PATCH_NO_EFFECT"
         ) {
-            return "建议下一步：先重新读取目标文件，只保留当前文件中的原始上下文；把下一次补丁控制在少量文件、少量区域内，每处前后保留 2-3 行空格开头的上下文；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
+            return "建议下一步：先重新读取目标文件，只保留当前文件中的原始上下文；@@ 之后不要直接粘贴目标文件内容，必须把每一行明确写成“空格上下文 / -旧行 / +新行”，其中空白上下文行也要写成单个空格行；把下一次补丁控制在少量文件、少量区域内，每处前后保留 2-3 行空格开头的上下文；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
         }
         return "建议下一步：不要继续盲目重复 apply_patch。先 `read_file` 读取最新文件，再把修改拆成少量文件、少量区域逐次提交；如果改动跨很多区域、很多文件，或接近整文件改写，请改用 `write_file`。".to_string();
     }

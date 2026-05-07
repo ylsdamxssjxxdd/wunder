@@ -535,3 +535,84 @@ test('composer context usage keeps completed model usage total ahead of stale oc
   assert.equal(source.contextTokens, 8795);
   assert.equal(source.contextTotalTokens, 128000);
 });
+
+test('composer context usage ignores trailing manual compaction marker and keeps the last real assistant final usage', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:50.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 20500,
+            output_tokens: 157,
+            total_tokens: 20657
+          }
+        }
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:52.000Z',
+        manual_compaction_marker: true,
+        workflowItems: [
+          {
+            eventType: 'compaction',
+            status: 'completed',
+            toolName: 'context_compaction',
+            toolCallId: 'compaction:manual:demo',
+            detail: JSON.stringify({
+              status: 'done',
+              trigger_mode: 'manual',
+              projected_request_tokens: 4547,
+              projected_request_tokens_after: 2641
+            })
+          }
+        ]
+      }
+    ],
+    {
+      context_tokens: 2641,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 20657);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage ignores goal divider messages and keeps the last real assistant final usage', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:50.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          usage: {
+            input_tokens: 20500,
+            output_tokens: 157,
+            total_tokens: 20657
+          }
+        }
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-07T13:13:51.000Z',
+        content: '目标已开始：继续完成任务',
+        manual_goal_marker: true
+      }
+    ],
+    {
+      context_tokens: 20657,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 20657);
+  assert.equal(source.contextTotalTokens, 128000);
+});

@@ -76,7 +76,6 @@ mod execute;
 mod limiter;
 mod llm;
 mod memory;
-mod preflight;
 mod prompt;
 mod request;
 mod result_normalizer;

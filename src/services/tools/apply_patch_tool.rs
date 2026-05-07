@@ -1,5 +1,6 @@
 use super::command_options::parse_dry_run;
 use super::*;
+use super::apply_patch_update::apply_update_chunks_with_diff as apply_update_chunks_with_diff_engine;
 use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
 use crate::monitor::MonitorState;
 
@@ -18,7 +19,7 @@ const PATCH_STRICT_MAX_UPDATE_CHUNKS_PER_CALL: usize = 6;
 const PATCH_STRICT_MAX_UPDATE_CHUNKS_PER_FILE: usize = 3;
 const PATCH_STRICT_MAX_CHANGED_LINES_PER_CALL: usize = 240;
 const PATCH_INPUT_UNWRAP_MAX_DEPTH: usize = 8;
-const PATCH_CANCEL_CHECK_INTERVAL: usize = 32;
+pub(super) const PATCH_CANCEL_CHECK_INTERVAL: usize = 32;
 
 #[derive(Debug, Clone)]
 enum ParsedPatchOp {
@@ -37,20 +38,20 @@ enum ParsedPatchOp {
 }
 
 #[derive(Debug, Clone, Default)]
-struct UpdateChunk {
-    change_context: Option<String>,
-    lines: Vec<ChunkLine>,
-    end_of_file: bool,
+pub(super) struct UpdateChunk {
+    pub(super) change_context: Option<String>,
+    pub(super) lines: Vec<ChunkLine>,
+    pub(super) end_of_file: bool,
 }
 
 #[derive(Debug, Clone)]
-struct ChunkLine {
-    kind: ChunkLineKind,
-    text: String,
+pub(super) struct ChunkLine {
+    pub(super) kind: ChunkLineKind,
+    pub(super) text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChunkLineKind {
+pub(super) enum ChunkLineKind {
     Context,
     Add,
     Delete,
@@ -98,21 +99,21 @@ struct ApplyPatchSummary {
 }
 
 #[derive(Debug, Clone)]
-struct FileDiffBlock {
-    header: String,
-    start_line_before: usize,
-    end_line_before: usize,
-    start_line_after: usize,
-    end_line_after: usize,
-    lines: Vec<FileDiffLine>,
+pub(super) struct FileDiffBlock {
+    pub(super) header: String,
+    pub(super) start_line_before: usize,
+    pub(super) end_line_before: usize,
+    pub(super) start_line_after: usize,
+    pub(super) end_line_after: usize,
+    pub(super) lines: Vec<FileDiffLine>,
 }
 
 #[derive(Debug, Clone)]
-struct FileDiffLine {
-    kind: &'static str,
-    old_line: Option<usize>,
-    new_line: Option<usize>,
-    text: String,
+pub(super) struct FileDiffLine {
+    pub(super) kind: &'static str,
+    pub(super) old_line: Option<usize>,
+    pub(super) new_line: Option<usize>,
+    pub(super) text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -130,9 +131,9 @@ struct PatchToolError {
 }
 
 #[derive(Clone)]
-struct PatchCancelProbe {
-    monitor: Arc<MonitorState>,
-    session_id: String,
+pub(super) struct PatchCancelProbe {
+    pub(super) monitor: Arc<MonitorState>,
+    pub(super) session_id: String,
 }
 
 impl PatchToolError {
@@ -166,7 +167,7 @@ fn localized_message(zh: impl Into<String>, en: impl Into<String>) -> String {
     }
 }
 
-fn patch_error_with_hint(
+pub(super) fn patch_error_with_hint(
     code: &'static str,
     zh: impl Into<String>,
     en: impl Into<String>,
@@ -526,7 +527,7 @@ fn ensure_patch_not_cancelled(context: &ToolContext<'_>) -> Result<()> {
     Ok(())
 }
 
-fn ensure_patch_not_cancelled_probe(probe: &PatchCancelProbe) -> Result<()> {
+pub(super) fn ensure_patch_not_cancelled_probe(probe: &PatchCancelProbe) -> Result<()> {
     if probe.monitor.is_cancelled(&probe.session_id) {
         return Err(patch_cancelled_error());
     }
@@ -1294,8 +1295,12 @@ fn apply_patch_ops(
                         "Ensure the Update File path exists, or create it first via Add File.",
                     ));
                 };
-                let (next_content, diff_blocks) =
-                    apply_update_chunks_with_diff(&source_content, &chunks, &path, cancel_probe)?;
+                let (next_content, diff_blocks) = apply_update_chunks_with_diff_engine(
+                    &source_content,
+                    &chunks,
+                    &path,
+                    cancel_probe,
+                )?;
                 let had_effect = next_content != source_content
                     || move_to_target
                         .as_ref()
@@ -1553,7 +1558,7 @@ fn read_staged_or_fs(
     Ok(Some(content))
 }
 
-fn split_lines(content: &str) -> Vec<String> {
+pub(super) fn split_lines(content: &str) -> Vec<String> {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines = normalized
         .split('\n')
@@ -1614,311 +1619,6 @@ fn build_delete_file_diff_block(source: &str) -> FileDiffBlock {
     }
 }
 
-fn build_update_diff_blocks(_before: &str, replacements: &[LineReplacement]) -> Vec<FileDiffBlock> {
-    let mut blocks = Vec::new();
-    let mut line_delta = 0isize;
-
-    for replacement in replacements {
-        let start_before = replacement.start + 1;
-        let end_before = if replacement.old_len == 0 {
-            replacement.start
-        } else {
-            replacement.start + replacement.old_len
-        };
-        let after_start_zero = ((replacement.start as isize) + line_delta).max(0) as usize;
-        let start_after = after_start_zero + 1;
-        let end_after = if replacement.new_lines.is_empty() {
-            after_start_zero
-        } else {
-            after_start_zero + replacement.new_lines.len()
-        };
-        let mut lines = Vec::with_capacity(replacement.display_lines.len());
-        let mut old_cursor = start_before;
-        let mut new_cursor = start_after;
-
-        for line in &replacement.display_lines {
-            match line.kind {
-                ChunkLineKind::Context => {
-                    lines.push(FileDiffLine {
-                        kind: "meta",
-                        old_line: Some(old_cursor),
-                        new_line: Some(new_cursor),
-                        text: line.text.clone(),
-                    });
-                    old_cursor += 1;
-                    new_cursor += 1;
-                }
-                ChunkLineKind::Delete => {
-                    lines.push(FileDiffLine {
-                        kind: "delete",
-                        old_line: Some(old_cursor),
-                        new_line: None,
-                        text: line.text.clone(),
-                    });
-                    old_cursor += 1;
-                }
-                ChunkLineKind::Add => {
-                    lines.push(FileDiffLine {
-                        kind: "add",
-                        old_line: None,
-                        new_line: Some(new_cursor),
-                        text: line.text.clone(),
-                    });
-                    new_cursor += 1;
-                }
-            }
-        }
-
-        blocks.push(FileDiffBlock {
-            header: format!(
-                "@@ -{},{} +{},{} @@",
-                start_before,
-                replacement.old_len,
-                start_after,
-                replacement.new_lines.len()
-            ),
-            start_line_before: start_before,
-            end_line_before: end_before,
-            start_line_after: start_after,
-            end_line_after: end_after,
-            lines,
-        });
-
-        line_delta += replacement.new_lines.len() as isize - replacement.old_len as isize;
-    }
-
-    blocks
-}
-
-#[derive(Debug, Clone)]
-struct LineReplacement {
-    start: usize,
-    old_len: usize,
-    new_lines: Vec<String>,
-    display_lines: Vec<ChunkLine>,
-}
-
-fn compute_chunk_replacements(
-    source_lines: &[String],
-    path: &str,
-    chunks: &[UpdateChunk],
-    cancel_probe: Option<&PatchCancelProbe>,
-) -> Result<Vec<LineReplacement>> {
-    let mut replacements = Vec::new();
-    let mut line_index = 0usize;
-
-    for (index, chunk) in chunks.iter().enumerate() {
-        if index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
-            if let Some(probe) = cancel_probe {
-                ensure_patch_not_cancelled_probe(probe)?;
-            }
-        }
-
-        if let Some(raw_anchor) = chunk
-            .change_context
-            .as_deref()
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-        {
-            let anchor_lines = vec![raw_anchor.to_string()];
-            let Some(anchor_index) = seek_sequence(source_lines, &anchor_lines, line_index, false)
-            else {
-                let synthetic_chunk = UpdateChunk {
-                    change_context: Some(raw_anchor.to_string()),
-                    lines: vec![ChunkLine {
-                        kind: ChunkLineKind::Context,
-                        text: raw_anchor.to_string(),
-                    }],
-                    end_of_file: false,
-                };
-                let (hint_zh, hint_en) = build_context_not_found_hint(
-                    source_lines,
-                    &anchor_lines,
-                    line_index,
-                    &synthetic_chunk,
-                );
-                return Err(patch_error_with_hint(
-                    "PATCH_CONTEXT_NOT_FOUND",
-                    format!(
-                        "补丁应用失败：{} 第 {} 个变更块找不到 @@ 锚点 {}",
-                        path,
-                        index + 1,
-                        raw_anchor
-                    ),
-                    format!(
-                        "Patch apply failed: chunk {} in {} cannot find @@ anchor {}",
-                        index + 1,
-                        path,
-                        raw_anchor
-                    ),
-                    hint_zh,
-                    hint_en,
-                ));
-            };
-            line_index = anchor_index + 1;
-        }
-
-        let old_lines = chunk
-            .lines
-            .iter()
-            .filter(|line| line.kind != ChunkLineKind::Add)
-            .map(|line| line.text.clone())
-            .collect::<Vec<_>>();
-        let mut new_lines = chunk
-            .lines
-            .iter()
-            .filter(|line| line.kind != ChunkLineKind::Delete)
-            .map(|line| line.text.clone())
-            .collect::<Vec<_>>();
-
-        if old_lines.is_empty() {
-            let insertion_index = source_lines.len();
-            replacements.push(LineReplacement {
-                start: insertion_index,
-                old_len: 0,
-                new_lines,
-                display_lines: chunk.lines.clone(),
-            });
-            continue;
-        }
-
-        let mut pattern = old_lines;
-        let mut found = seek_sequence(source_lines, &pattern, line_index, chunk.end_of_file);
-        if found.is_none() && pattern.last().is_some_and(|line| line.is_empty()) {
-            pattern.pop();
-            if new_lines.last().is_some_and(|line| line.is_empty()) {
-                new_lines.pop();
-            }
-            found = seek_sequence(source_lines, &pattern, line_index, chunk.end_of_file);
-        }
-
-        let Some(found_index) = found else {
-            let (hint_zh, hint_en) =
-                build_context_not_found_hint(source_lines, &pattern, line_index, chunk);
-            return Err(patch_error_with_hint(
-                "PATCH_CONTEXT_NOT_FOUND",
-                format!(
-                    "补丁应用失败：{} 第 {} 个变更块找不到匹配上下文",
-                    path,
-                    index + 1
-                ),
-                format!(
-                    "Patch apply failed: chunk {} in {} has no matching context",
-                    index + 1,
-                    path
-                ),
-                hint_zh,
-                hint_en,
-            ));
-        };
-
-        replacements.push(LineReplacement {
-            start: found_index,
-            old_len: pattern.len(),
-            new_lines,
-            display_lines: chunk.lines.clone(),
-        });
-        line_index = found_index + pattern.len();
-    }
-
-    replacements.sort_by_key(|item| item.start);
-    Ok(replacements)
-}
-
-fn apply_line_replacements(lines: &[String], replacements: &[LineReplacement]) -> Vec<String> {
-    let mut result = lines.to_vec();
-    for replacement in replacements.iter().rev() {
-        for _ in 0..replacement.old_len {
-            if replacement.start < result.len() {
-                result.remove(replacement.start);
-            }
-        }
-        for (offset, line) in replacement.new_lines.iter().enumerate() {
-            result.insert(replacement.start + offset, line.clone());
-        }
-    }
-    result
-}
-
-fn normalize_punctuation(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
-            | '\u{2212}' => '-',
-            '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' => '\'',
-            '\u{201C}' | '\u{201D}' | '\u{201E}' | '\u{201F}' => '"',
-            '\u{00A0}' | '\u{2002}' | '\u{2003}' | '\u{2004}' | '\u{2005}' | '\u{2006}'
-            | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' | '\u{202F}' | '\u{205F}'
-            | '\u{3000}' => ' ',
-            _ => ch,
-        })
-        .collect()
-}
-
-fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) -> Option<usize> {
-    if pattern.is_empty() {
-        return Some(start.min(lines.len()));
-    }
-    if pattern.len() > lines.len() {
-        return None;
-    }
-
-    let max_start = lines.len() - pattern.len();
-    let search_start = if eof && lines.len() >= pattern.len() {
-        max_start
-    } else {
-        start
-    };
-    if search_start > max_start {
-        return None;
-    }
-
-    let match_at = |index: usize, normalize: &dyn Fn(&str) -> String| -> bool {
-        pattern.iter().enumerate().all(|(offset, expected)| {
-            normalize(lines[index + offset].as_str()) == normalize(expected.as_str())
-        })
-    };
-
-    for index in search_start..=max_start {
-        if match_at(index, &|value| value.to_string()) {
-            return Some(index);
-        }
-    }
-    for index in search_start..=max_start {
-        if match_at(index, &|value| value.trim_end().to_string()) {
-            return Some(index);
-        }
-    }
-    for index in search_start..=max_start {
-        if match_at(index, &|value| value.trim().to_string()) {
-            return Some(index);
-        }
-    }
-    for index in search_start..=max_start {
-        if match_at(index, &|value| normalize_punctuation(value.trim())) {
-            return Some(index);
-        }
-    }
-    None
-}
-
-fn apply_update_chunks_with_diff(
-    source: &str,
-    chunks: &[UpdateChunk],
-    path: &str,
-    cancel_probe: Option<&PatchCancelProbe>,
-) -> Result<(String, Vec<FileDiffBlock>)> {
-    let original_lines = split_lines(source);
-    let replacements = compute_chunk_replacements(&original_lines, path, chunks, cancel_probe)?;
-    let diff_blocks = build_update_diff_blocks(source, &replacements);
-    let mut new_lines = apply_line_replacements(&original_lines, &replacements);
-    if new_lines.is_empty() || new_lines.last().is_some_and(|line| !line.is_empty()) {
-        new_lines.push(String::new());
-    }
-    Ok((new_lines.join("\n"), diff_blocks))
-}
-
 #[cfg(test)]
 fn apply_update_chunks(
     source: &str,
@@ -1926,7 +1626,7 @@ fn apply_update_chunks(
     path: &str,
     cancel_probe: Option<&PatchCancelProbe>,
 ) -> Result<String> {
-    apply_update_chunks_with_diff(source, chunks, path, cancel_probe).map(|(content, _)| content)
+    apply_update_chunks_with_diff_engine(source, chunks, path, cancel_probe).map(|(content, _)| content)
 }
 
 #[cfg(test)]
@@ -2117,7 +1817,7 @@ fn derive_chunk_search_plan(
     }
 }
 
-fn build_context_not_found_hint(
+pub(super) fn build_context_not_found_hint(
     source_lines: &[String],
     old_lines: &[String],
     cursor: usize,

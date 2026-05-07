@@ -1710,16 +1710,10 @@
       :current="workerCardImportOverlayCurrent"
       :total="workerCardImportOverlayTotal"
     />
-    <CompanionFloatingLayer
-      :desktop-mode="desktopMode"
-      :resolve-agent-runtime-state="resolveAgentRuntimeState"
-      :open-agent-by-id="openAgentById"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
-import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 
 const controller = useMessengerViewController();

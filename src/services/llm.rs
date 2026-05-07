@@ -4151,7 +4151,7 @@ mod tests {
     #[test]
     fn update_stream_tool_calls_merges_delta_then_snapshot_without_duplication() {
         let mut acc = Vec::new();
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4163,7 +4163,7 @@ mod tests {
                 }]
             }),
         );
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4175,7 +4175,7 @@ mod tests {
                 }]
             }),
         );
-        update_stream_tool_calls(
+        update_stream_tool_calls_snapshot(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4189,8 +4189,8 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].name, "read_file");
-        assert_eq!(acc[0].arguments, "{\"path\":\"demo.txt\"}");
+        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("read_file"));
+        assert_eq!(resolve_stream_tool_call_arguments(&acc[0]), "{\"path\":\"demo.txt\"}");
     }
 
     #[test]
@@ -4210,11 +4210,11 @@ mod tests {
     }
 
     #[test]
-    fn merge_stream_text_field_preserves_whitespace_between_fragments() {
+    fn merge_stream_delta_field_preserves_whitespace_between_fragments() {
         let mut merged = String::new();
-        merge_stream_text_field(&mut merged, "import ");
-        merge_stream_text_field(&mut merged, "json\nfrom datetime import ");
-        merge_stream_text_field(&mut merged, "datetime, timedelta");
+        merge_stream_delta_field(&mut merged, "import ");
+        merge_stream_delta_field(&mut merged, "json\nfrom datetime import ");
+        merge_stream_delta_field(&mut merged, "datetime, timedelta");
 
         assert_eq!(
             merged,
@@ -4223,28 +4223,10 @@ mod tests {
     }
 
     #[test]
-    fn merge_stream_text_field_preserves_single_character_prefix_overlap() {
-        let mut merged = "plt.savefig(path, b".to_string();
-        merge_stream_text_field(&mut merged, "box_inches='tight')");
-
-        assert_eq!(merged, "plt.savefig(path, bbox_inches='tight')");
-    }
-
-    #[test]
-    fn merge_stream_text_field_preserves_short_word_boundary_overlap() {
-        let mut merged = String::new();
-        for fragment in ["{\"content\":\"", "for", " i", " in", " range"] {
-            merge_stream_text_field(&mut merged, fragment);
-        }
-
-        assert_eq!(merged, "{\"content\":\"for i in range");
-    }
-
-    #[test]
-    fn merge_stream_text_field_preserves_whitespace_only_fragment() {
+    fn merge_stream_delta_field_preserves_whitespace_only_fragment() {
         let mut merged = String::new();
         for fragment in ["which", " ", "python3"] {
-            merge_stream_text_field(&mut merged, fragment);
+            merge_stream_delta_field(&mut merged, fragment);
         }
 
         assert_eq!(merged, "which python3");
@@ -4253,7 +4235,7 @@ mod tests {
     #[test]
     fn update_stream_tool_calls_preserves_whitespace_in_arguments() {
         let mut acc = Vec::new();
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4265,7 +4247,7 @@ mod tests {
                 }]
             }),
         );
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4276,7 +4258,7 @@ mod tests {
                 }]
             }),
         );
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4297,7 +4279,7 @@ mod tests {
     }
 
     #[test]
-    fn update_stream_tool_calls_preserves_short_overlap_fragments() {
+    fn update_stream_tool_calls_preserves_incremental_fragments() {
         let mut acc = Vec::new();
         for (index, fragment) in [
             "{",
@@ -4321,7 +4303,7 @@ mod tests {
             if index == 0 {
                 function["name"] = json!("programmatic_tool_call");
             }
-            update_stream_tool_calls(
+            update_stream_tool_calls_delta(
                 &mut acc,
                 &json!({
                     "tool_calls": [{
@@ -4343,7 +4325,7 @@ mod tests {
     #[test]
     fn update_stream_tool_calls_preserves_whitespace_only_argument_fragments() {
         let mut acc = Vec::new();
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4355,7 +4337,7 @@ mod tests {
                 }]
             }),
         );
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4366,7 +4348,7 @@ mod tests {
                 }]
             }),
         );
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "tool_calls": [{
@@ -4389,7 +4371,7 @@ mod tests {
     #[test]
     fn update_stream_tool_calls_ignores_assistant_name_metadata() {
         let mut acc = Vec::new();
-        update_stream_tool_calls(
+        update_stream_tool_calls_delta(
             &mut acc,
             &json!({
                 "content": "<think>...</think>",
@@ -4516,48 +4498,27 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].name, "apply_patch");
+        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("apply_patch"));
         assert_eq!(
-            acc[0].arguments,
+            resolve_stream_tool_call_arguments(&acc[0]),
             "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
         );
     }
 
     #[test]
-    fn merge_stream_json_field_replaces_later_complete_json_payload() {
-        let mut merged = "{\"content\":\"hello\"}".to_string();
-        merge_stream_json_field(&mut merged, "{\"content\":\"hello world\"}");
-        assert_eq!(merged, "{\"content\":\"hello world\"}");
-    }
-
-    #[test]
-    fn merge_stream_json_field_does_not_replace_with_incompatible_complete_snapshot() {
-        let mut merged = "{\"content\":\"plt.figure(figsize=(6,6))\\nplt.plot([0,1])\"}".to_string();
-        merge_stream_json_field(
-            &mut merged,
-            "{\"raw\":\"0,bbox_inches='tight',transparent=True)\\nplt.show()\\n\",\"path\":\"draw_heart.py\"}",
-        );
+    fn resolve_stream_tool_call_arguments_merges_snapshot_with_delta_data() {
+        let call = StreamToolCall {
+            arguments_delta: "{\"content\":\"hello\"}".to_string(),
+            arguments_snapshot: Some(
+                "{\"raw\":\"tail\",\"path\":\"draw_heart.py\"}".to_string(),
+            ),
+            ..Default::default()
+        };
         assert_eq!(
-            serde_json::from_str::<Value>(&merged).expect("valid json"),
+            serde_json::from_str::<Value>(&resolve_stream_tool_call_arguments(&call))
+                .expect("valid json"),
             json!({
-                "content": "plt.figure(figsize=(6,6))\nplt.plot([0,1])",
-                "raw": "0,bbox_inches='tight',transparent=True)\nplt.show()\n",
-                "path": "draw_heart.py"
-            })
-        );
-    }
-
-    #[test]
-    fn merge_complete_json_snapshots_adds_missing_keys_without_replacing_existing_content() {
-        let merged = merge_complete_json_snapshots(
-            "{\"content\":\"alpha\"}",
-            "{\"raw\":\"tail\",\"path\":\"draw_heart.py\"}",
-        )
-        .expect("merged json");
-        assert_eq!(
-            serde_json::from_str::<Value>(&merged).expect("valid json"),
-            json!({
-                "content": "alpha",
+                "content": "hello",
                 "raw": "tail",
                 "path": "draw_heart.py"
             })
@@ -4565,13 +4526,22 @@ mod tests {
     }
 
     #[test]
-    fn merge_stream_json_field_replaces_empty_json_seed_before_complete_payload() {
-        let mut merged = "{}".to_string();
-        merge_stream_json_field(
-            &mut merged,
-            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}",
+    fn resolve_stream_tool_call_arguments_prefers_snapshot_for_complete_object() {
+        let call = StreamToolCall {
+            arguments_delta: "{}".to_string(),
+            arguments_snapshot: Some(
+                "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}".to_string(),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(
+            serde_json::from_str::<Value>(&resolve_stream_tool_call_arguments(&call))
+                .expect("valid json"),
+            json!({
+                "filename": "draw_heart.py",
+                "content": "print('ok')"
+            })
         );
-        assert_eq!(merged, "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}");
     }
 
     #[test]
@@ -4587,6 +4557,7 @@ mod tests {
                     "arguments": "{}"
                 }
             }),
+            StreamToolFieldMode::Snapshot,
         );
         merge_stream_tool_call_item(
             &mut acc,
@@ -4596,11 +4567,15 @@ mod tests {
                     "arguments": "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
                 }
             }),
+            StreamToolFieldMode::Snapshot,
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].name, "ptc");
-        assert_eq!(acc[0].arguments, "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}");
+        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("ptc"));
+        assert_eq!(
+            resolve_stream_tool_call_arguments(&acc[0]),
+            "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+        );
     }
 
     #[test]
@@ -4616,6 +4591,7 @@ mod tests {
                     "arguments": "{}"
                 }
             }),
+            StreamToolFieldMode::Snapshot,
         );
         for fragment in [
             "{",
@@ -4640,13 +4616,14 @@ mod tests {
                         "arguments": fragment
                     }
                 }),
+                StreamToolFieldMode::Delta,
             );
         }
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].name, "ptc");
+        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("ptc"));
         assert_eq!(
-            acc[0].arguments,
+            resolve_stream_tool_call_arguments(&acc[0]),
             "{\"filename\": \"demo.py\", \"content\": \"print(1)\"}"
         );
     }

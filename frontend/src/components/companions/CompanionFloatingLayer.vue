@@ -72,6 +72,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router';
 
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
@@ -112,7 +113,9 @@ const BASE_WIDTH = 192;
 const BASE_HEIGHT = 208;
 const SCREEN_MARGIN = 8;
 const CLICK_WAVE_DURATION_MS = 700;
+const MESSAGE_HINT_DURATION_MS = 3200;
 const POSITION_STORAGE_KEY = 'wunder_agent_companion_positions';
+const DEFAULT_AGENT_KEY = '__default__';
 
 const props = withDefaults(
   defineProps<{
@@ -133,6 +136,7 @@ const { t } = useI18n();
 const now = ref(Date.now());
 const draggingKey = ref('');
 const spriteStateByKey = reactive<Record<string, CompanionSpriteStateId>>({});
+const seenAssistantBubbleSignatureByConversationKey = reactive<Record<string, string>>({});
 const spriteStateTimeoutByKey = new Map<string, number>();
 const positions = ref<Record<string, CompanionPosition>>(loadPositions());
 const scalePresets = Object.freeze([0.5, 0.8, 1.0, 1.2, 1.4, 1.6]);
@@ -174,18 +178,41 @@ const currentMessage = computed(() => {
   return message;
 });
 
+const resolveAgentKey = (value: unknown, fallback = ''): string => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return fallback;
+  }
+  const lowered = text.toLowerCase();
+  if (lowered === DEFAULT_AGENT_KEY || lowered === 'default' || lowered === 'system') {
+    return DEFAULT_AGENT_KEY;
+  }
+  return text;
+};
+
 const activeSessionAgentId = computed(() => {
   const sessionId = String(chatStore.activeSessionId || '').trim();
   if (sessionId) {
     const session = Array.isArray(chatStore.sessions)
       ? chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId)
       : null;
-    const sessionAgentId = String(session?.agent_id || chatStore.draftAgentId || '').trim();
+    const sessionAgentId = resolveAgentKey(
+      session?.agent_id || (session?.is_default === true ? DEFAULT_AGENT_KEY : '') || chatStore.draftAgentId,
+      session?.is_default === true ? DEFAULT_AGENT_KEY : ''
+    );
     if (sessionAgentId) {
       return sessionAgentId;
     }
   }
-  return String(chatStore.draftAgentId || '').trim();
+  const draftAgentId = resolveAgentKey(chatStore.draftAgentId);
+  if (draftAgentId) {
+    return draftAgentId;
+  }
+  const routeQuery = router.currentRoute.value.query || {};
+  if (String(routeQuery.entry || '').trim().toLowerCase() === 'default') {
+    return DEFAULT_AGENT_KEY;
+  }
+  return resolveAgentKey(routeQuery.agent_id);
 });
 
 const normalizeBubbleText = (value: unknown): string =>
@@ -204,7 +231,16 @@ const truncateBubbleText = (value: string, max = 96): string => {
   return `${value.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 };
 
-const activeAgentAssistantMessage = computed<Record<string, unknown> | null>(() => {
+const activeConversationBubbleKey = computed(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (sessionId) {
+    return `session:${sessionId}`;
+  }
+  const agentId = activeSessionAgentId.value;
+  return agentId ? `draft:${agentId}` : '';
+});
+
+const latestActiveAssistantBubble = computed<Record<string, unknown> | null>(() => {
   const targetAgentId = activeSessionAgentId.value;
   if (!targetAgentId) {
     return null;
@@ -215,15 +251,31 @@ const activeAgentAssistantMessage = computed<Record<string, unknown> | null>(() 
     if (String(message?.role || '').trim().toLowerCase() !== 'assistant') {
       continue;
     }
+    if (message?.isGreeting === true) {
+      return null;
+    }
+    if (
+      message?.stream_incomplete === true ||
+      message?.workflowStreaming === true ||
+      message?.reasoningStreaming === true
+    ) {
+      return null;
+    }
     const content = truncateBubbleText(
       normalizeBubbleText(prepareMessageMarkdownContent(message?.content, message))
     );
     if (!content) {
-      continue;
+      return null;
     }
     return {
       agentId: targetAgentId,
-      content
+      content,
+      signature: [
+        targetAgentId,
+        String(message?.history_id || message?.id || '').trim(),
+        String(message?.created_at || '').trim(),
+        content
+      ].join('::')
     };
   }
   return null;
@@ -250,15 +302,11 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
       const scale = Number(override?.scale ?? config.scale ?? 1);
       const position = positions.value[key] || defaultPosition(index);
       const runtimeMessage = currentMessage.value;
-      const agentMessage = activeAgentAssistantMessage.value;
       const hasMessageHints = config.messageHints !== false && companionStore.settings.messageHintsEnabled !== false;
-      const isActiveAgent = agentMessage?.agentId === agentId;
       const runtimeMessageAgentId = String(runtimeMessage?.agentId || '').trim();
-      const matchesRuntimeMessage = !runtimeMessageAgentId || runtimeMessageAgentId === agentId;
+      const matchesRuntimeMessage = runtimeMessageAgentId === agentId;
       const runtimeMessageText = matchesRuntimeMessage ? String(runtimeMessage?.text || '') : '';
-      const messageText = hasMessageHints && isActiveAgent
-        ? String(agentMessage?.content || runtimeMessageText || '')
-        : runtimeMessageText;
+      const messageText = hasMessageHints ? runtimeMessageText : '';
       const messageVisible = hasMessageHints && Boolean(messageText);
       return {
         key,
@@ -282,6 +330,8 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
     })
   return items.filter((item): item is FloatingEntry => Boolean(item));
 });
+
+const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
 
 const menuStyle = computed(() => {
   if (!menuState.value) {
@@ -369,7 +419,7 @@ function resolveRuntimeSpriteState(agentId: string): CompanionSpriteStateId {
   const state = typeof props.resolveAgentRuntimeState === 'function'
     ? props.resolveAgentRuntimeState(String(agentId || '').trim())
     : 'idle';
-  const activeAgentId = String(activeAgentAssistantMessage.value?.agentId || '').trim();
+  const activeAgentId = String(activeSessionAgentId.value || '').trim();
   const reviewingCurrentAgent =
     normalizeAgentRuntimeState(state) === 'pending' &&
     activeAgentId === String(agentId || '').trim() &&
@@ -427,7 +477,7 @@ function setPosition(key: string, position: CompanionPosition): void {
 async function syncDesktopOverlay(): Promise<void> {
   const entry = visibleEntries.value[0] || null;
   const bridge = getDesktopBridge();
-  if (!props.desktopMode || !entry || !bridge) {
+  if (!effectiveDesktopMode.value || !entry || !bridge) {
     if (desktopOverlayActive && typeof bridge?.hideCompanion === 'function') {
       await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     }
@@ -655,6 +705,38 @@ onBeforeUnmount(() => {
   window.removeEventListener('blur', closeEntryMenu);
   void getDesktopBridge()?.hideCompanion?.({ persistEnabled: false });
 });
+
+watch(
+  () => [
+    activeConversationBubbleKey.value,
+    String(latestActiveAssistantBubble.value?.signature || ''),
+    String(latestActiveAssistantBubble.value?.agentId || '')
+  ].join('::'),
+  () => {
+    const conversationKey = activeConversationBubbleKey.value;
+    if (!conversationKey) {
+      return;
+    }
+    const latestBubble = latestActiveAssistantBubble.value;
+    const signature = String(latestBubble?.signature || '').trim();
+    if (!signature) {
+      if (!(conversationKey in seenAssistantBubbleSignatureByConversationKey)) {
+        seenAssistantBubbleSignatureByConversationKey[conversationKey] = '';
+      }
+      return;
+    }
+    const previousSignature = String(seenAssistantBubbleSignatureByConversationKey[conversationKey] || '').trim();
+    seenAssistantBubbleSignatureByConversationKey[conversationKey] = signature;
+    if (!previousSignature || previousSignature === signature) {
+      return;
+    }
+    companionStore.showMessage(String(latestBubble?.content || '').trim(), {
+      agentId: String(latestBubble?.agentId || '').trim(),
+      durationMs: MESSAGE_HINT_DURATION_MS
+    });
+  },
+  { immediate: true }
+);
 
 watch(
   () => menuState.value ? `${menuState.value.x}:${menuState.value.y}:${menuState.value.entry.key}` : '',

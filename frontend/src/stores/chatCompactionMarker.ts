@@ -431,3 +431,28 @@ export const mergeCompactionMarkersIntoMessages = (
   }
   return changed ? result : baseMessages;
 };
+
+export const dedupeTerminalCompactionMarkersInPlace = (
+  messages: ChatMessage[] | null | undefined
+): ChatMessage[] => {
+  if (!Array.isArray(messages) || messages.length <= 1) {
+    return Array.isArray(messages) ? messages : [];
+  }
+  const seen = new Set<string>();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isTerminalManualCompactionMarker(message)) {
+      continue;
+    }
+    const signature = resolveCompactionMarkerSignature(message);
+    if (!signature) {
+      continue;
+    }
+    if (seen.has(signature)) {
+      messages.splice(index, 1);
+      continue;
+    }
+    seen.add(signature);
+  }
+  return messages;
+};

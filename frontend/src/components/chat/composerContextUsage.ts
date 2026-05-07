@@ -231,6 +231,81 @@ const isAssistantMessageRunning = (message: Record<string, unknown>): boolean =>
       message.waitingForOutput
   );
 
+const hasMessageContent = (value: unknown): boolean => String(value || '').trim().length > 0;
+
+const hasPlanSteps = (plan: unknown): boolean =>
+  Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&
+  (((plan as { steps?: unknown[] } | null)?.steps?.length) || 0) > 0;
+
+const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  let hasCompaction = false;
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return false;
+    }
+    const record = item as Record<string, unknown>;
+    const eventType = String(record.eventType || record.event || '').trim().toLowerCase();
+    const toolName = String(record.toolName || record.tool || record.name || '').trim().toLowerCase();
+    const toolCallId = String(record.toolCallId || record.tool_call_id || '').trim().toLowerCase();
+    const isCompaction =
+      eventType === 'compaction' ||
+      eventType === 'compaction_progress' ||
+      eventType === 'compaction_notice' ||
+      toolName === 'context_compaction' ||
+      toolName === 'context_compact' ||
+      toolName === 'compaction' ||
+      toolCallId.startsWith('compaction:');
+    if (!isCompaction) {
+      return false;
+    }
+    hasCompaction = true;
+  }
+  return hasCompaction;
+};
+
+const isCompactionMarkerAssistantMessage = (message: Record<string, unknown>): boolean => {
+  if (String(message.role || '').trim().toLowerCase() !== 'assistant') return false;
+  if (hasMessageContent(message.content) || hasMessageContent(message.reasoning)) return false;
+  if (hasPlanSteps(message.plan)) return false;
+  const panelStatus = String(
+    ((message.questionPanel as Record<string, unknown> | null)?.status || '')
+  )
+    .trim()
+    .toLowerCase();
+  if (panelStatus === 'pending') return false;
+  if (message.manual_compaction_marker === true || message.manualCompactionMarker === true) {
+    return true;
+  }
+  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
+  if (!isAssistantMessageRunning(message)) return true;
+  const workflowItems = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  return workflowItems.some((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    const detailRaw = record.detail;
+    if (typeof detailRaw !== 'string') return false;
+    try {
+      const detail = JSON.parse(detailRaw) as Record<string, unknown>;
+      return String(detail?.trigger_mode ?? detail?.triggerMode ?? '').trim().toLowerCase() === 'manual';
+    } catch {
+      return false;
+    }
+  });
+};
+
+const isGoalMarkerAssistantMessage = (message: Record<string, unknown>): boolean =>
+  String(message.role || '').trim().toLowerCase() === 'assistant' &&
+  hasMessageContent(message.content) &&
+  (message.manual_goal_marker === true || message.manualGoalMarker === true);
+
+const shouldSkipComposerContextAssistant = (message: Record<string, unknown>): boolean =>
+  Boolean(
+    message.isGreeting ||
+      isCompactionMarkerAssistantMessage(message) ||
+      isGoalMarkerAssistantMessage(message)
+  );
+
 export const resolveComposerContextUsageSource = (
   messages: unknown[],
   session: ComposerContextSessionSource,
@@ -244,6 +319,7 @@ export const resolveComposerContextUsageSource = (
         : null;
     if (!current) continue;
     if (String(current.role || '').trim().toLowerCase() !== 'assistant') continue;
+    if (shouldSkipComposerContextAssistant(current)) continue;
     const stats =
       current.stats && typeof current.stats === 'object'
         ? (current.stats as Record<string, unknown>)

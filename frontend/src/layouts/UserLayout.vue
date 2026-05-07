@@ -1,10 +1,12 @@
 <template>
   <router-view />
+  <CompanionFloatingLayer />
 </template>
 
 <script setup lang="ts">
 import { onMounted, watch } from 'vue';
 
+import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
 import { useAuthStore } from '@/stores/auth';
 
 const authStore = useAuthStore();
