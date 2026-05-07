@@ -409,48 +409,22 @@
             <div v-else-if="!avatarDialogCompanionOptions.length" class="messenger-list-empty">
               {{ t('portal.agent.companion.dynamicEmpty') }}
             </div>
-            <div v-else class="messenger-agent-companion-list">
-              <div
-                v-for="item in avatarDialogCompanionOptions"
-                :key="`${item.scope || 'private'}:${item.id}`"
-                class="messenger-agent-companion-option"
-                :class="{ active: isAvatarDialogCompanionSelected(item) }"
-                role="button"
-                tabindex="0"
-                @click="selectAvatarDialogCompanion(item)"
-                @keydown.enter.prevent="selectAvatarDialogCompanion(item)"
-                @keydown.space.prevent="selectAvatarDialogCompanion(item)"
-              >
-                <span class="messenger-agent-companion-option-preview" aria-hidden="true">
-                  <CompanionSprite :source="item.spritesheetDataUrl" state="idle" fit paused />
-                </span>
-                <span class="messenger-agent-companion-option-main">
-                  <span class="messenger-agent-companion-option-title">
-                    <span class="messenger-agent-companion-option-name">{{ item.displayName }}</span>
-                    <span class="messenger-agent-companion-option-scope">
-                      {{
-                        (item.scope || 'private') === 'global'
-                          ? t('portal.agent.companion.sourceGlobal')
-                          : t('portal.agent.companion.sourcePrivate')
-                      }}
-                    </span>
-                  </span>
-                  <span class="messenger-agent-companion-option-desc">
-                    {{ item.description || t('companions.noDescription') }}
-                  </span>
-                </span>
-                <button
-                  v-if="(item.scope || 'private') === 'private'"
-                  class="messenger-agent-companion-option-remove"
-                  type="button"
-                  :title="t('common.delete')"
-                  :aria-label="t('common.delete')"
-                  @click.stop="removePrivateCompanion(item)"
-                >
-                  <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-                </button>
-              </div>
-            </div>
+            <CompanionLazyList
+              v-else
+              class="messenger-agent-companion-list"
+              :items="avatarDialogCompanionOptions"
+              :selected-scope="avatarDialogCompanionScope"
+              :selected-id="avatarDialogCompanionId"
+              :global-label="t('portal.agent.companion.sourceGlobal')"
+              :private-label="t('portal.agent.companion.sourcePrivate')"
+              :no-description-label="t('companions.noDescription')"
+              :delete-label="t('common.delete')"
+              :empty-label="t('portal.agent.companion.dynamicEmpty')"
+              :show-delete="true"
+              :page-size="10"
+              @select="selectAvatarDialogCompanion"
+              @remove="removePrivateCompanion"
+            />
             <div class="messenger-agent-companion-control-row">
               <label class="messenger-agent-companion-display-control">
                 <span>
@@ -542,6 +516,7 @@ import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue'
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
+import CompanionLazyList from '@/components/companions/CompanionLazyList.vue';
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';

@@ -1497,6 +1497,121 @@ async fn preset_force_sync_updates_inner_visible_worker_card_skills() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_force_sync_updates_preview_skill_flag_for_users() {
+    let context = build_test_context_with_config("preset_preview_skill_user_a", |config| {
+        config.user_agents.presets = vec![build_preset_config("preset_preview_skill_sync", None)];
+    })
+    .await;
+
+    let user_b = context
+        .state
+        .user_store
+        .create_user(
+            "preset_preview_skill_user_b",
+            Some("preset_preview_skill_user_b@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create second user");
+    let token_b = context
+        .state
+        .user_store
+        .create_session_token(&user_b.user_id)
+        .expect("create second user token")
+        .token;
+
+    let initial_sync = sync_preset(&context.app, "preset_preview_skill_sync", "force", None).await;
+    let created_agents = initial_sync["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    assert!(
+        created_agents >= 2,
+        "expected at least 2 created agents in initial preview skill sync, got {created_agents}"
+    );
+
+    let initial_user_a_agents = list_user_agents(&context.app, &context.token).await;
+    let initial_user_b_agents = list_user_agents(&context.app, &token_b).await;
+    assert_eq!(
+        find_agent_by_name(&initial_user_a_agents, PRESET_NAME)["preview_skill"],
+        json!(false)
+    );
+    assert_eq!(
+        find_agent_by_name(&initial_user_b_agents, PRESET_NAME)["preview_skill"],
+        json!(false)
+    );
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_preview_skill_sync")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["preview_skill"] = json!(true);
+        }
+    }
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    assert_eq!(
+        find_preset_item(&updated_items, &preset_id)["preview_skill"],
+        json!(true)
+    );
+
+    let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
+    let updated_agents = sync_result["data"]["summary"]["updated_agents"]
+        .as_u64()
+        .expect("updated_agents should be number");
+    assert!(
+        updated_agents >= 1,
+        "expected at least 1 updated agent after preview skill sync, got {updated_agents}"
+    );
+
+    let user_a_agents = list_user_agents(&context.app, &context.token).await;
+    let user_b_agents = list_user_agents(&context.app, &token_b).await;
+    assert_eq!(
+        find_agent_by_name(&user_a_agents, PRESET_NAME)["preview_skill"],
+        json!(true)
+    );
+    assert_eq!(
+        find_agent_by_name(&user_b_agents, PRESET_NAME)["preview_skill"],
+        json!(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_update_keeps_preview_skill_when_field_is_omitted() {
+    let context = build_test_context_with_config("preset_preview_skill_omit_field", |config| {
+        let mut preset = build_preset_config("preset_preview_skill_omit_field", None);
+        preset.preview_skill = true;
+        config.user_agents.presets = vec![preset];
+    })
+    .await;
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_preview_skill_omit_field")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["description"] = json!("updated description");
+            if let Some(object) = item.as_object_mut() {
+                object.remove("preview_skill");
+            }
+        }
+    }
+
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    let updated = find_preset_item(&updated_items, &preset_id);
+    assert_eq!(updated["preview_skill"], json!(true));
+    assert_eq!(updated["description"], json!("updated description"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preset_force_sync_can_disable_skill_creator_without_reinjection() {
     let user_id = "preset_disable_skill_creator_user";
     let context = build_test_context_with_config(user_id, |config| {

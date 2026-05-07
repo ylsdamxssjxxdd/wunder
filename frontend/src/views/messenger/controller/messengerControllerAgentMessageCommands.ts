@@ -720,6 +720,10 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           ctx.agentGoalComposerObjective.value = savedObjective;
           ctx.agentGoalComposerRequested.value = false;
           ctx.agentGoalComposerVisible.value = true;
+          ctx.chatStore.appendLocalMessage('assistant', savedObjective, {
+              sessionId,
+              manualGoalMarker: true
+          });
           ElMessage.success(ctx.t('chat.command.goalSet', { objective: savedObjective }));
       }
       catch (error) {

@@ -1036,6 +1036,9 @@
                     :session-busy="activeMessengerSessionBusy"
                   />
                 </template>
+                <template v-else-if="isGoalMarkerMessage(item.message)">
+                  <MessageGoalDivider :objective="String(item.message.content || '')" />
+                </template>
                 <template v-else>
                 <MessageCompactionDivider
                   v-if="
@@ -2212,6 +2215,7 @@ const isAudioRecordingSupported = controller.isAudioRecordingSupported;
 const isAuthDeniedStatus = controller.isAuthDeniedStatus;
 const isChatDebugEnabled = controller.isChatDebugEnabled;
 const isCompactionMarkerMessage = controller.isCompactionMarkerMessage;
+const isGoalMarkerMessage = controller.isGoalMarkerMessage;
 const isCompactionOnlyWorkflowItems = controller.isCompactionOnlyWorkflowItems;
 const isCompactionRunningFromWorkflowItems = controller.isCompactionRunningFromWorkflowItems;
 const isContactOnline = controller.isContactOnline;
@@ -2303,6 +2307,7 @@ const mcpTools = controller.mcpTools;
 const measureMessengerLayoutElement = controller.measureMessengerLayoutElement;
 const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = controller.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
 const MessageCompactionDivider = controller.MessageCompactionDivider;
+const MessageGoalDivider = controller.MessageGoalDivider;
 const MessageFeedbackActions = controller.MessageFeedbackActions;
 const MessageKnowledgeCitation = controller.MessageKnowledgeCitation;
 const messageListRef = controller.messageListRef;

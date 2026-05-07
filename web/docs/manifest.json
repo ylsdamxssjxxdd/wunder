@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-30T06:31:50.169425+00:00",
+  "generated_at": "2026-05-07T03:44:41.831672+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -2205,7 +2205,7 @@
       "language": "zh-CN",
       "title": "核心概览",
       "summary": "理解 Wunder，先抓住 11 个核心。它们定义的不是\"系统里有什么功能\"，而是\"系统必须守住哪些设计原则\"。",
-      "updated_at": "2026-04-14",
+      "updated_at": "2026-05-07",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",

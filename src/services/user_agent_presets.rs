@@ -351,6 +351,7 @@ fn plan_snapshot_sync(
     compare_field!(name);
     compare_field!(description);
     compare_field!(system_prompt);
+    compare_field!(preview_skill);
     compare_field!(model_name);
     compare_field!(ability_items);
     compare_field!(tool_names);
@@ -386,6 +387,7 @@ fn apply_sync_mode(
     sync_field!(name);
     sync_field!(description);
     sync_field!(system_prompt);
+    sync_field!(preview_skill);
     sync_field!(model_name);
     sync_field!(ability_items);
     sync_field!(tool_names);

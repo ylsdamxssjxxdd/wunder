@@ -45,6 +45,7 @@ export type CompanionMessage = {
   text: string;
   kind: 'info' | 'success' | 'warning';
   visibleUntil: number;
+  agentId?: string;
 };
 
 export type AgentCompanionOverride = {
@@ -93,10 +94,12 @@ const normalizeCompanionMessage = (value: unknown): CompanionMessage | null => {
     return null;
   }
   const kind = String(source.kind || '').trim().toLowerCase();
+  const agentId = String(source.agentId || source.agent_id || '').trim();
   return {
     text,
     kind: kind === 'success' || kind === 'warning' ? kind : 'info',
-    visibleUntil: Math.max(0, normalizeNumber(source.visibleUntil, Date.now()))
+    visibleUntil: Math.max(0, normalizeNumber(source.visibleUntil, Date.now())),
+    agentId: agentId || undefined
   };
 };
 
@@ -529,16 +532,18 @@ export const useCompanionStore = defineStore('companions', () => {
 
   const showMessage = (
     text: string,
-    options: { kind?: 'info' | 'success' | 'warning'; durationMs?: number } = {}
+    options: { kind?: 'info' | 'success' | 'warning'; durationMs?: number; agentId?: string } = {}
   ): void => {
     const cleaned = String(text || '').trim();
     if (!cleaned) {
       return;
     }
+    const agentId = String(options.agentId || '').trim();
     message.value = {
       text: cleaned,
       kind: options.kind === 'success' || options.kind === 'warning' ? options.kind : 'info',
-      visibleUntil: Date.now() + Math.max(1200, Math.min(8000, Number(options.durationMs || 2600)))
+      visibleUntil: Date.now() + Math.max(1200, Math.min(8000, Number(options.durationMs || 2600))),
+      agentId: agentId || undefined
     };
   };
 

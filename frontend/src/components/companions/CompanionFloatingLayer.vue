@@ -111,6 +111,7 @@ type DesktopCompanionBridge = {
 const BASE_WIDTH = 192;
 const BASE_HEIGHT = 208;
 const SCREEN_MARGIN = 8;
+const CLICK_WAVE_DURATION_MS = 700;
 const POSITION_STORAGE_KEY = 'wunder_agent_companion_positions';
 
 const props = withDefaults(
@@ -252,7 +253,9 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
       const agentMessage = activeAgentAssistantMessage.value;
       const hasMessageHints = config.messageHints !== false && companionStore.settings.messageHintsEnabled !== false;
       const isActiveAgent = agentMessage?.agentId === agentId;
-      const runtimeMessageText = String(runtimeMessage?.text || '');
+      const runtimeMessageAgentId = String(runtimeMessage?.agentId || '').trim();
+      const matchesRuntimeMessage = !runtimeMessageAgentId || runtimeMessageAgentId === agentId;
+      const runtimeMessageText = matchesRuntimeMessage ? String(runtimeMessage?.text || '') : '';
       const messageText = hasMessageHints && isActiveAgent
         ? String(agentMessage?.content || runtimeMessageText || '')
         : runtimeMessageText;
@@ -460,9 +463,12 @@ function handleClick(entry: FloatingEntry): void {
   if (Date.now() < clickSuppressUntil) {
     return;
   }
-  setSpriteState(entry.key, 'waving', 900);
+  setSpriteState(entry.key, 'waving', CLICK_WAVE_DURATION_MS);
   if (!entry.messageVisible) {
-    companionStore.showMessage(entry.name || entry.companion.displayName, { durationMs: 1800 });
+    companionStore.showMessage(entry.name || entry.companion.displayName, {
+      durationMs: 1800,
+      agentId: entry.agentId
+    });
   }
 }
 

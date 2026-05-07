@@ -286,6 +286,9 @@
                     :session-busy="activeSessionBusy"
                   />
                 </template>
+                <template v-else-if="isGoalMarkerMessage(message)">
+                  <MessageGoalDivider :objective="String(message.content || '')" />
+                </template>
                 <template v-else>
                 <MessageCompactionDivider
                   v-if="message.role === 'assistant' && shouldShowCompactionDivider(message)"
@@ -845,6 +848,7 @@ import FeatureChannelDialog from '@/components/chat/FeatureChannelDialog.vue';
 import FeatureCronDialog from '@/components/chat/FeatureCronDialog.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageCompactionDivider from '@/components/chat/MessageCompactionDivider.vue';
+import MessageGoalDivider from '@/components/chat/MessageGoalDivider.vue';
 import MessageFeedbackActions from '@/components/chat/MessageFeedbackActions.vue';
 import MessageKnowledgeCitation from '@/components/chat/MessageKnowledgeCitation.vue';
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
@@ -1683,6 +1687,7 @@ const shouldShowMessageText = (message) => {
 const shouldShowMessage = (message) => {
   if (isHiddenInternalMessage(message)) return false;
   if (isCompactionMarkerMessage(message)) return shouldShowCompactionDivider(message);
+  if (isGoalMarkerMessage(message)) return true;
   if (message?.role !== 'assistant') return true;
   return (
     shouldShowMessageText(message) ||
@@ -2692,6 +2697,13 @@ const handleCopyMessage = async (message) => {
     ElMessage.error(t('chat.message.copyFailed'));
   }
 };
+
+const isGoalMarkerMessage = (message): boolean =>
+  Boolean(
+    message &&
+      message.role === 'assistant' &&
+      (message.manual_goal_marker === true || message.manualGoalMarker === true)
+  );
 
 const messageTtsPlayingKey = ref('');
 const messageTtsLoadingKey = ref('');

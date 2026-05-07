@@ -7082,6 +7082,15 @@ button.messenger-chat-header-model {
   background: #ffffff;
   color: #202020;
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.12);
+  margin-top: 8vh !important;
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.messenger-dialog.el-dialog .el-dialog__body {
+  flex: 1;
+  overflow: auto;
 }
 
 .messenger-dialog .el-dialog__header {
@@ -7092,8 +7101,6 @@ button.messenger-chat-header-model {
 
 .messenger-dialog .el-dialog__body {
   padding: 14px 16px;
-  max-height: 72vh;
-  overflow: auto;
 }
 
 .messenger-dialog .el-dialog__footer {

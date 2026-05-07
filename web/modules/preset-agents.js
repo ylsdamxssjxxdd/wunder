@@ -2193,6 +2193,7 @@ const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {})
         name: item.name,
         description: item.description,
         system_prompt: item.system_prompt,
+        preview_skill: item.preview_skill === true,
         model_name: normalizeOptionalModelName(item.model_name),
         icon: stringifyIconConfig(item.icon || {
           kind: "static",

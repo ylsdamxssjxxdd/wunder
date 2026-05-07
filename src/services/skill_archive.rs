@@ -1,6 +1,6 @@
 use crate::services::archive_extract::extract_archive_bytes;
 use anyhow::{anyhow, Context, Result};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -127,10 +127,8 @@ fn normalize_imported_skill_entries(
     files: &[PathBuf],
     reserved_top_dirs: &HashSet<String>,
 ) -> Result<Vec<ImportedArchiveEntry>> {
-    let mut direct_entries = Vec::with_capacity(files.len());
-    let mut direct_top_dirs = BTreeSet::new();
-    let mut nested_groups: BTreeMap<String, Vec<(PathBuf, PathBuf)>> = BTreeMap::new();
-    let mut nested_wrappers = BTreeSet::new();
+    let mut parsed_files = Vec::with_capacity(files.len());
+    let mut has_direct_root_file = false;
 
     for relative in files {
         let components = normalized_path_components(relative)?;
@@ -140,56 +138,75 @@ fn normalize_imported_skill_entries(
             ));
         }
         if components.len() == 2 {
-            let top_dir = components[0].clone();
-            ensure_skill_top_dir_allowed(&top_dir, reserved_top_dirs)?;
-            direct_top_dirs.insert(top_dir.clone());
-            direct_entries.push(ImportedArchiveEntry {
-                source_relative: relative.clone(),
-                destination_relative: relative.clone(),
-                top_level_dir: top_dir,
-            });
-            continue;
+            has_direct_root_file = true;
         }
-
-        let wrapper = components[0].clone();
-        let nested_top_dir = components[1].clone();
-        ensure_skill_top_dir_allowed(&nested_top_dir, reserved_top_dirs)?;
-        nested_wrappers.insert(wrapper.clone());
-        let destination_relative = build_relative_path(&components[1..]);
-        nested_groups
-            .entry(wrapper)
-            .or_default()
-            .push((relative.clone(), destination_relative));
+        parsed_files.push((relative.clone(), components));
     }
 
-    if direct_entries.is_empty() && nested_groups.len() == 1 && nested_wrappers.len() == 1 {
-        let mut output = Vec::with_capacity(files.len());
-        for (_, items) in nested_groups {
-            for (source_relative, destination_relative) in items {
-                let top_level_dir = uploaded_skill_archive_top_dir(&destination_relative)?;
-                output.push(ImportedArchiveEntry {
-                    source_relative,
-                    destination_relative,
-                    top_level_dir,
-                });
+    if has_direct_root_file {
+        let mut direct_top_dir: Option<String> = None;
+        let mut output = Vec::with_capacity(parsed_files.len());
+        for (relative, components) in parsed_files {
+            let top_dir = components[0].clone();
+            ensure_skill_top_dir_allowed(&top_dir, reserved_top_dirs)?;
+            match &direct_top_dir {
+                Some(existing) if existing != &top_dir => {
+                    return Err(anyhow!(
+                        "skill archive must place files under a top-level skill directory"
+                    ));
+                }
+                None => direct_top_dir = Some(top_dir.clone()),
+                _ => {}
             }
+            output.push(ImportedArchiveEntry {
+                source_relative: relative.clone(),
+                destination_relative: relative,
+                top_level_dir: top_dir,
+            });
         }
         return Ok(output);
     }
 
-    if !nested_groups.is_empty() {
-        return Err(anyhow!(
-            "skill archive must place files under a top-level skill directory"
-        ));
+    let mut wrapper_dir: Option<String> = None;
+    let mut top_level_dir: Option<String> = None;
+    let mut output = Vec::with_capacity(parsed_files.len());
+
+    for (relative, components) in parsed_files {
+        if components.len() < 3 {
+            return Err(anyhow!(
+                "skill archive must contain a dedicated top-level directory"
+            ));
+        }
+        let wrapper = components[0].clone();
+        let nested_top_dir = components[1].clone();
+        ensure_skill_top_dir_allowed(&nested_top_dir, reserved_top_dirs)?;
+        match &wrapper_dir {
+            Some(existing) if existing != &wrapper => {
+                return Err(anyhow!(
+                    "skill archive must place files under a top-level skill directory"
+                ));
+            }
+            None => wrapper_dir = Some(wrapper.clone()),
+            _ => {}
+        }
+        match &top_level_dir {
+            Some(existing) if existing != &nested_top_dir => {
+                return Err(anyhow!(
+                    "skill archive must place files under a top-level skill directory"
+                ));
+            }
+            None => top_level_dir = Some(nested_top_dir.clone()),
+            _ => {}
+        }
+        let destination_relative = build_relative_path(&components[1..]);
+        output.push(ImportedArchiveEntry {
+            source_relative: relative,
+            destination_relative,
+            top_level_dir: nested_top_dir,
+        });
     }
 
-    if direct_top_dirs.is_empty() {
-        return Err(anyhow!(
-            "skill archive must contain a dedicated top-level directory"
-        ));
-    }
-
-    Ok(direct_entries)
+    Ok(output)
 }
 
 fn ensure_skill_top_dir_allowed(top_dir: &str, reserved_top_dirs: &HashSet<String>) -> Result<()> {
@@ -229,7 +246,8 @@ fn build_relative_path(components: &[String]) -> PathBuf {
     path
 }
 
-pub fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String> {
+#[cfg(test)]
+pub(crate) fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String> {
     let components = normalized_path_components(path)?;
     if components.len() < 2 {
         return Err(anyhow!(

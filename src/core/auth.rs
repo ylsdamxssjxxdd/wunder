@@ -60,6 +60,9 @@ pub fn is_admin_path(path: &str) -> bool {
     if path.starts_with("/wunder/plaza") {
         return false;
     }
+    if path.starts_with("/wunder/companions/global") {
+        return false;
+    }
     true
 }
 
@@ -138,6 +141,8 @@ mod tests {
         assert!(!is_admin_path("/wunder/external_links"));
         assert!(!is_admin_path("/wunder/plaza/items"));
         assert!(!is_admin_path("/wunder/plaza/items/demo"));
+        assert!(!is_admin_path("/wunder/companions/global"));
+        assert!(!is_admin_path("/wunder/companions/global/abc"));
         assert!(is_admin_path("/wunder"));
         assert!(is_admin_path("/wunder/mcp"));
         assert!(is_admin_path("/a2a"));

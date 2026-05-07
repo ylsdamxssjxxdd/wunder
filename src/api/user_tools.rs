@@ -3683,6 +3683,60 @@ mod tests {
     }
 
     #[test]
+    fn import_skill_archive_accepts_skill_root_with_nested_files() {
+        let dir = tempdir().expect("tempdir");
+        let archive = build_skill_archive(&[
+            (
+                "hello-world-skill/SKILL.md",
+                "---\nname: hello-world-skill\ndescription: demo\n---\n",
+            ),
+            (
+                "hello-world-skill/scripts/generate_report.py",
+                "print('ok')\n",
+            ),
+            (
+                "hello-world-skill/assets/team_template.md",
+                "# template\n",
+            ),
+            (
+                "hello-world-skill/references/report_templates.md",
+                "# refs\n",
+            ),
+        ]);
+        let imported = import_skill_archive("hello-world-skill.zip", &archive, dir.path(), &HashSet::new())
+            .expect("import direct skill archive");
+
+        assert_eq!(imported.extracted, 4);
+        assert_eq!(
+            imported.top_level_dirs,
+            vec!["hello-world-skill".to_string()]
+        );
+        assert!(dir
+            .path()
+            .join("hello-world-skill")
+            .join("SKILL.md")
+            .is_file());
+        assert!(dir
+            .path()
+            .join("hello-world-skill")
+            .join("scripts")
+            .join("generate_report.py")
+            .is_file());
+        assert!(dir
+            .path()
+            .join("hello-world-skill")
+            .join("assets")
+            .join("team_template.md")
+            .is_file());
+        assert!(dir
+            .path()
+            .join("hello-world-skill")
+            .join("references")
+            .join("report_templates.md")
+            .is_file());
+    }
+
+    #[test]
     fn import_skill_archive_rejects_mixed_wrapped_and_direct_layouts() {
         let dir = tempdir().expect("tempdir");
         let archive = build_skill_archive(&[

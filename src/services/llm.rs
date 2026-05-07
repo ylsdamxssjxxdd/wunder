@@ -4,6 +4,7 @@ use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::json_schema::normalize_tool_input_schema_for_openai;
 use crate::core::tool_args::{
     normalize_tool_arguments_json as normalize_tool_arguments_json_lossy,
+    normalize_tool_arguments_json_with_meta,
     sanitize_tool_call_payload,
 };
 use crate::schemas::TokenUsage;
@@ -2329,18 +2330,20 @@ where
                     || is_false_tool_stop_reason(payload.get("finish_reason"))
                     || is_false_tool_stop_reason(payload.get("stop_reason"))
                     || is_false_tool_stop_reason(payload.get("stopReason"));
-            update_stream_tool_calls(tool_calls_accumulator, &delta);
+            update_stream_tool_calls_delta(tool_calls_accumulator, &delta);
             if let Some(message) = choice.and_then(|value| value.get("message")) {
-                update_stream_tool_calls(tool_calls_accumulator, message);
+                update_stream_tool_calls_snapshot(tool_calls_accumulator, message);
             }
             if let Some(choice_payload) = choice {
-                update_stream_tool_calls(tool_calls_accumulator, choice_payload);
+                if choice_payload.get("message").is_none() {
+                    update_stream_tool_calls_snapshot(tool_calls_accumulator, choice_payload);
+                }
             }
             if let Some(payload_tool_calls) = payload.get("tool_calls") {
-                update_stream_tool_calls(tool_calls_accumulator, payload_tool_calls);
+                update_stream_tool_calls_snapshot(tool_calls_accumulator, payload_tool_calls);
             }
             if let Some(payload_function_call) = payload.get("function_call") {
-                update_stream_tool_calls(tool_calls_accumulator, payload_function_call);
+                update_stream_tool_calls_snapshot(tool_calls_accumulator, payload_function_call);
             }
             if !content_delta.is_empty() {
                 combined.push_str(content_delta.as_str());
@@ -2460,7 +2463,11 @@ where
                                     .unwrap_or_else(|| "{}".to_string()),
                             }
                         });
-                        merge_stream_tool_call_item(tool_calls_accumulator, &call);
+                        merge_stream_tool_call_item(
+                            tool_calls_accumulator,
+                            &call,
+                            StreamToolFieldMode::Snapshot,
+                        );
                         on_delta(String::new(), String::new()).await?;
                     }
                     _ => {}
@@ -2507,7 +2514,11 @@ where
                                     "arguments": partial,
                                 }
                             });
-                            merge_stream_tool_call_item(tool_calls_accumulator, &call);
+                            merge_stream_tool_call_item(
+                                tool_calls_accumulator,
+                                &call,
+                                StreamToolFieldMode::Delta,
+                            );
                             on_delta(String::new(), String::new()).await?;
                         }
                     }
@@ -2732,32 +2743,90 @@ fn format_stream_error_message(prefix: &str, error_payload: &Value) -> String {
 struct StreamToolCall {
     id: Option<String>,
     source_id: Option<String>,
-    name: String,
-    arguments: String,
+    name_delta: String,
+    name_snapshot: Option<String>,
+    arguments_delta: String,
+    arguments_snapshot: Option<String>,
 }
 
-fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, payload: &Value) {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamToolFieldMode {
+    Delta,
+    Snapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolArgumentsCandidateSource {
+    Delta,
+    Snapshot,
+}
+
+#[derive(Clone, Debug)]
+struct ToolArgumentsCandidate {
+    source: ToolArgumentsCandidateSource,
+    normalized: String,
+    parsed: Option<Value>,
+    quality: u8,
+}
+
+fn update_stream_tool_calls_delta(acc: &mut Vec<StreamToolCall>, payload: &Value) {
     match payload {
         Value::Array(items) => {
             if items.is_empty() {
                 return;
             }
             for item in items {
-                merge_stream_tool_call_item(acc, item);
+                merge_stream_tool_call_item(acc, item, StreamToolFieldMode::Delta);
             }
         }
         Value::Object(map) => {
             if let Some(tool_calls) = map.get("tool_calls").or_else(|| map.get("tool_call")) {
-                update_stream_tool_calls(acc, tool_calls);
+                update_stream_tool_calls_delta(acc, tool_calls);
             } else if looks_like_stream_tool_call_item(map) {
-                merge_stream_tool_call_item(acc, payload);
+                merge_stream_tool_call_item(acc, payload, StreamToolFieldMode::Delta);
             }
 
             if let Some(function_call) = map.get("function_call") {
                 if acc.is_empty() {
                     acc.push(StreamToolCall::default());
                 }
-                apply_function_delta(&mut acc[0], function_call);
+                apply_function_fragment(
+                    &mut acc[0],
+                    function_call,
+                    StreamToolFieldMode::Delta,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn update_stream_tool_calls_snapshot(acc: &mut Vec<StreamToolCall>, payload: &Value) {
+    match payload {
+        Value::Array(items) => {
+            if items.is_empty() {
+                return;
+            }
+            for item in items {
+                merge_stream_tool_call_item(acc, item, StreamToolFieldMode::Snapshot);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(tool_calls) = map.get("tool_calls").or_else(|| map.get("tool_call")) {
+                update_stream_tool_calls_snapshot(acc, tool_calls);
+            } else if looks_like_stream_tool_call_item(map) {
+                merge_stream_tool_call_item(acc, payload, StreamToolFieldMode::Snapshot);
+            }
+
+            if let Some(function_call) = map.get("function_call") {
+                if acc.is_empty() {
+                    acc.push(StreamToolCall::default());
+                }
+                apply_function_fragment(
+                    &mut acc[0],
+                    function_call,
+                    StreamToolFieldMode::Snapshot,
+                );
             }
         }
         _ => {}
@@ -2800,7 +2869,7 @@ fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Va
     } else {
         arguments
     };
-    upsert_response_tool_call(acc, item_id, call_id, name, arguments);
+    upsert_response_tool_call(acc, item_id, call_id, name, arguments, StreamToolFieldMode::Snapshot);
 }
 
 fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: &Value) {
@@ -2816,7 +2885,7 @@ fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: 
     if arguments.is_none() && call_id.is_none() && item_id.is_none() {
         return;
     }
-    upsert_response_tool_call(acc, item_id, call_id, None, arguments);
+    upsert_response_tool_call(acc, item_id, call_id, None, arguments, StreamToolFieldMode::Delta);
 }
 
 fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Value]) {
@@ -2840,7 +2909,7 @@ fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Valu
         if name.is_none() && arguments.is_none() && call_id.is_none() {
             continue;
         }
-        upsert_response_tool_call(acc, None, call_id, name, arguments);
+        upsert_response_tool_call(acc, None, call_id, name, arguments, StreamToolFieldMode::Snapshot);
     }
 }
 
@@ -2850,6 +2919,7 @@ fn upsert_response_tool_call(
     call_id: Option<&str>,
     name: Option<&str>,
     arguments: Option<&str>,
+    mode: StreamToolFieldMode,
 ) {
     let index = find_response_tool_call_index(acc, item_id, call_id).unwrap_or_else(|| {
         acc.push(StreamToolCall::default());
@@ -2869,10 +2939,20 @@ fn upsert_response_tool_call(
         }
     }
     if let Some(name) = name {
-        merge_stream_text_field(&mut slot.name, name);
+        apply_stream_text_field(
+            match mode {
+                StreamToolFieldMode::Delta => &mut slot.name_delta,
+                StreamToolFieldMode::Snapshot => {
+                    slot.name_snapshot = Some(name.to_string());
+                    &mut slot.name_delta
+                }
+            },
+            name,
+            mode,
+        );
     }
     if let Some(arguments) = arguments {
-        merge_stream_text_field(&mut slot.arguments, arguments);
+        apply_stream_arguments_field(slot, arguments, mode);
     }
 }
 
@@ -2943,7 +3023,11 @@ fn looks_like_stream_tool_call_item(map: &serde_json::Map<String, Value>) -> boo
     has_arguments && (has_index_or_id || is_function_type)
 }
 
-fn merge_stream_tool_call_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
+fn merge_stream_tool_call_item(
+    acc: &mut Vec<StreamToolCall>,
+    item: &Value,
+    mode: StreamToolFieldMode,
+) {
     let Value::Object(map) = item else {
         return;
     };
@@ -2969,44 +3053,268 @@ fn merge_stream_tool_call_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
     }
 
     if let Some(function) = map.get("function") {
-        apply_function_delta(slot, function);
+        apply_function_fragment(slot, function, mode);
     } else {
-        apply_function_delta(slot, item);
+        apply_function_fragment(slot, item, mode);
     }
 }
 
-fn apply_function_delta(slot: &mut StreamToolCall, function: &Value) {
+fn apply_function_fragment(slot: &mut StreamToolCall, function: &Value, mode: StreamToolFieldMode) {
     if let Value::Object(map) = function {
         if let Some(name) = map.get("name").and_then(Value::as_str) {
-            merge_stream_text_field(&mut slot.name, name);
+            apply_stream_text_field(&mut slot.name_delta, name, mode);
+            if matches!(mode, StreamToolFieldMode::Snapshot) {
+                slot.name_snapshot = Some(name.to_string());
+            }
         }
         if let Some(arguments) = map.get("arguments").and_then(Value::as_str) {
-            merge_stream_text_field(&mut slot.arguments, arguments);
+            apply_stream_arguments_field(slot, arguments, mode);
         }
     }
 }
 
-fn merge_stream_text_field(target: &mut String, fragment: &str) {
+fn apply_stream_text_field(target: &mut String, fragment: &str, mode: StreamToolFieldMode) {
+    match mode {
+        StreamToolFieldMode::Delta => merge_stream_delta_field(target, fragment),
+        StreamToolFieldMode::Snapshot => {
+            target.clear();
+            target.push_str(fragment);
+        }
+    }
+}
+
+fn apply_stream_arguments_field(
+    slot: &mut StreamToolCall,
+    fragment: &str,
+    mode: StreamToolFieldMode,
+) {
+    if fragment.is_empty() {
+        return;
+    }
+    match mode {
+        StreamToolFieldMode::Delta => merge_stream_delta_field(&mut slot.arguments_delta, fragment),
+        StreamToolFieldMode::Snapshot => slot.arguments_snapshot = Some(fragment.to_string()),
+    }
+}
+
+fn merge_stream_delta_field(target: &mut String, fragment: &str) {
+    if fragment.is_empty() {
+        return;
+    }
+    if target.is_empty() {
+        target.push_str(fragment);
+        return;
+    }
+    if target == fragment {
+        return;
+    }
+    if fragment.starts_with(target.as_str()) {
+        *target = fragment.to_string();
+        return;
+    }
+    if target.starts_with(fragment) {
+        return;
+    }
     target.push_str(fragment);
+}
+
+fn merge_tool_argument_values(current: &mut Value, next: &Value) -> bool {
+    match (current, next) {
+        (Value::Object(current_map), Value::Object(next_map)) => {
+            for (key, next_value) in next_map {
+                match current_map.get_mut(key) {
+                    Some(current_value) => {
+                        if !merge_tool_argument_values(current_value, next_value) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        current_map.insert(key.clone(), next_value.clone());
+                    }
+                }
+            }
+            true
+        }
+        (Value::Array(current_items), Value::Array(next_items)) => {
+            if current_items.len() > next_items.len() {
+                return false;
+            }
+            for (index, next_item) in next_items.iter().enumerate() {
+                if let Some(current_item) = current_items.get_mut(index) {
+                    if !merge_tool_argument_values(current_item, next_item) {
+                        return false;
+                    }
+                } else {
+                    current_items.push(next_item.clone());
+                }
+            }
+            true
+        }
+        (Value::String(current_text), Value::String(next_text)) => {
+            if next_text.starts_with(current_text.as_str()) {
+                *current_text = next_text.clone();
+                true
+            } else {
+                current_text.starts_with(next_text.as_str())
+            }
+        }
+        (current_value, next_value) => current_value == next_value,
+    }
+}
+
+fn build_tool_arguments_candidate(
+    raw: &str,
+    source: ToolArgumentsCandidateSource,
+) -> Option<ToolArgumentsCandidate> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+        let normalized = match &parsed {
+            Value::Object(_) => trimmed.to_string(),
+            _ => normalize_tool_arguments_json_lossy(trimmed),
+        };
+        let quality = if parsed.is_object() { 4 } else { 1 };
+        let parsed = serde_json::from_str::<Value>(&normalized).ok();
+        return Some(ToolArgumentsCandidate {
+            source,
+            normalized,
+            parsed,
+            quality,
+        });
+    }
+
+    let (normalized, repair) = normalize_tool_arguments_json_with_meta(trimmed);
+    let parsed = serde_json::from_str::<Value>(&normalized).ok();
+    let strategy = repair
+        .as_ref()
+        .and_then(|value| value.get("strategy"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let quality = match parsed.as_ref() {
+        Some(Value::Object(map))
+            if strategy == "lossy_json_string_repair"
+                || strategy == "empty_object_prefix_removed" =>
+        {
+            if map.contains_key("raw") || map.contains_key("value") {
+                1
+            } else {
+                3
+            }
+        }
+        Some(Value::Object(map)) => {
+            if map.contains_key("raw") || map.contains_key("value") {
+                1
+            } else {
+                2
+            }
+        }
+        _ => 0,
+    };
+    Some(ToolArgumentsCandidate {
+        source,
+        normalized,
+        parsed,
+        quality,
+    })
+}
+
+fn merge_tool_argument_candidates(
+    delta: &ToolArgumentsCandidate,
+    snapshot: &ToolArgumentsCandidate,
+) -> Option<String> {
+    let mut merged = delta.parsed.clone()?;
+    let snapshot_value = snapshot.parsed.as_ref()?;
+    merge_tool_argument_values(&mut merged, snapshot_value)
+        .then(|| serde_json::to_string(&merged).unwrap_or_else(|_| snapshot.normalized.clone()))
+}
+
+fn choose_tool_arguments_candidate<'a>(
+    left: &'a ToolArgumentsCandidate,
+    right: &'a ToolArgumentsCandidate,
+) -> &'a ToolArgumentsCandidate {
+    let left_rank = (
+        left.quality,
+        left.parsed
+            .as_ref()
+            .and_then(Value::as_object)
+            .map(|map| map.len())
+            .unwrap_or(0),
+        left.normalized.len(),
+        matches!(left.source, ToolArgumentsCandidateSource::Snapshot),
+    );
+    let right_rank = (
+        right.quality,
+        right.parsed
+            .as_ref()
+            .and_then(Value::as_object)
+            .map(|map| map.len())
+            .unwrap_or(0),
+        right.normalized.len(),
+        matches!(right.source, ToolArgumentsCandidateSource::Snapshot),
+    );
+    if right_rank > left_rank {
+        right
+    } else {
+        left
+    }
+}
+
+fn resolve_stream_tool_call_name(call: &StreamToolCall) -> Option<String> {
+    call.name_snapshot
+        .as_deref()
+        .or_else(|| (!call.name_delta.is_empty()).then_some(call.name_delta.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn resolve_stream_tool_call_arguments(call: &StreamToolCall) -> String {
+    let delta = build_tool_arguments_candidate(
+        &call.arguments_delta,
+        ToolArgumentsCandidateSource::Delta,
+    );
+    let snapshot = call
+        .arguments_snapshot
+        .as_deref()
+        .and_then(|raw| build_tool_arguments_candidate(raw, ToolArgumentsCandidateSource::Snapshot));
+
+    match (delta, snapshot) {
+        (Some(delta), Some(snapshot)) => {
+            if let Some(merged) = merge_tool_argument_candidates(&delta, &snapshot) {
+                merged
+            } else {
+                choose_tool_arguments_candidate(&delta, &snapshot)
+                    .normalized
+                    .clone()
+            }
+        }
+        (Some(delta), None) => delta.normalized,
+        (None, Some(snapshot)) => snapshot.normalized,
+        (None, None) => "{}".to_string(),
+    }
 }
 
 fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
     let mut output = Vec::new();
     for call in acc {
-        if call.name.trim().is_empty() {
+        let Some(name) = resolve_stream_tool_call_name(call) else {
             continue;
-        }
-        let arguments = if is_freeform_tool_name(&call.name) {
-            let input = extract_freeform_tool_input(&call.arguments)
-                .unwrap_or_else(|| call.arguments.clone());
+        };
+        let raw_arguments = resolve_stream_tool_call_arguments(call);
+        let arguments = if is_freeform_tool_name(&name) {
+            let input = extract_freeform_tool_input(&raw_arguments)
+                .unwrap_or(raw_arguments.clone());
             serde_json::to_string(&json!({ "input": input })).unwrap_or_else(|_| "{}".to_string())
         } else {
-            normalize_tool_arguments_json(&call.arguments)
+            raw_arguments
         };
         let mut payload = json!({
             "type": "function",
             "function": {
-                "name": call.name,
+                "name": name,
                 "arguments": arguments,
             }
         });
@@ -3748,6 +4056,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn process_sse_event_block_merges_openai_delta_and_message_snapshot_without_duplication() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_\",\"arguments\":\"{\\\"path\\\":\\\"\"}}]}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process first delta");
+        assert!(!done);
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"file\",\"arguments\":\"notes.txt\\\"}\"}}]},\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"notes.txt\\\"}\"}}]}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process delta plus snapshot");
+        assert!(!done);
+
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized.as_array().map(Vec::len), Some(1));
+        assert_eq!(finalized[0]["id"], "call_1");
+        assert_eq!(finalized[0]["function"]["name"], "read_file");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"path\":\"notes.txt\"}"
+        );
+    }
+
+    #[tokio::test]
     async fn process_sse_event_block_ignores_empty_tool_calls_array() {
         let mut combined = String::new();
         let mut reasoning = String::new();
@@ -3799,7 +4149,7 @@ mod tests {
     }
 
     #[test]
-    fn update_stream_tool_calls_appends_delta_and_snapshot_verbatim() {
+    fn update_stream_tool_calls_merges_delta_then_snapshot_without_duplication() {
         let mut acc = Vec::new();
         update_stream_tool_calls(
             &mut acc,
@@ -3839,11 +4189,8 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].name, "read_fileread_file");
-        assert_eq!(
-            acc[0].arguments,
-            "{\"path\":\"demo.txt\"}{\"path\":\"demo.txt\"}"
-        );
+        assert_eq!(acc[0].name, "read_file");
+        assert_eq!(acc[0].arguments, "{\"path\":\"demo.txt\"}");
     }
 
     #[test]
@@ -3891,6 +4238,16 @@ mod tests {
         }
 
         assert_eq!(merged, "{\"content\":\"for i in range");
+    }
+
+    #[test]
+    fn merge_stream_text_field_preserves_whitespace_only_fragment() {
+        let mut merged = String::new();
+        for fragment in ["which", " ", "python3"] {
+            merge_stream_text_field(&mut merged, fragment);
+        }
+
+        assert_eq!(merged, "which python3");
     }
 
     #[test]
@@ -3980,6 +4337,52 @@ mod tests {
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"content\":\"for i in range(12):\\n    print(i)\",\"filename\":\"script.py\"}"
+        );
+    }
+
+    #[test]
+    fn update_stream_tool_calls_preserves_whitespace_only_argument_fragments() {
+        let mut acc = Vec::new();
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "name": "execute_command",
+                        "arguments": "{\"content\":\"which"
+                    }
+                }]
+            }),
+        );
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "arguments": " "
+                    }
+                }]
+            }),
+        );
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "arguments": "python3\"}"
+                    }
+                }]
+            }),
+        );
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "execute_command");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"content\":\"which python3\"}"
         );
     }
 
@@ -4089,7 +4492,7 @@ mod tests {
     }
 
     #[test]
-    fn update_responses_tool_call_from_item_appends_custom_tool_fields_verbatim() {
+    fn update_responses_tool_call_from_item_keeps_latest_custom_tool_snapshot() {
         let mut acc = Vec::new();
         update_responses_tool_call_from_item(
             &mut acc,
@@ -4113,7 +4516,7 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(acc[0].name, "apply_patchapply_patch");
+        assert_eq!(acc[0].name, "apply_patch");
         assert_eq!(
             acc[0].arguments,
             "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
@@ -4121,30 +4524,58 @@ mod tests {
     }
 
     #[test]
-    fn merge_stream_text_field_appends_later_complete_json_payload() {
+    fn merge_stream_json_field_replaces_later_complete_json_payload() {
         let mut merged = "{\"content\":\"hello\"}".to_string();
-        merge_stream_text_field(&mut merged, "{\"content\":\"hello world\"}");
+        merge_stream_json_field(&mut merged, "{\"content\":\"hello world\"}");
+        assert_eq!(merged, "{\"content\":\"hello world\"}");
+    }
+
+    #[test]
+    fn merge_stream_json_field_does_not_replace_with_incompatible_complete_snapshot() {
+        let mut merged = "{\"content\":\"plt.figure(figsize=(6,6))\\nplt.plot([0,1])\"}".to_string();
+        merge_stream_json_field(
+            &mut merged,
+            "{\"raw\":\"0,bbox_inches='tight',transparent=True)\\nplt.show()\\n\",\"path\":\"draw_heart.py\"}",
+        );
         assert_eq!(
-            merged,
-            "{\"content\":\"hello\"}{\"content\":\"hello world\"}"
+            serde_json::from_str::<Value>(&merged).expect("valid json"),
+            json!({
+                "content": "plt.figure(figsize=(6,6))\nplt.plot([0,1])",
+                "raw": "0,bbox_inches='tight',transparent=True)\nplt.show()\n",
+                "path": "draw_heart.py"
+            })
         );
     }
 
     #[test]
-    fn merge_stream_text_field_appends_empty_json_before_complete_payload() {
+    fn merge_complete_json_snapshots_adds_missing_keys_without_replacing_existing_content() {
+        let merged = merge_complete_json_snapshots(
+            "{\"content\":\"alpha\"}",
+            "{\"raw\":\"tail\",\"path\":\"draw_heart.py\"}",
+        )
+        .expect("merged json");
+        assert_eq!(
+            serde_json::from_str::<Value>(&merged).expect("valid json"),
+            json!({
+                "content": "alpha",
+                "raw": "tail",
+                "path": "draw_heart.py"
+            })
+        );
+    }
+
+    #[test]
+    fn merge_stream_json_field_replaces_empty_json_seed_before_complete_payload() {
         let mut merged = "{}".to_string();
-        merge_stream_text_field(
+        merge_stream_json_field(
             &mut merged,
             "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}",
         );
-        assert_eq!(
-            merged,
-            "{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
-        );
+        assert_eq!(merged, "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}");
     }
 
     #[test]
-    fn merge_stream_tool_call_item_appends_empty_json_seed_from_anthropic_tool_use() {
+    fn merge_stream_tool_call_item_replaces_empty_json_seed_from_anthropic_tool_use() {
         let mut acc = Vec::new();
         merge_stream_tool_call_item(
             &mut acc,
@@ -4169,14 +4600,11 @@ mod tests {
 
         assert_eq!(acc.len(), 1);
         assert_eq!(acc[0].name, "ptc");
-        assert_eq!(
-            acc[0].arguments,
-            "{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
-        );
+        assert_eq!(acc[0].arguments, "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}");
     }
 
     #[test]
-    fn merge_stream_tool_call_item_appends_empty_json_seed_and_incremental_fragments() {
+    fn merge_stream_tool_call_item_replaces_empty_json_seed_and_merges_incremental_fragments() {
         let mut acc = Vec::new();
         merge_stream_tool_call_item(
             &mut acc,
@@ -4219,7 +4647,7 @@ mod tests {
         assert_eq!(acc[0].name, "ptc");
         assert_eq!(
             acc[0].arguments,
-            "{}{\"filename\": \"demo.py\", \"content\": \"print(1)\"}"
+            "{\"filename\": \"demo.py\", \"content\": \"print(1)\"}"
         );
     }
 

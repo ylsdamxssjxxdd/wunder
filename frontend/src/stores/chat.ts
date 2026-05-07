@@ -111,7 +111,10 @@ import {
   mergeCompactionMarkersIntoMessages,
   shouldPreserveTerminalCompactionMarkerState
 } from './chatCompactionMarker';
-import { replaceMessageArrayKeepingReference } from './chatMessageArraySync';
+import {
+  replaceMessageArrayKeepingReference,
+  resolveRealtimeMessageArrayReference
+} from './chatMessageArraySync';
 import {
   mergeProtectedRealtimeMessages,
   upsertProtectedRealtimeMessage
@@ -152,6 +155,7 @@ type SnapshotAssistantMessage = {
   subagents?: unknown[];
   hiddenInternal?: boolean;
   manual_compaction_marker?: boolean;
+  manual_goal_marker?: boolean;
   realtime_protected?: boolean;
 };
 
@@ -299,6 +303,7 @@ type AppendLocalMessageOptions = {
   createdAt?: unknown;
   sessionId?: unknown;
   immediate?: boolean;
+  manualGoalMarker?: boolean;
 };
 
 type ResumeStreamOptions = {
@@ -1648,6 +1653,19 @@ const isGoalActiveForLock = (goal): boolean => {
   return status === 'active' || status === 'paused';
 };
 
+const isGoalCompletedForNotice = (goal): boolean => {
+  const status = String(goal?.status || '').trim().toLowerCase();
+  return status === 'complete';
+};
+
+const isGoalMarkerMessage = (message): boolean =>
+  Boolean(
+    message &&
+      message.role === 'assistant' &&
+      String(message.content || '').trim() &&
+      (message.manual_goal_marker === true || message.manualGoalMarker === true)
+  );
+
 const goalSessionIdFromPayload = (value, fallback = ''): string => {
   const source =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -1713,6 +1731,14 @@ const syncGoalFromSessionRecord = (store, session): SessionGoal | null => {
   }
   return null;
 };
+
+const hasManualGoalMarkerMessage = (messages: unknown[]): boolean =>
+  Array.isArray(messages) &&
+  messages.some((message) => {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
+    const record = message as Record<string, unknown>;
+    return record.manual_goal_marker === true || record.manualGoalMarker === true;
+  });
 
 const syncGoalsFromSessionList = (store, sessions) => {
   (Array.isArray(sessions) ? sessions : []).forEach((session) => {
@@ -5199,6 +5225,20 @@ const getSessionMessages = (sessionId) => {
   return sessionMessages.get(key) || null;
 };
 
+const resolveSessionMessageArray = (store, sessionId, fallbackMessages = null) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) {
+    return Array.isArray(fallbackMessages) ? fallbackMessages : [];
+  }
+  return resolveRealtimeMessageArrayReference({
+    sessionId: key,
+    activeSessionId: resolveSessionKey(store?.activeSessionId),
+    activeMessages: store?.messages,
+    cachedMessages: getSessionMessages(key),
+    fallbackMessages
+  });
+};
+
 const cacheSessionMessages = (sessionId, messages) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
@@ -6341,7 +6381,7 @@ const startSessionWatcher = (store, sessionId) => {
   runtime.watchReconcileAt = 0;
   const requestId = buildWsRequestId();
   runtime.watchRequestId = requestId;
-  const sessionMessagesRef = getSessionMessages(key) || store.messages;
+  let sessionMessagesRef = resolveSessionMessageArray(store, key, store.messages);
   cacheSessionMessages(key, sessionMessagesRef);
   const workflowState = getSessionWorkflowState(key);
   const roundStates = new Map();
@@ -6834,6 +6874,14 @@ const startSessionWatcher = (store, sessionId) => {
   };
 
   const onEvent = (eventType, dataText, eventId) => {
+    const currentSessionMessagesRef = resolveSessionMessageArray(store, key, sessionMessagesRef);
+    if (currentSessionMessagesRef !== sessionMessagesRef) {
+      sessionMessagesRef = replaceMessageArrayKeepingReference(
+        currentSessionMessagesRef,
+        sessionMessagesRef
+      );
+      cacheSessionMessages(key, sessionMessagesRef);
+    }
     recoverRuntimeInteractiveControllers(store, key, runtime, {
       localLastEventId: lastEventId
     });
@@ -11286,6 +11334,9 @@ export const useChatStore = defineStore('chat', {
       const text = String(content || '').trim();
       if (!text) return null;
       const message = buildMessage(normalizedRole, text, options.createdAt);
+      if (options.manualGoalMarker === true && normalizedRole === 'assistant') {
+        message.manual_goal_marker = true;
+      }
       this.messages.push(message);
       const targetSessionId = String(options.sessionId ?? this.activeSessionId ?? '').trim();
       if (targetSessionId) {
@@ -11396,6 +11447,7 @@ export const useChatStore = defineStore('chat', {
       if (!targetSessionId) return null;
       const previousSessionId = this.activeSessionId;
       const previousSessionKey = resolveSessionKey(previousSessionId);
+      const previousForegroundMessages = Array.isArray(this.messages) ? this.messages : [];
       const runtimeForPreserveGuard = ensureRuntime(targetSessionId);
       recoverRuntimeInteractiveControllers(this, targetSessionId, runtimeForPreserveGuard);
       const lifecycleForPreserveGuard = refreshRuntimeStreamLifecycle(runtimeForPreserveGuard);
@@ -11421,7 +11473,15 @@ export const useChatStore = defineStore('chat', {
       getHistoryState(targetSessionId, { reset: true });
       const knownSessionRecord =
         this.sessions.find((item) => resolveSessionKey(item?.id) === targetSessionId) || null;
-      const cachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(targetSessionId));
+      const liveSessionMessages = resolveSessionMessageArray(
+        {
+          activeSessionId: previousSessionKey,
+          messages: previousForegroundMessages
+        },
+        targetSessionId,
+        previousSessionKey === targetSessionId ? previousForegroundMessages : null
+      );
+      const cachedSessionMessages = dedupeAssistantMessagesInPlace(liveSessionMessages);
       const snapshot = previousSessionKey && previousSessionKey !== targetSessionId
         ? null
         : this.getSnapshotForSession(targetSessionId);
@@ -11461,7 +11521,16 @@ export const useChatStore = defineStore('chat', {
           prefetchedSessionDetail = null;
         }
       }
-      const latestCachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(targetSessionId));
+      const latestCachedSessionMessages = dedupeAssistantMessagesInPlace(
+        resolveSessionMessageArray(
+          {
+            activeSessionId: previousSessionKey,
+            messages: previousForegroundMessages
+          },
+          targetSessionId,
+          previousSessionKey === targetSessionId ? previousForegroundMessages : null
+        )
+      );
       let sessionRes = null;
       let eventsPayload = null;
       let sessionDetail = prefetchedSessionDetail;
@@ -11558,7 +11627,13 @@ export const useChatStore = defineStore('chat', {
             })
             .filter(Boolean)
         : [];
-      const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
+      const finalCachedMessages = dedupeAssistantMessages(
+        resolveSessionMessageArray(
+          this,
+          targetSessionId,
+          resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null
+        )
+      );
       const canReuseHydratedMessages =
         !remoteRunning &&
         Array.isArray(finalCachedMessages) &&
@@ -11635,9 +11710,11 @@ export const useChatStore = defineStore('chat', {
         hydrateForegroundMessages,
         remoteRunning
       })) {
-        const watchedMessages =
-          getSessionMessages(targetSessionId) ||
-          (activeSessionKey === targetSessionId ? this.messages : null);
+        const watchedMessages = resolveSessionMessageArray(
+          this,
+          targetSessionId,
+          activeSessionKey === targetSessionId ? this.messages : null
+        );
         if (Array.isArray(watchedMessages)) {
           chatDebugLog('chat.store.detail', 'foreground-sync-keep-live', {
             sessionId: targetSessionId,
@@ -11648,9 +11725,11 @@ export const useChatStore = defineStore('chat', {
           nextMessages = watchedMessages;
         }
       } else if (preserveWatcher) {
-        const watchedMessages =
-          getSessionMessages(targetSessionId) ||
-          (activeSessionKey === targetSessionId ? this.messages : null);
+        const watchedMessages = resolveSessionMessageArray(
+          this,
+          targetSessionId,
+          activeSessionKey === targetSessionId ? this.messages : null
+        );
         const foregroundMerge = mergeForegroundHydratedMessagesWithLive(
           watchedMessages,
           nextMessages
@@ -11812,9 +11891,7 @@ export const useChatStore = defineStore('chat', {
           return true;
         });
         if (deduped.length > 0) {
-          const sessionMessagesRef = resolveSessionKey(this.activeSessionId) === targetId
-            ? this.messages
-            : getSessionMessages(targetId) || [];
+          const sessionMessagesRef = resolveSessionMessageArray(this, targetId, this.messages);
           const nextMessages = [...deduped, ...sessionMessagesRef];
           const nextLimit = Math.min(
             Number(state.windowLimit || MESSAGE_WINDOW_LIMIT) + deduped.length,
@@ -11822,8 +11899,14 @@ export const useChatStore = defineStore('chat', {
           );
           state.windowLimit = nextLimit;
           if (resolveSessionKey(this.activeSessionId) === targetId) {
-            this.messages = nextMessages;
-            notifySessionSnapshot(this, targetId, this.messages, true, { skipWindowing: true });
+            const syncedMessages = replaceMessageArrayKeepingReference(
+              this.messages,
+              nextMessages
+            );
+            this.messages = syncedMessages;
+            notifySessionSnapshot(this, targetId, syncedMessages, true, {
+              skipWindowing: true
+            });
           } else {
             cacheSessionMessages(targetId, nextMessages);
           }
@@ -12899,7 +12982,7 @@ export const useChatStore = defineStore('chat', {
       message.workflowStreaming = true;
       message.stream_incomplete = true;
       resetAssistantWaitingOutputPhase(message);
-      const sessionMessagesRef = getSessionMessages(sessionId) || this.messages;
+      const sessionMessagesRef = resolveSessionMessageArray(this, sessionId, this.messages);
       cacheSessionMessages(sessionId, sessionMessagesRef);
       notifySessionSnapshot(this, sessionId, sessionMessagesRef);
       const workflowState = getSessionWorkflowState(sessionId);

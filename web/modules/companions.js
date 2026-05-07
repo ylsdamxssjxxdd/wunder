@@ -39,6 +39,9 @@ const PREVIEW_ACTIONS = [
 ];
 
 let previewAnimationTimer = null;
+let listPreviewObserver = null;
+
+const PAGE_SIZE = 12;
 
 const ensureState = () => {
   if (!state.companions) {
@@ -48,6 +51,7 @@ const ensureState = () => {
       search: "",
       loading: false,
       previewAction: "idle",
+      page: 1,
     };
   }
   if (!state.panelLoaded) {
@@ -140,6 +144,75 @@ const stopPreviewAnimation = () => {
   previewAnimationTimer = null;
 };
 
+const stopListPreviewObserver = () => {
+  if (listPreviewObserver) {
+    listPreviewObserver.disconnect();
+    listPreviewObserver = null;
+  }
+};
+
+const observeListPreviews = () => {
+  stopListPreviewObserver();
+  if (typeof IntersectionObserver === "undefined") {
+    loadAllListPreviews();
+    return;
+  }
+  const previews = elements.companionAdminList.querySelectorAll(".companion-admin-item-preview[data-loaded='0']");
+  if (!previews.length) {
+    return;
+  }
+  listPreviewObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const preview = entry.target;
+          const url = preview.dataset.spritesheetUrl;
+          if (url && preview.dataset.loaded === "0") {
+            preview.dataset.loaded = "1";
+            renderLazySpritePreview(preview, url);
+          }
+          listPreviewObserver?.unobserve(preview);
+        }
+      });
+    },
+    { rootMargin: "100px", threshold: 0.01 }
+  );
+  previews.forEach((preview) => {
+    listPreviewObserver.observe(preview);
+  });
+};
+
+const loadAllListPreviews = () => {
+  const previews = elements.companionAdminList.querySelectorAll(".companion-admin-item-preview[data-loaded='0']");
+  previews.forEach((preview) => {
+    const url = preview.dataset.spritesheetUrl;
+    if (url && preview.dataset.loaded === "0") {
+      preview.dataset.loaded = "1";
+      renderLazySpritePreview(preview, url);
+    }
+  });
+};
+
+const renderLazySpritePreview = (container, url) => {
+  container.textContent = "";
+  if (!url) {
+    return;
+  }
+  const viewport = document.createElement("span");
+  viewport.className = "companion-admin-sprite";
+  viewport.style.width = `${FRAME_WIDTH * SPRITE_SCALE}px`;
+  viewport.style.height = `${FRAME_HEIGHT * SPRITE_SCALE}px`;
+  const sheet = document.createElement("span");
+  sheet.className = "companion-admin-sprite-sheet";
+  sheet.style.width = `${FRAME_WIDTH}px`;
+  sheet.style.height = `${FRAME_HEIGHT}px`;
+  sheet.style.backgroundImage = `url("${url}")`;
+  sheet.style.backgroundPosition = "0 0";
+  sheet.style.transform = `scale(${SPRITE_SCALE})`;
+  viewport.appendChild(sheet);
+  container.appendChild(viewport);
+};
+
 const renderSpritePreview = (container, item) => {
   container.textContent = "";
   if (!item?.spritesheet_data_url) {
@@ -217,17 +290,32 @@ const renderList = () => {
   const list = elements.companionAdminList;
   const empty = elements.companionAdminEmpty;
   list.textContent = "";
-  const items = filteredCompanions();
-  empty.style.display = items.length ? "none" : "block";
+  const allItems = filteredCompanions();
+  const totalCount = allItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const currentPage = Math.max(1, Math.min(state.companions.page || 1, totalPages));
+  state.companions.page = currentPage;
+
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+  const items = allItems.slice(start, end);
+
+  empty.style.display = totalCount ? "none" : "block";
+
   const fragment = document.createDocumentFragment();
   items.forEach((item) => {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "companion-admin-item";
     row.classList.toggle("is-active", item.id === state.companions.selectedId);
+    row.dataset.companionId = item.id;
     const preview = document.createElement("span");
     preview.className = "companion-admin-item-preview";
-    renderSpritePreview(preview, item);
+    preview.dataset.spritesheetUrl = item.spritesheet_data_url;
+    preview.dataset.loaded = "0";
+    const placeholder = document.createElement("span");
+    placeholder.className = "companion-admin-item-preview-placeholder";
+    preview.appendChild(placeholder);
     const main = document.createElement("span");
     main.className = "companion-admin-item-main";
     const title = document.createElement("span");
@@ -246,7 +334,43 @@ const renderList = () => {
     });
     fragment.appendChild(row);
   });
+
+  if (totalPages > 1) {
+    const pager = document.createElement("div");
+    pager.className = "companion-admin-pager";
+    const prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "companion-admin-pager-btn";
+    prevBtn.disabled = currentPage <= 1;
+    prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left" aria-hidden="true"></i>';
+    prevBtn.addEventListener("click", () => {
+      if (currentPage > 1) {
+        state.companions.page = currentPage - 1;
+        renderList();
+      }
+    });
+    const info = document.createElement("span");
+    info.className = "companion-admin-pager-info";
+    info.textContent = `${currentPage} / ${totalPages}`;
+    const nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "companion-admin-pager-btn";
+    nextBtn.disabled = currentPage >= totalPages;
+    nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right" aria-hidden="true"></i>';
+    nextBtn.addEventListener("click", () => {
+      if (currentPage < totalPages) {
+        state.companions.page = currentPage + 1;
+        renderList();
+      }
+    });
+    pager.appendChild(prevBtn);
+    pager.appendChild(info);
+    pager.appendChild(nextBtn);
+    fragment.appendChild(pager);
+  }
+
   list.appendChild(fragment);
+  observeListPreviews();
 };
 
 const renderDetail = () => {
@@ -314,17 +438,35 @@ const importCompanion = async (file) => {
 };
 
 const handleImportChange = async () => {
-  const file = elements.companionAdminImportInput.files?.[0] || null;
+  const files = Array.from(elements.companionAdminImportInput.files || []);
   elements.companionAdminImportInput.value = "";
-  if (!file) {
+  if (!files.length) {
     return;
   }
-  try {
-    await importCompanion(file);
+  state.companions.loading = true;
+  renderDetail();
+  let successCount = 0;
+  let failCount = 0;
+  const errors = [];
+  for (const file of files) {
+    try {
+      await importCompanion(file);
+      successCount += 1;
+    } catch (error) {
+      failCount += 1;
+      errors.push(`${file.name}: ${error.message || "-"}`);
+    }
+  }
+  state.companions.loading = false;
+  if (successCount > 0) {
     await loadCompanions({ silent: true });
-    notify(t("companionsAdmin.toast.importSuccess"), "success");
-  } catch (error) {
-    notify(t("companionsAdmin.toast.importFailed", { message: error.message || "-" }), "error");
+  }
+  if (failCount === 0) {
+    notify(t("companionsAdmin.toast.importSuccessMulti", { count: successCount }), "success");
+  } else if (successCount === 0) {
+    notify(t("companionsAdmin.toast.importFailedMulti", { count: failCount, errors: errors.slice(0, 3).join("; ") }), "error");
+  } else {
+    notify(t("companionsAdmin.toast.importPartial", { success: successCount, fail: failCount }), "warning");
   }
 };
 

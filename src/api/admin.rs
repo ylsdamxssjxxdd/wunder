@@ -6239,6 +6239,9 @@ fn normalize_preset_agents(
         let previous = existing_by_id
             .get(&preset_id)
             .and_then(|prev| canonicalize_preset_config(prev, &preset_id, skill_name_keys));
+        let preview_skill = item
+            .preview_skill
+            .unwrap_or_else(|| previous.as_ref().map(|prev| prev.preview_skill).unwrap_or(false));
         let candidate = canonicalize_preset_config(
             &UserAgentPresetConfig {
                 preset_id: preset_id.clone(),
@@ -6246,7 +6249,7 @@ fn normalize_preset_agents(
                 name: cleaned_name.to_string(),
                 description: item.description.trim().to_string(),
                 system_prompt: item.system_prompt.trim().to_string(),
-                preview_skill: item.preview_skill.unwrap_or(false),
+                preview_skill,
                 model_name: user_agent_presets::normalize_optional_model_name(
                     item.model_name.as_deref(),
                 ),
