@@ -21,6 +21,7 @@ import {
   isCompactionRunningFromWorkflowItems,
   resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
+import { resolveCompactionDividerTransitionTokens } from './compactionDividerTokens';
 
 type Props = {
   items?: unknown[];
@@ -106,21 +107,9 @@ const transitionLabel = computed(() => {
   const detail = snapshot.value?.detail;
   if (!detail) return '';
   if (hasCollapsedCompactionSummary.value) return '';
-  const before = toOptionalInt(
-    detail.projected_request_tokens,
-    detail.total_tokens,
-    detail.context_tokens,
-    detail.context_guard_tokens_before
-  );
-  const after = toOptionalInt(
-    detail.projected_request_tokens_after,
-    detail.total_tokens_after,
-    detail.context_tokens_after,
-    detail.context_guard_tokens_after,
-    detail.final_context_tokens
-  );
-  if (before === null || after === null) return '';
-  return `${formatTokenCount(before)} -> ${formatTokenCount(after)} tokens`;
+  const transition = resolveCompactionDividerTransitionTokens(detail as Record<string, unknown>);
+  if (!transition) return '';
+  return `${formatTokenCount(transition.before)} -> ${formatTokenCount(transition.after)} tokens`;
 });
 
 const label = computed(() => {

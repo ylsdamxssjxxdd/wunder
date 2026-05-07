@@ -1232,11 +1232,57 @@ const buildHeatmapItems = (toolStats) => {
   return items;
 };
 
+const captureHorizontalScrollState = (container) => {
+  if (!container) {
+    return null;
+  }
+  const storedScrollLeft = Number(container.dataset.scrollLeft || "");
+  const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+  const currentScrollLeft = Math.max(0, container.scrollLeft || 0);
+  const scrollLeft =
+    Number.isFinite(storedScrollLeft) && storedScrollLeft >= 0
+      ? storedScrollLeft
+      : currentScrollLeft;
+  return {
+    scrollLeft,
+    pinnedRight: maxScrollLeft > 0 && maxScrollLeft - scrollLeft <= 16,
+  };
+};
+
+const restoreHorizontalScrollState = (container, snapshot) => {
+  if (!container || !snapshot) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const nextMaxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+      const nextScrollLeft = snapshot.pinnedRight
+        ? nextMaxScrollLeft
+        : Math.min(snapshot.scrollLeft, nextMaxScrollLeft);
+      container.scrollLeft = nextScrollLeft;
+      container.dataset.scrollLeft = String(nextScrollLeft);
+    });
+  });
+};
+
+const bindToolHeatmapScrollPersistence = () => {
+  if (!elements.toolHeatmapWrap || elements.toolHeatmapWrap.dataset.boundScroll === "1") {
+    return;
+  }
+  elements.toolHeatmapWrap.dataset.boundScroll = "1";
+  elements.toolHeatmapWrap.addEventListener("scroll", () => {
+    elements.toolHeatmapWrap.dataset.scrollLeft = String(
+      Math.max(0, elements.toolHeatmapWrap.scrollLeft || 0)
+    );
+  });
+};
+
 const renderToolHeatmap = (toolStats) => {
   if (!elements.toolHeatmapGrid || !elements.toolHeatmapEmpty) {
     return;
   }
   const normalized = buildHeatmapItems(toolStats);
+  const scrollSnapshot = captureHorizontalScrollState(elements.toolHeatmapWrap);
   elements.toolHeatmapGrid.textContent = "";
   if (!normalized.length) {
     elements.toolHeatmapEmpty.style.display = "block";
@@ -1274,6 +1320,7 @@ const renderToolHeatmap = (toolStats) => {
     });
     elements.toolHeatmapGrid.appendChild(tile);
   });
+  restoreHorizontalScrollState(elements.toolHeatmapWrap, scrollSnapshot);
 };
 
 // 渲染系统监视指标
@@ -4050,6 +4097,7 @@ const requestCancelSession = async (sessionId) => {
 
 export const initMonitorPanel = () => {
   ensureMonitorState();
+  bindToolHeatmapScrollPersistence();
   ensureMonitorCharts();
   bindMonitorPagination();
   bindMonitorSessionFilters();

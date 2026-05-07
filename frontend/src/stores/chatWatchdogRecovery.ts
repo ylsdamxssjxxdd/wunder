@@ -14,5 +14,10 @@ export const shouldWatchdogReconcileDrift = (options: {
   if (options.hasPendingMessage) {
     return false;
   }
-  return normalizeEventId(options.remoteLastEventId) > normalizeEventId(options.localLastEventId);
+  const remote = normalizeEventId(options.remoteLastEventId);
+  const local = normalizeEventId(options.localLastEventId);
+  // Ignore tiny drift after terminal hydrate paths. A 1-step delta is commonly caused by
+  // server-side terminal bookkeeping landing after the foreground message merge, and forcing
+  // detail reload on every watchdog tick can repeatedly resurrect stale assistant content.
+  return remote > local + 1;
 };

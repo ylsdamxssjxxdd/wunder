@@ -195,6 +195,34 @@ const resolveCompactionIdentity = (message: ChatMessage): string => {
   return '';
 };
 
+const resolveCompactionCanonicalKey = (message: ChatMessage): string => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+    const item = asObject(items[cursor]) as WorkflowItem | null;
+    if (!item || !isCompactionWorkflowItem(item)) continue;
+    const detail = parseDetailObject(item.detail ?? item.data ?? item.payload);
+    const compactionId = normalizeText(detail?.compaction_id ?? detail?.compactionId);
+    if (compactionId) {
+      return `id:${compactionId}`;
+    }
+    const callRef = normalizeText(
+      item.toolCallId ?? item.tool_call_id ?? item.callId ?? item.call_id
+    );
+    if (callRef) {
+      return `ref:${callRef}`;
+    }
+    const round = resolveStreamRound(
+      detail?.user_round ?? detail?.userRound ?? detail?.round ?? message.stream_round
+    );
+    const triggerMode = normalizeText(detail?.trigger_mode ?? detail?.triggerMode);
+    const identity = resolveCompactionIdentity(message);
+    if (round !== null || identity) {
+      return `round:${round ?? 0}|mode:${triggerMode}|${identity}`;
+    }
+  }
+  return '';
+};
+
 const resolveCompactionMarkerSignature = (message: ChatMessage): string => {
   const createdAt = String(message.created_at ?? '').trim();
   const shape = resolveWorkflowShape(message);
@@ -304,6 +332,11 @@ const isLikelySameCompactionMarker = (
   const remoteCallRef = resolveWorkflowCallRef(remoteMessage);
   const cachedCallRef = resolveWorkflowCallRef(cachedMessage);
   if (remoteCallRef && cachedCallRef && remoteCallRef === cachedCallRef) {
+    return true;
+  }
+  const remoteCanonical = resolveCompactionCanonicalKey(remoteMessage);
+  const cachedCanonical = resolveCompactionCanonicalKey(cachedMessage);
+  if (remoteCanonical && cachedCanonical && remoteCanonical === cachedCanonical) {
     return true;
   }
   const remoteIdentity = resolveCompactionIdentity(remoteMessage);
@@ -444,7 +477,8 @@ export const dedupeTerminalCompactionMarkersInPlace = (
     if (!isTerminalManualCompactionMarker(message)) {
       continue;
     }
-    const signature = resolveCompactionMarkerSignature(message);
+    const canonicalKey = resolveCompactionCanonicalKey(message);
+    const signature = canonicalKey || resolveCompactionMarkerSignature(message);
     if (!signature) {
       continue;
     }

@@ -78,6 +78,7 @@
     "./chat-pending-regression.test.ts",
     "./chat-assistant-match-regression.test.ts",
     "./chat-compaction-marker-regression.test.ts",
+    "./chat-compaction-divider-tokens-regression.test.ts",
     "./chat-compaction-dedupe-regression.test.ts",
     "./chat-compaction-summary-regression.test.ts",
     "./messenger-chat-refresh-recovery-regression.test.ts",

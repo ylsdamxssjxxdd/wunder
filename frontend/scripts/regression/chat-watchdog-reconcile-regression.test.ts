@@ -43,3 +43,25 @@ test('watchdog ignores non-advancing or invalid event ids', () => {
     false
   );
 });
+
+test('watchdog ignores single-step terminal drift after hydrate', () => {
+  assert.equal(
+    shouldWatchdogReconcileDrift({
+      remoteLastEventId: 15,
+      localLastEventId: 14,
+      hasPendingMessage: false
+    }),
+    false
+  );
+});
+
+test('watchdog still reconciles meaningful drift after hydrate', () => {
+  assert.equal(
+    shouldWatchdogReconcileDrift({
+      remoteLastEventId: 16,
+      localLastEventId: 14,
+      hasPendingMessage: false
+    }),
+    true
+  );
+});

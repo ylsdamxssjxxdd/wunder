@@ -5654,8 +5654,30 @@ const isForegroundRealtimeAssistant = (message) =>
     message &&
       message.role === 'assistant' &&
       !message.isGreeting &&
+      !message.hiddenInternal &&
       isPendingAssistantMessage(message)
   );
+
+const shouldPreserveUnmatchedLiveAssistant = (message) => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) {
+    return false;
+  }
+  if (message.realtime_protected === true) {
+    return true;
+  }
+  if (isPendingAssistantMessage(message)) {
+    return true;
+  }
+  if (
+    isCompactionMarkerAssistantMessage(message) &&
+    !normalizeFlag(message?.workflowStreaming) &&
+    !normalizeFlag(message?.reasoningStreaming) &&
+    !normalizeFlag(message?.stream_incomplete)
+  ) {
+    return true;
+  }
+  return false;
+};
 
 const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages) => {
   if (!Array.isArray(hydratedMessages)) {
@@ -5709,12 +5731,16 @@ const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages)
     mergeSnapshotAssistant(liveTarget, message);
     return liveTarget;
   });
-  // Preserve unmatched live assistants that were lost during merge.
-  // This prevents realtime client messages from being silently replaced by
-  // stale or misordered server data when the cursor-based search exhausts early.
+  // Preserve only live assistants that are still semantically authoritative:
+  // pending live output, explicitly realtime-protected items, or terminal
+  // compaction markers. Older completed assistants should defer to hydrated
+  // history; otherwise stale image/text replies can be reinserted forever.
   for (let i = 0; i < liveAssistants.length; i += 1) {
     if (!matchedLiveAssistants.has(i)) {
       const liveTarget = liveAssistants[i].message;
+      if (!shouldPreserveUnmatchedLiveAssistant(liveTarget)) {
+        continue;
+      }
       const insertAfterIndex = findLiveAssistantInsertionIndex(liveTarget, mergedMessages);
       if (insertAfterIndex >= 0) {
         mergedMessages.splice(insertAfterIndex + 1, 0, liveTarget);
@@ -11646,11 +11672,12 @@ export const useChatStore = defineStore('chat', {
           resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null
         )
       );
+      const previousHydratedVersion = readSessionHydratedMessageVersion(targetSessionId);
       const canReuseHydratedMessages =
         !remoteRunning &&
         Array.isArray(finalCachedMessages) &&
         finalCachedMessages.length > 0 &&
-        readSessionHydratedMessageVersion(targetSessionId) === hydratedVersion;
+        previousHydratedVersion === hydratedVersion;
       let messages = finalCachedMessages;
       if (canReuseHydratedMessages) {
         getSessionWorkflowState(targetSessionId, { reset: true });
@@ -11696,6 +11723,12 @@ export const useChatStore = defineStore('chat', {
       clearSupersededPendingAssistantMessages(nextMessages);
       applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
       const activeSessionKey = resolveSessionKey(this.activeSessionId);
+      const shouldKeepStableForegroundMessages =
+        preserveWatcher &&
+        !remoteRunning &&
+        previousHydratedVersion === hydratedVersion &&
+        Array.isArray(finalCachedMessages) &&
+        finalCachedMessages.length > 0;
       const hydrateForegroundMessages = shouldApplyForegroundDetailHydration({
         preserveWatcher,
         forceHydration: options.forceHydrateForeground === true,
@@ -11717,7 +11750,16 @@ export const useChatStore = defineStore('chat', {
         compactionRoundCount: compactionHydrationRounds.length,
         runtime: buildRuntimeDebugSnapshot(runtime)
       });
-      if (shouldKeepForegroundLiveMessages({
+      if (shouldKeepStableForegroundMessages) {
+        const watchedMessages = resolveSessionMessageArray(
+          this,
+          targetSessionId,
+          activeSessionKey === targetSessionId ? this.messages : null
+        );
+        if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
+          nextMessages = watchedMessages;
+        }
+      } else if (shouldKeepForegroundLiveMessages({
         preserveWatcher,
         hydrateForegroundMessages,
         remoteRunning
