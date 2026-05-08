@@ -1460,6 +1460,7 @@
           />
           <ChatComposer
             v-else
+            ref="agentComposerViewRef"
             world-style
             :class="{ 'messenger-agent-composer-lock': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
             :loading="agentSessionLoading"
@@ -1800,6 +1801,7 @@ const agentPromptPreviewToolingItems = controller.agentPromptPreviewToolingItems
 const agentPromptPreviewToolingMode = controller.agentPromptPreviewToolingMode;
 const agentPromptPreviewVisible = controller.agentPromptPreviewVisible;
 const agentPromptToolSummary = controller.agentPromptToolSummary;
+const agentComposerViewRef = controller.agentComposerViewRef;
 const AgentQuickCreateDialog = controller.AgentQuickCreateDialog;
 const agentQuickCreateVisible = controller.agentQuickCreateVisible;
 const agentRenderableMessages = controller.agentRenderableMessages;

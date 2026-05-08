@@ -1,6 +1,7 @@
 pub mod a2a;
 pub mod admin;
 pub mod admin_bridge;
+pub mod admin_multimodal;
 pub mod admin_prompt_templates;
 pub mod admin_sim_lab;
 pub mod admin_swarm;
@@ -68,6 +69,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(workspace::router())
         .merge(admin::router())
         .merge(admin_bridge::router())
+        .merge(admin_multimodal::router())
         .merge(admin_prompt_templates::router())
         .merge(admin_swarm::router())
         .merge(admin_sim_lab::router())

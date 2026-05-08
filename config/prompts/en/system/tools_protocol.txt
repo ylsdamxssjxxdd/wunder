@@ -34,8 +34,12 @@ apply_patch rules (Codex-aligned):
 - Input must start with *** Begin Patch and end with *** End Patch.
 - Use the right section header: *** Add File:, *** Update File:, *** Delete File:, *** Move to:.
 - After @@ in Update File hunks, every line must start with one of: space / + / -. Blank context lines must be encoded as a single leading space line (" ").
+- When a line changes, write it explicitly as -old followed by +new; do not leave both versions as ordinary context lines.
+- Prefer one small patch at a time, touching only a small number of files and local regions; do not pack many distant edits into one apply_patch attempt.
+- If you are unsure whether the patch will match, prefer dry_run first and apply for real only after the preview looks correct.
+- Keep 2-3 lines of raw current-file context around each change when possible; never copy read_file display artifacts such as >>> path, line numbers, or separators.
 - Keep edits minimal and surgical; avoid unrelated reformat/reordering.
-- On errors, use error_code/hint/retryable to make the smallest possible retry.
+- On errors, use error_code/hint/retryable to make the smallest possible retry. If the edit is close to a whole-file rewrite or spans many distant regions, stop expanding apply_patch and switch to write_file.
 
 Fallback XML example (only when native tool calling is unavailable):
 <tool_call>

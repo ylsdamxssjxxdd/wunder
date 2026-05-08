@@ -64,6 +64,17 @@ function normalizeModelType(value) {
     return "embedding";
   }
   if (
+    normalized === "asr" ||
+    normalized === "stt" ||
+    normalized === "speech_to_text" ||
+    normalized === "speech2text" ||
+    normalized === "audio_transcription" ||
+    normalized === "transcription" ||
+    normalized === "audio_to_text"
+  ) {
+    return "asr";
+  }
+  if (
     normalized === "tts" ||
     normalized === "speech" ||
     normalized === "text_to_speech" ||

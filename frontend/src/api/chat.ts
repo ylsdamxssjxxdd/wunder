@@ -115,6 +115,9 @@ export const convertChatAttachment = (file: File) => {
 export const processChatMediaAttachment = (formData: FormData) =>
   api.post('/chat/attachments/media/process', formData);
 
+export const transcribeChatAudio = (formData: FormData) =>
+  api.post('/chat/attachments/media/process', formData);
+
 export const synthesizeChatTts = (payload: unknown) =>
   api.post('/chat/tts', payload, {
     responseType: 'blob',

@@ -1575,6 +1575,21 @@ const focusComposerInputAtEnd = () => {
   });
 };
 
+const appendTextToComposer = (text: unknown) => {
+  const normalized = String(text || '').trim();
+  if (!normalized) return;
+  const current = String(inputText.value || '');
+  inputText.value = current.trim()
+    ? `${current.replace(/\s*$/, '')}\n${normalized}`
+    : normalized;
+  commandMenuDismissed.value = false;
+  persistDraftState();
+  void nextTick(() => {
+    resizeInput();
+    focusComposerInputAtEnd();
+  });
+};
+
 const setCommandMenuIndex = (index) => {
   const total = commandSuggestions.value.length;
   if (total <= 0) {
@@ -2739,6 +2754,11 @@ watch(
     caretPosition.value = 0;
   }
 );
+
+defineExpose({
+  appendTextToComposer,
+  focusComposerInputAtEnd
+});
 </script>
 
 <style scoped>

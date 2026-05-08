@@ -4,6 +4,7 @@ use crate::schemas::AttachmentPayload;
 use crate::services::chat_attachments::{
     is_supported_model_image_mime, parse_image_data_url, validate_image_attachment_bytes,
 };
+use crate::services::multimodal_models::{self, AudioTranscriptionRequest};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
@@ -190,6 +191,7 @@ async fn process_audio_source(
     let content_type = detect_audio_content_type(filename);
     let (transcript, mut warnings) = transcribe_audio_file(
         &config.channels.media.asr,
+        config,
         source_path,
         filename,
         content_type.as_str(),
@@ -431,6 +433,7 @@ async fn process_video_source(
             Ok(()) => {
                 let (transcript, audio_warnings) = transcribe_audio_file(
                     &config.channels.media.asr,
+                    config,
                     &audio_path,
                     audio_path
                         .file_name()
@@ -707,10 +710,44 @@ async fn probe_media(source_path: &Path) -> Result<MediaProbe> {
 
 async fn transcribe_audio_file(
     config: &ChannelAsrConfig,
+    app_config: &Config,
     source_path: &Path,
     filename: &str,
     mime_type: &str,
 ) -> (Option<String>, Vec<String>) {
+    if multimodal_models::resolve_asr_model(app_config, None).is_some() {
+        match fs::read(source_path).await {
+            Ok(bytes) => match multimodal_models::transcribe_audio(
+                app_config,
+                AudioTranscriptionRequest {
+                    audio_bytes: bytes.into(),
+                    filename: filename.to_string(),
+                    content_type: mime_type.to_string(),
+                    model_name: None,
+                    language: None,
+                    prompt: None,
+                    response_format: None,
+                    temperature: None,
+                },
+            )
+            .await
+            {
+                Ok(result) => return (Some(result.text), Vec::new()),
+                Err(err) => {
+                    return (
+                        None,
+                        vec![format!("Audio transcription request failed: {err}")],
+                    );
+                }
+            },
+            Err(err) => {
+                return (
+                    None,
+                    vec![format!("Audio transcription failed to read file: {}", err)],
+                );
+            }
+        }
+    }
     if !config.enabled {
         return (
             None,

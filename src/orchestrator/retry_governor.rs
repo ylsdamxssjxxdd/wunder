@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 3;
 const MAX_SAME_RETRYABLE_FAILURES: u32 = 2;
 const MAX_SAME_TOOL_FAILURES: u32 = 3;
-const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 2;
+const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 5;
 const FINGERPRINT_DETAIL_MAX_CHARS: usize = 240;
 
 #[derive(Clone, Debug)]
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_patch_reroutes_after_two_failures() {
+    fn apply_patch_reroutes_after_five_failures() {
         let mut governor = RetryGovernor::new(6);
         let tool_name = resolve_tool_name("apply_patch");
         let payload = ToolResultPayload {
@@ -315,11 +315,14 @@ mod tests {
             meta: None,
         };
         assert!(governor.record_failure(&tool_name, &payload).is_none());
+        assert!(governor.record_failure(&tool_name, &payload).is_none());
+        assert!(governor.record_failure(&tool_name, &payload).is_none());
+        assert!(governor.record_failure(&tool_name, &payload).is_none());
         let stop = governor
             .record_failure(&tool_name, &payload)
-            .expect("apply_patch should reroute on second failure");
+            .expect("apply_patch should reroute on fifth failure");
         assert_eq!(stop.reason, "tool_failure_reroute_required");
-        assert_eq!(stop.threshold, 2);
-        assert_eq!(stop.same_tool_failures, 2);
+        assert_eq!(stop.threshold, 5);
+        assert_eq!(stop.same_tool_failures, 5);
     }
 }

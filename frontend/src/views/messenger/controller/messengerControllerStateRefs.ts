@@ -535,6 +535,11 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.worldComposerViewRef = ref<WorldComposerViewRef | null>(null);
 
+  ctx.agentComposerViewRef = ref<{
+      appendTextToComposer?: (value: string) => void;
+      focusComposerInputAtEnd?: () => void;
+  } | null>(null);
+
   ctx.worldUploading = ref(false);
 
   ctx.worldVoiceRecording = ref(false);

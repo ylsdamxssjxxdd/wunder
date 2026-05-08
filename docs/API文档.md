@@ -1178,6 +1178,7 @@
 - `GET` 返回：
   - `llm.default`：默认对话模型配置名称
   - `llm.default_embedding`：默认嵌入模型配置名称（可选）
+  - `llm.default_asr`：默认声转文模型配置名称（可选）
   - `llm.default_tts`：默认语音模型配置名称（可选）
   - `llm.default_image`：默认绘图模型配置名称（可选）
 - `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
@@ -1187,6 +1188,7 @@
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
+  - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
   - 说明：`model_type=tts` 表示语音模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
   - 说明：`model_type=image` 表示绘图模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
@@ -1199,7 +1201,7 @@
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
 - `POST` 入参：
   - `llm.default`：默认对话模型配置名称
-  - `llm.default_embedding/default_tts/default_image`：默认嵌入/语音/绘图模型配置名称（可选）
+  - `llm.default_embedding/default_asr/default_tts/default_image/default_video`：默认嵌入/声转文/语音/绘图/视频模型配置名称（可选）
   - `llm.models`：模型配置映射，用于保存与下发
 
 ### 4.1.6.1 `/wunder/admin/llm/context_window`
@@ -1215,6 +1217,97 @@
   - `max_context`：最大上下文长度（可能为 null）
   - `message`：探测结果说明
   - 说明：仅支持 OpenAI 兼容 provider（见 `/wunder/admin/llm` 说明）。
+
+### 4.1.6.1.1 `/wunder/admin/multimodal/speech`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的语音测试接口。服务端按指定或默认 TTS 模型发起语音合成，将结果写入指定工作区后返回保存路径与结构化结果。
+- 入参（JSON）：
+  - `user_id`：目标工作区所属用户（可选，默认 `admin`）
+  - `container_id`：工作区容器编号（可选，默认 `0`）
+  - `path`：保存相对路径（可选；不传时自动写入 `generated_media/`）
+  - `text`：待合成文本
+  - `model_name`：语音模型配置名称（可选）
+  - `voice`：音色（可选）
+  - `instructions`：风格/语气控制（可选）
+  - `response_format`：输出格式（可选，支持 `wav/mp3/flac/aac/opus/pcm`）
+  - `speed`：语速（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `speech`
+  - `data.user_id` / `data.container_id` / `data.workspace_id`
+  - `data.model_name`：最终命中的模型配置名称
+  - `data.content_type`：结果 MIME
+  - `data.size_bytes`：结果字节数
+  - `data.workspace_relative_path`：工作区相对路径
+  - `data.public_path`：工作区公开路径（可用于后续下载/预览）
+  - `data.request`：服务端实际使用的请求参数摘要
+
+### 4.1.6.1.0 `/wunder/admin/multimodal/transcription`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的声转文测试接口。支持直接上传音频文件，或传工作区中的 `source_public_path`；服务端按指定或默认 ASR 模型转写后返回文本、原始响应和源文件路径。
+- 入参（Multipart Form）：
+  - `user_id`：目标工作区所属用户（可选，默认 `admin`）
+  - `container_id`：工作区容器编号（可选，默认 `0`）
+  - `path`：当上传文件时，源音频保存到工作区的相对路径（可选）
+  - `source_public_path`：已有工作区音频文件的公共路径（可选；与 `file` 二选一）
+  - `file`：待转写音频文件（可选；与 `source_public_path` 二选一）
+  - `model_name`：声转文模型配置名称（可选）
+  - `language`：识别语言提示（可选）
+  - `prompt`：转写提示（可选）
+  - `response_format`：返回格式（可选，支持 `json/text/verbose_json/srt/vtt`）
+  - `temperature`：解码温度（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `transcription`
+  - `data.user_id` / `data.container_id` / `data.workspace_id`
+  - `data.model_name`：最终命中的模型配置名称
+  - `data.content_type`：上游返回 Content-Type
+  - `data.text`：识别文本
+  - `data.source_public_path`：源音频工作区公共路径
+  - `data.source_workspace_relative_path`：源音频工作区相对路径
+  - `data.raw_response`：上游原始结构化响应
+  - `data.request`：服务端实际使用的请求参数摘要
+
+### 4.1.6.1.2 `/wunder/admin/multimodal/image`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的绘图测试接口。服务端按指定或默认绘图模型生成图片，将结果写入指定工作区后返回保存路径与结构化结果。
+- 入参（JSON）：
+  - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
+  - `prompt`：绘图提示词
+  - `model_name`：绘图模型配置名称（可选）
+  - `size`：尺寸（可选）
+  - `output_format`：输出格式（可选，支持 `png/jpeg/webp`）
+  - `negative_prompt`：负向提示词（可选）
+  - `num_inference_steps`：采样步数（可选）
+  - `guidance_scale`：引导系数（可选）
+  - `seed`：随机种子（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `image`
+  - 其余结构同 `/wunder/admin/multimodal/speech`
+
+### 4.1.6.1.3 `/wunder/admin/multimodal/video`
+
+- 方法：`POST`
+- 说明：管理员侧多模调试中的视频测试接口。服务端按指定或默认视频模型生成视频，将结果写入指定工作区后返回保存路径与结构化结果。
+- 入参（JSON）：
+  - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
+  - `prompt`：视频提示词
+  - `model_name`：视频模型配置名称（可选）
+  - `size`：尺寸（可选）
+  - `seconds`：时长秒数（可选）
+  - `fps`：帧率（可选）
+  - `num_frames`：帧数（可选）
+  - `negative_prompt`：负向提示词（可选）
+  - `num_inference_steps`：采样步数（可选）
+  - `guidance_scale` / `guidance_scale_2`：引导系数（可选）
+  - `boundary_ratio`：边界比例（可选）
+  - `flow_shift`：流场偏移（可选）
+  - `seed`：随机种子（可选）
+  - `enable_frame_interpolation`：是否启用插帧（可选）
+- 返回（JSON）：
+  - `data.kind`：固定为 `video`
+  - 其余结构同 `/wunder/admin/multimodal/speech`
 
 ### 4.1.6.2 `/wunder/admin/system`
 
@@ -1741,7 +1834,7 @@
 - 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/token_adjustment`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
-- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
+- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
 - 舰桥中心治理：`/wunder/admin/bridge/metadata`、`/wunder/admin/bridge/supported_channels`、`/wunder/admin/bridge/centers`、`/wunder/admin/bridge/centers/{center_id}`、`/wunder/admin/bridge/centers/{center_id}/accounts`、`/wunder/admin/bridge/centers/{center_id}/weixin_bind`、`/wunder/admin/bridge/accounts/{center_account_id}`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/routes/{route_id}`、`/wunder/admin/bridge/delivery_logs`。

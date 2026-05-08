@@ -53,9 +53,12 @@ export type DesktopLlmContextProbePayload = {
   timeout_s?: number;
 };
 
+export type DesktopTtsVoicesProbePayload = DesktopLlmContextProbePayload;
+
 export type DesktopLlmConfig = {
   default: string;
   default_embedding?: string;
+  default_asr?: string;
   default_tts?: string;
   default_image?: string;
   default_video?: string;
@@ -174,6 +177,11 @@ export const resetDesktopWorkState = () =>
 
 export const probeDesktopLlmContextWindow = (payload: DesktopLlmContextProbePayload) =>
   desktopApi.post('/wunder/desktop/llm/context_window', payload, {
+    headers: buildDesktopHeaders()
+  });
+
+export const probeDesktopTtsVoices = (payload: DesktopTtsVoicesProbePayload) =>
+  desktopApi.post('/wunder/desktop/llm/tts_voices', payload, {
     headers: buildDesktopHeaders()
   });
 

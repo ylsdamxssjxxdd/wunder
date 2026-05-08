@@ -132,6 +132,7 @@
               >
                 <el-option :label="t('desktop.system.modelTypeLlm')" value="llm" />
                 <el-option :label="t('desktop.system.modelTypeEmbedding')" value="embedding" />
+                <el-option :label="t('desktop.system.modelTypeAsr')" value="asr" />
                 <el-option :label="t('desktop.system.modelTypeTts')" value="tts" />
                 <el-option :label="t('desktop.system.modelTypeImage')" value="image" />
                 <el-option :label="t('desktop.system.modelTypeVideo')" value="video" />
@@ -231,10 +232,64 @@
                 </el-button>
               </div>
             </label>
+            <template v-if="selectedModel.model_type === 'asr'">
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.asrLanguage') }}</span>
+                <el-input
+                  v-model="selectedModel.asr_language"
+                  :placeholder="t('desktop.system.asrLanguagePlaceholder')"
+                />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.asrResponseFormat') }}</span>
+                <el-select
+                  v-model="selectedModel.asr_response_format"
+                  class="desktop-system-settings-input"
+                  popper-class="desktop-system-settings-popper"
+                >
+                  <el-option label="json" value="json" />
+                  <el-option label="text" value="text" />
+                  <el-option label="verbose_json" value="verbose_json" />
+                  <el-option label="srt" value="srt" />
+                  <el-option label="vtt" value="vtt" />
+                </el-select>
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.asrTemperature') }}</span>
+                <el-input v-model="selectedModel.asr_temperature" />
+              </label>
+              <label class="desktop-system-settings-field desktop-system-settings-field--full">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.asrPrompt') }}</span>
+                <el-input v-model="selectedModel.asr_prompt" type="textarea" :rows="2" />
+              </label>
+            </template>
             <template v-if="selectedModel.model_type === 'tts'">
               <label class="desktop-system-settings-field">
                 <span class="desktop-system-settings-field-label">{{ t('desktop.system.ttsVoice') }}</span>
-                <el-input v-model="selectedModel.tts_voice" :placeholder="t('desktop.system.ttsVoicePlaceholder')" />
+                <el-select
+                  v-if="ttsVoiceOptions.length"
+                  v-model="selectedModel.tts_voice"
+                  class="desktop-system-settings-input"
+                  popper-class="desktop-system-settings-popper"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  :loading="probingTtsVoices"
+                  :placeholder="t('desktop.system.ttsVoicePlaceholder')"
+                >
+                  <el-option
+                    v-for="voice in ttsVoiceOptions"
+                    :key="voice"
+                    :label="voice"
+                    :value="voice"
+                  />
+                </el-select>
+                <el-input
+                  v-else
+                  v-model="selectedModel.tts_voice"
+                  :placeholder="t('desktop.system.ttsVoicePlaceholder')"
+                />
               </label>
               <label class="desktop-system-settings-field">
                 <span class="desktop-system-settings-field-label">{{ t('desktop.system.ttsResponseFormat') }}</span>
@@ -548,13 +603,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   fetchDesktopSettings,
   listDesktopLanPeers,
   probeDesktopLlmContextWindow,
+  probeDesktopTtsVoices,
   resetDesktopWorkState,
   updateDesktopSettings,
   type DesktopLanMeshSettings,
@@ -567,10 +623,11 @@ import DesktopRuntimePreferencesPanel from '@/components/messenger/DesktopRuntim
 import { useChatStore } from '@/stores/chat';
 import {
   getProviderModelPresets,
+  type ProviderModelType,
   resolveProviderModelPresetMaxContext
 } from '@/views/messenger/providerModelPresets';
 
-type ModelType = 'llm' | 'embedding' | 'tts' | 'image' | 'video';
+type ModelType = 'llm' | 'embedding' | 'asr' | 'tts' | 'image' | 'video';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type SelectedModelPreference = {
@@ -596,6 +653,10 @@ type ModelRow = {
   tool_call_mode: ToolCallMode;
   reasoning_effort: ReasoningEffort;
   history_compaction_ratio: string;
+  asr_language: string;
+  asr_prompt: string;
+  asr_response_format: string;
+  asr_temperature: string;
   tts_voice: string;
   tts_instructions: string;
   tts_response_format: string;
@@ -620,6 +681,7 @@ type ModelRow = {
 };
 
 const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_model';
+const ASR_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_asr_model';
 const TTS_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_tts_model';
 const IMAGE_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_image_model';
 const VIDEO_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_video_model';
@@ -645,11 +707,15 @@ const probingContext = ref(false);
 const resettingWorkState = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
+const defaultAsrModel = ref('');
 const defaultTtsModel = ref('');
 const defaultImageModel = ref('');
 const defaultVideoModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
+const probingTtsVoices = ref(false);
+const ttsVoiceOptions = ref<string[]>([]);
+const lastTtsVoiceProbeKey = ref('');
 const savingLan = ref(false);
 const loadingLanPeers = ref(false);
 const lanMeshEnabled = ref(false);
@@ -665,22 +731,77 @@ const lanSharedSecret = ref('');
 const lanPeers = ref<DesktopLanPeer[]>([]);
 let nextModelUid = 1;
 const DEFAULT_PROVIDER_ID = 'openai_compatible';
-const PROVIDER_PRESETS: Array<{ id: string; label: string; baseUrl: string }> = [
-  { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
-  { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
-  { id: 'anthropic', label: 'anthropic', baseUrl: 'https://api.anthropic.com/v1' },
-  { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
-  { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
-  { id: 'deepseek', label: 'deepseek', baseUrl: 'https://api.deepseek.com' },
-  { id: 'moonshot', label: 'moonshot', baseUrl: 'https://api.moonshot.ai/v1' },
-  { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-  { id: 'groq', label: 'groq', baseUrl: 'https://api.groq.com/openai/v1' },
-  { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
-  { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' },
-  { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
-  { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
-];
-const PROVIDER_PRESET_MAP = new Map(PROVIDER_PRESETS.map((item) => [item.id, item]));
+const DEFAULT_MODEL_PROVIDER_IDS = new Set(['openai_compatible', 'vllm_omni']);
+const PROVIDER_PRESETS_BY_TYPE: Record<
+  ModelType,
+  Array<{ id: string; label: string; baseUrl: string }>
+> = {
+  llm: [
+    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
+    { id: 'anthropic', label: 'anthropic', baseUrl: 'https://api.anthropic.com/v1' },
+    { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
+    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+    { id: 'deepseek', label: 'deepseek', baseUrl: 'https://api.deepseek.com' },
+    { id: 'moonshot', label: 'moonshot', baseUrl: 'https://api.moonshot.ai/v1' },
+    { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { id: 'groq', label: 'groq', baseUrl: 'https://api.groq.com/openai/v1' },
+    { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
+    { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' },
+    { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
+    { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+  ],
+  embedding: [
+    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
+    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+    { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
+    { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+  ],
+  asr: [
+    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
+    { id: 'whisper_cpp', label: 'whisper_cpp', baseUrl: 'http://127.0.0.1:8080' },
+    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
+    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+    { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
+    { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+  ],
+  tts: [
+    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
+    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
+    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+    { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
+    { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+  ],
+  image: [
+    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
+    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
+    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+    { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
+    { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
+    { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' }
+  ],
+  video: [
+    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
+    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
+    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+    { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
+    { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
+    { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' }
+  ]
+};
+const PROVIDER_PRESET_MAP = new Map(
+  Object.values(PROVIDER_PRESETS_BY_TYPE)
+    .flat()
+    .map((item) => [item.id, item])
+);
 
 const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 
@@ -734,12 +855,19 @@ const resolveErrorMessage = (error: unknown, fallback: string): string => {
 const embeddingModelRows = computed(() =>
   modelRows.value.filter((item) => item.model_type === 'embedding')
 );
+const getDefaultProviderIdForType = (modelType: ModelType): string =>
+  modelType === 'llm' ? DEFAULT_PROVIDER_ID : 'vllm_omni';
+const getProviderPresetsForType = (
+  modelType: ModelType
+): Array<{ id: string; label: string; baseUrl: string }> =>
+  PROVIDER_PRESETS_BY_TYPE[modelType] || PROVIDER_PRESETS_BY_TYPE.llm;
 const isDefaultModelRow = (row: ModelRow): boolean => {
   const key = String(row?.key || '').trim();
   if (!key) return false;
   return (
     key === defaultModel.value.trim() ||
     key === defaultEmbeddingModel.value.trim() ||
+    key === defaultAsrModel.value.trim() ||
     key === defaultTtsModel.value.trim() ||
     key === defaultImageModel.value.trim() ||
     key === defaultVideoModel.value.trim()
@@ -753,10 +881,11 @@ const modelRowsForList = computed(() =>
       if (!key) return 5;
       if (key === defaultModel.value.trim() && modelType === 'llm') return 0;
       if (key === defaultEmbeddingModel.value.trim() && modelType === 'embedding') return 1;
-      if (key === defaultTtsModel.value.trim() && modelType === 'tts') return 2;
-      if (key === defaultImageModel.value.trim() && modelType === 'image') return 3;
-      if (key === defaultVideoModel.value.trim() && modelType === 'video') return 4;
-      return 5;
+      if (key === defaultAsrModel.value.trim() && modelType === 'asr') return 2;
+      if (key === defaultTtsModel.value.trim() && modelType === 'tts') return 3;
+      if (key === defaultImageModel.value.trim() && modelType === 'image') return 4;
+      if (key === defaultVideoModel.value.trim() && modelType === 'video') return 5;
+      return 6;
     };
     const rankDiff = rank(keyA, a.model_type) - rank(keyB, b.model_type);
     if (rankDiff !== 0) return rankDiff;
@@ -776,7 +905,10 @@ const modelOptionsForSelectedModel = computed(() => {
 
   const options: Array<{ value: string; label: string }> = [];
   const existing = new Set<string>();
-  for (const preset of getProviderModelPresets(current.provider)) {
+  for (const preset of getProviderModelPresets(
+    current.provider,
+    normalizeModelType(current.model_type) as ProviderModelType
+  )) {
     const modelId = String(preset.id || '').trim();
     if (!modelId) continue;
     const normalized = modelId.toLowerCase();
@@ -802,8 +934,9 @@ const modelOptionsForSelectedModel = computed(() => {
   return options;
 });
 const providerOptionsForSelectedModel = computed(() => {
+  const modelType = normalizeModelType(selectedModel.value?.model_type);
   const currentProvider = normalizeProviderId(selectedModel.value?.provider);
-  const options = PROVIDER_PRESETS.map((item) => ({
+  const options = getProviderPresetsForType(modelType).map((item) => ({
     id: item.id,
     label: item.label
   }));
@@ -819,7 +952,7 @@ const modelBaseUrlPlaceholder = computed(() => {
 
 const providerFieldNote = computed(() => {
   const modelType = selectedModel.value?.model_type || 'llm';
-  if (modelType === 'tts' || modelType === 'image') {
+  if (modelType === 'asr' || modelType === 'tts' || modelType === 'image' || modelType === 'video') {
     return t('desktop.system.providerHintMultimodal');
   }
   return t('desktop.system.providerHint');
@@ -830,6 +963,8 @@ const setCurrentDefaultLabel = computed(() => {
   switch (normalizeModelType(current.model_type)) {
     case 'embedding':
       return t('desktop.system.setDefaultEmbeddingModel');
+    case 'asr':
+      return t('desktop.system.setDefaultAsrModel');
     case 'tts':
       return t('desktop.system.setDefaultTtsModel');
     case 'image':
@@ -843,6 +978,8 @@ const setCurrentDefaultLabel = computed(() => {
 const modelParameterSectionTitle = computed(() => {
   const current = selectedModel.value;
   switch (normalizeModelType(current?.model_type)) {
+    case 'asr':
+      return t('desktop.system.section.asr');
     case 'tts':
       return t('desktop.system.section.tts');
     case 'image':
@@ -858,6 +995,16 @@ const normalizeModelType = (value: unknown): ModelType => {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'embedding' || raw === 'embed' || raw === 'embeddings') {
     return 'embedding';
+  }
+  if (
+    raw === 'asr' ||
+    raw === 'stt' ||
+    raw === 'speech_to_text' ||
+    raw === 'audio_transcription' ||
+    raw === 'transcription' ||
+    raw === 'audio_to_text'
+  ) {
+    return 'asr';
   }
   if (raw === 'tts' || raw === 'speech' || raw === 'text_to_speech' || raw === 'text-to-speech') {
     return 'tts';
@@ -881,6 +1028,8 @@ const modelTypeLabel = (value: unknown): string => {
   switch (normalizeModelType(value)) {
     case 'embedding':
       return t('desktop.system.modelTypeEmbedding');
+    case 'asr':
+      return t('desktop.system.modelTypeAsr');
     case 'tts':
       return t('desktop.system.modelTypeTts');
     case 'image':
@@ -912,6 +1061,10 @@ const normalizeProviderId = (value: unknown): string => {
       return 'moonshot';
     case 'dashscope':
       return 'qwen';
+    case 'vllmomni':
+      return 'vllm_omni';
+    case 'whispercpp':
+      return 'whisper_cpp';
     case 'lm_studio':
       return 'lmstudio';
     default:
@@ -960,6 +1113,11 @@ const normalizeTtsResponseFormat = (value: unknown): string => {
   return ['wav', 'mp3', 'flac', 'aac', 'opus', 'pcm'].includes(raw) ? raw : 'wav';
 };
 
+const normalizeAsrResponseFormat = (value: unknown): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  return ['json', 'text', 'verbose_json', 'srt', 'vtt'].includes(raw) ? raw : 'json';
+};
+
 const normalizeImageOutputFormat = (value: unknown): string => {
   const raw = String(value || '').trim().toLowerCase();
   return ['png', 'jpeg', 'webp'].includes(raw) ? raw : '';
@@ -968,7 +1126,7 @@ const normalizeImageOutputFormat = (value: unknown): string => {
 const applyModelPresetContext = (row: ModelRow, force = true) => {
   if (!row || normalizeModelType(row.model_type) !== 'llm') return;
   if (!force && String(row.max_context || '').trim()) return;
-  const maxContext = resolveProviderModelPresetMaxContext(row.provider, row.model);
+  const maxContext = resolveProviderModelPresetMaxContext(row.provider, row.model, 'llm');
   if (!Number.isFinite(maxContext) || Number(maxContext) <= 0) return;
   row.max_context = String(Math.round(Number(maxContext)));
 };
@@ -1023,6 +1181,57 @@ const handleModelSuggestionSelect = (item: { value?: string }) => {
   applyModelPresetContext(current);
 };
 
+const buildTtsVoiceProbePayload = (row: ModelRow | null) => {
+  if (!row || normalizeModelType(row.model_type) !== 'tts') return null;
+  const model = String(row.model || '').trim();
+  const provider = normalizeProviderId(row.provider);
+  const baseUrl = String(row.base_url || '').trim() || resolveProviderBaseUrl(provider);
+  const apiKey = String(row.api_key || '').trim();
+  if (!baseUrl || !model) return null;
+  return {
+    provider,
+    base_url: baseUrl,
+    api_key: apiKey || undefined,
+    model,
+    timeout_s: 15
+  };
+};
+
+const probeTtsVoicesForSelectedModel = async (force = false) => {
+  const current = selectedModel.value;
+  const payload = buildTtsVoiceProbePayload(current);
+  if (!payload) {
+    ttsVoiceOptions.value = [];
+    lastTtsVoiceProbeKey.value = '';
+    return;
+  }
+  const probeKey = `${current?.uid || ''}|${payload.provider}|${payload.base_url}|${payload.model}|${
+    payload.api_key ? 1 : 0
+  }`;
+  if (!force && probeKey === lastTtsVoiceProbeKey.value) {
+    return;
+  }
+  probingTtsVoices.value = true;
+  try {
+    const response = await probeDesktopTtsVoices(payload);
+    const latest = selectedModel.value;
+    if (!latest || latest.uid !== current?.uid) return;
+    const items = Array.isArray(response?.data?.voices)
+      ? response.data.voices
+          .map((item: unknown) => String(item || '').trim())
+          .filter((item: string) => item.length > 0)
+      : [];
+    ttsVoiceOptions.value = Array.from(new Set(items));
+    lastTtsVoiceProbeKey.value = probeKey;
+  } catch (error) {
+    console.error(error);
+    ttsVoiceOptions.value = [];
+    lastTtsVoiceProbeKey.value = '';
+  } finally {
+    probingTtsVoices.value = false;
+  }
+};
+
 const FLOAT_INPUT_PRECISION = 7;
 
 const roundFloat = (value: number): number => {
@@ -1052,7 +1261,9 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     uid: makeModelUid(),
     key,
     model_type: normalizeModelType(raw.model_type),
-    provider: normalizeProviderId(raw.provider),
+    provider: normalizeProviderId(
+      raw.provider || getDefaultProviderIdForType(normalizeModelType(raw.model_type))
+    ),
     base_url: String(raw.base_url || ''),
     api_key: String(raw.api_key || ''),
     model: String(raw.model || ''),
@@ -1067,6 +1278,10 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode, raw.provider),
     reasoning_effort: normalizeReasoningEffort(raw.reasoning_effort),
     history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.9),
+    asr_language: String(raw.asr_language || ''),
+    asr_prompt: String(raw.asr_prompt || ''),
+    asr_response_format: normalizeAsrResponseFormat(raw.asr_response_format),
+    asr_temperature: formatFloatForInput(raw.asr_temperature, 0),
     tts_voice: String(raw.tts_voice || ''),
     tts_instructions: String(raw.tts_instructions || ''),
     tts_response_format: normalizeTtsResponseFormat(raw.tts_response_format),
@@ -1154,6 +1369,8 @@ const defaultModelStorageKeyByType = (modelType: ModelType): string => {
   switch (modelType) {
     case 'embedding':
       return EMBEDDING_DEFAULT_MODEL_STORAGE_KEY;
+    case 'asr':
+      return ASR_DEFAULT_MODEL_STORAGE_KEY;
     case 'tts':
       return TTS_DEFAULT_MODEL_STORAGE_KEY;
     case 'image':
@@ -1195,7 +1412,7 @@ const addModel = (modelType: ModelType = 'llm') => {
     uid: makeModelUid(),
     key: '',
     model_type: modelType,
-    provider: DEFAULT_PROVIDER_ID,
+    provider: getDefaultProviderIdForType(modelType),
     base_url: '',
     api_key: '',
     model: '',
@@ -1207,9 +1424,13 @@ const addModel = (modelType: ModelType = 'llm') => {
     support_vision: false,
     support_hearing: false,
     stream_include_usage: true,
-    tool_call_mode: resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID),
+    tool_call_mode: resolveDefaultToolCallMode(getDefaultProviderIdForType(modelType)),
     reasoning_effort: '',
     history_compaction_ratio: modelType === 'llm' ? '0.9' : '',
+    asr_language: '',
+    asr_prompt: '',
+    asr_response_format: 'json',
+    asr_temperature: '0',
     tts_voice: '',
     tts_instructions: '',
     tts_response_format: 'wav',
@@ -1251,6 +1472,7 @@ const setCurrentAsDefault = async () => {
   }
   const previousDefaultModel = defaultModel.value;
   const previousDefaultEmbeddingModel = defaultEmbeddingModel.value;
+  const previousDefaultAsrModel = defaultAsrModel.value;
   const previousDefaultTtsModel = defaultTtsModel.value;
   const previousDefaultImageModel = defaultImageModel.value;
   const previousDefaultVideoModel = defaultVideoModel.value;
@@ -1258,6 +1480,9 @@ const setCurrentAsDefault = async () => {
   switch (modelType) {
     case 'embedding':
       defaultEmbeddingModel.value = key;
+      break;
+    case 'asr':
+      defaultAsrModel.value = key;
       break;
     case 'tts':
       defaultTtsModel.value = key;
@@ -1276,6 +1501,7 @@ const setCurrentAsDefault = async () => {
   if (!saved) {
     defaultModel.value = previousDefaultModel;
     defaultEmbeddingModel.value = previousDefaultEmbeddingModel;
+    defaultAsrModel.value = previousDefaultAsrModel;
     defaultTtsModel.value = previousDefaultTtsModel;
     defaultImageModel.value = previousDefaultImageModel;
     defaultVideoModel.value = previousDefaultVideoModel;
@@ -1290,6 +1516,7 @@ const removeModel = (target: ModelRow) => {
     'embedding',
     defaultEmbeddingModel.value
   );
+  defaultAsrModel.value = findDefaultModelKeyByType(modelRows.value, 'asr', defaultAsrModel.value);
   defaultTtsModel.value = findDefaultModelKeyByType(modelRows.value, 'tts', defaultTtsModel.value);
   defaultImageModel.value = findDefaultModelKeyByType(
     modelRows.value,
@@ -1367,6 +1594,11 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     setText('tts_instructions', row.tts_instructions);
     setText('tts_response_format', normalizeTtsResponseFormat(row.tts_response_format));
     setFloat('tts_speed', row.tts_speed);
+  } else if (row.model_type === 'asr') {
+    setText('asr_language', row.asr_language);
+    setText('asr_prompt', row.asr_prompt);
+    setText('asr_response_format', normalizeAsrResponseFormat(row.asr_response_format));
+    setFloat('asr_temperature', row.asr_temperature);
   } else if (row.model_type === 'image') {
     setText('image_size', row.image_size);
     setText('image_output_format', normalizeImageOutputFormat(row.image_output_format));
@@ -1484,6 +1716,11 @@ const applySettingsData = (
     modelRows.value,
     'embedding',
     String(llm.default_embedding || '').trim() || readStoredDefaultModel('embedding')
+  );
+  defaultAsrModel.value = findDefaultModelKeyByType(
+    modelRows.value,
+    'asr',
+    String(llm.default_asr || '').trim() || readStoredDefaultModel('asr')
   );
   defaultTtsModel.value = findDefaultModelKeyByType(
     modelRows.value,
@@ -1625,6 +1862,16 @@ const saveModelSettings = async (): Promise<boolean> => {
     return false;
   }
 
+  const currentDefaultAsr = findDefaultModelKeyByType(
+    modelRows.value,
+    'asr',
+    defaultAsrModel.value.trim()
+  );
+  if (currentDefaultAsr && !models[currentDefaultAsr]) {
+    ElMessage.warning(t('desktop.system.defaultAsrModelMissing'));
+    return false;
+  }
+
   const currentDefaultTts = findDefaultModelKeyByType(
     modelRows.value,
     'tts',
@@ -1661,6 +1908,7 @@ const saveModelSettings = async (): Promise<boolean> => {
       llm: {
         default: currentDefaultModel,
         default_embedding: currentDefaultEmbedding || undefined,
+        default_asr: currentDefaultAsr || undefined,
         default_tts: currentDefaultTts || undefined,
         default_image: currentDefaultImage || undefined,
         default_video: currentDefaultVideo || undefined,
@@ -1669,6 +1917,7 @@ const saveModelSettings = async (): Promise<boolean> => {
     });
     const data = (response?.data?.data || {}) as Record<string, any>;
     writeStoredDefaultModel('embedding', currentDefaultEmbedding);
+    writeStoredDefaultModel('asr', currentDefaultAsr);
     writeStoredDefaultModel('tts', currentDefaultTts);
     writeStoredDefaultModel('image', currentDefaultImage);
     writeStoredDefaultModel('video', currentDefaultVideo);
@@ -1753,6 +2002,58 @@ const handleResetWorkState = async () => {
     resettingWorkState.value = false;
   }
 };
+
+watch(
+  () => {
+    const current = selectedModel.value;
+    return current ? `${current.uid}|${current.model_type}` : '';
+  },
+  (currentKey, previousKey) => {
+    const row = selectedModel.value;
+    if (!row || !currentKey || !previousKey) return;
+    const [previousUid, previousTypeRaw] = previousKey.split('|');
+    const [currentUid, currentTypeRaw] = currentKey.split('|');
+    if (!previousUid || previousUid !== currentUid) return;
+    const previousType = normalizeModelType(previousTypeRaw);
+    const currentType = normalizeModelType(currentTypeRaw);
+    if (previousType === currentType) return;
+    const currentProvider = normalizeProviderId(row.provider);
+    const desiredProvider = getDefaultProviderIdForType(currentType);
+    const previousDefaultProvider = getDefaultProviderIdForType(previousType);
+    const availableProviders = new Set(
+      getProviderPresetsForType(currentType).map((item) => normalizeProviderId(item.id))
+    );
+    if (!availableProviders.has(currentProvider) || currentProvider === previousDefaultProvider) {
+      const previousBaseUrl = String(row.base_url || '').trim();
+      const currentBaseUrl = resolveProviderBaseUrl(currentProvider);
+      row.provider = desiredProvider;
+      if (!previousBaseUrl || previousBaseUrl === currentBaseUrl) {
+        row.base_url = resolveProviderBaseUrl(desiredProvider);
+      }
+      row.tool_call_mode = resolveDefaultToolCallMode(desiredProvider);
+    }
+  }
+);
+
+watch(
+  () => {
+    const current = selectedModel.value;
+    return current
+      ? [
+          current.uid,
+          current.model_type,
+          current.provider,
+          current.base_url,
+          current.api_key,
+          current.model
+        ].join('|')
+      : '';
+  },
+  () => {
+    void probeTtsVoicesForSelectedModel();
+  },
+  { immediate: true }
+);
 
 onMounted(() => {
   if (showModelPanel.value || showLanPanel.value) {

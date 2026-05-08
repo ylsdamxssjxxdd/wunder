@@ -256,6 +256,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/llm/context_window",
             post(admin_llm_context_window),
         )
+        .route("/wunder/admin/llm/tts_voices", post(admin_llm_tts_voices))
         .route(
             "/wunder/admin/system",
             get(admin_system_get).post(admin_system_update),
@@ -3040,6 +3041,49 @@ async fn admin_llm_context_window(
         }
     };
     Ok(Json(payload))
+}
+
+async fn admin_llm_tts_voices(
+    Json(payload): Json<LlmContextProbeRequest>,
+) -> Result<Json<Value>, Response> {
+    let model = payload.model.trim();
+    let provider = llm::normalize_provider(payload.provider.as_deref());
+    let inline_base = payload.base_url.trim();
+    let base_url = if inline_base.is_empty() {
+        llm::provider_default_base_url(&provider).unwrap_or("")
+    } else {
+        inline_base
+    };
+    if base_url.is_empty() || model.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.base_url_or_model_required"),
+        ));
+    }
+    if !llm::is_openai_compatible_provider(&provider) {
+        return Ok(Json(json!({
+            "voices": [],
+            "message": i18n::t("probe.provider_unsupported")
+        })));
+    }
+
+    let timeout_s = payload.timeout_s.unwrap_or(15).max(5);
+    let api_key = payload.api_key.as_deref().unwrap_or("");
+    let result = crate::multimodal_models::probe_tts_voices(base_url, api_key, model, timeout_s).await;
+    let response = match result {
+        Ok(voices) if !voices.is_empty() => {
+            json!({ "voices": voices, "message": i18n::t("probe.success") })
+        }
+        Ok(_) => json!({ "voices": [], "message": i18n::t("probe.no_context") }),
+        Err(err) => {
+            let message = i18n::t_with_params(
+                "probe.failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            );
+            json!({ "voices": [], "message": message })
+        }
+    };
+    Ok(Json(response))
 }
 
 fn normalize_string_list(values: Vec<String>) -> Vec<String> {

@@ -74,6 +74,10 @@ import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughp
 import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
 import { initSimLabPanel } from "./modules/sim-lab.js?v=20260215-01";
 import { initEvaluationPanel } from "./modules/evaluation.js?v=20260315-07";
+import {
+  initMultimodalDebugPanel,
+  loadMultimodalDebugPanel,
+} from "./modules/multimodal-debug.js?v=20260508-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260215-01";
@@ -189,6 +193,8 @@ const panelMap = {
   prompt: { panel: elements.promptPanel, nav: elements.navPrompt },
 
   evaluation: { panel: elements.evaluationPanel, nav: elements.navEvaluation },
+
+  multimodalDebug: { panel: elements.multimodalDebugPanel, nav: elements.navMultimodalDebug },
 
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
 
@@ -953,6 +959,22 @@ const bindNavigation = () => {
     });
   }
 
+  if (elements.navMultimodalDebug) {
+    elements.navMultimodalDebug.addEventListener("click", async () => {
+      switchPanel("multimodalDebug");
+      if (!state.panelLoaded.multimodalDebug) {
+        try {
+          await loadMultimodalDebugPanel();
+          state.panelLoaded.multimodalDebug = true;
+        } catch (error) {
+          appendLog(
+            t("app.panelLoadFailed", { panel: t("panel.multimodalDebug"), message: error.message })
+          );
+        }
+      }
+    });
+  }
+
   if (elements.navApiDocs) {
     elements.navApiDocs.addEventListener("click", () => switchPanel("apiDocs"));
   }
@@ -1230,6 +1252,8 @@ const bootstrap = async () => {
 
   initA2aServicesPanel();
 
+  initMultimodalDebugPanel();
+
   initUserTools();
 
   initSettingsPanel();
@@ -1320,6 +1344,18 @@ const bootstrap = async () => {
       .catch((error) => {
         appendLog(
           t("app.panelLoadFailed", { panel: t("panel.evaluation"), message: error.message })
+        );
+      });
+  }
+
+  if (initialPanel === "multimodalDebug" && !state.panelLoaded.multimodalDebug) {
+    loadMultimodalDebugPanel()
+      .then(() => {
+        state.panelLoaded.multimodalDebug = true;
+      })
+      .catch((error) => {
+        appendLog(
+          t("app.panelLoadFailed", { panel: t("panel.multimodalDebug"), message: error.message })
         );
       });
   }

@@ -1587,7 +1587,20 @@ pub(crate) async fn build_chat_request(
         .map(|record| record.preview_skill)
         .unwrap_or(false);
 
-    if should_auto_title(&record.title) {
+    let is_first_user_message = state
+        .workspace
+        .load_history_page(&user.user_id, &session_id, None, 2)
+        .map(|items| {
+            !items.iter().any(|item| {
+                item.get("role")
+                    .and_then(Value::as_str)
+                    .map(|role| role == "user")
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+
+    if is_first_user_message && should_auto_title(&record.title) {
         if let Some(title) = build_session_title(&content) {
             let _ =
                 state

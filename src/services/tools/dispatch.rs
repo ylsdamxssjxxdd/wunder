@@ -76,6 +76,9 @@ pub async fn execute_builtin_tool(
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
             multimodal_generation_tool::tool_generate_speech(context, args).await
         }
+        multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH => {
+            multimodal_generation_tool::tool_transcribe_speech(context, args).await
+        }
         multimodal_generation_tool::TOOL_GENERATE_IMAGE => {
             multimodal_generation_tool::tool_generate_image(context, args).await
         }

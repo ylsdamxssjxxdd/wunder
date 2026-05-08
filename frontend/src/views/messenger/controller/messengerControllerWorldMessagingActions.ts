@@ -21,6 +21,7 @@ import {
   uploadUserSkillZip
 } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
+import { processChatMediaAttachment } from '@/api/chat';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
 import OrchestrationWorkbench from '@/components/orchestration/OrchestrationWorkbench.vue';
 import AbilityTooltipListItem from '@/components/common/AbilityTooltipListItem.vue';
@@ -905,8 +906,27 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       if (runtime.draftIdentity !== ctx.resolveAgentDraftIdentity()) {
           return;
       }
+      const voiceFile = new File([recording.blob], ctx.buildAgentVoiceFileName(), { type: 'audio/wav' });
       try {
-          const voiceFile = new File([recording.blob], ctx.buildAgentVoiceFileName(), { type: 'audio/wav' });
+          const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
+          await ctx.appendTextToAgentComposerDraft(transcript);
+          ElMessage.success(ctx.t('messenger.world.voice.transcribedToComposer'));
+          return;
+      }
+      catch (error) {
+          const message = String((error as { message?: unknown } | null)?.message || '').trim().toLowerCase();
+          const shouldFallback = !message ||
+              message.includes('disabled') ||
+              message.includes('not configured') ||
+              message.includes('not supported') ||
+              message.includes('transcription') ||
+              message.includes('asr');
+          if (!shouldFallback) {
+              showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
+              return;
+          }
+      }
+      try {
           const uploadedPaths = await ctx.uploadWorldFilesToUserContainer([voiceFile], { appendTokens: false });
           const uploadedPath = String(uploadedPaths[0] || '').trim();
           if (!uploadedPath) {
@@ -1002,6 +1022,59 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
 
   ctx.buildWorldVoiceFileName = (): string => `voice-${Date.now()}.wav`;
 
+  ctx.transcribeRecordedAudioToText = async (file: File): Promise<string> => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await processChatMediaAttachment(formData);
+      const payload = (response?.data?.data || {}) as Record<string, unknown>;
+      const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+      const text = attachments
+          .map((item) => String((item as Record<string, unknown>)?.content || '').trim())
+          .find((value) => value) || String(payload.text || '').trim();
+      if (text) {
+        return text;
+      }
+      throw new Error(String(payload.message || ctx.t('messenger.world.voice.transcribeFailed')));
+  };
+
+  ctx.appendTextToAgentComposerDraft = async (text: string) => {
+      const normalized = String(text || '').trim();
+      if (!normalized)
+          return;
+      const composer = (ctx.agentComposerViewRef?.value || null) as {
+          appendTextToComposer?: (value: string) => void;
+          focusComposerInputAtEnd?: () => void;
+      } | null;
+      if (composer?.appendTextToComposer) {
+          composer.appendTextToComposer(normalized);
+          return;
+      }
+      const textarea = ctx.chatFooterRef.value?.querySelector('textarea') as HTMLTextAreaElement | null;
+      if (textarea) {
+          const current = String(textarea.value || '');
+          textarea.value = current.trim() ? `${current.replace(/\s*$/, '')}\n${normalized}` : normalized;
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          await nextTick();
+          if (typeof textarea.focus === 'function') {
+              textarea.focus();
+          }
+          const cursor = textarea.value.length;
+          if (typeof textarea.setSelectionRange === 'function') {
+              textarea.setSelectionRange(cursor, cursor);
+          }
+      }
+  };
+
+  ctx.appendTextToWorldDraft = async (text: string) => {
+      const normalized = String(text || '').trim();
+      if (!normalized)
+          return;
+      const current = String(ctx.worldDraft.value || '');
+      ctx.worldDraft.value = current.trim() ? `${current.replace(/\s*$/, '')}\n${normalized}` : normalized;
+      await nextTick();
+      ctx.focusWorldTextareaToEnd();
+  };
+
   ctx.stopWorldVoiceRecordingAndSend = async () => {
       const runtime = ctx.worldVoiceRecordingRuntime;
       if (!runtime)
@@ -1024,9 +1097,28 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       if (runtime.conversationId !== String(ctx.activeConversation.value?.id || '').trim()) {
           return;
       }
+      const voiceFile = new File([recording.blob], ctx.buildWorldVoiceFileName(), { type: 'audio/wav' });
       ctx.worldUploading.value = true;
       try {
-          const voiceFile = new File([recording.blob], ctx.buildWorldVoiceFileName(), { type: 'audio/wav' });
+          const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
+          await ctx.appendTextToWorldDraft(transcript);
+          ElMessage.success(ctx.t('messenger.world.voice.transcribedToComposer'));
+          return;
+      }
+      catch (error) {
+          const message = String((error as { message?: unknown } | null)?.message || '').trim().toLowerCase();
+          const shouldFallback = !message ||
+              message.includes('disabled') ||
+              message.includes('not configured') ||
+              message.includes('not supported') ||
+              message.includes('transcription') ||
+              message.includes('asr');
+          if (!shouldFallback) {
+              showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
+              return;
+          }
+      }
+      try {
           const uploadedPaths = await ctx.uploadWorldFilesToUserContainer([voiceFile], { appendTokens: false });
           const uploadedPath = String(uploadedPaths[0] || '').trim();
           if (!uploadedPath) {

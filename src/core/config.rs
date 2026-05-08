@@ -178,6 +178,8 @@ pub struct LlmConfig {
     #[serde(default)]
     pub default_embedding: Option<String>,
     #[serde(default)]
+    pub default_asr: Option<String>,
+    #[serde(default)]
     pub default_tts: Option<String>,
     #[serde(default)]
     pub default_image: Option<String>,
@@ -362,6 +364,14 @@ pub struct LlmModelConfig {
     pub tts_response_format: Option<String>,
     #[serde(default)]
     pub tts_speed: Option<f32>,
+    #[serde(default)]
+    pub asr_language: Option<String>,
+    #[serde(default)]
+    pub asr_prompt: Option<String>,
+    #[serde(default)]
+    pub asr_response_format: Option<String>,
+    #[serde(default)]
+    pub asr_temperature: Option<f32>,
     #[serde(default)]
     pub image_size: Option<String>,
     #[serde(default)]

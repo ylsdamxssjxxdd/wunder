@@ -123,6 +123,10 @@
                 <i class="fa-solid fa-list-check"></i>
                 <span data-i18n="panel.evaluation">能力评估</span>
               </button>
+              <button id="navMultimodalDebug" class="nav-btn">
+                <i class="fa-solid fa-photo-film"></i>
+                <span data-i18n="panel.multimodalDebug">多模调试</span>
+              </button>
               <button id="navDebug" class="nav-btn">
                 <i class="fa-solid fa-bug"></i>
                 <span data-i18n="panel.debug">调试面板</span>
@@ -1246,6 +1250,330 @@
             </div>
           </div>
         </section>
+        <section id="multimodalDebugPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="multimodalDebug.title">多模调试</h1>
+            <div class="header-actions">
+              <div class="header-input">
+                <label for="multimodalDebugUserId" data-i18n="multimodalDebug.field.userId">user_id</label>
+                <input id="multimodalDebugUserId" type="text" placeholder="admin" />
+              </div>
+              <div class="header-input">
+                <label for="multimodalDebugContainerId" data-i18n="multimodalDebug.field.container">工作区容器</label>
+                <input id="multimodalDebugContainerId" type="number" min="0" max="10" step="1" value="0" />
+              </div>
+              <div class="header-input">
+                <label for="multimodalDebugPath" data-i18n="multimodalDebug.field.path">保存路径</label>
+                <input
+                  id="multimodalDebugPath"
+                  type="text"
+                  placeholder="generated_media/custom_output"
+                  data-i18n-placeholder="multimodalDebug.placeholder.path"
+                />
+              </div>
+              <button id="multimodalDebugClearBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-broom"></i>
+                <span data-i18n="common.clear">清空</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="multimodalDebug.tip">
+            在管理员侧直接调试语音、绘图、视频模型。请求参数、运行日志、结果预览和工作区保存路径会统一展示，便于快速复盘。
+          </div>
+          <div class="multimodal-debug-layout">
+            <div class="multimodal-debug-forms">
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-microphone-lines"></i>
+                    <span data-i18n="multimodalDebug.section.transcription">声转文调试</span>
+                  </div>
+                  <button id="multimodalDebugTranscriptionRun" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-play"></i>
+                    <span data-i18n="multimodalDebug.action.runTranscription">开始调试</span>
+                  </button>
+                </div>
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="multimodalDebugTranscriptionModel" data-i18n="multimodalDebug.field.model">模型</label>
+                    <select id="multimodalDebugTranscriptionModel"></select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugTranscriptionLanguage" data-i18n="multimodalDebug.field.asrLanguage">识别语言</label>
+                    <input id="multimodalDebugTranscriptionLanguage" type="text" placeholder="例如：zh / en" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugTranscriptionResponseFormat" data-i18n="multimodalDebug.field.asrResponseFormat">返回格式</label>
+                    <select id="multimodalDebugTranscriptionResponseFormat">
+                      <option value="json">json</option>
+                      <option value="text">text</option>
+                      <option value="verbose_json">verbose_json</option>
+                      <option value="srt">srt</option>
+                      <option value="vtt">vtt</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugTranscriptionTemperature" data-i18n="multimodalDebug.field.asrTemperature">temperature</label>
+                    <input id="multimodalDebugTranscriptionTemperature" type="number" min="0" max="2" step="0.1" />
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugTranscriptionPrompt" data-i18n="multimodalDebug.field.asrPrompt">转写提示</label>
+                    <textarea id="multimodalDebugTranscriptionPrompt" rows="2" placeholder="可选提示词，用于约束转写风格"></textarea>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugTranscriptionSourcePath" data-i18n="multimodalDebug.field.sourceAudioPath">音频路径</label>
+                    <input id="multimodalDebugTranscriptionSourcePath" type="text" placeholder="/workspaces/admin/chat_media/source/sample.wav 或工作区相对路径" />
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugTranscriptionFile" data-i18n="multimodalDebug.field.audioFile">上传音频</label>
+                    <input id="multimodalDebugTranscriptionFile" type="file" accept="audio/*,.mp3,.wav,.flac,.aac,.ogg,.opus,.m4a" />
+                  </div>
+                </div>
+              </section>
+
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-wave-square"></i>
+                    <span data-i18n="multimodalDebug.section.speech">声音调试</span>
+                  </div>
+                  <button id="multimodalDebugSpeechRun" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-play"></i>
+                    <span data-i18n="multimodalDebug.action.runSpeech">开始调试</span>
+                  </button>
+                </div>
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="multimodalDebugSpeechModel" data-i18n="multimodalDebug.field.model">模型</label>
+                    <select id="multimodalDebugSpeechModel"></select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugSpeechVoice" data-i18n="multimodalDebug.field.voice">音色</label>
+                    <input id="multimodalDebugSpeechVoice" type="text" placeholder="default" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugSpeechFormat" data-i18n="multimodalDebug.field.audioFormat">音频格式</label>
+                    <select id="multimodalDebugSpeechFormat">
+                      <option value="">自动</option>
+                      <option value="wav">wav</option>
+                      <option value="mp3">mp3</option>
+                      <option value="flac">flac</option>
+                      <option value="aac">aac</option>
+                      <option value="opus">opus</option>
+                      <option value="pcm">pcm</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugSpeechSpeed" data-i18n="multimodalDebug.field.speed">语速</label>
+                    <input id="multimodalDebugSpeechSpeed" type="number" min="0.25" max="4" step="0.05" placeholder="1" />
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugSpeechInstructions" data-i18n="multimodalDebug.field.instructions">风格</label>
+                    <textarea id="multimodalDebugSpeechInstructions" rows="2" placeholder="控制语气、情绪、节奏等"></textarea>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugSpeechText" data-i18n="multimodalDebug.field.text">输入文本</label>
+                    <textarea id="multimodalDebugSpeechText" rows="4" placeholder="输入要合成的文本"></textarea>
+                  </div>
+                </div>
+              </section>
+
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-image"></i>
+                    <span data-i18n="multimodalDebug.section.image">绘图调试</span>
+                  </div>
+                  <button id="multimodalDebugImageRun" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-play"></i>
+                    <span data-i18n="multimodalDebug.action.runImage">开始调试</span>
+                  </button>
+                </div>
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="multimodalDebugImageModel" data-i18n="multimodalDebug.field.model">模型</label>
+                    <select id="multimodalDebugImageModel"></select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugImageSize" data-i18n="multimodalDebug.field.size">尺寸</label>
+                    <input id="multimodalDebugImageSize" type="text" placeholder="1024x1024" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugImageFormat" data-i18n="multimodalDebug.field.outputFormat">输出格式</label>
+                    <select id="multimodalDebugImageFormat">
+                      <option value="">自动</option>
+                      <option value="png">png</option>
+                      <option value="jpeg">jpeg</option>
+                      <option value="webp">webp</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugImageSteps" data-i18n="multimodalDebug.field.steps">采样步数</label>
+                    <input id="multimodalDebugImageSteps" type="number" min="1" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugImageGuidance" data-i18n="multimodalDebug.field.guidanceScale">引导系数</label>
+                    <input id="multimodalDebugImageGuidance" type="number" min="0.1" step="0.1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugImageSeed" data-i18n="multimodalDebug.field.seed">Seed</label>
+                    <input id="multimodalDebugImageSeed" type="number" min="0" step="1" />
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugImageNegativePrompt" data-i18n="multimodalDebug.field.negativePrompt">负向提示词</label>
+                    <textarea id="multimodalDebugImageNegativePrompt" rows="2" placeholder="输入需要抑制的内容"></textarea>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugImagePrompt" data-i18n="multimodalDebug.field.prompt">提示词</label>
+                    <textarea id="multimodalDebugImagePrompt" rows="4" placeholder="输入绘图提示词"></textarea>
+                  </div>
+                </div>
+              </section>
+
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-film"></i>
+                    <span data-i18n="multimodalDebug.section.video">视频调试</span>
+                  </div>
+                  <button id="multimodalDebugVideoRun" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-play"></i>
+                    <span data-i18n="multimodalDebug.action.runVideo">开始调试</span>
+                  </button>
+                </div>
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoModel" data-i18n="multimodalDebug.field.model">模型</label>
+                    <select id="multimodalDebugVideoModel"></select>
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoSize" data-i18n="multimodalDebug.field.size">尺寸</label>
+                    <input id="multimodalDebugVideoSize" type="text" placeholder="1280x720" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoSeconds" data-i18n="multimodalDebug.field.seconds">时长(秒)</label>
+                    <input id="multimodalDebugVideoSeconds" type="number" min="0.1" step="0.1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoFps" data-i18n="multimodalDebug.field.fps">FPS</label>
+                    <input id="multimodalDebugVideoFps" type="number" min="1" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoFrames" data-i18n="multimodalDebug.field.frames">帧数</label>
+                    <input id="multimodalDebugVideoFrames" type="number" min="1" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoSteps" data-i18n="multimodalDebug.field.steps">采样步数</label>
+                    <input id="multimodalDebugVideoSteps" type="number" min="1" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoGuidance" data-i18n="multimodalDebug.field.guidanceScale">引导系数</label>
+                    <input id="multimodalDebugVideoGuidance" type="number" min="0.1" step="0.1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoGuidance2" data-i18n="multimodalDebug.field.guidanceScale2">引导系数2</label>
+                    <input id="multimodalDebugVideoGuidance2" type="number" min="0.1" step="0.1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoBoundaryRatio" data-i18n="multimodalDebug.field.boundaryRatio">边界比例</label>
+                    <input id="multimodalDebugVideoBoundaryRatio" type="number" min="0.01" step="0.01" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoFlowShift" data-i18n="multimodalDebug.field.flowShift">Flow Shift</label>
+                    <input id="multimodalDebugVideoFlowShift" type="number" min="0.01" step="0.01" />
+                  </div>
+                  <div class="form-row">
+                    <label for="multimodalDebugVideoSeed" data-i18n="multimodalDebug.field.seed">Seed</label>
+                    <input id="multimodalDebugVideoSeed" type="number" min="0" step="1" />
+                  </div>
+                  <div class="form-row multimodal-inline-toggle">
+                    <label class="multimodal-checkbox">
+                      <input id="multimodalDebugVideoInterpolation" type="checkbox" />
+                      <span data-i18n="multimodalDebug.field.interpolation">插帧</span>
+                    </label>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugVideoNegativePrompt" data-i18n="multimodalDebug.field.negativePrompt">负向提示词</label>
+                    <textarea id="multimodalDebugVideoNegativePrompt" rows="2" placeholder="输入需要抑制的内容"></textarea>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="multimodalDebugVideoPrompt" data-i18n="multimodalDebug.field.prompt">提示词</label>
+                    <textarea id="multimodalDebugVideoPrompt" rows="4" placeholder="输入视频提示词"></textarea>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="multimodal-debug-side">
+              <section class="multimodal-card multimodal-status-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-satellite-dish"></i>
+                    <span data-i18n="multimodalDebug.section.status">运行状态</span>
+                  </div>
+                </div>
+                <div class="multimodal-status-grid">
+                  <div class="metric-card">
+                    <label data-i18n="multimodalDebug.metric.lastType">最近类型</label>
+                    <strong id="multimodalDebugLastType">-</strong>
+                  </div>
+                  <div class="metric-card">
+                    <label data-i18n="multimodalDebug.metric.lastModel">最近模型</label>
+                    <strong id="multimodalDebugLastModel">-</strong>
+                  </div>
+                  <div class="metric-card">
+                    <label data-i18n="multimodalDebug.metric.lastPath">保存路径</label>
+                    <strong id="multimodalDebugLastPath">-</strong>
+                  </div>
+                  <div class="metric-card">
+                    <label data-i18n="multimodalDebug.metric.lastSize">结果大小</label>
+                    <strong id="multimodalDebugLastSize">-</strong>
+                  </div>
+                </div>
+                <div id="multimodalDebugStatusText" class="muted">-</div>
+              </section>
+
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-terminal"></i>
+                    <span data-i18n="multimodalDebug.section.logs">调试日志</span>
+                  </div>
+                </div>
+                <div id="multimodalDebugLog" class="multimodal-debug-log"></div>
+              </section>
+
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-box-open"></i>
+                    <span data-i18n="multimodalDebug.section.result">返回结果</span>
+                  </div>
+                  <button id="multimodalDebugCopyResultBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-copy"></i>
+                    <span data-i18n="common.copy">复制</span>
+                  </button>
+                </div>
+                <pre id="multimodalDebugResultJson" class="code-preview multimodal-debug-result-json"></pre>
+              </section>
+
+              <section class="multimodal-card">
+                <div class="multimodal-card-header">
+                  <div class="multimodal-card-title">
+                    <i class="fa-solid fa-photo-film"></i>
+                    <span data-i18n="multimodalDebug.section.preview">结果预览</span>
+                  </div>
+                </div>
+                <div id="multimodalDebugPreviewMeta" class="muted"></div>
+                <div id="multimodalDebugPreview" class="multimodal-debug-preview">
+                  <div class="multimodal-debug-preview-empty" data-i18n="multimodalDebug.preview.empty">
+                    暂无结果
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
         <section id="debugPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="debug.title">请求调试</h1>
@@ -1608,6 +1936,7 @@
                       <option value="performance" data-i18n="panel.performance">Performance</option>
                       <option value="prompt" data-i18n="panel.prompt">Prompt</option>
                       <option value="evaluation" data-i18n="panel.evaluation">Evaluation</option>
+                      <option value="multimodalDebug" data-i18n="panel.multimodalDebug">Multimodal Debug</option>
                       <option value="debug" data-i18n="panel.debug">Debug</option>
                       <option value="lsp" data-i18n="panel.lsp">LSP</option>
                       <option value="docsSite" data-i18n="panel.docsSite">Docs Site</option>
@@ -2803,6 +3132,7 @@
                     <select id="llmModelType">
                       <option value="llm" data-i18n="llm.modelType.llm">LLM</option>
                       <option value="embedding" data-i18n="llm.modelType.embedding">Embedding</option>
+                      <option value="asr" data-i18n="llm.modelType.asr">ASR</option>
                       <option value="tts" data-i18n="llm.modelType.tts">TTS</option>
                       <option value="image" data-i18n="llm.modelType.image">Image</option>
                       <option value="video" data-i18n="llm.modelType.video">Video</option>
@@ -2933,6 +3263,37 @@
                     <div class="form-row">
                       <label for="llmTtsInstructions" data-i18n="llm.field.ttsInstructions">语音风格</label>
                       <textarea id="llmTtsInstructions" rows="2"></textarea>
+                    </div>
+                  </div>
+                  <div id="llmAsrRows">
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmAsrLanguage" data-i18n="llm.field.asrLanguage">识别语言</label>
+                        <input
+                          id="llmAsrLanguage"
+                          type="text"
+                          placeholder="例如：zh / en"
+                          data-i18n-placeholder="llm.placeholder.asrLanguage"
+                        />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmAsrResponseFormat" data-i18n="llm.field.asrResponseFormat">返回格式</label>
+                        <select id="llmAsrResponseFormat">
+                          <option value="json">json</option>
+                          <option value="text">text</option>
+                          <option value="verbose_json">verbose_json</option>
+                          <option value="srt">srt</option>
+                          <option value="vtt">vtt</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="form-row">
+                      <label for="llmAsrTemperature" data-i18n="llm.field.asrTemperature">temperature</label>
+                      <input id="llmAsrTemperature" type="number" min="0" max="2" step="0.1" />
+                    </div>
+                    <div class="form-row">
+                      <label for="llmAsrPrompt" data-i18n="llm.field.asrPrompt">转写提示</label>
+                      <textarea id="llmAsrPrompt" rows="2"></textarea>
                     </div>
                   </div>
                   <div id="llmImageRows">

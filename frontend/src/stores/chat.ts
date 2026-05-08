@@ -12637,7 +12637,10 @@ export const useChatStore = defineStore('chat', {
       if (activeSession) {
         this.sessions = applyMainSession(this.sessions, activeSession.agent_id, sessionId);
         persistAgentSession(activeSession.agent_id, sessionId);
-        if (shouldAutoTitle(activeSession.title)) {
+        const hasExistingUserMessage = sessionMessagesRef.some(
+          (message) => message !== userMessage && String(message?.role || '').trim() === 'user'
+        );
+        if (!hasExistingUserMessage && shouldAutoTitle(activeSession.title)) {
           const autoTitle = buildSessionTitle(content);
           if (autoTitle) {
             activeSession.title = autoTitle;

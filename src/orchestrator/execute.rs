@@ -2829,7 +2829,7 @@ fn build_tool_failure_reroute_model_notice(
             Value::String(next_step)
         },
         "instruction": if tool_name == resolve_tool_name("apply_patch") {
-            Value::String("Do not emit another broad apply_patch attempt. Read the latest file, keep the next patch to a small batch, and after @@ write each line explicitly as space-context / -old / +new instead of pasting raw target lines. If that still fails, switch to write_file for a full rewrite.".to_string())
+            Value::String("Do not emit another broad apply_patch attempt. Read the latest file or exact excerpt, keep the next patch to a small batch, and after @@ write each line explicitly as space-context / -old / +new instead of pasting raw target lines. If unsure, use dry_run first. Never leave both old and new versions as plain context lines. If that still fails, switch to write_file for a full rewrite.".to_string())
         } else {
             Value::String("Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy.".to_string())
         },
@@ -2871,9 +2871,9 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
                 | "PATCH_CONTEXT_AMBIGUOUS"
                 | "PATCH_NO_EFFECT"
         ) {
-            return "建议下一步：先重新读取目标文件，只保留当前文件中的原始上下文；@@ 之后不要直接粘贴目标文件内容，必须把每一行明确写成“空格上下文 / -旧行 / +新行”，其中空白上下文行也要写成单个空格行；把下一次补丁控制在少量文件、少量区域内，每处前后保留 2-3 行空格开头的上下文；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
+            return "建议下一步：先重新读取目标文件或相关片段，只保留当前文件中的原始上下文；@@ 之后不要直接粘贴目标文件内容，必须把每一行明确写成“空格上下文 / -旧行 / +新行”，其中空白上下文行也要写成单个空格行；不要把旧行和新行都写成普通上下文行。下一次补丁请控制在少量文件、少量区域内，每处前后保留 2-3 行空格开头的上下文；如果你对匹配是否稳定没有把握，先加 `dry_run` 预演；不要复制 >>> 路径、行号或 --- 分隔线。若仍然接近整文件修改，请直接改用 `write_file`。".to_string();
         }
-        return "建议下一步：不要继续盲目重复 apply_patch。先 `read_file` 读取最新文件，再把修改拆成少量文件、少量区域逐次提交；如果改动跨很多区域、很多文件，或接近整文件改写，请改用 `write_file`。".to_string();
+        return "建议下一步：不要继续盲目重复 apply_patch。先 `read_file` 读取最新文件或精确片段，再把修改拆成少量文件、少量区域逐次提交；如果不确定补丁是否能匹配，先用 `dry_run`；如果改动跨很多区域、很多文件，或接近整文件改写，请改用 `write_file`。".to_string();
     }
     "建议下一步：停止重复当前调用，调整工具参数或更换工具路径后继续。".to_string()
 }

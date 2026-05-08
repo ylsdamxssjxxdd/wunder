@@ -10,24 +10,81 @@ let lastProbeKey = "";
 let lastAutoContext = null;
 let probeInFlight = false;
 let pendingProbe = false;
+let ttsVoiceProbeTimer = null;
+let ttsVoiceProbeInFlight = false;
+let pendingTtsVoiceProbe = false;
+let lastTtsVoiceProbeKey = "";
+let lastTtsVoiceOptions = [];
 const FLOAT_INPUT_PRECISION = 7;
 const DEFAULT_PROVIDER_ID = "openai_compatible";
-const PROVIDER_PRESETS = [
-  { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
-  { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
-  { id: "anthropic", label: "anthropic", baseUrl: "https://api.anthropic.com/v1" },
-  { id: "openrouter", label: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
-  { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
-  { id: "deepseek", label: "deepseek", baseUrl: "https://api.deepseek.com" },
-  { id: "moonshot", label: "moonshot", baseUrl: "https://api.moonshot.ai/v1" },
-  { id: "qwen", label: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
-  { id: "groq", label: "groq", baseUrl: "https://api.groq.com/openai/v1" },
-  { id: "mistral", label: "mistral", baseUrl: "https://api.mistral.ai/v1" },
-  { id: "together", label: "together", baseUrl: "https://api.together.xyz/v1" },
-  { id: "ollama", label: "ollama", baseUrl: "http://127.0.0.1:11434/v1" },
-  { id: "lmstudio", label: "lmstudio", baseUrl: "http://127.0.0.1:1234/v1" },
-];
-const PROVIDER_PRESET_MAP = new Map(PROVIDER_PRESETS.map((item) => [item.id, item]));
+const DEFAULT_MODEL_PROVIDER_IDS = new Set(["openai_compatible", "vllm_omni"]);
+const PROVIDER_PRESETS_BY_TYPE = {
+  llm: [
+    { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+    { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+    { id: "anthropic", label: "anthropic", baseUrl: "https://api.anthropic.com/v1" },
+    { id: "openrouter", label: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+    { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+    { id: "deepseek", label: "deepseek", baseUrl: "https://api.deepseek.com" },
+    { id: "moonshot", label: "moonshot", baseUrl: "https://api.moonshot.ai/v1" },
+    { id: "qwen", label: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    { id: "groq", label: "groq", baseUrl: "https://api.groq.com/openai/v1" },
+    { id: "mistral", label: "mistral", baseUrl: "https://api.mistral.ai/v1" },
+    { id: "together", label: "together", baseUrl: "https://api.together.xyz/v1" },
+    { id: "ollama", label: "ollama", baseUrl: "http://127.0.0.1:11434/v1" },
+    { id: "lmstudio", label: "lmstudio", baseUrl: "http://127.0.0.1:1234/v1" },
+  ],
+  embedding: [
+    { id: "vllm_omni", label: "vllm_omni", baseUrl: "http://127.0.0.1:8000/v1" },
+    { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+    { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+    { id: "qwen", label: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    { id: "ollama", label: "ollama", baseUrl: "http://127.0.0.1:11434/v1" },
+    { id: "lmstudio", label: "lmstudio", baseUrl: "http://127.0.0.1:1234/v1" },
+  ],
+  asr: [
+    { id: "vllm_omni", label: "vllm_omni", baseUrl: "http://127.0.0.1:8000/v1" },
+    { id: "whisper_cpp", label: "whisper_cpp", baseUrl: "http://127.0.0.1:8080" },
+    { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+    { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+    { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+    { id: "qwen", label: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    { id: "ollama", label: "ollama", baseUrl: "http://127.0.0.1:11434/v1" },
+    { id: "lmstudio", label: "lmstudio", baseUrl: "http://127.0.0.1:1234/v1" },
+  ],
+  tts: [
+    { id: "vllm_omni", label: "vllm_omni", baseUrl: "http://127.0.0.1:8000/v1" },
+    { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+    { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+    { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+    { id: "qwen", label: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+    { id: "ollama", label: "ollama", baseUrl: "http://127.0.0.1:11434/v1" },
+    { id: "lmstudio", label: "lmstudio", baseUrl: "http://127.0.0.1:1234/v1" },
+  ],
+  image: [
+    { id: "vllm_omni", label: "vllm_omni", baseUrl: "http://127.0.0.1:8000/v1" },
+    { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+    { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+    { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+    { id: "openrouter", label: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+    { id: "mistral", label: "mistral", baseUrl: "https://api.mistral.ai/v1" },
+    { id: "together", label: "together", baseUrl: "https://api.together.xyz/v1" },
+  ],
+  video: [
+    { id: "vllm_omni", label: "vllm_omni", baseUrl: "http://127.0.0.1:8000/v1" },
+    { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
+    { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+    { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
+    { id: "openrouter", label: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+    { id: "mistral", label: "mistral", baseUrl: "https://api.mistral.ai/v1" },
+    { id: "together", label: "together", baseUrl: "https://api.together.xyz/v1" },
+  ],
+};
+const PROVIDER_PRESET_MAP = new Map(
+  Object.values(PROVIDER_PRESETS_BY_TYPE)
+    .flat()
+    .map((item) => [item.id, item]),
+);
 const DEFAULT_BASE_URL_PLACEHOLDER =
   elements.llmBaseUrl?.getAttribute("placeholder") || "https://api.example.com";
 let lastProviderSelection = DEFAULT_PROVIDER_ID;
@@ -48,6 +105,10 @@ const normalizeProviderId = (value) => {
       return "anthropic";
     case "silicon_flow":
       return "siliconflow";
+    case "vllmomni":
+      return "vllm_omni";
+    case "whispercpp":
+      return "whisper_cpp";
     case "kimi":
       return "moonshot";
     case "dashscope":
@@ -63,6 +124,8 @@ const getProviderPreset = (provider) =>
   PROVIDER_PRESET_MAP.get(normalizeProviderId(provider)) || null;
 
 const resolveProviderBaseUrl = (provider) => getProviderPreset(provider)?.baseUrl || "";
+const getProviderPresetsForType = (modelType) =>
+  PROVIDER_PRESETS_BY_TYPE[modelType] || PROVIDER_PRESETS_BY_TYPE.llm;
 
 const resolveDefaultToolCallMode = (provider) =>
   normalizeProviderId(provider) === "openai" ? "freeform_call" : "function_call";
@@ -137,7 +200,7 @@ const normalizeReasoningEffort = (value) => {
   return "";
 };
 
-const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding", "tts", "image", "video"]);
+const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding", "asr", "tts", "image", "video"]);
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) {
@@ -146,6 +209,17 @@ const normalizeModelType = (value) => {
   const normalized = raw.replace(/[\s-]+/g, "_");
   if (normalized === "embed" || normalized === "emb" || normalized === "embeddings") {
     return "embedding";
+  }
+  if (
+    normalized === "asr" ||
+    normalized === "stt" ||
+    normalized === "speech_to_text" ||
+    normalized === "speech2text" ||
+    normalized === "audio_transcription" ||
+    normalized === "transcription" ||
+    normalized === "audio_to_text"
+  ) {
+    return "asr";
   }
   if (
     normalized === "tts" ||
@@ -203,10 +277,14 @@ const resolveDefaultModelNameByType = (desiredName, modelType, models, order) =>
   return order.find((name) => normalizeModelType(models[name]?.model_type) === normalizedType) || "";
 };
 
+const getDefaultProviderIdForType = (modelType) =>
+  normalizeModelType(modelType) === "llm" ? DEFAULT_PROVIDER_ID : "vllm_omni";
+
 const renderProviderOptions = (activeProvider) => {
   if (!elements.llmProvider) {
     return;
   }
+  const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
   const current = normalizeProviderId(activeProvider || elements.llmProvider.value);
   elements.llmProvider.textContent = "";
   if (current && !PROVIDER_PRESET_MAP.has(current)) {
@@ -215,7 +293,7 @@ const renderProviderOptions = (activeProvider) => {
     option.textContent = current;
     elements.llmProvider.appendChild(option);
   }
-  PROVIDER_PRESETS.forEach((item) => {
+  getProviderPresetsForType(modelType).forEach((item) => {
     const option = document.createElement("option");
     option.value = item.id;
     option.textContent = item.label;
@@ -308,17 +386,56 @@ const normalizeTtsResponseFormat = (value) => {
   return ["wav", "mp3", "flac", "aac", "opus", "pcm"].includes(raw) ? raw : "wav";
 };
 
+const normalizeAsrResponseFormat = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  return ["json", "text", "verbose_json", "srt", "vtt"].includes(raw) ? raw : "json";
+};
+
 const normalizeImageOutputFormat = (value) => {
   const raw = String(value || "").trim().toLowerCase();
   return ["png", "jpeg", "webp"].includes(raw) ? raw : "";
 };
 
+const ensureTtsVoiceDatalist = () => {
+  if (!elements.llmTtsVoice || typeof document === "undefined") {
+    return null;
+  }
+  let listId = elements.llmTtsVoice.getAttribute("list");
+  let datalist = listId ? document.getElementById(listId) : null;
+  if (!datalist) {
+    listId = "llmTtsVoiceOptions";
+    datalist = document.getElementById(listId);
+    if (!datalist) {
+      datalist = document.createElement("datalist");
+      datalist.id = listId;
+      document.body.appendChild(datalist);
+    }
+    elements.llmTtsVoice.setAttribute("list", listId);
+  }
+  return datalist;
+};
+
+const renderTtsVoiceOptions = (voices) => {
+  lastTtsVoiceOptions = Array.isArray(voices) ? voices : [];
+  const datalist = ensureTtsVoiceDatalist();
+  if (!datalist) {
+    return;
+  }
+  datalist.textContent = "";
+  lastTtsVoiceOptions.forEach((voice) => {
+    const option = document.createElement("option");
+    option.value = voice;
+    datalist.appendChild(option);
+  });
+};
+
 // 规范化 LLM 配置，避免空值影响展示。
 const normalizeLlmConfig = (raw) => {
-  const provider = normalizeProviderId(raw?.provider || DEFAULT_PROVIDER_ID);
+  const modelType = normalizeModelType(raw?.model_type);
+  const provider = normalizeProviderId(raw?.provider || getDefaultProviderIdForType(modelType));
   return {
     enable: raw?.enable !== false,
-    model_type: normalizeModelType(raw?.model_type),
+    model_type: modelType,
     provider,
     base_url: raw?.base_url || "",
     api_key: raw?.api_key || "",
@@ -360,6 +477,13 @@ const normalizeLlmConfig = (raw) => {
     tts_instructions: raw?.tts_instructions || "",
     tts_response_format: normalizeTtsResponseFormat(raw?.tts_response_format),
     tts_speed: typeof raw?.tts_speed === "number" && !Number.isNaN(raw.tts_speed) ? raw.tts_speed : 1,
+    asr_language: raw?.asr_language || "",
+    asr_prompt: raw?.asr_prompt || "",
+    asr_response_format: normalizeAsrResponseFormat(raw?.asr_response_format),
+    asr_temperature:
+      typeof raw?.asr_temperature === "number" && !Number.isNaN(raw.asr_temperature)
+        ? raw.asr_temperature
+        : 0,
     image_size: raw?.image_size || "",
     image_output_format: normalizeImageOutputFormat(raw?.image_output_format),
     image_negative_prompt: raw?.image_negative_prompt || "",
@@ -437,6 +561,12 @@ const normalizeLlmSet = (raw) => {
     normalizedModels,
     order
   );
+  const defaultAsrName = resolveDefaultModelNameByType(
+    llm.default_asr,
+    "asr",
+    normalizedModels,
+    order
+  );
   const defaultTtsName = resolveDefaultModelNameByType(
     llm.default_tts,
     "tts",
@@ -458,6 +588,7 @@ const normalizeLlmSet = (raw) => {
   return {
     defaultName,
     defaultEmbeddingName,
+    defaultAsrName,
     defaultTtsName,
     defaultImageName,
     defaultVideoName,
@@ -479,14 +610,16 @@ const resetProbeState = () => {
 };
 
 const clearLlmForm = () => {
+  const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
+  const defaultProvider = getDefaultProviderIdForType(modelType);
   if (elements.llmConfigName) {
     elements.llmConfigName.value = "";
   }
   if (elements.llmModelType) {
     elements.llmModelType.value = "llm";
   }
-  renderProviderOptions(DEFAULT_PROVIDER_ID);
-  elements.llmProvider.value = DEFAULT_PROVIDER_ID;
+  renderProviderOptions(defaultProvider);
+  elements.llmProvider.value = defaultProvider;
   elements.llmModel.value = "";
   elements.llmBaseUrl.value = "";
   elements.llmApiKey.value = "";
@@ -502,7 +635,7 @@ const clearLlmForm = () => {
   elements.llmHearing.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
   if (elements.llmToolCallMode) {
-    elements.llmToolCallMode.value = resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID);
+    elements.llmToolCallMode.value = resolveDefaultToolCallMode(defaultProvider);
   }
   if (elements.llmReasoningEffort) {
     elements.llmReasoningEffort.value = "";
@@ -512,6 +645,10 @@ const clearLlmForm = () => {
   if (elements.llmTtsInstructions) elements.llmTtsInstructions.value = "";
   if (elements.llmTtsResponseFormat) elements.llmTtsResponseFormat.value = "wav";
   if (elements.llmTtsSpeed) elements.llmTtsSpeed.value = formatFloatForInput(1, 1);
+  if (elements.llmAsrLanguage) elements.llmAsrLanguage.value = "";
+  if (elements.llmAsrPrompt) elements.llmAsrPrompt.value = "";
+  if (elements.llmAsrResponseFormat) elements.llmAsrResponseFormat.value = "json";
+  if (elements.llmAsrTemperature) elements.llmAsrTemperature.value = formatFloatForInput(0, 0);
   if (elements.llmImageSize) elements.llmImageSize.value = "";
   if (elements.llmImageOutputFormat) elements.llmImageOutputFormat.value = "";
   if (elements.llmImageSteps) elements.llmImageSteps.value = "";
@@ -539,14 +676,15 @@ const clearLlmForm = () => {
   if (elements.llmVideoFlowShift) elements.llmVideoFlowShift.value = "";
   if (elements.llmVideoNegativePrompt) elements.llmVideoNegativePrompt.value = "";
   if (elements.llmVideoFrameInterpolation) elements.llmVideoFrameInterpolation.checked = false;
-  applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
-  lastProviderSelection = DEFAULT_PROVIDER_ID;
+  applyProviderDefaults(defaultProvider, { forceBaseUrl: false });
+  lastProviderSelection = defaultProvider;
   updateLlmTypeVisibility("llm");
 };
 
 const updateLlmTypeVisibility = (modelType) => {
   const normalized = normalizeModelType(modelType || elements.llmModelType?.value || "llm");
   const isLlm = normalized === "llm";
+  const isAsr = normalized === "asr";
   const isTts = normalized === "tts";
   const isImage = normalized === "image";
   const isVideo = normalized === "video";
@@ -564,6 +702,7 @@ const updateLlmTypeVisibility = (modelType) => {
   toggle(elements.llmThinkingTokenBudgetRow, isLlm);
   toggle(elements.llmMaxRoundsRow, isLlm);
   toggle(elements.llmMaxContextRow, isLlm);
+  toggle(elements.llmAsrRows, isAsr);
   toggle(elements.llmTtsRows, isTts);
   toggle(elements.llmImageRows, isImage);
   toggle(elements.llmVideoRows, isVideo);
@@ -574,6 +713,8 @@ const updateLlmTypeVisibility = (modelType) => {
     const titleKey =
       normalized === "tts"
         ? "llm.section.tts"
+        : normalized === "asr"
+          ? "llm.section.asr"
         : normalized === "image"
           ? "llm.section.image"
           : normalized === "video"
@@ -581,6 +722,7 @@ const updateLlmTypeVisibility = (modelType) => {
           : "llm.section.generation";
     elements.llmGenerationTitle.textContent = t(titleKey);
   }
+  renderProviderOptions(elements.llmProvider?.value || DEFAULT_PROVIDER_ID);
 };
 
 // 将 LLM 配置渲染到表单。
@@ -631,6 +773,18 @@ const applyLlmConfigToForm = (name, config) => {
   }
   if (elements.llmTtsSpeed) {
     elements.llmTtsSpeed.value = formatFloatForInput(llm.tts_speed ?? 1, 1);
+  }
+  if (elements.llmAsrLanguage) {
+    elements.llmAsrLanguage.value = llm.asr_language || "";
+  }
+  if (elements.llmAsrPrompt) {
+    elements.llmAsrPrompt.value = llm.asr_prompt || "";
+  }
+  if (elements.llmAsrResponseFormat) {
+    elements.llmAsrResponseFormat.value = normalizeAsrResponseFormat(llm.asr_response_format);
+  }
+  if (elements.llmAsrTemperature) {
+    elements.llmAsrTemperature.value = formatFloatForInput(llm.asr_temperature ?? 0, 0);
   }
   if (elements.llmImageSize) elements.llmImageSize.value = llm.image_size || "";
   if (elements.llmImageOutputFormat) {
@@ -705,6 +859,7 @@ const updateDetailHeader = () => {
     const isDefault =
       (modelType === "llm" && activeName === state.llm.defaultName) ||
       (modelType === "embedding" && activeName === state.llm.defaultEmbeddingName) ||
+      (modelType === "asr" && activeName === state.llm.defaultAsrName) ||
       (modelType === "tts" && activeName === state.llm.defaultTtsName) ||
       (modelType === "image" && activeName === state.llm.defaultImageName) ||
       (modelType === "video" && activeName === state.llm.defaultVideoName);
@@ -724,6 +879,7 @@ const updateDetailHeader = () => {
     const isDefault =
       (modelType === "llm" && activeName === state.llm.defaultName) ||
       (modelType === "embedding" && activeName === state.llm.defaultEmbeddingName) ||
+      (modelType === "asr" && activeName === state.llm.defaultAsrName) ||
       (modelType === "tts" && activeName === state.llm.defaultTtsName) ||
       (modelType === "image" && activeName === state.llm.defaultImageName) ||
       (modelType === "video" && activeName === state.llm.defaultVideoName);
@@ -761,6 +917,8 @@ const renderLlmList = () => {
     const iconClass =
       modelType === "embedding"
         ? "fa-cube"
+        : modelType === "asr"
+          ? "fa-waveform"
         : modelType === "tts"
           ? "fa-volume-high"
           : modelType === "image"
@@ -777,6 +935,7 @@ const renderLlmList = () => {
     const isDefault =
       (modelType === "llm" && name === state.llm.defaultName) ||
       (modelType === "embedding" && name === state.llm.defaultEmbeddingName) ||
+      (modelType === "asr" && name === state.llm.defaultAsrName) ||
       (modelType === "tts" && name === state.llm.defaultTtsName) ||
       (modelType === "image" && name === state.llm.defaultImageName) ||
       (modelType === "video" && name === state.llm.defaultVideoName);
@@ -836,6 +995,15 @@ const buildLlmConfigFromForm = (baseConfig) => {
   };
   if (modelType === "embedding") {
     return commonConfig;
+  }
+  if (modelType === "asr") {
+    return {
+      ...commonConfig,
+      asr_language: elements.llmAsrLanguage?.value.trim() || undefined,
+      asr_prompt: elements.llmAsrPrompt?.value.trim() || undefined,
+      asr_response_format: normalizeAsrResponseFormat(elements.llmAsrResponseFormat?.value),
+      asr_temperature: parseFloatInput(elements.llmAsrTemperature, 0),
+    };
   }
   if (modelType === "tts") {
     return {
@@ -911,6 +1079,18 @@ const buildLlmConfigForPayload = (rawConfig) => {
   };
   if (commonConfig.model_type === "embedding") {
     return commonConfig;
+  }
+  if (commonConfig.model_type === "asr") {
+    return {
+      ...commonConfig,
+      asr_language: config.asr_language || undefined,
+      asr_prompt: config.asr_prompt || undefined,
+      asr_response_format: normalizeAsrResponseFormat(config.asr_response_format),
+      asr_temperature:
+        Number.isFinite(config.asr_temperature) && config.asr_temperature >= 0
+          ? config.asr_temperature
+          : 0,
+    };
   }
   if (commonConfig.model_type === "tts") {
     return {
@@ -1015,12 +1195,34 @@ const selectLlmConfig = (name) => {
   applyLlmConfigToForm(name, state.llm.configs[name]);
   renderLlmList();
   updateDetailHeader();
+  scheduleTtsVoiceProbe();
 };
 
 // 构建模型上下文探测请求体。
 const buildContextProbePayload = () => {
   const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
   if (modelType !== "llm") {
+    return null;
+  }
+  const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
+  const baseUrl = elements.llmBaseUrl.value.trim() || resolveProviderBaseUrl(provider);
+  const model = elements.llmModel.value.trim();
+  const apiKey = elements.llmApiKey.value.trim();
+  if (!baseUrl || !model) {
+    return null;
+  }
+  return {
+    provider,
+    base_url: baseUrl,
+    api_key: apiKey,
+    model,
+    timeout_s: 15,
+  };
+};
+
+const buildTtsVoiceProbePayload = () => {
+  const modelType = normalizeModelType(elements.llmModelType?.value || "llm");
+  if (modelType !== "tts") {
     return null;
   }
   const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
@@ -1128,6 +1330,73 @@ const scheduleContextProbe = () => {
   }, 600);
 };
 
+const requestTtsVoices = async (force = false) => {
+  if (ttsVoiceProbeInFlight) {
+    pendingTtsVoiceProbe = true;
+    return;
+  }
+  const payload = buildTtsVoiceProbePayload();
+  if (!payload) {
+    renderTtsVoiceOptions([]);
+    lastTtsVoiceProbeKey = "";
+    return;
+  }
+  const probeKey = `${payload.provider}|${payload.base_url}|${payload.model}|${payload.api_key ? 1 : 0}`;
+  if (!force && probeKey === lastTtsVoiceProbeKey && lastTtsVoiceOptions.length) {
+    return;
+  }
+  ttsVoiceProbeInFlight = true;
+  try {
+    const wunderBase = getWunderBase();
+    const endpoint = `${wunderBase}/admin/llm/tts_voices`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const latestPayload = buildTtsVoiceProbePayload();
+    const latestKey = latestPayload
+      ? `${latestPayload.provider}|${latestPayload.base_url}|${latestPayload.model}|${
+          latestPayload.api_key ? 1 : 0
+        }`
+      : "";
+    if (latestKey && latestKey !== probeKey) {
+      return;
+    }
+    const voices = Array.isArray(result.voices)
+      ? result.voices.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    renderTtsVoiceOptions(voices);
+    lastTtsVoiceProbeKey = probeKey;
+  } catch (error) {
+    renderTtsVoiceOptions([]);
+    lastTtsVoiceProbeKey = "";
+  } finally {
+    ttsVoiceProbeInFlight = false;
+    if (pendingTtsVoiceProbe) {
+      pendingTtsVoiceProbe = false;
+      setTimeout(() => {
+        requestTtsVoices(true);
+      }, 0);
+    }
+  }
+};
+
+const scheduleTtsVoiceProbe = () => {
+  if (ttsVoiceProbeTimer) {
+    clearTimeout(ttsVoiceProbeTimer);
+  }
+  ttsVoiceProbeTimer = setTimeout(() => {
+    requestTtsVoices(false);
+  }, 400);
+};
+
 const renderDebugModelOptions = () => {
   if (!elements.debugModelName) {
     return;
@@ -1177,6 +1446,7 @@ const applyLlmSet = (raw, options = {}) => {
   state.llm.order = normalized.order;
   state.llm.defaultName = normalized.defaultName;
   state.llm.defaultEmbeddingName = normalized.defaultEmbeddingName;
+  state.llm.defaultAsrName = normalized.defaultAsrName;
   state.llm.defaultTtsName = normalized.defaultTtsName;
   state.llm.defaultImageName = normalized.defaultImageName;
   state.llm.defaultVideoName = normalized.defaultVideoName;
@@ -1265,6 +1535,9 @@ const commitActiveConfigEdits = () => {
     if (state.llm.defaultEmbeddingName === activeName) {
       state.llm.defaultEmbeddingName = desiredName;
     }
+    if (state.llm.defaultAsrName === activeName) {
+      state.llm.defaultAsrName = desiredName;
+    }
     if (state.llm.defaultTtsName === activeName) {
       state.llm.defaultTtsName = desiredName;
     }
@@ -1290,6 +1563,12 @@ const commitActiveConfigEdits = () => {
   state.llm.defaultEmbeddingName = resolveDefaultModelNameByType(
     state.llm.defaultEmbeddingName,
     "embedding",
+    state.llm.configs,
+    state.llm.order
+  );
+  state.llm.defaultAsrName = resolveDefaultModelNameByType(
+    state.llm.defaultAsrName,
+    "asr",
     state.llm.configs,
     state.llm.order
   );
@@ -1333,6 +1612,12 @@ const buildLlmPayload = () => {
     state.llm.configs,
     state.llm.order
   );
+  const defaultAsrName = resolveDefaultModelNameByType(
+    state.llm.defaultAsrName,
+    "asr",
+    state.llm.configs,
+    state.llm.order
+  );
   const defaultTtsName = resolveDefaultModelNameByType(
     state.llm.defaultTtsName,
     "tts",
@@ -1352,12 +1637,14 @@ const buildLlmPayload = () => {
     state.llm.order
   );
   state.llm.defaultEmbeddingName = defaultEmbeddingName;
+  state.llm.defaultAsrName = defaultAsrName;
   state.llm.defaultTtsName = defaultTtsName;
   state.llm.defaultImageName = defaultImageName;
   state.llm.defaultVideoName = defaultVideoName;
   return {
     default: defaultName,
     default_embedding: defaultEmbeddingName || undefined,
+    default_asr: defaultAsrName || undefined,
     default_tts: defaultTtsName || undefined,
     default_image: defaultImageName || undefined,
     default_video: defaultVideoName || undefined,
@@ -1434,6 +1721,14 @@ const handleDeleteConfig = () => {
       state.llm.order
     );
   }
+  if (state.llm.defaultAsrName === activeName) {
+    state.llm.defaultAsrName = resolveDefaultModelNameByType(
+      "",
+      "asr",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
   if (state.llm.defaultTtsName === activeName) {
     state.llm.defaultTtsName = resolveDefaultModelNameByType(
       "",
@@ -1479,6 +1774,8 @@ const handleSetDefault = () => {
   const modelType = normalizeModelType(activeConfig?.model_type);
   if (modelType === "embedding") {
     state.llm.defaultEmbeddingName = activeName;
+  } else if (modelType === "asr") {
+    state.llm.defaultAsrName = activeName;
   } else if (modelType === "tts") {
     state.llm.defaultTtsName = activeName;
   } else if (modelType === "image") {
@@ -1517,6 +1814,23 @@ const handleModelTypeChange = () => {
     return;
   }
   syncActiveConfigToState();
+  const desiredProvider = getDefaultProviderIdForType(modelType);
+  const currentProvider = normalizeProviderId(elements.llmProvider?.value || "");
+  const availableProviders = new Set(
+    getProviderPresetsForType(modelType).map((item) => normalizeProviderId(item.id)),
+  );
+  if (!availableProviders.has(currentProvider)) {
+    renderProviderOptions(desiredProvider);
+    if (elements.llmProvider) {
+      elements.llmProvider.value = desiredProvider;
+    }
+    syncToolCallModeForProvider(desiredProvider, currentProvider);
+    applyProviderDefaults(desiredProvider, {
+      previousProvider: currentProvider,
+      forceBaseUrl: false,
+    });
+    lastProviderSelection = desiredProvider;
+  }
   if (modelType !== "llm" && state.llm.defaultName === activeName) {
     state.llm.defaultName = resolveDefaultLlmName("", state.llm.configs, state.llm.order);
   }
@@ -1524,6 +1838,14 @@ const handleModelTypeChange = () => {
     state.llm.defaultEmbeddingName = resolveDefaultModelNameByType(
       "",
       "embedding",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
+  if (modelType !== "asr" && state.llm.defaultAsrName === activeName) {
+    state.llm.defaultAsrName = resolveDefaultModelNameByType(
+      "",
+      "asr",
       state.llm.configs,
       state.llm.order
     );
@@ -1560,8 +1882,9 @@ const handleModelTypeChange = () => {
 
 // 初始化模型配置面板交互。
 export const initLlmPanel = () => {
-  renderProviderOptions();
+  renderProviderOptions(DEFAULT_PROVIDER_ID);
   updateBaseUrlPlaceholder(DEFAULT_PROVIDER_ID);
+  ensureTtsVoiceDatalist();
   lastProviderSelection = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
   elements.saveLlmBtn.addEventListener("click", async () => {
     try {
@@ -1578,7 +1901,10 @@ export const initLlmPanel = () => {
   elements.llmDeleteBtn?.addEventListener("click", handleDeleteConfig);
   elements.llmSetDefaultBtn?.addEventListener("click", handleSetDefault);
   elements.llmConfigName?.addEventListener("input", handleNameEdit);
-  elements.llmModelType?.addEventListener("change", handleModelTypeChange);
+  elements.llmModelType?.addEventListener("change", () => {
+    handleModelTypeChange();
+    scheduleTtsVoiceProbe();
+  });
   elements.llmProbeContextBtn?.addEventListener("click", () => {
     // 手动触发最大上下文探测，缺少必要字段时给出提示
     if (!buildContextProbePayload()) {
@@ -1588,7 +1914,10 @@ export const initLlmPanel = () => {
     requestContextWindow(true);
   });
 
-  const handleProbeInput = () => scheduleContextProbe();
+  const handleProbeInput = () => {
+    scheduleContextProbe();
+    scheduleTtsVoiceProbe();
+  };
   elements.llmBaseUrl.addEventListener("input", handleProbeInput);
   elements.llmModel.addEventListener("input", handleProbeInput);
   elements.llmApiKey.addEventListener("input", handleProbeInput);
@@ -1603,6 +1932,10 @@ export const initLlmPanel = () => {
   });
   elements.llmBaseUrl.addEventListener("blur", () => requestContextWindow(true));
   elements.llmModel.addEventListener("blur", () => requestContextWindow(true));
+  elements.llmBaseUrl.addEventListener("blur", () => requestTtsVoices(true));
+  elements.llmModel.addEventListener("blur", () => requestTtsVoices(true));
+  elements.llmApiKey.addEventListener("blur", () => requestTtsVoices(true));
+  scheduleTtsVoiceProbe();
 };
 
 

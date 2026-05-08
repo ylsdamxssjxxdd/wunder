@@ -1,6 +1,7 @@
 use super::command_options::parse_dry_run;
 use super::*;
 use super::apply_patch_update::apply_update_chunks_with_diff as apply_update_chunks_with_diff_engine;
+use super::apply_patch_update::{ChunkContextFailureDetail, ChunkContextFailureKind};
 use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
 use crate::monitor::MonitorState;
 
@@ -14,10 +15,10 @@ const END_OF_FILE_MARKER: &str = "*** End of File";
 const PATCH_INPUT_MAX_BYTES: usize = 512 * 1024;
 const PATCH_MAX_FILE_OPS: usize = 200;
 const PATCH_MAX_UPDATE_CHUNKS: usize = 1000;
-const PATCH_STRICT_MAX_UPDATE_FILES_PER_CALL: usize = 3;
-const PATCH_STRICT_MAX_UPDATE_CHUNKS_PER_CALL: usize = 6;
-const PATCH_STRICT_MAX_UPDATE_CHUNKS_PER_FILE: usize = 3;
-const PATCH_STRICT_MAX_CHANGED_LINES_PER_CALL: usize = 240;
+const PATCH_STRICT_MAX_UPDATE_FILES_PER_CALL: usize = 4;
+const PATCH_STRICT_MAX_UPDATE_CHUNKS_PER_CALL: usize = 12;
+const PATCH_STRICT_MAX_UPDATE_CHUNKS_PER_FILE: usize = 8;
+const PATCH_STRICT_MAX_CHANGED_LINES_PER_CALL: usize = 480;
 const PATCH_INPUT_UNWRAP_MAX_DEPTH: usize = 8;
 pub(super) const PATCH_CANCEL_CHECK_INTERVAL: usize = 32;
 
@@ -86,6 +87,17 @@ struct FileChangeSummary {
     diff_blocks: Vec<FileDiffBlock>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct UpdateChunkEffect {
+    has_context: bool,
+    context_lines: usize,
+    has_add: bool,
+    has_delete: bool,
+    old_len: usize,
+    new_len: usize,
+    looks_like_missing_prefixes: bool,
+}
+
 #[derive(Debug, Clone)]
 struct ApplyPatchSummary {
     changed_files: Vec<PathBuf>,
@@ -96,6 +108,7 @@ struct ApplyPatchSummary {
     hunks_applied: usize,
     file_summaries: Vec<FileChangeSummary>,
     no_effect_updates: Vec<String>,
+    no_effect_chunk_effects: Vec<Vec<UpdateChunkEffect>>,
 }
 
 #[derive(Debug, Clone)]
@@ -369,12 +382,13 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
             .cloned()
             .collect::<Vec<_>>()
             .join(", ");
+        let (zh_hint, en_hint) = build_patch_no_effect_hint(&summary.no_effect_chunk_effects);
         return Err(patch_error_with_hint(
             "PATCH_NO_EFFECT",
             format!("补丁没有产生任何实际修改：{sample}"),
             format!("Patch produced no effective change: {sample}"),
-            "这通常表示 Update File 里的 '-' 与 '+' 内容实际相同，或补丁只重复写回原内容。请重新读取文件，确认新增与删除行确实不同后再重试。",
-            "This usually means the Update File '-' and '+' lines are effectively identical, or the patch only rewrote the original content. Re-read the file and ensure added and deleted lines are actually different before retrying.",
+            zh_hint,
+            en_hint,
         ));
     }
 
@@ -505,6 +519,7 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
         hunks_applied,
         file_summaries,
         no_effect_updates: Vec::new(),
+        no_effect_chunk_effects: Vec::new(),
     }
 }
 
@@ -632,13 +647,13 @@ fn enforce_patch_edit_scope(parsed_ops: &[ParsedPatchOp]) -> Result<()> {
     Err(patch_error_with_hint(
         "PATCH_SCOPE_TOO_BROAD",
         format!(
-            "apply_patch 只适合小批量精确编辑；当前补丁包含 {update_files} 个 Update File、{update_chunks} 个变更块、单文件最多 {max_chunks_in_single_file} 个变更块、{changed_lines} 行实际改动，范围过大。"
+            "apply_patch 仍然适合小批量精确编辑；当前补丁包含 {update_files} 个 Update File、{update_chunks} 个变更块、单文件最多 {max_chunks_in_single_file} 个变更块、{changed_lines} 行实际改动，已超过当前允许的放宽范围。"
         ),
         format!(
-            "apply_patch is only for small-batch precise edits; this patch has {update_files} Update File blocks, {update_chunks} change chunks, up to {max_chunks_in_single_file} chunks in one file, and {changed_lines} changed lines, so it is too broad."
+            "apply_patch is still meant for precise batch edits; this patch has {update_files} Update File blocks, {update_chunks} change chunks, up to {max_chunks_in_single_file} chunks in one file, and {changed_lines} changed lines, which exceeds the current relaxed scope."
         ),
-        "请先读取最新文件，再把补丁控制在少量文件和少量区域内；如果单文件有很多分散修改、跨很多文件，或接近整文件重写，请改用 write_file。",
-        "Read the latest file first, then keep the patch to a small number of files and regions; if one file has many scattered edits, the patch spans many files, or it is close to a full rewrite, switch to write_file.",
+        "请先读取最新文件，再把补丁控制在少量文件和少量区域内；如果单文件有很多分散修改、跨很多文件，或已经非常接近整文件重写，请优先改用 write_file。",
+        "Read the latest file first, then keep the patch to a manageable number of files and regions; if one file has many scattered edits, the patch spans many files, or it is already very close to a full rewrite, prefer write_file.",
     ))
 }
 
@@ -1201,6 +1216,7 @@ fn apply_patch_ops(
     let mut moved = 0usize;
     let mut hunks_applied = 0usize;
     let mut no_effect_updates = Vec::new();
+    let mut no_effect_chunk_effects = Vec::new();
 
     for (op_index, op) in ops.into_iter().enumerate() {
         if op_index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
@@ -1307,6 +1323,12 @@ fn apply_patch_ops(
                         .is_some_and(|new_target| *new_target != target);
                 if !had_effect {
                     no_effect_updates.push(path.clone());
+                    no_effect_chunk_effects.push(
+                        chunks
+                            .iter()
+                            .map(analyze_update_chunk_effect)
+                            .collect::<Vec<_>>(),
+                    );
                     continue;
                 }
                 hunks_applied += chunks.len();
@@ -1388,6 +1410,7 @@ fn apply_patch_ops(
         hunks_applied,
         file_summaries,
         no_effect_updates,
+        no_effect_chunk_effects,
     })
 }
 
@@ -1651,6 +1674,14 @@ struct PartialMatchWindow {
     diffs: Vec<(usize, String, String)>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct ChunkShape {
+    leading_context: usize,
+    trailing_context: usize,
+    has_add: bool,
+    has_delete: bool,
+}
+
 #[cfg(test)]
 fn find_chunk_range(
     source_lines: &[String],
@@ -1817,13 +1848,122 @@ fn derive_chunk_search_plan(
     }
 }
 
+fn analyze_chunk_shape(chunk: &UpdateChunk) -> ChunkShape {
+    let mut shape = ChunkShape::default();
+    let mut seen_non_context = false;
+    for line in &chunk.lines {
+        match line.kind {
+            ChunkLineKind::Context => {
+                if seen_non_context {
+                    shape.trailing_context += 1;
+                } else {
+                    shape.leading_context += 1;
+                }
+            }
+            ChunkLineKind::Add => {
+                shape.has_add = true;
+                seen_non_context = true;
+            }
+            ChunkLineKind::Delete => {
+                shape.has_delete = true;
+                seen_non_context = true;
+            }
+        }
+    }
+    shape
+}
+
+fn analyze_update_chunk_effect(chunk: &UpdateChunk) -> UpdateChunkEffect {
+    let mut effect = UpdateChunkEffect::default();
+    let mut previous_context_line: Option<String> = None;
+    for line in &chunk.lines {
+        match line.kind {
+            ChunkLineKind::Context => {
+                effect.has_context = true;
+                effect.context_lines = effect.context_lines.saturating_add(1);
+                if let Some(previous) = previous_context_line.as_deref() {
+                    if looks_like_missing_change_prefix_pair(previous, &line.text) {
+                        effect.looks_like_missing_prefixes = true;
+                    }
+                }
+                previous_context_line = Some(line.text.clone());
+            }
+            ChunkLineKind::Add => {
+                effect.has_add = true;
+                effect.new_len = effect.new_len.saturating_add(1);
+                previous_context_line = None;
+            }
+            ChunkLineKind::Delete => {
+                effect.has_delete = true;
+                effect.old_len = effect.old_len.saturating_add(1);
+                previous_context_line = None;
+            }
+        }
+    }
+    effect
+}
+
+fn looks_like_missing_change_prefix_pair(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    if left.is_empty() || right.is_empty() || left == right {
+        return false;
+    }
+    let left_lhs = left.split_once('=').map(|(lhs, _)| lhs.trim());
+    let right_lhs = right.split_once('=').map(|(lhs, _)| lhs.trim());
+    if let (Some(left_lhs), Some(right_lhs)) = (left_lhs, right_lhs) {
+        return !left_lhs.is_empty() && left_lhs == right_lhs;
+    }
+    false
+}
+
+fn build_patch_no_effect_hint(no_effect_chunk_effects: &[Vec<UpdateChunkEffect>]) -> (String, String) {
+    let effects = no_effect_chunk_effects.iter().flatten().collect::<Vec<_>>();
+    let has_missing_prefixes = effects
+        .iter()
+        .any(|effect| effect.looks_like_missing_prefixes);
+    if has_missing_prefixes {
+        return (
+            "检测到这次补丁里有一些行看起来像同一个赋值语句的旧值/新值，但它们都被当成了普通上下文行。通常是你忘了给旧行加 `-`、给新行加 `+`。请把真正要替换的两行明确写成 `-旧行` 和 `+新行`。".to_string(),
+            "Some lines in this patch look like old/new versions of the same assignment, but they were both treated as ordinary context lines. This usually means the old line is missing `-` and the new line is missing `+`. Rewrite the real replacement as `-old_line` and `+new_line`.".to_string(),
+        );
+    }
+
+    let has_context_only_hunk = effects
+        .iter()
+        .any(|effect| effect.has_context && !effect.has_add && !effect.has_delete);
+    if has_context_only_hunk {
+        return (
+            "这次补丁只有上下文，没有任何真正的新增/删除行。请确认每个 Update File 至少包含一对 `-旧行` / `+新行`，或者把真正改动并回同一个 hunk。".to_string(),
+            "This patch only contains context and no real add/delete lines. Make sure each Update File has at least one `-old_line` / `+new_line` pair, or merge the real edit back into the same hunk.".to_string(),
+        );
+    }
+
+    let has_same_add_delete = effects
+        .iter()
+        .any(|effect| effect.has_add && effect.has_delete && effect.old_len == effect.new_len);
+    if has_same_add_delete {
+        return (
+            "这次补丁里的 `-` 和 `+` 行实际改回了同一个内容，所以文件没有变化。请重新读取最新文件，确认删除行和新增行确实不同后再提交。".to_string(),
+            "The `-` and `+` lines in this patch effectively changed back to the same content, so nothing changed on disk. Re-read the latest file and ensure the deleted and added lines are actually different before retrying.".to_string(),
+        );
+    }
+
+    (
+        "这通常表示 Update File 里的 `-` 与 `+` 内容实际相同，或补丁只重复写回原内容。请重新读取文件，确认新增与删除行确实不同后再重试。".to_string(),
+        "This usually means the Update File `-` and `+` lines are effectively identical, or the patch only rewrote the original content. Re-read the file and ensure added and deleted lines are actually different before retrying.".to_string(),
+    )
+}
+
 pub(super) fn build_context_not_found_hint(
     source_lines: &[String],
     old_lines: &[String],
     cursor: usize,
     chunk: &UpdateChunk,
+    failure: Option<&ChunkContextFailureDetail>,
 ) -> (String, String) {
     let search_plan = derive_chunk_search_plan(source_lines, cursor, chunk);
+    let chunk_shape = analyze_chunk_shape(chunk);
     let expected_preview = format_numbered_preview(old_lines, 0, 4);
     let nearby_start = search_plan.search_start.saturating_sub(2);
     let nearby_preview = format_numbered_preview(source_lines, nearby_start, 6);
@@ -1893,22 +2033,45 @@ pub(super) fn build_context_not_found_hint(
     };
 
     let zh_dup_warn = if has_context_delete_dup {
-        "检测到上下文行与紧随的删除行内容重复：要删除/替换的行不应同时作为上下文行出现，请去掉重复的上下文行。\n"
+        "检测到上下文行与紧随的删除行内容重复：要删除/替换的那一行只能保留为 `-旧行`，不要再把同一行额外写成空格上下文行。请删掉重复的上下文行。\n"
     } else {
         ""
     };
     let en_dup_warn = if has_context_delete_dup {
-        "Detected context line duplicated with the following delete line: a line to be deleted/replaced should not also appear as context. Remove the redundant context line.\n"
+        "Detected a context line duplicated with the following delete line: a line being deleted/replaced should appear only as `-old_line`, not also as a space-context line. Remove the redundant context line.\n"
     } else {
         ""
     };
+    let (zh_fix, en_fix) = match failure.map(|detail| detail.kind) {
+        Some(ChunkContextFailureKind::DuplicateAnchorAfterContextOnlyChunk) => (
+            "检测到前一个变更块是空 hunk，并且当前变更块复用了同一组锚点。通常是多写了一个只有上下文的 @@ 块，导致前一个空块先占用了匹配位置。请删除前一个空 hunk，或把当前插入/替换内容并入同一个 hunk 后再重试。\n".to_string(),
+            "The previous chunk appears to be an empty hunk, and this chunk reuses the same anchor lines. This usually means an extra context-only @@ block consumed the match position first. Remove the earlier empty hunk, or merge the insertion/replacement into a single hunk and retry.\n".to_string(),
+        ),
+        _ => (String::new(), String::new()),
+    };
+    let (zh_insert_fix, en_insert_fix) = if chunk_shape.has_add
+        && !chunk_shape.has_delete
+        && chunk_shape.trailing_context == 0
+    {
+        (
+            "检测到这是一个纯插入 hunk，而且插入内容后面没有稳定的尾部上下文。若当前位置附近存在重复结构，模型很容易把插入点放错。请在插入内容后再保留 1-2 行未修改原文，作为尾部锚点；或者把插入内容并回前后已有上下文所在的同一个 hunk。\n".to_string(),
+            "This appears to be an insertion-only hunk with no stable trailing context after the inserted lines. If similar structure repeats nearby, the insertion point is easy to misplace. Keep 1-2 unchanged lines after the insertion as a trailing anchor, or merge the insertion back into the surrounding hunk.\n".to_string(),
+        )
+    } else if chunk_shape.has_add && !chunk_shape.has_delete && chunk_shape.leading_context == 0 {
+        (
+            "检测到这是一个纯插入 hunk，而且插入内容前面没有稳定的头部上下文。请在插入内容前补 1-2 行未修改原文，作为头部锚点；或者把插入内容并回前后已有上下文所在的同一个 hunk。\n".to_string(),
+            "This appears to be an insertion-only hunk with no stable leading context before the inserted lines. Add 1-2 unchanged lines before the insertion as a leading anchor, or merge the insertion back into the surrounding hunk.\n".to_string(),
+        )
+    } else {
+        (String::new(), String::new())
+    };
 
     let zh_hint = format!(
-        "{zh_dup_warn}请直接读取相关片段并重建补丁，或补充更稳定的 @@ 上下文；不要整文件盲目重读。\n{zh_anchor}\n期望旧片段（前 4 行）：\n{expected_preview}\n邻近源码（从第 {} 行起）：\n{nearby_preview}\n{zh_partial}",
+        "{zh_dup_warn}{zh_fix}{zh_insert_fix}请直接读取相关片段并重建补丁，或补充更稳定的 @@ 上下文；不要整文件盲目重读。\n{zh_anchor}\n期望旧片段（前 4 行）：\n{expected_preview}\n邻近源码（从第 {} 行起）：\n{nearby_preview}\n{zh_partial}",
         nearby_start + 1
     );
     let en_hint = format!(
-        "{en_dup_warn}Read only the relevant excerpt and rebuild the patch, or add more stable @@ context; avoid blindly re-reading the whole file.\n{en_anchor}\nExpected old snippet (first 4 lines):\n{expected_preview}\nNearby source (starting at line {}):\n{nearby_preview}\n{en_partial}",
+        "{en_dup_warn}{en_fix}{en_insert_fix}Read only the relevant excerpt and rebuild the patch, or add more stable @@ context; avoid blindly re-reading the whole file.\n{en_anchor}\nExpected old snippet (first 4 lines):\n{expected_preview}\nNearby source (starting at line {}):\n{nearby_preview}\n{en_partial}",
         nearby_start + 1
     );
     (zh_hint, en_hint)
@@ -2311,6 +2474,28 @@ mod tests {
         assert!(summary.file_summaries.is_empty());
         let content = fs::read_to_string(&file_path).expect("read source file");
         assert_eq!(content, "print('hello')\n");
+
+        let result = build_patch_error_result(anyhow::anyhow!(
+            PatchToolError::new(
+                "PATCH_NO_EFFECT",
+                "补丁没有产生任何实际修改：demo.py".to_string(),
+                Some(
+                    "这次补丁只有上下文，没有任何真正的新增/删除行。请确认每个 Update File 至少包含一对 `-旧行` / `+新行`，或者把真正改动并回同一个 hunk。".to_string()
+                ),
+                true,
+            )
+        ));
+        let hint = result
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("hint"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            hint.contains("没有任何真正的新增/删除行")
+                || hint.contains("at least one `-old_line` / `+new_line` pair"),
+            "unexpected hint: {hint}"
+        );
     }
 
     #[test]
@@ -2727,6 +2912,119 @@ plain context
         assert!(
             hint.contains("line-4") || hint.contains("line-x") || hint.contains("Mismatch samples"),
             "hint should include concrete line diff context: {hint}"
+        );
+    }
+
+    #[test]
+    fn apply_update_chunks_not_found_hint_explains_empty_hunk_duplicate_anchor_case() {
+        let source = "line1\nax.axis('off')\n\n# Body\nbody = 1\n";
+        let chunks = vec![
+            UpdateChunk {
+                change_context: None,
+                lines: vec![
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "ax.axis('off')".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "# Body".to_string(),
+                    },
+                ],
+                end_of_file: false,
+            },
+            UpdateChunk {
+                change_context: None,
+                lines: vec![
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "ax.axis('off')".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Add,
+                        text: "# Canvas background".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Add,
+                        text: "bg = 1".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "".to_string(),
+                    },
+                    ChunkLine {
+                        kind: ChunkLineKind::Context,
+                        text: "# Body".to_string(),
+                    },
+                ],
+                end_of_file: false,
+            },
+        ];
+        let error = apply_update_chunks(source, &chunks, "demo.txt", None)
+            .expect_err("duplicate anchor after context-only hunk should fail with guidance");
+        let result = build_patch_error_result(error);
+        let hint = result
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("hint"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            hint.contains("空 hunk")
+                || hint.contains("上下文")
+                || hint.contains("empty hunk")
+                || hint.contains("context-only"),
+            "unexpected hint: {hint}"
+        );
+        assert!(
+            hint.contains("同一个 hunk")
+                || hint.contains("删除前一个空")
+                || hint.contains("single hunk")
+                || hint.contains("Remove the earlier empty hunk"),
+            "unexpected hint: {hint}"
+        );
+    }
+
+    #[test]
+    fn apply_update_chunks_not_found_hint_explains_insertion_without_trailing_anchor() {
+        let source = "alpha\nanchor\nbody\nanchor\nbody\n";
+        let chunk = UpdateChunk {
+            change_context: None,
+            lines: vec![
+                ChunkLine {
+                    kind: ChunkLineKind::Context,
+                    text: "anchor".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Add,
+                    text: "# inserted".to_string(),
+                },
+            ],
+            end_of_file: false,
+        };
+        let error = apply_update_chunks(source, &[chunk], "demo.txt", None)
+            .expect_err("insertion without trailing anchor should produce a corrective hint");
+        let result = build_patch_error_result(error);
+        let hint = result
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("hint"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            hint.contains("尾部上下文")
+                || hint.contains("trailing context")
+                || hint.contains("尾部锚点")
+                || hint.contains("trailing anchor"),
+            "unexpected hint: {hint}"
         );
     }
 

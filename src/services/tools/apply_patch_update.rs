@@ -6,6 +6,17 @@ use super::apply_patch_tool::{
     UpdateChunk, PATCH_CANCEL_CHECK_INTERVAL,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChunkContextFailureKind {
+    Generic,
+    DuplicateAnchorAfterContextOnlyChunk,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ChunkContextFailureDetail {
+    pub(super) kind: ChunkContextFailureKind,
+}
+
 #[derive(Debug, Clone)]
 struct LineReplacement {
     start: usize,
@@ -98,6 +109,7 @@ fn compute_chunk_replacements(
 ) -> Result<Vec<LineReplacement>> {
     let mut replacements = Vec::new();
     let mut line_index = 0usize;
+    let mut previous_context_only_chunk: Option<(usize, usize, Vec<String>)> = None;
 
     for (index, chunk) in chunks.iter().enumerate() {
         if index % PATCH_CANCEL_CHECK_INTERVAL == 0 {
@@ -128,6 +140,9 @@ fn compute_chunk_replacements(
                     &anchor_lines,
                     line_index,
                     &synthetic_chunk,
+                    Some(&ChunkContextFailureDetail {
+                        kind: ChunkContextFailureKind::Generic,
+                    }),
                 );
                 return Err(patch_error_with_hint(
                     "PATCH_CONTEXT_NOT_FOUND",
@@ -161,8 +176,23 @@ fn compute_chunk_replacements(
             .filter(|line| line.kind != ChunkLineKind::Delete)
             .map(|line| line.text.clone())
             .collect::<Vec<_>>();
+        let has_actual_change = chunk
+            .lines
+            .iter()
+            .any(|line| !matches!(line.kind, ChunkLineKind::Context));
+
+        if !has_actual_change {
+            let pattern = if old_lines.is_empty() {
+                chunk.lines.iter().map(|line| line.text.clone()).collect()
+            } else {
+                old_lines.clone()
+            };
+            previous_context_only_chunk = Some((index, line_index, pattern));
+            continue;
+        }
 
         if old_lines.is_empty() {
+            previous_context_only_chunk = None;
             replacements.push(LineReplacement {
                 start: source_lines.len(),
                 old_len: 0,
@@ -186,8 +216,23 @@ fn compute_chunk_replacements(
         }
 
         let Some(found_index) = found else {
+            let failure_kind = previous_context_only_chunk
+                .as_ref()
+                .and_then(|(prev_index, prev_cursor, prev_pattern)| {
+                    if *prev_index + 1 != index || *prev_cursor != line_index {
+                        return None;
+                    }
+                    if prev_pattern == &pattern {
+                        return Some(ChunkContextFailureKind::DuplicateAnchorAfterContextOnlyChunk);
+                    }
+                    None
+                })
+                .unwrap_or(ChunkContextFailureKind::Generic);
+            let failure = ChunkContextFailureDetail {
+                kind: failure_kind,
+            };
             let (hint_zh, hint_en) =
-                build_context_not_found_hint(source_lines, &pattern, line_index, chunk);
+                build_context_not_found_hint(source_lines, &pattern, line_index, chunk, Some(&failure));
             return Err(patch_error_with_hint(
                 "PATCH_CONTEXT_NOT_FOUND",
                 format!("补丁应用失败：{path} 第 {} 个变更块找不到匹配上下文", index + 1),
@@ -201,6 +246,7 @@ fn compute_chunk_replacements(
             ));
         };
 
+        previous_context_only_chunk = None;
         replacements.push(LineReplacement {
             start: found_index,
             old_len: pattern.len(),

@@ -1552,12 +1552,12 @@
     "zh-CN": "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。"
   },
   "tool.spec.apply_patch.args.input": {
-    "en-US": "Raw apply_patch payload only. Do not wrap it in JSON or Markdown. The text MUST start with *** Begin Patch and end with *** End Patch. CRITICAL: after @@, do not paste plain target lines. Every line in Update File must explicitly start with one of: space = unchanged context, - = old line to remove/replace, + = new line to add/replace. Blank context lines must be written as a single leading space line, not as an empty line. HARD RULES: (1) When the patch is based on read_file output, never copy the display header like \">>> path\". (2) Never copy display line numbers like \"3: code\"; write only the original code text. (3) Include at least 2-3 context lines (space-prefixed) around each change so the tool can locate it. (4) Do not use *** as an old/new separator inside a hunk. (5) A line to be deleted or replaced must appear only as a '-' line, not also as a context (' ') line. Minimal pattern: context line starts with space, changed line pair uses - then +. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch",
-    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。关键规则：@@ 之后不能直接粘贴目标文件内容，Update File 里的每一行都必须显式带前缀，且只允许三种前缀：空格=未修改的上下文行，- = 要删除/替换的旧行，+ = 要新增/替换的新行。空白上下文行也必须写成“单个空格开头的一行”，不能留空行。硬规则：(1) 如果补丁基于 read_file 输出，绝对不要复制 \">>> 路径\" 这类展示文件头；(2) 绝对不要复制 \"3: 代码\" 这类展示行号，只写文件原始代码文本；(3) 每处变更前后至少保留 2-3 行上下文行（空格开头），帮助工具定位位置；(4) 不要在 hunk 内用 *** 分隔旧内容和新内容；(5) 要删除或替换的行只能用 '-' 前缀，不能同时再用空格前缀作为上下文行重复出现。最小正确模式：上下文行用空格开头，真正改动必须成对写成 -旧行 / +新行。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch"
+    "en-US": "Raw apply_patch payload only. Do not wrap it in JSON or Markdown. The text MUST start with *** Begin Patch and end with *** End Patch. CRITICAL: after @@, do not paste plain target lines. Every line in Update File must explicitly start with one of: space = unchanged context, - = old line to remove/replace, + = new line to add/replace. Blank context lines must be written as a single leading space line, not as an empty line. Prefer one small patch at a time and keep each patch to a small number of files and local regions. HARD RULES: (1) When the patch is based on read_file output, never copy the display header like \">>> path\". (2) Never copy display line numbers like \"3: code\"; write only the original code text. (3) Include at least 2-3 context lines (space-prefixed) around each change so the tool can locate it. (4) Do not use *** as an old/new separator inside a hunk. (5) A line to be deleted or replaced must appear only as a '-' line, not also as a context (' ') line. (6) Do not repeat old/new target lines as plain context lines; real changes must be written as -old followed by +new. Recommended workflow for weaker models: read the exact excerpt first, build one tiny patch, use dry_run when unsure, then apply for real. If the edit touches many distant regions or most of the file, switch to write_file. Minimal pattern: context line starts with space, changed line pair uses - then +. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch",
+    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。关键规则：@@ 之后不能直接粘贴目标文件内容，Update File 里的每一行都必须显式带前缀，且只允许三种前缀：空格=未修改的上下文行，- = 要删除/替换的旧行，+ = 要新增/替换的新行。空白上下文行也必须写成“单个空格开头的一行”，不能留空行。优先一次只做一个小 patch，并把每次补丁控制在少量文件、少量局部区域内。硬规则：(1) 如果补丁基于 read_file 输出，绝对不要复制 \">>> 路径\" 这类展示文件头；(2) 绝对不要复制 \"3: 代码\" 这类展示行号，只写文件原始代码文本；(3) 每处变更前后至少保留 2-3 行上下文行（空格开头），帮助工具定位位置；(4) 不要在 hunk 内用 *** 分隔旧内容和新内容；(5) 要删除或替换的行只能用 '-' 前缀，不能同时再用空格前缀作为上下文行重复出现；(6) 不要把旧行和新行都写成普通上下文行，真正改动必须明确写成 -旧行 再 +新行。对能力较弱的模型，推荐流程是：先 read_file 读取精确片段，再构造一个很小的 patch；如果不确定，先加 dry_run 预演，确认后再正式提交；如果修改跨很多分散区域，或者接近整文件改写，请直接改用 write_file。最小正确模式：上下文行用空格开头，真正改动必须成对写成 -旧行 / +新行。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply precise edits with apply_patch grammar. This tool is for small-batch edits only: a few files, a few hunks, clear local context. It is not a free-form diff tool and not for broad rewrites; use write_file for full-file replacement. Recommended workflow: (1) read the exact file or excerpt first; (2) build one small patch; (3) after @@, write every line explicitly as space-context / -old / +new instead of pasting raw target lines; (4) keep 2-3 context lines around each change; (5) after a failure, rebuild from the closest matching excerpt rather than blindly re-reading the whole file. Never paste read_file display artifacts such as \">>> path\" or \"123: code\" into the patch. Do not use unified diff headers like \"@@ -1,3 +1,3 @@\" as the only locator; prefer raw context lines from the current file.",
-    "zh-CN": "按 apply_patch grammar 做精确编辑。这个工具只适合小批量修改：少量文件、少量 hunk、明确的局部上下文。它不是自由 diff 工具，也不适合大范围重写；整文件替换请改用写入文件。推荐用法：1. 修改前先 read_file 读取目标文件或局部片段；2. 一次只提交一个小 patch；3. @@ 之后不要直接粘贴目标文件内容，而是把每一行明确写成“空格上下文 / -旧行 / +新行”；4. 每处修改前后保留 2-3 行上下文行（空格开头）；5. 如果失败，优先基于最接近的相关片段重建补丁，不要盲目整文件重读。不要把 read_file 输出里的 \">>> 路径\" 或 \"123: 代码\" 这类展示内容粘进补丁。不要只写 unified diff 风格的 \"@@ -1,3 +1,3 @@\" 头当定位信息，应优先使用当前文件里的原始上下文行来定位。"
+    "en-US": "Apply precise edits with apply_patch grammar. This tool is for small-batch edits only: a few files, a few hunks, clear local context. It is not a free-form diff tool and not for broad rewrites; use write_file for full-file replacement. Recommended workflow: (1) read the exact file or excerpt first; (2) build one small patch; (3) when unsure, prefer dry_run first; (4) after @@, write every line explicitly as space-context / -old / +new instead of pasting raw target lines; (5) keep 2-3 context lines around each change; (6) after a failure, rebuild from the closest matching excerpt rather than blindly re-reading the whole file. Never paste read_file display artifacts such as \">>> path\" or \"123: code\" into the patch. Do not use unified diff headers like \"@@ -1,3 +1,3 @@\" as the only locator; prefer raw context lines from the current file. If the change spans many distant regions, many files, or most of one file, stop using apply_patch and switch to write_file.",
+    "zh-CN": "按 apply_patch grammar 做精确编辑。这个工具只适合小批量修改：少量文件、少量 hunk、明确的局部上下文。它不是自由 diff 工具，也不适合大范围重写；整文件替换请改用写入文件。推荐用法：1. 修改前先 read_file 读取目标文件或局部片段；2. 一次只提交一个小 patch；3. 如果不确定，优先先用 dry_run 预演；4. @@ 之后不要直接粘贴目标文件内容，而是把每一行明确写成“空格上下文 / -旧行 / +新行”；5. 每处修改前后保留 2-3 行上下文行（空格开头）；6. 如果失败，优先基于最接近的相关片段重建补丁，不要盲目整文件重读。不要把 read_file 输出里的 \">>> 路径\" 或 \"123: 代码\" 这类展示内容粘进补丁。不要只写 unified diff 风格的 \"@@ -1,3 +1,3 @@\" 头当定位信息，应优先使用当前文件里的原始上下文行来定位。如果修改跨很多分散区域、很多文件，或已经接近整文件重写，就不要继续用 apply_patch，直接改用 write_file。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
@@ -2214,6 +2214,46 @@
   "tool.spec.generate_speech.args.speed": {
     "en-US": "Optional playback speed.",
     "zh-CN": "可选，播放速度。"
+  },
+  "tool.spec.transcribe_speech.description": {
+    "en-US": "Transcribe an audio file in the current workspace with the configured speech-to-text model and return the recognized text.",
+    "zh-CN": "使用已配置的声转文模型转写当前工作区中的音频文件，并返回识别文本。"
+  },
+  "tool.spec.transcribe_speech.args.path": {
+    "en-US": "Workspace-relative audio path. You can also pass a /workspaces/... public path.",
+    "zh-CN": "工作区相对音频路径，也可传 /workspaces/... 公共路径。"
+  },
+  "tool.spec.transcribe_speech.args.source_public_path": {
+    "en-US": "Optional explicit public workspace path to the source audio file.",
+    "zh-CN": "可选，显式指定源音频的工作区公共路径。"
+  },
+  "tool.spec.transcribe_speech.args.model_name": {
+    "en-US": "Optional speech-to-text model config name. Empty uses the default ASR model.",
+    "zh-CN": "可选，声转文模型配置名称；留空使用默认 ASR 模型。"
+  },
+  "tool.spec.transcribe_speech.args.language": {
+    "en-US": "Optional recognition language hint, such as zh or en.",
+    "zh-CN": "可选，识别语言提示，例如 zh 或 en。"
+  },
+  "tool.spec.transcribe_speech.args.prompt": {
+    "en-US": "Optional transcription prompt or style hint.",
+    "zh-CN": "可选，转写提示词或风格约束。"
+  },
+  "tool.spec.transcribe_speech.args.response_format": {
+    "en-US": "Optional response format, such as json / text / verbose_json / srt / vtt.",
+    "zh-CN": "可选，返回格式，例如 json / text / verbose_json / srt / vtt。"
+  },
+  "tool.spec.transcribe_speech.args.temperature": {
+    "en-US": "Optional decoding temperature.",
+    "zh-CN": "可选，解码温度。"
+  },
+  "tool.spec.transcribe_speech.args.filename": {
+    "en-US": "Optional override filename for upload/transcription requests.",
+    "zh-CN": "可选，上传/转写请求使用的文件名覆盖值。"
+  },
+  "tool.spec.transcribe_speech.args.content_type": {
+    "en-US": "Optional override MIME type for the source audio.",
+    "zh-CN": "可选，源音频的 MIME 类型覆盖值。"
   },
   "tool.spec.generate_image.description": {
     "en-US": "Generate an image with the configured image model, save it into the current workspace, and return the saved file path.",

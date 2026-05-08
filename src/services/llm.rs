@@ -32,6 +32,8 @@ const DEFAULT_QWEN_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-m
 const DEFAULT_GROQ_BASE_URL: &str = "https://api.groq.com/openai/v1";
 const DEFAULT_MISTRAL_BASE_URL: &str = "https://api.mistral.ai/v1";
 const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
+const DEFAULT_VLLM_OMNI_BASE_URL: &str = "http://127.0.0.1:8000/v1";
+const DEFAULT_WHISPER_CPP_BASE_URL: &str = "http://127.0.0.1:8080";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8_192;
@@ -52,6 +54,7 @@ const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 4] = [
 pub enum ModelType {
     Llm,
     Embedding,
+    Asr,
     Tts,
     Image,
     Video,
@@ -77,6 +80,8 @@ pub fn normalize_model_type(value: Option<&str>) -> ModelType {
     }
     match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "embedding" | "embed" | "emb" => ModelType::Embedding,
+        "asr" | "stt" | "speech_to_text" | "speech2text" | "audio_transcription"
+        | "transcription" | "audio_to_text" => ModelType::Asr,
         "tts" | "speech" | "text_to_speech" | "text2speech" | "audio_speech" => ModelType::Tts,
         "image" | "draw" | "drawing" | "text_to_image" | "text2image" | "image_generation" => {
             ModelType::Image
@@ -97,6 +102,10 @@ pub fn is_embedding_model(config: &LlmModelConfig) -> bool {
 
 pub fn is_llm_model(config: &LlmModelConfig) -> bool {
     normalize_model_type(config.model_type.as_deref()) == ModelType::Llm
+}
+
+pub fn is_asr_model(config: &LlmModelConfig) -> bool {
+    normalize_model_type(config.model_type.as_deref()) == ModelType::Asr
 }
 
 pub fn is_tts_model(config: &LlmModelConfig) -> bool {
@@ -155,7 +164,7 @@ fn disable_thinking_requested(config: &LlmModelConfig) -> bool {
 fn should_emit_enable_thinking_flag(config: &LlmModelConfig) -> bool {
     matches!(
         normalize_provider(config.provider.as_deref()).as_str(),
-        "openai_compatible" | "qwen" | "vllm" | "vllm_ascend"
+        "openai_compatible" | "qwen" | "vllm" | "vllm_ascend" | "vllm_omni"
     )
 }
 
@@ -163,7 +172,7 @@ fn should_emit_vllm_chat_template_kwargs(config: &LlmModelConfig) -> bool {
     let provider = normalize_provider(config.provider.as_deref());
     matches!(
         provider.as_str(),
-        "openai_compatible" | "vllm" | "vllm_ascend"
+        "openai_compatible" | "vllm" | "vllm_ascend" | "vllm_omni"
     )
 }
 
@@ -1277,6 +1286,11 @@ pub fn normalize_provider(provider: Option<&str>) -> String {
         "groq" => "groq".to_string(),
         "mistral" => "mistral".to_string(),
         "together" => "together".to_string(),
+        "vllm_omni" => "vllm_omni".to_string(),
+        "vllmomni" => "vllm_omni".to_string(),
+        "vllm_omni_api" => "vllm_omni".to_string(),
+        "whisper_cpp" => "whisper_cpp".to_string(),
+        "whispercpp" => "whisper_cpp".to_string(),
         "ollama" => "ollama".to_string(),
         "lm_studio" => "lmstudio".to_string(),
         "lmstudio" => "lmstudio".to_string(),
@@ -1300,6 +1314,8 @@ pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
         "groq" => Some(DEFAULT_GROQ_BASE_URL),
         "mistral" => Some(DEFAULT_MISTRAL_BASE_URL),
         "together" => Some(DEFAULT_TOGETHER_BASE_URL),
+        "vllm_omni" => Some(DEFAULT_VLLM_OMNI_BASE_URL),
+        "whisper_cpp" => Some(DEFAULT_WHISPER_CPP_BASE_URL),
         "ollama" => Some(DEFAULT_OLLAMA_BASE_URL),
         "lmstudio" => Some(DEFAULT_LMSTUDIO_BASE_URL),
         _ => None,

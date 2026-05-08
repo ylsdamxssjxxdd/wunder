@@ -49,6 +49,7 @@ export const state = {
     performance: false,
     simLab: false,
     evaluation: false,
+    multimodalDebug: false,
     docsSite: false,
     mcp: false,
     lsp: false,
@@ -68,6 +69,12 @@ export const state = {
     running: false,
     samples: [],
     history: [],
+  },
+  multimodalDebug: {
+    loaded: false,
+    busy: false,
+    lastResult: null,
+    previewObjectUrl: null,
   },
   mcp: {
     servers: [],
@@ -181,6 +188,7 @@ export const state = {
     order: [],
     defaultName: "",
     defaultEmbeddingName: "",
+    defaultAsrName: "",
     defaultTtsName: "",
     defaultImageName: "",
     defaultVideoName: "",

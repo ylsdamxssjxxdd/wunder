@@ -594,6 +594,27 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
+            name: multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH.to_string(),
+            title: None,
+            description: t("tool.spec.transcribe_speech.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": t("tool.spec.transcribe_speech.args.path")},
+                    "source_public_path": {"type": "string", "description": t("tool.spec.transcribe_speech.args.source_public_path")},
+                    "model_name": {"type": "string", "description": t("tool.spec.transcribe_speech.args.model_name")},
+                    "language": {"type": "string", "description": t("tool.spec.transcribe_speech.args.language")},
+                    "prompt": {"type": "string", "description": t("tool.spec.transcribe_speech.args.prompt")},
+                    "response_format": {"type": "string", "description": t("tool.spec.transcribe_speech.args.response_format")},
+                    "temperature": {"type": "number", "description": t("tool.spec.transcribe_speech.args.temperature")},
+                    "filename": {"type": "string", "description": t("tool.spec.transcribe_speech.args.filename")},
+                    "content_type": {"type": "string", "description": t("tool.spec.transcribe_speech.args.content_type")}
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
             name: multimodal_generation_tool::TOOL_GENERATE_IMAGE.to_string(),
             title: None,
             description: t("tool.spec.generate_image.description"),
@@ -677,7 +698,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "input": {"type": "string", "description": t("tool.spec.apply_patch.args.input")},
-                    "dry_run": {"type": "boolean", "description": "Parse and resolve patch targets without writing files."}
+                    "dry_run": {"type": "boolean", "description": "Preview whether the patch can be parsed and matched without writing files. Prefer dry_run first when the patch was built from a fresh read or when you are unsure about context matching."}
                 },
                 "required": ["input"],
                 "additionalProperties": false
@@ -1139,6 +1160,10 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         multimodal_generation_tool::TOOL_GENERATE_SPEECH.to_string(),
     );
     map.insert(
+        multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH_ALIAS.to_string(),
+        multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH.to_string(),
+    );
+    map.insert(
         multimodal_generation_tool::TOOL_GENERATE_IMAGE_ALIAS.to_string(),
         multimodal_generation_tool::TOOL_GENERATE_IMAGE.to_string(),
     );
@@ -1288,6 +1313,11 @@ fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     {
         return false;
     }
+    if canonical == multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH
+        && !multimodal_generation_tool::transcribe_tool_available(config)
+    {
+        return false;
+    }
     if canonical == multimodal_generation_tool::TOOL_GENERATE_IMAGE
         && !multimodal_generation_tool::image_tool_available(config)
     {
@@ -1408,6 +1438,9 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
             Some(multimodal_generation_tool::TOOL_GENERATE_SPEECH_ALIAS)
+        }
+        multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH => {
+            Some(multimodal_generation_tool::TOOL_TRANSCRIBE_SPEECH_ALIAS)
         }
         multimodal_generation_tool::TOOL_GENERATE_IMAGE => {
             Some(multimodal_generation_tool::TOOL_GENERATE_IMAGE_ALIAS)

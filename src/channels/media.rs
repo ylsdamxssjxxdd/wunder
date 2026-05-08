@@ -1,5 +1,6 @@
 use crate::channels::types::{ChannelAttachment, ChannelLocation, ChannelMessage};
 use crate::config::{ChannelAsrConfig, ChannelMediaConfig, ChannelTtsConfig};
+use crate::llm::normalize_provider;
 use crate::schemas::AttachmentPayload;
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::STANDARD;
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_TTS_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_WHISPER_CPP_ASR_BASE_URL: &str = "http://127.0.0.1:8080";
 
 #[derive(Debug, Clone)]
 pub struct MediaProcessingResult {
@@ -173,7 +175,7 @@ impl MediaProcessor {
         }
     }
 
-    async fn transcribe_audio(&self, attachment: &ChannelAttachment) -> Result<Option<String>> {
+async fn transcribe_audio(&self, attachment: &ChannelAttachment) -> Result<Option<String>> {
         let config = &self.config.asr;
         if !config.enabled {
             return Ok(None);
@@ -182,10 +184,11 @@ impl MediaProcessor {
             .provider
             .as_deref()
             .unwrap_or("openai")
-            .trim()
-            .to_ascii_lowercase();
+            .trim();
+        let provider = normalize_provider(Some(provider));
         match provider.as_str() {
             "openai" | "openai_compatible" => self.transcribe_openai(config, attachment).await,
+            "whisper_cpp" => self.transcribe_whisper_cpp(config, attachment).await,
             _ => self.transcribe_webhook(config, attachment).await,
         }
     }
@@ -301,8 +304,15 @@ impl MediaProcessor {
         }
         let base_url = config
             .base_url
-            .as_deref()
-            .unwrap_or(DEFAULT_ASR_BASE_URL)
+            .as_deref();
+        let provider = normalize_provider(config.provider.as_deref());
+        let is_whisper_cpp = provider == "whisper_cpp";
+        let base_url = base_url
+            .unwrap_or(if is_whisper_cpp {
+                DEFAULT_WHISPER_CPP_ASR_BASE_URL
+            } else {
+                DEFAULT_ASR_BASE_URL
+            })
             .trim()
             .trim_end_matches('/');
         let model = config.model.as_deref().unwrap_or("whisper-1").trim();
@@ -318,19 +328,90 @@ impl MediaProcessor {
         };
         let bytes = fetch_bytes(&self.http, &attachment.url, max_bytes).await?;
         let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            format!("Bearer {api_key}").parse::<HeaderValue>()?,
-        );
+        if !is_whisper_cpp {
+            headers.insert(
+                AUTHORIZATION,
+                format!("Bearer {api_key}").parse::<HeaderValue>()?,
+            );
+        }
         let part = Part::bytes(bytes).file_name(filename.to_string());
-        let form = Form::new()
-            .part("file", part)
-            .text("model", model.to_string());
+        let mut form = Form::new().part("file", part);
+        let endpoint = if is_whisper_cpp {
+            if let Some(language) = config
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && *value != "whisper-1")
+            {
+                form = form.text("language", language.to_string());
+            }
+            form = form.text("response_format", "json".to_string());
+            format!("{base_url}/inference")
+        } else {
+            form = form.text("model", model.to_string());
+            format!("{base_url}/audio/transcriptions")
+        };
         let timeout = Duration::from_secs(config.timeout_s.max(10));
         let response = self
             .http
-            .post(format!("{base_url}/audio/transcriptions"))
+            .post(endpoint)
             .headers(headers)
+            .timeout(timeout)
+            .multipart(form)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        let text = body
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        Ok(text)
+    }
+
+    async fn transcribe_whisper_cpp(
+        &self,
+        config: &ChannelAsrConfig,
+        attachment: &ChannelAttachment,
+    ) -> Result<Option<String>> {
+        let base_url = config
+            .base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_WHISPER_CPP_ASR_BASE_URL)
+            .trim()
+            .trim_end_matches('/');
+        if base_url.is_empty() {
+            return Ok(None);
+        }
+        let max_bytes = if config.max_bytes == 0 {
+            25 * 1024 * 1024
+        } else {
+            config.max_bytes
+        };
+        let bytes = fetch_bytes(&self.http, &attachment.url, max_bytes).await?;
+        let filename = attachment
+            .name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("audio");
+        let mut form = Form::new()
+            .part("file", Part::bytes(bytes).file_name(filename.to_string()))
+            .text("response_format", "json");
+        if let Some(model) = config
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            form = form.text("model", model.to_string());
+        }
+        let timeout = Duration::from_secs(config.timeout_s.max(10));
+        let response = self
+            .http
+            .post(format!("{base_url}/inference"))
             .timeout(timeout)
             .multipart(form)
             .send()

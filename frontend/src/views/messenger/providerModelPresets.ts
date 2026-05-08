@@ -4,7 +4,13 @@ export type ProviderModelPreset = {
   maxContext?: number;
 };
 
-const PROVIDER_MODEL_PRESETS: Record<string, ProviderModelPreset[]> = {
+export type ProviderModelType = 'llm' | 'embedding' | 'asr' | 'tts' | 'image' | 'video';
+
+const PROVIDER_MODEL_PRESETS_BY_TYPE: Record<
+  ProviderModelType,
+  Record<string, ProviderModelPreset[]>
+> = {
+  llm: {
   openai_compatible: [
     { id: 'gpt-5.1', maxContext: 128000 },
     { id: 'gpt-5', maxContext: 128000 },
@@ -110,6 +116,81 @@ const PROVIDER_MODEL_PRESETS: Record<string, ProviderModelPreset[]> = {
     { id: 'mistralai/mistral-7b-instruct-v0.3', maxContext: 32768 },
     { id: 'google/gemma-2-9b-it', maxContext: 8192 }
   ]
+  },
+  embedding: {
+    vllm_omni: [
+      { id: 'BAAI/bge-m3', maxContext: 8192 },
+      { id: 'Qwen/Qwen3-Embedding-8B', maxContext: 32768 }
+    ],
+    openai_compatible: [
+      { id: 'text-embedding-3-large', maxContext: 8192 },
+      { id: 'text-embedding-3-small', maxContext: 8192 }
+    ],
+    siliconflow: [{ id: 'BAAI/bge-m3', maxContext: 8192 }],
+    qwen: [{ id: 'text-embedding-v4', maxContext: 8192 }]
+  },
+  asr: {
+    vllm_omni: [
+      { id: 'fixie-ai/ultravox-v0_5-llama-3_2-1b', maxContext: 32768 },
+      { id: 'openai/whisper-large-v3-turbo', maxContext: 32768 }
+    ],
+    whisper_cpp: [
+      { id: 'whisper.cpp', label: 'whisper.cpp server' },
+      { id: 'ggml-large-v3-turbo', label: 'ggml-large-v3-turbo' }
+    ],
+    openai_compatible: [
+      { id: 'whisper-1', maxContext: 32768 },
+      { id: 'gpt-4o-mini-transcribe', maxContext: 32768 }
+    ],
+    openai: [
+      { id: 'whisper-1', maxContext: 32768 },
+      { id: 'gpt-4o-mini-transcribe', maxContext: 32768 }
+    ],
+    siliconflow: [{ id: 'FunAudioLLM/SenseVoiceSmall', maxContext: 32768 }],
+    qwen: [{ id: 'qwen-audio-asr', maxContext: 32768 }]
+  },
+  tts: {
+    vllm_omni: [
+      { id: 'hexgrad/Kokoro-82M', maxContext: 32768 },
+      { id: 'cartesia/sonic-2', maxContext: 32768 }
+    ],
+    openai_compatible: [
+      { id: 'gpt-4o-mini-tts', maxContext: 32768 },
+      { id: 'tts-1', maxContext: 32768 },
+      { id: 'tts-1-hd', maxContext: 32768 }
+    ],
+    openai: [
+      { id: 'gpt-4o-mini-tts', maxContext: 32768 },
+      { id: 'tts-1', maxContext: 32768 },
+      { id: 'tts-1-hd', maxContext: 32768 }
+    ],
+    siliconflow: [{ id: 'FunAudioLLM/CosyVoice2-0.5B', maxContext: 32768 }],
+    qwen: [{ id: 'qwen-tts-latest', maxContext: 32768 }]
+  },
+  image: {
+    vllm_omni: [
+      { id: 'black-forest-labs/FLUX.1-schnell', maxContext: 32768 },
+      { id: 'stabilityai/stable-diffusion-xl-base-1.0', maxContext: 32768 }
+    ],
+    openai_compatible: [{ id: 'gpt-image-1', maxContext: 32768 }],
+    openai: [{ id: 'gpt-image-1', maxContext: 32768 }],
+    siliconflow: [
+      { id: 'black-forest-labs/FLUX.1-schnell', maxContext: 32768 },
+      { id: 'stabilityai/stable-diffusion-xl-base-1.0', maxContext: 32768 }
+    ],
+    openrouter: [{ id: 'google/gemini-2.5-flash-image-preview', maxContext: 1048576 }],
+    mistral: [{ id: 'black-forest-labs/FLUX.1-schnell', maxContext: 32768 }]
+  },
+  video: {
+    vllm_omni: [
+      { id: 'genmo/mochi-1-preview', maxContext: 32768 },
+      { id: 'Lightricks/LTX-Video', maxContext: 32768 }
+    ],
+    openai_compatible: [{ id: 'genmo/mochi-1-preview', maxContext: 32768 }],
+    openai: [{ id: 'sora-1', maxContext: 32768 }],
+    siliconflow: [{ id: 'Lightricks/LTX-Video', maxContext: 32768 }],
+    openrouter: [{ id: 'genmo/mochi-1-preview', maxContext: 32768 }]
+  }
 };
 
 const normalizeProviderId = (value: unknown): string => {
@@ -119,6 +200,18 @@ const normalizeProviderId = (value: unknown): string => {
     .replace(/[\s-]+/g, '_');
   if (normalized === 'claude' || normalized === 'anthropic_api') {
     return 'anthropic';
+  }
+  if (normalized === 'openai_compat') {
+    return 'openai_compatible';
+  }
+  if (normalized === 'lm_studio') {
+    return 'lmstudio';
+  }
+  if (normalized === 'vllmomni') {
+    return 'vllm_omni';
+  }
+  if (normalized === 'whispercpp') {
+    return 'whisper_cpp';
   }
   return normalized;
 };
@@ -160,22 +253,27 @@ const inferContextFromModelId = (value: unknown): number | null => {
   return inferred;
 };
 
-export const getProviderModelPresets = (provider: unknown): ProviderModelPreset[] =>
-  PROVIDER_MODEL_PRESETS[normalizeProviderId(provider)] || [];
+export const getProviderModelPresets = (
+  provider: unknown,
+  modelType: ProviderModelType = 'llm'
+): ProviderModelPreset[] =>
+  PROVIDER_MODEL_PRESETS_BY_TYPE[modelType]?.[normalizeProviderId(provider)] || [];
 
 export const resolveAnyProviderModelPresetMaxContext = (model: unknown): number | null => {
   const modelId = normalizeModelId(model);
   if (!modelId) return null;
   let matchedMaxContext: number | null = null;
-  Object.values(PROVIDER_MODEL_PRESETS).forEach((presets) => {
-    presets.forEach((item) => {
-      if (normalizeModelId(item.id) !== modelId) return;
-      const parsed = Number(item.maxContext);
-      if (!Number.isFinite(parsed) || parsed <= 0) return;
-      const normalized = Math.round(parsed);
-      if (matchedMaxContext === null || normalized > matchedMaxContext) {
-        matchedMaxContext = normalized;
-      }
+  Object.values(PROVIDER_MODEL_PRESETS_BY_TYPE).forEach((presetsByProvider) => {
+    Object.values(presetsByProvider).forEach((presets) => {
+      presets.forEach((item) => {
+        if (normalizeModelId(item.id) !== modelId) return;
+        const parsed = Number(item.maxContext);
+        if (!Number.isFinite(parsed) || parsed <= 0) return;
+        const normalized = Math.round(parsed);
+        if (matchedMaxContext === null || normalized > matchedMaxContext) {
+          matchedMaxContext = normalized;
+        }
+      });
     });
   });
   if (matchedMaxContext !== null) {
@@ -184,10 +282,14 @@ export const resolveAnyProviderModelPresetMaxContext = (model: unknown): number 
   return inferContextFromModelId(modelId);
 };
 
-export const resolveProviderModelPresetMaxContext = (provider: unknown, model: unknown): number | null => {
+export const resolveProviderModelPresetMaxContext = (
+  provider: unknown,
+  model: unknown,
+  modelType: ProviderModelType = 'llm'
+): number | null => {
   const modelId = normalizeModelId(model);
   if (!modelId) return null;
-  const presets = getProviderModelPresets(provider);
+  const presets = getProviderModelPresets(provider, modelType);
   const matched = presets.find((item) => normalizeModelId(item.id) === modelId);
   if (Number.isFinite(Number(matched?.maxContext)) && Number(matched?.maxContext) > 0) {
     return Math.round(Number(matched?.maxContext));
