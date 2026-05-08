@@ -146,6 +146,9 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: frontendPort,
+      fs: {
+        allow: [path.resolve(__dirname, '..')]
+      },
       proxy: {
         '/docs': makeProxyRule(),
         '/third': makeProxyRule(),

@@ -50,115 +50,6 @@ const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 const USER_DASHBOARD_TTL_MS = 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
-const TOOL_HEATMAP_ICON_RULES = [
-  { keyword: "用户世界工具", icon: "fa-earth-asia" },
-  { keyword: "user_world", icon: "fa-earth-asia" },
-  { keyword: "user world", icon: "fa-earth-asia" },
-  { keyword: "会话让出", icon: "fa-share-from-square" },
-  { keyword: "sessions_yield", icon: "fa-share-from-square" },
-  { keyword: "session yield", icon: "fa-share-from-square" },
-  { keyword: "yield", icon: "fa-share-from-square" },
-  { keyword: "自我状态", icon: "fa-gauge-high" },
-  { keyword: "self_status", icon: "fa-gauge-high" },
-  { keyword: "self status", icon: "fa-gauge-high" },
-  { keyword: "桌面控制器", icon: "fa-computer-mouse" },
-  { keyword: "desktop_controller", icon: "fa-computer-mouse" },
-  { keyword: "desktop controller", icon: "fa-computer-mouse" },
-  { keyword: "桌面监视器", icon: "fa-display" },
-  { keyword: "桌面监控", icon: "fa-display" },
-  { keyword: "desktop_monitor", icon: "fa-display" },
-  { keyword: "desktop monitor", icon: "fa-display" },
-  { keyword: "计划面板", icon: "fa-table-columns" },
-  { keyword: "计划看板", icon: "fa-table-columns" },
-  { keyword: "update_plan", icon: "fa-table-columns" },
-  { keyword: "plan board", icon: "fa-table-columns" },
-  { keyword: "问询面板", icon: "fa-circle-question" },
-  { keyword: "question_panel", icon: "fa-circle-question" },
-  { keyword: "ask_panel", icon: "fa-circle-question" },
-  { keyword: "question panel", icon: "fa-circle-question" },
-  { keyword: "浏览器", icon: "fa-window-maximize" },
-  { keyword: "browser", icon: "fa-window-maximize" },
-  { keyword: "browser_navigate", icon: "fa-window-maximize" },
-  { keyword: "browser_click", icon: "fa-window-maximize" },
-  { keyword: "browser_type", icon: "fa-window-maximize" },
-  { keyword: "browser_screenshot", icon: "fa-window-maximize" },
-  { keyword: "browser_read_page", icon: "fa-window-maximize" },
-  { keyword: "节点调用", icon: "fa-diagram-project" },
-  { keyword: "node.invoke", icon: "fa-diagram-project" },
-  { keyword: "node_invoke", icon: "fa-diagram-project" },
-  { keyword: "node invoke", icon: "fa-diagram-project" },
-  { keyword: "gateway_invoke", icon: "fa-diagram-project" },
-  { keyword: "技能调用", icon: "fa-wand-magic-sparkles" },
-  { keyword: "skill_call", icon: "fa-wand-magic-sparkles" },
-  { keyword: "skill_get", icon: "fa-wand-magic-sparkles" },
-  { keyword: "智能体蜂群", icon: "fa-bee" },
-  { keyword: "子智能体控制", icon: "fa-diagram-project" },
-  { keyword: "subagent_control", icon: "fa-diagram-project" },
-  { keyword: "会话线程控制", icon: "fa-code-branch" },
-  { keyword: "thread_control", icon: "fa-code-branch" },
-  { keyword: "session_thread", icon: "fa-code-branch" },
-  { keyword: "agent_swarm", icon: "fa-bee" },
-  { keyword: "swarm_control", icon: "fa-bee" },
-  { keyword: "网页抓取", icon: "fa-globe" },
-  { keyword: "web_fetch", icon: "fa-globe" },
-  { keyword: "web fetch", icon: "fa-globe" },
-  { keyword: "webfetch", icon: "fa-globe" },
-  { keyword: "a2a观察", icon: "fa-glasses" },
-  { keyword: "a2a_observe", icon: "fa-glasses" },
-  { keyword: "a2a等待", icon: "fa-clock" },
-  { keyword: "a2a_wait", icon: "fa-clock" },
-  { keyword: "休眠等待", icon: "fa-hourglass-half" },
-  { keyword: "sleep_wait", icon: "fa-hourglass-half" },
-  { keyword: "sleep", icon: "fa-hourglass-half" },
-  { keyword: "pause", icon: "fa-hourglass-half" },
-  { keyword: "记忆管理", icon: "fa-memory" },
-  { keyword: "memory_manager", icon: "fa-memory" },
-  { keyword: "memory_manage", icon: "fa-memory" },
-  { keyword: "memory manager", icon: "fa-memory" },
-  { keyword: "a2a@", icon: "fa-diagram-project" },
-  { keyword: "a2ui", icon: "fa-image" },
-  { keyword: "读图工具", icon: "fa-image" },
-  { keyword: "read_image", icon: "fa-image" },
-  { keyword: "read image", icon: "fa-image" },
-  { keyword: "view_image", icon: "fa-image" },
-  { keyword: "view image", icon: "fa-image" },
-  { keyword: "声转文", icon: "fa-microphone-lines" },
-  { keyword: "语音转文", icon: "fa-microphone-lines" },
-  { keyword: "transcribe_speech", icon: "fa-microphone-lines" },
-  { keyword: "transcribe speech", icon: "fa-microphone-lines" },
-  { keyword: "speech_to_text", icon: "fa-microphone-lines" },
-  { keyword: "语音生成", icon: "fa-wave-square" },
-  { keyword: "文转声", icon: "fa-wave-square" },
-  { keyword: "generate_speech", icon: "fa-wave-square" },
-  { keyword: "speech generation", icon: "fa-wave-square" },
-  { keyword: "绘图生成", icon: "fa-image" },
-  { keyword: "generate_image", icon: "fa-image" },
-  { keyword: "image generation", icon: "fa-image" },
-  { keyword: "视频生成", icon: "fa-film" },
-  { keyword: "generate_video", icon: "fa-film" },
-  { keyword: "video generation", icon: "fa-film" },
-  { keyword: "渠道工具", icon: "fa-comments" },
-  { keyword: "channel_tool", icon: "fa-comments" },
-  { keyword: "channel tool", icon: "fa-comments" },
-  { keyword: "channel_send", icon: "fa-comments" },
-  { keyword: "channel_contacts", icon: "fa-comments" },
-  { keyword: "列出文件", icon: "fa-folder-open" },
-  { keyword: "list files", icon: "fa-folder-open" },
-  { keyword: "list_file", icon: "fa-folder-open" },
-  { keyword: "list_files", icon: "fa-folder-open" },
-  { keyword: "读取文件", icon: "fa-file-lines" },
-  { keyword: "read file", icon: "fa-file-lines" },
-  { keyword: "read_file", icon: "fa-file-lines" },
-  { keyword: "写入文件", icon: "fa-file-circle-plus" },
-  { keyword: "write file", icon: "fa-file-circle-plus" },
-  { keyword: "write_file", icon: "fa-file-circle-plus" },
-  { keyword: "应用补丁", icon: "fa-pen-to-square" },
-  { keyword: "apply patch", icon: "fa-pen-to-square" },
-  { keyword: "apply_patch", icon: "fa-pen-to-square" },
-  { keyword: "LSP查询", icon: "fa-code" },
-  { keyword: "lsp query", icon: "fa-code" },
-  { keyword: "lsp", icon: "fa-code" },
-];
 // 线程状态环图配色与图例配置
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
 const STATUS_CHART_EMPTY_COLOR = "#ffffff";
@@ -1083,20 +974,11 @@ const resolveToolIcon = (name, category, runtimeName = "") => {
   const toolName = String(name || "").trim();
   const runtimeToolName = String(runtimeName || "").trim();
   const categoryKey = String(category || "").toLowerCase();
-  const matchName = runtimeToolName || toolName;
-  const lowerName = matchName.toLowerCase();
-  const normalizedName = normalizeToolMatchKey(lowerName);
   const unifiedIcon = resolveToolIconClass(
     [toolName, runtimeToolName, categoryKey].filter(Boolean).join(" ")
   );
   if (unifiedIcon && unifiedIcon !== "fa-toolbox") {
     return unifiedIcon;
-  }
-  if (lowerName === "wunder@excute" || lowerName.endsWith("@wunder@excute")) {
-    return "fa-dragon";
-  }
-  if (lowerName === "wunder@doc2md" || lowerName.endsWith("@wunder@doc2md")) {
-    return "fa-file-lines";
   }
   if (
     categoryKey === "mcp" ||
@@ -1104,11 +986,6 @@ const resolveToolIcon = (name, category, runtimeName = "") => {
     mcpToolNameSet.has(toolName)
   ) {
     return "fa-plug";
-  }
-  for (const rule of TOOL_HEATMAP_ICON_RULES) {
-    if (matchesToolKeyword(lowerName, normalizedName, rule.keyword)) {
-      return rule.icon;
-    }
   }
   if (runtimeToolName.includes("@") || toolName.includes("@")) {
     return "fa-plug";
@@ -1121,72 +998,6 @@ const resolveToolIcon = (name, category, runtimeName = "") => {
   }
   if (categoryKey === "user" || categoryKey === "shared") {
     return "fa-wrench";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "执行命令") ||
-    matchesToolKeyword(lowerName, normalizedName, "run command") ||
-    matchesToolKeyword(lowerName, normalizedName, "execute command") ||
-    matchesToolKeyword(lowerName, normalizedName, "execute_command") ||
-    matchesToolKeyword(lowerName, normalizedName, "shell")
-  ) {
-    return "fa-terminal";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "ptc") ||
-    matchesToolKeyword(lowerName, normalizedName, "programmatic_tool_call")
-  ) {
-    return "fa-code";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "定时任务") ||
-    matchesToolKeyword(lowerName, normalizedName, "计划任务") ||
-    matchesToolKeyword(lowerName, normalizedName, "cron") ||
-    matchesToolKeyword(lowerName, normalizedName, "schedule") ||
-    matchesToolKeyword(lowerName, normalizedName, "scheduled") ||
-    matchesToolKeyword(lowerName, normalizedName, "timer") ||
-    matchesToolKeyword(lowerName, normalizedName, "schedule_task")
-  ) {
-    return "fa-clock";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "搜索") ||
-    matchesToolKeyword(lowerName, normalizedName, "检索") ||
-    matchesToolKeyword(lowerName, normalizedName, "search") ||
-    matchesToolKeyword(lowerName, normalizedName, "query") ||
-    matchesToolKeyword(lowerName, normalizedName, "retrieve") ||
-    matchesToolKeyword(lowerName, normalizedName, "search_content")
-  ) {
-    return "fa-magnifying-glass";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "读取") ||
-    matchesToolKeyword(lowerName, normalizedName, "写入") ||
-    matchesToolKeyword(lowerName, normalizedName, "编辑") ||
-    matchesToolKeyword(lowerName, normalizedName, "替换") ||
-    matchesToolKeyword(lowerName, normalizedName, "列出") ||
-    matchesToolKeyword(lowerName, normalizedName, "read") ||
-    matchesToolKeyword(lowerName, normalizedName, "write") ||
-    matchesToolKeyword(lowerName, normalizedName, "edit") ||
-    matchesToolKeyword(lowerName, normalizedName, "replace") ||
-    matchesToolKeyword(lowerName, normalizedName, "list")
-  ) {
-    return "fa-file-lines";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "知识") ||
-    matchesToolKeyword(lowerName, normalizedName, "knowledge")
-  ) {
-    return "fa-database";
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, "最终回复") ||
-    matchesToolKeyword(lowerName, normalizedName, "final answer") ||
-    matchesToolKeyword(lowerName, normalizedName, "final_response")
-  ) {
-    return "fa-flag-checkered";
-  }
-  if (categoryKey === "builtin") {
-    return "fa-toolbox";
   }
   return "fa-toolbox";
 };

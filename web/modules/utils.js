@@ -1,4 +1,5 @@
 import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
+import { resolveToolIconClass as resolveSharedToolIconClass } from "../shared/tool-visuals.js";
 
 // 工具函数：纯逻辑处理，便于多模块复用
 
@@ -229,21 +230,7 @@ const TOOL_ICON_RULES = [
 ];
 
 export const resolveToolIconClass = (value) => {
-  const text = String(value || "").trim().toLowerCase();
-  if (!text) {
-    return "fa-toolbox";
-  }
-  for (const rule of TOOL_ICON_RULES) {
-    if (
-      rule.keywords.some((keyword) => {
-        const normalized = String(keyword || "").trim().toLowerCase();
-        return normalized && text.includes(normalized);
-      })
-    ) {
-      return rule.icon;
-    }
-  }
-  return "fa-toolbox";
+  return resolveSharedToolIconClass(value);
 };
 
 

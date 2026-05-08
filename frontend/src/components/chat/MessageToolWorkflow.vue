@@ -133,7 +133,7 @@ import {
   resolveCompactionInstanceLabel,
   type CompactionDisplay
 } from '@/utils/chatCompactionUi';
-import { resolveAbilityVisual } from '@/utils/abilityVisuals';
+import { resolveAbilityVisual, resolveToolIconClass } from '@/utils/abilityVisuals';
 import {
   formatWorkflowDurationLabel,
   resolveWorkflowEntryDurationMs
@@ -1949,14 +1949,15 @@ const isWebFetchTool = (toolName: string): boolean => {
   );
 };
 
-const resolveToolIconClass = (toolName: string): string => {
+const resolveWorkflowToolIconClass = (toolName: string): string => {
   if (isCompactionTool(toolName)) return 'fa-compress';
-  return resolveAbilityVisual({
+  const icon = resolveToolIconClass({
     name: toolName,
     kind: 'tool',
     group: 'builtin',
     source: 'builtin'
-  }).icon;
+  });
+  return icon || 'fa-toolbox';
 };
 
 const formatContextWindowLabel = (before: unknown, after: unknown): string => {
@@ -3118,7 +3119,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     summaryBrief: summary.summaryBrief,
     summaryTitle,
     toolCallRawTitle: buildToolCallDebugText(entry),
-    toolIconClass: resolveToolIconClass(entry.toolName),
+    toolIconClass: resolveWorkflowToolIconClass(entry.toolName),
     isCompaction: Boolean(compactionDisplay),
     status,
     consumedTokensLabel,
@@ -3402,7 +3403,7 @@ const buildPendingEntryView = (
     summaryBrief: '',
     summaryTitle,
     toolCallRawTitle: summaryTitle,
-    toolIconClass: resolveToolIconClass(toolName),
+    toolIconClass: resolveWorkflowToolIconClass(toolName),
     isCompaction,
     status: 'loading',
     consumedTokensLabel: '',

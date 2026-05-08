@@ -86,7 +86,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { getAgentRuntimeRecords } from '@/api/agents';
 import { useI18n } from '@/i18n';
 import { useThemeStore } from '@/stores/theme';
-import { resolveAbilityVisual } from '@/utils/abilityVisuals';
+import { resolveToolIconClass } from '@/utils/abilityVisuals';
 import {
   normalizeRuntimeHeatmapItems,
   type RuntimeHeatmapItem,
@@ -463,106 +463,24 @@ function resolveToolIcon(item: RuntimeHeatmapItem): string {
   const displayName = String(item?.tool || '').trim();
   const runtimeName = String(item?.runtimeName || '').trim();
   const category = String(item?.category || '').trim().toLowerCase();
-  const toolName = runtimeName || displayName;
-  const lowerName = toolName.toLowerCase();
-  const normalizedName = normalizeToolMatchKey(lowerName);
-  if (lowerName === 'wunder@excute' || lowerName.endsWith('@wunder@excute')) {
-    return 'fa-dragon';
-  }
-  if (lowerName === 'wunder@doc2md' || lowerName.endsWith('@wunder@doc2md')) {
-    return 'fa-file-lines';
-  }
-  if (category === 'mcp') {
-    return 'fa-plug';
-  }
-  if (category === 'knowledge') {
-    return 'fa-database';
-  }
-  if (category === 'skill') {
-    return 'fa-book';
-  }
-  const unifiedIcon = resolveAbilityVisual({
-    name: toolName,
-    kind: 'tool',
+  const directIcon = resolveToolIconClass({
+    name: runtimeName || displayName,
+    runtimeName,
+    category,
     group: item?.group || category || 'builtin',
     source: item?.source || category || 'builtin'
-  }).icon;
-  if (unifiedIcon && unifiedIcon !== 'fa-toolbox') {
-    return unifiedIcon;
+  });
+  if (directIcon && directIcon !== 'fa-toolbox') {
+    return directIcon;
   }
-  for (const rule of TOOL_HEATMAP_ICON_RULES) {
-    if (matchesToolKeyword(lowerName, normalizedName, rule.keyword)) {
-      return rule.icon;
-    }
-  }
-  if (runtimeName.includes('@') || displayName.includes('@')) {
-    return 'fa-plug';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, '执行命令') ||
-    matchesToolKeyword(lowerName, normalizedName, 'run command') ||
-    matchesToolKeyword(lowerName, normalizedName, 'execute command') ||
-    matchesToolKeyword(lowerName, normalizedName, 'execute_command') ||
-    matchesToolKeyword(lowerName, normalizedName, 'shell')
-  ) {
-    return 'fa-terminal';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, 'ptc') ||
-    matchesToolKeyword(lowerName, normalizedName, 'programmatic_tool_call')
-  ) {
-    return 'fa-code';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, '定时任务') ||
-    matchesToolKeyword(lowerName, normalizedName, '计划任务') ||
-    matchesToolKeyword(lowerName, normalizedName, 'cron') ||
-    matchesToolKeyword(lowerName, normalizedName, 'schedule') ||
-    matchesToolKeyword(lowerName, normalizedName, 'scheduled') ||
-    matchesToolKeyword(lowerName, normalizedName, 'timer') ||
-    matchesToolKeyword(lowerName, normalizedName, 'schedule_task')
-  ) {
-    return 'fa-clock';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, '搜索') ||
-    matchesToolKeyword(lowerName, normalizedName, '检索') ||
-    matchesToolKeyword(lowerName, normalizedName, 'search') ||
-    matchesToolKeyword(lowerName, normalizedName, 'query') ||
-    matchesToolKeyword(lowerName, normalizedName, 'retrieve') ||
-    matchesToolKeyword(lowerName, normalizedName, 'search_content')
-  ) {
-    return 'fa-magnifying-glass';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, '读取') ||
-    matchesToolKeyword(lowerName, normalizedName, '写入') ||
-    matchesToolKeyword(lowerName, normalizedName, '编辑') ||
-    matchesToolKeyword(lowerName, normalizedName, '替换') ||
-    matchesToolKeyword(lowerName, normalizedName, '列出') ||
-    matchesToolKeyword(lowerName, normalizedName, 'read') ||
-    matchesToolKeyword(lowerName, normalizedName, 'write') ||
-    matchesToolKeyword(lowerName, normalizedName, 'edit') ||
-    matchesToolKeyword(lowerName, normalizedName, 'replace') ||
-    matchesToolKeyword(lowerName, normalizedName, 'list')
-  ) {
-    return 'fa-file-lines';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, '知识') ||
-    matchesToolKeyword(lowerName, normalizedName, 'knowledge')
-  ) {
-    return 'fa-database';
-  }
-  if (
-    matchesToolKeyword(lowerName, normalizedName, '最终回复') ||
-    matchesToolKeyword(lowerName, normalizedName, 'final answer') ||
-    matchesToolKeyword(lowerName, normalizedName, 'final response') ||
-    matchesToolKeyword(lowerName, normalizedName, 'final_response')
-  ) {
-    return 'fa-paper-plane';
-  }
-  return 'fa-toolbox';
+  const icon = resolveToolIconClass({
+    name: runtimeName || displayName,
+    runtimeName,
+    category,
+    group: item?.group || category || 'builtin',
+    source: item?.source || category || 'builtin'
+  });
+  return icon || 'fa-toolbox';
 }
 
 function updateHeatmapRows() {

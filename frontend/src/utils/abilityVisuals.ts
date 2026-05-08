@@ -1,3 +1,5 @@
+import { resolveToolIconClass as resolveSharedToolIconClass } from '../../../web/shared/tool-visuals.js';
+
 export type AbilityVisualTone =
   | 'general'
   | 'skill'
@@ -16,6 +18,8 @@ export type AbilityVisualInput = {
   kind?: unknown;
   group?: unknown;
   source?: unknown;
+  runtimeName?: unknown;
+  category?: unknown;
 };
 
 export type AbilityVisualMeta = {
@@ -37,11 +41,6 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['自我状态', 'self_status', 'self status'], icon: 'fa-gauge-high', tone: 'general' },
   { keywords: ['桌面控制器'], icon: 'fa-computer-mouse', tone: 'general' },
   { keywords: ['桌面监视器'], icon: 'fa-display', tone: 'general' },
-  { keywords: ['读图工具', 'view_image', 'view image'], icon: 'fa-image', tone: 'search' },
-  { keywords: ['声转文', '语音转文', 'transcribe_speech', 'transcribe speech', 'speech to text', 'speech_to_text', 'asr', 'audio transcription'], icon: 'fa-microphone-lines', tone: 'search' },
-  { keywords: ['语音生成', '文转声', 'generate_speech', 'speech generation', 'tts', 'text to speech', 'text_to_speech'], icon: 'fa-wave-square', tone: 'general' },
-  { keywords: ['绘图生成', 'generate_image', 'image generation', 'text to image', 'text_to_image'], icon: 'fa-image', tone: 'search' },
-  { keywords: ['视频生成', 'generate_video', 'video generation', 'text to video', 'text_to_video'], icon: 'fa-film', tone: 'search' },
   { keywords: ['渠道工具', 'channel_tool', 'channel tool', 'channel_send', 'channel_contacts'], icon: 'fa-comments', tone: 'general' },
   { keywords: ['LSP查询', 'lsp query', 'lsp'], icon: 'fa-code', tone: 'file' },
   {
@@ -61,7 +60,6 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['browser', '浏览器'], icon: 'fa-window-maximize', tone: 'search' },
   { keywords: ['a2a_observe', 'a2a observe', 'a2a观察'], icon: 'fa-glasses', tone: 'automation' },
   { keywords: ['a2a_wait', 'a2a wait', 'a2a等待'], icon: 'fa-clock', tone: 'automation' },
-  { keywords: ['a2ui'], icon: 'fa-image', tone: 'search' },
   { keywords: ['agent_swarm', 'swarm_control', '智能体蜂群'], icon: 'fa-bee', tone: 'automation' },
   { keywords: ['subagent_control', '子智能体控制'], icon: 'fa-diagram-project', tone: 'automation' },
   {
@@ -87,7 +85,6 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['网页抓取'], icon: 'fa-globe', tone: 'search' },
   { keywords: ['list_files', 'list_file', 'list files'], icon: 'fa-folder-open', tone: 'file' },
   { keywords: ['列出文件'], icon: 'fa-folder-open', tone: 'file' },
-  { keywords: ['read_image', 'read image'], icon: 'fa-image', tone: 'search' },
   { keywords: ['search_content', 'search content'], icon: 'fa-magnifying-glass', tone: 'search' },
   { keywords: ['搜索内容', '搜索', '检索'], icon: 'fa-magnifying-glass', tone: 'search' },
   { keywords: ['read_file', 'read file'], icon: 'fa-file-lines', tone: 'file' },
@@ -255,9 +252,32 @@ const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
   return null;
 };
 
+export const resolveToolIconClass = (input: AbilityVisualInput | string): string =>
+  resolveSharedToolIconClass(input as never);
+
 export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMeta => {
   const kind = resolveAbilityKind(input.kind, input.group || input.source);
   const preferredTone = resolvePreferredTone(kind, input.group, input.source);
+  const resolvedName = cleanText(input.name).toLowerCase();
+  const resolvedHint = cleanText(input.hint).toLowerCase();
+  const resolvedDescription = cleanText(input.description).toLowerCase();
+  const resolvedText = `${resolvedName} ${resolvedHint} ${resolvedDescription}`;
+  if (
+    resolvedText.includes('read_image') ||
+    resolvedText.includes('view_image') ||
+    resolvedText.includes('读图工具') ||
+    resolvedText.includes('view image')
+  ) {
+    return { icon: 'fa-eye', tone: 'search' };
+  }
+  if (
+    resolvedText.includes('generate_image') ||
+    resolvedText.includes('text_to_image') ||
+    resolvedText.includes('image generation') ||
+    resolvedText.includes('绘图生成')
+  ) {
+    return { icon: 'fa-paintbrush', tone: 'search' };
+  }
   const matchedRule = findAbilityRule(input);
 
   // For skill-type abilities, prevent non-skill rules from overriding the icon.
@@ -268,9 +288,10 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
       : matchedRule;
 
   const tone = preferredTone || effectiveRule?.tone || (kind === 'skill' ? 'skill' : 'general');
+  const sharedIcon = resolveToolIconClass(input);
 
   return {
-    icon: effectiveRule?.icon || resolveContextualDefaultIcon(input, tone),
+    icon: effectiveRule?.icon || (sharedIcon !== 'fa-toolbox' ? sharedIcon : resolveContextualDefaultIcon(input, tone)),
     tone
   };
 };
