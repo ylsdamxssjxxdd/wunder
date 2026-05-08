@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tokio::fs;
 
 pub const TOOL_GENERATE_SPEECH: &str = "语音生成";
-pub const TOOL_TRANSCRIBE_SPEECH: &str = "语音转文";
+pub const TOOL_TRANSCRIBE_SPEECH: &str = "声转文";
 pub const TOOL_GENERATE_IMAGE: &str = "绘图生成";
 pub const TOOL_GENERATE_VIDEO: &str = "视频生成";
 

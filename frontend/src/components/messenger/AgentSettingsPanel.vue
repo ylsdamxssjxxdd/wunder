@@ -33,7 +33,7 @@
                 <CompanionSprite
                   v-if="formCompanionRecord"
                   class="messenger-agent-avatar-trigger-sprite"
-                  :source="formCompanionRecord.spritesheetDataUrl"
+                  :source="formCompanionRecord.spritesheetDataUrl || formCompanionRecord.spritesheetUrl || ''"
                   state="idle"
                   fit
                   paused
@@ -286,7 +286,7 @@
               <CompanionSprite
                 v-if="avatarDialogCompanion"
                 class="messenger-agent-avatar-dialog-sprite"
-                :source="avatarDialogCompanion.spritesheetDataUrl"
+                :source="avatarDialogCompanion.spritesheetDataUrl || avatarDialogCompanion.spritesheetUrl || ''"
                 state="idle"
                 :scale="avatarDialogCompanionScale"
                 fit
@@ -984,7 +984,10 @@ const avatarDialogCompanion = computed(() =>
     : null
 );
 const avatarDialogCompanionLoading = computed(() =>
-  companionStore.loading || (!companionStore.hydrated && !companionStore.globalCompanions.length && !companionStore.companions.length)
+  companionStore.loading ||
+  companionStore.globalCompanionsLoading ||
+  (!companionStore.hydrated && !companionStore.companions.length) ||
+  (avatarDialogKind.value === 'companion' && !companionStore.globalCompanionsLoaded && !companionStore.companions.length)
 );
 const agentAvatarPreviewImageUrl = computed(() =>
   formCompanionRecord.value ? '' : resolveAvatarOptionImage(form.icon_name)
@@ -1051,6 +1054,8 @@ const openAvatarDialog = () => {
   avatarDialogVisible.value = true;
   void companionStore.hydrate().catch(() => undefined);
   void companionStore.loadGlobalCompanions().catch(() => undefined);
+  void ensureCompanionPreviewLoaded(form.companion_scope, form.companion_id);
+  void ensureAvatarDialogCompanionLoaded();
 };
 
 const closeAvatarDialog = () => {
@@ -1074,6 +1079,7 @@ const setAvatarDialogKind = (kind: 'static' | 'companion') => {
   if (kind === 'companion') {
     ensureAvatarDialogCompanionSelection();
     void companionStore.loadGlobalCompanions().catch(() => undefined);
+    void ensureAvatarDialogCompanionLoaded();
   }
 };
 
@@ -1097,6 +1103,7 @@ const selectAvatarDialogCompanion = (item: CompanionPackageRecord): void => {
   avatarDialogKind.value = 'companion';
   avatarDialogCompanionScope.value = normalizeCompanionScope(item.scope);
   avatarDialogCompanionId.value = String(item.id || '').trim();
+  void ensureAvatarDialogCompanionLoaded();
 };
 
 const ensureAvatarDialogCompanionSelection = (): void => {
@@ -1119,10 +1126,32 @@ const ensureAvatarDialogCompanionSelection = (): void => {
   avatarDialogCompanionId.value = '';
 };
 
+const ensureCompanionPreviewLoaded = async (
+  scope: 'global' | 'private',
+  id: string
+): Promise<void> => {
+  if (normalizeCompanionScope(scope) !== 'global') {
+    return;
+  }
+  const cleanedId = String(id || '').trim();
+  if (!cleanedId) {
+    return;
+  }
+  await companionStore.ensureGlobalCompanion(cleanedId).catch(() => undefined);
+};
+
+const ensureAvatarDialogCompanionLoaded = async (): Promise<void> => {
+  if (avatarDialogKind.value !== 'companion') {
+    return;
+  }
+  await ensureCompanionPreviewLoaded(avatarDialogCompanionScope.value, avatarDialogCompanionId.value);
+};
+
 watch(
   () => [avatarDialogKind.value, avatarDialogCompanionOptions.value] as const,
   () => {
     ensureAvatarDialogCompanionSelection();
+    void ensureAvatarDialogCompanionLoaded();
   },
   { immediate: true }
 );
@@ -1748,7 +1777,6 @@ onMounted(() => {
   emit('panel-mounted');
   panelMounted.value = true;
   void companionStore.hydrate().catch(() => undefined);
-  void companionStore.loadGlobalCompanions().catch(() => undefined);
   stopUnsavedGuard = registerUnsavedChangesGuard('messenger-agent-settings', confirmDiscardChanges);
   stopUserToolsUpdatedListener = onUserToolsUpdated((event) => {
     const detail = event?.detail || {};
@@ -1764,6 +1792,7 @@ onMounted(() => {
   window.addEventListener('focus', refreshAgentFromExternalChange);
   document.addEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
   void reloadAgent();
+  void ensureCompanionPreviewLoaded(form.companion_scope, form.companion_id);
   scheduleFocusTargetIfNeeded();
 });
 
@@ -1773,6 +1802,17 @@ watch(
     if (!panelMounted.value || panelDisposed) return;
     void reloadAgent();
   }
+);
+
+watch(
+  () => [form.icon_kind, form.companion_scope, form.companion_id] as const,
+  ([kind, scope, id]) => {
+    if (kind !== 'companion') {
+      return;
+    }
+    void ensureCompanionPreviewLoaded(scope, id);
+  },
+  { immediate: true }
 );
 
 watch(

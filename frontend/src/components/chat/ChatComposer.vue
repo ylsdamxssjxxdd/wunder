@@ -215,16 +215,21 @@
           class="messenger-world-tool-btn"
           type="button"
           :class="{
-            'messenger-world-tool-btn--recording': voiceRecording
+            'messenger-world-tool-btn--recording': voiceRecording,
+            'messenger-world-tool-btn--transcribing': voiceTranscribing
           }"
           :title="voiceButtonTitle"
           :aria-label="voiceButtonTitle"
-          :disabled="attachmentBusy > 0 || stopButtonActive"
+          :disabled="attachmentBusy > 0 || stopButtonActive || voiceTranscribing"
           @click="handleToggleVoiceRecord"
         >
           <i
             :class="[
-              voiceRecording ? 'fa-solid fa-stop' : 'fa-solid fa-microphone',
+              voiceRecording
+                ? 'fa-solid fa-stop'
+                : voiceTranscribing
+                  ? 'fa-solid fa-waveform-lines'
+                  : 'fa-solid fa-microphone',
               'messenger-world-tool-fa-icon'
             ]"
             aria-hidden="true"
@@ -253,6 +258,14 @@
         <div v-if="voiceRecording" class="messenger-world-voice-indicator">
           <i class="fa-solid fa-circle messenger-world-voice-indicator-dot" aria-hidden="true"></i>
           <span>{{ voiceRecordingLabel }}</span>
+        </div>
+        <div v-else-if="voiceTranscribing" class="messenger-world-voice-indicator messenger-world-voice-indicator--transcribing">
+          <span class="messenger-world-transcribing-rings" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
+          <span>{{ voiceTranscribingLabel }}</span>
         </div>
       </div>
       <textarea
@@ -531,6 +544,10 @@ const props = defineProps({
   voiceDurationMs: {
     type: Number,
     default: 0
+  },
+  voiceTranscribing: {
+    type: Boolean,
+    default: false
   },
   showApprovalLabel: {
     type: Boolean,
@@ -1148,13 +1165,16 @@ const formatVoiceDurationLabel = (durationMs: unknown): string => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 const voiceButtonTitle = computed(() => {
-  return props.voiceRecording ? t('messenger.world.voice.stop') : t('messenger.world.voice.start');
+  if (props.voiceRecording) return t('messenger.world.voice.stop');
+  if (props.voiceTranscribing) return t('messenger.world.voice.transcribing');
+  return t('messenger.world.voice.start');
 });
 const voiceRecordingLabel = computed(() =>
   t('messenger.world.voice.recording', {
     duration: formatVoiceDurationLabel(props.voiceDurationMs)
   })
 );
+const voiceTranscribingLabel = computed(() => t('messenger.world.voice.transcribing'));
 const approvalLabelText = computed(() => String(props.approvalLabel || '').trim());
 const approvalModeOptions = computed<ApprovalModeOption[]>(() => {
   const source = Array.isArray(props.approvalModeOptions) ? props.approvalModeOptions : [];
@@ -1201,6 +1221,7 @@ const showApprovalLabel = computed(
 );
 const voiceSupported = computed(() => props.worldStyle && props.voiceSupported);
 const voiceRecording = computed(() => props.worldStyle && props.voiceRecording);
+const voiceTranscribing = computed(() => props.worldStyle && props.voiceTranscribing);
 const stopButtonActive = computed(() => Boolean(props.loading || props.goalLocked));
 const canSendOrStop = computed(() => {
 

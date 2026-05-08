@@ -2992,6 +2992,26 @@
   min-width: 0;
 }
 
+.tool-item label.tool-item-label-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-item-icon {
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+.tool-item-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .tool-item .tool-check,
 .skill-item .tool-check {
   flex: 0 0 auto;

@@ -8,6 +8,7 @@ import {
   formatDurationLong,
   formatTimestamp,
   formatTokenCount,
+  resolveToolIconClass,
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
@@ -121,6 +122,21 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "read image", icon: "fa-image" },
   { keyword: "view_image", icon: "fa-image" },
   { keyword: "view image", icon: "fa-image" },
+  { keyword: "声转文", icon: "fa-microphone-lines" },
+  { keyword: "语音转文", icon: "fa-microphone-lines" },
+  { keyword: "transcribe_speech", icon: "fa-microphone-lines" },
+  { keyword: "transcribe speech", icon: "fa-microphone-lines" },
+  { keyword: "speech_to_text", icon: "fa-microphone-lines" },
+  { keyword: "语音生成", icon: "fa-wave-square" },
+  { keyword: "文转声", icon: "fa-wave-square" },
+  { keyword: "generate_speech", icon: "fa-wave-square" },
+  { keyword: "speech generation", icon: "fa-wave-square" },
+  { keyword: "绘图生成", icon: "fa-image" },
+  { keyword: "generate_image", icon: "fa-image" },
+  { keyword: "image generation", icon: "fa-image" },
+  { keyword: "视频生成", icon: "fa-film" },
+  { keyword: "generate_video", icon: "fa-film" },
+  { keyword: "video generation", icon: "fa-film" },
   { keyword: "渠道工具", icon: "fa-comments" },
   { keyword: "channel_tool", icon: "fa-comments" },
   { keyword: "channel tool", icon: "fa-comments" },
@@ -1070,6 +1086,12 @@ const resolveToolIcon = (name, category, runtimeName = "") => {
   const matchName = runtimeToolName || toolName;
   const lowerName = matchName.toLowerCase();
   const normalizedName = normalizeToolMatchKey(lowerName);
+  const unifiedIcon = resolveToolIconClass(
+    [toolName, runtimeToolName, categoryKey].filter(Boolean).join(" ")
+  );
+  if (unifiedIcon && unifiedIcon !== "fa-toolbox") {
+    return unifiedIcon;
+  }
   if (lowerName === "wunder@excute" || lowerName.endsWith("@wunder@excute")) {
     return "fa-dragon";
   }

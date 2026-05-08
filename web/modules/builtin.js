@@ -1,7 +1,7 @@
 import { elements } from "./elements.js?v=20260215-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { getToolInputSchema } from "./utils.js?v=20251229-02";
+import { getToolInputSchema, resolveToolIconClass } from "./utils.js?v=20251229-02";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { openToolDetailModal } from "./tool-detail.js?v=20260115-05";
 import { notify } from "./notify.js";
@@ -50,9 +50,14 @@ const renderBuiltinTools = () => {
         });
     });
     const label = document.createElement("label");
-    label.innerHTML = `<strong>${tool.name}</strong><span class="muted">${
-      tool.description || ""
-    }</span>`;
+    label.classList.add("tool-item-label-with-icon");
+    const icon = document.createElement("i");
+    icon.className = `fa-solid ${resolveToolIconClass(tool.name || tool.description || "")} tool-item-icon`;
+    const textWrap = document.createElement("span");
+    textWrap.className = "tool-item-info";
+    textWrap.innerHTML = `<strong>${tool.name}</strong><span class="muted">${tool.description || ""}</span>`;
+    label.appendChild(icon);
+    label.appendChild(textWrap);
     // 点击工具条目查看详情，避免与勾选动作冲突
     item.addEventListener("click", (event) => {
       if (event.target === checkbox) {

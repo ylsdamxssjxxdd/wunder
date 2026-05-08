@@ -386,14 +386,21 @@
   - `description`：说明
   - `spritesheet_path`：形象包内帧图路径
   - `spritesheet_mime`：帧图 MIME
-  - `spritesheet_data_url`：帧图 data URL，前端用于预览和浮层渲染
+  - `spritesheet_url`：帧图直连地址（`/wunder/companions/global/{id}/spritesheet?...`），列表/选择器优先使用该字段做轻量预览
   - `imported_at/updated_at`：导入与更新时间戳（秒）
+  - 说明：列表接口默认不再内联返回整张帧图 data URL，避免形象较多时首开页面或弹窗传输体过大。
 
 #### `GET /wunder/companions/global/{id}`
 
 - 方法：`GET`
 - 鉴权：无。
-- 返回（JSON）：`data` 为单个全局形象记录；不存在时返回 `404`。
+- 返回（JSON）：`data` 为单个全局形象完整记录；除列表元数据外，额外包含 `spritesheet_data_url`，供桌面浮窗或单项详情按需加载。不存在时返回 `404`。
+
+#### `GET /wunder/companions/global/{id}/spritesheet`
+
+- 方法：`GET`
+- 鉴权：无。
+- 返回：帧图二进制，`Content-Type` 与 `spritesheet_mime` 一致。用于管理员侧/用户侧形象列表轻量预览，避免在列表接口内联大体积 base64。
 
 #### `GET /wunder/companions/global/{id}/package`
 
@@ -427,9 +434,10 @@
 #### `/wunder/admin/companions*`
 
 - 说明：管理员全局形象管理接口。全局形象供所有用户和管理员预设智能体选择；用户私有形象不经过这些接口。
-- `GET /wunder/admin/companions`：返回 `data.items[]` 全局形象列表，字段同 `/wunder/companions/global`。
+- `GET /wunder/admin/companions`：返回 `data.items[]` 全局形象列表，字段同 `/wunder/companions/global`，默认只返回轻量元数据与 `spritesheet_url`。
 - `POST /wunder/admin/companions`：使用 multipart 表单字段 `file` 上传标准形象 zip 包；返回 `data.item` 与 `data.sha256`。
-- `GET /wunder/admin/companions/{id}`：读取单个全局形象。
+- `GET /wunder/admin/companions/{id}`：读取单个全局形象完整记录，包含 `spritesheet_data_url`。
+- `GET /wunder/admin/companions/{id}/spritesheet`：返回单个全局形象帧图二进制，供管理员列表轻量预览。
 - `PATCH /wunder/admin/companions/{id}`：更新 `display_name`/`name` 与 `description`。
 - `DELETE /wunder/admin/companions/{id}`：删除全局形象，返回 `data.deleted`。
 - `GET /wunder/admin/companions/{id}/package`：导出标准形象 zip 包。

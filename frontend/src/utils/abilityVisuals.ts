@@ -38,6 +38,10 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['桌面控制器'], icon: 'fa-computer-mouse', tone: 'general' },
   { keywords: ['桌面监视器'], icon: 'fa-display', tone: 'general' },
   { keywords: ['读图工具', 'view_image', 'view image'], icon: 'fa-image', tone: 'search' },
+  { keywords: ['声转文', '语音转文', 'transcribe_speech', 'transcribe speech', 'speech to text', 'speech_to_text', 'asr', 'audio transcription'], icon: 'fa-microphone-lines', tone: 'search' },
+  { keywords: ['语音生成', '文转声', 'generate_speech', 'speech generation', 'tts', 'text to speech', 'text_to_speech'], icon: 'fa-wave-square', tone: 'general' },
+  { keywords: ['绘图生成', 'generate_image', 'image generation', 'text to image', 'text_to_image'], icon: 'fa-image', tone: 'search' },
+  { keywords: ['视频生成', 'generate_video', 'video generation', 'text to video', 'text_to_video'], icon: 'fa-film', tone: 'search' },
   { keywords: ['渠道工具', 'channel_tool', 'channel tool', 'channel_send', 'channel_contacts'], icon: 'fa-comments', tone: 'general' },
   { keywords: ['LSP查询', 'lsp query', 'lsp'], icon: 'fa-code', tone: 'file' },
   {

@@ -48,6 +48,7 @@ const ensureState = () => {
     state.companions = {
       items: [],
       selectedId: "",
+      detailItem: null,
       search: "",
       loading: false,
       previewAction: "idle",
@@ -97,6 +98,7 @@ const normalizeCompanion = (item) => ({
   display_name: String(item?.display_name || item?.displayName || item?.name || "").trim(),
   description: String(item?.description || "").trim(),
   spritesheet_path: String(item?.spritesheet_path || item?.spritesheetPath || "").trim(),
+  spritesheet_url: String(item?.spritesheet_url || item?.spritesheetUrl || "").trim(),
   spritesheet_data_url: String(item?.spritesheet_data_url || item?.spritesheetDataUrl || "").trim(),
   imported_at: Number(item?.imported_at || item?.importedAt || 0),
   updated_at: Number(item?.updated_at || item?.updatedAt || 0),
@@ -106,7 +108,12 @@ export const listGlobalCompanions = async () => {
   const payload = await requestJson("/admin/companions");
   return (Array.isArray(payload?.data?.items) ? payload.data.items : [])
     .map(normalizeCompanion)
-    .filter((item) => item.id && item.display_name && item.spritesheet_data_url);
+    .filter((item) => item.id && item.display_name && (item.spritesheet_url || item.spritesheet_data_url));
+};
+
+const getGlobalCompanion = async (id) => {
+  const payload = await requestJson(`/admin/companions/${encodeURIComponent(id)}`);
+  return normalizeCompanion(payload?.data || {});
 };
 
 const selectedCompanion = () =>
@@ -215,7 +222,8 @@ const renderLazySpritePreview = (container, url) => {
 
 const renderSpritePreview = (container, item) => {
   container.textContent = "";
-  if (!item?.spritesheet_data_url) {
+  const source = String(item?.spritesheet_data_url || item?.spritesheet_url || "").trim();
+  if (!source) {
     return;
   }
   const viewport = document.createElement("span");
@@ -226,7 +234,7 @@ const renderSpritePreview = (container, item) => {
   sheet.className = "companion-admin-sprite-sheet";
   sheet.style.width = `${FRAME_WIDTH}px`;
   sheet.style.height = `${FRAME_HEIGHT}px`;
-  sheet.style.backgroundImage = `url("${item.spritesheet_data_url}")`;
+  sheet.style.backgroundImage = `url("${source}")`;
   sheet.style.backgroundPosition = "0 0";
   sheet.style.transform = `scale(${SPRITE_SCALE})`;
   viewport.appendChild(sheet);
@@ -236,7 +244,8 @@ const renderSpritePreview = (container, item) => {
 const renderPreviewSprite = (container, item, actionId) => {
   stopPreviewAnimation();
   container.textContent = "";
-  if (!item?.spritesheet_data_url) {
+  const source = String(item?.spritesheet_data_url || item?.spritesheet_url || "").trim();
+  if (!source) {
     return;
   }
   const action = PREVIEW_ACTIONS.find((entry) => entry.id === actionId) || PREVIEW_ACTIONS[0];
@@ -248,7 +257,7 @@ const renderPreviewSprite = (container, item, actionId) => {
   sheet.className = "companion-admin-sprite-sheet";
   sheet.style.width = `${FRAME_WIDTH}px`;
   sheet.style.height = `${FRAME_HEIGHT}px`;
-  sheet.style.backgroundImage = `url("${item.spritesheet_data_url}")`;
+  sheet.style.backgroundImage = `url("${source}")`;
   sheet.style.backgroundPosition = `0 -${action.row * FRAME_HEIGHT}px`;
   sheet.style.transform = "scale(0.9)";
   viewport.appendChild(sheet);
@@ -311,7 +320,7 @@ const renderList = () => {
     row.dataset.companionId = item.id;
     const preview = document.createElement("span");
     preview.className = "companion-admin-item-preview";
-    preview.dataset.spritesheetUrl = item.spritesheet_data_url;
+    preview.dataset.spritesheetUrl = item.spritesheet_url || item.spritesheet_data_url;
     preview.dataset.loaded = "0";
     const placeholder = document.createElement("span");
     placeholder.className = "companion-admin-item-preview-placeholder";
@@ -330,7 +339,9 @@ const renderList = () => {
     row.appendChild(main);
     row.addEventListener("click", () => {
       state.companions.selectedId = item.id;
+      state.companions.detailItem = item;
       renderAll();
+      ensureSelectedCompanionDetail().catch(() => undefined);
     });
     fragment.appendChild(row);
   });
@@ -374,7 +385,9 @@ const renderList = () => {
 };
 
 const renderDetail = () => {
-  const item = selectedCompanion();
+  const item = state.companions.detailItem && state.companions.detailItem.id === state.companions.selectedId
+    ? state.companions.detailItem
+    : selectedCompanion();
   const hasItem = Boolean(item);
   elements.companionAdminDetailTitle.textContent = hasItem
     ? item.display_name
@@ -403,6 +416,37 @@ const renderAll = () => {
   renderDetail();
 };
 
+const ensureSelectedCompanionDetail = async () => {
+  const selectedId = String(state.companions.selectedId || "").trim();
+  if (!selectedId) {
+    state.companions.detailItem = null;
+    renderDetail();
+    return null;
+  }
+  const current = state.companions.detailItem;
+  if (current?.id === selectedId && current?.spritesheet_data_url) {
+    return current;
+  }
+  const summary = selectedCompanion();
+  state.companions.detailItem = summary || null;
+  renderDetail();
+  try {
+    const detail = await getGlobalCompanion(selectedId);
+    if (String(state.companions.selectedId || "").trim() !== selectedId) {
+      return null;
+    }
+    state.companions.detailItem = detail;
+    renderDetail();
+    return detail;
+  } catch (error) {
+    if (String(state.companions.selectedId || "").trim() === selectedId) {
+      state.companions.detailItem = summary || null;
+      renderDetail();
+    }
+    throw error;
+  }
+};
+
 export const loadCompanions = async ({ silent = false } = {}) => {
   ensureState();
   if (!ensureElements()) {
@@ -416,7 +460,9 @@ export const loadCompanions = async ({ silent = false } = {}) => {
     state.companions.selectedId = items.some((item) => item.id === previous)
       ? previous
       : items[0]?.id || "";
+    state.companions.detailItem = null;
     renderAll();
+    await ensureSelectedCompanionDetail();
     if (!silent) {
       notify(t("companionsAdmin.toast.refreshSuccess"), "success");
     }

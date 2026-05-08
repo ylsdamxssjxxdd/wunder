@@ -3,6 +3,7 @@ import { elements } from "./elements.js?v=20260215-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { t } from "./i18n.js?v=20260215-01";
+import { resolveToolIconClass } from "./utils.js?v=20251229-02";
 
 // 工具勾选状态使用本地缓存，按 user_id 隔离
 const TOOL_SELECTION_STORAGE_PREFIX = "wunder_tool_selection:";
@@ -285,6 +286,9 @@ const renderPromptToolList = (container, items, emptyText) => {
       persistToolSelection();
     });
     const label = document.createElement("label");
+    label.classList.add("tool-item-label-with-icon");
+    const icon = document.createElement("i");
+    icon.className = `fa-solid ${resolveToolIconClass(item.name || displayName || item.description || "")} tool-item-icon`;
     const metaParts = [];
     if (item.description) {
       metaParts.push(item.description);
@@ -294,6 +298,7 @@ const renderPromptToolList = (container, items, emptyText) => {
     }
     const nameNode = document.createElement("strong");
     nameNode.textContent = displayName;
+    label.appendChild(icon);
     label.appendChild(nameNode);
     if (metaParts.length) {
       const description = document.createElement("span");

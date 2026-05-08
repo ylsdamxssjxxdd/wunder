@@ -26,7 +26,8 @@ export type CompanionPosition = {
 };
 
 export type CompanionPackageRecord = CompanionPackageManifest & {
-  spritesheetDataUrl: string;
+  spritesheetDataUrl?: string;
+  spritesheetUrl?: string;
   spritesheetMime: string;
   importedAt: number;
   updatedAt: number;
@@ -256,7 +257,8 @@ const normalizeGlobalRecord = (value: unknown): CompanionPackageRecord | null =>
   const displayName = String(source.display_name || source.displayName || source.name || '').trim();
   const spritesheetPath = String(source.spritesheet_path || source.spritesheetPath || '').trim();
   const spritesheetDataUrl = String(source.spritesheet_data_url || source.spritesheetDataUrl || '').trim();
-  if (!id || !displayName || !spritesheetPath || !spritesheetDataUrl.startsWith('data:image/')) {
+  const spritesheetUrl = String(source.spritesheet_url || source.spritesheetUrl || '').trim();
+  if (!id || !displayName || !spritesheetPath) {
     return null;
   }
   return {
@@ -264,7 +266,8 @@ const normalizeGlobalRecord = (value: unknown): CompanionPackageRecord | null =>
     displayName,
     description: String(source.description || '').trim(),
     spritesheetPath,
-    spritesheetDataUrl,
+    spritesheetDataUrl: spritesheetDataUrl.startsWith('data:image/') ? spritesheetDataUrl : undefined,
+    spritesheetUrl: spritesheetUrl || undefined,
     spritesheetMime: String(source.spritesheet_mime || source.spritesheetMime || 'image/webp').trim(),
     importedAt: Math.max(0, normalizeNumber(source.imported_at || source.importedAt, Date.now())),
     updatedAt: Math.max(0, normalizeNumber(source.updated_at || source.updatedAt, Date.now())),
@@ -295,6 +298,15 @@ const requestGlobalCompanionPackage = async (id: string): Promise<Blob> => {
   return response.data as Blob;
 };
 
+const requestGlobalCompanion = async (id: string): Promise<CompanionPackageRecord | null> => {
+  const response = await api.get(`/companions/global/${encodeURIComponent(id)}`, {
+    headers: {
+      'Cache-Control': 'no-store'
+    }
+  });
+  return normalizeGlobalRecord(response.data?.data || null);
+};
+
 const getDesktopBridge = (): Record<string, unknown> | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -308,6 +320,8 @@ let desktopCompanionUnsubscribe: (() => void) | null = null;
 export const useCompanionStore = defineStore('companions', () => {
   const companions = ref<CompanionPackageRecord[]>([]);
   const globalCompanions = ref<CompanionPackageRecord[]>([]);
+  const globalCompanionsLoaded = ref(false);
+  const globalCompanionsLoading = ref(false);
   const settings = ref<CompanionSettings>(loadSettings());
   const agentOverrides = ref<Record<string, AgentCompanionOverride>>(loadAgentOverrides());
   const message = ref<CompanionMessage | null>(null);
@@ -379,7 +393,6 @@ export const useCompanionStore = defineStore('companions', () => {
     lastError.value = '';
     try {
       companions.value = await listStoredCompanions();
-      void loadGlobalCompanions().catch(() => undefined);
       if (settings.value.selectedId && !companions.value.some((item) => item.id === settings.value.selectedId)) {
         settings.value.selectedId = '';
       }
@@ -403,12 +416,46 @@ export const useCompanionStore = defineStore('companions', () => {
   };
 
   const loadGlobalCompanions = async (options: { force?: boolean } = {}): Promise<CompanionPackageRecord[]> => {
-    if (!options.force && globalCompanions.value.length) {
+    if (!options.force && globalCompanionsLoaded.value) {
       return globalCompanions.value;
     }
-    const items = await requestGlobalCompanions();
-    globalCompanions.value = items;
-    return items;
+    globalCompanionsLoading.value = true;
+    try {
+      const items = await requestGlobalCompanions();
+      globalCompanions.value = items;
+      globalCompanionsLoaded.value = true;
+      return items;
+    } finally {
+      globalCompanionsLoading.value = false;
+    }
+  };
+
+  const ensureGlobalCompanion = async (id: string): Promise<CompanionPackageRecord | null> => {
+    const cleaned = String(id || '').trim();
+    if (!cleaned) {
+      return null;
+    }
+    const existing = globalCompanions.value.find((item) => item.id === cleaned) || null;
+    if (existing?.spritesheetDataUrl) {
+      return existing;
+    }
+    const detail = await requestGlobalCompanion(cleaned);
+    if (!detail) {
+      return existing;
+    }
+    const next = globalCompanions.value.slice();
+    const index = next.findIndex((item) => item.id === cleaned);
+    if (index >= 0) {
+      next[index] = {
+        ...next[index],
+        ...detail,
+        spritesheetUrl: detail.spritesheetUrl || next[index]?.spritesheetUrl
+      };
+    } else {
+      next.push(detail);
+    }
+    globalCompanions.value = next;
+    return next.find((item) => item.id === cleaned) || detail;
   };
 
   const findCompanion = (
@@ -596,6 +643,8 @@ export const useCompanionStore = defineStore('companions', () => {
     enabled,
     featureEnabled,
     globalCompanions,
+    globalCompanionsLoaded,
+    globalCompanionsLoading,
     hydrated,
     lastError,
     loading,
@@ -612,6 +661,7 @@ export const useCompanionStore = defineStore('companions', () => {
     importPackage,
     findCompanion,
     loadGlobalCompanions,
+    ensureGlobalCompanion,
     removeCompanion,
     selectCompanion,
     setAgentOverride,

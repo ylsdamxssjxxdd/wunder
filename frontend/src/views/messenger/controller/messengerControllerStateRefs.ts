@@ -546,9 +546,13 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.worldVoiceDurationMs = ref(0);
 
+  ctx.worldVoiceTranscribing = ref(false);
+
   ctx.agentVoiceRecording = ref(false);
 
   ctx.agentVoiceDurationMs = ref(0);
+
+  ctx.agentVoiceTranscribing = ref(false);
 
   ctx.worldVoicePlaybackCurrentMs = ref(0);
 

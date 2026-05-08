@@ -907,6 +907,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           return;
       }
       const voiceFile = new File([recording.blob], ctx.buildAgentVoiceFileName(), { type: 'audio/wav' });
+      ctx.agentVoiceTranscribing.value = true;
       try {
           const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
           await ctx.appendTextToAgentComposerDraft(transcript);
@@ -947,6 +948,9 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       }
       catch (error) {
           showApiError(error, ctx.t('chat.error.requestFailed'));
+      }
+      finally {
+          ctx.agentVoiceTranscribing.value = false;
       }
   };
 
@@ -1099,6 +1103,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       }
       const voiceFile = new File([recording.blob], ctx.buildWorldVoiceFileName(), { type: 'audio/wav' });
       ctx.worldUploading.value = true;
+      ctx.worldVoiceTranscribing.value = true;
       try {
           const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
           await ctx.appendTextToWorldDraft(transcript);
@@ -1142,6 +1147,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       }
       finally {
           ctx.worldUploading.value = false;
+          ctx.worldVoiceTranscribing.value = false;
       }
   };
 

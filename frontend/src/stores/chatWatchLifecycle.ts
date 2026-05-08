@@ -50,6 +50,16 @@ type ForegroundLiveRetentionOptions = {
   remoteRunning?: unknown;
 };
 
+type ForegroundHydrationGapOptions = {
+  preserveWatcher?: boolean;
+  lifecycle?: unknown;
+  hasSendController?: boolean;
+  hasResumeController?: boolean;
+  remoteRunning?: unknown;
+  liveHasPendingAssistant?: boolean;
+  hydratedHasPendingAssistant?: boolean;
+};
+
 type ActiveSessionPreserveOptions = {
   isSameActiveSession?: boolean;
   lifecycle?: unknown;
@@ -92,3 +102,24 @@ export const shouldKeepForegroundLiveMessages = (
   options.preserveWatcher === true &&
   options.hydrateForegroundMessages !== true &&
   options.remoteRunning === true;
+
+export const shouldKeepForegroundLiveMessagesDuringRunningGap = (
+  options: ForegroundHydrationGapOptions
+): boolean => {
+  if (options.preserveWatcher !== true) return false;
+  if (options.remoteRunning !== true) return false;
+  if (options.liveHasPendingAssistant !== true) return false;
+  if (options.hydratedHasPendingAssistant === true) return false;
+  if (options.hasSendController || options.hasResumeController) return true;
+  const lifecycle = normalizeStreamLifecyclePhase(options.lifecycle);
+  return lifecycle !== 'sending' && lifecycle !== 'resuming';
+};
+
+export const shouldKeepForegroundInteractiveRuntime = (options: {
+  remoteRunning?: unknown;
+  hasSendController?: boolean;
+  hasResumeController?: boolean;
+}): boolean =>
+  options.remoteRunning === true ||
+  options.hasSendController === true ||
+  options.hasResumeController === true;

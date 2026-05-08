@@ -760,41 +760,17 @@ const PROVIDER_PRESETS_BY_TYPE: Record<
     { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
   ],
   asr: [
-    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
-    { id: 'whisper_cpp', label: 'whisper_cpp', baseUrl: 'http://127.0.0.1:8080' },
-    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
-    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
-    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
-    { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-    { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
-    { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+    { id: 'vllm_omni', label: 'vllm-omni', baseUrl: 'http://127.0.0.1:8000/v1' },
+    { id: 'whisper_cpp', label: 'whisper', baseUrl: 'http://127.0.0.1:8080' }
   ],
   tts: [
-    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
-    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
-    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
-    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
-    { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-    { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
-    { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+    { id: 'vllm_omni', label: 'vllm-omni', baseUrl: 'http://127.0.0.1:8000/v1' }
   ],
   image: [
-    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
-    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
-    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
-    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
-    { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
-    { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
-    { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' }
+    { id: 'vllm_omni', label: 'vllm-omni', baseUrl: 'http://127.0.0.1:8000/v1' }
   ],
   video: [
-    { id: 'vllm_omni', label: 'vllm_omni', baseUrl: 'http://127.0.0.1:8000/v1' },
-    { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
-    { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
-    { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
-    { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
-    { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
-    { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' }
+    { id: 'vllm_omni', label: 'vllm-omni', baseUrl: 'http://127.0.0.1:8000/v1' }
   ]
 };
 const PROVIDER_PRESET_MAP = new Map(

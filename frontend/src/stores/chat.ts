@@ -102,6 +102,8 @@ import {
   normalizeStreamLifecyclePhase,
   shouldForcePreserveWatcherForActiveSession,
   shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundInteractiveRuntime,
+  shouldKeepForegroundLiveMessagesDuringRunningGap,
   shouldKeepForegroundLiveMessages,
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
@@ -11738,12 +11740,34 @@ export const useChatStore = defineStore('chat', {
         hasResumeController: Boolean(runtime?.resumeController)
       });
       const hasPendingAssistantAfterHydrationPreview = Boolean(findPendingAssistantMessage(nextMessages));
+      const liveForegroundMessages =
+        preserveWatcher || activeSessionKey === targetSessionId
+          ? resolveSessionMessageArray(
+              this,
+              targetSessionId,
+              activeSessionKey === targetSessionId ? this.messages : null
+            )
+          : null;
+      const hasPendingAssistantInForegroundLive = Boolean(
+        findPendingAssistantMessage(liveForegroundMessages)
+      );
+      const keepForegroundRunningGap = shouldKeepForegroundLiveMessagesDuringRunningGap({
+        preserveWatcher,
+        lifecycle: refreshRuntimeStreamLifecycle(runtime),
+        hasSendController: Boolean(runtime?.sendController),
+        hasResumeController: Boolean(runtime?.resumeController),
+        remoteRunning,
+        liveHasPendingAssistant: hasPendingAssistantInForegroundLive,
+        hydratedHasPendingAssistant: hasPendingAssistantAfterHydrationPreview
+      });
       chatDebugLog('chat.store.detail', 'foreground-sync-decision', {
         sessionId: targetSessionId,
         preserveWatcher,
         hydrateForegroundMessages,
         remoteRunning,
         activeSessionKey,
+        keepForegroundRunningGap,
+        hasPendingAssistantInForegroundLive,
         hasPendingAssistantAfterHydration: hasPendingAssistantAfterHydrationPreview,
         cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
         nextMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
@@ -11757,6 +11781,21 @@ export const useChatStore = defineStore('chat', {
           activeSessionKey === targetSessionId ? this.messages : null
         );
         if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
+          nextMessages = watchedMessages;
+        }
+      } else if (keepForegroundRunningGap) {
+        const watchedMessages = resolveSessionMessageArray(
+          this,
+          targetSessionId,
+          activeSessionKey === targetSessionId ? this.messages : null
+        );
+        if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
+          chatDebugLog('chat.store.detail', 'foreground-sync-preserve-running-gap', {
+            sessionId: targetSessionId,
+            watchedMessageCount: watchedMessages.length,
+            hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+            compactionRoundCount: compactionHydrationRounds.length
+          });
           nextMessages = watchedMessages;
         }
       } else if (shouldKeepForegroundLiveMessages({
@@ -11839,7 +11878,12 @@ export const useChatStore = defineStore('chat', {
         runtime,
         Math.max(resolveMaterializedMessageEventId(nextMessages), remoteLastEventId || 0)
       );
-      if (!hasPendingAssistantAfterHydration) {
+      const shouldKeepInteractiveRuntime = shouldKeepForegroundInteractiveRuntime({
+        remoteRunning,
+        hasSendController: Boolean(runtime?.sendController),
+        hasResumeController: Boolean(runtime?.resumeController)
+      });
+      if (!hasPendingAssistantAfterHydration && !shouldKeepInteractiveRuntime) {
         clearRuntimeInteractiveControllers(runtime, { abort: false });
         // Keep historical threads idle on entry; avoid reviving stale running status.
         setSessionLoading(this, targetSessionId, false);

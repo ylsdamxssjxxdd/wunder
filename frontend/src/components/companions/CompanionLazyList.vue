@@ -14,9 +14,9 @@
       >
         <span class="companion-lazy-list-item-preview" aria-hidden="true">
           <CompanionSprite
-            v-if="item.spritesheetDataUrl"
+            v-if="item.spritesheetDataUrl || item.spritesheetUrl"
             class="companion-lazy-list-item-sprite"
-            :source="item.spritesheetDataUrl"
+            :source="item.spritesheetDataUrl || item.spritesheetUrl || ''"
             state="idle"
             :scale="previewScale"
             fit

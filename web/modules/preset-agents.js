@@ -466,6 +466,7 @@ const normalizeCompanionRecord = (item) => ({
   id: String(item?.id || "").trim(),
   display_name: String(item?.display_name || item?.displayName || item?.name || "").trim(),
   description: String(item?.description || "").trim(),
+  spritesheet_url: String(item?.spritesheet_url || item?.spritesheetUrl || "").trim(),
   spritesheet_data_url: String(item?.spritesheet_data_url || item?.spritesheetDataUrl || "").trim(),
 });
 
@@ -1321,7 +1322,7 @@ const renderCompanionFace = (container, companion) => {
   }
   target.textContent = "";
   target.style.background = "transparent";
-  const source = String(companion?.spritesheet_data_url || "").trim();
+  const source = String(companion?.spritesheet_data_url || companion?.spritesheet_url || "").trim();
   if (!source) {
     const fallback = document.createElement("span");
     fallback.className = "preset-agent-avatar-option-initial";

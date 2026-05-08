@@ -90,16 +90,21 @@
         type="button"
         :class="{
           active: voiceRecording,
-          'messenger-world-tool-btn--recording': voiceRecording
+          'messenger-world-tool-btn--recording': voiceRecording,
+          'messenger-world-tool-btn--transcribing': voiceTranscribing
         }"
-        :disabled="uploading"
+        :disabled="uploading || voiceTranscribing"
         :title="voiceButtonTitle"
         :aria-label="voiceButtonTitle"
         @click="emit('toggle-voice-record')"
       >
         <i
           :class="[
-            voiceRecording ? 'fa-solid fa-stop' : 'fa-solid fa-microphone',
+            voiceRecording
+              ? 'fa-solid fa-stop'
+              : voiceTranscribing
+                ? 'fa-solid fa-waveform-lines'
+                : 'fa-solid fa-microphone',
             'messenger-world-tool-fa-icon'
           ]"
           aria-hidden="true"
@@ -139,6 +144,14 @@
       <div v-if="voiceRecording" class="messenger-world-voice-indicator">
         <i class="fa-solid fa-circle messenger-world-voice-indicator-dot" aria-hidden="true"></i>
         <span>{{ voiceRecordingLabel }}</span>
+      </div>
+      <div v-else-if="voiceTranscribing" class="messenger-world-voice-indicator messenger-world-voice-indicator--transcribing">
+        <span class="messenger-world-transcribing-rings" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </span>
+        <span>{{ voiceTranscribingLabel }}</span>
       </div>
     </div>
     <textarea
@@ -226,6 +239,7 @@ const props = withDefaults(
     sendKey?: SendKeyMode;
     voiceRecording?: boolean;
     voiceDurationMs?: number;
+    voiceTranscribing?: boolean;
     voiceSupported?: boolean;
   }>(),
   {
@@ -233,6 +247,7 @@ const props = withDefaults(
     screenshotSupported: false,
     voiceRecording: false,
     voiceDurationMs: 0,
+    voiceTranscribing: false,
     voiceSupported: true
   }
 );
@@ -291,13 +306,16 @@ const formatVoiceDurationLabel = (durationMs: unknown): string => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 const voiceButtonTitle = computed(() => {
-  return props.voiceRecording ? t('messenger.world.voice.stop') : t('messenger.world.voice.start');
+  if (props.voiceRecording) return t('messenger.world.voice.stop');
+  if (props.voiceTranscribing) return t('messenger.world.voice.transcribing');
+  return t('messenger.world.voice.start');
 });
 const voiceRecordingLabel = computed(() =>
   t('messenger.world.voice.recording', {
     duration: formatVoiceDurationLabel(props.voiceDurationMs)
   })
 );
+const voiceTranscribingLabel = computed(() => t('messenger.world.voice.transcribing'));
 const screenshotCaptureOptions = computed<ScreenshotCaptureOption[]>(() => [
   {
     key: 'full-keep',

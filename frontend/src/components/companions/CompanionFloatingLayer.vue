@@ -24,7 +24,7 @@
           {{ entry.message }}
         </div>
         <CompanionSprite
-          :source="entry.companion.spritesheetDataUrl"
+          :source="entry.companion.spritesheetDataUrl || entry.companion.spritesheetUrl || ''"
           :state="resolveEntrySpriteState(entry)"
           :scale="entry.scale"
         />
@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue';
 import { useRouter } from 'vue-router';
 
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
@@ -681,7 +681,6 @@ function clampAfterResize(): void {
 
 onMounted(async () => {
   await companionStore.hydrate().catch(() => undefined);
-  await companionStore.loadGlobalCompanions().catch(() => undefined);
   if (!agentStore.agents.length) {
     await agentStore.loadAgents().catch(() => undefined);
   }
@@ -695,6 +694,34 @@ onMounted(async () => {
     }
   }, 500);
 });
+
+watchEffect(() => {
+  allAgents.value.forEach((agent) => {
+    const config = parseAgentAvatarIconConfig(agent.icon);
+    if (config.kind !== 'companion') {
+      return;
+    }
+    const scope = config.scope || 'global';
+    const companionId = String(config.id || config.name || '').trim();
+    if (scope !== 'global' || !companionId) {
+      return;
+    }
+    void companionStore.ensureGlobalCompanion(companionId).catch(() => undefined);
+  });
+});
+
+watch(
+  () => visibleEntries.value.map((entry) => `${entry.agentId}:${entry.companion.id}:${entry.companion.scope || 'private'}:${entry.companion.spritesheetDataUrl ? '1' : '0'}`).join('|'),
+  () => {
+    visibleEntries.value.forEach((entry) => {
+      if ((entry.companion.scope || 'private') !== 'global' || entry.companion.spritesheetDataUrl) {
+        return;
+      }
+      void companionStore.ensureGlobalCompanion(entry.companion.id).catch(() => undefined);
+    });
+  },
+  { immediate: true }
+);
 
 onBeforeUnmount(() => {
   if (nowTimer !== null) window.clearInterval(nowTimer);

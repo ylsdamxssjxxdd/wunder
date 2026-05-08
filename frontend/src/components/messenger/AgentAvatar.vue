@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, watchEffect } from 'vue';
 
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import { useCompanionStore } from '@/stores/companions';
@@ -61,12 +61,23 @@ const isRunning = computed(() => props.state === 'running');
 const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
 const companionStore = useCompanionStore();
 void companionStore.hydrate().catch(() => undefined);
+watchEffect(() => {
+  if (avatarConfig.value.kind !== 'companion') {
+    return;
+  }
+  const scope = avatarConfig.value.scope || 'global';
+  const id = avatarConfig.value.id || avatarConfig.value.name;
+  if (scope !== 'global' || !String(id || '').trim()) {
+    return;
+  }
+  void companionStore.ensureGlobalCompanion(String(id || '').trim()).catch(() => undefined);
+});
 const companionRecord = computed(() =>
   avatarConfig.value.kind === 'companion'
     ? companionStore.findCompanion(avatarConfig.value.scope || 'global', avatarConfig.value.id || avatarConfig.value.name)
     : null
 );
-const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || '');
+const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || companionRecord.value?.spritesheetUrl || '');
 // The companion display scale is only for the floating character layer.
 // Agent avatars should stay visually stable inside message/list UI.
 const companionSpriteScale = computed(() => 1);

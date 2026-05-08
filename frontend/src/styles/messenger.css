@@ -2660,6 +2660,14 @@ button.messenger-chat-header-model {
   background: rgba(220, 38, 38, 0.12);
 }
 
+.messenger-world-tool-btn--transcribing,
+.messenger-world-tool-btn--transcribing:hover:not(:disabled) {
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.38);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(14, 165, 233, 0.24));
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.08), 0 8px 22px rgba(59, 130, 246, 0.14);
+}
+
 .messenger-world-voice-indicator {
   margin-left: auto;
   display: inline-flex;
@@ -2676,6 +2684,41 @@ button.messenger-chat-header-model {
   animation: messenger-world-voice-pulse 1.2s ease-in-out infinite;
 }
 
+.messenger-world-voice-indicator--transcribing {
+  color: #1d4ed8;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(191, 219, 254, 0.75), rgba(186, 230, 253, 0.86));
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.14), 0 10px 26px rgba(59, 130, 246, 0.14);
+}
+
+.messenger-world-transcribing-rings {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.messenger-world-transcribing-rings span {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(37, 99, 235, 0.72);
+  animation: messenger-world-transcribing-ping 1.35s ease-out infinite;
+}
+
+.messenger-world-transcribing-rings span:nth-child(2) {
+  animation-delay: 0.22s;
+}
+
+.messenger-world-transcribing-rings span:nth-child(3) {
+  animation-delay: 0.44s;
+}
+
 @keyframes messenger-world-voice-pulse {
   0%,
   100% {
@@ -2683,6 +2726,21 @@ button.messenger-chat-header-model {
   }
   50% {
     opacity: 1;
+  }
+}
+
+@keyframes messenger-world-transcribing-ping {
+  0% {
+    transform: scale(0.35);
+    opacity: 0.95;
+  }
+  70% {
+    transform: scale(1.35);
+    opacity: 0.15;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
   }
 }
 

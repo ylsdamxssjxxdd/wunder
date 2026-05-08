@@ -2560,6 +2560,7 @@ export default {
   'messenger.world.voice.start': 'Start recording',
   'messenger.world.voice.stop': 'Stop and send',
   'messenger.world.voice.recording': 'Recording {duration}',
+  'messenger.world.voice.transcribing': 'Recognizing speech…',
   'messenger.world.voice.unsupported': 'Voice recording is unavailable',
   'messenger.world.voice.permissionDenied': 'Microphone access was denied. Please check system or app permissions.',
   'messenger.world.voice.title': 'Voice message',

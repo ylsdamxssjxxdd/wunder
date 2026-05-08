@@ -23,7 +23,8 @@ use crate::performance::{
 };
 use crate::services::companions::{
     content_hash, delete_global_companion, export_global_companion, import_global_companion,
-    list_global_companions, load_global_companion, update_global_companion,
+    list_global_companions, load_global_companion, load_global_companion_spritesheet,
+    update_global_companion,
 };
 use crate::services::default_agent_sync::{
     self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
@@ -336,6 +337,10 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_companion_get)
                 .patch(admin_companion_update)
                 .delete(admin_companion_delete),
+        )
+        .route(
+            "/wunder/admin/companions/{id}/spritesheet",
+            get(admin_companion_spritesheet),
         )
         .route(
             "/wunder/admin/companions/{id}/package",
@@ -4793,6 +4798,33 @@ async fn admin_companion_get(
         ));
     };
     Ok(Json(json!({ "data": item })))
+}
+
+async fn admin_companion_spritesheet(
+    State(_state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Response, Response> {
+    let Some((mime, bytes)) = load_global_companion_spritesheet(&id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    else {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "companion not found".to_string(),
+        ));
+    };
+    let mut response = Response::new(axum::body::Body::from(bytes.clone()));
+    *response.status_mut() = StatusCode::OK;
+    if let Ok(value) = AxumHeaderValue::from_str(&mime) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, value);
+    }
+    if let Ok(value) = AxumHeaderValue::from_str(&bytes.len().to_string()) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_LENGTH, value);
+    }
+    Ok(response)
 }
 
 async fn admin_companions_import(

@@ -1472,6 +1472,7 @@
             :voice-supported="agentVoiceSupported"
             :voice-recording="agentVoiceRecording"
             :voice-duration-ms="agentVoiceDurationMs"
+            :voice-transcribing="agentVoiceTranscribing"
             :show-approval-label="showAgentComposerApprovalHint"
             :approval-label="agentComposerApprovalHintLabel"
             :approval-mode="composerApprovalMode"
@@ -1513,6 +1514,7 @@
           :screenshot-supported="worldDesktopScreenshotSupported"
           :voice-recording="worldVoiceRecording"
           :voice-duration-ms="worldVoiceDurationMs"
+          :voice-transcribing="worldVoiceTranscribing"
           :voice-supported="worldVoiceSupported"
           @update:draft="worldDraft = $event"
           @resize-mousedown="startWorldComposerResize"
@@ -1828,6 +1830,7 @@ const agentVoiceModelHearingSupported = controller.agentVoiceModelHearingSupport
 const agentVoiceModelSupportCheckedAt = controller.agentVoiceModelSupportCheckedAt;
 const agentVoiceRecording = controller.agentVoiceRecording;
 const agentVoiceRecordingRuntime = controller.agentVoiceRecordingRuntime;
+const agentVoiceTranscribing = controller.agentVoiceTranscribing;
 const agentVoiceSupported = controller.agentVoiceSupported;
 const allowNavigationCollapse = controller.allowNavigationCollapse;
 const appearanceHydrating = controller.appearanceHydrating;
@@ -2988,6 +2991,7 @@ const worldVoicePlaybackRuntime = controller.worldVoicePlaybackRuntime;
 const worldVoicePlayingMessageKey = controller.worldVoicePlayingMessageKey;
 const worldVoiceRecording = controller.worldVoiceRecording;
 const worldVoiceRecordingRuntime = controller.worldVoiceRecordingRuntime;
+const worldVoiceTranscribing = controller.worldVoiceTranscribing;
 const worldVoiceSupported = controller.worldVoiceSupported;
 const writeWorldDraft = controller.writeWorldDraft;
 </script>
