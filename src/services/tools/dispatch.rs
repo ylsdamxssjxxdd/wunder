@@ -14,6 +14,7 @@ use super::{
 use super::{
     apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool, web_fetch_tool,
 };
+use super::multimodal_generation_tool;
 use crate::cron::{handle_cron_action, CronActionRequest};
 use crate::i18n;
 use crate::services::goal;
@@ -72,6 +73,15 @@ pub async fn execute_builtin_tool(
         "搜索内容" => search_content(context, args).await,
         "读取文件" => read_files(context, args).await,
         read_image_tool::TOOL_READ_IMAGE => read_image_tool::tool_read_image(context, args).await,
+        multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
+            multimodal_generation_tool::tool_generate_speech(context, args).await
+        }
+        multimodal_generation_tool::TOOL_GENERATE_IMAGE => {
+            multimodal_generation_tool::tool_generate_image(context, args).await
+        }
+        multimodal_generation_tool::TOOL_GENERATE_VIDEO => {
+            multimodal_generation_tool::tool_generate_video(context, args).await
+        }
         "技能调用" => execute_skill_call(context, args).await,
         "写入文件" => write_file(context, args).await,
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,

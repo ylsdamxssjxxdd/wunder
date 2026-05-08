@@ -134,6 +134,7 @@
                 <el-option :label="t('desktop.system.modelTypeEmbedding')" value="embedding" />
                 <el-option :label="t('desktop.system.modelTypeTts')" value="tts" />
                 <el-option :label="t('desktop.system.modelTypeImage')" value="image" />
+                <el-option :label="t('desktop.system.modelTypeVideo')" value="video" />
               </el-select>
             </label>
             <label class="desktop-system-settings-field">
@@ -151,6 +152,9 @@
                   :value="provider.id"
                 />
               </el-select>
+              <span class="desktop-system-settings-field-note">
+                {{ providerFieldNote }}
+              </span>
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelName') }}</span>
@@ -286,6 +290,57 @@
                 <span class="desktop-system-settings-field-label">{{ t('desktop.system.imageNegativePrompt') }}</span>
                 <el-input v-model="selectedModel.image_negative_prompt" type="textarea" :rows="2" />
               </label>
+            </template>
+            <template v-if="selectedModel.model_type === 'video'">
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoSize') }}</span>
+                <el-input v-model="selectedModel.video_size" :placeholder="t('desktop.system.videoSizePlaceholder')" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoSeconds') }}</span>
+                <el-input v-model="selectedModel.video_seconds" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoFps') }}</span>
+                <el-input v-model="selectedModel.video_fps" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoNumFrames') }}</span>
+                <el-input v-model="selectedModel.video_num_frames" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoSteps') }}</span>
+                <el-input v-model="selectedModel.video_num_inference_steps" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoGuidanceScale') }}</span>
+                <el-input v-model="selectedModel.video_guidance_scale" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoGuidanceScale2') }}</span>
+                <el-input v-model="selectedModel.video_guidance_scale_2" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoBoundaryRatio') }}</span>
+                <el-input v-model="selectedModel.video_boundary_ratio" />
+              </label>
+              <label class="desktop-system-settings-field">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoFlowShift') }}</span>
+                <el-input v-model="selectedModel.video_flow_shift" />
+              </label>
+              <label class="desktop-system-settings-field desktop-system-settings-field--full">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoNegativePrompt') }}</span>
+                <el-input v-model="selectedModel.video_negative_prompt" type="textarea" :rows="2" />
+              </label>
+              <div class="desktop-system-settings-field desktop-system-settings-field--full">
+                <span class="desktop-system-settings-field-label">{{ t('desktop.system.videoAdvanced') }}</span>
+                <div class="desktop-system-settings-checkbox-group">
+                  <label class="desktop-system-settings-checkbox">
+                    <input v-model="selectedModel.video_enable_frame_interpolation" type="checkbox" />
+                    <span>{{ t('desktop.system.videoEnableFrameInterpolation') }}</span>
+                  </label>
+                </div>
+              </div>
             </template>
           </div>
           <div v-else class="desktop-system-settings-section-empty">
@@ -515,7 +570,7 @@ import {
   resolveProviderModelPresetMaxContext
 } from '@/views/messenger/providerModelPresets';
 
-type ModelType = 'llm' | 'embedding' | 'tts' | 'image';
+type ModelType = 'llm' | 'embedding' | 'tts' | 'image' | 'video';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type SelectedModelPreference = {
@@ -550,12 +605,24 @@ type ModelRow = {
   image_negative_prompt: string;
   image_num_inference_steps: string;
   image_guidance_scale: string;
+  video_size: string;
+  video_seconds: string;
+  video_fps: string;
+  video_num_frames: string;
+  video_negative_prompt: string;
+  video_num_inference_steps: string;
+  video_guidance_scale: string;
+  video_guidance_scale_2: string;
+  video_boundary_ratio: string;
+  video_flow_shift: string;
+  video_enable_frame_interpolation: boolean;
   raw: Record<string, unknown>;
 };
 
 const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_model';
 const TTS_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_tts_model';
 const IMAGE_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_image_model';
+const VIDEO_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_video_model';
 
 const props = withDefaults(
   defineProps<{
@@ -580,6 +647,7 @@ const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
 const defaultTtsModel = ref('');
 const defaultImageModel = ref('');
+const defaultVideoModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
 const savingLan = ref(false);
@@ -673,7 +741,8 @@ const isDefaultModelRow = (row: ModelRow): boolean => {
     key === defaultModel.value.trim() ||
     key === defaultEmbeddingModel.value.trim() ||
     key === defaultTtsModel.value.trim() ||
-    key === defaultImageModel.value.trim()
+    key === defaultImageModel.value.trim() ||
+    key === defaultVideoModel.value.trim()
   );
 };
 const modelRowsForList = computed(() =>
@@ -686,7 +755,8 @@ const modelRowsForList = computed(() =>
       if (key === defaultEmbeddingModel.value.trim() && modelType === 'embedding') return 1;
       if (key === defaultTtsModel.value.trim() && modelType === 'tts') return 2;
       if (key === defaultImageModel.value.trim() && modelType === 'image') return 3;
-      return 4;
+      if (key === defaultVideoModel.value.trim() && modelType === 'video') return 4;
+      return 5;
     };
     const rankDiff = rank(keyA, a.model_type) - rank(keyB, b.model_type);
     if (rankDiff !== 0) return rankDiff;
@@ -746,6 +816,14 @@ const modelBaseUrlPlaceholder = computed(() => {
   const provider = selectedModel.value?.provider;
   return resolveProviderBaseUrl(provider) || t('desktop.system.baseUrlPlaceholder');
 });
+
+const providerFieldNote = computed(() => {
+  const modelType = selectedModel.value?.model_type || 'llm';
+  if (modelType === 'tts' || modelType === 'image') {
+    return t('desktop.system.providerHintMultimodal');
+  }
+  return t('desktop.system.providerHint');
+});
 const setCurrentDefaultLabel = computed(() => {
   const current = selectedModel.value;
   if (!current) return t('desktop.system.setDefaultChatModel');
@@ -756,6 +834,8 @@ const setCurrentDefaultLabel = computed(() => {
       return t('desktop.system.setDefaultTtsModel');
     case 'image':
       return t('desktop.system.setDefaultImageModel');
+    case 'video':
+      return t('desktop.system.setDefaultVideoModel');
     default:
       return t('desktop.system.setDefaultChatModel');
   }
@@ -767,6 +847,8 @@ const modelParameterSectionTitle = computed(() => {
       return t('desktop.system.section.tts');
     case 'image':
       return t('desktop.system.section.image');
+    case 'video':
+      return t('desktop.system.section.video');
     default:
       return t('desktop.system.section.generation');
   }
@@ -783,6 +865,15 @@ const normalizeModelType = (value: unknown): ModelType => {
   if (raw === 'image' || raw === 'draw' || raw === 'drawing' || raw === 'text_to_image' || raw === 'text-to-image') {
     return 'image';
   }
+  if (
+    raw === 'video' ||
+    raw === 'movie' ||
+    raw === 'animation' ||
+    raw === 'text_to_video' ||
+    raw === 'text-to-video'
+  ) {
+    return 'video';
+  }
   return 'llm';
 };
 
@@ -794,6 +885,8 @@ const modelTypeLabel = (value: unknown): string => {
       return t('desktop.system.modelTypeTts');
     case 'image':
       return t('desktop.system.modelTypeImage');
+    case 'video':
+      return t('desktop.system.modelTypeVideo');
     default:
       return t('desktop.system.modelTypeLlm');
   }
@@ -984,6 +1077,20 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     image_num_inference_steps:
       raw.image_num_inference_steps == null ? '' : String(raw.image_num_inference_steps),
     image_guidance_scale: raw.image_guidance_scale == null ? '' : String(raw.image_guidance_scale),
+    video_size: String(raw.video_size || ''),
+    video_seconds: raw.video_seconds == null ? '' : String(raw.video_seconds),
+    video_fps: raw.video_fps == null ? '' : String(raw.video_fps),
+    video_num_frames: raw.video_num_frames == null ? '' : String(raw.video_num_frames),
+    video_negative_prompt: String(raw.video_negative_prompt || ''),
+    video_num_inference_steps:
+      raw.video_num_inference_steps == null ? '' : String(raw.video_num_inference_steps),
+    video_guidance_scale: raw.video_guidance_scale == null ? '' : String(raw.video_guidance_scale),
+    video_guidance_scale_2:
+      raw.video_guidance_scale_2 == null ? '' : String(raw.video_guidance_scale_2),
+    video_boundary_ratio:
+      raw.video_boundary_ratio == null ? '' : String(raw.video_boundary_ratio),
+    video_flow_shift: raw.video_flow_shift == null ? '' : String(raw.video_flow_shift),
+    video_enable_frame_interpolation: raw.video_enable_frame_interpolation === true,
     raw: { ...raw }
   }));
 
@@ -1051,6 +1158,8 @@ const defaultModelStorageKeyByType = (modelType: ModelType): string => {
       return TTS_DEFAULT_MODEL_STORAGE_KEY;
     case 'image':
       return IMAGE_DEFAULT_MODEL_STORAGE_KEY;
+    case 'video':
+      return VIDEO_DEFAULT_MODEL_STORAGE_KEY;
     default:
       return '';
   }
@@ -1110,6 +1219,17 @@ const addModel = (modelType: ModelType = 'llm') => {
     image_negative_prompt: '',
     image_num_inference_steps: '',
     image_guidance_scale: '',
+    video_size: '',
+    video_seconds: '',
+    video_fps: '',
+    video_num_frames: '',
+    video_negative_prompt: '',
+    video_num_inference_steps: '',
+    video_guidance_scale: '',
+    video_guidance_scale_2: '',
+    video_boundary_ratio: '',
+    video_flow_shift: '',
+    video_enable_frame_interpolation: false,
     raw: {}
   };
   modelRows.value.push(row);
@@ -1133,6 +1253,7 @@ const setCurrentAsDefault = async () => {
   const previousDefaultEmbeddingModel = defaultEmbeddingModel.value;
   const previousDefaultTtsModel = defaultTtsModel.value;
   const previousDefaultImageModel = defaultImageModel.value;
+  const previousDefaultVideoModel = defaultVideoModel.value;
   const modelType = normalizeModelType(current.model_type);
   switch (modelType) {
     case 'embedding':
@@ -1144,6 +1265,9 @@ const setCurrentAsDefault = async () => {
     case 'image':
       defaultImageModel.value = key;
       break;
+    case 'video':
+      defaultVideoModel.value = key;
+      break;
     default:
       defaultModel.value = key;
       break;
@@ -1154,6 +1278,7 @@ const setCurrentAsDefault = async () => {
     defaultEmbeddingModel.value = previousDefaultEmbeddingModel;
     defaultTtsModel.value = previousDefaultTtsModel;
     defaultImageModel.value = previousDefaultImageModel;
+    defaultVideoModel.value = previousDefaultVideoModel;
   }
 };
 
@@ -1170,6 +1295,11 @@ const removeModel = (target: ModelRow) => {
     modelRows.value,
     'image',
     defaultImageModel.value
+  );
+  defaultVideoModel.value = findDefaultModelKeyByType(
+    modelRows.value,
+    'video',
+    defaultVideoModel.value
   );
   ensureSelectedModel();
 };
@@ -1243,6 +1373,18 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     setText('image_negative_prompt', row.image_negative_prompt);
     setInt('image_num_inference_steps', row.image_num_inference_steps);
     setFloat('image_guidance_scale', row.image_guidance_scale);
+  } else if (row.model_type === 'video') {
+    setText('video_size', row.video_size);
+    setFloat('video_seconds', row.video_seconds);
+    setInt('video_fps', row.video_fps);
+    setInt('video_num_frames', row.video_num_frames);
+    setText('video_negative_prompt', row.video_negative_prompt);
+    setInt('video_num_inference_steps', row.video_num_inference_steps);
+    setFloat('video_guidance_scale', row.video_guidance_scale);
+    setFloat('video_guidance_scale_2', row.video_guidance_scale_2);
+    setFloat('video_boundary_ratio', row.video_boundary_ratio);
+    setFloat('video_flow_shift', row.video_flow_shift);
+    output.video_enable_frame_interpolation = row.video_enable_frame_interpolation === true;
   }
 
   return output;
@@ -1352,6 +1494,11 @@ const applySettingsData = (
     modelRows.value,
     'image',
     String(llm.default_image || '').trim() || readStoredDefaultModel('image')
+  );
+  defaultVideoModel.value = findDefaultModelKeyByType(
+    modelRows.value,
+    'video',
+    String(llm.default_video || '').trim() || readStoredDefaultModel('video')
   );
 
   ensureSelectedModel(preferredSelection);
@@ -1498,6 +1645,16 @@ const saveModelSettings = async (): Promise<boolean> => {
     return false;
   }
 
+  const currentDefaultVideo = findDefaultModelKeyByType(
+    modelRows.value,
+    'video',
+    defaultVideoModel.value.trim()
+  );
+  if (currentDefaultVideo && !models[currentDefaultVideo]) {
+    ElMessage.warning(t('desktop.system.defaultVideoModelMissing'));
+    return false;
+  }
+
   savingModel.value = true;
   try {
     const response = await updateDesktopSettings({
@@ -1506,6 +1663,7 @@ const saveModelSettings = async (): Promise<boolean> => {
         default_embedding: currentDefaultEmbedding || undefined,
         default_tts: currentDefaultTts || undefined,
         default_image: currentDefaultImage || undefined,
+        default_video: currentDefaultVideo || undefined,
         models
       }
     });
@@ -1513,6 +1671,7 @@ const saveModelSettings = async (): Promise<boolean> => {
     writeStoredDefaultModel('embedding', currentDefaultEmbedding);
     writeStoredDefaultModel('tts', currentDefaultTts);
     writeStoredDefaultModel('image', currentDefaultImage);
+    writeStoredDefaultModel('video', currentDefaultVideo);
     applySettingsData(data, preferredSelection);
     emit('desktop-model-meta-changed');
     ElMessage.success(t('desktop.common.saveSuccess'));
@@ -1819,6 +1978,12 @@ onMounted(() => {
 .desktop-system-settings-field-label {
   color: var(--portal-text);
   font-size: 12px;
+}
+
+.desktop-system-settings-field-note {
+  color: var(--portal-muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .desktop-system-settings-form-grid {

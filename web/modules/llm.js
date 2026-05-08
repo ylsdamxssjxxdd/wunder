@@ -137,7 +137,7 @@ const normalizeReasoningEffort = (value) => {
   return "";
 };
 
-const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding", "tts", "image"]);
+const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding", "tts", "image", "video"]);
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) {
@@ -165,6 +165,16 @@ const normalizeModelType = (value) => {
     normalized === "image_generation"
   ) {
     return "image";
+  }
+  if (
+    normalized === "video" ||
+    normalized === "movie" ||
+    normalized === "animation" ||
+    normalized === "text_to_video" ||
+    normalized === "text2video" ||
+    normalized === "video_generation"
+  ) {
+    return "video";
   }
   return MODEL_TYPE_OPTIONS.has(normalized) ? normalized : "llm";
 };
@@ -361,6 +371,43 @@ const normalizeLlmConfig = (raw) => {
       typeof raw?.image_guidance_scale === "number" && !Number.isNaN(raw.image_guidance_scale)
         ? raw.image_guidance_scale
         : null,
+    video_size: raw?.video_size || "",
+    video_seconds: typeof raw?.video_seconds === "number" && !Number.isNaN(raw.video_seconds)
+      ? raw.video_seconds
+      : null,
+    video_fps: typeof raw?.video_fps === "number" && !Number.isNaN(raw.video_fps)
+      ? raw.video_fps
+      : null,
+    video_num_frames:
+      typeof raw?.video_num_frames === "number" && !Number.isNaN(raw.video_num_frames)
+        ? raw.video_num_frames
+        : null,
+    video_negative_prompt: raw?.video_negative_prompt || "",
+    video_num_inference_steps:
+      typeof raw?.video_num_inference_steps === "number" &&
+      !Number.isNaN(raw.video_num_inference_steps)
+        ? raw.video_num_inference_steps
+        : null,
+    video_guidance_scale:
+      typeof raw?.video_guidance_scale === "number" &&
+      !Number.isNaN(raw.video_guidance_scale)
+        ? raw.video_guidance_scale
+        : null,
+    video_guidance_scale_2:
+      typeof raw?.video_guidance_scale_2 === "number" &&
+      !Number.isNaN(raw.video_guidance_scale_2)
+        ? raw.video_guidance_scale_2
+        : null,
+    video_boundary_ratio:
+      typeof raw?.video_boundary_ratio === "number" &&
+      !Number.isNaN(raw.video_boundary_ratio)
+        ? raw.video_boundary_ratio
+        : null,
+    video_flow_shift:
+      typeof raw?.video_flow_shift === "number" && !Number.isNaN(raw.video_flow_shift)
+        ? raw.video_flow_shift
+        : null,
+    video_enable_frame_interpolation: raw?.video_enable_frame_interpolation === true,
     mock_if_unconfigured: raw?.mock_if_unconfigured !== false,
   };
 };
@@ -402,11 +449,18 @@ const normalizeLlmSet = (raw) => {
     normalizedModels,
     order
   );
+  const defaultVideoName = resolveDefaultModelNameByType(
+    llm.default_video,
+    "video",
+    normalizedModels,
+    order
+  );
   return {
     defaultName,
     defaultEmbeddingName,
     defaultTtsName,
     defaultImageName,
+    defaultVideoName,
     models: normalizedModels,
     order,
   };
@@ -463,6 +517,28 @@ const clearLlmForm = () => {
   if (elements.llmImageSteps) elements.llmImageSteps.value = "";
   if (elements.llmImageGuidanceScale) elements.llmImageGuidanceScale.value = "";
   if (elements.llmImageNegativePrompt) elements.llmImageNegativePrompt.value = "";
+  if (elements.llmVideoSize) elements.llmVideoSize.value = "";
+  if (elements.llmVideoSeconds) elements.llmVideoSeconds.value = "";
+  if (elements.llmVideoFps) elements.llmVideoFps.value = "";
+  if (elements.llmVideoNumFrames) elements.llmVideoNumFrames.value = "";
+  if (elements.llmVideoSteps) elements.llmVideoSteps.value = "";
+  if (elements.llmVideoGuidanceScale) elements.llmVideoGuidanceScale.value = "";
+  if (elements.llmVideoGuidanceScale2) elements.llmVideoGuidanceScale2.value = "";
+  if (elements.llmVideoBoundaryRatio) elements.llmVideoBoundaryRatio.value = "";
+  if (elements.llmVideoFlowShift) elements.llmVideoFlowShift.value = "";
+  if (elements.llmVideoNegativePrompt) elements.llmVideoNegativePrompt.value = "";
+  if (elements.llmVideoFrameInterpolation) elements.llmVideoFrameInterpolation.checked = false;
+  if (elements.llmVideoSize) elements.llmVideoSize.value = "";
+  if (elements.llmVideoSeconds) elements.llmVideoSeconds.value = "";
+  if (elements.llmVideoFps) elements.llmVideoFps.value = "";
+  if (elements.llmVideoNumFrames) elements.llmVideoNumFrames.value = "";
+  if (elements.llmVideoSteps) elements.llmVideoSteps.value = "";
+  if (elements.llmVideoGuidanceScale) elements.llmVideoGuidanceScale.value = "";
+  if (elements.llmVideoGuidanceScale2) elements.llmVideoGuidanceScale2.value = "";
+  if (elements.llmVideoBoundaryRatio) elements.llmVideoBoundaryRatio.value = "";
+  if (elements.llmVideoFlowShift) elements.llmVideoFlowShift.value = "";
+  if (elements.llmVideoNegativePrompt) elements.llmVideoNegativePrompt.value = "";
+  if (elements.llmVideoFrameInterpolation) elements.llmVideoFrameInterpolation.checked = false;
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
   lastProviderSelection = DEFAULT_PROVIDER_ID;
   updateLlmTypeVisibility("llm");
@@ -473,6 +549,7 @@ const updateLlmTypeVisibility = (modelType) => {
   const isLlm = normalized === "llm";
   const isTts = normalized === "tts";
   const isImage = normalized === "image";
+  const isVideo = normalized === "video";
   const showGeneration = true;
   const toggle = (element, visible) => {
     if (!element) {
@@ -489,6 +566,7 @@ const updateLlmTypeVisibility = (modelType) => {
   toggle(elements.llmMaxContextRow, isLlm);
   toggle(elements.llmTtsRows, isTts);
   toggle(elements.llmImageRows, isImage);
+  toggle(elements.llmVideoRows, isVideo);
   toggle(elements.llmConnectionOnlyHint, !showGeneration);
   toggle(elements.llmCapabilitiesCard, isLlm);
   toggle(elements.llmCompactionCard, isLlm);
@@ -498,6 +576,8 @@ const updateLlmTypeVisibility = (modelType) => {
         ? "llm.section.tts"
         : normalized === "image"
           ? "llm.section.image"
+          : normalized === "video"
+            ? "llm.section.video"
           : "llm.section.generation";
     elements.llmGenerationTitle.textContent = t(titleKey);
   }
@@ -563,6 +643,31 @@ const applyLlmConfigToForm = (name, config) => {
   if (elements.llmImageNegativePrompt) {
     elements.llmImageNegativePrompt.value = llm.image_negative_prompt || "";
   }
+  if (elements.llmVideoSize) elements.llmVideoSize.value = llm.video_size || "";
+  if (elements.llmVideoSeconds) elements.llmVideoSeconds.value = llm.video_seconds ?? "";
+  if (elements.llmVideoFps) elements.llmVideoFps.value = llm.video_fps ?? "";
+  if (elements.llmVideoNumFrames) elements.llmVideoNumFrames.value = llm.video_num_frames ?? "";
+  if (elements.llmVideoSteps) {
+    elements.llmVideoSteps.value = llm.video_num_inference_steps ?? "";
+  }
+  if (elements.llmVideoGuidanceScale) {
+    elements.llmVideoGuidanceScale.value = llm.video_guidance_scale ?? "";
+  }
+  if (elements.llmVideoGuidanceScale2) {
+    elements.llmVideoGuidanceScale2.value = llm.video_guidance_scale_2 ?? "";
+  }
+  if (elements.llmVideoBoundaryRatio) {
+    elements.llmVideoBoundaryRatio.value = llm.video_boundary_ratio ?? "";
+  }
+  if (elements.llmVideoFlowShift) {
+    elements.llmVideoFlowShift.value = llm.video_flow_shift ?? "";
+  }
+  if (elements.llmVideoNegativePrompt) {
+    elements.llmVideoNegativePrompt.value = llm.video_negative_prompt || "";
+  }
+  if (elements.llmVideoFrameInterpolation) {
+    elements.llmVideoFrameInterpolation.checked = llm.video_enable_frame_interpolation === true;
+  }
   updateLlmTypeVisibility(llm.model_type);
   applyProviderDefaults(llm.provider, {
     forceBaseUrl: !llm.base_url,
@@ -596,7 +701,14 @@ const updateDetailHeader = () => {
   }
   if (elements.llmDetailMeta) {
     const parts = [];
-    if (activeName === state.llm.defaultName) {
+    const modelType = normalizeModelType(config?.model_type);
+    const isDefault =
+      (modelType === "llm" && activeName === state.llm.defaultName) ||
+      (modelType === "embedding" && activeName === state.llm.defaultEmbeddingName) ||
+      (modelType === "tts" && activeName === state.llm.defaultTtsName) ||
+      (modelType === "image" && activeName === state.llm.defaultImageName) ||
+      (modelType === "video" && activeName === state.llm.defaultVideoName);
+    if (isDefault) {
       parts.push(t("llm.default"));
     }
     if (config.model) {
@@ -608,9 +720,14 @@ const updateDetailHeader = () => {
     elements.llmDetailMeta.textContent = parts.join(" · ") || t("llm.detail.selected");
   }
   if (elements.llmSetDefaultBtn) {
-    const isChatModel = normalizeModelType(config?.model_type) === "llm";
-    const isDefault = activeName === state.llm.defaultName && isChatModel;
-    elements.llmSetDefaultBtn.disabled = isDefault || !isChatModel;
+    const modelType = normalizeModelType(config?.model_type);
+    const isDefault =
+      (modelType === "llm" && activeName === state.llm.defaultName) ||
+      (modelType === "embedding" && activeName === state.llm.defaultEmbeddingName) ||
+      (modelType === "tts" && activeName === state.llm.defaultTtsName) ||
+      (modelType === "image" && activeName === state.llm.defaultImageName) ||
+      (modelType === "video" && activeName === state.llm.defaultVideoName);
+    elements.llmSetDefaultBtn.disabled = isDefault;
     elements.llmSetDefaultBtn.classList.toggle("llm-default-btn", isDefault);
   }
   if (elements.llmDeleteBtn) {
@@ -648,14 +765,22 @@ const renderLlmList = () => {
           ? "fa-volume-high"
           : modelType === "image"
             ? "fa-image"
-            : "fa-robot";
+            : modelType === "video"
+              ? "fa-film"
+              : "fa-robot";
     icon.className = `fa-solid ${iconClass} llm-type-icon is-${modelType}`;
     const titleText = document.createElement("span");
     titleText.className = "llm-list-item-name";
     titleText.textContent = getDisplayName(name);
     title.appendChild(icon);
     title.appendChild(titleText);
-    if (name === state.llm.defaultName) {
+    const isDefault =
+      (modelType === "llm" && name === state.llm.defaultName) ||
+      (modelType === "embedding" && name === state.llm.defaultEmbeddingName) ||
+      (modelType === "tts" && name === state.llm.defaultTtsName) ||
+      (modelType === "image" && name === state.llm.defaultImageName) ||
+      (modelType === "video" && name === state.llm.defaultVideoName);
+    if (isDefault) {
       const badge = document.createElement("span");
       badge.className = "llm-default-tag";
       badge.innerHTML = `<i class="fa-solid fa-star"></i>${t("llm.defaultBadge")}`;
@@ -732,6 +857,22 @@ const buildLlmConfigFromForm = (baseConfig) => {
       image_guidance_scale: parseOptionalFloatInput(elements.llmImageGuidanceScale) || undefined,
     };
   }
+  if (modelType === "video") {
+    return {
+      ...commonConfig,
+      video_size: elements.llmVideoSize?.value.trim() || undefined,
+      video_seconds: parseOptionalFloatInput(elements.llmVideoSeconds) || undefined,
+      video_fps: parseOptionalIntInput(elements.llmVideoFps) || undefined,
+      video_num_frames: parseOptionalIntInput(elements.llmVideoNumFrames) || undefined,
+      video_negative_prompt: elements.llmVideoNegativePrompt?.value.trim() || undefined,
+      video_num_inference_steps: parseOptionalIntInput(elements.llmVideoSteps) || undefined,
+      video_guidance_scale: parseOptionalFloatInput(elements.llmVideoGuidanceScale) || undefined,
+      video_guidance_scale_2: parseOptionalFloatInput(elements.llmVideoGuidanceScale2) || undefined,
+      video_boundary_ratio: parseOptionalFloatInput(elements.llmVideoBoundaryRatio) || undefined,
+      video_flow_shift: parseOptionalFloatInput(elements.llmVideoFlowShift) || undefined,
+      video_enable_frame_interpolation: elements.llmVideoFrameInterpolation?.checked === true,
+    };
+  }
   return {
     ...commonConfig,
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
@@ -794,6 +935,46 @@ const buildLlmConfigForPayload = (rawConfig) => {
         Number.isFinite(config.image_guidance_scale) && config.image_guidance_scale > 0
           ? config.image_guidance_scale
           : undefined,
+    };
+  }
+  if (commonConfig.model_type === "video") {
+    return {
+      ...commonConfig,
+      video_size: config.video_size || undefined,
+      video_seconds:
+        Number.isFinite(config.video_seconds) && config.video_seconds > 0
+          ? config.video_seconds
+          : undefined,
+      video_fps:
+        Number.isFinite(config.video_fps) && config.video_fps > 0
+          ? config.video_fps
+          : undefined,
+      video_num_frames:
+        Number.isFinite(config.video_num_frames) && config.video_num_frames > 0
+          ? config.video_num_frames
+          : undefined,
+      video_negative_prompt: config.video_negative_prompt || undefined,
+      video_num_inference_steps:
+        Number.isFinite(config.video_num_inference_steps) && config.video_num_inference_steps > 0
+          ? config.video_num_inference_steps
+          : undefined,
+      video_guidance_scale:
+        Number.isFinite(config.video_guidance_scale) && config.video_guidance_scale > 0
+          ? config.video_guidance_scale
+          : undefined,
+      video_guidance_scale_2:
+        Number.isFinite(config.video_guidance_scale_2) && config.video_guidance_scale_2 > 0
+          ? config.video_guidance_scale_2
+          : undefined,
+      video_boundary_ratio:
+        Number.isFinite(config.video_boundary_ratio) && config.video_boundary_ratio > 0
+          ? config.video_boundary_ratio
+          : undefined,
+      video_flow_shift:
+        Number.isFinite(config.video_flow_shift) && config.video_flow_shift > 0
+          ? config.video_flow_shift
+          : undefined,
+      video_enable_frame_interpolation: config.video_enable_frame_interpolation === true,
     };
   }
   return {
@@ -998,6 +1179,7 @@ const applyLlmSet = (raw, options = {}) => {
   state.llm.defaultEmbeddingName = normalized.defaultEmbeddingName;
   state.llm.defaultTtsName = normalized.defaultTtsName;
   state.llm.defaultImageName = normalized.defaultImageName;
+  state.llm.defaultVideoName = normalized.defaultVideoName;
   state.llm.loaded = true;
   state.llm.nameEdits = {};
   const desiredActive = state.llm.activeName;
@@ -1089,6 +1271,9 @@ const commitActiveConfigEdits = () => {
     if (state.llm.defaultImageName === activeName) {
       state.llm.defaultImageName = desiredName;
     }
+    if (state.llm.defaultVideoName === activeName) {
+      state.llm.defaultVideoName = desiredName;
+    }
     delete state.llm.nameEdits[activeName];
   } else {
     state.llm.configs[activeName] = currentConfig;
@@ -1117,6 +1302,12 @@ const commitActiveConfigEdits = () => {
   state.llm.defaultImageName = resolveDefaultModelNameByType(
     state.llm.defaultImageName,
     "image",
+    state.llm.configs,
+    state.llm.order
+  );
+  state.llm.defaultVideoName = resolveDefaultModelNameByType(
+    state.llm.defaultVideoName,
+    "video",
     state.llm.configs,
     state.llm.order
   );
@@ -1154,14 +1345,22 @@ const buildLlmPayload = () => {
     state.llm.configs,
     state.llm.order
   );
+  const defaultVideoName = resolveDefaultModelNameByType(
+    state.llm.defaultVideoName,
+    "video",
+    state.llm.configs,
+    state.llm.order
+  );
   state.llm.defaultEmbeddingName = defaultEmbeddingName;
   state.llm.defaultTtsName = defaultTtsName;
   state.llm.defaultImageName = defaultImageName;
+  state.llm.defaultVideoName = defaultVideoName;
   return {
     default: defaultName,
     default_embedding: defaultEmbeddingName || undefined,
     default_tts: defaultTtsName || undefined,
     default_image: defaultImageName || undefined,
+    default_video: defaultVideoName || undefined,
     models,
   };
 };
@@ -1251,6 +1450,14 @@ const handleDeleteConfig = () => {
       state.llm.order
     );
   }
+  if (state.llm.defaultVideoName === activeName) {
+    state.llm.defaultVideoName = resolveDefaultModelNameByType(
+      "",
+      "video",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
   state.llm.activeName = state.llm.defaultName || state.llm.order[0] || "";
   resetProbeState();
   renderLlmList();
@@ -1269,10 +1476,18 @@ const handleSetDefault = () => {
     return;
   }
   const activeConfig = state.llm.configs[activeName];
-  if (normalizeModelType(activeConfig?.model_type) !== "llm") {
-    return;
+  const modelType = normalizeModelType(activeConfig?.model_type);
+  if (modelType === "embedding") {
+    state.llm.defaultEmbeddingName = activeName;
+  } else if (modelType === "tts") {
+    state.llm.defaultTtsName = activeName;
+  } else if (modelType === "image") {
+    state.llm.defaultImageName = activeName;
+  } else if (modelType === "video") {
+    state.llm.defaultVideoName = activeName;
+  } else {
+    state.llm.defaultName = activeName;
   }
-  state.llm.defaultName = activeName;
   renderLlmList();
   updateDetailHeader();
   appendLog(t("llm.setDefault", { name: activeName }));
@@ -1304,6 +1519,38 @@ const handleModelTypeChange = () => {
   syncActiveConfigToState();
   if (modelType !== "llm" && state.llm.defaultName === activeName) {
     state.llm.defaultName = resolveDefaultLlmName("", state.llm.configs, state.llm.order);
+  }
+  if (modelType !== "embedding" && state.llm.defaultEmbeddingName === activeName) {
+    state.llm.defaultEmbeddingName = resolveDefaultModelNameByType(
+      "",
+      "embedding",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
+  if (modelType !== "tts" && state.llm.defaultTtsName === activeName) {
+    state.llm.defaultTtsName = resolveDefaultModelNameByType(
+      "",
+      "tts",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
+  if (modelType !== "image" && state.llm.defaultImageName === activeName) {
+    state.llm.defaultImageName = resolveDefaultModelNameByType(
+      "",
+      "image",
+      state.llm.configs,
+      state.llm.order
+    );
+  }
+  if (modelType !== "video" && state.llm.defaultVideoName === activeName) {
+    state.llm.defaultVideoName = resolveDefaultModelNameByType(
+      "",
+      "video",
+      state.llm.configs,
+      state.llm.order
+    );
   }
   applyLlmConfigToForm(activeName, state.llm.configs[activeName]);
   renderLlmList();

@@ -58,6 +58,7 @@ export type DesktopLlmConfig = {
   default_embedding?: string;
   default_tts?: string;
   default_image?: string;
+  default_video?: string;
   models: Record<string, Record<string, unknown>>;
 };
 

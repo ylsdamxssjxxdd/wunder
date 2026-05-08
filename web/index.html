@@ -2805,11 +2805,12 @@
                       <option value="embedding" data-i18n="llm.modelType.embedding">Embedding</option>
                       <option value="tts" data-i18n="llm.modelType.tts">TTS</option>
                       <option value="image" data-i18n="llm.modelType.image">Image</option>
+                      <option value="video" data-i18n="llm.modelType.video">Video</option>
                     </select>
                   </div>
                   <div class="grid">
                     <div class="form-row">
-                      <label for="llmProvider" data-i18n="llm.field.provider">provider</label>
+                      <label for="llmProvider" data-i18n="llm.field.provider">Provider preset</label>
                       <select id="llmProvider">
                         <option value="openai_compatible">openai_compatible</option>
                       </select>
@@ -2968,6 +2969,62 @@
                     <div class="form-row">
                       <label for="llmImageNegativePrompt" data-i18n="llm.field.imageNegativePrompt">负向提示词</label>
                       <textarea id="llmImageNegativePrompt" rows="2"></textarea>
+                    </div>
+                  </div>
+                  <div id="llmVideoRows">
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmVideoSize">视频尺寸</label>
+                        <input id="llmVideoSize" type="text" placeholder="例如：832x480" />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmVideoSeconds">时长（秒）</label>
+                        <input id="llmVideoSeconds" type="number" min="0.5" step="0.1" />
+                      </div>
+                    </div>
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmVideoFps">FPS</label>
+                        <input id="llmVideoFps" type="number" min="1" step="1" />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmVideoNumFrames">总帧数</label>
+                        <input id="llmVideoNumFrames" type="number" min="1" step="1" />
+                      </div>
+                    </div>
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmVideoSteps">采样步数</label>
+                        <input id="llmVideoSteps" type="number" min="1" step="1" />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmVideoGuidanceScale">guidance_scale</label>
+                        <input id="llmVideoGuidanceScale" type="number" min="0" step="0.1" />
+                      </div>
+                    </div>
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmVideoGuidanceScale2">guidance_scale_2</label>
+                        <input id="llmVideoGuidanceScale2" type="number" min="0" step="0.1" />
+                      </div>
+                      <div class="form-row">
+                        <label for="llmVideoBoundaryRatio">boundary_ratio</label>
+                        <input id="llmVideoBoundaryRatio" type="number" min="0" step="0.01" />
+                      </div>
+                    </div>
+                    <div class="grid">
+                      <div class="form-row">
+                        <label for="llmVideoFlowShift">flow_shift</label>
+                        <input id="llmVideoFlowShift" type="number" min="0" step="0.1" />
+                      </div>
+                      <div class="form-row checkbox-row">
+                        <input id="llmVideoFrameInterpolation" type="checkbox" />
+                        <label for="llmVideoFrameInterpolation">启用补帧</label>
+                      </div>
+                    </div>
+                    <div class="form-row">
+                      <label for="llmVideoNegativePrompt">负向提示词</label>
+                      <textarea id="llmVideoNegativePrompt" rows="2"></textarea>
                     </div>
                   </div>
                   <div id="llmConnectionOnlyHint" class="muted" data-i18n="llm.section.connectionOnly">

@@ -17,6 +17,7 @@ mod desktop_control;
 mod dispatch;
 mod freeform;
 mod memory_manager_tool;
+mod multimodal_generation_tool;
 mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;

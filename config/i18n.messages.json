@@ -2183,6 +2183,142 @@
     "en-US": "Optional frame step for GIF files. 0 means first frame only; 2 means frames 1,3,5...",
     "zh-CN": "可选，GIF 文件的间隔取帧参数。0 表示仅首帧；2 表示取第 1、3、5... 帧。"
   },
+  "tool.spec.generate_speech.description": {
+    "en-US": "Generate speech with the configured TTS model, save the audio into the current workspace, and return the saved file path.",
+    "zh-CN": "使用已配置的语音模型生成音频，保存到当前工作区，并返回生成文件路径。"
+  },
+  "tool.spec.generate_speech.args.text": {
+    "en-US": "Text content to synthesize.",
+    "zh-CN": "要合成的文本内容。"
+  },
+  "tool.spec.generate_speech.args.path": {
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+  },
+  "tool.spec.generate_speech.args.model_name": {
+    "en-US": "Optional TTS model config name. Empty uses the default TTS model.",
+    "zh-CN": "可选，语音模型配置名；留空使用默认语音模型。"
+  },
+  "tool.spec.generate_speech.args.voice": {
+    "en-US": "Optional voice / speaker parameter.",
+    "zh-CN": "可选，音色 / 说话人参数。"
+  },
+  "tool.spec.generate_speech.args.instructions": {
+    "en-US": "Optional style instructions for the speech model.",
+    "zh-CN": "可选，语音风格指令。"
+  },
+  "tool.spec.generate_speech.args.response_format": {
+    "en-US": "Optional audio format, such as wav / mp3 / flac / opus.",
+    "zh-CN": "可选，输出音频格式，如 wav / mp3 / flac / opus。"
+  },
+  "tool.spec.generate_speech.args.speed": {
+    "en-US": "Optional playback speed.",
+    "zh-CN": "可选，播放速度。"
+  },
+  "tool.spec.generate_image.description": {
+    "en-US": "Generate an image with the configured image model, save it into the current workspace, and return the saved file path.",
+    "zh-CN": "使用已配置的绘图模型生成图片，保存到当前工作区，并返回生成文件路径。"
+  },
+  "tool.spec.generate_image.args.prompt": {
+    "en-US": "Prompt describing the target image.",
+    "zh-CN": "描述目标图片的提示词。"
+  },
+  "tool.spec.generate_image.args.path": {
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+  },
+  "tool.spec.generate_image.args.model_name": {
+    "en-US": "Optional image model config name. Empty uses the default image model.",
+    "zh-CN": "可选，绘图模型配置名；留空使用默认绘图模型。"
+  },
+  "tool.spec.generate_image.args.size": {
+    "en-US": "Optional output size, such as 1024x1024.",
+    "zh-CN": "可选，输出尺寸，如 1024x1024。"
+  },
+  "tool.spec.generate_image.args.output_format": {
+    "en-US": "Optional output image format preference.",
+    "zh-CN": "可选，输出图片格式偏好。"
+  },
+  "tool.spec.generate_image.args.negative_prompt": {
+    "en-US": "Optional negative prompt.",
+    "zh-CN": "可选，负向提示词。"
+  },
+  "tool.spec.generate_image.args.num_inference_steps": {
+    "en-US": "Optional number of inference steps.",
+    "zh-CN": "可选，采样步数。"
+  },
+  "tool.spec.generate_image.args.guidance_scale": {
+    "en-US": "Optional guidance scale.",
+    "zh-CN": "可选，引导系数。"
+  },
+  "tool.spec.generate_image.args.seed": {
+    "en-US": "Optional random seed.",
+    "zh-CN": "可选，随机种子。"
+  },
+  "tool.spec.generate_video.description": {
+    "en-US": "Generate a video with the configured video model, save it into the current workspace, and return the saved file path.",
+    "zh-CN": "使用已配置的视频模型生成视频，保存到当前工作区，并返回生成文件路径。"
+  },
+  "tool.spec.generate_video.args.prompt": {
+    "en-US": "Prompt describing the target video.",
+    "zh-CN": "描述目标视频的提示词。"
+  },
+  "tool.spec.generate_video.args.path": {
+    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
+    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+  },
+  "tool.spec.generate_video.args.model_name": {
+    "en-US": "Optional video model config name. Empty uses the default video model.",
+    "zh-CN": "可选，视频模型配置名；留空使用默认视频模型。"
+  },
+  "tool.spec.generate_video.args.size": {
+    "en-US": "Optional output size, such as 832x480.",
+    "zh-CN": "可选，输出尺寸，如 832x480。"
+  },
+  "tool.spec.generate_video.args.seconds": {
+    "en-US": "Optional video duration in seconds.",
+    "zh-CN": "可选，视频时长（秒）。"
+  },
+  "tool.spec.generate_video.args.fps": {
+    "en-US": "Optional output FPS.",
+    "zh-CN": "可选，输出 FPS。"
+  },
+  "tool.spec.generate_video.args.num_frames": {
+    "en-US": "Optional frame count.",
+    "zh-CN": "可选，帧数。"
+  },
+  "tool.spec.generate_video.args.negative_prompt": {
+    "en-US": "Optional negative prompt.",
+    "zh-CN": "可选，负向提示词。"
+  },
+  "tool.spec.generate_video.args.num_inference_steps": {
+    "en-US": "Optional number of inference steps.",
+    "zh-CN": "可选，采样步数。"
+  },
+  "tool.spec.generate_video.args.guidance_scale": {
+    "en-US": "Optional guidance scale.",
+    "zh-CN": "可选，引导系数。"
+  },
+  "tool.spec.generate_video.args.guidance_scale_2": {
+    "en-US": "Optional second-stage guidance scale.",
+    "zh-CN": "可选，第二阶段引导系数。"
+  },
+  "tool.spec.generate_video.args.boundary_ratio": {
+    "en-US": "Optional boundary ratio.",
+    "zh-CN": "可选，boundary_ratio。"
+  },
+  "tool.spec.generate_video.args.flow_shift": {
+    "en-US": "Optional flow shift.",
+    "zh-CN": "可选，flow_shift。"
+  },
+  "tool.spec.generate_video.args.seed": {
+    "en-US": "Optional random seed.",
+    "zh-CN": "可选，随机种子。"
+  },
+  "tool.spec.generate_video.args.enable_frame_interpolation": {
+    "en-US": "Whether to enable frame interpolation when the backend supports it.",
+    "zh-CN": "后端支持时，是否启用补帧。"
+  },
   "tool.spec.skill_call.args.name": {
     "en-US": "Skill name to load.",
     "zh-CN": "要加载的技能名称。"

@@ -182,6 +182,8 @@ pub struct LlmConfig {
     #[serde(default)]
     pub default_image: Option<String>,
     #[serde(default)]
+    pub default_video: Option<String>,
+    #[serde(default)]
     pub models: HashMap<String, LlmModelConfig>,
 }
 
@@ -372,6 +374,30 @@ pub struct LlmModelConfig {
     pub image_num_inference_steps: Option<u32>,
     #[serde(default)]
     pub image_guidance_scale: Option<f32>,
+    #[serde(default)]
+    pub video_size: Option<String>,
+    #[serde(default)]
+    pub video_seconds: Option<f32>,
+    #[serde(default)]
+    pub video_fps: Option<u32>,
+    #[serde(default)]
+    pub video_num_frames: Option<u32>,
+    #[serde(default)]
+    pub video_negative_prompt: Option<String>,
+    #[serde(default)]
+    pub video_num_inference_steps: Option<u32>,
+    #[serde(default)]
+    pub video_guidance_scale: Option<f32>,
+    #[serde(default)]
+    pub video_guidance_scale_2: Option<f32>,
+    #[serde(default)]
+    pub video_boundary_ratio: Option<f32>,
+    #[serde(default)]
+    pub video_flow_shift: Option<f32>,
+    #[serde(default)]
+    pub video_enable_frame_interpolation: Option<bool>,
+    #[serde(default)]
+    pub video_sync_mode: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

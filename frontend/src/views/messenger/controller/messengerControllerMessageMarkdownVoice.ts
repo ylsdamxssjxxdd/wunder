@@ -116,6 +116,7 @@ import { useUserWorldStore } from '@/stores/userWorld';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
+import { resolveBlobApiErrorMessage } from '@/utils/blobApiError';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
@@ -688,7 +689,7 @@ export function installMessengerControllerMessageMarkdownVoice(ctx: MessengerCon
       catch (error) {
           console.error(error);
           ctx.messageTtsPlayingKey.value = '';
-          ElMessage.error(ctx.t('chat.message.ttsFailed'));
+          ElMessage.error(await resolveBlobApiErrorMessage(error, ctx.t('chat.message.ttsFailed')));
       }
       finally {
           if (ctx.messageTtsLoadingKey.value === messageKey) {

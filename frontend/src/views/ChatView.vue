@@ -914,6 +914,7 @@ import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { resolveBlobApiErrorMessage } from '@/utils/blobApiError';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { resolveUserBasePath } from '@/utils/basePath';
 import { chatPerf } from '@/utils/chatPerf';
@@ -2803,7 +2804,7 @@ const handleToggleMessageTts = async (message, index) => {
   } catch (error) {
     console.error(error);
     messageTtsPlayingKey.value = '';
-    ElMessage.error(t('chat.message.ttsFailed'));
+    ElMessage.error(await resolveBlobApiErrorMessage(error, t('chat.message.ttsFailed')));
   } finally {
     if (messageTtsLoadingKey.value === messageKey) {
       messageTtsLoadingKey.value = '';

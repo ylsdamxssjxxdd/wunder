@@ -3,7 +3,8 @@ use crate::config::LlmModelConfig;
 use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
-    COMPACTION_REPLACEMENT_HISTORY_META_KEY, COMPACTION_SAFETY_MARGIN, OBSERVATION_PREFIX,
+    COMPACTION_REPLACEMENT_HISTORY_META_KEY, COMPACTION_SAFETY_MARGIN,
+    DEFAULT_MAX_OUTPUT_TOKENS, OBSERVATION_PREFIX,
 };
 use crate::prompting::read_prompt_template;
 use crate::workspace::WorkspaceManager;
@@ -76,7 +77,8 @@ impl HistoryManager {
         let reserve_output = llm_config
             .max_output
             .and_then(|value| if value > 0 { Some(value as i64) } else { None })
-            .unwrap_or(COMPACTION_OUTPUT_RESERVE);
+            .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+            .max(COMPACTION_OUTPUT_RESERVE);
         let hard_limit = max_context - reserve_output - COMPACTION_SAFETY_MARGIN;
         if hard_limit <= 0 {
             return Some(max_context.max(1).min(ratio_limit.max(1)));
@@ -759,6 +761,34 @@ mod tests {
         let en_prompt = with_language("en-US", HistoryManager::load_compaction_prompt);
         assert!(en_prompt.contains("## Current progress"));
         assert!(en_prompt.contains("## Critical references"));
+    }
+
+    #[test]
+    fn get_auto_compact_limit_reserves_default_output_budget_when_unset() {
+        let llm_config = LlmModelConfig {
+            max_context: Some(156_000),
+            max_output: None,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            HistoryManager::get_auto_compact_limit(&llm_config),
+            Some(140_400)
+        );
+    }
+
+    #[test]
+    fn get_auto_compact_limit_respects_explicit_output_budget() {
+        let llm_config = LlmModelConfig {
+            max_context: Some(156_000),
+            max_output: Some(8_192),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            HistoryManager::get_auto_compact_limit(&llm_config),
+            Some(140_400)
+        );
     }
 
     #[test]

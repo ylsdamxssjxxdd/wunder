@@ -1192,7 +1192,7 @@
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为真实用户消息窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
-  - 说明：`max_output` 为单次请求的统一输出上限；未配置时服务端默认按 `32768` 下发，避免模型循环无限输出。
+  - 说明：`max_output` 为单次请求的统一输出上限；未配置时服务端默认按 `8192` 下发，避免模型循环无限输出。
   - 说明：`thinking_token_budget` 为 reasoning/thinking 通道的单次思考 Token 上限；未配置时服务端默认按 `16384` 下发；若 `reasoning_effort=none` 则不下发该预算。
   - 说明：服务端当前会同时下发 `thinking_token_budget`（对齐 vLLM / OpenAI-compatible 扩展）与 `thinking_budget_tokens`（对齐 `llama.cpp` server 请求体）；Anthropic `messages` 协议不下发这两个非标准字段。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。

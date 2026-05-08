@@ -183,6 +183,7 @@ export const state = {
     defaultEmbeddingName: "",
     defaultTtsName: "",
     defaultImageName: "",
+    defaultVideoName: "",
     activeName: "",
     nameEdits: {},
     loaded: false,

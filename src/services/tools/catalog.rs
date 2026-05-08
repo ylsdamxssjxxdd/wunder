@@ -1,5 +1,5 @@
 use super::{
-    browser_tool, channel_tool, desktop_control, read_image_tool, self_status_tool,
+    browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool, self_status_tool,
     sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
 };
 use crate::config::Config;
@@ -575,6 +575,73 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
+            name: multimodal_generation_tool::TOOL_GENERATE_SPEECH.to_string(),
+            title: None,
+            description: t("tool.spec.generate_speech.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": t("tool.spec.generate_speech.args.text")},
+                    "path": {"type": "string", "description": t("tool.spec.generate_speech.args.path")},
+                    "model_name": {"type": "string", "description": t("tool.spec.generate_speech.args.model_name")},
+                    "voice": {"type": "string", "description": t("tool.spec.generate_speech.args.voice")},
+                    "instructions": {"type": "string", "description": t("tool.spec.generate_speech.args.instructions")},
+                    "response_format": {"type": "string", "description": t("tool.spec.generate_speech.args.response_format")},
+                    "speed": {"type": "number", "description": t("tool.spec.generate_speech.args.speed")}
+                },
+                "required": ["text"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: multimodal_generation_tool::TOOL_GENERATE_IMAGE.to_string(),
+            title: None,
+            description: t("tool.spec.generate_image.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": t("tool.spec.generate_image.args.prompt")},
+                    "path": {"type": "string", "description": t("tool.spec.generate_image.args.path")},
+                    "model_name": {"type": "string", "description": t("tool.spec.generate_image.args.model_name")},
+                    "size": {"type": "string", "description": t("tool.spec.generate_image.args.size")},
+                    "output_format": {"type": "string", "description": t("tool.spec.generate_image.args.output_format")},
+                    "negative_prompt": {"type": "string", "description": t("tool.spec.generate_image.args.negative_prompt")},
+                    "num_inference_steps": {"type": "integer", "description": t("tool.spec.generate_image.args.num_inference_steps")},
+                    "guidance_scale": {"type": "number", "description": t("tool.spec.generate_image.args.guidance_scale")},
+                    "seed": {"type": "integer", "description": t("tool.spec.generate_image.args.seed")}
+                },
+                "required": ["prompt"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: multimodal_generation_tool::TOOL_GENERATE_VIDEO.to_string(),
+            title: None,
+            description: t("tool.spec.generate_video.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": t("tool.spec.generate_video.args.prompt")},
+                    "path": {"type": "string", "description": t("tool.spec.generate_video.args.path")},
+                    "model_name": {"type": "string", "description": t("tool.spec.generate_video.args.model_name")},
+                    "size": {"type": "string", "description": t("tool.spec.generate_video.args.size")},
+                    "seconds": {"type": "number", "description": t("tool.spec.generate_video.args.seconds")},
+                    "fps": {"type": "integer", "description": t("tool.spec.generate_video.args.fps")},
+                    "num_frames": {"type": "integer", "description": t("tool.spec.generate_video.args.num_frames")},
+                    "negative_prompt": {"type": "string", "description": t("tool.spec.generate_video.args.negative_prompt")},
+                    "num_inference_steps": {"type": "integer", "description": t("tool.spec.generate_video.args.num_inference_steps")},
+                    "guidance_scale": {"type": "number", "description": t("tool.spec.generate_video.args.guidance_scale")},
+                    "guidance_scale_2": {"type": "number", "description": t("tool.spec.generate_video.args.guidance_scale_2")},
+                    "boundary_ratio": {"type": "number", "description": t("tool.spec.generate_video.args.boundary_ratio")},
+                    "flow_shift": {"type": "number", "description": t("tool.spec.generate_video.args.flow_shift")},
+                    "seed": {"type": "integer", "description": t("tool.spec.generate_video.args.seed")},
+                    "enable_frame_interpolation": {"type": "boolean", "description": t("tool.spec.generate_video.args.enable_frame_interpolation")}
+                },
+                "required": ["prompt"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
             name: "技能调用".to_string(),
             title: None,
             description: t("tool.spec.skill_call.description"),
@@ -1067,6 +1134,18 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         read_image_tool::TOOL_VIEW_IMAGE_ALIAS.to_string(),
         read_image_tool::TOOL_READ_IMAGE.to_string(),
     );
+    map.insert(
+        multimodal_generation_tool::TOOL_GENERATE_SPEECH_ALIAS.to_string(),
+        multimodal_generation_tool::TOOL_GENERATE_SPEECH.to_string(),
+    );
+    map.insert(
+        multimodal_generation_tool::TOOL_GENERATE_IMAGE_ALIAS.to_string(),
+        multimodal_generation_tool::TOOL_GENERATE_IMAGE.to_string(),
+    );
+    map.insert(
+        multimodal_generation_tool::TOOL_GENERATE_VIDEO_ALIAS.to_string(),
+        multimodal_generation_tool::TOOL_GENERATE_VIDEO.to_string(),
+    );
     map.insert("skill_call".to_string(), "技能调用".to_string());
     map.insert("skill_get".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
@@ -1204,6 +1283,21 @@ fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     {
         return false;
     }
+    if canonical == multimodal_generation_tool::TOOL_GENERATE_SPEECH
+        && !multimodal_generation_tool::speech_tool_available(config)
+    {
+        return false;
+    }
+    if canonical == multimodal_generation_tool::TOOL_GENERATE_IMAGE
+        && !multimodal_generation_tool::image_tool_available(config)
+    {
+        return false;
+    }
+    if canonical == multimodal_generation_tool::TOOL_GENERATE_VIDEO
+        && !multimodal_generation_tool::video_tool_available(config)
+    {
+        return false;
+    }
     true
 }
 
@@ -1312,6 +1406,15 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),
         self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
+        multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
+            Some(multimodal_generation_tool::TOOL_GENERATE_SPEECH_ALIAS)
+        }
+        multimodal_generation_tool::TOOL_GENERATE_IMAGE => {
+            Some(multimodal_generation_tool::TOOL_GENERATE_IMAGE_ALIAS)
+        }
+        multimodal_generation_tool::TOOL_GENERATE_VIDEO => {
+            Some(multimodal_generation_tool::TOOL_GENERATE_VIDEO_ALIAS)
+        }
         sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
         _ => None,
     }

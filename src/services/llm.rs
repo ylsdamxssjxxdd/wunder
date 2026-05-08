@@ -34,7 +34,7 @@ const DEFAULT_MISTRAL_BASE_URL: &str = "https://api.mistral.ai/v1";
 const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
-const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 32_768;
+const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8_192;
 const DEFAULT_THINKING_TOKEN_BUDGET: u32 = 16_384;
 const CHAT_COMPLETIONS_RESOURCE: &str = "chat/completions";
 const RESPONSES_RESOURCE: &str = "responses";
@@ -54,6 +54,7 @@ pub enum ModelType {
     Embedding,
     Tts,
     Image,
+    Video,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,12 @@ pub fn normalize_model_type(value: Option<&str>) -> ModelType {
         "image" | "draw" | "drawing" | "text_to_image" | "text2image" | "image_generation" => {
             ModelType::Image
         }
+        "video"
+        | "text_to_video"
+        | "text2video"
+        | "video_generation"
+        | "movie"
+        | "animation" => ModelType::Video,
         _ => ModelType::Llm,
     }
 }
@@ -98,6 +105,10 @@ pub fn is_tts_model(config: &LlmModelConfig) -> bool {
 
 pub fn is_image_model(config: &LlmModelConfig) -> bool {
     normalize_model_type(config.model_type.as_deref()) == ModelType::Image
+}
+
+pub fn is_video_model(config: &LlmModelConfig) -> bool {
+    normalize_model_type(config.model_type.as_deref()) == ModelType::Video
 }
 
 pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
@@ -5419,7 +5430,7 @@ mod tests {
             false,
         );
 
-        assert_eq!(payload["max_tokens"], 32_768);
+        assert_eq!(payload["max_tokens"], 8_192);
         assert_eq!(payload["thinking_token_budget"], 16_384);
         assert_eq!(payload["thinking_budget_tokens"], 16_384);
     }
@@ -5465,7 +5476,7 @@ mod tests {
 
         assert!(payload.get("thinking_token_budget").is_none());
         assert!(payload.get("thinking_budget_tokens").is_none());
-        assert_eq!(payload["max_tokens"], 32_768);
+        assert_eq!(payload["max_tokens"], 8_192);
     }
 
     #[test]
