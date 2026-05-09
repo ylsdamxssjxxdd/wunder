@@ -46,6 +46,9 @@ import {
 } from '@/utils/subagentRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
 import {
+  mergeSessionsByIdPreservingRuntimeFields
+} from '@/stores/chatSessionMerge';
+import {
   estimateChatTextTokens,
   estimateRequestContextTokens,
   resolveRequestContextPreviewTokens
@@ -1800,82 +1803,6 @@ const patchSessionRuntimeFields = (session) => {
     next = { ...source, goal: normalizedGoal };
   }
   return next || session;
-};
-
-const mergeSessionRuntimeFields = (current, incoming) => {
-  const currentRecord =
-    current && typeof current === 'object' && !Array.isArray(current)
-      ? (current as Record<string, unknown>)
-      : {};
-  const incomingRecord =
-    incoming && typeof incoming === 'object' && !Array.isArray(incoming)
-      ? (incoming as Record<string, unknown>)
-      : {};
-  const merged = {
-    ...currentRecord,
-    ...incomingRecord
-  } as Record<string, unknown>;
-
-  const contextKeys = [
-    'context_tokens',
-    'context_occupancy_tokens',
-    'contextTokens',
-    'contextOccupancyTokens',
-    'context_max_tokens',
-    'context_total_tokens',
-    'contextTotalTokens',
-    'max_context',
-    'maxContext',
-    'context_window'
-  ] as const;
-  contextKeys.forEach((key) => {
-    if (
-      (incomingRecord[key] === null || incomingRecord[key] === undefined || incomingRecord[key] === '') &&
-      currentRecord[key] !== null &&
-      currentRecord[key] !== undefined &&
-      currentRecord[key] !== ''
-    ) {
-      merged[key] = currentRecord[key];
-    }
-  });
-
-  if (
-    (incomingRecord.goal === null || incomingRecord.goal === undefined) &&
-    currentRecord.goal !== null &&
-    currentRecord.goal !== undefined
-  ) {
-    merged.goal = currentRecord.goal;
-  }
-  if (
-    (incomingRecord.orchestration_lock === null || incomingRecord.orchestration_lock === undefined) &&
-    currentRecord.orchestration_lock !== null &&
-    currentRecord.orchestration_lock !== undefined
-  ) {
-    merged.orchestration_lock = currentRecord.orchestration_lock;
-  }
-  return patchSessionRuntimeFields(merged);
-};
-
-const mergeSessionsByIdPreservingRuntimeFields = (currentSessions, incomingSessions) => {
-  const currentList = Array.isArray(currentSessions) ? currentSessions : [];
-  const incomingList = Array.isArray(incomingSessions) ? incomingSessions : [];
-  if (!currentList.length) {
-    return sortSessionsByActivity(incomingList);
-  }
-  const currentById = new Map<string, Record<string, unknown>>();
-  currentList.forEach((session) => {
-    const key = resolveSessionKey(session?.id);
-    if (!key) return;
-    currentById.set(key, (session || {}) as Record<string, unknown>);
-  });
-  const merged = incomingList.map((session) => {
-    const key = resolveSessionKey(session?.id);
-    if (!key) {
-      return patchSessionRuntimeFields(session);
-    }
-    return mergeSessionRuntimeFields(currentById.get(key) || null, session);
-  });
-  return sortSessionsByActivity(merged);
 };
 
 const resolveErrorCode = (error) =>
@@ -11560,7 +11487,12 @@ export const useChatStore = defineStore('chat', {
         previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
       });
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
-      const nextSessions = mergeSessionsByIdPreservingRuntimeFields(this.sessions, data.data.items || []);
+      const nextSessions = mergeSessionsByIdPreservingRuntimeFields(
+        this.sessions,
+        data.data.items || [],
+        patchSessionRuntimeFields,
+        sortSessionsByActivity
+      );
       this.sessions = mergeRetainedActiveSessionIntoList(this, nextSessions);
       syncGoalsFromSessionList(this, this.sessions);
       if (requestedAgentId !== null) {
