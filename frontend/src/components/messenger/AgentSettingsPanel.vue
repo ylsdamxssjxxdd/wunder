@@ -69,13 +69,10 @@
             :disabled="isInteractionDisabled"
           />
         </el-form-item>
-        <el-form-item
-          class="messenger-agent-form-item messenger-agent-form-item--tools"
-          :label="t('portal.agent.form.tools')"
-        >
+        <el-form-item class="messenger-agent-form-item messenger-agent-form-item--tools">
           <div class="messenger-tool-picker">
             <div class="messenger-agent-tools-head">
-              <div class="messenger-agent-tools-head-spacer" aria-hidden="true"></div>
+              <span class="messenger-agent-tools-caption">{{ t('portal.agent.form.tools') }}</span>
               <el-input
                 v-model="toolSearchKeyword"
                 class="messenger-agent-tools-search"
@@ -1966,11 +1963,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.messenger-agent-form-item--tools :deep(.el-form-item__label) {
-  display: block;
-  width: 100%;
-}
-
 .messenger-agent-base-control :deep(.el-select),
 .messenger-agent-base-control :deep(.el-select__wrapper),
 .messenger-agent-base-control :deep(.beeroom-group-field) {
@@ -1990,17 +1982,21 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  margin-bottom: 12px;
 }
 
-.messenger-agent-tools-head-spacer {
+.messenger-agent-tools-caption {
   flex: 1 1 auto;
   min-width: 0;
+  color: var(--el-text-color-regular, #111827);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .messenger-agent-tools-search {
   width: min(240px, 42vw);
   flex: 0 1 240px;
-  margin-bottom: 12px;
 }
 
 .messenger-agent-tools-search :deep(.el-input__wrapper) {

@@ -2372,7 +2372,14 @@ fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value
     if truncated == content {
         return;
     }
+    let (content_head, omitted_chars) = truncate_text_head(&content, 1200);
     compacted.insert("content".to_string(), Value::String(truncated));
+    if !content_head.trim().is_empty() {
+        compacted.insert("content_head".to_string(), Value::String(content_head));
+    }
+    if omitted_chars > 0 {
+        compacted.insert("content_omitted_chars".to_string(), json!(omitted_chars));
+    }
     compacted.insert("continuation_required".to_string(), Value::Bool(true));
     compacted
         .entry("continuation_hint".to_string())
@@ -3675,6 +3682,12 @@ mod tests {
         let maybe_preview = data.get("preview").and_then(Value::as_str);
         let visible = maybe_content.or(maybe_preview).unwrap_or("");
         assert!(visible.chars().count() > OBSERVATION_HEAD_CHARS);
+        assert!(data.get("content_head").and_then(Value::as_str).is_some());
+        assert!(data
+            .get("content_omitted_chars")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            > 0);
     }
 
     #[test]

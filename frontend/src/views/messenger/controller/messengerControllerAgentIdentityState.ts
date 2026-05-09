@@ -214,6 +214,7 @@ import {
   saveMessengerOrderPreferences,
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
+import { hasRetainedMessageConversationContext } from '@/views/messenger/messageConversationRetention';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
@@ -620,6 +621,16 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
       if (querySessionId || queryAgentId || queryEntry === 'default')
           return 'agent';
       if (String(ctx.chatStore.activeSessionId || '').trim() || String(ctx.chatStore.draftAgentId || '').trim()) {
+          return 'agent';
+      }
+      if (hasRetainedMessageConversationContext({
+          routeSessionId: querySessionId,
+          routeAgentId: queryAgentId,
+          routeEntry: queryEntry,
+          activeSessionId: ctx.chatStore.activeSessionId,
+          draftAgentId: ctx.chatStore.draftAgentId,
+          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0
+      })) {
           return 'agent';
       }
       return '';

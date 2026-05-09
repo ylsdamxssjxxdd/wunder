@@ -308,9 +308,13 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     const toolDisplayName = resolveWorkflowToolDisplayName(item);
     const toolRuntimeName = resolveWorkflowToolRuntimeName(item) || toolName;
     const toolFunctionName = resolveWorkflowToolFunctionName(item);
-    const toolKey = toolName.trim().toLowerCase() || '__unknown__';
     const itemId = resolveWorkflowItemId(item) || `tool-entry-${index}`;
     const toolCallId = resolveWorkflowLinkRef(item);
+    const toolRefKey = toolCallId || itemId;
+    const toolKey = [
+      toolName.trim().toLowerCase() || '__unknown__',
+      toolRefKey
+    ].join('::');
 
     if (kind === 'call') {
       const existingIndex =

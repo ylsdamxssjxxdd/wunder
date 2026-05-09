@@ -37,6 +37,17 @@ test('retains message conversation context while only local draft messages remai
   );
 });
 
+test('retains agent conversation semantics while local message context is still present', () => {
+  assert.equal(
+    hasRetainedMessageConversationContext({
+      activeSessionId: '',
+      draftAgentId: '',
+      messageCount: 3
+    }),
+    true
+  );
+});
+
 test('allows empty state only when no route, session, draft, or message context remains', () => {
   assert.equal(
     hasRetainedMessageConversationContext({

@@ -8,7 +8,11 @@ export type WorkflowCompactionSnapshot = {
   status: 'pending' | 'loading' | 'completed' | 'failed' | 'cancelled';
   explicitStatus: boolean;
   detail: UnknownObject | null;
+  workflowRef: string;
 };
+
+const resolveCompactionWorkflowRef = (item: UnknownObject): string =>
+  String(item.toolCallId || item.tool_call_id || item.callId || item.call_id || '').trim();
 
 export const isCompactionSummaryEvent = (eventType: unknown, payload: unknown): boolean => {
   const normalizedEventType = String(eventType || '').trim().toLowerCase();
@@ -76,8 +80,9 @@ const isCompactionToolName = (value: unknown): boolean => {
   return text.includes(CONTEXT_CN) && text.includes(COMPACTION_CN);
 };
 
-export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompactionSnapshot | null => {
-  if (!Array.isArray(items) || items.length === 0) return null;
+export const resolveCompactionSnapshots = (items: unknown): WorkflowCompactionSnapshot[] => {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const snapshots: WorkflowCompactionSnapshot[] = [];
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = asObject(items[index]);
     if (!item) continue;
@@ -96,14 +101,20 @@ export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompact
       || null;
     const detailStatusRaw = String(detail?.status ?? '').trim();
     const itemStatusRaw = String(item.status ?? '').trim();
-    return {
+    snapshots.push({
       eventType,
       status: normalizeCompactionStatus(detailStatusRaw || itemStatusRaw),
       explicitStatus: Boolean(detailStatusRaw || itemStatusRaw),
-      detail
-    };
+      detail,
+      workflowRef: resolveCompactionWorkflowRef(item)
+    });
   }
-  return null;
+  return snapshots.reverse();
+};
+
+export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompactionSnapshot | null => {
+  const snapshots = resolveCompactionSnapshots(items);
+  return snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
 };
 
 export const isCompactionRunningFromWorkflowItems = (items: unknown): boolean => {

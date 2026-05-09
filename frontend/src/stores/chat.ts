@@ -8704,6 +8704,26 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return refs.length > 0 ? refs[refs.length - 1] : null;
   };
 
+  const resolveCompactionInstanceRef = (detailPayload, fallbackRound = null) => {
+    const payload =
+      detailPayload && typeof detailPayload === 'object'
+        ? detailPayload
+        : {};
+    const compactionId = pickString(
+      payload?.compaction_id,
+      payload?.compactionId
+    );
+    if (compactionId) {
+      return `compaction-id:${compactionId}`;
+    }
+    const triggerMode = pickString(payload?.trigger_mode, payload?.triggerMode) || 'auto_loop';
+    compactionAnonymousRefSeq += 1;
+    if (Number.isFinite(fallbackRound)) {
+      return `compaction:${triggerMode}:${fallbackRound}:${compactionAnonymousRefSeq}`;
+    }
+    return `compaction:${triggerMode}:${compactionAnonymousRefSeq}`;
+  };
+
   const markCompactionProgressFailed = (detailPayload) => {
     const workflowRef = resolveLatestCompactionRef();
     if (!workflowRef) return false;
@@ -8841,6 +8861,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   const finalizeLingeringCompactionProgressItems = (detailPayload, status) => {
+    const entries = Array.from(compactionProgressItemMap.entries());
     const itemIds = resolveLingeringCompactionProgressItemIds();
     if (!itemIds.length) {
       if (compactionProgressItemMap.size > 0 || activeCompactionWorkflowRef) {
@@ -8860,6 +8881,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       if (!existingItem || !isPendingCompactionStatus(existingItem.status)) {
         return;
       }
+      const workflowRef =
+        entries.find((entry) => String(entry[1] || '').trim() === String(itemId || '').trim())?.[0]
+        || activeCompactionWorkflowRef;
       const existingDetail = safeJsonParse(existingItem.detail);
       const mergedDetail = {
         ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
@@ -8873,9 +8897,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         status,
         detail: buildDetail(mergedDetail),
         isTool: true,
-        eventType: 'compaction'
+        eventType: 'compaction',
+        toolCallId: workflowRef || undefined
       });
-      appendCompactionOutcomeNotice(activeCompactionWorkflowRef, mergedDetail, status);
+      appendCompactionOutcomeNotice(workflowRef, mergedDetail, status);
       finalized = true;
     });
     compactionProgressItemMap.clear();
@@ -8937,7 +8962,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return '';
   };
 
-  const resolveActiveCompactionWorkflowRef = (round) => {
+  const resolveActiveCompactionWorkflowRef = (round, detailPayload = null) => {
+    const instanceRef = resolveCompactionInstanceRef(detailPayload, round);
+    if (instanceRef) {
+      activeCompactionWorkflowRef = instanceRef;
+      return instanceRef;
+    }
     if (!activeCompactionWorkflowRef) {
       activeCompactionWorkflowRef =
         resolveExistingCompactionWorkflowRef() || allocateCompactionWorkflowRef(round);
@@ -8945,7 +8975,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return activeCompactionWorkflowRef;
   };
 
-  const resolveStandaloneCompactionWorkflowRef = (round) =>
+  const resolveStandaloneCompactionWorkflowRef = (round, detailPayload = null) =>
+    resolveCompactionInstanceRef(detailPayload, round) ||
     activeCompactionWorkflowRef ||
     resolveExistingCompactionWorkflowRef() ||
     allocateCompactionWorkflowRef(round);
@@ -9467,7 +9498,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           }
           summary = resolveCompactionProgressTitle(stage, summary, t) ?? summary;
           const round = resolveRound(payload, data);
-          const workflowRef = resolveActiveCompactionWorkflowRef(round);
+          const workflowRef = resolveActiveCompactionWorkflowRef(round, detailSource);
           ensureCompactionProgressItem(
             pickText(summary) || t('chat.workflow.progressUpdate'),
             buildDetail(detailSource),
@@ -10298,7 +10329,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'compaction': {
         markManualCompactionMarker(data ?? payload ?? {});
         const round = resolveRound(payload, data);
-        const workflowRef = resolveStandaloneCompactionWorkflowRef(round);
+        const workflowRef = resolveStandaloneCompactionWorkflowRef(round, data ?? payload ?? {});
         const normalizedCompactionStatus = String(data?.status ?? payload?.status ?? '').trim().toLowerCase();
         const compactionStatus =
           normalizedCompactionStatus === 'failed' || normalizedCompactionStatus === 'error'
