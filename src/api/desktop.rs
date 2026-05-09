@@ -50,7 +50,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/desktop/llm/context_window",
             post(desktop_llm_context_window),
         )
-        .route("/wunder/desktop/llm/tts_voices", post(desktop_llm_tts_voices))
+        .route(
+            "/wunder/desktop/llm/tts_voices",
+            post(desktop_llm_tts_voices),
+        )
         .route(
             "/wunder/admin/llm/context_window",
             post(desktop_llm_context_window),
@@ -555,7 +558,8 @@ async fn desktop_llm_tts_voices(
 
     let timeout_s = payload.timeout_s.unwrap_or(15).max(5);
     let api_key = payload.api_key.as_deref().unwrap_or("");
-    let result = crate::multimodal_models::probe_tts_voices(base_url, api_key, model, timeout_s).await;
+    let result =
+        crate::multimodal_models::probe_tts_voices(base_url, api_key, model, timeout_s).await;
     let response = match result {
         Ok(voices) if !voices.is_empty() => {
             json!({ "voices": voices, "message": i18n::t("probe.success") })

@@ -21,7 +21,7 @@ const TOOL_ICON_RULES = [
   { keywords: ["读图工具", "read_image", "read image", "view_image", "view image"], icon: "fa-eye" },
   { keywords: ["声转文", "语音转文", "transcribe_speech", "transcribe speech", "speech_to_text", "speech to text", "asr", "audio transcription"], icon: "fa-microphone-lines" },
   { keywords: ["文转声", "语音生成", "generate_speech", "speech generation", "text_to_speech", "text to speech", "tts"], icon: "fa-wave-square" },
-  { keywords: ["绘图生成", "generate_image", "image generation", "text_to_image", "text to image"], icon: "fa-paintbrush" },
+  { keywords: ["图像生成", "绘图生成", "generate_image", "image generation", "text_to_image", "text to image"], icon: "fa-paintbrush" },
   { keywords: ["视频生成", "generate_video", "video generation", "text_to_video", "text to video"], icon: "fa-film" },
   { keywords: ["渠道工具", "channel_tool", "channel tool", "channel_send", "channel_contacts"], icon: "fa-comments" },
   { keywords: ["列出文件", "list files", "list_file", "list_files"], icon: "fa-folder-open" },

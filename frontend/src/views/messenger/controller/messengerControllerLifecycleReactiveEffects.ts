@@ -532,8 +532,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.orderedSharedAgentsState.orderedKeys.value.join('\n'),
       ctx.orderedBeeroomGroupsState.orderedKeys.value.join('\n')
   ], () => {
+      const refreshTraceId = String(ctx.messengerSessionRefreshTraceId.value || '').trim();
+      const refreshTraceSource = String(ctx.messengerSessionRefreshTraceSource.value || '').trim();
       if (ctx.messengerOrderHydrating.value || !ctx.messengerOrderReady.value) {
           chatDebugLog('messenger.order', 'watch-skip', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource,
               hydrating: ctx.messengerOrderHydrating.value,
               ready: ctx.messengerOrderReady.value
           });
@@ -546,12 +550,16 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           current.agentsShared.join('\n') === snapshot.agentsShared.join('\n') &&
           current.swarms.join('\n') === snapshot.swarms.join('\n')) {
           chatDebugLog('messenger.order', 'watch-no-change', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource,
               current,
               snapshot
           });
           return;
       }
       chatDebugLog('messenger.order', 'watch-change', {
+          traceId: refreshTraceId,
+          traceSource: refreshTraceSource,
           current,
           snapshot
       });

@@ -1771,7 +1771,8 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         return;
     };
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
-    if matches!(canonical.as_str(), "apply_patch" | "搴旂敤琛ヤ竵") {
+    let keep_path_in_data = matches!(canonical.as_str(), "写入文件" | "write_file");
+    if matches!(canonical.as_str(), "apply_patch" | "应用补丁") {
         let maybe_compacted = map
             .get("data")
             .and_then(Value::as_object)
@@ -1882,6 +1883,9 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         );
     }
     map.remove("meta");
+    if keep_path_in_data {
+        restore_compact_observation_path(map, &raw_data);
+    }
 }
 
 fn compact_dense_arrays_to_jsonl(value: &mut Value) {
@@ -2079,7 +2083,6 @@ fn strip_compact_payload_noise(value: &mut Value, depth: usize) {
             "context_after",
             "context_before",
             "engine",
-            "path",
         ] {
             data.remove(key);
         }
@@ -2090,6 +2093,22 @@ fn strip_compact_payload_noise(value: &mut Value, depth: usize) {
     for nested in map.values_mut() {
         strip_compact_payload_noise(nested, depth + 1);
     }
+}
+
+fn restore_compact_observation_path(compacted_map: &mut Map<String, Value>, raw_data: &Value) {
+    let Some(path) = raw_data
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(data) = compacted_map.get_mut("data").and_then(Value::as_object_mut) else {
+        return;
+    };
+    data.entry("path".to_string())
+        .or_insert_with(|| Value::String(path.to_string()));
 }
 
 fn extract_observation_data(value: &Value) -> Value {
@@ -3493,7 +3512,7 @@ mod tests {
     #[test]
     fn test_compact_observation_payload_read_file_strips_read_output_notice() {
         let mut payload = json!({
-            "tool": "璇诲彇鏂囦欢",
+            "tool": "读取文件",
             "ok": true,
             "data": {
                 "content": "line1\nline2\n...(truncated read output, omitted 512 bytes)...",
@@ -3514,7 +3533,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
+        compact_observation_payload(&mut payload, "读取文件");
 
         let data = payload
             .get("data")
@@ -3538,7 +3557,7 @@ mod tests {
     fn test_compact_observation_payload_read_file_limits_content_without_marker() {
         let long_content = "x".repeat(8_000);
         let mut payload = json!({
-            "tool": "璇诲彇鏂囦欢",
+            "tool": "读取文件",
             "ok": true,
             "data": {
                 "content": long_content,
@@ -3560,7 +3579,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
+        compact_observation_payload(&mut payload, "读取文件");
 
         let data = payload
             .get("data")
@@ -3583,7 +3602,7 @@ mod tests {
     #[test]
     fn test_compact_observation_payload_read_file_keeps_patch_usage_hint_from_flat_data() {
         let mut payload = json!({
-            "tool": "璇诲彇鏂囦欢",
+            "tool": "读取文件",
             "ok": true,
             "data": {
                 "content": ">>> notes.md\n1: alpha",
@@ -3599,7 +3618,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
+        compact_observation_payload(&mut payload, "读取文件");
 
         let data = payload
             .get("data")
@@ -3622,7 +3641,7 @@ mod tests {
     fn test_compact_observation_payload_read_file_uses_unified_budget_for_large_content() {
         let long_content = "x".repeat(OBSERVATION_MAX_CHARS + 240);
         let mut payload = json!({
-            "tool": "璇诲彇鏂囦欢",
+            "tool": "读取文件",
             "ok": true,
             "data": {
                 "content": long_content,
@@ -3643,7 +3662,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload, "璇诲彇鏂囦欢");
+        compact_observation_payload(&mut payload, "读取文件");
 
         let data = payload.get("data").cloned().unwrap_or(Value::Null);
         assert_eq!(
@@ -3919,6 +3938,38 @@ mod tests {
     }
 
     #[test]
+    fn test_compact_observation_payload_write_file_keeps_precise_path() {
+        let mut payload = json!({
+            "tool": "写入文件",
+            "ok": true,
+            "data": {
+                "path": "nai_long2.py",
+                "bytes": 9297,
+                "dry_run": false,
+                "existed": false,
+                "previous_bytes": 0
+            },
+            "meta": {
+                "duration_ms": 4
+            }
+        });
+
+        compact_observation_payload(&mut payload, "写入文件");
+        strip_compact_payload_noise(&mut payload, 0);
+
+        let data = payload
+            .get("data")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            data.get("path").and_then(Value::as_str),
+            Some("nai_long2.py")
+        );
+        assert_eq!(data.get("bytes").and_then(Value::as_u64), Some(9297));
+    }
+
+    #[test]
     fn test_normalize_final_response_payload_from_json_object() {
         let answer = normalize_final_response_payload(r#"{"content":"0"}"#);
         assert_eq!(answer, "0");
@@ -4022,7 +4073,10 @@ mod tests {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        assert_eq!(first.get("path").and_then(Value::as_str), Some("src/main.rs"));
+        assert_eq!(
+            first.get("path").and_then(Value::as_str),
+            Some("src/main.rs")
+        );
         assert_eq!(first.get("hunks").and_then(Value::as_u64), Some(1));
         assert!(first.get("diff_blocks").is_none());
     }

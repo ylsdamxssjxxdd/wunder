@@ -10,7 +10,8 @@ use tokio::fs;
 
 pub const TOOL_GENERATE_SPEECH: &str = "语音生成";
 pub const TOOL_TRANSCRIBE_SPEECH: &str = "声转文";
-pub const TOOL_GENERATE_IMAGE: &str = "绘图生成";
+pub const TOOL_GENERATE_IMAGE: &str = "图像生成";
+pub const TOOL_GENERATE_IMAGE_LEGACY: &str = "绘图生成";
 pub const TOOL_GENERATE_VIDEO: &str = "视频生成";
 
 pub const TOOL_GENERATE_SPEECH_ALIAS: &str = "generate_speech";
@@ -348,14 +349,18 @@ async fn persist_generated_media(
             format!("{GENERATED_MEDIA_DIR}/{prefix}_{stamp}.{extension}")
         });
     let relative = ensure_extension(relative, extension);
-    let target = context.workspace.resolve_path(context.workspace_id, &relative)?;
+    let target = context
+        .workspace
+        .resolve_path(context.workspace_id, &relative)?;
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).await?;
     }
     fs::write(&target, bytes).await?;
     context.workspace.mark_tree_dirty(context.workspace_id);
     Ok(PersistedMediaFile {
-        public_path: context.workspace.display_path(context.workspace_id, &target),
+        public_path: context
+            .workspace
+            .display_path(context.workspace_id, &target),
         workspace_relative_path: relative.replace('\\', "/"),
         size_bytes: bytes.len(),
     })

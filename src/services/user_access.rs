@@ -4,7 +4,9 @@ use crate::state::AppState;
 use crate::storage::{
     UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord,
 };
-use crate::tools::{collect_available_tool_names, resolve_tool_name};
+use crate::tools::{
+    collect_available_tool_names, collect_enabled_tool_names_for_catalog, resolve_tool_name,
+};
 use crate::user_tools::UserToolBindings;
 use std::collections::HashSet;
 
@@ -86,11 +88,59 @@ pub fn compute_allowed_tool_names(
         .trim()
         .eq_ignore_ascii_case("desktop")
     {
+        let plan_tool_name = resolve_tool_name("update_plan");
         let has_plan_tool = allowed
             .iter()
-            .any(|name| resolve_tool_name(name) == "计划面板");
+            .any(|name| resolve_tool_name(name) == plan_tool_name);
         if !has_plan_tool {
-            allowed.insert("计划面板".to_string());
+            allowed.insert(plan_tool_name);
+        }
+    }
+
+    allowed
+}
+
+pub fn compute_allowed_tool_names_for_catalog(
+    _user: &UserAccountRecord,
+    context: &UserToolContext,
+) -> HashSet<String> {
+    let mut allowed = collect_enabled_tool_names_for_catalog(
+        &context.config,
+        &context.skills,
+        Some(&context.bindings),
+    );
+
+    if let Some(access) = context.tool_access.as_ref() {
+        if let Some(allowed_tools) = access
+            .allowed_tools
+            .as_ref()
+            .filter(|items| !items.is_empty())
+        {
+            let allowed_set: HashSet<String> = allowed_tools
+                .iter()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect();
+            allowed = allowed
+                .intersection(&allowed_set)
+                .cloned()
+                .collect::<HashSet<_>>();
+        }
+    }
+
+    if context
+        .config
+        .server
+        .mode
+        .trim()
+        .eq_ignore_ascii_case("desktop")
+    {
+        let plan_tool_name = resolve_tool_name("update_plan");
+        let has_plan_tool = allowed
+            .iter()
+            .any(|name| resolve_tool_name(name) == plan_tool_name);
+        if !has_plan_tool {
+            allowed.insert(plan_tool_name);
         }
     }
 

@@ -175,16 +175,12 @@ impl MediaProcessor {
         }
     }
 
-async fn transcribe_audio(&self, attachment: &ChannelAttachment) -> Result<Option<String>> {
+    async fn transcribe_audio(&self, attachment: &ChannelAttachment) -> Result<Option<String>> {
         let config = &self.config.asr;
         if !config.enabled {
             return Ok(None);
         }
-        let provider = config
-            .provider
-            .as_deref()
-            .unwrap_or("openai")
-            .trim();
+        let provider = config.provider.as_deref().unwrap_or("openai").trim();
         let provider = normalize_provider(Some(provider));
         match provider.as_str() {
             "openai" | "openai_compatible" => self.transcribe_openai(config, attachment).await,
@@ -302,9 +298,7 @@ async fn transcribe_audio(&self, attachment: &ChannelAttachment) -> Result<Optio
         if api_key.is_empty() {
             return Ok(None);
         }
-        let base_url = config
-            .base_url
-            .as_deref();
+        let base_url = config.base_url.as_deref();
         let provider = normalize_provider(config.provider.as_deref());
         let is_whisper_cpp = provider == "whisper_cpp";
         let base_url = base_url

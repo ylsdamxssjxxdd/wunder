@@ -24,6 +24,9 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+const PRESET_META_PREFIX: &str = "user_agent_presets_v1:";
+const PRESET_CONTAINER_META_PREFIX: &str = "user_agent_presets_container_v1:";
+
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
@@ -308,6 +311,177 @@ pub fn find_preset_agent<'a>(
         })
         .max_by(|left, right| left.updated_at.total_cmp(&right.updated_at))
         .or_else(|| same_name_agent(agents, &preset.name))
+}
+
+fn preset_meta_key(user_id: &str) -> String {
+    format!("{PRESET_META_PREFIX}{user_id}")
+}
+
+fn preset_container_meta_key(user_id: &str) -> String {
+    format!("{PRESET_CONTAINER_META_PREFIX}{user_id}")
+}
+
+fn preset_by_name(preset_agents: &[PresetAgent], name: &str) -> Option<PresetAgent> {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    preset_agents
+        .iter()
+        .find(|preset| preset.name == cleaned)
+        .cloned()
+}
+
+fn duplicate_preset_bound_agent_ids(
+    records: &[UserAgentRecord],
+    configured_preset_ids: &HashSet<String>,
+) -> HashSet<String> {
+    let mut duplicates_by_preset_id: HashMap<String, Vec<&UserAgentRecord>> = HashMap::new();
+    for record in records {
+        if normalize_hive_id(&record.hive_id) != DEFAULT_HIVE_ID {
+            continue;
+        }
+        let Some(binding) = record.preset_binding.as_ref() else {
+            continue;
+        };
+        if !configured_preset_ids.contains(&binding.preset_id) {
+            continue;
+        }
+        duplicates_by_preset_id
+            .entry(binding.preset_id.clone())
+            .or_default()
+            .push(record);
+    }
+    duplicates_by_preset_id
+        .into_values()
+        .filter(|items| items.len() > 1)
+        .flat_map(|mut items| {
+            items.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
+            items
+                .into_iter()
+                .skip(1)
+                .map(|record| record.agent_id.clone())
+        })
+        .collect()
+}
+
+pub async fn ensure_user_preset_agents(state: &AppState, user: &UserAccountRecord) -> Result<bool> {
+    state.user_store.ensure_default_hive(&user.user_id)?;
+    let meta_key = preset_meta_key(&user.user_id);
+    let container_meta_key = preset_container_meta_key(&user.user_id);
+    let preset_agents = configured_preset_agents(state).await;
+    let bootstrap_completed = state.user_store.get_meta(&meta_key)?.is_some();
+    let configured_preset_ids = preset_agents
+        .iter()
+        .map(|preset| preset.preset_id.clone())
+        .collect::<HashSet<_>>();
+    let mut existing = state.user_store.list_user_agents(&user.user_id)?;
+
+    let duplicate_ids = duplicate_preset_bound_agent_ids(&existing, &configured_preset_ids);
+    if !duplicate_ids.is_empty() {
+        for duplicate_id in &duplicate_ids {
+            let _ = state
+                .user_store
+                .delete_user_agent(&user.user_id, duplicate_id);
+        }
+        existing.retain(|record| !duplicate_ids.contains(&record.agent_id));
+    }
+
+    let now = now_ts();
+    let container_layout_seeded = state.user_store.get_meta(&container_meta_key)?.is_some();
+    let mut target_by_preset_id = HashMap::new();
+    let mut matched_preset_by_agent_id = HashMap::new();
+    for preset in &preset_agents {
+        if let Some(record) = find_preset_agent(&existing, preset) {
+            matched_preset_by_agent_id.insert(record.agent_id.clone(), preset.clone());
+            target_by_preset_id.insert(
+                preset.preset_id.clone(),
+                build_target_snapshot(state, user, preset).await,
+            );
+        }
+    }
+
+    let mut existing_mutated = false;
+    for record in &existing {
+        let mut updated = record.clone();
+        let mut changed = false;
+        let mut matched_preset = matched_preset_by_agent_id.get(&record.agent_id).cloned();
+        if matched_preset.is_none() {
+            matched_preset = preset_by_name(&preset_agents, updated.name.trim());
+        }
+
+        if !container_layout_seeded {
+            if let Some(container_id) = matched_preset
+                .as_ref()
+                .map(|preset| preset.sandbox_container_id)
+            {
+                if updated.sandbox_container_id == 1 && updated.sandbox_container_id != container_id
+                {
+                    updated.sandbox_container_id = container_id;
+                    changed = true;
+                }
+            }
+        }
+
+        if let Some(preset) = matched_preset.as_ref() {
+            if updated.preset_binding.is_none() {
+                let target = match target_by_preset_id.get(&preset.preset_id) {
+                    Some(snapshot) => snapshot.clone(),
+                    None => {
+                        let snapshot = build_target_snapshot(state, user, preset).await;
+                        target_by_preset_id.insert(preset.preset_id.clone(), snapshot.clone());
+                        snapshot
+                    }
+                };
+                updated.preset_binding = Some(build_binding(preset, &target));
+                changed = true;
+            }
+        }
+
+        if changed {
+            updated.updated_at = now;
+            state.user_store.upsert_user_agent(&updated)?;
+            existing_mutated = true;
+        }
+    }
+
+    if !container_layout_seeded {
+        state.user_store.set_meta(&container_meta_key, "1")?;
+    }
+    if existing_mutated {
+        existing = state.user_store.list_user_agents(&user.user_id)?;
+    }
+
+    let mut preset_agents_restored = false;
+    for preset in &preset_agents {
+        if find_preset_agent(&existing, preset).is_some() {
+            continue;
+        }
+        let record = create_preset_agent_record(state, user, preset, now).await;
+        state.user_store.upsert_user_agent(&record)?;
+        preset_agents_restored = true;
+    }
+
+    let mut bootstrap_meta_written = false;
+    if !bootstrap_completed && !preset_agents.is_empty() {
+        state.user_store.set_meta(&meta_key, "1")?;
+        bootstrap_meta_written = true;
+    }
+
+    let changed = existing_mutated
+        || preset_agents_restored
+        || bootstrap_meta_written
+        || !container_layout_seeded
+        || !duplicate_ids.is_empty();
+    if changed {
+        if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+            tracing::warn!(
+                "failed to sync inner-visible preset state for {}: {err}",
+                user.user_id
+            );
+        }
+    }
+    Ok(changed)
 }
 
 fn baseline_snapshot(

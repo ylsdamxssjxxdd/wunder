@@ -26,7 +26,7 @@ use crate::tools::{
 };
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
-    UserToolContext,
+    compute_allowed_tool_names_for_catalog, UserToolContext,
 };
 use crate::user_tools::{UserKnowledgeBase, UserMcpServer, UserToolsPayload};
 use crate::vector_knowledge;
@@ -2379,7 +2379,7 @@ async fn user_tools_catalog(
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context_for_catalog(&state, &user_id).await;
-    let allowed = compute_allowed_tool_names(&resolved.user, &context);
+    let allowed = compute_allowed_tool_names_for_catalog(&resolved.user, &context);
     let summary =
         build_user_tools_summary(&user_id, &allowed, &context, true, state.storage.as_ref());
     Ok(Json(json!({ "data": summary })))
@@ -3593,9 +3593,7 @@ mod tests {
     };
     use crate::config::Config;
     use crate::core::schemas::ToolSpec;
-    use crate::services::skill_archive::{
-        import_skill_archive, uploaded_skill_archive_top_dir,
-    };
+    use crate::services::skill_archive::{import_skill_archive, uploaded_skill_archive_top_dir};
     use crate::services::user_access::UserToolContext;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::{load_skills, SkillRegistry, SkillSpec};
@@ -3694,17 +3692,19 @@ mod tests {
                 "hello-world-skill/scripts/generate_report.py",
                 "print('ok')\n",
             ),
-            (
-                "hello-world-skill/assets/team_template.md",
-                "# template\n",
-            ),
+            ("hello-world-skill/assets/team_template.md", "# template\n"),
             (
                 "hello-world-skill/references/report_templates.md",
                 "# refs\n",
             ),
         ]);
-        let imported = import_skill_archive("hello-world-skill.zip", &archive, dir.path(), &HashSet::new())
-            .expect("import direct skill archive");
+        let imported = import_skill_archive(
+            "hello-world-skill.zip",
+            &archive,
+            dir.path(),
+            &HashSet::new(),
+        )
+        .expect("import direct skill archive");
 
         assert_eq!(imported.extracted, 4);
         assert_eq!(
@@ -3752,9 +3752,7 @@ mod tests {
         let err = import_skill_archive("mixed.zip", &archive, dir.path(), &HashSet::new())
             .expect_err("mixed archive should be rejected");
 
-        assert!(err
-            .to_string()
-            .contains("top-level skill directory"));
+        assert!(err.to_string().contains("top-level skill directory"));
     }
 
     #[test]
@@ -3775,7 +3773,10 @@ mod tests {
         let specs = registry.list_specs();
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name, "数据库校验技能2");
-        assert_eq!(specs[0].description, "本技能用于对数据库表中的数据进行规则校验。");
+        assert_eq!(
+            specs[0].description,
+            "本技能用于对数据库表中的数据进行规则校验。"
+        );
         assert!(specs[0].frontmatter.is_empty());
     }
 

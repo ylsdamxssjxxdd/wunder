@@ -579,8 +579,8 @@
 - `GET` 返回（JSON）：
   - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
   - `embedding_models`：可用嵌入模型名称列表（仅包含 model_type=embedding）
-  - `tts_models`：可用语音模型名称列表（仅包含 model_type=tts）
-  - `image_models`：可用绘图模型名称列表（仅包含 model_type=image）
+  - `tts_models`：可用文转声模型名称列表（仅包含 model_type=tts）
+  - `image_models`：可用图像生成模型名称列表（仅包含 model_type=image）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
   - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
@@ -1187,8 +1187,8 @@
   - `llm.default`：默认对话模型配置名称
   - `llm.default_embedding`：默认嵌入模型配置名称（可选）
   - `llm.default_asr`：默认声转文模型配置名称（可选）
-  - `llm.default_tts`：默认语音模型配置名称（可选）
-  - `llm.default_image`：默认绘图模型配置名称（可选）
+  - `llm.default_tts`：默认文转声模型配置名称（可选）
+  - `llm.default_image`：默认图像生成模型配置名称（可选）
 - `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
   - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
@@ -1197,8 +1197,8 @@
   - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
   - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
-  - 说明：`model_type=tts` 表示语音模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
-  - 说明：`model_type=image` 表示绘图模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
+  - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
+  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为真实用户消息窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
@@ -1235,7 +1235,7 @@
   - `container_id`：工作区容器编号（可选，默认 `0`）
   - `path`：保存相对路径（可选；不传时自动写入 `generated_media/`）
   - `text`：待合成文本
-  - `model_name`：语音模型配置名称（可选）
+  - `model_name`：文转声模型配置名称（可选）
   - `voice`：音色（可选）
   - `instructions`：风格/语气控制（可选）
   - `response_format`：输出格式（可选，支持 `wav/mp3/flac/aac/opus/pcm`）
@@ -1279,11 +1279,11 @@
 ### 4.1.6.1.2 `/wunder/admin/multimodal/image`
 
 - 方法：`POST`
-- 说明：管理员侧多模调试中的绘图测试接口。服务端按指定或默认绘图模型生成图片，将结果写入指定工作区后返回保存路径与结构化结果。
+- 说明：管理员侧多模调试中的图像生成测试接口。服务端按指定或默认图像生成模型生成图片，将结果写入指定工作区后返回保存路径与结构化结果。
 - 入参（JSON）：
   - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
-  - `prompt`：绘图提示词
-  - `model_name`：绘图模型配置名称（可选）
+  - `prompt`：图像生成提示词
+  - `model_name`：图像生成模型配置名称（可选）
   - `size`：尺寸（可选）
   - `output_format`：输出格式（可选，支持 `png/jpeg/webp`）
   - `negative_prompt`：负向提示词（可选）

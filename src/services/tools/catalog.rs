@@ -1,6 +1,6 @@
 use super::{
-    browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool, self_status_tool,
-    sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
+    browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool,
+    self_status_tool, sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -1168,6 +1168,10 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         multimodal_generation_tool::TOOL_GENERATE_IMAGE.to_string(),
     );
     map.insert(
+        multimodal_generation_tool::TOOL_GENERATE_IMAGE_LEGACY.to_string(),
+        multimodal_generation_tool::TOOL_GENERATE_IMAGE.to_string(),
+    );
+    map.insert(
         multimodal_generation_tool::TOOL_GENERATE_VIDEO_ALIAS.to_string(),
         multimodal_generation_tool::TOOL_GENERATE_VIDEO.to_string(),
     );
@@ -1501,6 +1505,92 @@ pub fn collect_available_tool_names(
     if browser_tool::browser_tools_enabled(config) {
         // Browser visibility is controlled by tools.browser.enabled, so it should not require
         // a duplicated entry in tools.builtin.enabled.
+        enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
+        names.insert(browser_tool::TOOL_BROWSER.to_string());
+    }
+    for name in goal::goal_tool_names() {
+        enabled_builtin.insert(name.to_string());
+        names.insert(name.to_string());
+    }
+    for server in &config.mcp.servers {
+        if !server.enabled {
+            continue;
+        }
+        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+        for tool in &server.tool_specs {
+            if tool.name.is_empty() {
+                continue;
+            }
+            if !allow.is_empty() && !allow.contains(&tool.name) {
+                continue;
+            }
+            names.insert(format!("{}@{}", server.name, tool.name));
+        }
+    }
+    for service in &config.a2a.services {
+        if !service.enabled {
+            continue;
+        }
+        if service.name.is_empty() {
+            continue;
+        }
+        names.insert(format!("a2a@{}", service.name));
+    }
+    let skill_names: HashSet<String> = skills
+        .list_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    names.extend(skill_names.clone());
+    for base in &config.knowledge.bases {
+        if !base.enabled {
+            continue;
+        }
+        let name = base.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if skill_names.contains(name) {
+            continue;
+        }
+        names.insert(name.to_string());
+    }
+    if let Some(bindings) = user_tool_bindings {
+        names.extend(bindings.alias_map.keys().cloned());
+        names.extend(bindings.skill_specs.iter().map(|spec| spec.name.clone()));
+    }
+    let alias_map = builtin_aliases();
+    for (alias, canonical) in alias_map {
+        if enabled_builtin.contains(&canonical) && !names.contains(&alias) {
+            names.insert(alias);
+        }
+    }
+    names
+}
+
+pub fn collect_enabled_tool_names_for_catalog(
+    config: &Config,
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut enabled_builtin = HashSet::new();
+    if is_desktop_mode(config) {
+        for canonical in desktop_builtin_tool_names() {
+            enabled_builtin.insert(canonical.clone());
+            names.insert(canonical.clone());
+        }
+    } else {
+        for name in &config.tools.builtin.enabled {
+            let canonical = resolve_tool_name(name);
+            if canonical.is_empty() {
+                continue;
+            }
+            enabled_builtin.insert(canonical.clone());
+            names.insert(canonical);
+        }
+    }
+    if browser_tool::browser_tools_enabled(config) {
         enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
         names.insert(browser_tool::TOOL_BROWSER.to_string());
     }

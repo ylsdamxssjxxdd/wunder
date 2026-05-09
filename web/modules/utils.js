@@ -206,7 +206,7 @@ const TOOL_ICON_RULES = [
     icon: "fa-wave-square",
   },
   {
-    keywords: ["绘图生成", "generate_image", "image generation", "text_to_image", "text to image"],
+    keywords: ["图像生成", "绘图生成", "generate_image", "image generation", "text_to_image", "text to image"],
     icon: "fa-image",
   },
   {

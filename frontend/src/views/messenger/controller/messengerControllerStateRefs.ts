@@ -819,6 +819,10 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.timelineDetailSessionId = ref('');
 
+  ctx.messengerSessionRefreshTraceId = ref('');
+
+  ctx.messengerSessionRefreshTraceSource = ref('');
+
   ctx.skillDockUploading = ref(false);
 
   ctx.approvalResponding = ref(false);

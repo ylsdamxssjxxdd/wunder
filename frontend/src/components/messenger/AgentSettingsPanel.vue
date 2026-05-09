@@ -69,10 +69,13 @@
             :disabled="isInteractionDisabled"
           />
         </el-form-item>
-        <el-form-item class="messenger-agent-form-item messenger-agent-form-item--tools">
-          <template #label>
+        <el-form-item
+          class="messenger-agent-form-item messenger-agent-form-item--tools"
+          :label="t('portal.agent.form.tools')"
+        >
+          <div class="messenger-tool-picker">
             <div class="messenger-agent-tools-head">
-              <span>{{ t('portal.agent.form.tools') }}</span>
+              <div class="messenger-agent-tools-head-spacer" aria-hidden="true"></div>
               <el-input
                 v-model="toolSearchKeyword"
                 class="messenger-agent-tools-search"
@@ -83,8 +86,6 @@
                 @click.stop
               />
             </div>
-          </template>
-          <div class="messenger-tool-picker">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('portal.agent.tools.loading') }}</div>
             <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
             <div v-else-if="!toolSections.length" class="messenger-list-empty">
@@ -1991,9 +1992,15 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.messenger-agent-tools-head-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .messenger-agent-tools-search {
   width: min(240px, 42vw);
   flex: 0 1 240px;
+  margin-bottom: 12px;
 }
 
 .messenger-agent-tools-search :deep(.el-input__wrapper) {

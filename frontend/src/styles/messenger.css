@@ -5899,6 +5899,10 @@ button.messenger-chat-header-model {
   line-height: 1;
 }
 
+.messenger-composer-scope.chat-shell .chat-composer-world-toolbar {
+  gap: 4px;
+}
+
 .messenger-composer-scope.chat-shell .chat-composer-command-panel {
   position: absolute;
   top: auto;
@@ -5916,6 +5920,10 @@ button.messenger-chat-header-model {
   max-height: min(280px, calc(var(--app-viewport-height, 100vh) - 160px));
   overflow: auto;
   z-index: 40;
+}
+
+.messenger-composer-scope.chat-shell .messenger-world-tool-anchor + .messenger-world-tool-anchor {
+  margin-left: 2px;
 }
 
 .messenger-composer-scope.chat-shell .chat-composer-command-section-label {

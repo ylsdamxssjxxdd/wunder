@@ -2185,7 +2185,7 @@
   },
   "tool.spec.generate_speech.description": {
     "en-US": "Generate speech with the configured TTS model, save the audio into the current workspace, and return the saved file path.",
-    "zh-CN": "使用已配置的语音模型生成音频，保存到当前工作区，并返回生成文件路径。"
+    "zh-CN": "使用已配置的文转声模型生成音频，保存到当前工作区，并返回生成文件路径。"
   },
   "tool.spec.generate_speech.args.text": {
     "en-US": "Text content to synthesize.",
@@ -2197,7 +2197,7 @@
   },
   "tool.spec.generate_speech.args.model_name": {
     "en-US": "Optional TTS model config name. Empty uses the default TTS model.",
-    "zh-CN": "可选，语音模型配置名；留空使用默认语音模型。"
+    "zh-CN": "可选，文转声模型配置名；留空使用默认文转声模型。"
   },
   "tool.spec.generate_speech.args.voice": {
     "en-US": "Optional voice / speaker parameter.",
@@ -2257,7 +2257,7 @@
   },
   "tool.spec.generate_image.description": {
     "en-US": "Generate an image with the configured image model, save it into the current workspace, and return the saved file path.",
-    "zh-CN": "使用已配置的绘图模型生成图片，保存到当前工作区，并返回生成文件路径。"
+    "zh-CN": "使用已配置的图像生成模型生成图片，保存到当前工作区，并返回生成文件路径。"
   },
   "tool.spec.generate_image.args.prompt": {
     "en-US": "Prompt describing the target image.",
@@ -2269,7 +2269,7 @@
   },
   "tool.spec.generate_image.args.model_name": {
     "en-US": "Optional image model config name. Empty uses the default image model.",
-    "zh-CN": "可选，绘图模型配置名；留空使用默认绘图模型。"
+    "zh-CN": "可选，图像生成模型配置名；留空使用默认图像生成模型。"
   },
   "tool.spec.generate_image.args.size": {
     "en-US": "Optional output size, such as 1024x1024.",

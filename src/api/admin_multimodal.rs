@@ -5,7 +5,7 @@ use crate::services::multimodal_models::{
 };
 use crate::state::AppState;
 use crate::storage::{normalize_workspace_container_id, USER_PRIVATE_CONTAINER_ID};
-use axum::extract::{DefaultBodyLimit, Multipart, State, Json};
+use axum::extract::{DefaultBodyLimit, Json, Multipart, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{routing::post, Router};
@@ -27,7 +27,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/multimodal/transcription",
             post(admin_transcribe_audio).layer(DefaultBodyLimit::max(MAX_MULTIMODAL_UPLOAD_BYTES)),
         )
-        .route("/wunder/admin/multimodal/speech", post(admin_generate_speech))
+        .route(
+            "/wunder/admin/multimodal/speech",
+            post(admin_generate_speech),
+        )
         .route("/wunder/admin/multimodal/image", post(admin_generate_image))
         .route("/wunder/admin/multimodal/video", post(admin_generate_video))
 }
@@ -151,14 +154,15 @@ async fn admin_transcribe_audio(
         .workspace
         .scoped_user_id_by_container(&resolved.user.user_id, container_id);
     let config = state.config_store.get().await;
-    let selected_model_name = multimodal_models::resolve_asr_model(&config, payload.model_name.as_deref())
-        .map(|(name, _)| name)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::BAD_REQUEST,
-                "asr model is not configured".to_string(),
-            )
-        })?;
+    let selected_model_name =
+        multimodal_models::resolve_asr_model(&config, payload.model_name.as_deref())
+            .map(|(name, _)| name)
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "asr model is not configured".to_string(),
+                )
+            })?;
 
     let (audio_bytes, filename, content_type, source_public_path, source_workspace_relative_path) =
         if let Some(bytes) = payload.upload_bytes {
@@ -239,7 +243,12 @@ async fn admin_transcribe_audio(
         },
     )
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, format!("asr request failed: {err}")))?;
+    .map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            format!("asr request failed: {err}"),
+        )
+    })?;
 
     Ok(Json(json!({
         "data": {
@@ -313,7 +322,12 @@ async fn admin_generate_speech(
         },
     )
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, format!("tts request failed: {err}")))?;
+    .map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            format!("tts request failed: {err}"),
+        )
+    })?;
 
     let saved = persist_generated_media(
         state.as_ref(),

@@ -263,6 +263,14 @@ async fn register(
             error_response(StatusCode::BAD_REQUEST, localize_register_error(&err))
         })?;
     }
+    if let Err(err) =
+        crate::services::user_agent_presets::ensure_user_preset_agents(&state, &created_user).await
+    {
+        tracing::warn!(
+            "failed to sync preset agents after register for {}: {err}",
+            created_user.user_id
+        );
+    }
     let session = state
         .user_store
         .login_with_scope(username, password, &resolve_login_session_scope(&headers))
@@ -454,6 +462,17 @@ async fn external_login(
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if created {
+        if let Err(err) =
+            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+                .await
+        {
+            tracing::warn!(
+                "failed to sync preset agents after external login provision for {}: {err}",
+                session.user.user_id
+            );
+        }
+    }
 
     state
         .control
@@ -509,6 +528,17 @@ async fn external_issue_code(
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if created {
+        if let Err(err) =
+            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+                .await
+        {
+            tracing::warn!(
+                "failed to sync preset agents after external code provision for {}: {err}",
+                session.user.user_id
+            );
+        }
+    }
 
     state
         .control
@@ -601,6 +631,17 @@ async fn external_launch(
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if created {
+        if let Err(err) =
+            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+                .await
+        {
+            tracing::warn!(
+                "failed to sync preset agents after external launch provision for {}: {err}",
+                session.user.user_id
+            );
+        }
+    }
 
     state
         .control
@@ -678,6 +719,17 @@ async fn external_token_launch(
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if created {
+        if let Err(err) =
+            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+                .await
+        {
+            tracing::warn!(
+                "failed to sync preset agents after external token launch provision for {}: {err}",
+                session.user.user_id
+            );
+        }
+    }
 
     state
         .control
@@ -2164,7 +2216,11 @@ mod tests {
         resolve_external_token_login_target_from_candidates, summarize_user_session_records,
         validate_external_embed_jwt, DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
+    use crate::config::{Config, UserAgentPresetConfig};
+    use crate::config_store::ConfigStore;
+    use crate::services::user_agent_presets::ensure_user_preset_agents;
     use crate::services::user_store::UserStore;
+    use crate::state::{AppState, AppStateInitOptions};
     use crate::storage::{ChatSessionRecord, SqliteStorage, StorageBackend, UserAgentRecord};
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
@@ -2463,6 +2519,82 @@ mod tests {
             .login("external_1", DEFAULT_EXTERNAL_LAUNCH_PASSWORD)
             .expect("login with default password");
         assert_eq!(login.user.user_id, "external_1");
+    }
+
+    #[tokio::test]
+    async fn external_launch_provision_can_sync_preset_agents_for_new_user() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("external-launch-preset-sync.db");
+        let config_path = dir.path().join("wunder.yaml");
+
+        let mut config = Config::default();
+        config.storage.backend = "sqlite".to_string();
+        config.storage.db_path = db_path.to_string_lossy().to_string();
+        config.workspace.root = dir.path().join("workspaces").to_string_lossy().to_string();
+        config.skills.enabled.clear();
+        config.security.external_auth_key = Some("external-key".to_string());
+        config.security.external_embed_preset_agent_name = Some("External Preset".to_string());
+        config.user_agents.presets = vec![UserAgentPresetConfig {
+            preset_id: "preset_external_launch_sync".to_string(),
+            revision: 1,
+            name: "External Preset".to_string(),
+            description: "preset".to_string(),
+            system_prompt: "preset prompt".to_string(),
+            preview_skill: false,
+            model_name: None,
+            icon: None,
+            icon_name: "spark".to_string(),
+            icon_color: "#94a3b8".to_string(),
+            sandbox_container_id: 2,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            approval_mode: "full_auto".to_string(),
+            status: "active".to_string(),
+        }];
+
+        let config_store = ConfigStore::new(config_path);
+        let config_for_store = config.clone();
+        config_store
+            .update(|current| *current = config_for_store.clone())
+            .await
+            .expect("update config store");
+        let state = Arc::new(
+            AppState::new_with_options(config_store, config, AppStateInitOptions::cli_default())
+                .expect("create app state"),
+        );
+
+        let (session, created, updated) = provision_external_launch_session(
+            state.user_store.as_ref(),
+            "external_sync_user",
+            None,
+            None,
+            false,
+            UserStore::default_session_scope(),
+        )
+        .expect("create external launch session");
+        assert!(created);
+        assert!(!updated);
+
+        let changed = ensure_user_preset_agents(&state, &session.user)
+            .await
+            .expect("sync preset agents");
+        assert!(changed);
+
+        let agents = state
+            .user_store
+            .list_user_agents(&session.user.user_id)
+            .expect("list user agents");
+        let preset_agent = agents
+            .iter()
+            .find(|record| record.name == "External Preset")
+            .expect("preset agent should exist");
+        let binding = preset_agent
+            .preset_binding
+            .as_ref()
+            .expect("preset binding should exist");
+        assert_eq!(binding.preset_id, "preset_external_launch_sync");
     }
 
     #[test]

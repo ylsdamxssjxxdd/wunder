@@ -228,14 +228,20 @@ fn compute_chunk_replacements(
                     None
                 })
                 .unwrap_or(ChunkContextFailureKind::Generic);
-            let failure = ChunkContextFailureDetail {
-                kind: failure_kind,
-            };
-            let (hint_zh, hint_en) =
-                build_context_not_found_hint(source_lines, &pattern, line_index, chunk, Some(&failure));
+            let failure = ChunkContextFailureDetail { kind: failure_kind };
+            let (hint_zh, hint_en) = build_context_not_found_hint(
+                source_lines,
+                &pattern,
+                line_index,
+                chunk,
+                Some(&failure),
+            );
             return Err(patch_error_with_hint(
                 "PATCH_CONTEXT_NOT_FOUND",
-                format!("补丁应用失败：{path} 第 {} 个变更块找不到匹配上下文", index + 1),
+                format!(
+                    "补丁应用失败：{path} 第 {} 个变更块找不到匹配上下文",
+                    index + 1
+                ),
                 format!(
                     "Patch apply failed: chunk {} in {} has no matching context",
                     index + 1,

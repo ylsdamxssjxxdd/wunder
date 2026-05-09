@@ -37,6 +37,7 @@ import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/vie
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
+import { chatDebugLog } from '@/utils/chatDebug';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
@@ -689,7 +690,33 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
   };
 
   ctx.refreshRealtimeChatSessions = async () => {
-      await ctx.chatStore.loadSessions();
+      const traceId = `sess-refresh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      ctx.messengerSessionRefreshTraceId.value = traceId;
+      ctx.messengerSessionRefreshTraceSource.value = 'realtime-pulse';
+      chatDebugLog('messenger.conversation', 'session-refresh-start', {
+          traceId,
+          source: ctx.messengerSessionRefreshTraceSource.value,
+          activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
+          sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0
+      });
+      try {
+          await ctx.chatStore.loadSessions({
+              traceId,
+              traceSource: ctx.messengerSessionRefreshTraceSource.value
+          });
+      }
+      finally {
+          chatDebugLog('messenger.conversation', 'session-refresh-finish', {
+              traceId,
+              source: ctx.messengerSessionRefreshTraceSource.value,
+              activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
+              sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0
+          });
+          if (ctx.messengerSessionRefreshTraceId.value === traceId) {
+              ctx.messengerSessionRefreshTraceId.value = '';
+              ctx.messengerSessionRefreshTraceSource.value = '';
+          }
+      }
   };
 
   ctx.REALTIME_CONTACT_REFRESH_MIN_MS = 7000;

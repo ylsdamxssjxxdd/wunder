@@ -274,6 +274,7 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
     resolvedText.includes('generate_image') ||
     resolvedText.includes('text_to_image') ||
     resolvedText.includes('image generation') ||
+    resolvedText.includes('图像生成') ||
     resolvedText.includes('绘图生成')
   ) {
     return { icon: 'fa-paintbrush', tone: 'search' };

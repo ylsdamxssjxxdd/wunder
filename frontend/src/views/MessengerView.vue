@@ -964,7 +964,10 @@
 
         <template v-else>
           <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
-          <div v-else-if="!hasAnyMixedConversations || !sessionHub.activeConversation" class="messenger-chat-empty-state">
+          <div
+            v-else-if="!hasRetainedMessageConversationContext && !sessionHub.activeConversation"
+            class="messenger-chat-empty-state"
+          >
             <div class="messenger-chat-empty-icon">
               <i class="fa-regular fa-comments" aria-hidden="true"></i>
             </div>
@@ -2164,6 +2167,7 @@ const hasActiveSubagentItems = controller.hasActiveSubagentItems;
 const hasActiveSubagentsAfterLatestUser = controller.hasActiveSubagentsAfterLatestUser;
 const hasAgentAbilitySummary = controller.hasAgentAbilitySummary;
 const hasAnyMixedConversations = controller.hasAnyMixedConversations;
+const hasRetainedMessageConversationContext = controller.hasRetainedMessageConversationContext;
 const hasAssistantWaitingForCurrentOutput = controller.hasAssistantWaitingForCurrentOutput;
 const hasCronTask = controller.hasCronTask;
 const hasHotBeeroomRuntimeState = controller.hasHotBeeroomRuntimeState;

@@ -59,7 +59,9 @@ pub fn list_global_companions() -> Result<Vec<CompanionSummary>> {
         return Ok(Vec::new());
     }
     let mut records = Vec::new();
-    for entry in fs::read_dir(&root).with_context(|| format!("read companion dir {}", root.display()))? {
+    for entry in
+        fs::read_dir(&root).with_context(|| format!("read companion dir {}", root.display()))?
+    {
         let Ok(entry) = entry else {
             continue;
         };
@@ -72,7 +74,9 @@ pub fn list_global_companions() -> Result<Vec<CompanionSummary>> {
         match load_global_companion_summary(&entry.file_name().to_string_lossy()) {
             Ok(Some(record)) => records.push(record),
             Ok(None) => {}
-            Err(err) => tracing::warn!("failed to load companion {}: {err}", entry.path().display()),
+            Err(err) => {
+                tracing::warn!("failed to load companion {}: {err}", entry.path().display())
+            }
         }
     }
     records.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
@@ -113,7 +117,8 @@ pub fn load_global_companion(id: &str) -> Result<Option<CompanionRecord>> {
         return Ok(None);
     };
     let image_path = companion_dir(&summary.id).join(safe_zip_path(&summary.spritesheet_path)?);
-    let image = fs::read(&image_path).with_context(|| format!("read spritesheet {}", image_path.display()))?;
+    let image = fs::read(&image_path)
+        .with_context(|| format!("read spritesheet {}", image_path.display()))?;
     Ok(Some(CompanionRecord {
         spritesheet_data_url: data_url(&image, &summary.spritesheet_mime),
         summary,
@@ -125,7 +130,8 @@ pub fn load_global_companion_spritesheet(id: &str) -> Result<Option<(String, Vec
         return Ok(None);
     };
     let image_path = companion_dir(&summary.id).join(safe_zip_path(&summary.spritesheet_path)?);
-    let image = fs::read(&image_path).with_context(|| format!("read spritesheet {}", image_path.display()))?;
+    let image = fs::read(&image_path)
+        .with_context(|| format!("read spritesheet {}", image_path.display()))?;
     Ok(Some((summary.spritesheet_mime, image)))
 }
 
@@ -143,7 +149,11 @@ pub fn import_global_companion(filename: &str, bytes: &[u8]) -> Result<Companion
     persist_package(parsed)
 }
 
-pub fn update_global_companion(id: &str, display_name: Option<&str>, description: Option<&str>) -> Result<CompanionRecord> {
+pub fn update_global_companion(
+    id: &str,
+    display_name: Option<&str>,
+    description: Option<&str>,
+) -> Result<CompanionRecord> {
     let id = sanitize_id(id);
     let Some(mut record) = load_global_companion(&id)? else {
         return Err(anyhow!("companion not found"));
@@ -164,7 +174,8 @@ pub fn update_global_companion(id: &str, display_name: Option<&str>, description
         spritesheet_path: record.summary.spritesheet_path.clone(),
     };
     write_manifest(&companion_dir(&record.summary.id), &manifest)?;
-    load_global_companion(&record.summary.id)?.ok_or_else(|| anyhow!("companion not found after update"))
+    load_global_companion(&record.summary.id)?
+        .ok_or_else(|| anyhow!("companion not found after update"))
 }
 
 pub fn delete_global_companion(id: &str) -> Result<bool> {
@@ -187,18 +198,22 @@ pub fn export_global_companion(id: &str) -> Result<(String, Vec<u8>)> {
     };
     let dir = companion_dir(&record.summary.id);
     let image_path = dir.join(safe_zip_path(&record.summary.spritesheet_path)?);
-    let image = fs::read(&image_path).with_context(|| format!("read spritesheet {}", image_path.display()))?;
+    let image = fs::read(&image_path)
+        .with_context(|| format!("read spritesheet {}", image_path.display()))?;
     let mut cursor = Cursor::new(Vec::new());
     {
         let mut writer = ZipWriter::new(&mut cursor);
         let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
         writer.start_file(MANIFEST_NAME, options)?;
-        writer.write_all(serde_json::to_string_pretty(&CompanionManifest {
-            id: record.summary.id.clone(),
-            display_name: record.summary.display_name.clone(),
-            description: record.summary.description.clone(),
-            spritesheet_path: record.summary.spritesheet_path.clone(),
-        })?.as_bytes())?;
+        writer.write_all(
+            serde_json::to_string_pretty(&CompanionManifest {
+                id: record.summary.id.clone(),
+                display_name: record.summary.display_name.clone(),
+                description: record.summary.description.clone(),
+                spritesheet_path: record.summary.spritesheet_path.clone(),
+            })?
+            .as_bytes(),
+        )?;
         writer.start_file(&record.summary.spritesheet_path, options)?;
         writer.write_all(&image)?;
         writer.finish()?;
@@ -210,7 +225,9 @@ fn parse_package(bytes: &[u8]) -> Result<ParsedPackage> {
     let cursor = Cursor::new(bytes);
     let mut archive = ZipArchive::new(cursor).context("read companion zip failed")?;
     let manifest_bytes = read_zip_entry(&mut archive, MANIFEST_NAME, MAX_PACKAGE_BYTES)?;
-    let manifest = normalize_manifest(serde_json::from_slice::<CompanionManifest>(&manifest_bytes)?)?;
+    let manifest = normalize_manifest(serde_json::from_slice::<CompanionManifest>(
+        &manifest_bytes,
+    )?)?;
     let spritesheet_path = safe_zip_path(&manifest.spritesheet_path)?;
     let spritesheet_zip_path = spritesheet_path.to_string_lossy().replace('\\', "/");
     let spritesheet_bytes =
@@ -233,10 +250,13 @@ fn persist_package(parsed: ParsedPackage) -> Result<CompanionRecord> {
     }
     fs::write(&image_path, &parsed.spritesheet_bytes)?;
     write_manifest(&target_dir, &parsed.manifest)?;
-    load_global_companion(&parsed.manifest.id)?.ok_or_else(|| anyhow!("companion not found after import"))
+    load_global_companion(&parsed.manifest.id)?
+        .ok_or_else(|| anyhow!("companion not found after import"))
 }
 
-fn load_companion_manifest_parts(id: &str) -> Result<Option<(CompanionManifest, PathBuf, fs::Metadata)>> {
+fn load_companion_manifest_parts(
+    id: &str,
+) -> Result<Option<(CompanionManifest, PathBuf, fs::Metadata)>> {
     let id = sanitize_id(id);
     if id.is_empty() {
         return Ok(None);
@@ -258,7 +278,11 @@ fn load_companion_manifest_parts(id: &str) -> Result<Option<(CompanionManifest, 
     Ok(Some((manifest, image_path, metadata)))
 }
 
-fn read_zip_entry(archive: &mut ZipArchive<Cursor<&[u8]>>, path: &str, max_bytes: usize) -> Result<Vec<u8>> {
+fn read_zip_entry(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
     let normalized = normalize_zip_path(path);
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;

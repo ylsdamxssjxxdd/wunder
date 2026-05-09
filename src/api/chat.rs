@@ -626,14 +626,11 @@ async fn get_session(
         .workspace
         .load_session_context_tokens(&resolved.user.user_id, &session_id)
         .max(0);
-    let goal = crate::services::goal::get_goal(
-        state.storage.clone(),
-        &resolved.user.user_id,
-        &session_id,
-    )
-    .await
-    .ok()
-    .flatten();
+    let goal =
+        crate::services::goal::get_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
+            .await
+            .ok()
+            .flatten();
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
@@ -2006,12 +2003,17 @@ async fn cancel_session(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let goal_cleared =
-        crate::services::goal::clear_goal(state.storage.clone(), &resolved.user.user_id, &session_id)
-            .await
-            .unwrap_or(false);
+    let goal_cleared = crate::services::goal::clear_goal(
+        state.storage.clone(),
+        &resolved.user.user_id,
+        &session_id,
+    )
+    .await
+    .unwrap_or(false);
     let cancelled = state.monitor.cancel(&session_id);
-    Ok(Json(json!({ "data": { "cancelled": cancelled, "goal_cleared": goal_cleared } })))
+    Ok(Json(
+        json!({ "data": { "cancelled": cancelled, "goal_cleared": goal_cleared } }),
+    ))
 }
 
 async fn compact_session(
@@ -3117,7 +3119,9 @@ fn insert_session_runtime_fields(
     {
         map.insert("model_key".to_string(), json!(model_key));
     }
-    if let Some(max_context) = runtime.and_then(|runtime| runtime.max_context).filter(|value| *value > 0)
+    if let Some(max_context) = runtime
+        .and_then(|runtime| runtime.max_context)
+        .filter(|value| *value > 0)
     {
         map.insert("context_max_tokens".to_string(), json!(max_context));
         map.insert("context_total_tokens".to_string(), json!(max_context));

@@ -1,13 +1,12 @@
 use crate::config::{Config, LlmModelConfig};
 use crate::llm::{
-    build_model_auth_headers, build_openai_model_resource_endpoint, is_asr_model,
-    is_image_model, is_tts_model, is_video_model, resolve_model_base_url,
-    normalize_provider,
+    build_model_auth_headers, build_openai_model_resource_endpoint, is_asr_model, is_image_model,
+    is_tts_model, is_video_model, normalize_provider, resolve_model_base_url,
 };
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use reqwest::Client;
 use reqwest::multipart::{Form, Part};
+use reqwest::Client;
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -419,9 +418,8 @@ async fn transcribe_audio_with_model(
     }
     let base_url =
         resolve_model_base_url(config).ok_or_else(|| anyhow!("asr base_url is required"))?;
-    let endpoint =
-        build_openai_model_resource_endpoint(&base_url, AUDIO_TRANSCRIPTIONS_RESOURCE)
-            .ok_or_else(|| anyhow!("asr base_url is invalid"))?;
+    let endpoint = build_openai_model_resource_endpoint(&base_url, AUDIO_TRANSCRIPTIONS_RESOURCE)
+        .ok_or_else(|| anyhow!("asr base_url is invalid"))?;
     let model = config
         .model
         .as_deref()
@@ -512,8 +510,8 @@ async fn transcribe_audio_with_model(
     } else {
         serde_json::from_slice::<Value>(&body).context("parse asr response json")?
     };
-    let text = extract_asr_text(&raw_response)
-        .ok_or_else(|| anyhow!("asr response is missing text"))?;
+    let text =
+        extract_asr_text(&raw_response).ok_or_else(|| anyhow!("asr response is missing text"))?;
     Ok(AudioTranscriptionResponse {
         text,
         content_type,
@@ -590,7 +588,10 @@ async fn transcribe_audio_with_whisper_cpp(
         .and_then(|value| value.to_str().ok())
         .map(str::to_string)
         .unwrap_or_else(|| whisper_cpp_content_type(&response_format).to_string());
-    let body = response.bytes().await.context("read whisper.cpp asr response body")?;
+    let body = response
+        .bytes()
+        .await
+        .context("read whisper.cpp asr response body")?;
     if !status.is_success() {
         let detail = String::from_utf8_lossy(&body);
         return Err(anyhow!(
@@ -606,7 +607,8 @@ async fn transcribe_audio_with_whisper_cpp(
         match serde_json::from_slice::<Value>(&body) {
             Ok(value) => value,
             Err(err) => {
-                let text = String::from_utf8(body.to_vec()).context("decode whisper.cpp response")?;
+                let text =
+                    String::from_utf8(body.to_vec()).context("decode whisper.cpp response")?;
                 let trimmed = text.trim().to_string();
                 if trimmed.is_empty() {
                     return Err(anyhow!("whisper.cpp asr response parse failed: {err}"));
@@ -811,7 +813,10 @@ fn build_image_payload(
             .or(config.image_num_inference_steps)
             .filter(|value| *value > 0)
         {
-            map.insert("num_inference_steps".to_string(), json!(num_inference_steps));
+            map.insert(
+                "num_inference_steps".to_string(),
+                json!(num_inference_steps),
+            );
         }
         if let Some(guidance_scale) = request
             .guidance_scale
@@ -938,7 +943,10 @@ async fn generate_video_with_model(
     if bytes.is_empty() {
         return Err(anyhow!("video response is empty"));
     }
-    Ok(VideoGenerationResponse { bytes, content_type })
+    Ok(VideoGenerationResponse {
+        bytes,
+        content_type,
+    })
 }
 
 fn video_sync_resource_path() -> String {
@@ -1072,8 +1080,8 @@ pub fn image_generation_resource_path() -> &'static str {
 mod tests {
     use super::{
         build_speech_payload, list_asr_model_names, list_image_model_names, list_tts_model_names,
-        list_video_model_names, normalize_asr_response_format, resolve_asr_model, resolve_image_model,
-        resolve_tts_model, resolve_video_model,
+        list_video_model_names, normalize_asr_response_format, resolve_asr_model,
+        resolve_image_model, resolve_tts_model, resolve_video_model,
     };
     use crate::config::{Config, LlmModelConfig};
     use serde_json::Value;
@@ -1139,7 +1147,10 @@ mod tests {
     #[test]
     fn normalize_asr_response_format_falls_back_to_json() {
         assert_eq!(normalize_asr_response_format(Some("text")), "text");
-        assert_eq!(normalize_asr_response_format(Some("verbose_json")), "verbose_json");
+        assert_eq!(
+            normalize_asr_response_format(Some("verbose_json")),
+            "verbose_json"
+        );
         assert_eq!(normalize_asr_response_format(Some("unknown")), "json");
     }
 
@@ -1180,8 +1191,7 @@ mod tests {
             speed: None,
         };
 
-        let payload =
-            build_speech_payload(&config, "tts-model", &request, "wav", Some("Vivian"));
+        let payload = build_speech_payload(&config, "tts-model", &request, "wav", Some("Vivian"));
 
         assert_eq!(payload.get("voice").and_then(Value::as_str), Some("Vivian"));
     }

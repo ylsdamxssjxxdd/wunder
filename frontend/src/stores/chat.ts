@@ -124,6 +124,7 @@ import {
   upsertProtectedRealtimeMessage
 } from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
+import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -5535,6 +5536,52 @@ function buildRuntimeDebugSnapshot(runtime) {
         : null
   };
 }
+
+const shouldRetainActiveSessionDuringListRefresh = (store, nextSessions) => {
+  const activeSessionId = resolveSessionKey(store?.activeSessionId);
+  if (!activeSessionId) {
+    return false;
+  }
+  if ((Array.isArray(nextSessions) ? nextSessions : []).some((item) => resolveSessionKey(item?.id) === activeSessionId)) {
+    return false;
+  }
+  const activeMessages = Array.isArray(store?.messages) ? store.messages : [];
+  const runtime = getRuntime(activeSessionId);
+  const runtimeStatus = normalizeThreadRuntimeStatus(runtime?.threadStatus);
+  const isRuntimeHot =
+    Boolean(store?.loadingBySession?.[activeSessionId]) ||
+    isThreadRuntimeBusy(runtimeStatus) ||
+    hasRunningAssistantMessage(activeMessages);
+  const hasContext = hasRetainedConversationContext({
+    activeSessionId,
+    draftAgentId: store?.draftAgentId,
+    messageCount: activeMessages.length
+  });
+  return isRuntimeHot || hasContext;
+};
+
+const mergeRetainedActiveSessionIntoList = (store, nextSessions) => {
+  const normalizedNextSessions = Array.isArray(nextSessions) ? nextSessions : [];
+  if (!shouldRetainActiveSessionDuringListRefresh(store, normalizedNextSessions)) {
+    return normalizedNextSessions;
+  }
+  const activeSessionId = resolveSessionKey(store?.activeSessionId);
+  const existingActiveSession =
+    (Array.isArray(store?.sessions)
+      ? store.sessions.find((item) => resolveSessionKey(item?.id) === activeSessionId)
+      : null) || null;
+  if (!existingActiveSession) {
+    return normalizedNextSessions;
+  }
+  chatDebugLog('messenger.conversation', 'retain-active-session-during-refresh', {
+    activeSessionId,
+    previousSessionCount: Array.isArray(store?.sessions) ? store.sessions.length : 0,
+    nextSessionCount: normalizedNextSessions.length,
+    messageCount: Array.isArray(store?.messages) ? store.messages.length : 0,
+    runtime: buildRuntimeDebugSnapshot(getRuntime(activeSessionId))
+  });
+  return sortSessionsByActivity([existingActiveSession, ...normalizedNextSessions]);
+};
 
 const readRuntimePendingManualCompaction = (runtime, sessionId = null) => {
   const pending = runtime?.pendingManualCompaction;
@@ -11391,18 +11438,35 @@ export const useChatStore = defineStore('chat', {
     async loadSessions(options: LoadSessionsOptions = {}) {
       const params: { agent_id?: string } = {};
       let requestedAgentId: string | null = null;
+      const traceId = String((options as Record<string, unknown> | null)?.traceId || '').trim();
+      const traceSource = String((options as Record<string, unknown> | null)?.traceSource || '').trim();
 
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
         requestedAgentId = String(options.agent_id ?? '');
         params.agent_id = requestedAgentId;
       }
+      chatDebugLog('messenger.conversation', 'load-sessions-start', {
+        traceId,
+        traceSource,
+        requestedAgentId,
+        activeSessionId: resolveSessionKey(this.activeSessionId),
+        previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
+      });
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
-      this.sessions = sortSessionsByActivity(data.data.items || []);
+      const nextSessions = sortSessionsByActivity(data.data.items || []);
+      this.sessions = mergeRetainedActiveSessionIntoList(this, nextSessions);
       syncGoalsFromSessionList(this, this.sessions);
       if (requestedAgentId !== null) {
         writeSessionListCache(requestedAgentId, this.sessions);
       }
       syncDemoChatCache({ sessions: this.sessions });
+      chatDebugLog('messenger.conversation', 'load-sessions-finish', {
+        traceId,
+        traceSource,
+        requestedAgentId,
+        activeSessionId: resolveSessionKey(this.activeSessionId),
+        nextSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
+      });
       return this.sessions;
     },
     openDraftSession(options: OpenDraftSessionOptions = {}) {

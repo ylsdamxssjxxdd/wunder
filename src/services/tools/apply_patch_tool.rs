@@ -1,7 +1,7 @@
-use super::command_options::parse_dry_run;
-use super::*;
 use super::apply_patch_update::apply_update_chunks_with_diff as apply_update_chunks_with_diff_engine;
 use super::apply_patch_update::{ChunkContextFailureDetail, ChunkContextFailureKind};
+use super::command_options::parse_dry_run;
+use super::*;
 use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
 use crate::monitor::MonitorState;
 
@@ -1649,7 +1649,8 @@ fn apply_update_chunks(
     path: &str,
     cancel_probe: Option<&PatchCancelProbe>,
 ) -> Result<String> {
-    apply_update_chunks_with_diff_engine(source, chunks, path, cancel_probe).map(|(content, _)| content)
+    apply_update_chunks_with_diff_engine(source, chunks, path, cancel_probe)
+        .map(|(content, _)| content)
 }
 
 #[cfg(test)]
@@ -1917,7 +1918,9 @@ fn looks_like_missing_change_prefix_pair(left: &str, right: &str) -> bool {
     false
 }
 
-fn build_patch_no_effect_hint(no_effect_chunk_effects: &[Vec<UpdateChunkEffect>]) -> (String, String) {
+fn build_patch_no_effect_hint(
+    no_effect_chunk_effects: &[Vec<UpdateChunkEffect>],
+) -> (String, String) {
     let effects = no_effect_chunk_effects.iter().flatten().collect::<Vec<_>>();
     let has_missing_prefixes = effects
         .iter()

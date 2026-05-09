@@ -369,7 +369,9 @@ impl ThreadRuntime {
             return Ok(());
         }
         let thread_id = format!("thread_{cleaned}");
-        let tasks = self.user_store.list_agent_tasks_by_thread(&thread_id, None, 32)?;
+        let tasks = self
+            .user_store
+            .list_agent_tasks_by_thread(&thread_id, None, 32)?;
         for task in tasks {
             let is_pending = task.status == TASK_STATUS_PENDING || task.status == TASK_STATUS_RETRY;
             if !is_pending {

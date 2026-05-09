@@ -259,6 +259,144 @@ async fn list_user_agents(app: &Router, token: &str) -> Vec<Value> {
         .clone()
 }
 
+#[tokio::test]
+async fn register_creates_preset_agents_immediately() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".to_string();
+    config.storage.db_path = temp_dir
+        .path()
+        .join("register-preset-sync.db")
+        .to_string_lossy()
+        .to_string();
+    config.workspace.root = temp_dir
+        .path()
+        .join("workspaces")
+        .to_string_lossy()
+        .to_string();
+    config.skills.enabled.clear();
+    config.user_agents.presets = vec![build_preset_config("preset_register_sync", None)];
+
+    let config_store = ConfigStore::new(temp_dir.path().join("wunder.yaml"));
+    let config_for_store = config.clone();
+    config_store
+        .update(|current| *current = config_for_store.clone())
+        .await
+        .expect("update config store");
+    let state = Arc::new(
+        AppState::new_with_options(config_store, config, AppStateInitOptions::cli_default())
+            .expect("create app state"),
+    );
+    let app = build_router(state.clone());
+
+    let (status, payload) = send_json(
+        &app,
+        None,
+        Method::POST,
+        "/wunder/auth/register",
+        Some(json!({
+            "username": "register_preset_user",
+            "email": "register_preset_user@example.test",
+            "password": "password-123"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+
+    let created_user = state
+        .user_store
+        .get_user_by_username("register_preset_user")
+        .expect("load user")
+        .expect("user should exist");
+    let agents = state
+        .user_store
+        .list_user_agents(&created_user.user_id)
+        .expect("list user agents");
+    let preset_agent = agents
+        .iter()
+        .find(|record| record.name == PRESET_NAME)
+        .expect("preset agent should be created");
+    let binding = preset_agent
+        .preset_binding
+        .as_ref()
+        .expect("preset agent should carry binding");
+    assert_eq!(binding.preset_id, "preset_register_sync");
+}
+
+#[tokio::test]
+async fn admin_create_user_creates_preset_agents_immediately() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut config = Config::default();
+    config.storage.backend = "sqlite".to_string();
+    config.storage.db_path = temp_dir
+        .path()
+        .join("admin-create-preset-sync.db")
+        .to_string_lossy()
+        .to_string();
+    config.workspace.root = temp_dir
+        .path()
+        .join("workspaces")
+        .to_string_lossy()
+        .to_string();
+    config.skills.enabled.clear();
+    config.user_agents.presets = vec![build_preset_config("preset_admin_create_sync", None)];
+
+    let config_store = ConfigStore::new(temp_dir.path().join("wunder.yaml"));
+    let config_for_store = config.clone();
+    config_store
+        .update(|current| *current = config_for_store.clone())
+        .await
+        .expect("update config store");
+    let state = Arc::new(
+        AppState::new_with_options(config_store, config, AppStateInitOptions::cli_default())
+            .expect("create app state"),
+    );
+    state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let admin_token = state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+    let app = build_router(state.clone());
+
+    let (status, payload) = send_json(
+        &app,
+        Some(&admin_token),
+        Method::POST,
+        "/wunder/admin/user_accounts",
+        Some(json!({
+            "username": "admin_created_preset_user",
+            "password": "password-123",
+            "roles": ["user"],
+            "status": "active"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+
+    let created_user = state
+        .user_store
+        .get_user_by_username("admin_created_preset_user")
+        .expect("load user")
+        .expect("user should exist");
+    let agents = state
+        .user_store
+        .list_user_agents(&created_user.user_id)
+        .expect("list user agents");
+    let preset_agent = agents
+        .iter()
+        .find(|record| record.name == PRESET_NAME)
+        .expect("preset agent should be created");
+    let binding = preset_agent
+        .preset_binding
+        .as_ref()
+        .expect("preset agent should carry binding");
+    assert_eq!(binding.preset_id, "preset_admin_create_sync");
+}
+
 async fn list_admin_presets(app: &Router) -> Vec<Value> {
     let (status, payload) =
         send_json(app, None, Method::GET, "/wunder/admin/preset_agents", None).await;

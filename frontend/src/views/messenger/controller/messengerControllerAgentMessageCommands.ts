@@ -31,6 +31,7 @@ import {
   settleMessengerBootstrapTasks,
   splitMessengerBootstrapTasks
 } from '@/views/messenger/bootstrap';
+import { hasRetainedMessageConversationContext as resolveRetainedMessageConversationContext } from '@/views/messenger/messageConversationRetention';
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
@@ -487,11 +488,45 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       ctx.ensureSectionSelection();
   };
 
+  const hasRetainedMessageConversationContext = (options: {
+      includeActiveConversation?: boolean;
+  } = {}): boolean => {
+      return resolveRetainedMessageConversationContext({
+          activeConversationId: options.includeActiveConversation === true
+              ? String(ctx.sessionHub.activeConversation?.id || '').trim()
+              : '',
+          routeConversationId: ctx.route.query?.conversation_id,
+          routeSessionId: ctx.route.query?.session_id,
+          routeAgentId: ctx.route.query?.agent_id,
+          routeEntry: ctx.route.query?.entry,
+          activeSessionId: ctx.chatStore.activeSessionId,
+          draftAgentId: ctx.chatStore.draftAgentId,
+          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          worldConversationId: ctx.userWorldStore.activeConversationId,
+          worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages)
+              ? ctx.userWorldStore.activeMessages.length
+              : 0
+      });
+  };
+
+  ctx.hasRetainedMessageConversationContext = computed(() => hasRetainedMessageConversationContext());
+
   ctx.clearMessagePanelWhenConversationEmpty = () => {
       if (ctx.sessionHub.activeSection !== 'messages')
           return;
       if (ctx.hasAnyMixedConversations.value)
           return;
+      if (hasRetainedMessageConversationContext()) {
+          chatDebugLog('messenger.conversation', 'skip-clear-empty-panel', {
+              activeConversation: ctx.sessionHub.activeConversation,
+              activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
+              draftAgentId: String(ctx.chatStore.draftAgentId || '').trim(),
+              messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+              worldConversationId: String(ctx.userWorldStore.activeConversationId || '').trim(),
+              worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages) ? ctx.userWorldStore.activeMessages.length : 0
+          });
+          return;
+      }
       if (ctx.sessionHub.activeConversation) {
           ctx.sessionHub.clearActiveConversation();
       }
@@ -578,14 +613,25 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
   ctx.syncAgentConversationFallback = () => {
       if (ctx.sessionHub.activeSection !== 'messages')
           return;
-      if (!ctx.hasAnyMixedConversations.value) {
-          ctx.clearMessagePanelWhenConversationEmpty();
-          return;
-      }
       if (ctx.sessionHub.activeConversation)
           return;
+      const worldConversationId = String(ctx.userWorldStore.activeConversationId || '').trim();
+      if (worldConversationId) {
+          const worldConversation = (Array.isArray(ctx.userWorldStore.conversations)
+              ? ctx.userWorldStore.conversations
+              : []).find((item) => String(item?.conversation_id || '').trim() === worldConversationId);
+          const kind = String(worldConversation?.conversation_type || '').trim().toLowerCase() === 'group'
+              ? 'group'
+              : 'direct';
+          ctx.sessionHub.setActiveConversation({ kind, id: worldConversationId });
+          chatDebugLog('messenger.conversation', 'restore-world-conversation', {
+              conversationId: worldConversationId,
+              kind
+          });
+          return;
+      }
       const routeConversationId = String(ctx.route.query?.conversation_id || '').trim();
-      if (routeConversationId || String(ctx.userWorldStore.activeConversationId || '').trim())
+      if (routeConversationId)
           return;
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (sessionId) {
@@ -595,9 +641,16 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               id: sessionId,
               agentId: ctx.normalizeAgentId(session?.agent_id ?? ctx.chatStore.draftAgentId)
           });
+          chatDebugLog('messenger.conversation', 'restore-agent-session', {
+              sessionId,
+              agentId: ctx.normalizeAgentId(session?.agent_id ?? ctx.chatStore.draftAgentId)
+          });
           return;
       }
       if (!String(ctx.chatStore.draftAgentId || '').trim() && !ctx.chatStore.messages.length) {
+          if (!ctx.hasAnyMixedConversations.value) {
+              ctx.clearMessagePanelWhenConversationEmpty();
+          }
           return;
       }
       const draftAgent = ctx.normalizeAgentId(ctx.chatStore.draftAgentId || ctx.selectedAgentId.value);
@@ -605,6 +658,10 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           kind: 'agent',
           id: `draft:${draftAgent}`,
           agentId: draftAgent
+      });
+      chatDebugLog('messenger.conversation', 'restore-agent-draft', {
+          draftAgentId: draftAgent,
+          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0
       });
   };
 

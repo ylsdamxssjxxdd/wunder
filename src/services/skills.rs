@@ -290,7 +290,11 @@ fn extract_meta_name(meta: &HashMap<String, YamlValue>) -> String {
     "".to_string()
 }
 
-fn extract_skill_name(meta: &HashMap<String, YamlValue>, content: &str, skill_dir: &Path) -> String {
+fn extract_skill_name(
+    meta: &HashMap<String, YamlValue>,
+    content: &str,
+    skill_dir: &Path,
+) -> String {
     let meta_name = extract_meta_name(meta);
     if !meta_name.is_empty() {
         return meta_name;
@@ -334,9 +338,7 @@ fn extract_skill_description(meta: &HashMap<String, YamlValue>, content: &str) -
 }
 
 fn extract_first_heading(content: &str) -> String {
-    let normalized = content
-        .replace("\r\n", "\n")
-        .replace('\r', "\n");
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed = normalized.trim_start_matches('\u{feff}');
     for line in trimmed.lines() {
         let trimmed = line.trim();

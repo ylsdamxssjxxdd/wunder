@@ -6,18 +6,85 @@ type ChatDebugEntry = {
 };
 
 const DEBUG_STORAGE_KEYS = ['wunder:chat-debug', 'wunder_chat_debug', '__wunder_chat_debug__'];
+const DEBUG_VERBOSE_STORAGE_KEYS = ['wunder:chat-debug-verbose', 'wunder_chat_debug_verbose'];
 const DEBUG_TRUE_VALUES = new Set(['1', 'true', 'on', 'yes', 'debug']);
 const DEBUG_HISTORY_KEY = '__WUNDER_CHAT_DEBUG_LOGS__';
 const DEBUG_DUMP_FN_KEY = '__wunderChatDebugDump';
 const DEBUG_CLEAR_FN_KEY = '__wunderChatDebugClear';
 const DEBUG_ENABLE_FN_KEY = '__wunderChatDebugEnable';
 const DEBUG_DISABLE_FN_KEY = '__wunderChatDebugDisable';
+const DEBUG_ENABLE_VERBOSE_FN_KEY = '__wunderChatDebugEnableVerbose';
+const DEBUG_DISABLE_VERBOSE_FN_KEY = '__wunderChatDebugDisableVerbose';
 const DEBUG_MAX_HISTORY = 2000;
+const DEBUG_VERBOSE_SCOPES = new Set([
+  'chat.store.preload',
+  'chat.llm.request',
+  'chat.store.runtime',
+  'chat.compaction.event',
+  'chat.compaction.hydrate',
+  'chat.compaction.manual',
+  'chat.store.loading',
+  'chat.store.controller-recovery',
+  'messenger.viewport',
+  'messenger.workflow-shell',
+  'messenger.workflow-surface',
+  'chat.composer',
+  'messenger.order'
+]);
+const DEBUG_ALWAYS_SCOPES = new Set([
+  'messenger.conversation',
+  'messenger.busy',
+  'chat.store.detail',
+  'messenger.interaction-blocker',
+  'chat.store.busy'
+]);
+const DEBUG_VERBOSE_SCOPE_EVENTS = new Map<string, Set<string>>([
+  [
+    'chat.store.runtime',
+    new Set([
+      'workflow-tool-model-usage',
+      'realtime-workflow-mutation'
+    ])
+  ],
+  [
+    'messenger.busy',
+    new Set([
+      'snapshot-change'
+    ])
+  ],
+  [
+    'chat.store.detail',
+    new Set([
+      'foreground-sync-decision',
+      'foreground-sync-preserve-running-gap',
+      'foreground-sync-keep-live',
+      'foreground-sync-replace-live',
+      'idle-stream-state-cleared'
+    ])
+  ]
+]);
 
 const readStorageFlag = (): boolean => {
   if (typeof window === 'undefined') return false;
   try {
     for (const key of DEBUG_STORAGE_KEYS) {
+      const raw = String(window.localStorage.getItem(key) || '')
+        .trim()
+        .toLowerCase();
+      if (DEBUG_TRUE_VALUES.has(raw)) {
+        return true;
+      }
+    }
+  } catch {
+    // ignore storage access failures
+  }
+  return false;
+};
+
+const readVerboseStorageFlag = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    for (const key of DEBUG_VERBOSE_STORAGE_KEYS) {
       const raw = String(window.localStorage.getItem(key) || '')
         .trim()
         .toLowerCase();
@@ -45,6 +112,7 @@ const readSearchFlag = (): boolean => {
 };
 
 export const isChatDebugEnabled = (): boolean => readStorageFlag() || readSearchFlag();
+export const isChatDebugVerboseEnabled = (): boolean => readVerboseStorageFlag();
 
 const setDebugStorageFlag = (enabled: boolean) => {
   if (typeof window === 'undefined') return;
@@ -59,6 +127,40 @@ const setDebugStorageFlag = (enabled: boolean) => {
   } catch {
     // ignore storage access failures
   }
+};
+
+const setDebugVerboseStorageFlag = (enabled: boolean) => {
+  if (typeof window === 'undefined') return;
+  try {
+    if (enabled) {
+      window.localStorage.setItem(DEBUG_VERBOSE_STORAGE_KEYS[0], '1');
+      return;
+    }
+    DEBUG_VERBOSE_STORAGE_KEYS.forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+  } catch {
+    // ignore storage access failures
+  }
+};
+
+const shouldLogScopeEvent = (scope: string, event: string): boolean => {
+  const normalizedScope = String(scope || '').trim() || 'unknown';
+  const normalizedEvent = String(event || '').trim() || 'event';
+  if (DEBUG_ALWAYS_SCOPES.has(normalizedScope)) {
+    const suppressedEvents = DEBUG_VERBOSE_SCOPE_EVENTS.get(normalizedScope);
+    if (!suppressedEvents) {
+      return true;
+    }
+    if (isChatDebugVerboseEnabled()) {
+      return true;
+    }
+    return !suppressedEvents.has(normalizedEvent);
+  }
+  if (isChatDebugVerboseEnabled()) {
+    return true;
+  }
+  return !DEBUG_VERBOSE_SCOPES.has(normalizedScope);
 };
 
 const ensureDebugAccessors = () => {
@@ -85,6 +187,14 @@ const ensureDebugAccessors = () => {
     setDebugStorageFlag(false);
     return false;
   };
+  target[DEBUG_ENABLE_VERBOSE_FN_KEY] = () => {
+    setDebugVerboseStorageFlag(true);
+    return true;
+  };
+  target[DEBUG_DISABLE_VERBOSE_FN_KEY] = () => {
+    setDebugVerboseStorageFlag(false);
+    return false;
+  };
 };
 
 const pushDebugEntry = (entry: ChatDebugEntry) => {
@@ -103,11 +213,14 @@ const pushDebugEntry = (entry: ChatDebugEntry) => {
 
 export const chatDebugLog = (scope: string, event: string, payload?: unknown): void => {
   if (!isChatDebugEnabled()) return;
+  const normalizedScope = String(scope || '').trim() || 'unknown';
+  const normalizedEvent = String(event || '').trim() || 'event';
+  if (!shouldLogScopeEvent(normalizedScope, normalizedEvent)) return;
   const time = new Date().toISOString();
   const entry: ChatDebugEntry = {
     time,
-    scope: String(scope || '').trim() || 'unknown',
-    event: String(event || '').trim() || 'event'
+    scope: normalizedScope,
+    event: normalizedEvent
   };
   if (payload !== undefined) {
     entry.payload = payload;

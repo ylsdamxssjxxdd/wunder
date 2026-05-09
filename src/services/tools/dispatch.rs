@@ -1,6 +1,7 @@
 use super::catalog::resolve_tool_name;
 use super::channel_tool;
 use super::context::ToolContext;
+use super::multimodal_generation_tool;
 use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
 use super::{
@@ -14,7 +15,6 @@ use super::{
 use super::{
     apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool, web_fetch_tool,
 };
-use super::multimodal_generation_tool;
 use crate::cron::{handle_cron_action, CronActionRequest};
 use crate::i18n;
 use crate::services::goal;

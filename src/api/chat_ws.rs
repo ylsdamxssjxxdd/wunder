@@ -810,9 +810,12 @@ async fn handle_ws(
                         .await;
                         if let Some(session_id) = cancel_session_id {
                             if session_exists(&state, &user.user_id, &session_id) {
-                                let _ =
-                                    goal::clear_goal(state.storage.clone(), &user.user_id, &session_id)
-                                        .await;
+                                let _ = goal::clear_goal(
+                                    state.storage.clone(),
+                                    &user.user_id,
+                                    &session_id,
+                                )
+                                .await;
                                 let _ = state.monitor.cancel(&session_id);
                             }
                         }

@@ -4,8 +4,7 @@ use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::json_schema::normalize_tool_input_schema_for_openai;
 use crate::core::tool_args::{
     normalize_tool_arguments_json as normalize_tool_arguments_json_lossy,
-    normalize_tool_arguments_json_with_meta,
-    sanitize_tool_call_payload,
+    normalize_tool_arguments_json_with_meta, sanitize_tool_call_payload,
 };
 use crate::schemas::TokenUsage;
 use crate::services::chat_attachments::parse_image_data_url;
@@ -80,18 +79,20 @@ pub fn normalize_model_type(value: Option<&str>) -> ModelType {
     }
     match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "embedding" | "embed" | "emb" => ModelType::Embedding,
-        "asr" | "stt" | "speech_to_text" | "speech2text" | "audio_transcription"
-        | "transcription" | "audio_to_text" => ModelType::Asr,
+        "asr"
+        | "stt"
+        | "speech_to_text"
+        | "speech2text"
+        | "audio_transcription"
+        | "transcription"
+        | "audio_to_text" => ModelType::Asr,
         "tts" | "speech" | "text_to_speech" | "text2speech" | "audio_speech" => ModelType::Tts,
         "image" | "draw" | "drawing" | "text_to_image" | "text2image" | "image_generation" => {
             ModelType::Image
         }
-        "video"
-        | "text_to_video"
-        | "text2video"
-        | "video_generation"
-        | "movie"
-        | "animation" => ModelType::Video,
+        "video" | "text_to_video" | "text2video" | "video_generation" | "movie" | "animation" => {
+            ModelType::Video
+        }
         _ => ModelType::Llm,
     }
 }
@@ -2817,11 +2818,7 @@ fn update_stream_tool_calls_delta(acc: &mut Vec<StreamToolCall>, payload: &Value
                 if acc.is_empty() {
                     acc.push(StreamToolCall::default());
                 }
-                apply_function_fragment(
-                    &mut acc[0],
-                    function_call,
-                    StreamToolFieldMode::Delta,
-                );
+                apply_function_fragment(&mut acc[0], function_call, StreamToolFieldMode::Delta);
             }
         }
         _ => {}
@@ -2849,11 +2846,7 @@ fn update_stream_tool_calls_snapshot(acc: &mut Vec<StreamToolCall>, payload: &Va
                 if acc.is_empty() {
                     acc.push(StreamToolCall::default());
                 }
-                apply_function_fragment(
-                    &mut acc[0],
-                    function_call,
-                    StreamToolFieldMode::Snapshot,
-                );
+                apply_function_fragment(&mut acc[0], function_call, StreamToolFieldMode::Snapshot);
             }
         }
         _ => {}
@@ -2896,7 +2889,14 @@ fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Va
     } else {
         arguments
     };
-    upsert_response_tool_call(acc, item_id, call_id, name, arguments, StreamToolFieldMode::Snapshot);
+    upsert_response_tool_call(
+        acc,
+        item_id,
+        call_id,
+        name,
+        arguments,
+        StreamToolFieldMode::Snapshot,
+    );
 }
 
 fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: &Value) {
@@ -2912,7 +2912,14 @@ fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: 
     if arguments.is_none() && call_id.is_none() && item_id.is_none() {
         return;
     }
-    upsert_response_tool_call(acc, item_id, call_id, None, arguments, StreamToolFieldMode::Delta);
+    upsert_response_tool_call(
+        acc,
+        item_id,
+        call_id,
+        None,
+        arguments,
+        StreamToolFieldMode::Delta,
+    );
 }
 
 fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Value]) {
@@ -2936,7 +2943,14 @@ fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Valu
         if name.is_none() && arguments.is_none() && call_id.is_none() {
             continue;
         }
-        upsert_response_tool_call(acc, None, call_id, name, arguments, StreamToolFieldMode::Snapshot);
+        upsert_response_tool_call(
+            acc,
+            None,
+            call_id,
+            name,
+            arguments,
+            StreamToolFieldMode::Snapshot,
+        );
     }
 }
 
@@ -3274,7 +3288,8 @@ fn choose_tool_arguments_candidate<'a>(
     );
     let right_rank = (
         right.quality,
-        right.parsed
+        right
+            .parsed
             .as_ref()
             .and_then(Value::as_object)
             .map(|map| map.len())
@@ -3299,14 +3314,11 @@ fn resolve_stream_tool_call_name(call: &StreamToolCall) -> Option<String> {
 }
 
 fn resolve_stream_tool_call_arguments(call: &StreamToolCall) -> String {
-    let delta = build_tool_arguments_candidate(
-        &call.arguments_delta,
-        ToolArgumentsCandidateSource::Delta,
-    );
-    let snapshot = call
-        .arguments_snapshot
-        .as_deref()
-        .and_then(|raw| build_tool_arguments_candidate(raw, ToolArgumentsCandidateSource::Snapshot));
+    let delta =
+        build_tool_arguments_candidate(&call.arguments_delta, ToolArgumentsCandidateSource::Delta);
+    let snapshot = call.arguments_snapshot.as_deref().and_then(|raw| {
+        build_tool_arguments_candidate(raw, ToolArgumentsCandidateSource::Snapshot)
+    });
 
     match (delta, snapshot) {
         (Some(delta), Some(snapshot)) => {
@@ -3332,8 +3344,8 @@ fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
         };
         let raw_arguments = resolve_stream_tool_call_arguments(call);
         let arguments = if is_freeform_tool_name(&name) {
-            let input = extract_freeform_tool_input(&raw_arguments)
-                .unwrap_or(raw_arguments.clone());
+            let input =
+                extract_freeform_tool_input(&raw_arguments).unwrap_or(raw_arguments.clone());
             serde_json::to_string(&json!({ "input": input })).unwrap_or_else(|_| "{}".to_string())
         } else {
             raw_arguments
@@ -4083,7 +4095,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_sse_event_block_merges_openai_delta_and_message_snapshot_without_duplication() {
+    async fn process_sse_event_block_merges_openai_delta_and_message_snapshot_without_duplication()
+    {
         let mut combined = String::new();
         let mut reasoning = String::new();
         let mut usage: Option<TokenUsage> = None;
@@ -4216,8 +4229,14 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("read_file"));
-        assert_eq!(resolve_stream_tool_call_arguments(&acc[0]), "{\"path\":\"demo.txt\"}");
+        assert_eq!(
+            resolve_stream_tool_call_name(&acc[0]).as_deref(),
+            Some("read_file")
+        );
+        assert_eq!(
+            resolve_stream_tool_call_arguments(&acc[0]),
+            "{\"path\":\"demo.txt\"}"
+        );
     }
 
     #[test]
@@ -4525,7 +4544,10 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("apply_patch"));
+        assert_eq!(
+            resolve_stream_tool_call_name(&acc[0]).as_deref(),
+            Some("apply_patch")
+        );
         assert_eq!(
             resolve_stream_tool_call_arguments(&acc[0]),
             "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
@@ -4536,9 +4558,7 @@ mod tests {
     fn resolve_stream_tool_call_arguments_merges_snapshot_with_delta_data() {
         let call = StreamToolCall {
             arguments_delta: "{\"content\":\"hello\"}".to_string(),
-            arguments_snapshot: Some(
-                "{\"raw\":\"tail\",\"path\":\"draw_heart.py\"}".to_string(),
-            ),
+            arguments_snapshot: Some("{\"raw\":\"tail\",\"path\":\"draw_heart.py\"}".to_string()),
             ..Default::default()
         };
         assert_eq!(
@@ -4598,7 +4618,10 @@ mod tests {
         );
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("ptc"));
+        assert_eq!(
+            resolve_stream_tool_call_name(&acc[0]).as_deref(),
+            Some("ptc")
+        );
         assert_eq!(
             resolve_stream_tool_call_arguments(&acc[0]),
             "{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
@@ -4648,7 +4671,10 @@ mod tests {
         }
 
         assert_eq!(acc.len(), 1);
-        assert_eq!(resolve_stream_tool_call_name(&acc[0]).as_deref(), Some("ptc"));
+        assert_eq!(
+            resolve_stream_tool_call_name(&acc[0]).as_deref(),
+            Some("ptc")
+        );
         assert_eq!(
             resolve_stream_tool_call_arguments(&acc[0]),
             "{\"filename\": \"demo.py\", \"content\": \"print(1)\"}"

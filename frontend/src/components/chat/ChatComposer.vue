@@ -146,49 +146,73 @@
       </button>
       <div v-if="worldStyle" class="messenger-world-toolbar chat-composer-world-toolbar">
         <div
-          ref="worldCommandAnchorRef"
+          v-if="presetQuestionItems.length"
+          ref="worldPresetCommandAnchorRef"
           class="messenger-world-tool-anchor"
-          :class="{ 'is-open': worldCommandPanelVisible }"
-          @mouseenter="handleWorldCommandAnchorMouseEnter"
-          @mouseleave="handleWorldCommandAnchorMouseLeave"
-          @focusin="handleWorldCommandAnchorFocusIn"
-          @focusout="handleWorldCommandAnchorFocusOut"
+          :class="{ 'is-open': isWorldCommandPanelVisible('preset') }"
+          @mouseenter="handleWorldCommandAnchorMouseEnter('preset')"
+          @mouseleave="handleWorldCommandAnchorMouseLeave('preset')"
+          @focusin="handleWorldCommandAnchorFocusIn('preset')"
+          @focusout="handleWorldCommandAnchorFocusOut('preset', $event)"
         >
           <button
             class="messenger-world-tool-btn"
             type="button"
-            :class="{ active: worldCommandPanelVisible }"
+            :class="{ active: isWorldCommandPanelVisible('preset') }"
             :disabled="stopButtonActive"
-            :title="t('chat.commandMenu.quick')"
-            :aria-label="t('chat.commandMenu.quick')"
-            @click.prevent="openWorldCommandPanel"
+            :title="t('chat.commandMenu.presetQuestions')"
+            :aria-label="t('chat.commandMenu.presetQuestions')"
+            @click.prevent="toggleWorldCommandPanel('preset')"
+          >
+            <i class="fa-solid fa-wand-magic-sparkles chat-composer-command-btn-icon" aria-hidden="true"></i>
+          </button>
+          <div
+            v-if="isWorldCommandPanelVisible('preset')"
+            class="chat-composer-command-panel"
+            @mouseenter="handleWorldCommandPanelMouseEnter('preset')"
+            @mouseleave="handleWorldCommandPanelMouseLeave('preset')"
+          >
+            <div class="chat-composer-command-section-label">
+              {{ t('chat.commandMenu.presetQuestions') }}
+            </div>
+            <button
+              v-for="item in presetQuestionItems"
+              :key="`preset-question:${item.command}`"
+              class="chat-composer-command-item chat-composer-command-item--question"
+              type="button"
+              :title="item.command"
+              @click="applyPresetQuestion(item.command)"
+            >
+              <span class="chat-composer-command-name">{{ item.command }}</span>
+            </button>
+          </div>
+        </div>
+        <div
+          ref="worldSystemCommandAnchorRef"
+          class="messenger-world-tool-anchor"
+          :class="{ 'is-open': isWorldCommandPanelVisible('system') }"
+          @mouseenter="handleWorldCommandAnchorMouseEnter('system')"
+          @mouseleave="handleWorldCommandAnchorMouseLeave('system')"
+          @focusin="handleWorldCommandAnchorFocusIn('system')"
+          @focusout="handleWorldCommandAnchorFocusOut('system', $event)"
+        >
+          <button
+            class="messenger-world-tool-btn"
+            type="button"
+            :class="{ active: isWorldCommandPanelVisible('system') }"
+            :disabled="stopButtonActive"
+            :title="t('chat.commandMenu.commands')"
+            :aria-label="t('chat.commandMenu.commands')"
+            @click.prevent="toggleWorldCommandPanel('system')"
           >
             <i class="fa-solid fa-terminal chat-composer-command-btn-icon" aria-hidden="true"></i>
           </button>
           <div
-            v-if="worldCommandPanelVisible"
+            v-if="isWorldCommandPanelVisible('system')"
             class="chat-composer-command-panel"
-            @mouseenter="handleWorldCommandPanelMouseEnter"
-            @mouseleave="handleWorldCommandPanelMouseLeave"
+            @mouseenter="handleWorldCommandPanelMouseEnter('system')"
+            @mouseleave="handleWorldCommandPanelMouseLeave('system')"
           >
-            <template v-if="presetQuestionItems.length">
-              <div class="chat-composer-command-section-label">
-                {{ t('chat.commandMenu.presetQuestions') }}
-              </div>
-              <button
-                v-for="item in presetQuestionItems"
-                :key="`preset:${item.command}`"
-                class="chat-composer-command-item chat-composer-command-item--question"
-                type="button"
-                :title="item.command"
-                @click="applyPresetQuestion(item.command)"
-              >
-                <span class="chat-composer-command-name">{{ item.command }}</span>
-              </button>
-              <div class="chat-composer-command-section-label">
-                {{ t('chat.commandMenu.commands') }}
-              </div>
-            </template>
             <button
               v-for="item in quickCommandItems"
               :key="item.command"
@@ -650,10 +674,13 @@ const attachments = ref<ComposerDraftAttachment[]>([]);
 const attachmentBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
-const worldCommandAnchorRef = ref<HTMLElement | null>(null);
-const worldCommandPanelVisible = ref(false);
-const worldCommandAnchorHovered = ref(false);
-const worldCommandPanelHovered = ref(false);
+type WorldCommandPanelType = 'preset' | 'system';
+
+const worldPresetCommandAnchorRef = ref<HTMLElement | null>(null);
+const worldSystemCommandAnchorRef = ref<HTMLElement | null>(null);
+const worldCommandPanelVisible = ref<WorldCommandPanelType | ''>('');
+const worldCommandAnchorHovered = ref<WorldCommandPanelType | ''>('');
+const worldCommandPanelHovered = ref<WorldCommandPanelType | ''>('');
 const screenshotMenuAnchorRef = ref<HTMLElement | null>(null);
 const screenshotMenuPanelRef = ref<HTMLElement | null>(null);
 const screenshotMenuVisible = ref(false);
@@ -2422,64 +2449,86 @@ const clearWorldCommandPanelCloseTimer = () => {
   }
 };
 
-const scheduleWorldCommandPanelClose = () => {
+const isWorldCommandPanelVisible = (panel: WorldCommandPanelType): boolean =>
+  worldCommandPanelVisible.value === panel;
+
+const scheduleWorldCommandPanelClose = (panel: WorldCommandPanelType) => {
   clearWorldCommandPanelCloseTimer();
   worldCommandPanelCloseTimer = setTimeout(() => {
     worldCommandPanelCloseTimer = null;
-    if (worldCommandAnchorHovered.value || worldCommandPanelHovered.value) {
+    if (worldCommandAnchorHovered.value === panel || worldCommandPanelHovered.value === panel) {
       return;
     }
-    worldCommandPanelVisible.value = false;
+    if (worldCommandPanelVisible.value === panel) {
+      worldCommandPanelVisible.value = '';
+    }
   }, WORLD_COMMAND_PANEL_CLOSE_DELAY_MS);
 };
 
-const openWorldCommandPanel = () => {
+const openWorldCommandPanel = (panel: WorldCommandPanelType) => {
   if (stopButtonActive.value) return;
   closeScreenshotMenu();
   clearWorldCommandPanelCloseTimer();
-  worldCommandPanelVisible.value = true;
+  worldCommandPanelVisible.value = panel;
 };
 
 const closeWorldCommandPanel = () => {
   clearWorldCommandPanelCloseTimer();
-  worldCommandAnchorHovered.value = false;
-  worldCommandPanelHovered.value = false;
-  worldCommandPanelVisible.value = false;
+  worldCommandAnchorHovered.value = '';
+  worldCommandPanelHovered.value = '';
+  worldCommandPanelVisible.value = '';
 };
 
-const handleWorldCommandAnchorMouseEnter = () => {
-  worldCommandAnchorHovered.value = true;
-  openWorldCommandPanel();
+const toggleWorldCommandPanel = (panel: WorldCommandPanelType) => {
+  if (isWorldCommandPanelVisible(panel)) {
+    closeWorldCommandPanel();
+    return;
+  }
+  openWorldCommandPanel(panel);
 };
 
-const handleWorldCommandAnchorMouseLeave = () => {
-  worldCommandAnchorHovered.value = false;
-  scheduleWorldCommandPanelClose();
+const handleWorldCommandAnchorMouseEnter = (panel: WorldCommandPanelType) => {
+  worldCommandAnchorHovered.value = panel;
+  openWorldCommandPanel(panel);
 };
 
-const handleWorldCommandPanelMouseEnter = () => {
-  worldCommandPanelHovered.value = true;
-  openWorldCommandPanel();
+const handleWorldCommandAnchorMouseLeave = (panel: WorldCommandPanelType) => {
+  if (worldCommandAnchorHovered.value === panel) {
+    worldCommandAnchorHovered.value = '';
+  }
+  scheduleWorldCommandPanelClose(panel);
 };
 
-const handleWorldCommandPanelMouseLeave = () => {
-  worldCommandPanelHovered.value = false;
-  scheduleWorldCommandPanelClose();
+const handleWorldCommandPanelMouseEnter = (panel: WorldCommandPanelType) => {
+  worldCommandPanelHovered.value = panel;
+  openWorldCommandPanel(panel);
 };
 
-const handleWorldCommandAnchorFocusIn = () => {
-  worldCommandAnchorHovered.value = true;
-  openWorldCommandPanel();
+const handleWorldCommandPanelMouseLeave = (panel: WorldCommandPanelType) => {
+  if (worldCommandPanelHovered.value === panel) {
+    worldCommandPanelHovered.value = '';
+  }
+  scheduleWorldCommandPanelClose(panel);
 };
 
-const handleWorldCommandAnchorFocusOut = (event: FocusEvent) => {
-  const anchor = worldCommandAnchorRef.value;
+const handleWorldCommandAnchorFocusIn = (panel: WorldCommandPanelType) => {
+  worldCommandAnchorHovered.value = panel;
+  openWorldCommandPanel(panel);
+};
+
+const resolveWorldCommandAnchor = (panel: WorldCommandPanelType): HTMLElement | null =>
+  panel === 'preset' ? worldPresetCommandAnchorRef.value : worldSystemCommandAnchorRef.value;
+
+const handleWorldCommandAnchorFocusOut = (panel: WorldCommandPanelType, event: FocusEvent) => {
+  const anchor = resolveWorldCommandAnchor(panel);
   const nextTarget = event.relatedTarget as Node | null;
   if (anchor && nextTarget && anchor.contains(nextTarget)) {
     return;
   }
-  worldCommandAnchorHovered.value = false;
-  scheduleWorldCommandPanelClose();
+  if (worldCommandAnchorHovered.value === panel) {
+    worldCommandAnchorHovered.value = '';
+  }
+  scheduleWorldCommandPanelClose(panel);
 };
 
 const handleApprovalModeChange = (event: Event) => {
@@ -2516,8 +2565,9 @@ const applyPresetQuestion = (question: string) => {
   if (goalEditorVisible.value) return;
   closeWorldCommandPanel();
   closeScreenshotMenu();
-  const preset = String(question || '').trim();
-  if (!preset) return;
+  const preset = String(question || '');
+  const normalized = preset.trim();
+  if (!normalized) return;
   const current = String(inputText.value || '');
   inputText.value = current.trim() ? `${current.replace(/\s*$/, '')}\n${preset}` : preset;
   commandMenuDismissed.value = false;
@@ -2593,8 +2643,11 @@ const handleToggleVoiceRecord = () => {
 const handleDocumentPointerDown = (event: PointerEvent) => {
   const target = event.target as Node | null;
   if (worldCommandPanelVisible.value) {
-    const commandAnchor = worldCommandAnchorRef.value;
-    if (!commandAnchor || !target || !commandAnchor.contains(target)) {
+    const presetAnchor = worldPresetCommandAnchorRef.value;
+    const systemAnchor = worldSystemCommandAnchorRef.value;
+    const isInsidePreset = Boolean(presetAnchor && target && presetAnchor.contains(target));
+    const isInsideSystem = Boolean(systemAnchor && target && systemAnchor.contains(target));
+    if (!isInsidePreset && !isInsideSystem) {
       closeWorldCommandPanel();
     }
   }

@@ -17,7 +17,10 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/companions/global", get(list_global))
         .route("/wunder/companions/global/{id}", get(get_global))
-        .route("/wunder/companions/global/{id}/spritesheet", get(get_global_spritesheet))
+        .route(
+            "/wunder/companions/global/{id}/spritesheet",
+            get(get_global_spritesheet),
+        )
         .route("/wunder/companions/global/{id}/package", get(export_global))
 }
 

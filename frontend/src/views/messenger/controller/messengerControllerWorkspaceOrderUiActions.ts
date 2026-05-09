@@ -439,9 +439,14 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
 
   ctx.hydrateMessengerOrderPreferences = async () => {
       const scopedUserId = String(ctx.currentUserId.value || '').trim();
+      const refreshTraceId = String(ctx.messengerSessionRefreshTraceId.value || '').trim();
+      const refreshTraceSource = String(ctx.messengerSessionRefreshTraceSource.value || '').trim();
       ctx.messengerOrderReady.value = false;
       if (!scopedUserId) {
-          chatDebugLog('messenger.order', 'hydrate-skip-no-user', {});
+          chatDebugLog('messenger.order', 'hydrate-skip-no-user', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource
+          });
           ctx.applyMessengerOrderPreferences(defaultMessengerOrderPreferences());
           ctx.messengerOrderReady.value = true;
           return;
@@ -457,6 +462,8 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
               preferences.updatedAt <= 0 &&
               ctx.hasMessengerOrderEntries(localPreferences);
           chatDebugLog('messenger.order', 'hydrate-loaded', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource,
               userId: scopedUserId,
               remote: preferences,
               local: localPreferences,
@@ -471,6 +478,8 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
               ctx.messengerOrderReady.value = true;
               if (shouldBackfillLocalOrder) {
                   chatDebugLog('messenger.order', 'hydrate-backfill-local', {
+                      traceId: refreshTraceId,
+                      traceSource: refreshTraceSource,
                       userId: scopedUserId,
                       current: ctx.captureMessengerOrderPreferences()
                   });
@@ -481,8 +490,12 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
   };
 
   ctx.persistMessengerOrderPreferences = async () => {
+      const refreshTraceId = String(ctx.messengerSessionRefreshTraceId.value || '').trim();
+      const refreshTraceSource = String(ctx.messengerSessionRefreshTraceSource.value || '').trim();
       if (ctx.messengerOrderHydrating.value || !ctx.messengerOrderReady.value) {
           chatDebugLog('messenger.order', 'persist-skip-not-ready', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource,
               hydrating: ctx.messengerOrderHydrating.value,
               ready: ctx.messengerOrderReady.value
           });
@@ -490,11 +503,16 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
       }
       const scopedUserId = String(ctx.currentUserId.value || '').trim();
       if (!scopedUserId) {
-          chatDebugLog('messenger.order', 'persist-skip-no-user', {});
+          chatDebugLog('messenger.order', 'persist-skip-no-user', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource
+          });
           return;
       }
       const current = ctx.captureMessengerOrderPreferences();
       chatDebugLog('messenger.order', 'persist-start', {
+          traceId: refreshTraceId,
+          traceSource: refreshTraceSource,
           userId: scopedUserId,
           current
       });
@@ -509,14 +527,20 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
           updatedAt: persisted.updatedAt
       };
       chatDebugLog('messenger.order', 'persist-finish', {
+          traceId: refreshTraceId,
+          traceSource: refreshTraceSource,
           userId: scopedUserId,
           persisted
       });
   };
 
   ctx.scheduleMessengerOrderPersist = () => {
+      const refreshTraceId = String(ctx.messengerSessionRefreshTraceId.value || '').trim();
+      const refreshTraceSource = String(ctx.messengerSessionRefreshTraceSource.value || '').trim();
       if (ctx.messengerOrderHydrating.value || !ctx.messengerOrderReady.value || typeof window === 'undefined') {
           chatDebugLog('messenger.order', 'schedule-skip', {
+              traceId: refreshTraceId,
+              traceSource: refreshTraceSource,
               hydrating: ctx.messengerOrderHydrating.value,
               ready: ctx.messengerOrderReady.value,
               hasWindow: typeof window !== 'undefined'
@@ -527,6 +551,8 @@ export function installMessengerControllerWorkspaceOrderUiActions(ctx: Messenger
           window.clearTimeout(ctx.messengerOrderSaveTimer.value);
       }
       chatDebugLog('messenger.order', 'schedule', {
+          traceId: refreshTraceId,
+          traceSource: refreshTraceSource,
           current: ctx.captureMessengerOrderPreferences()
       });
       ctx.messengerOrderSaveTimer.value = window.setTimeout(() => {

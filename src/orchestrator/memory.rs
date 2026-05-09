@@ -341,7 +341,6 @@ impl Orchestrator {
             }
             source_messages.push(message.clone());
         }
-
         let mut artifact_prefixes = i18n::get_known_prefixes("history.artifact_prefix");
         if artifact_prefixes.is_empty() {
             artifact_prefixes.push(i18n::t("history.artifact_prefix"));
@@ -384,6 +383,7 @@ impl Orchestrator {
         } else {
             String::new()
         };
+        let _ = self.workspace.flush_writes_async().await;
         if artifact_content.is_empty() {
             let history_manager = HistoryManager;
             artifact_content =
@@ -686,6 +686,7 @@ impl Orchestrator {
         let source_interaction_tokens = estimate_messages_tokens(&source_interaction_messages);
         let retained_segments = collect_retained_interaction_segments_with_indexes_for_compaction(
             &source_messages,
+            current_user_index,
             COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
             COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
@@ -2921,12 +2922,40 @@ fn summarize_compaction_observation(content: &Value) -> String {
     {
         headline.push_str(&format!(" [{code}]"));
     }
+    if let Some(compact_write) = summarize_compaction_write_file_observation(tool_name, map) {
+        return compact_write;
+    }
     let detail = extract_compaction_observation_detail(map);
     if detail.is_empty() {
         headline
     } else {
         format!("{headline}\n{detail}")
     }
+}
+
+fn summarize_compaction_write_file_observation(
+    tool_name: &str,
+    payload: &Map<String, Value>,
+) -> Option<String> {
+    if !matches!(tool_name.trim(), "写入文件" | "write_file") {
+        return None;
+    }
+    let data = payload.get("data")?.as_object()?;
+    let path = data
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let existed = data
+        .get("existed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let action = if existed {
+        "Updated file"
+    } else {
+        "Created file"
+    };
+    Some(format!("{action} {path}"))
 }
 
 fn extract_compaction_observation_detail(map: &Map<String, Value>) -> String {
@@ -3606,7 +3635,10 @@ fn build_interaction_block_message(role: &str, parts: &[String]) -> Option<Value
     }))
 }
 
-fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<InteractionBlock> {
+fn split_messages_into_interaction_turns_with_boundary(
+    messages: &[Value],
+    boundary_index: Option<usize>,
+) -> Vec<InteractionBlock> {
     let mut turns: Vec<InteractionBlock> = Vec::new();
     let mut current_role: Option<&'static str> = None;
     let mut current_indexes: Vec<usize> = Vec::new();
@@ -3638,6 +3670,14 @@ fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<InteractionB
     };
 
     for (index, message) in messages.iter().enumerate() {
+        if boundary_index == Some(index) {
+            flush_current(
+                &mut turns,
+                &mut current_role,
+                &mut current_indexes,
+                &mut current_parts,
+            );
+        }
         if HistoryManager::is_compaction_summary_item(message) {
             continue;
         }
@@ -3666,8 +3706,22 @@ fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<InteractionB
     turns
 }
 
+fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<InteractionBlock> {
+    split_messages_into_interaction_turns_with_boundary(messages, None)
+}
+
 fn collect_normalized_interaction_blocks(messages: &[Value]) -> Vec<InteractionBlock> {
     split_messages_into_interaction_turns(messages)
+        .iter()
+        .filter_map(normalize_interaction_turn_messages)
+        .collect()
+}
+
+fn collect_normalized_interaction_blocks_with_boundary(
+    messages: &[Value],
+    boundary_index: Option<usize>,
+) -> Vec<InteractionBlock> {
+    split_messages_into_interaction_turns_with_boundary(messages, boundary_index)
         .iter()
         .filter_map(normalize_interaction_turn_messages)
         .collect()
@@ -3848,6 +3902,7 @@ fn collect_retained_interaction_segments_for_compaction(
 ) -> (Vec<Value>, Vec<Value>) {
     let segments = collect_retained_interaction_segments_with_indexes_for_compaction(
         messages,
+        None,
         retained_turn_count,
         head_token_limit,
         tail_token_limit,
@@ -3862,6 +3917,7 @@ struct RetainedInteractionSegments {
 
 fn collect_retained_interaction_segments_with_indexes_for_compaction(
     messages: &[Value],
+    boundary_index: Option<usize>,
     retained_turn_count: usize,
     head_token_limit: i64,
     tail_token_limit: i64,
@@ -3873,13 +3929,14 @@ fn collect_retained_interaction_segments_with_indexes_for_compaction(
         };
     }
 
-    if split_messages_into_interaction_turns(messages).is_empty() {
+    if split_messages_into_interaction_turns_with_boundary(messages, boundary_index).is_empty() {
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
             tail_messages: Vec::new(),
         };
     }
-    let normalized_turns = collect_normalized_interaction_blocks(messages);
+    let normalized_turns =
+        collect_normalized_interaction_blocks_with_boundary(messages, boundary_index);
     if normalized_turns.is_empty() {
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
@@ -4792,6 +4849,28 @@ mod tests {
                 "Inspecting\n\nReading file details".to_string(),
                 "Tool observation (read_file): success\nLoaded /tmp/demo.txt".to_string(),
                 "round-1 answer".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_split_messages_into_interaction_turns_respects_boundary_index() {
+        let messages = vec![
+            json!({ "role": "assistant", "content": "previous final answer" }),
+            json!({ "role": "assistant", "content": "new round kickoff" }),
+        ];
+
+        let turns = split_messages_into_interaction_turns_with_boundary(&messages, Some(1));
+        let contents = turns
+            .iter()
+            .map(|turn| turn.message["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            contents,
+            vec![
+                "previous final answer".to_string(),
+                "new round kickoff".to_string(),
             ]
         );
     }

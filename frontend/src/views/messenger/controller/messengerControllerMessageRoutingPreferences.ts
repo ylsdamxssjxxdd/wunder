@@ -862,6 +862,8 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       };
       ctx.messengerOrderHydrating.value = false;
       chatDebugLog('messenger.order', 'apply', {
+          traceId: String(ctx.messengerSessionRefreshTraceId.value || '').trim(),
+          traceSource: String(ctx.messengerSessionRefreshTraceSource.value || '').trim(),
           messages: value.messages.slice(),
           agentsOwned: value.agentsOwned.slice(),
           agentsShared: value.agentsShared.slice(),

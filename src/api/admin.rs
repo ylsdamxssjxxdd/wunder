@@ -3074,7 +3074,8 @@ async fn admin_llm_tts_voices(
 
     let timeout_s = payload.timeout_s.unwrap_or(15).max(5);
     let api_key = payload.api_key.as_deref().unwrap_or("");
-    let result = crate::multimodal_models::probe_tts_voices(base_url, api_key, model, timeout_s).await;
+    let result =
+        crate::multimodal_models::probe_tts_voices(base_url, api_key, model, timeout_s).await;
     let response = match result {
         Ok(voices) if !voices.is_empty() => {
             json!({ "voices": voices, "message": i18n::t("probe.success") })
@@ -5105,6 +5106,14 @@ async fn admin_user_accounts_create(
             payload.is_demo,
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Err(err) =
+        crate::services::user_agent_presets::ensure_user_preset_agents(&state, &record).await
+    {
+        tracing::warn!(
+            "failed to sync preset agents after admin user create for {}: {err}",
+            record.user_id
+        );
+    }
     let unit = record
         .unit_id
         .as_ref()
@@ -6315,9 +6324,12 @@ fn normalize_preset_agents(
         let previous = existing_by_id
             .get(&preset_id)
             .and_then(|prev| canonicalize_preset_config(prev, &preset_id, skill_name_keys));
-        let preview_skill = item
-            .preview_skill
-            .unwrap_or_else(|| previous.as_ref().map(|prev| prev.preview_skill).unwrap_or(false));
+        let preview_skill = item.preview_skill.unwrap_or_else(|| {
+            previous
+                .as_ref()
+                .map(|prev| prev.preview_skill)
+                .unwrap_or(false)
+        });
         let candidate = canonicalize_preset_config(
             &UserAgentPresetConfig {
                 preset_id: preset_id.clone(),
