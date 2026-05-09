@@ -1037,11 +1037,11 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       ctx.showHelpManualWaitingOverlay.value);
 
   ctx.showChatComposerFooter = computed(() => {
-      const routeSection = resolveSectionFromRoute(ctx.route.path, ctx.route.query.section);
-      if (routeSection !== 'messages') {
+      if (ctx.sessionHub.activeSection !== 'messages') {
           return false;
       }
-      return !ctx.showChatSettingsView.value && (ctx.isAgentConversationActive.value || ctx.isWorldConversationActive.value);
+      return !ctx.showChatSettingsView.value &&
+          ['agent', 'world'].includes(String(ctx.resolvedMessageConversationKind.value || ''));
   });
 
   ctx.filteredOwnedAgents = computed(() => {

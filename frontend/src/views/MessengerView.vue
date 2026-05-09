@@ -347,7 +347,7 @@
             <span>{{ t('messenger.action.openConversation') }}</span>
           </button>
           <button
-            v-if="!showChatSettingsView && isAgentConversationActive"
+            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
             class="messenger-header-btn messenger-header-btn--text"
             :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked || activeSessionGoalLocked }"
             type="button"
@@ -360,7 +360,7 @@
             {{ t('chat.newConversation') }}
           </button>
           <button
-            v-if="!showChatSettingsView && isAgentConversationActive"
+            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
             class="messenger-header-btn"
             :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
             type="button"
@@ -371,7 +371,7 @@
             <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
           </button>
           <button
-            v-if="!showChatSettingsView && isAgentConversationActive"
+            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
             class="messenger-header-btn"
             type="button"
             :disabled="isMessengerInteractionBlocked"
@@ -382,7 +382,7 @@
             <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
           </button>
           <button
-            v-if="!showChatSettingsView && isAgentConversationActive"
+            v-if="!showChatSettingsView && resolvedMessageConversationKind === 'agent'"
             class="messenger-header-btn"
             type="button"
             :title="t('common.setting')"
@@ -413,8 +413,8 @@
           'is-helper-workspace': showHelperAppsWorkspace,
           'is-beeroom': ['swarms', 'orchestrations'].includes(sessionHub.activeSection),
           'is-beeroom-canvas': ['swarms', 'orchestrations'].includes(sessionHub.activeSection),
-          'is-agent': isAgentConversationActive,
-          'is-world': isWorldConversationActive
+          'is-agent': resolvedMessageConversationKind === 'agent',
+          'is-world': resolvedMessageConversationKind === 'world'
         }"
         @scroll="handleMessageListScroll"
         @click="handleMessageContentClick"
@@ -965,7 +965,7 @@
         <template v-else>
           <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
           <div
-            v-else-if="!hasRetainedMessageConversationContext && !sessionHub.activeConversation"
+            v-else-if="!hasRetainedMessageConversationContext && resolvedMessageConversationKind === ''"
             class="messenger-chat-empty-state"
           >
             <div class="messenger-chat-empty-icon">
@@ -974,7 +974,7 @@
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
 
-          <template v-else-if="isAgentConversationActive">
+          <template v-else-if="resolvedMessageConversationKind === 'agent'">
             <template v-for="item in agentRenderableMessages" :key="item.key">
             <div
               v-if="
@@ -1298,7 +1298,7 @@
             </template>
           </template>
 
-          <template v-else-if="isWorldConversationActive">
+          <template v-else-if="resolvedMessageConversationKind === 'world'">
             <div
               v-for="item in worldRenderableMessages"
               :key="item.key"
@@ -1443,7 +1443,7 @@
         >
           <i class="fa-solid fa-angles-down" aria-hidden="true"></i>
         </button>
-        <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
+        <div v-if="resolvedMessageConversationKind === 'agent'" class="messenger-agent-composer messenger-composer-scope chat-shell">
           <InquiryPanel
             v-if="activeAgentInquiryPanel"
             :panel="activeAgentInquiryPanel.panel"
@@ -1504,7 +1504,7 @@
           />
         </div>
         <MessengerWorldComposer
-          v-else-if="isWorldConversationActive"
+          v-else-if="resolvedMessageConversationKind === 'world'"
           ref="worldComposerViewRef"
           :style="worldComposerStyle"
           :quick-panel-mode="worldQuickPanelMode"

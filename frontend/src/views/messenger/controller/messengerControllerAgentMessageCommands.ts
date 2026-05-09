@@ -492,6 +492,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       includeActiveConversation?: boolean;
   } = {}): boolean => {
       return resolveRetainedMessageConversationContext({
+          foregroundLock: ctx.agentSendForegroundLock.value,
           activeConversationId: options.includeActiveConversation === true
               ? String(ctx.sessionHub.activeConversation?.id || '').trim()
               : '',
@@ -947,6 +948,18 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           }
       }
       const targetAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
+      chatDebugLog('messenger.send', 'controller-send-start', {
+          activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
+          draftAgentId: String(ctx.chatStore.draftAgentId || '').trim(),
+          activeConversation: ctx.activeConversation.value,
+          targetAgentId,
+          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          contentLength: finalContent.length,
+          attachmentCount: attachments.length
+      });
+      const activeSessionIdBeforeSend = String(ctx.chatStore.activeSessionId || '').trim();
+      ctx.agentSendForegroundLock.value = true;
+      ctx.agentSendForegroundLockSessionId.value = activeSessionIdBeforeSend || `draft:${targetAgentId}`;
       ctx.autoStickToBottom.value = true;
       ctx.setRuntimeStateOverride(targetAgentId, 'running', 30000);
       ctx.pendingAssistantCenter = true;
@@ -974,6 +987,8 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           showApiError(error, ctx.t('chat.error.requestFailed'));
       }
       finally {
+          ctx.agentSendForegroundLock.value = false;
+          ctx.agentSendForegroundLockSessionId.value = '';
           ctx.agentInquirySelection.value = [];
       }
   };

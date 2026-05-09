@@ -33,6 +33,7 @@ const DEBUG_VERBOSE_SCOPES = new Set([
 ]);
 const DEBUG_ALWAYS_SCOPES = new Set([
   'messenger.conversation',
+  'messenger.send',
   'messenger.busy',
   'chat.store.detail',
   'messenger.interaction-blocker',

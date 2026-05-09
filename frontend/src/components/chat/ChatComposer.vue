@@ -524,6 +524,7 @@ import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
 import {
   formatContextTokenCount,
+  resolveStableComposerContextPair,
   resolveComposerRunningContextDisplayState,
   resolveComposerContextUsageSource
 } from '@/components/chat/composerContextUsage';
@@ -968,8 +969,9 @@ watch(
     lastContextDisplaySessionId.value = sessionId;
     lastContextDisplayAssistantSignature.value = assistantSignature;
     if (switchedSession || !loading) {
-      composerContextUsedTokensStable.value = rawUsed;
-      composerContextTotalTokensStable.value = rawTotal;
+      const nextPair = resolveStableComposerContextPair(rawUsed, rawTotal);
+      composerContextUsedTokensStable.value = nextPair.used;
+      composerContextTotalTokensStable.value = nextPair.total;
       composerContextAssistantBaseTokens.value = null;
       composerContextAssistantRawBaseTokens.value = null;
       composerContextAssistantLastRawTokens.value = null;
@@ -986,9 +988,11 @@ watch(
       composerContextAssistantLastRawTokens.value = runningRaw;
       const nextUsed =
         rawUsed === null ? currentUsed : currentUsed === null ? rawUsed : Math.max(currentUsed, rawUsed);
-      composerContextUsedTokensStable.value = nextUsed;
-      composerContextTotalTokensStable.value =
+      const nextTotal =
         rawTotal === null ? currentTotal : currentTotal === null ? rawTotal : Math.max(currentTotal, rawTotal);
+      const nextPair = resolveStableComposerContextPair(nextUsed, nextTotal);
+      composerContextUsedTokensStable.value = nextPair.used;
+      composerContextTotalTokensStable.value = nextPair.total;
       return;
     }
     if (rawUsed !== null) {
@@ -1010,16 +1014,31 @@ watch(
         composerContextAssistantBaseTokens.value = next.baseTokens;
         composerContextAssistantRawBaseTokens.value = next.rawBaseTokens;
         composerContextAssistantLastRawTokens.value = next.lastRawTokens;
-        composerContextUsedTokensStable.value = next.stableTokens;
+        const nextPair = resolveStableComposerContextPair(
+          next.stableTokens,
+          composerContextTotalTokensStable.value
+        );
+        composerContextUsedTokensStable.value = nextPair.used;
+        composerContextTotalTokensStable.value = nextPair.total;
         return;
       }
-      composerContextUsedTokensStable.value =
-        current === null ? rawUsed : Math.max(current, rawUsed);
+      const nextUsed = current === null ? rawUsed : Math.max(current, rawUsed);
+      const nextPair = resolveStableComposerContextPair(
+        nextUsed,
+        composerContextTotalTokensStable.value
+      );
+      composerContextUsedTokensStable.value = nextPair.used;
+      composerContextTotalTokensStable.value = nextPair.total;
     }
     if (rawTotal !== null) {
       const current = composerContextTotalTokensStable.value;
-      composerContextTotalTokensStable.value =
-        current === null ? rawTotal : Math.max(current, rawTotal);
+      const nextTotal = current === null ? rawTotal : Math.max(current, rawTotal);
+      const nextPair = resolveStableComposerContextPair(
+        composerContextUsedTokensStable.value,
+        nextTotal
+      );
+      composerContextUsedTokensStable.value = nextPair.used;
+      composerContextTotalTokensStable.value = nextPair.total;
     }
   },
   { immediate: true }
@@ -2601,6 +2620,13 @@ const handleSend = async () => {
   const content = inputText.value.trim();
   const payloadAttachments = buildAttachmentPayload();
   if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
+  chatDebugLog('messenger.send', 'composer-send-emit', {
+    activeSessionId: String(chatStore.activeSessionId || '').trim(),
+    messageCount: Array.isArray(chatStore.messages) ? chatStore.messages.length : 0,
+    contentLength: content.length,
+    attachmentCount: payloadAttachments.length,
+    hasInquirySelection: hasInquirySelection.value
+  });
   emit('send', { content, attachments: payloadAttachments });
   inputText.value = '';
   commandMenuDismissed.value = false;

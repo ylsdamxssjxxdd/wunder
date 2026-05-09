@@ -26,6 +26,8 @@ const BeeroomE2EHarnessView = () => import('@/views/dev/BeeroomE2EHarnessView.vu
 const ChatCompactionE2EHarnessView = () => import('@/views/dev/ChatCompactionE2EHarnessView.vue');
 const ChatBubbleStressE2EHarnessView = () => import('@/views/dev/ChatBubbleStressE2EHarnessView.vue');
 const MessengerHeavyHistoryE2EHarnessView = () => import('@/views/dev/MessengerHeavyHistoryE2EHarnessView.vue');
+const MessengerSendGuardE2EHarnessView = () => import('@/views/dev/MessengerSendGuardE2EHarnessView.vue');
+const MessengerReturnResumeE2EHarnessView = () => import('@/views/dev/MessengerReturnResumeE2EHarnessView.vue');
 
 const USER_LOGIN_PATH = '/login';
 const EMBED_AUTH_QUERY_KEYS = new Set([
@@ -215,6 +217,16 @@ const routes: RouteRecordRaw[] = [
           path: '/__e2e/messenger-heavy-history',
           name: 'messenger-heavy-history-e2e-harness',
           component: MessengerHeavyHistoryE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-send-guard',
+          name: 'messenger-send-guard-e2e-harness',
+          component: MessengerSendGuardE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-return-resume',
+          name: 'messenger-return-resume-e2e-harness',
+          component: MessengerReturnResumeE2EHarnessView
         }
       ] satisfies RouteRecordRaw[])
     : []),

@@ -909,6 +909,8 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           if (String(lastMessage?.role || '') === 'assistant') {
               ctx.pendingAssistantCenter = false;
               ctx.pendingAssistantCenterCount = ctx.chatStore.messages.length;
+              ctx.agentSendForegroundLock.value = false;
+              ctx.agentSendForegroundLockSessionId.value = '';
               ctx.autoStickToBottom.value = false;
               void ctx.scrollLatestAssistantToCenter();
               return;

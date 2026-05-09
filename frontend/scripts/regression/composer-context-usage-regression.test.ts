@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   resolveComposerContextUsageSource,
+  resolveStableComposerContextPair,
   resolveComposerRunningContextDisplayState
 } from '../../src/components/chat/composerContextUsage';
 import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
@@ -83,6 +84,17 @@ test('composer context usage merges session cache only after the assistant is st
 
   assert.equal(source.runningAssistant, false);
   assert.equal(source.contextTokens, 27018);
+});
+
+test('composer context display clears both values when total tokens are missing', () => {
+  assert.deepEqual(resolveStableComposerContextPair(4583, null), {
+    used: null,
+    total: null
+  });
+  assert.deepEqual(resolveStableComposerContextPair(4583, 0), {
+    used: null,
+    total: null
+  });
 });
 
 test('composer context usage keeps completed assistant final value ahead of stale session estimate', () => {

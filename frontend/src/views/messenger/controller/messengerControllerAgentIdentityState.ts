@@ -214,7 +214,11 @@ import {
   saveMessengerOrderPreferences,
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
-import { hasRetainedMessageConversationContext } from '@/views/messenger/messageConversationRetention';
+import {
+  hasRetainedAgentConversationContext,
+  hasRetainedMessageConversationContext,
+  resolveMessageConversationKind
+} from '@/views/messenger/messageConversationRetention';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
@@ -605,38 +609,45 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
       if (ctx.sessionHub.activeSection !== 'messages') {
           return '';
       }
-      const identity = ctx.activeConversation.value;
-      if (identity?.kind === 'agent')
-          return 'agent';
-      if (identity?.kind === 'direct' || identity?.kind === 'group')
-          return 'world';
-      const queryConversationId = String(ctx.route.query?.conversation_id || '').trim();
-      if (queryConversationId)
-          return 'world';
-      const querySessionId = String(ctx.route.query?.session_id || '').trim();
-      const queryAgentId = String(ctx.route.query?.agent_id || '').trim();
-      const queryEntry = String(ctx.route.query?.entry || '')
-          .trim()
-          .toLowerCase();
-      if (querySessionId || queryAgentId || queryEntry === 'default')
-          return 'agent';
-      if (String(ctx.chatStore.activeSessionId || '').trim() || String(ctx.chatStore.draftAgentId || '').trim()) {
-          return 'agent';
-      }
-      if (hasRetainedMessageConversationContext({
-          routeSessionId: querySessionId,
-          routeAgentId: queryAgentId,
-          routeEntry: queryEntry,
+      return resolveMessageConversationKind({
+          foregroundLock: ctx.agentSendForegroundLock.value,
+          activeConversationKind: ctx.activeConversation.value?.kind,
+          activeConversationId: ctx.activeConversation.value?.id,
+          routeConversationId: ctx.route.query?.conversation_id,
+          routeSessionId: ctx.route.query?.session_id,
+          routeAgentId: ctx.route.query?.agent_id,
+          routeEntry: ctx.route.query?.entry,
           activeSessionId: ctx.chatStore.activeSessionId,
           draftAgentId: ctx.chatStore.draftAgentId,
-          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0
-      })) {
-          return 'agent';
-      }
-      return '';
+          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          worldConversationId: ctx.userWorldStore.activeConversationId,
+          worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages)
+              ? ctx.userWorldStore.activeMessages.length
+              : 0
+      });
   });
 
-  ctx.isAgentConversationActive = computed(() => ctx.resolvedMessageConversationKind.value === 'agent');
+  ctx.isAgentConversationActive = computed(() => {
+      if (ctx.resolvedMessageConversationKind.value === 'agent') {
+          return true;
+      }
+      return hasRetainedAgentConversationContext({
+          foregroundLock: ctx.agentSendForegroundLock.value,
+          activeConversationKind: ctx.activeConversation.value?.kind,
+          activeConversationId: ctx.activeConversation.value?.id,
+          routeConversationId: ctx.route.query?.conversation_id,
+          routeSessionId: ctx.route.query?.session_id,
+          routeAgentId: ctx.route.query?.agent_id,
+          routeEntry: ctx.route.query?.entry,
+          activeSessionId: ctx.chatStore.activeSessionId,
+          draftAgentId: ctx.chatStore.draftAgentId,
+          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          worldConversationId: ctx.userWorldStore.activeConversationId,
+          worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages)
+              ? ctx.userWorldStore.activeMessages.length
+              : 0
+      });
+  });
 
   ctx.isWorldConversationActive = computed(() => ctx.resolvedMessageConversationKind.value === 'world');
 

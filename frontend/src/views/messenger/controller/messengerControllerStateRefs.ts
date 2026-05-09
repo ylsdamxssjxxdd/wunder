@@ -1053,6 +1053,10 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.pendingAssistantCenterCount = 0;
 
+  ctx.agentSendForegroundLock = ref(false);
+
+  ctx.agentSendForegroundLockSessionId = ref('');
+
   ctx.MESSENGER_PERF_TRACE_ENABLED = (() => {
       if (typeof window === 'undefined')
           return false;

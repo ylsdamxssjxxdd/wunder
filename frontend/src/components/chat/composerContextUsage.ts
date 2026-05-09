@@ -159,6 +159,19 @@ export const formatContextTokenCount = (value: unknown): string => {
   return String(normalized);
 };
 
+export const resolveStableComposerContextPair = (
+  used: number | null,
+  total: number | null
+): { used: number | null; total: number | null } => {
+  if (used === null && total === null) {
+    return { used: null, total: null };
+  }
+  if (total === null || total <= 0) {
+    return { used: null, total: null };
+  }
+  return { used, total };
+};
+
 export const resolveAssistantContextTokens = (stats: ComposerContextStatsSource): number | null => {
   if (!stats) {
     return null;
