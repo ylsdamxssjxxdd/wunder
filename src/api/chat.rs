@@ -2010,7 +2010,7 @@ async fn cancel_session(
     )
     .await
     .unwrap_or(false);
-    let cancelled = state.monitor.cancel(&session_id);
+    let cancelled = state.monitor.cancel_with_source(&session_id, "rest_cancel");
     Ok(Json(
         json!({ "data": { "cancelled": cancelled, "goal_cleared": goal_cleared } }),
     ))

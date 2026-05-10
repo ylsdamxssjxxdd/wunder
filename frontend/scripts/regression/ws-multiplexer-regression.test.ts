@@ -210,3 +210,78 @@ test('ws multiplexer removes kept queued request on explicit cancel', async () =
     restore();
   }
 });
+
+test('ws multiplexer does not send backend cancel when local abort opts out', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const controller = new AbortController();
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const requestPromise = client.request({
+      requestId: 'request-abort-local',
+      sessionId: 'session-abort-local',
+      signal: controller.signal,
+      cancelOnAbort: false,
+      message: { type: 'run', request_id: 'request-abort-local' },
+      onEvent: () => {}
+    });
+
+    socket.open();
+    await sleep(0);
+    controller.abort();
+
+    await assert.rejects(requestPromise, { name: 'AbortError' });
+    assert.deepEqual(
+      socket.sent.map((item) => JSON.parse(item)),
+      [{ type: 'run', request_id: 'request-abort-local' }]
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('ws multiplexer sends client_abort cancel source on default local abort', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const controller = new AbortController();
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const requestPromise = client.request({
+      requestId: 'request-abort-cancel',
+      sessionId: 'session-abort-cancel',
+      signal: controller.signal,
+      message: { type: 'run', request_id: 'request-abort-cancel' },
+      onEvent: () => {}
+    });
+
+    socket.open();
+    await sleep(0);
+    controller.abort();
+
+    await assert.rejects(requestPromise, { name: 'AbortError' });
+    assert.deepEqual(
+      socket.sent.map((item) => JSON.parse(item)),
+      [
+        { type: 'run', request_id: 'request-abort-cancel' },
+        {
+          type: 'cancel',
+          request_id: 'request-abort-cancel',
+          session_id: 'session-abort-cancel',
+          payload: { cancel_source: 'client_abort' }
+        }
+      ]
+    );
+  } finally {
+    restore();
+  }
+});

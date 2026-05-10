@@ -160,6 +160,10 @@ impl OrchestratorError {
         Self::new("CANCELLED", message, None)
     }
 
+    pub(super) fn cancelled_with_detail(message: String, detail: Value) -> Self {
+        Self::new("CANCELLED", message, Some(detail))
+    }
+
     pub(super) fn llm_unavailable(message: String) -> Self {
         Self::new("LLM_UNAVAILABLE", message, None)
     }
@@ -205,6 +209,10 @@ impl OrchestratorError {
 
     pub(crate) fn recovery_action(&self) -> &'static str {
         self.meta.recovery_action.as_str()
+    }
+
+    pub(crate) fn detail(&self) -> Option<&Value> {
+        self.detail.as_ref()
     }
 
     pub(crate) fn to_payload(&self) -> Value {

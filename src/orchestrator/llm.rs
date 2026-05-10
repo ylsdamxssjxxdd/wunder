@@ -231,6 +231,23 @@ impl Orchestrator {
         loop {
             interval.tick().await;
             if self.monitor.is_cancelled(session_id) {
+                let detail = self
+                    .monitor
+                    .get_record(session_id)
+                    .and_then(|record| record.get("cancel_source").cloned())
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                    });
+                if let Some(cancel_source) = detail {
+                    return OrchestratorError::cancelled_with_detail(
+                        i18n::t("error.session_cancelled"),
+                        json!({ "cancel_source": cancel_source }),
+                    );
+                }
                 return OrchestratorError::cancelled(i18n::t("error.session_cancelled"));
             }
         }

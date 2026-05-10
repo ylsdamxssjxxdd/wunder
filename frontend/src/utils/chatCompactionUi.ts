@@ -110,6 +110,20 @@ const toBool = (...values: unknown[]): boolean | null => {
   return null;
 };
 
+const UNOBSERVED_AFTER_COMPACTION = 'unobserved_after_compaction';
+
+const normalizeMarker = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+
+const isUnobservedAfterCompaction = (detailObject: UnknownObject | null): boolean => {
+  if (!detailObject) return false;
+  return [
+    detailObject.context_usage_source_after,
+    detailObject.contextUsageSourceAfter,
+    detailObject.context_usage_source,
+    detailObject.contextUsageSource
+  ].some((value) => normalizeMarker(value) === UNOBSERVED_AFTER_COMPACTION);
+};
+
 const formatTokenCount = (value: number | null): string =>
   value === null ? '' : `${numberFormatter.format(value)} tokens`;
 
@@ -317,6 +331,8 @@ export const buildCompactionDisplay = (
     toBool(detailObject?.context_guard_summary_trimmed, detailObject?.summary_trimmed) === true;
   const currentTrimmed =
     toBool(detailObject?.context_guard_current_user_trimmed, detailObject?.current_user_trimmed) === true;
+  const afterUnobserved = isUnobservedAfterCompaction(detailObject);
+  const afterUnobservedLabel = t('chat.toolWorkflow.compaction.detail.waitingObservedUsage');
 
   const projectedBefore = toOptionalInt(
     detailObject?.projected_request_tokens,
@@ -324,24 +340,34 @@ export const buildCompactionDisplay = (
     detailObject?.context_tokens,
     detailObject?.context_guard_tokens_before
   );
-  const projectedAfter = toOptionalInt(
+  const projectedAfterRaw = toOptionalInt(
     detailObject?.projected_request_tokens_after,
     detailObject?.total_tokens_after,
     detailObject?.context_tokens_after,
     detailObject?.context_guard_tokens_after
   );
+  const projectedAfter = afterUnobserved ? null : projectedAfterRaw;
   const projectedTransition = formatTokenTransition(projectedBefore, projectedAfter);
+  const projectedDisplay =
+    afterUnobserved && projectedBefore !== null
+      ? `${formatTokenCount(projectedBefore)} → ${afterUnobservedLabel}`
+      : projectedTransition;
 
   const messageBefore = toOptionalInt(
     detailObject?.context_tokens,
     detailObject?.history_usage,
     detailObject?.context_guard_tokens_before
   );
-  const messageAfter = toOptionalInt(
+  const messageAfterRaw = toOptionalInt(
     detailObject?.context_tokens_after,
     detailObject?.context_guard_tokens_after
   );
+  const messageAfter = afterUnobserved ? null : messageAfterRaw;
   const messageTransition = formatTokenTransition(messageBefore, messageAfter);
+  const messageDisplay =
+    afterUnobserved && messageBefore !== null
+      ? `${formatTokenCount(messageBefore)} → ${afterUnobservedLabel}`
+      : messageTransition;
 
   const currentTransition = formatTokenTransition(
     toOptionalInt(
@@ -449,8 +475,8 @@ export const buildCompactionDisplay = (
         : reason === 'overflow'
           ? t('chat.toolWorkflow.compaction.titleOverflow')
           : t('chat.toolWorkflow.compaction.title');
-  const summaryTitle = projectedTransition && !isRunning
-    ? `${summaryTitleBase} ${projectedTransition}`
+  const summaryTitle = projectedDisplay && !isRunning
+    ? `${summaryTitleBase} ${projectedDisplay}`
     : summaryTitleBase;
 
   let resultSummary = isRunning
@@ -475,8 +501,8 @@ export const buildCompactionDisplay = (
 
   const lines: string[] = [];
   appendLine(lines, t('chat.toolWorkflow.compaction.detail.reason'), resolveReasonLabel(reason, t));
-  appendLine(lines, t('chat.toolWorkflow.compaction.detail.projectedRequest'), projectedTransition);
-  appendLine(lines, t('chat.toolWorkflow.compaction.detail.messageContext'), messageTransition);
+  appendLine(lines, t('chat.toolWorkflow.compaction.detail.projectedRequest'), projectedDisplay);
+  appendLine(lines, t('chat.toolWorkflow.compaction.detail.messageContext'), messageDisplay);
   appendLine(lines, t('chat.toolWorkflow.compaction.detail.requestBudget'), requestBudget);
   appendLine(
     lines,
@@ -531,7 +557,9 @@ export const buildCompactionDisplay = (
                 percent: formatPercent(beforeRatio)
               })
             : '',
-          afterLabel: projectedAfter !== null
+          afterLabel: afterUnobserved
+            ? t('chat.toolWorkflow.compaction.usage.afterPending')
+            : projectedAfter !== null
             ? t('chat.toolWorkflow.compaction.usage.after', {
                 tokens: formatTokenCount(projectedAfter),
                 percent: formatPercent(afterRatio)
@@ -551,7 +579,7 @@ export const buildCompactionDisplay = (
     metrics,
     'projected-request',
     t('chat.toolWorkflow.compaction.metric.projectedRequest'),
-    projectedTransition,
+    projectedDisplay,
     !isRunning && projectedBefore !== null && projectedAfter !== null && projectedAfter < projectedBefore
       ? 'success'
       : 'default'
@@ -560,7 +588,7 @@ export const buildCompactionDisplay = (
     metrics,
     'message-context',
     t('chat.toolWorkflow.compaction.metric.messageContext'),
-    messageTransition,
+    messageDisplay,
     !isRunning && messageBefore !== null && messageAfter !== null && messageAfter < messageBefore
       ? 'success'
       : 'default'
@@ -640,7 +668,7 @@ export const buildCompactionDisplay = (
       label: t('chat.toolWorkflow.compaction.stage.compact'),
       detail: normalizedStatus === 'skipped'
         ? t('chat.toolWorkflow.compaction.stage.notNeeded')
-        : resolveStageDetail(resultSummary, projectedTransition || messageTransition, t),
+        : resolveStageDetail(resultSummary, projectedDisplay || messageDisplay, t),
       state: compactState
     },
     {

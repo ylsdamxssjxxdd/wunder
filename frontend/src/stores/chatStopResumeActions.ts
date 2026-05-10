@@ -439,7 +439,8 @@ export const chatStopResumeActions = {
           },
           onEvent,
           signal: runtime?.resumeController?.signal,
-          closeOnFinal: resumeAfterEventId > 0
+          closeOnFinal: resumeAfterEventId > 0,
+          cancelOnAbort: false
         });
       } catch (error) {
         if (error?.name === 'AbortError') {

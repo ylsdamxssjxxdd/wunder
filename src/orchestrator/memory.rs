@@ -21,7 +21,9 @@ const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
 const COMPACTION_DEBUG_PREVIEW_CHARS: usize = 240;
 const COMPACTION_MIN_RETAINED_INTERACTION_TOKENS: i64 = 128;
 const COMPACTION_CURRENT_TURN_FINAL_NOTE: &str =
-    "[Compaction continuation]\nThe current user request has already produced successful tool output before compaction. Do not repeat the original request or re-run tools solely because the original user message is present in retained history. Continue from the tool result and provide the final response if no further repair is required.";
+    "The compaction summary indicates that the current user-facing task has no remaining executable work, or only needs a final/clarifying response. Treat retained user messages as historical context, not as a fresh request. Do not call tools, regenerate artifacts, rewrite files, or restart the original request solely because older messages are visible. Provide the final response now from the compaction summary and retained latest messages.";
+const COMPACTION_CURRENT_TURN_SUCCESS_NOTE: &str =
+    "The current user request already produced successful tool output before compaction, but that does not by itself mean the user-facing task is complete. Continue from the latest retained tool observation and the compaction summary. Treat retained user messages as historical context, not as a fresh request. If the summary resume action is final or ask_user, do not call tools; answer or ask the user now. If the resume action is continue, perform only the named remaining step. Do not restart or redo completed work.";
 const COMPACTION_CURRENT_TURN_REPAIR_NOTE: &str =
     "[Compaction continuation]\nThe current user request already entered tool execution and the latest tool output reports failure. Do not restart from the original user request. Continue from the retained failure observation, change strategy, and repair or explain based on the available evidence.";
 
@@ -60,16 +62,17 @@ impl CurrentTurnProgressState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct CurrentTurnProgress {
     state: CurrentTurnProgressState,
     has_post_user_messages: bool,
     has_tool_success: bool,
     has_tool_failure: bool,
+    latest_tool_observation: Option<ToolObservationSnapshot>,
 }
 
 impl CurrentTurnProgress {
-    fn state_label(self) -> &'static str {
+    fn state_label(&self) -> &'static str {
         self.state.label()
     }
 }
@@ -79,6 +82,7 @@ enum CurrentUserReplayMode {
     Original,
     Placeholder,
     FinalContinuation,
+    ToolSuccessContinuation,
     RepairContinuation,
     Omitted,
 }
@@ -89,6 +93,7 @@ impl CurrentUserReplayMode {
             Self::Original => "original",
             Self::Placeholder => "placeholder",
             Self::FinalContinuation => "final_continuation",
+            Self::ToolSuccessContinuation => "tool_success_continuation",
             Self::RepairContinuation => "repair_continuation",
             Self::Omitted => "omitted",
         }
@@ -100,6 +105,40 @@ struct CurrentUserReplay {
     message: Option<Value>,
     mode: CurrentUserReplayMode,
     trimmed: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ToolObservationSnapshot {
+    tool_name: String,
+    ok: Option<bool>,
+    summary: String,
+    next_step_hint: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CompactionResumeAction {
+    Final,
+    Continue,
+    Retry,
+    AskUser,
+    #[default]
+    Unknown,
+}
+
+impl CompactionResumeAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Final => "final",
+            Self::Continue => "continue",
+            Self::Retry => "retry",
+            Self::AskUser => "ask_user",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn should_finalize(self) -> bool {
+        matches!(self, Self::Final | Self::AskUser)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -749,6 +788,7 @@ impl Orchestrator {
                 compaction_id,
             ));
         };
+        let resume_action = detect_compaction_resume_action(&summary_text);
         let source_interaction_blocks = collect_normalized_interaction_blocks(&source_messages);
         let source_interaction_messages = source_interaction_blocks
             .iter()
@@ -793,7 +833,9 @@ impl Orchestrator {
             current_user_message.as_ref(),
             question_text.as_str(),
             message_budget,
-            current_turn_progress,
+            &current_turn_progress,
+            resume_action,
+            &summary_text,
         );
         let current_user_message_for_history_trimmed = current_user_replay.trimmed;
         let current_user_replay_mode = current_user_replay.mode;
@@ -1125,6 +1167,10 @@ impl Orchestrator {
         compaction_payload_map.insert(
             "current_user_replay_mode".to_string(),
             Value::String(current_user_replay_mode.as_str().to_string()),
+        );
+        compaction_payload_map.insert(
+            "compaction_resume_action".to_string(),
+            Value::String(resume_action.as_str().to_string()),
         );
         compaction_payload_map.insert(
             "current_turn_progress_state".to_string(),
@@ -1621,7 +1667,20 @@ impl Orchestrator {
         }
         match outcome {
             Ok(()) => self.monitor.mark_finished(session_id),
-            Err(err) if err.code() == "CANCELLED" => self.monitor.mark_cancelled(session_id),
+            Err(err) if err.code() == "CANCELLED" => {
+                let cancel_source = err
+                    .detail()
+                    .and_then(|detail| detail.get("cancel_source"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let Some(cancel_source) = cancel_source {
+                    self.monitor
+                        .mark_cancelled_with_source(session_id, cancel_source);
+                } else {
+                    self.monitor.mark_cancelled(session_id);
+                }
+            }
             Err(err) => self.monitor.mark_error(session_id, err.message()),
         }
     }
@@ -3059,6 +3118,12 @@ fn classify_current_turn_progress(
                 Some(false) => progress.has_tool_failure = true,
                 None => progress.has_post_user_messages = true,
             }
+            if let Some(snapshot) = observation
+                .as_ref()
+                .and_then(build_tool_observation_snapshot)
+            {
+                progress.latest_tool_observation = Some(snapshot);
+            }
             continue;
         }
         if role == "assistant" && has_tool_call_payload(message) {
@@ -3077,6 +3142,261 @@ fn classify_current_turn_progress(
     progress
 }
 
+fn build_tool_observation_snapshot(payload: &Value) -> Option<ToolObservationSnapshot> {
+    let map = payload.as_object()?;
+    let tool_name = map
+        .get("tool")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+    let ok = map.get("ok").and_then(Value::as_bool);
+    let summary = summarize_compaction_observation_payload(payload);
+    let next_step_hint = infer_next_step_after_successful_tool(&tool_name, map);
+    Some(ToolObservationSnapshot {
+        tool_name,
+        ok,
+        summary,
+        next_step_hint,
+    })
+}
+
+fn infer_next_step_after_successful_tool(
+    tool_name: &str,
+    payload: &Map<String, Value>,
+) -> Option<String> {
+    if payload.get("ok").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    if matches!(tool_name.trim(), "写入文件" | "write_file") {
+        let data = payload.get("data").and_then(Value::as_object)?;
+        let path = data
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        return Some(format!(
+            "A successful file write is usually an intermediate step. Continue with the next action required by the summary, such as running or validating `{path}`, before finalizing."
+        ));
+    }
+    if matches!(
+        tool_name.trim(),
+        "读取文件" | "read_file" | "搜索内容" | "search_content" | "列出文件" | "list_files"
+    ) {
+        return Some(
+            "The latest successful tool only gathered information. Use it to decide the next concrete action; do not treat the task as complete unless the summary says no deliverable remains."
+                .to_string(),
+        );
+    }
+    None
+}
+
+fn append_compaction_summary_excerpt(note: &mut String, summary_text: &str) {
+    let body = strip_compaction_prefix_text(summary_text);
+    let excerpt = trim_text_to_chars(body.trim(), 1_200, COMPACTION_TEXT_TRUNCATION_SUFFIX);
+    if excerpt.trim().is_empty() {
+        return;
+    }
+    note.push('\n');
+    note.push_str("- summary_excerpt:\n");
+    note.push_str(&excerpt);
+}
+
+fn detect_compaction_resume_action(summary_text: &str) -> CompactionResumeAction {
+    let body = strip_compaction_prefix_text(summary_text);
+    let normalized = body.replace("\r\n", "\n");
+    for line in normalized.lines() {
+        let trimmed = line.trim().trim_start_matches(['-', '*', ' ']).trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some(value) = lower
+            .strip_prefix("resume_action:")
+            .or_else(|| lower.strip_prefix("next_action:"))
+            .or_else(|| lower.strip_prefix("resume action:"))
+            .or_else(|| lower.strip_prefix("next action:"))
+        {
+            return parse_compaction_resume_action_value(value);
+        }
+        if let Some(value) = trimmed
+            .strip_prefix("下一步动作：")
+            .or_else(|| trimmed.strip_prefix("下一步动作:"))
+            .or_else(|| trimmed.strip_prefix("续跑动作："))
+            .or_else(|| trimmed.strip_prefix("续跑动作:"))
+        {
+            return parse_compaction_resume_action_value(value);
+        }
+    }
+
+    infer_compaction_resume_action_from_sections(&normalized)
+}
+
+fn parse_compaction_resume_action_value(value: &str) -> CompactionResumeAction {
+    let raw = value
+        .trim()
+        .trim_matches(['`', '"', '\'', '*', ' ', '-', ':', '：']);
+    let direct = raw.trim();
+    match direct {
+        "最终回复" | "结束" | "完成" => return CompactionResumeAction::Final,
+        "继续" => return CompactionResumeAction::Continue,
+        "重试" | "修复" => return CompactionResumeAction::Retry,
+        "询问用户" | "澄清" => return CompactionResumeAction::AskUser,
+        _ => {}
+    }
+    let cleaned = raw.to_ascii_lowercase();
+    let first = cleaned
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ';' | '，' | '；'))
+        .next()
+        .unwrap_or_default()
+        .trim();
+    match first {
+        "final" | "finish" | "done" | "complete" | "completed" | "answer" => {
+            CompactionResumeAction::Final
+        }
+        "continue" | "next" | "work" | "run" => CompactionResumeAction::Continue,
+        "retry" | "repair" | "fix" => CompactionResumeAction::Retry,
+        "ask_user" | "ask-user" | "ask" | "clarify" | "clarification" => {
+            CompactionResumeAction::AskUser
+        }
+        _ => CompactionResumeAction::Unknown,
+    }
+}
+
+fn infer_compaction_resume_action_from_sections(summary_text: &str) -> CompactionResumeAction {
+    let body = summary_text.trim();
+    if body.is_empty() {
+        return CompactionResumeAction::Unknown;
+    }
+    if summary_has_failure_signal(body) {
+        return CompactionResumeAction::Retry;
+    }
+    if summary_has_no_remaining_work_signal(body) {
+        return CompactionResumeAction::Final;
+    }
+    if summary_has_pending_work_signal(body) {
+        return CompactionResumeAction::Continue;
+    }
+    if summary_has_completed_signal(body) {
+        return CompactionResumeAction::Final;
+    }
+    CompactionResumeAction::Unknown
+}
+
+fn summary_has_completed_signal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("completed")
+        || lower.contains("already produced")
+        || lower.contains("already generated")
+        || lower.contains("done")
+        || text.contains("已完成")
+        || text.contains("已经完成")
+        || text.contains("已生成")
+        || text.contains("已经生成")
+        || text.contains("已绘制")
+}
+
+fn summary_has_no_remaining_work_signal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("no remaining")
+        || lower.contains("nothing remains")
+        || lower.contains("no explicit todo")
+        || lower.contains("no pending")
+        || lower.contains("no further")
+        || text.contains("无明确待办")
+        || text.contains("没有明确待办")
+        || text.contains("无需继续")
+        || text.contains("没有剩余待办")
+        || text.contains("无剩余待办")
+}
+
+fn summary_has_pending_work_signal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("remaining todo")
+        || lower.contains("pending")
+        || lower.contains("next step")
+        || lower.contains("todo:")
+        || lower.contains("continue")
+        || text.contains("待执行")
+        || text.contains("剩余待办")
+        || text.contains("下一步")
+        || text.contains("继续")
+}
+
+fn summary_has_failure_signal(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("failed")
+        || lower.contains("failure")
+        || lower.contains("error")
+        || lower.contains("retry")
+        || lower.contains("repair")
+        || text.contains("失败")
+        || text.contains("错误")
+        || text.contains("修复")
+        || text.contains("重试")
+}
+
+fn build_current_turn_final_continuation_note(
+    resume_action: CompactionResumeAction,
+    summary_text: &str,
+) -> String {
+    let mut note = String::from("[Compaction continuation]\n\n[Compaction summary decision]\n");
+    note.push_str("- resume_action: ");
+    note.push_str(resume_action.as_str());
+    append_compaction_summary_excerpt(&mut note, summary_text);
+    note.push('\n');
+    note.push_str(COMPACTION_CURRENT_TURN_FINAL_NOTE.trim());
+    trim_text_to_tokens(
+        &note,
+        COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS.max(1_024),
+        COMPACTION_TEXT_TRUNCATION_SUFFIX,
+    )
+}
+
+fn build_tool_success_continuation_note(
+    progress: &CurrentTurnProgress,
+    resume_action: CompactionResumeAction,
+    summary_text: &str,
+) -> String {
+    let mut note = String::from("[Compaction continuation]");
+    note.push_str("\n\n[Compaction summary decision]\n");
+    note.push_str("- resume_action: ");
+    note.push_str(resume_action.as_str());
+    append_compaction_summary_excerpt(&mut note, summary_text);
+    if let Some(snapshot) = progress.latest_tool_observation.as_ref() {
+        note.push_str("\n\n[Latest retained tool observation]\n");
+        note.push_str("- tool: ");
+        note.push_str(snapshot.tool_name.trim());
+        note.push('\n');
+        if let Some(ok) = snapshot.ok {
+            note.push_str("- ok: ");
+            note.push_str(if ok { "true" } else { "false" });
+            note.push('\n');
+        }
+        let summary = snapshot.summary.trim();
+        if !summary.is_empty() {
+            note.push_str("- summary: ");
+            note.push_str(summary);
+            note.push('\n');
+        }
+        if let Some(hint) = snapshot
+            .next_step_hint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            note.push_str("- next_step_hint: ");
+            note.push_str(hint);
+            note.push('\n');
+        }
+    }
+    note.push_str("\n");
+    note.push_str(COMPACTION_CURRENT_TURN_SUCCESS_NOTE.trim());
+    trim_text_to_tokens(
+        &note,
+        COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS.max(1_024),
+        COMPACTION_TEXT_TRUNCATION_SUFFIX,
+    )
+}
+
 fn parse_compaction_observation_payload(content: &Value) -> Option<Value> {
     let raw = content.as_str()?.trim();
     let payload_text = raw
@@ -3093,7 +3413,9 @@ fn build_current_turn_replay_message(
     current_user_message: Option<&Value>,
     question_text: &str,
     message_budget: i64,
-    progress: CurrentTurnProgress,
+    progress: &CurrentTurnProgress,
+    resume_action: CompactionResumeAction,
+    summary_text: &str,
 ) -> CurrentUserReplay {
     match progress.state {
         CurrentTurnProgressState::Pending => {
@@ -3135,22 +3457,34 @@ fn build_current_turn_replay_message(
             }
         }
         CurrentTurnProgressState::ToolSucceeded => {
+            let should_finalize = resume_action.should_finalize();
+            let note = if should_finalize {
+                build_current_turn_final_continuation_note(resume_action, summary_text)
+            } else {
+                build_tool_success_continuation_note(progress, resume_action, summary_text)
+            };
             let mut message = json!({
                 "role": "user",
-                "content": COMPACTION_CURRENT_TURN_FINAL_NOTE,
+                "content": note,
             });
             mark_current_user_message_inflight(&mut message);
             CurrentUserReplay {
                 message: Some(message),
-                mode: CurrentUserReplayMode::FinalContinuation,
+                mode: if should_finalize {
+                    CurrentUserReplayMode::FinalContinuation
+                } else {
+                    CurrentUserReplayMode::ToolSuccessContinuation
+                },
                 trimmed: false,
             }
         }
         CurrentTurnProgressState::ToolFailed | CurrentTurnProgressState::InProgress => {
             let note = if progress.has_tool_failure {
                 COMPACTION_CURRENT_TURN_REPAIR_NOTE
-            } else {
+            } else if resume_action.should_finalize() {
                 COMPACTION_CURRENT_TURN_FINAL_NOTE
+            } else {
+                COMPACTION_CURRENT_TURN_SUCCESS_NOTE
             };
             let mut message = json!({
                 "role": "user",
@@ -3170,6 +3504,10 @@ fn summarize_compaction_observation(content: &Value) -> String {
     let Some(payload) = parse_compaction_observation_payload(content) else {
         return extract_memory_summary_text_value(content);
     };
+    summarize_compaction_observation_payload(&payload)
+}
+
+fn summarize_compaction_observation_payload(payload: &Value) -> String {
     let Some(map) = payload.as_object() else {
         return extract_memory_summary_text_value(&payload);
     };
@@ -4682,7 +5020,7 @@ mod tests {
     }
 
     #[test]
-    fn test_current_turn_replay_uses_final_continuation_after_successful_tool() {
+    fn test_current_turn_replay_uses_tool_success_continuation_after_successful_tool() {
         let messages = vec![
             json!({ "role": "system", "content": "system prompt" }),
             json!({ "role": "user", "content": "draw item" }),
@@ -4698,22 +5036,127 @@ mod tests {
         ];
         let progress = classify_current_turn_progress(&messages, 1);
 
-        let replay =
-            build_current_turn_replay_message(messages.get(1), "draw item", 2048, progress);
+        let replay = build_current_turn_replay_message(
+            messages.get(1),
+            "draw item",
+            2048,
+            &progress,
+            CompactionResumeAction::Continue,
+            "resume_action: continue\n## What remains to be done\nRun the next step.",
+        );
 
         assert_eq!(progress.state, CurrentTurnProgressState::ToolSucceeded);
-        assert_eq!(replay.mode, CurrentUserReplayMode::FinalContinuation);
+        assert_eq!(replay.mode, CurrentUserReplayMode::ToolSuccessContinuation);
         let replay_message = replay.message.expect("continuation message");
         assert_eq!(
             replay_message.get("role").and_then(Value::as_str),
             Some("user")
         );
         assert!(is_compaction_inflight_current_user_message(&replay_message));
-        assert!(replay_message
+        let content = replay_message
             .get("content")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .contains("Do not repeat the original request"));
+            .unwrap_or_default();
+        assert!(content.contains("does not by itself mean the user-facing task is complete"));
+        assert!(content.contains("Latest retained tool observation"));
+    }
+
+    #[test]
+    fn test_current_turn_replay_for_successful_write_file_requires_next_step() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "generate chart" }),
+            json!({ "role": "assistant", "content": "I will write the script" }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "write_file",
+                    "ok": true,
+                    "data": {
+                        "path": "chart.py",
+                        "bytes": 1200,
+                        "existed": false,
+                    },
+                })),
+            }),
+        ];
+        let progress = classify_current_turn_progress(&messages, 1);
+        let replay = build_current_turn_replay_message(
+            messages.get(1),
+            "generate chart",
+            2048,
+            &progress,
+            CompactionResumeAction::Continue,
+            "resume_action: continue\n## What remains to be done\nRun and validate chart.py.",
+        );
+        let content = replay
+            .message
+            .as_ref()
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        assert_eq!(replay.mode, CurrentUserReplayMode::ToolSuccessContinuation);
+        assert!(content.contains("Created file chart.py"));
+        assert!(content.contains("running or validating `chart.py`"));
+        assert!(content.contains("before finalizing"));
+    }
+
+    #[test]
+    fn test_current_turn_replay_uses_final_continuation_when_summary_has_no_todo() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "draw armor nailong" }),
+            json!({ "role": "assistant", "content": "I will draw it" }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "ptc",
+                    "ok": true,
+                    "data": {
+                        "path": "/workspaces/admin__c__1/ptc_temp/nailong_armor.py",
+                        "stderr": "/workspaces/admin__c__1/ptc_temp/nailong_armor.py:153: saved to /workspaces/admin__c__1/nailong_armor.png",
+                        "stdout": "Done",
+                    },
+                })),
+            }),
+        ];
+        let progress = classify_current_turn_progress(&messages, 1);
+        let replay = build_current_turn_replay_message(
+            messages.get(1),
+            "draw armor nailong",
+            2048,
+            &progress,
+            detect_compaction_resume_action(
+                "## 当前进展\n已完成绘制。\n## 剩余待办\n无明确待办。\nresume_action: final",
+            ),
+            "## 当前进展\n已完成绘制。\n## 剩余待办\n无明确待办。\nresume_action: final",
+        );
+        let content = replay
+            .message
+            .as_ref()
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        assert_eq!(replay.mode, CurrentUserReplayMode::FinalContinuation);
+        assert!(content.contains("Provide the final response now"));
+        assert!(content.contains("resume_action: final"));
+        assert!(content.contains("Do not call tools, regenerate artifacts, rewrite files"));
+        assert!(!content.contains("/workspaces/admin__c__1/nailong_armor.png"));
+    }
+
+    #[test]
+    fn test_compaction_resume_action_detects_no_remaining_work_without_path_parsing() {
+        let summary = format!(
+            "{}\n## 当前进展\n已完成绘制。\n## 剩余待办\n无明确待办。",
+            i18n::t("history.compaction_prefix")
+        );
+
+        assert_eq!(
+            detect_compaction_resume_action(&summary),
+            CompactionResumeAction::Final
+        );
     }
 
     #[test]
@@ -4739,7 +5182,9 @@ mod tests {
             messages.get(1),
             "repair generated file",
             2048,
-            progress,
+            &progress,
+            CompactionResumeAction::Retry,
+            "resume_action: retry",
         );
 
         assert_eq!(progress.state, CurrentTurnProgressState::ToolFailed);
@@ -4765,8 +5210,14 @@ mod tests {
         ];
         let progress = classify_current_turn_progress(&messages, 1);
 
-        let replay =
-            build_current_turn_replay_message(messages.get(1), "analyze input", 2048, progress);
+        let replay = build_current_turn_replay_message(
+            messages.get(1),
+            "analyze input",
+            2048,
+            &progress,
+            CompactionResumeAction::Unknown,
+            "",
+        );
 
         assert_eq!(progress.state, CurrentTurnProgressState::Pending);
         assert_eq!(replay.mode, CurrentUserReplayMode::Original);

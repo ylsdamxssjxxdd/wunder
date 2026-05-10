@@ -293,6 +293,7 @@ struct SessionRecord {
     start_time: f64,
     updated_time: f64,
     cancel_requested: bool,
+    cancel_source: Option<String>,
     ended_time: Option<f64>,
     user_rounds: i64,
     last_awarded_user_round: i64,
@@ -342,6 +343,7 @@ impl SessionRecord {
             start_time: now,
             updated_time: now,
             cancel_requested: false,
+            cancel_source: None,
             ended_time: None,
             user_rounds: 1,
             last_awarded_user_round: 0,
@@ -422,6 +424,7 @@ impl SessionRecord {
             "updated_time": format_ts(self.updated_time),
             "elapsed_s": round2(self.elapsed_s()),
             "cancel_requested": self.cancel_requested,
+            "cancel_source": self.cancel_source,
             "user_rounds": self.user_rounds,
             "context_tokens": context_tokens,
             "context_occupancy_tokens": context_tokens,
@@ -456,6 +459,7 @@ impl SessionRecord {
             "updated_time": self.updated_time,
             "ended_time": self.ended_time,
             "cancel_requested": self.cancel_requested,
+            "cancel_source": self.cancel_source,
             "user_rounds": self.user_rounds,
             "rounds": self.user_rounds,
             "last_awarded_user_round": self.last_awarded_user_round,
@@ -535,6 +539,12 @@ impl SessionRecord {
             .get("cancel_requested")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let cancel_source = payload
+            .get("cancel_source")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         let user_rounds = payload
             .get("user_rounds")
             .or_else(|| payload.get("rounds"))
@@ -622,6 +632,7 @@ impl SessionRecord {
             start_time,
             updated_time,
             cancel_requested,
+            cancel_source,
             ended_time,
             user_rounds,
             last_awarded_user_round,
@@ -1169,13 +1180,52 @@ impl MonitorState {
     }
 
     pub fn mark_cancelled(&self, session_id: &str) {
-        self.mark_status(
-            session_id,
-            Self::STATUS_CANCELLED,
-            Some(&i18n::t("monitor.summary.cancelled")),
+        self.mark_cancelled_with_source(session_id, "runtime_cancel");
+    }
+
+    pub fn mark_cancelled_with_source(&self, session_id: &str, source: &str) {
+        let normalized_source = source.trim();
+        self.run_guarded(
+            "monitor.mark_cancelled_with_source",
+            || (),
+            || {
+                let now = now_ts();
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(session_id) else {
+                        return;
+                    };
+                    if record.cancel_source.is_none() && !normalized_source.is_empty() {
+                        record.cancel_source = Some(normalized_source.to_string());
+                    }
+                    let cancel_source = record.cancel_source.clone();
+                    record.cancel_requested = true;
+                    record.status = Self::STATUS_CANCELLED.to_string();
+                    record.stage = "cancelled".to_string();
+                    record.summary = i18n::t("monitor.summary.cancelled");
+                    record.updated_time = now;
+                    record.ended_time = Some(now);
+                    let summary = record.summary.clone();
+                    self.append_event(
+                        record,
+                        Self::STATUS_CANCELLED,
+                        &json!({
+                            "summary": summary,
+                            "cancel_source": cancel_source,
+                        }),
+                        now,
+                    );
+                    record.dirty = true;
+                    self.maybe_persist_record(record, now, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+            },
         );
     }
-    pub fn cancel(&self, session_id: &str) -> bool {
+
+    pub fn cancel_with_source(&self, session_id: &str, source: &str) -> bool {
         self.run_guarded(
             "monitor.cancel",
             || false,
@@ -1191,14 +1241,24 @@ impl MonitorState {
                     {
                         return false;
                     }
+                    let normalized_source = source.trim();
                     record.cancel_requested = true;
+                    record.cancel_source = if normalized_source.is_empty() {
+                        None
+                    } else {
+                        Some(normalized_source.to_string())
+                    };
                     record.status = Self::STATUS_CANCELLING.to_string();
                     record.updated_time = now_ts();
                     let updated_time = record.updated_time;
+                    let cancel_source = record.cancel_source.clone();
                     self.append_event(
                         record,
                         "cancel",
-                        &json!({ "summary": i18n::t("monitor.summary.cancel_requested") }),
+                        &json!({
+                            "summary": i18n::t("monitor.summary.cancel_requested"),
+                            "cancel_source": cancel_source,
+                        }),
                         updated_time,
                     );
                     record.dirty = true;
@@ -1210,6 +1270,10 @@ impl MonitorState {
                 true
             },
         )
+    }
+
+    pub fn cancel(&self, session_id: &str) -> bool {
+        self.cancel_with_source(session_id, "monitor_cancel")
     }
 
     pub fn delete_session(&self, session_id: &str) -> bool {
@@ -2073,6 +2137,7 @@ impl MonitorState {
             record.updated_time = now;
             record.ended_time = None;
             record.cancel_requested = false;
+            record.cancel_source = None;
             record.context_tokens = 0;
             let summary = record.summary.clone();
             let user_round = record.user_rounds;
@@ -3033,6 +3098,41 @@ mod tests {
         assert_eq!(detail["session"]["context_tokens"], json!(4321));
         assert_eq!(detail["session"]["context_occupancy_tokens"], json!(4321));
         assert_eq!(detail["session"]["context_tokens_peak"], json!(4321));
+    }
+
+    #[test]
+    fn monitor_cancel_source_is_recorded_in_summary_events_and_storage() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-cancel-source.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            SandboxConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        let session_id = "sess-cancel-source";
+        monitor.register(session_id, "user", "agent", "question", true, false);
+
+        assert!(monitor.cancel_with_source(session_id, "client_abort"));
+        let detail = monitor.get_detail(session_id).expect("session detail");
+        assert_eq!(detail["session"]["cancel_source"], json!("client_abort"));
+        assert_eq!(detail["session"]["status"], json!("cancelling"));
+        assert!(detail["events"]
+            .as_array()
+            .is_some_and(|events| events.iter().any(|event| event["type"] == "cancel"
+                && event["data"]["cancel_source"] == "client_abort")));
+
+        monitor.mark_cancelled(session_id);
+        let record = monitor.get_record(session_id).expect("session record");
+        assert_eq!(record["status"], json!("cancelled"));
+        assert_eq!(record["cancel_source"], json!("client_abort"));
+        assert!(record["events"].as_array().is_some_and(|events| events
+            .iter()
+            .any(|event| event["type"] == "cancelled"
+                && event["data"]["cancel_source"] == "client_abort")));
     }
 
     #[test]

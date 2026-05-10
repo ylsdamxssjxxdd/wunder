@@ -90,6 +90,8 @@ struct WsWatchPayload {
 struct WsCancelPayload {
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default, alias = "reason")]
+    cancel_source: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -748,12 +750,20 @@ async fn handle_ws(
                                     continue;
                                 }
                             },
-                            None => WsCancelPayload { session_id: None },
+                            None => WsCancelPayload {
+                                session_id: None,
+                                cancel_source: None,
+                            },
                         };
                         let request_id = normalize_request_id(envelope.request_id.as_deref());
                         let session_id =
                             resolve_session_id(envelope.session_id, payload.session_id);
                         let session_id = session_id.filter(|value| !value.trim().is_empty());
+                        let cancel_source = payload
+                            .cancel_source
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty());
                         if request_id.is_none() && session_id.is_none() {
                             let _ = send_ws_error(
                                 &ws_tx,
@@ -816,7 +826,10 @@ async fn handle_ws(
                                     &session_id,
                                 )
                                 .await;
-                                let _ = state.monitor.cancel(&session_id);
+                                let _ = state.monitor.cancel_with_source(
+                                    &session_id,
+                                    cancel_source.unwrap_or("ws_cancel"),
+                                );
                             }
                         }
                     }

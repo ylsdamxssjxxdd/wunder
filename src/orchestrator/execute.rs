@@ -1934,7 +1934,18 @@ impl Orchestrator {
                     );
                 }
                 if err.code() == "CANCELLED" {
-                    self.monitor.mark_cancelled(&session_id);
+                    let cancel_source = err
+                        .detail()
+                        .and_then(|detail| detail.get("cancel_source"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if let Some(cancel_source) = cancel_source {
+                        self.monitor
+                            .mark_cancelled_with_source(&session_id, cancel_source);
+                    } else {
+                        self.monitor.mark_cancelled(&session_id);
+                    }
                 } else if err.code() != "USER_BUSY" {
                     self.monitor.mark_error(&session_id, err.message());
                 }

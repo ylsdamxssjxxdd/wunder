@@ -469,7 +469,8 @@ export const chatSendActions = {
           onEvent,
           signal: runtime?.sendController?.signal,
           closeOnFinal: true,
-          resolveOnQueued: true
+          resolveOnQueued: true,
+          cancelOnAbort: false
         });
       } catch (error) {
         if (error?.name === 'AbortError' || runtime?.stopRequested || chatPageLifecycle.pageUnloading) {

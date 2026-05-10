@@ -49,6 +49,7 @@ type PendingEntry = {
   keepPendingAfterQueuedAck: boolean;
   signal?: AbortSignal;
   abortHandler: (() => void) | null;
+  cancelOnAbort: boolean;
 };
 
 type WsMessagePayload = Record<string, unknown>;
@@ -458,13 +459,16 @@ export const createWsMultiplexer = (
     socket.send(JSON.stringify(message));
   };
 
-  const sendCancel = (requestId: string, sessionId?: string): void => {
+  const sendCancel = (requestId: string, sessionId?: string, reason?: string): void => {
     const normalizedRequestId = normalizeRequestId(requestId);
     if (!normalizedRequestId) return;
     if (socket && socket.readyState === WebSocket.OPEN) {
       const payload: WsMessagePayload = { type: 'cancel', request_id: normalizedRequestId };
       if (sessionId) {
         payload.session_id = sessionId;
+      }
+      if (reason) {
+        payload.payload = { cancel_source: reason };
       }
       try {
         sendMessage(payload);
@@ -616,15 +620,16 @@ export const createWsMultiplexer = (
         keepPendingAfterQueuedAck: payload?.keepPendingAfterQueuedAck === true,
         settled: false,
         signal: payload?.signal,
-        abortHandler: null
+        abortHandler: null,
+        cancelOnAbort: payload?.cancelOnAbort !== false
       };
       pending.set(requestId, entry);
       clearIdleTimer();
       schedulePing();
       const handleAbort = (): void => {
         if (!pending.has(requestId)) return;
-        if (payload?.cancelOnAbort !== false) {
-          sendCancel(requestId, payload?.sessionId);
+        if (entry.cancelOnAbort) {
+          sendCancel(requestId, payload?.sessionId, 'client_abort');
         }
         const err = buildAbortError();
         err.phase = 'aborted';

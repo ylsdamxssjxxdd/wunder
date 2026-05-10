@@ -1,5 +1,17 @@
 type UnknownObject = Record<string, unknown>;
 
+const UNOBSERVED_AFTER_COMPACTION = 'unobserved_after_compaction';
+
+const normalizeMarker = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+
+const isUnobservedAfterCompaction = (detail: UnknownObject): boolean =>
+  [
+    detail.context_usage_source_after,
+    detail.contextUsageSourceAfter,
+    detail.context_usage_source,
+    detail.contextUsageSource
+  ].some((value) => normalizeMarker(value) === UNOBSERVED_AFTER_COMPACTION);
+
 const toOptionalInt = (...values: unknown[]): number | null => {
   for (const value of values) {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -19,6 +31,7 @@ export const resolveCompactionDividerTransitionTokens = (
   detail: UnknownObject | null | undefined
 ): { before: number; after: number } | null => {
   if (!detail) return null;
+  if (isUnobservedAfterCompaction(detail)) return null;
 
   const confirmedBefore = toOptionalInt(
     detail.final_context_tokens_before,

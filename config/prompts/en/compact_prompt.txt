@@ -8,6 +8,7 @@ Hard rules:
 - When mentioning filenames, commands, or artifact paths, quote the exact observed values from context. Do not rename files, add version suffixes, or invent new artifact names.
 - If the current round produced newer files, commands, or tool results before compaction, prioritize those latest observed facts over older state.
 - Remaining TODOs must be actionable and directly tied to the current task.
+- You must output one line `resume_action: final|continue|retry|ask_user`. Use `final` when the user-facing task is complete and the remaining TODO is empty; use `continue` when a concrete next execution step remains; use `retry` when a failed step must be repaired; use `ask_user` when missing evidence requires user clarification.
 - Do not repeat this instruction text or add generic boilerplate disclaimers.
 
 Include:
@@ -23,4 +24,5 @@ Output structure:
 ## Key findings / decisions
 ## Important context / constraints
 ## What remains to be done
+resume_action: final|continue|retry|ask_user
 ## Critical references

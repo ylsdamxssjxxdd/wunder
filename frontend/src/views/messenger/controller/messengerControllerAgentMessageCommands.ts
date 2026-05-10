@@ -36,6 +36,7 @@ import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelect
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { confirmStopAgentRun } from '@/views/messenger/stopConfirmation';
+import { captureStopRunSnapshot, validateStopRunSnapshot } from '@/views/messenger/stopRunGuard';
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
@@ -999,8 +1000,43 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           chatDebugLog('messenger.send', 'blocked-stop-during-interaction-lock', ctx.buildActiveSessionBusyDebugSnapshot());
           return;
       }
-      chatDebugLog('messenger.send', 'manual-stop-click', ctx.buildActiveSessionBusyDebugSnapshot());
+      const targetSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      const resolveStopSnapshot = () => {
+          const currentSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+          const targetMessages = targetSessionId && targetSessionId === currentSessionId
+              ? (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])
+              : ctx.chatStore.getCachedSessionMessages(targetSessionId);
+          return captureStopRunSnapshot({
+              sessionId: targetSessionId,
+              messages: targetMessages,
+              busy: targetSessionId ? ctx.resolveEffectiveSessionBusy(targetSessionId, targetMessages) : false
+          });
+      };
+      const stopSnapshot = resolveStopSnapshot();
+      chatDebugLog('messenger.send', 'manual-stop-click', {
+          ...ctx.buildActiveSessionBusyDebugSnapshot(),
+          stopSnapshot
+      });
+      if (!stopSnapshot.sessionId || !stopSnapshot.busy) {
+          ElMessage.info(ctx.t('chat.command.stopNoRunning'));
+          return;
+      }
       if (!(await confirmStopAgentRun(ctx.t))) {
+          return;
+      }
+      const currentStopSnapshot = resolveStopSnapshot();
+      const stopDecision = validateStopRunSnapshot(
+          stopSnapshot,
+          currentStopSnapshot,
+          ctx.chatStore.activeSessionId
+      );
+      if (!stopDecision.ok) {
+          chatDebugLog('messenger.send', 'manual-stop-stale-confirmation', {
+              reason: stopDecision.reason,
+              expected: stopSnapshot,
+              current: currentStopSnapshot
+          });
+          ElMessage.info(ctx.t('chat.command.stopNoRunning'));
           return;
       }
       const targetAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
@@ -1008,7 +1044,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       ctx.pendingAssistantCenter = false;
       ctx.pendingAssistantCenterCount = 0;
       try {
-          await ctx.chatStore.stopStream();
+          await ctx.chatStore.stopSessionActivity(targetSessionId, { terminateSubagents: true });
           ctx.agentGoalComposerRequested.value = false;
           ctx.agentGoalComposerVisible.value = false;
           ctx.agentGoalComposerObjective.value = '';
