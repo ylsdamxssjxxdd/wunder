@@ -90,6 +90,7 @@ test('message viewport runtime remeasures visible message rows on resize observe
       showScrollBottomButton: ref(false),
       isAgentConversationActive: ref(true),
       isWorldConversationActive: ref(false),
+      activeConversationKey: ref('agent:assistant-1'),
       shouldVirtualizeMessages: ref(true),
       agentRenderableMessages: ref([{ key: 'assistant-1', message: { role: 'assistant' } }]),
       worldRenderableMessages: ref([]),
@@ -135,4 +136,110 @@ test('message viewport runtime remeasures visible message rows on resize observe
       (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
     }
   }
+});
+
+test('message viewport runtime restores remembered conversation scroll after remount', async () => {
+  const messageVirtualHeightCache = new Map<string, number>();
+  const activeConversationKey = ref('agent:session-a');
+  const firstContainer = {
+    scrollTop: 420,
+    clientHeight: 500,
+    scrollHeight: 1800,
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ top: 0, height: 500 })
+  } as unknown as HTMLElement;
+  const firstRuntime = createMessageViewportRuntime({
+    messageListRef: ref(firstContainer),
+    showChatSettingsView: ref(false),
+    autoStickToBottom: ref(false),
+    showScrollTopButton: ref(false),
+    showScrollBottomButton: ref(false),
+    isAgentConversationActive: ref(true),
+    isWorldConversationActive: ref(false),
+    activeConversationKey,
+    shouldVirtualizeMessages: ref(false),
+    agentRenderableMessages: ref([]),
+    worldRenderableMessages: ref([]),
+    messageVirtualHeightCache,
+    messageVirtualLayoutVersion: ref(0),
+    messageVirtualScrollTop: ref(0),
+    messageVirtualViewportHeight: ref(0),
+    estimateVirtualOffsetTop: () => 0,
+    resolveVirtualMessageHeight: () => 0
+  });
+
+  firstRuntime.rememberCurrentScroll();
+  firstRuntime.dispose();
+
+  const secondContainer = {
+    scrollTop: 0,
+    clientHeight: 500,
+    scrollHeight: 2200,
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ top: 0, height: 500 })
+  } as unknown as HTMLElement;
+  const secondRuntime = createMessageViewportRuntime({
+    messageListRef: ref(secondContainer),
+    showChatSettingsView: ref(false),
+    autoStickToBottom: ref(false),
+    showScrollTopButton: ref(false),
+    showScrollBottomButton: ref(false),
+    isAgentConversationActive: ref(true),
+    isWorldConversationActive: ref(false),
+    activeConversationKey,
+    shouldVirtualizeMessages: ref(false),
+    agentRenderableMessages: ref([]),
+    worldRenderableMessages: ref([]),
+    messageVirtualHeightCache: new Map<string, number>(),
+    messageVirtualLayoutVersion: ref(0),
+    messageVirtualScrollTop: ref(0),
+    messageVirtualViewportHeight: ref(0),
+    estimateVirtualOffsetTop: () => 0,
+    resolveVirtualMessageHeight: () => 0
+  });
+
+  const restored = await secondRuntime.restoreConversationScroll();
+
+  assert.equal(restored, true);
+  assert.equal(secondContainer.scrollTop, 820);
+  secondRuntime.dispose();
+});
+
+test('message viewport runtime can store scroll under an explicit previous conversation key', async () => {
+  const activeConversationKey = ref('agent:session-b');
+  const container = {
+    scrollTop: 360,
+    clientHeight: 400,
+    scrollHeight: 1600,
+    querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ top: 0, height: 400 })
+  } as unknown as HTMLElement;
+  const runtime = createMessageViewportRuntime({
+    messageListRef: ref(container),
+    showChatSettingsView: ref(false),
+    autoStickToBottom: ref(false),
+    showScrollTopButton: ref(false),
+    showScrollBottomButton: ref(false),
+    isAgentConversationActive: ref(true),
+    isWorldConversationActive: ref(false),
+    activeConversationKey,
+    shouldVirtualizeMessages: ref(false),
+    agentRenderableMessages: ref([]),
+    worldRenderableMessages: ref([]),
+    messageVirtualHeightCache: new Map<string, number>(),
+    messageVirtualLayoutVersion: ref(0),
+    messageVirtualScrollTop: ref(0),
+    messageVirtualViewportHeight: ref(0),
+    estimateVirtualOffsetTop: () => 0,
+    resolveVirtualMessageHeight: () => 0
+  });
+
+  runtime.rememberScrollForKey('agent:session-a');
+  container.scrollTop = 0;
+  activeConversationKey.value = 'agent:session-a';
+
+  assert.equal(await runtime.restoreConversationScroll(), true);
+  assert.equal(container.scrollTop, 360);
+
+  runtime.dispose();
 });

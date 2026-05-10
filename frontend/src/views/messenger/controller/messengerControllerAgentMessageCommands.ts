@@ -35,6 +35,7 @@ import { hasRetainedMessageConversationContext as resolveRetainedMessageConversa
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
+import { confirmStopAgentRun } from '@/views/messenger/stopConfirmation';
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
@@ -999,6 +1000,9 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           return;
       }
       chatDebugLog('messenger.send', 'manual-stop-click', ctx.buildActiveSessionBusyDebugSnapshot());
+      if (!(await confirmStopAgentRun(ctx.t))) {
+          return;
+      }
       const targetAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
       ctx.setRuntimeStateOverride(targetAgentId, 'done', 20000);
       ctx.pendingAssistantCenter = false;

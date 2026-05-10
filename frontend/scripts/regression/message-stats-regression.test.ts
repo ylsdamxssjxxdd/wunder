@@ -803,7 +803,7 @@ test('message stats hides tool-turn speed when no reliable average exists', () =
   assert.equal(findEntryValue(entries, 'Speed'), '-');
 });
 
-test('message stats prefers compacting when another assistant message is running compaction', () => {
+test('message stats keeps compaction status scoped to the assistant bubble that owns it', () => {
   const t = createTranslator();
   const pendingAssistant = {
     role: 'assistant',
@@ -831,8 +831,14 @@ test('message stats prefers compacting when another assistant message is running
     t,
     [pendingAssistant, compactionAssistant]
   );
+  const compactionEntries = buildAssistantMessageStatsEntries(
+    compactionAssistant,
+    t,
+    [pendingAssistant, compactionAssistant]
+  );
 
-  assert.equal(entries[0]?.value, 'Compacting');
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(compactionEntries[0]?.value, 'Compacting');
 });
 
 test('message stats keeps waiting-input status ahead of stale running flags', () => {

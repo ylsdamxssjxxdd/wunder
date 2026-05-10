@@ -1,6 +1,10 @@
 import { nextTick, type Ref } from 'vue';
 
 import { chatDebugLog, isChatDebugEnabled } from '../../utils/chatDebug';
+import {
+  rememberMessageScrollPosition,
+  restoreMessageScrollPosition
+} from './messageScrollMemory';
 
 export type RenderableMessage = {
   key: string;
@@ -15,6 +19,7 @@ export type MessageViewportRuntimeOptions = {
   showScrollBottomButton: Ref<boolean>;
   isAgentConversationActive: Ref<boolean>;
   isWorldConversationActive: Ref<boolean>;
+  activeConversationKey: Ref<string>;
   shouldVirtualizeMessages: Ref<boolean>;
   agentRenderableMessages: Ref<RenderableMessage[]>;
   worldRenderableMessages: Ref<RenderableMessage[]>;
@@ -34,6 +39,9 @@ export type MessageViewportRuntime = {
   jumpToMessageTop: () => Promise<void>;
   scrollVirtualMessageToIndex: (keys: string[], index: number, align?: 'center' | 'start') => void;
   scrollLatestAssistantToCenter: () => Promise<void>;
+  restoreConversationScroll: () => Promise<boolean>;
+  rememberCurrentScroll: () => void;
+  rememberScrollForKey: (key: string) => void;
   scheduleMessageViewportRefresh: (options?: {
     updateScrollState?: boolean;
     measure?: boolean;
@@ -287,6 +295,26 @@ export const createMessageViewportRuntime = (
     options.showScrollBottomButton.value = !shouldStick && isConversation;
   };
 
+  const rememberCurrentScroll = () => {
+    rememberMessageScrollPosition(options.activeConversationKey.value, options.messageListRef.value);
+  };
+
+  const rememberScrollForKey = (key: string) => {
+    rememberMessageScrollPosition(key, options.messageListRef.value);
+  };
+
+  const restoreConversationScroll = async () => {
+    await nextTick();
+    const container = options.messageListRef.value;
+    if (!container || options.showChatSettingsView.value) return false;
+    const restored = restoreMessageScrollPosition(options.activeConversationKey.value, container);
+    if (!restored) return false;
+    syncMessageVirtualMetrics();
+    updateMessageScrollState();
+    scheduleMessageVirtualMeasure();
+    return true;
+  };
+
   const scheduleMessageVirtualMeasure = (measureKeys?: string[]) => {
     if (typeof window === 'undefined') return;
     if (!options.shouldVirtualizeMessages.value) return;
@@ -357,6 +385,7 @@ export const createMessageViewportRuntime = (
     if (typeof window === 'undefined') {
       syncMessageVirtualMetrics();
       updateMessageScrollState();
+      rememberCurrentScroll();
       return;
     }
     if (messageScrollFrame !== null) return;
@@ -364,6 +393,7 @@ export const createMessageViewportRuntime = (
       messageScrollFrame = null;
       syncMessageVirtualMetrics();
       updateMessageScrollState();
+      rememberCurrentScroll();
       scheduleMessageVirtualMeasure();
     });
   };
@@ -397,6 +427,7 @@ export const createMessageViewportRuntime = (
     container.scrollTop = clamp(targetTop, 0, maxTop);
     syncMessageVirtualMetrics();
     updateMessageScrollState();
+    rememberCurrentScroll();
     scheduleMessageVirtualMeasure();
   };
 
@@ -412,6 +443,7 @@ export const createMessageViewportRuntime = (
     container.scrollTop = container.scrollHeight;
     syncMessageVirtualMetrics();
     updateMessageScrollState();
+    rememberCurrentScroll();
     scheduleMessageVirtualMeasure();
   };
 
@@ -428,6 +460,7 @@ export const createMessageViewportRuntime = (
     container.scrollTop = 0;
     syncMessageVirtualMetrics();
     updateMessageScrollState();
+    rememberCurrentScroll();
     scheduleMessageVirtualMeasure();
   };
 
@@ -466,6 +499,7 @@ export const createMessageViewportRuntime = (
       container.scrollTop = clamp(nextTop, 0, maxTop);
       syncMessageVirtualMetrics();
       updateMessageScrollState();
+      rememberCurrentScroll();
       scheduleMessageVirtualMeasure();
     });
   };
@@ -483,6 +517,7 @@ export const createMessageViewportRuntime = (
       window.cancelAnimationFrame(messageViewportRefreshFrame);
       messageViewportRefreshFrame = null;
     }
+    rememberCurrentScroll();
     releaseObservedMessageNodes();
     messageResizeObserver = null;
     scheduledViewportRefreshNeedsScrollState = false;
@@ -501,6 +536,9 @@ export const createMessageViewportRuntime = (
     jumpToMessageTop,
     scrollVirtualMessageToIndex,
     scrollLatestAssistantToCenter,
+    restoreConversationScroll,
+    rememberCurrentScroll,
+    rememberScrollForKey,
     scheduleMessageViewportRefresh,
     scheduleMessageVirtualMeasure,
     updateMessageScrollState,

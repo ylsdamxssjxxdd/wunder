@@ -472,11 +472,6 @@ const hasAssistantUnfinishedWaitingWindow = (
   return explicitState !== 'done' && explicitState !== 'error' && explicitState !== 'pending';
 };
 
-const isAssistantCompactionMessageRunning = (message: MessageLike | null | undefined): boolean => {
-  if (!message || message.role !== 'assistant' || message.isGreeting) return false;
-  return isCompactionRunningFromWorkflowItems(message?.workflowItems);
-};
-
 const resolveMessageIndex = (message: MessageLike, allMessages: MessageLike[]): number => {
   const directIndex = allMessages.lastIndexOf(message);
   if (directIndex >= 0) return directIndex;
@@ -523,19 +518,6 @@ const resolveAssistantUserRound = (
       message?.stream_round ??
       message?.streamRound
   );
-};
-
-const hasConversationCompactionRunning = (
-  message: MessageLike,
-  allMessages: MessageLike[] | null | undefined
-): boolean => {
-  if (!Array.isArray(allMessages) || allMessages.length < 2) return false;
-  const currentIndex = resolveMessageIndex(message, allMessages);
-  if (currentIndex < 0) return false;
-  return allMessages.some((item, index) => {
-    if (index === currentIndex || index < currentIndex) return false;
-    return isAssistantCompactionMessageRunning(item);
-  });
 };
 
 const buildStatusEntry = (
@@ -687,12 +669,6 @@ const resolveAssistantStatusEntry = (
   }
   if (hasActiveSubagentItems(message?.subagents)) {
     return buildStatusEntry(t('messenger.messageStatus.subagentRunning'), 'running', true, 'fa-solid fa-diagram-project');
-  }
-  if (
-    (isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message) || latestRequest.index >= 0) &&
-    hasConversationCompactionRunning(message, allMessages)
-  ) {
-    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true, 'fa-solid fa-compress');
   }
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true, 'fa-solid fa-screwdriver-wrench');

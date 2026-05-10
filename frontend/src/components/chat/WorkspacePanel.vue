@@ -561,7 +561,7 @@ const displayEntries = computed(() => {
   }
   return result;
 });
-const WORKSPACE_ROW_HEIGHT = 28;
+const WORKSPACE_ROW_HEIGHT = 24;
 const WORKSPACE_OVERSCAN = 8;
 const workspaceVirtual = computed(() => displayEntries.value.length > 120);
 const workspaceViewportHeight = computed(() => listRef.value?.clientHeight || 0);

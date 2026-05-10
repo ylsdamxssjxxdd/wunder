@@ -448,6 +448,18 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       ctx.messageViewportRuntime?.handleMessageListScroll();
   };
 
+  ctx.restoreConversationScroll = async () => {
+      return ctx.messageViewportRuntime?.restoreConversationScroll() ?? Promise.resolve(false);
+  };
+
+  ctx.rememberCurrentMessageScroll = () => {
+      ctx.messageViewportRuntime?.rememberCurrentScroll();
+  };
+
+  ctx.rememberMessageScrollForKey = (key: string) => {
+      ctx.messageViewportRuntime?.rememberScrollForKey(key);
+  };
+
   ctx.scrollMessagesToBottom = async (force = false) => {
       return ctx.messageViewportRuntime?.scrollMessagesToBottom(force) ?? Promise.resolve();
   };
@@ -515,6 +527,7 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       showScrollBottomButton: ctx.showScrollBottomButton,
       isAgentConversationActive: ctx.isAgentConversationActive,
       isWorldConversationActive: ctx.isWorldConversationActive,
+      activeConversationKey: computed(() => String(ctx.sessionHub.activeConversationKey || '')),
       shouldVirtualizeMessages: ctx.shouldVirtualizeMessages,
       agentRenderableMessages: ctx.agentRenderableMessages,
       worldRenderableMessages: ctx.worldRenderableMessages,

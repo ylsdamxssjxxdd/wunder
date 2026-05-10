@@ -569,7 +569,10 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.scheduleMessengerOrderPersist();
   }, { deep: false });
 
-  watch(() => ctx.sessionHub.activeSection, (section) => {
+  watch(() => ctx.sessionHub.activeSection, (section, previousSection) => {
+      if (previousSection === 'messages' && section !== 'messages') {
+          ctx.rememberCurrentMessageScroll?.();
+      }
       ctx.closeFileContainerMenu();
       if (!ctx.isSearchableMiddlePaneSection(section) && (ctx.keywordInput.value || ctx.sessionHub.keyword)) {
           ctx.clearKeywordDebounce();
@@ -587,6 +590,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.startRealtimePulse?.();
           ctx.triggerRealtimePulseRefresh?.(`enter-${section}`);
           if (section === 'messages') {
+              void nextTick(async () => {
+                  const restored = await ctx.restoreConversationScroll?.();
+                  if (!restored) {
+                      await ctx.scrollMessagesToBottom(true);
+                  }
+              });
               void ctx.chatStore.ensureActiveSessionRealtime?.({
                   reason: 'enter-messages-section',
                   hydrateIfCold: true
@@ -783,7 +792,10 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.ensureSectionSelection();
   });
 
-  watch(() => ctx.sessionHub.activeConversationKey, () => {
+  watch(() => ctx.sessionHub.activeConversationKey, (_value, oldValue) => {
+      if (oldValue) {
+          ctx.rememberMessageScrollForKey?.(String(oldValue));
+      }
       ctx.markdownCache.clear();
       ctx.clearWorkspaceResourceCache();
       ctx.pendingAssistantCenter = false;
@@ -793,6 +805,14 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
       ctx.scheduleWorkspaceResourceHydration();
+      if (ctx.sessionHub.activeSection === 'messages') {
+          void nextTick(async () => {
+              const restored = await ctx.restoreConversationScroll?.();
+              if (!restored) {
+                  await ctx.scrollMessagesToBottom(true);
+              }
+          });
+      }
   });
 
   watch(() => ctx.activeAgentPlan.value, (value) => {
@@ -929,6 +949,16 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
               void ctx.scrollLatestAssistantToCenter();
               return;
           }
+      }
+      if (
+          ctx.sessionHub.activeSection === 'messages' &&
+          !ctx.autoStickToBottom.value &&
+          ctx.messageListRef.value &&
+          ctx.messageListRef.value.scrollTop <= 1
+      ) {
+          void nextTick(() => {
+              void ctx.restoreConversationScroll?.();
+          });
       }
       if (ctx.autoStickToBottom.value) {
           void ctx.scrollMessagesToBottom();

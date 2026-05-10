@@ -104,6 +104,7 @@ const showScrollTopButton = ref(false);
 const showScrollBottomButton = ref(false);
 const isAgentConversationActive = ref(true);
 const isWorldConversationActive = ref(false);
+const activeConversationKey = ref('agent:heavy-history-harness');
 const shouldVirtualizeMessages = ref(false);
 const agentRenderableMessages = ref<RenderableMessage[]>([]);
 const worldRenderableMessages = ref<RenderableMessage[]>([]);
@@ -133,6 +134,7 @@ const runtime = createMessageViewportRuntime({
   showScrollBottomButton,
   isAgentConversationActive,
   isWorldConversationActive,
+  activeConversationKey,
   shouldVirtualizeMessages,
   agentRenderableMessages,
   worldRenderableMessages,
