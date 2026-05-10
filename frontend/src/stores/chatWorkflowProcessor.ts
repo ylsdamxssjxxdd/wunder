@@ -143,7 +143,10 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   const roundState = normalizeSessionWorkflowState(workflowState);
   const streamFlushMs = resolveStreamFlushMs(null, options.streamFlushMs);
   const perfEnabled = chatPerf.enabled();
-  const commandSessionStore = useCommandSessionStore();
+  const commandSessionStore =
+    typeof options.commandSessionStore === 'object' && options.commandSessionStore
+      ? options.commandSessionStore
+      : useCommandSessionStore();
   const processorSessionId = resolveSessionKey(options.sessionId);
   const toolItemMap = new Map();
   const toolCallItemMap = new Map();
@@ -650,16 +653,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
         usagePayload?.context_usage?.context_max_tokens
     );
     if (explicitContextTokens !== null) {
-      const existingContextTokens = normalizeContextTokens(stats.contextTokens);
-      const changed = existingContextTokens !== explicitContextTokens;
-      stats.contextTokens = explicitContextTokens;
-      contextEstimateBaseTokens = explicitContextTokens;
-      if (explicitContextTotalTokens !== null) {
-        stats.contextTotalTokens = explicitContextTotalTokens;
-      }
-      if (changed) {
-        options.onContextUsage?.(explicitContextTokens, stats.contextTotalTokens ?? null);
-      }
+      syncLiveContextTokens(explicitContextTokens, explicitContextTotalTokens);
     } else if (explicitContextTotalTokens !== null) {
       stats.contextTotalTokens = explicitContextTotalTokens;
     }
@@ -738,12 +732,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
         payload?.context_usage?.context_max_tokens
     );
     if (explicitContextTokens !== null) {
-      stats.contextTokens = explicitContextTokens;
-      contextEstimateBaseTokens = explicitContextTokens;
-      if (contextTotalTokens !== null) {
-        stats.contextTotalTokens = contextTotalTokens;
-      }
-      options.onContextUsage?.(explicitContextTokens, contextTotalTokens);
+      syncLiveContextTokens(explicitContextTokens, contextTotalTokens);
     } else if (contextTotalTokens !== null) {
       stats.contextTotalTokens = contextTotalTokens;
     }

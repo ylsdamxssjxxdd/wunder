@@ -100,4 +100,3 @@
 - 桌面端改动：Tauri 相关放 `desktop/tauri/`；Electron 相关放 `desktop/electron/src/`、`desktop/electron/resources/`、`desktop/electron/scripts/`。
 - 内置提示词、知识、技能、字体、预设卡片等资源统一放 `config/` 对应子目录，不要再放回仓库根目录。
 - 每次任务完成后必须通过脚本更新 `docs/功能迭代.md`，不要手写破坏分类结构。
-

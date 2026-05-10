@@ -29,10 +29,7 @@ import {
   resolveChatRequestTextInputOverflow
 } from '@/utils/chatRequestInputLimit';
 import {
-  hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
-  hasStreamingAssistantMessage,
-  isSessionBusyFromSignals,
   isThreadRuntimeBusy,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
@@ -74,9 +71,7 @@ import {
 import {
   selectLegacyMessageStatus,
   selectVisibleMessageProjections,
-  selectSessionBusy,
-  selectSessionBusyReason,
-  selectSessionRuntimeStatus
+  selectSessionBusyReason
 } from '@/realtime/chat/chatRuntimeSelectors';
 import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
@@ -130,10 +125,13 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { isGoalActiveForLock } from './chatPersist';
-import { buildRuntimeDebugSnapshot, getHistoryState, getRuntime, getSessionMessages, hasRuntimeControllers, resolveSessionKey } from './chatRuntimeState';
+import { getHistoryState, getRuntime, getSessionMessages, hasRuntimeControllers, resolveSessionKey } from './chatRuntimeState';
 import { PendingApproval, SessionGoal } from './chatTypes';
 import { resolveLegacyMessageRuntimeStatusFromStore, resolveProjectedVisibleMessagesFromStore } from './chatWatcher';
-import { isTerminalRuntimeStatus } from './chatWorkflowHydration';
+import {
+  resolveMergedSessionBusy,
+  resolveMergedSessionRuntimeStatus
+} from './chatBusyState';
 
 import { chatApprovalActions } from './chatApprovalActions';
 import { chatCacheActions } from './chatCacheActions';
@@ -168,48 +166,33 @@ export const useChatStore = defineStore('chat', {
     isSessionBusy: (state) => (sessionId) => {
       const key = resolveSessionKey(sessionId);
       if (!key) return false;
-      if (state.runtimeProjection?.sessions?.[key]) {
-        return selectSessionBusy(state.runtimeProjection, key);
-      }
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
       const runtime = getRuntime(key);
-      const busyBySignals = isSessionBusyFromSignals(
-        state.loadingBySession[key],
+      return resolveMergedSessionBusy({
+        projection: state.runtimeProjection,
+        sessionId: key,
+        loading: state.loadingBySession[key],
         messages,
-        runtime?.threadStatus
-      );
-      if (!busyBySignals) return false;
-      const hasLoadingFlag = Boolean(state.loadingBySession[key]);
-      const runtimeTerminal =
-        Boolean(runtime) &&
-        !hasRuntimeControllers(runtime) &&
-        isTerminalRuntimeStatus(runtime?.threadStatus);
-      if (
-        !hasLoadingFlag &&
-        runtimeTerminal &&
-        !hasActiveSubagentsAfterLatestUser(messages) &&
-        hasStreamingAssistantMessage(messages)
-      ) {
-        chatDebugLog('chat.store.busy', 'suppress-stale-assistant-busy-after-terminal', {
-          sessionId: key,
-          runtime: buildRuntimeDebugSnapshot(runtime),
-          activeSessionId: resolveSessionKey(state.activeSessionId),
-          messageCount: Array.isArray(messages) ? messages.length : 0
-        });
-        return false;
-      }
-      return busyBySignals;
+        runtimeStatus: runtime?.threadStatus,
+        runtimeKnown: Boolean(runtime),
+        runtimeHasControllers: hasRuntimeControllers(runtime)
+      });
     },
     sessionRuntimeStatus: (state) => (sessionId) => {
       const key = resolveSessionKey(sessionId);
-      const projectionStatus = selectSessionRuntimeStatus(
-        state.runtimeProjection,
-        key
-      );
-      if (projectionStatus !== 'not_loaded') return projectionStatus;
+      const activeKey = resolveSessionKey(state.activeSessionId);
+      const messages = activeKey === key ? state.messages : getSessionMessages(key);
       const runtime = getRuntime(key);
-      return normalizeThreadRuntimeStatus(runtime?.threadStatus);
+      return resolveMergedSessionRuntimeStatus({
+        projection: state.runtimeProjection,
+        sessionId: key,
+        loading: state.loadingBySession[key],
+        messages,
+        runtimeStatus: runtime?.threadStatus,
+        runtimeKnown: Boolean(runtime),
+        runtimeHasControllers: hasRuntimeControllers(runtime)
+      });
     },
     sessionBusyReason: (state) => (sessionId) => {
       const key = resolveSessionKey(sessionId);

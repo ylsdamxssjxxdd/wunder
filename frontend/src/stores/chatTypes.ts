@@ -215,6 +215,10 @@ export type WorkflowProcessorOptions = {
   streamFlushMs?: number;
   sessionId?: string | null;
   initialContextTokens?: number | null;
+  commandSessionStore?: {
+    upsertSnapshot?: (...args: unknown[]) => unknown;
+    appendDelta?: (...args: unknown[]) => unknown;
+  } | null;
   onThreadControl?: (payload: unknown) => void | Promise<void>;
   onContextUsage?: (contextTokens: number, contextTotalTokens?: number | null) => void;
 };

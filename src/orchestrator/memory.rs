@@ -3667,67 +3667,16 @@ fn build_compaction_instruction(
 
 fn merge_compaction_system_message(
     system_message: Option<Value>,
-    artifact_content: &str,
+    _artifact_content: &str,
 ) -> Option<Value> {
-    let artifact = artifact_content.trim();
     match system_message {
         Some(mut message) => {
-            if artifact.is_empty() {
-                return Some(message);
-            }
-            let existing_text = message
-                .as_object()
-                .and_then(|obj| obj.get("content"))
-                .map(flatten_compaction_system_content)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let merged_content = if existing_text.is_empty() {
-                artifact.to_string()
-            } else if existing_text.contains(artifact) {
-                existing_text
-            } else {
-                format!("{existing_text}\n\n{artifact}")
-            };
             if let Some(obj) = message.as_object_mut() {
                 obj.insert("role".to_string(), Value::String("system".to_string()));
-                obj.insert("content".to_string(), Value::String(merged_content));
-                Some(message)
-            } else {
-                Some(json!({ "role": "system", "content": merged_content }))
             }
+            Some(message)
         }
-        None => {
-            if artifact.is_empty() {
-                None
-            } else {
-                Some(json!({ "role": "system", "content": artifact }))
-            }
-        }
-    }
-}
-
-fn flatten_compaction_system_content(content: &Value) -> String {
-    match content {
-        Value::String(text) => text.to_string(),
-        Value::Array(items) => items
-            .iter()
-            .filter_map(|item| {
-                item.as_str()
-                    .or_else(|| item.get("text").and_then(Value::as_str))
-                    .or_else(|| item.get("content").and_then(Value::as_str))
-                    .map(ToString::to_string)
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        Value::Object(map) => map
-            .get("text")
-            .and_then(Value::as_str)
-            .or_else(|| map.get("content").and_then(Value::as_str))
-            .unwrap_or("")
-            .to_string(),
-        Value::Null => String::new(),
-        other => other.to_string(),
+        None => None,
     }
 }
 
@@ -5238,7 +5187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_compaction_system_message_merges_artifact_into_existing_system() {
+    fn test_merge_compaction_system_message_keeps_existing_system_frozen() {
         let merged = merge_compaction_system_message(
             Some(json!({ "role": "system", "content": "system prompt" })),
             "Artifact index",
@@ -5249,19 +5198,12 @@ mod tests {
             .get("content")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert!(content.contains("system prompt"));
-        assert!(content.contains("Artifact index"));
+        assert_eq!(content, "system prompt");
     }
 
     #[test]
-    fn test_merge_compaction_system_message_creates_system_from_artifact_only() {
-        let merged =
-            merge_compaction_system_message(None, "Artifact index").expect("artifact system");
-        assert_eq!(merged.get("role").and_then(Value::as_str), Some("system"));
-        assert_eq!(
-            merged.get("content").and_then(Value::as_str),
-            Some("Artifact index")
-        );
+    fn test_merge_compaction_system_message_does_not_create_artifact_system() {
+        assert!(merge_compaction_system_message(None, "Artifact index").is_none());
     }
 
     #[test]

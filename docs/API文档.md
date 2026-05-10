@@ -1621,7 +1621,7 @@
   - `ok`：是否成功
   - `message`：提示信息
 - 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
-- 说明：压缩重建默认保留“最早归一化交互窗口 + 压缩摘要 + 最近归一化交互窗口 + 当前轮续跑消息”。运行中压缩会按当前轮状态和摘要的 `resume_action` 生成临时 `user` 续跑指令，避免重复执行已成功工具或从失败现场重新开始；工具成功但 `resume_action=final/ask_user` 时使用 `final_continuation` 直接收口，`continue/retry/unknown` 时使用 `tool_success_continuation` 从最新 observation 与摘要继续。
+- 说明：压缩重建默认保留“冻结 system + 最早归一化交互窗口 + 压缩摘要 + 最近归一化交互窗口 + 当前轮续跑消息”。运行中压缩会按当前轮状态和摘要的 `resume_action` 生成临时 `user` 续跑指令，避免重复执行已成功工具或从失败现场重新开始；工具成功但 `resume_action=final/ask_user` 时使用 `final_continuation` 直接收口，`continue/retry/unknown` 时使用 `tool_success_continuation` 从最新 observation 与摘要继续。动态产物索引只参与摘要上下文，不追加到主请求 `system`。
 - 说明：`compaction` 事件会额外包含 `retained_user_message_count`、`retained_user_tokens`、`retained_interaction_message_count`、`retained_head_message_count`、`retained_tail_message_count`、`source_interaction_block_count`、`current_user_replay_mode`、`compaction_resume_action`、`current_turn_progress_state`、`current_turn_has_tool_success` 与 `current_turn_has_tool_failure` 字段，便于核对压缩保留窗口和当前轮续跑策略。
 - 说明：每次压缩都会生成唯一 `compaction_id`，并在 `progress / llm_request / llm_response / compaction` 事件中保持一致；压缩完成事件会额外带上 `replacement_history_message_count`、`replacement_history_tokens`、`rebuilt_request_debug` 与 `replacement_history_debug`，用于核对本次继续执行请求和已提交压缩基线。
 - 说明：若压缩摘要模型请求失败并回退到本地裁剪摘要，`compaction` 事件会额外附带 `summary_fallback_reason`、`summary_failure_code`、`summary_failure_message` 与 `summary_failure_retryable` 字段，便于区分“摘要请求失败”和“摘要输出为空”。
@@ -2774,7 +2774,7 @@
 - 压缩摘要消息的 `meta` 现在会额外持久化 `compaction_id` 与 `replacement_history`；后续普通请求与会话回放都会优先基于这份已提交的 `replacement_history`，而不是再次临时重建一套近似上下文。
   - 刷新页面后，前端应通过会话事件与 runtime 快照恢复“压缩中/已完成/失败”状态，而不是依赖本地临时气泡。
 - 摘要阶段的模型请求会按 `system? + source_messages + user: CONTEXT CHECKPOINT COMPACTION` 组装，压缩指令始终是最后一条消息，避免尾部工具 observation 覆盖摘要任务。
-- 运行中压缩完成后的继续执行请求会按 `system + retained_head_messages + summary + retained_tail_messages + current_user_replay_message` 组装；`current_user_replay_message` 只作为临时 `user` 续跑指令使用，不写入 `replacement_history`。续跑只读取摘要的 `resume_action` 与保留的结构化 observation，不从工具输出文本里提取路径来判断任务是否完成。
+- 运行中压缩完成后的继续执行请求会按 `frozen system + retained_head_messages + summary + retained_tail_messages + current_user_replay_message` 组装；`current_user_replay_message` 只作为临时 `user` 续跑指令使用，不写入 `replacement_history`。续跑只读取摘要的 `resume_action` 与保留的结构化 observation，不从工具输出文本里提取路径来判断任务是否完成，也不把产物索引拼进 `system`。
 - 返回：
   - `data.accepted`：固定为 `true`
   - `data.running`：固定为 `true`
