@@ -166,8 +166,8 @@ curl -X POST http://localhost:18000/wunder \
 ### token 统计是上下文占用量
 
 - 不是直接等同于账单
-- 当前上下文占用优先看 `round_usage.total_tokens`
-- 总消耗按每次请求的 `round_usage.total_tokens` 累加
+- 当前上下文占用优先看 `round_usage.context_occupancy_tokens`
+- 总消耗按每次请求的 `round_usage.request_consumed_tokens` 或 `round_usage.total_tokens` 累加
 
 ### 线程 system prompt 会冻结
 

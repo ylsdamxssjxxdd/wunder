@@ -916,7 +916,8 @@ impl MonitorState {
                     record.updated_time = now;
                     if event_type == "context_usage" {
                         if let Some(total) = parse_i64_value(
-                            data.get("context_tokens")
+                            data.get("context_occupancy_tokens")
+                                .or_else(|| data.get("context_tokens"))
                                 .or_else(|| data.get("total_tokens")),
                         ) {
                             record.context_tokens = total;
@@ -3002,6 +3003,36 @@ mod tests {
             data: json!({ "context_tokens": 1234 }),
         });
         assert_eq!(derive_effective_context_tokens(&events), Some((1234, 1234)));
+    }
+
+    #[test]
+    fn monitor_record_event_prefers_explicit_context_occupancy() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-context-occupancy.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            SandboxConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        let session_id = "sess-ctx";
+        monitor.register(session_id, "user", "agent", "question", true, false);
+        monitor.record_event(
+            session_id,
+            "context_usage",
+            &json!({
+                "context_occupancy_tokens": 4321,
+                "context_tokens": 1234,
+                "total_tokens": 9999
+            }),
+        );
+        let detail = monitor.get_detail(session_id).expect("session detail");
+        assert_eq!(detail["session"]["context_tokens"], json!(4321));
+        assert_eq!(detail["session"]["context_occupancy_tokens"], json!(4321));
+        assert_eq!(detail["session"]["context_tokens_peak"], json!(4321));
     }
 
     #[test]

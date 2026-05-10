@@ -55,6 +55,7 @@ import {
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
+import { shouldShowAgentSettingsPanelForSection } from '@/views/messenger/settingsPanelVisibility';
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
@@ -968,7 +969,7 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       top: `${ctx.fileContainerContextMenu.value.y}px`
   }));
 
-  ctx.showAgentSettingsPanel = computed(() => ctx.sessionHub.activeSection === 'agents' || ctx.isAgentConversationActive.value);
+  ctx.showAgentSettingsPanel = computed(() => shouldShowAgentSettingsPanelForSection(ctx.sessionHub.activeSection));
 
   ctx.settingsAgentId = computed(() => {
       if (ctx.sessionHub.activeSection === 'agents') {

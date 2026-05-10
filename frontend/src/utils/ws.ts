@@ -32,6 +32,7 @@ type WsRequestPayload = {
   onEvent?: StreamEventHandler;
   closeOnFinal?: boolean;
   resolveOnQueued?: boolean;
+  keepPendingAfterQueuedAck?: boolean;
   signal?: AbortSignal;
   cancelOnAbort?: boolean;
   sessionId?: string;
@@ -42,8 +43,10 @@ type PendingEntry = {
   onEvent: StreamEventHandler;
   resolve: () => void;
   reject: (error: unknown) => void;
+  settled: boolean;
   closeOnFinal: boolean;
   resolveOnQueued: boolean;
+  keepPendingAfterQueuedAck: boolean;
   signal?: AbortSignal;
   abortHandler: (() => void) | null;
 };
@@ -387,12 +390,41 @@ export const createWsMultiplexer = (
     }
   };
 
+  const settleResolve = (entry: PendingEntry): void => {
+    if (entry.settled) return;
+    entry.settled = true;
+    entry.resolve();
+  };
+
+  const settleReject = (entry: PendingEntry, error: unknown): void => {
+    if (entry.settled) return;
+    entry.settled = true;
+    entry.reject(error);
+  };
+
+  const resolveQueuedAck = (requestId: string): void => {
+    const entry = pending.get(requestId);
+    if (!entry) return;
+    if (!entry.keepPendingAfterQueuedAck) {
+      pending.delete(requestId);
+      cleanupRequest(entry);
+      settleResolve(entry);
+      if (pending.size === 0) {
+        clearPingTimer();
+      }
+      scheduleIdleClose();
+      return;
+    }
+    // Some WS producers send a queued ack before more request-scoped events.
+    settleResolve(entry);
+  };
+
   const resolveRequest = (requestId: string): void => {
     const entry = pending.get(requestId);
     if (!entry) return;
     pending.delete(requestId);
     cleanupRequest(entry);
-    entry.resolve();
+    settleResolve(entry);
     if (pending.size === 0) {
       clearPingTimer();
     }
@@ -404,7 +436,7 @@ export const createWsMultiplexer = (
     if (!entry) return;
     pending.delete(requestId);
     cleanupRequest(entry);
-    entry.reject(error);
+    settleReject(entry, error);
     if (pending.size === 0) {
       clearPingTimer();
     }
@@ -427,16 +459,22 @@ export const createWsMultiplexer = (
   };
 
   const sendCancel = (requestId: string, sessionId?: string): void => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const payload: WsMessagePayload = { type: 'cancel', request_id: requestId };
-    if (sessionId) {
-      payload.session_id = sessionId;
+    const normalizedRequestId = normalizeRequestId(requestId);
+    if (!normalizedRequestId) return;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      const payload: WsMessagePayload = { type: 'cancel', request_id: normalizedRequestId };
+      if (sessionId) {
+        payload.session_id = sessionId;
+      }
+      try {
+        sendMessage(payload);
+      } catch {
+        // ignore
+      }
     }
-    try {
-      sendMessage(payload);
-    } catch {
-      // ignore
-    }
+    const err = buildAbortError();
+    err.phase = 'cancelled';
+    rejectRequest(normalizedRequestId, err);
   };
 
   const handleMessage = (event: MessageEvent<string>): void => {
@@ -463,7 +501,7 @@ export const createWsMultiplexer = (
         eventPayload.queued === true ||
         asPayloadRecord(eventPayload.data).queued === true;
       if (entry.resolveOnQueued && queuedFlag) {
-        resolveRequest(requestId);
+        resolveQueuedAck(requestId);
         return;
       }
       if (isResumeRequiredSlowClientEvent(eventPayload)) {
@@ -575,6 +613,8 @@ export const createWsMultiplexer = (
         reject,
         closeOnFinal: payload?.closeOnFinal !== false,
         resolveOnQueued: payload?.resolveOnQueued === true,
+        keepPendingAfterQueuedAck: payload?.keepPendingAfterQueuedAck === true,
+        settled: false,
         signal: payload?.signal,
         abortHandler: null
       };

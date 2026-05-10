@@ -1200,7 +1200,7 @@
   - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
   - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
-  - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为真实用户消息窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode。
+  - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
   - 说明：`max_output` 为单次请求的统一输出上限；未配置时服务端默认按 `8192` 下发，避免模型循环无限输出。
   - 说明：`thinking_token_budget` 为 reasoning/thinking 通道的单次思考 Token 上限；未配置时服务端默认按 `16384` 下发；若 `reasoning_effort=none` 则不下发该预算。
@@ -1598,9 +1598,9 @@
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
 - `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
-- `session.context_tokens/context_tokens_peak` 汇总优先采用 `round_usage.total_tokens` 作为有效占用；`context_usage` 仍保留估算值用于过程观测。
-- `round_usage.total_tokens` 表示单轮请求完成后的实际上下文占用，是当前线程上下文占用的权威口径；实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加。
-- `round_usage` 事件额外提供 `context_occupancy_tokens` 与 `request_consumed_tokens` 两个显式语义别名；它们当前都与 `round_usage.total_tokens` 相同，新接入可直接按字段名区分“当前占用”和“单次请求消耗”。
+- `session.context_tokens/context_tokens_peak` 汇总优先采用显式 `context_occupancy_tokens/context_tokens` 作为有效占用；`context_usage` 的本地估算值仍保留用于过程观测。
+- `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
+- 新接入展示“当前上下文占用”时优先读取 `context_occupancy_tokens`，展示“单次请求消耗”或扣费统计时读取 `request_consumed_tokens`/`round_usage.total_tokens`。
 - Token 余额不足时返回 `USER_TOKEN_INSUFFICIENT`，错误明细会附带 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`，便于客户端直接刷新 Token 账户视图。
 
 
@@ -1620,8 +1620,9 @@
   - `ok`：是否成功
   - `message`：提示信息
 - 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
-- 说明：压缩重建默认保留“最近用户消息窗口（最多 20k token，按 token 窗口而非固定轮次）+ 压缩摘要 + 当前用户消息”；`compaction` 事件会额外包含 `retained_user_message_count`、`retained_user_tokens` 与 `retained_user_window_token_limit` 字段。
-- 说明：每次压缩都会生成唯一 `compaction_id`，并在 `progress / llm_request / llm_response / compaction` 事件中保持一致；压缩完成事件会额外带上 `replacement_history_message_count` 与 `replacement_history_tokens`，用于核对已提交的压缩基线。
+- 说明：压缩重建默认保留“最早归一化交互窗口 + 压缩摘要 + 最近归一化交互窗口 + 当前轮续跑消息”。运行中压缩会按当前轮状态生成临时 `user` 续跑指令，避免重复执行已成功工具或从失败现场重新开始。
+- 说明：`compaction` 事件会额外包含 `retained_user_message_count`、`retained_user_tokens`、`retained_interaction_message_count`、`retained_head_message_count`、`retained_tail_message_count`、`source_interaction_block_count`、`current_user_replay_mode`、`current_turn_progress_state`、`current_turn_has_tool_success` 与 `current_turn_has_tool_failure` 字段，便于核对压缩保留窗口和当前轮续跑策略。
+- 说明：每次压缩都会生成唯一 `compaction_id`，并在 `progress / llm_request / llm_response / compaction` 事件中保持一致；压缩完成事件会额外带上 `replacement_history_message_count`、`replacement_history_tokens`、`rebuilt_request_debug` 与 `replacement_history_debug`，用于核对本次继续执行请求和已提交压缩基线。
 - 说明：若压缩摘要模型请求失败并回退到本地裁剪摘要，`compaction` 事件会额外附带 `summary_fallback_reason`、`summary_failure_code`、`summary_failure_message` 与 `summary_failure_retryable` 字段，便于区分“摘要请求失败”和“摘要输出为空”。
 
 ### 4.1.11 `/wunder/admin/monitor/{session_id}`
@@ -2771,6 +2772,8 @@
 - 后端会将这次手动压缩登记为一个真实的独立运行轮次，并持续写入 `thread_status`、`progress`、`compaction`、`context_usage`、`turn_terminal` 等事件。
 - 压缩摘要消息的 `meta` 现在会额外持久化 `compaction_id` 与 `replacement_history`；后续普通请求与会话回放都会优先基于这份已提交的 `replacement_history`，而不是再次临时重建一套近似上下文。
   - 刷新页面后，前端应通过会话事件与 runtime 快照恢复“压缩中/已完成/失败”状态，而不是依赖本地临时气泡。
+- 摘要阶段的模型请求会按 `system? + source_messages + user: CONTEXT CHECKPOINT COMPACTION` 组装，压缩指令始终是最后一条消息，避免尾部工具 observation 覆盖摘要任务。
+- 运行中压缩完成后的继续执行请求会按 `system + retained_head_messages + summary + retained_tail_messages + current_user_replay_message` 组装；`current_user_replay_message` 只作为临时 `user` 续跑指令使用，不写入 `replacement_history`。
 - 返回：
   - `data.accepted`：固定为 `true`
   - `data.running`：固定为 `true`
@@ -2778,6 +2781,7 @@
   - `data.session_id`：当前会话 ID
 - 说明：
   - 压缩事件会带上 `trigger_mode`：目前包括 `manual`、`auto_loop`、`overflow_recovery`。前端只应将 `manual` 视为用户手动压缩分割线，其它模式属于智能体运行中的自动压缩/溢出恢复。
+  - 压缩事件会带上 `current_user_replay_mode` 与 `current_turn_progress_state`：`pending` 会保留当前用户消息，`tool_succeeded/tool_failed/in_progress` 会改用临时 `user` continuation note 承接当前轮，避免连续 assistant 尾消息或重复执行工具。
 
 - 工具结果现在采用“双通道”：
   - 前端事件通道（`tool_result` SSE）保留结构化结果用于渲染与工作流关联：`tool/ok/data/tool_call_id`，并保留 `meta` 与失败关键信息（`error/error_code/retryable`）；仍会裁剪 `trace_id/user_round/model_round` 等轮次追踪噪声。

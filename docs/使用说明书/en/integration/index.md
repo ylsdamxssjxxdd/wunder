@@ -166,8 +166,8 @@ curl -X POST http://localhost:18000/wunder \
 ### Token Counting Reflects Context Usage
 
 - It is not directly equivalent to billing
-- Current context usage is best viewed via `round_usage.total_tokens`
-- Total consumption is the sum of `round_usage.total_tokens` across all requests
+- Current context usage is best viewed via `round_usage.context_occupancy_tokens`
+- Total consumption is the sum of `round_usage.request_consumed_tokens` or `round_usage.total_tokens` across all requests
 
 ### Thread System Prompts Are Frozen
 

@@ -3,7 +3,7 @@ title: "Token Account and Usage"
 summary: "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing."
 read_when:
   - "You are looking at Token balance, daily grants, or session resource usage"
-  - "You want to understand why the system emphasizes round_usage.total_tokens and context occupancy"
+  - "You want to understand why the system distinguishes context_occupancy_tokens from request consumption"
 source_docs:
   - "docs/API文档.md"
   - "docs/设计文档/01-系统总体设计.md"
@@ -63,13 +63,15 @@ If you only watch the billing, it's hard to guide system governance.
 
 In monitoring and session summaries, the most meaningful are:
 
+- `round_usage.context_occupancy_tokens`
 - `round_usage.total_tokens`
 - `token_usage.total_tokens`
 
 Where:
 
-- `round_usage.total_tokens` represents **the actual context occupancy after a single round of request completes**, currently serving as the authoritative metric for context occupancy.
-- `token_usage.total_tokens` represents **the usage breakdown of a single model call**; when only one model call occurs in a round, it usually matches `round_usage.total_tokens`.
+- `round_usage.context_occupancy_tokens` represents **the current context occupancy after a single request completes**, currently serving as the authoritative metric for context occupancy.
+- `round_usage.total_tokens` represents **the current request consumption accumulated across model calls**.
+- `token_usage.total_tokens` represents **the usage breakdown of a single model call**; when only one model call occurs in a request, it usually matches `round_usage.total_tokens`.
 
 If you are doing new integrations, we recommend directly consuming these explicit aliases:
 
@@ -101,8 +103,8 @@ So a request might:
 ## Implementation Suggestions
 
 - When checking if a user can continue to use, prioritize Token account fields.
-- For current context occupancy recorded by Wunder, prioritize `round_usage.total_tokens`.
-- For cumulative consumption recorded by Wunder, sum up each request's `round_usage.total_tokens`.
+- For current context occupancy recorded by Wunder, prioritize `context_occupancy_tokens`.
+- For cumulative consumption recorded by Wunder, sum up each request's `request_consumed_tokens` or `round_usage.total_tokens`.
 - Do not conflate single-call usage, context occupancy, cumulative consumption, Token account, and vendor billing into one concept.
 
 ## Further Reading

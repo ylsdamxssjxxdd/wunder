@@ -88,7 +88,7 @@ test('message stats shows backend average decode speed even when usage is absent
   assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
-test('message stats context uses final usage total before explicit occupancy snapshots', () => {
+test('message stats context keeps final model usage before round usage totals', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -182,6 +182,25 @@ test('message stats context supports explicit context_occupancy_tokens alias', (
     t
   );
   assert.equal(findEntryValue(entries, 'Context'), '6123');
+});
+
+test('message stats context prefers explicit occupancy over accumulated round usage', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_occupancy_tokens: 7510,
+        roundUsage: {
+          input_tokens: 83699,
+          output_tokens: 4533,
+          total_tokens: 88232
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '7510');
 });
 
 test('message stats context keeps cached contextTokens ahead of occupancy alias', () => {

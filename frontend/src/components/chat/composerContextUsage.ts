@@ -101,8 +101,8 @@ const resolveFinalAssistantContextTokens = (stats: ComposerContextStatsSource): 
   }
   return (
     resolveUsageContextTokens(stats.usage) ??
-    resolveUsageContextTokens(stats.roundUsage ?? stats.round_usage) ??
-    resolveExplicitAssistantContextTokens(stats)
+    resolveExplicitAssistantContextTokens(stats) ??
+    resolveUsageContextTokens(stats.roundUsage ?? stats.round_usage)
   );
 };
 
@@ -367,7 +367,7 @@ export const resolveComposerContextUsageSource = (
             : assistantTotalTokens ?? sessionTotalTokens
       };
     }
-    if (assistantFinalUsageTokens !== null) {
+    if (assistantFinalUsageTokens !== null && assistantContextTokens === null) {
       return {
         ...source,
         contextTokens: assistantFinalUsageTokens,

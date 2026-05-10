@@ -4714,10 +4714,10 @@ mod tests {
         assert!(!done);
 
         assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].name, "ptc");
+        assert_eq!(tool_calls[0].name_snapshot.as_deref(), Some("ptc"));
         assert_eq!(
-            tool_calls[0].arguments,
-            "{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}"
+            tool_calls[0].arguments_snapshot.as_deref(),
+            Some("{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}")
         );
     }
 

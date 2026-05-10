@@ -137,7 +137,8 @@ export const createMessengerRealtimePulse = (
       window.addEventListener('online', handleVisibility);
       document.addEventListener('visibilitychange', handleVisibility);
     }
-    scheduleNext(resolveDelay());
+    // Run the first pulse immediately so visible chat state catches up after navigation/resume.
+    scheduleNext(0);
   };
 
   const stop = () => {

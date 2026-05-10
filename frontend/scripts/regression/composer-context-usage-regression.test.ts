@@ -124,6 +124,35 @@ test('composer context usage keeps completed assistant final value ahead of stal
   assert.equal(source.contextTokens, 25810);
 });
 
+test('composer context usage prefers explicit occupancy over accumulated round usage', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-10T00:00:00.000Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          context_occupancy_tokens: 7510,
+          roundUsage: {
+            input_tokens: 83699,
+            output_tokens: 4533,
+            total_tokens: 88232
+          }
+        }
+      }
+    ],
+    {
+      context_tokens: 3241,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 7510);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
 test('composer context usage lets the display layer stabilize a new round estimate', () => {
   const source = resolveComposerContextUsageSource(
     [

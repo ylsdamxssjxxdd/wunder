@@ -91,7 +91,8 @@ Because these types of problems are inherently different:
 
 - `trace_id`: Cross-module tracing
 - `log_profile`: `normal` or `debug`
-- `round_usage.total_tokens`: Actual context usage
+- `round_usage.context_occupancy_tokens`: Current context occupancy
+- `round_usage.total_tokens`: Current request consumption
 - `prefill_*` / `decode_*`: Speed and duration breakdown
 
 ## Common Misconceptions

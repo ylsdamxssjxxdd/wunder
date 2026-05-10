@@ -190,8 +190,8 @@ const resolveContextTokens = (stats: Record<string, any> | null | undefined): nu
   if (!stats || typeof stats !== 'object') return null;
   return (
     resolveUsageConsumedTokens(stats.usage) ??
-    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
-    resolveExplicitContextTokens(stats)
+    resolveExplicitContextTokens(stats) ??
+    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage)
   );
 };
 

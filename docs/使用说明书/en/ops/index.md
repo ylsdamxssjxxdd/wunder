@@ -177,7 +177,7 @@ External channels (Feishu/WeChat/QQ/XMPP)
 | **Queue depth** | Pending agent_tasks | > 100 |
 | **Error rate** | Failed requests / total requests | > 5% |
 | **Average latency** | End-to-end response time | > 30s |
-| **Token consumption** | Context usage, check `round_usage.total_tokens` first | Approaching max_context |
+| **Token consumption** | Context usage, check `round_usage.context_occupancy_tokens` first | Approaching max_context |
 
 **Built-in capabilities**:
 - Throughput stress-test endpoint

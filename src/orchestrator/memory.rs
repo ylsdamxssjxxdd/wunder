@@ -20,6 +20,10 @@ const COMPACTION_SUMMARY_MAX_CHARS: usize = 20_000;
 const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
 const COMPACTION_DEBUG_PREVIEW_CHARS: usize = 240;
 const COMPACTION_MIN_RETAINED_INTERACTION_TOKENS: i64 = 128;
+const COMPACTION_CURRENT_TURN_FINAL_NOTE: &str =
+    "[Compaction continuation]\nThe current user request has already produced successful tool output before compaction. Do not repeat the original request or re-run tools solely because the original user message is present in retained history. Continue from the tool result and provide the final response if no further repair is required.";
+const COMPACTION_CURRENT_TURN_REPAIR_NOTE: &str =
+    "[Compaction continuation]\nThe current user request already entered tool execution and the latest tool output reports failure. Do not restart from the original user request. Continue from the retained failure observation, change strategy, and repair or explain based on the available evidence.";
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -34,6 +38,68 @@ struct RebuiltContextGuardStats {
     summary_tokens_after: i64,
     summary_removed: bool,
     fallback_trim_applied: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum CurrentTurnProgressState {
+    #[default]
+    Pending,
+    ToolSucceeded,
+    ToolFailed,
+    InProgress,
+}
+
+impl CurrentTurnProgressState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::ToolSucceeded => "tool_succeeded",
+            Self::ToolFailed => "tool_failed",
+            Self::InProgress => "in_progress",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CurrentTurnProgress {
+    state: CurrentTurnProgressState,
+    has_post_user_messages: bool,
+    has_tool_success: bool,
+    has_tool_failure: bool,
+}
+
+impl CurrentTurnProgress {
+    fn state_label(self) -> &'static str {
+        self.state.label()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CurrentUserReplayMode {
+    Original,
+    Placeholder,
+    FinalContinuation,
+    RepairContinuation,
+    Omitted,
+}
+
+impl CurrentUserReplayMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::Placeholder => "placeholder",
+            Self::FinalContinuation => "final_continuation",
+            Self::RepairContinuation => "repair_continuation",
+            Self::Omitted => "omitted",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CurrentUserReplay {
+    message: Option<Value>,
+    mode: CurrentUserReplayMode,
+    trimmed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -312,6 +378,9 @@ impl Orchestrator {
         let current_user_message = current_user_index
             .and_then(|index| messages.get(index))
             .cloned();
+        let current_turn_progress = current_user_index
+            .map(|index| classify_current_turn_progress(&messages, index))
+            .unwrap_or_default();
         let question_text = current_question.trim().to_string();
         let current_user_signature = current_user_message
             .as_ref()
@@ -476,13 +545,12 @@ impl Orchestrator {
             &question_text,
             &current_user_signature,
         );
-        let mut summary_input = messages.clone();
         let compaction_message = json!({ "role": "user", "content": compaction_instruction });
-        if let Some(index) = current_user_index {
-            summary_input[index] = compaction_message;
-        } else {
-            summary_input.push(compaction_message);
-        }
+        let mut summary_input = build_compaction_summary_input(
+            system_message.as_ref(),
+            &source_messages,
+            compaction_message,
+        );
 
         let summary_config = build_compaction_summary_config(llm_config);
 
@@ -717,16 +785,24 @@ impl Orchestrator {
             .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
             .map(estimate_message_tokens)
             .sum::<i64>();
+        let current_user_replay = build_current_turn_replay_message(
+            current_user_message.as_ref(),
+            question_text.as_str(),
+            message_budget,
+            current_turn_progress,
+        );
+        let current_user_message_for_history_trimmed = current_user_replay.trimmed;
+        let current_user_replay_mode = current_user_replay.mode;
+        let current_turn_progress_state = current_turn_progress.state_label();
+
         let mut base_messages: Vec<Value> = Vec::new();
         if let Some(system_message) = replay_system_message.clone() {
             base_messages.push(system_message);
         }
         base_messages.extend(retained_head_messages.iter().cloned());
         base_messages.extend(retained_tail_messages.iter().cloned());
-        if let Some(current_user_message) = current_user_message.clone() {
-            base_messages.push(current_user_message);
-        } else if !question_text.is_empty() {
-            base_messages.push(json!({ "role": "user", "content": question_text.clone() }));
+        if let Some(current_turn_replay_message) = current_user_replay.message.clone() {
+            base_messages.push(current_turn_replay_message);
         }
         let base_tokens = estimate_messages_tokens(&base_messages);
         for _ in 0..3 {
@@ -769,19 +845,6 @@ impl Orchestrator {
         }
         emitter.emit("llm_response", response_payload).await;
 
-        let mut current_user_message_for_history_trimmed = false;
-        let current_user_message_for_request = current_user_message.as_ref().map(|message| {
-            let mut candidate =
-                if let Some(trimmed) = trim_message_to_fit_tokens(message, message_budget) {
-                    current_user_message_for_history_trimmed = true;
-                    trimmed
-                } else {
-                    message.clone()
-                };
-            mark_current_user_message_inflight(&mut candidate);
-            candidate
-        });
-
         let mut rebuilt = Vec::new();
         if let Some(system_message) = replay_system_message {
             rebuilt.push(system_message);
@@ -789,12 +852,8 @@ impl Orchestrator {
         rebuilt.extend(retained_head_messages_for_rebuilt);
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
         rebuilt.extend(retained_tail_messages_for_rebuilt);
-        if let Some(current_user_message) = current_user_message_for_request {
-            rebuilt.push(current_user_message);
-        } else if !question_text.is_empty() {
-            let mut current_user_placeholder = json!({ "role": "user", "content": question_text });
-            mark_current_user_message_inflight(&mut current_user_placeholder);
-            rebuilt.push(current_user_placeholder);
+        if let Some(current_turn_replay_message) = current_user_replay.message {
+            rebuilt.push(current_turn_replay_message);
         }
         let mut rebuilt = self.shrink_messages_to_limit(rebuilt, message_budget);
         let guard_stats = apply_rebuilt_context_guard(
@@ -1033,6 +1092,26 @@ impl Orchestrator {
         compaction_payload_map.insert(
             "summary_priority".to_string(),
             Value::Bool(compaction_profile.prefer_preserving_summary),
+        );
+        compaction_payload_map.insert(
+            "current_user_replay_mode".to_string(),
+            Value::String(current_user_replay_mode.as_str().to_string()),
+        );
+        compaction_payload_map.insert(
+            "current_turn_progress_state".to_string(),
+            Value::String(current_turn_progress_state.to_string()),
+        );
+        compaction_payload_map.insert(
+            "current_turn_has_post_user_progress".to_string(),
+            json!(current_turn_progress.has_post_user_messages),
+        );
+        compaction_payload_map.insert(
+            "current_turn_has_tool_success".to_string(),
+            json!(current_turn_progress.has_tool_success),
+        );
+        compaction_payload_map.insert(
+            "current_turn_has_tool_failure".to_string(),
+            json!(current_turn_progress.has_tool_failure),
         );
         compaction_payload_map.insert(
             "context_guard_applied".to_string(),
@@ -2862,6 +2941,28 @@ fn prepare_compaction_summary_messages(messages: Vec<Value>, max_tokens: i64) ->
     prepared
 }
 
+fn build_compaction_summary_input(
+    system_message: Option<&Value>,
+    source_messages: &[Value],
+    compaction_message: Value,
+) -> Vec<Value> {
+    let mut summary_input = Vec::with_capacity(
+        source_messages
+            .len()
+            .saturating_add(usize::from(system_message.is_some()))
+            .saturating_add(1),
+    );
+    if let Some(system_message) = system_message {
+        summary_input.push(system_message.clone());
+    }
+    summary_input.extend(source_messages.iter().cloned());
+    // Keep the compaction instruction as the final model-visible item. Tool
+    // failures after the current user request can otherwise override the
+    // summarization task and make the model continue normal work instead.
+    summary_input.push(compaction_message);
+    summary_input
+}
+
 fn normalize_compaction_summary_role(role: &str) -> &'static str {
     match role {
         "system" => "system",
@@ -2888,16 +2989,155 @@ fn is_compaction_observation_message(role: &str, obj: &Map<String, Value>) -> bo
     Orchestrator::is_observation_message(role, content)
 }
 
-fn summarize_compaction_observation(content: &Value) -> String {
-    let Some(raw) = content.as_str() else {
-        return extract_memory_summary_text_value(content);
-    };
-    let payload_text = raw.trim_start_matches(OBSERVATION_PREFIX).trim();
-    if payload_text.is_empty() {
-        return String::new();
+fn is_tool_role_message(message: &Value) -> bool {
+    message.get("role").and_then(Value::as_str) == Some("tool")
+}
+
+fn has_tool_call_payload(message: &Value) -> bool {
+    message
+        .get("tool_calls")
+        .or_else(|| message.get("toolCalls"))
+        .or_else(|| message.get("function_call"))
+        .or_else(|| message.get("functionCall"))
+        .is_some_and(|value| !value.is_null())
+}
+
+fn classify_current_turn_progress(
+    messages: &[Value],
+    current_user_index: usize,
+) -> CurrentTurnProgress {
+    let mut progress = CurrentTurnProgress::default();
+    let trailing = messages
+        .get(current_user_index.saturating_add(1)..)
+        .unwrap_or(&[]);
+    progress.has_post_user_messages = !trailing.is_empty();
+    for message in trailing {
+        let Some(obj) = message.as_object() else {
+            continue;
+        };
+        let role = obj.get("role").and_then(Value::as_str).unwrap_or("");
+        let content = obj.get("content").unwrap_or(&Value::Null);
+        if is_tool_role_message(message) || Orchestrator::is_observation_message(role, content) {
+            let observation = parse_compaction_observation_payload(content);
+            match observation
+                .as_ref()
+                .and_then(|payload| payload.get("ok"))
+                .and_then(Value::as_bool)
+            {
+                Some(true) => progress.has_tool_success = true,
+                Some(false) => progress.has_tool_failure = true,
+                None => progress.has_post_user_messages = true,
+            }
+            continue;
+        }
+        if role == "assistant" && has_tool_call_payload(message) {
+            progress.has_post_user_messages = true;
+        }
     }
-    let Ok(payload) = serde_json::from_str::<Value>(payload_text) else {
-        return strip_tool_calls(payload_text).trim().to_string();
+    progress.state = if progress.has_tool_failure {
+        CurrentTurnProgressState::ToolFailed
+    } else if progress.has_tool_success {
+        CurrentTurnProgressState::ToolSucceeded
+    } else if progress.has_post_user_messages {
+        CurrentTurnProgressState::InProgress
+    } else {
+        CurrentTurnProgressState::Pending
+    };
+    progress
+}
+
+fn parse_compaction_observation_payload(content: &Value) -> Option<Value> {
+    let raw = content.as_str()?.trim();
+    let payload_text = raw
+        .strip_prefix(OBSERVATION_PREFIX)
+        .map(str::trim)
+        .unwrap_or(raw);
+    if payload_text.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(payload_text).ok()
+}
+
+fn build_current_turn_replay_message(
+    current_user_message: Option<&Value>,
+    question_text: &str,
+    message_budget: i64,
+    progress: CurrentTurnProgress,
+) -> CurrentUserReplay {
+    match progress.state {
+        CurrentTurnProgressState::Pending => {
+            if let Some(message) = current_user_message {
+                let mut trimmed = false;
+                let mut candidate =
+                    if let Some(next) = trim_message_to_fit_tokens(message, message_budget) {
+                        trimmed = true;
+                        next
+                    } else {
+                        message.clone()
+                    };
+                mark_current_user_message_inflight(&mut candidate);
+                return CurrentUserReplay {
+                    message: Some(candidate),
+                    mode: CurrentUserReplayMode::Original,
+                    trimmed,
+                };
+            }
+            let question = question_text.trim();
+            if question.is_empty() {
+                return CurrentUserReplay {
+                    message: None,
+                    mode: CurrentUserReplayMode::Omitted,
+                    trimmed: false,
+                };
+            }
+            let mut placeholder = json!({ "role": "user", "content": question });
+            let mut trimmed = false;
+            if let Some(next) = trim_message_to_fit_tokens(&placeholder, message_budget) {
+                placeholder = next;
+                trimmed = true;
+            }
+            mark_current_user_message_inflight(&mut placeholder);
+            CurrentUserReplay {
+                message: Some(placeholder),
+                mode: CurrentUserReplayMode::Placeholder,
+                trimmed,
+            }
+        }
+        CurrentTurnProgressState::ToolSucceeded => {
+            let mut message = json!({
+                "role": "user",
+                "content": COMPACTION_CURRENT_TURN_FINAL_NOTE,
+            });
+            mark_current_user_message_inflight(&mut message);
+            CurrentUserReplay {
+                message: Some(message),
+                mode: CurrentUserReplayMode::FinalContinuation,
+                trimmed: false,
+            }
+        }
+        CurrentTurnProgressState::ToolFailed | CurrentTurnProgressState::InProgress => {
+            let note = if progress.has_tool_failure {
+                COMPACTION_CURRENT_TURN_REPAIR_NOTE
+            } else {
+                COMPACTION_CURRENT_TURN_FINAL_NOTE
+            };
+            let mut message = json!({
+                "role": "user",
+                "content": note,
+            });
+            mark_current_user_message_inflight(&mut message);
+            CurrentUserReplay {
+                message: Some(message),
+                mode: CurrentUserReplayMode::RepairContinuation,
+                trimmed: false,
+            }
+        }
+    }
+}
+
+fn summarize_compaction_observation(content: &Value) -> String {
+    let Some(payload) = parse_compaction_observation_payload(content) else {
+        return extract_memory_summary_text_value(content);
     };
     let Some(map) = payload.as_object() else {
         return extract_memory_summary_text_value(&payload);
@@ -4337,6 +4577,181 @@ mod tests {
         assert_eq!(
             prepared[0].get("content").and_then(Value::as_str),
             Some("system prompt\n\nartifact index")
+        );
+    }
+
+    #[test]
+    fn test_build_compaction_summary_input_keeps_instruction_last() {
+        let system_message = json!({ "role": "system", "content": "system prompt" });
+        let source_messages = vec![
+            json!({ "role": "user", "content": "older request" }),
+            json!({ "role": "assistant", "content": "attempted tool" }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "ptc",
+                    "ok": false,
+                    "error_code": "TOOL_EXEC_FAILED",
+                    "error": "script failed",
+                })),
+            }),
+        ];
+        let compaction_message = json!({
+            "role": "user",
+            "content": "CONTEXT CHECKPOINT COMPACTION: summarize only",
+        });
+
+        let summary_input = build_compaction_summary_input(
+            Some(&system_message),
+            &source_messages,
+            compaction_message,
+        );
+
+        assert_eq!(summary_input.len(), 5);
+        assert_eq!(
+            summary_input
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str),
+            Some("CONTEXT CHECKPOINT COMPACTION: summarize only")
+        );
+        assert!(summary_input[..summary_input.len() - 1]
+            .iter()
+            .any(|message| extract_guard_content_text(
+                message.get("content").unwrap_or(&Value::Null)
+            )
+            .contains("script failed")));
+    }
+
+    #[test]
+    fn test_prepare_compaction_summary_messages_preserves_final_instruction_after_trimming() {
+        let instruction = "CONTEXT CHECKPOINT COMPACTION: summarize only";
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "ptc",
+                    "ok": false,
+                    "error_code": "TOOL_EXEC_FAILED",
+                    "error": "failure detail ".repeat(1200),
+                })),
+            }),
+            json!({ "role": "user", "content": instruction }),
+        ];
+
+        let prepared = prepare_compaction_summary_messages(messages, 256);
+
+        assert_eq!(
+            prepared
+                .last()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str),
+            Some(instruction)
+        );
+        assert!(prepared.iter().any(|message| message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("Tool observation (ptc): failed")));
+    }
+
+    #[test]
+    fn test_current_turn_replay_uses_final_continuation_after_successful_tool() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "draw item" }),
+            json!({ "role": "assistant", "content": "I will draw it" }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "ptc",
+                    "ok": true,
+                    "data": { "path": "/workspaces/u/item.png" },
+                })),
+            }),
+        ];
+        let progress = classify_current_turn_progress(&messages, 1);
+
+        let replay =
+            build_current_turn_replay_message(messages.get(1), "draw item", 2048, progress);
+
+        assert_eq!(progress.state, CurrentTurnProgressState::ToolSucceeded);
+        assert_eq!(replay.mode, CurrentUserReplayMode::FinalContinuation);
+        let replay_message = replay.message.expect("continuation message");
+        assert_eq!(
+            replay_message.get("role").and_then(Value::as_str),
+            Some("user")
+        );
+        assert!(is_compaction_inflight_current_user_message(&replay_message));
+        assert!(replay_message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("Do not repeat the original request"));
+    }
+
+    #[test]
+    fn test_current_turn_replay_uses_user_continuation_after_tool_failure() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "repair generated file" }),
+            json!({ "role": "assistant", "content": "I will inspect it" }),
+            json!( {
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "apply_patch",
+                    "ok": false,
+                    "error_code": "PATCH_FORMAT_INVALID",
+                    "error": "bad patch",
+                })),
+            }),
+            json!({ "role": "assistant", "content": "I found the bad line" }),
+        ];
+        let progress = classify_current_turn_progress(&messages, 1);
+
+        let replay = build_current_turn_replay_message(
+            messages.get(1),
+            "repair generated file",
+            2048,
+            progress,
+        );
+
+        assert_eq!(progress.state, CurrentTurnProgressState::ToolFailed);
+        assert_eq!(replay.mode, CurrentUserReplayMode::RepairContinuation);
+        let replay_message = replay.message.expect("continuation message");
+        assert_eq!(
+            replay_message.get("role").and_then(Value::as_str),
+            Some("user")
+        );
+        assert!(is_compaction_inflight_current_user_message(&replay_message));
+        assert!(replay_message
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("latest tool output reports failure"));
+    }
+
+    #[test]
+    fn test_current_turn_replay_keeps_original_before_progress() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "analyze input" }),
+        ];
+        let progress = classify_current_turn_progress(&messages, 1);
+
+        let replay =
+            build_current_turn_replay_message(messages.get(1), "analyze input", 2048, progress);
+
+        assert_eq!(progress.state, CurrentTurnProgressState::Pending);
+        assert_eq!(replay.mode, CurrentUserReplayMode::Original);
+        assert_eq!(
+            replay
+                .message
+                .as_ref()
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str),
+            Some("analyze input")
         );
     }
 

@@ -32,8 +32,8 @@ Wunder 里有两个关于 Token 的概念，经常被混用：
 类似"当前负载"：告诉你这一轮上下文实际有多大。
 
 **关注什么**：
-- `round_usage.total_tokens`：当前上下文占用
-- `request_consumed_tokens`：单次请求消耗
+- `context_occupancy_tokens`：当前上下文占用
+- `round_usage.total_tokens` / `request_consumed_tokens`：单次请求消耗
 
 ## 作用
 

@@ -438,6 +438,8 @@ impl Orchestrator {
                 output: 0,
                 total: 0,
             };
+            let mut last_model_usage: Option<TokenUsage> = None;
+            let mut confirmed_context_occupancy_tokens: Option<i64> = None;
             let mut turn_decode_speed = TurnDecodeSpeedAccumulator::default();
             let mut answer = String::new();
             let mut stop_reason: Option<String> = None;
@@ -778,6 +780,10 @@ impl Orchestrator {
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
                 update_round_usage_authority(&mut round_usage, &usage);
+                last_model_usage = Some(usage.clone());
+                if let Some(context_tokens) = resolve_usage_context_occupancy_tokens(&usage) {
+                    confirmed_context_occupancy_tokens = Some(context_tokens);
+                }
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
                 } else {
@@ -1749,7 +1755,10 @@ impl Orchestrator {
                     .max(round_usage.input.saturating_add(round_usage.output));
             let has_round_usage =
                 round_usage.total > 0 || round_usage.input > 0 || round_usage.output > 0;
-            let round_context_tokens = resolve_round_context_occupancy_tokens(persisted_context_tokens);
+            let round_context_tokens = resolve_round_context_occupancy_tokens(
+                confirmed_context_occupancy_tokens,
+                persisted_context_tokens,
+            );
             if has_round_usage {
                 let usage_payload =
                     build_round_usage_payload(&round_usage, round_context_tokens, request_round);
@@ -1765,11 +1774,9 @@ impl Orchestrator {
                 }
             }
 
-            let response_usage = if has_round_usage {
-                Some(round_usage.clone())
-            } else {
-                None
-            };
+            let response_usage = last_model_usage
+                .clone()
+                .or_else(|| has_round_usage.then_some(round_usage.clone()));
             let response = WunderResponse {
                 session_id: session_id.clone(),
                 answer: answer.clone(),
@@ -2959,8 +2966,21 @@ fn update_round_usage_authority(target: &mut TokenUsage, usage: &TokenUsage) {
     target.total = target.total.saturating_add(usage.total);
 }
 
-fn resolve_round_context_occupancy_tokens(persisted_context_tokens: i64) -> i64 {
-    persisted_context_tokens.max(0)
+fn resolve_usage_context_occupancy_tokens(usage: &TokenUsage) -> Option<i64> {
+    let total = usage.total.max(usage.input.saturating_add(usage.output));
+    if total == 0 || total > i64::MAX as u64 {
+        return None;
+    }
+    Some(total as i64)
+}
+
+fn resolve_round_context_occupancy_tokens(
+    confirmed_context_occupancy_tokens: Option<i64>,
+    persisted_context_tokens: i64,
+) -> i64 {
+    confirmed_context_occupancy_tokens
+        .unwrap_or(persisted_context_tokens)
+        .max(0)
 }
 
 fn build_round_usage_payload(
@@ -2972,7 +2992,7 @@ fn build_round_usage_payload(
         "input_tokens": round_usage.input,
         "output_tokens": round_usage.output,
         "total_tokens": round_usage.total,
-        "context_occupancy_tokens": resolve_round_context_occupancy_tokens(context_occupancy_tokens),
+        "context_occupancy_tokens": context_occupancy_tokens.max(0),
         "request_consumed_tokens": round_usage.total,
     });
     if let Value::Object(ref mut map) = usage_payload {
@@ -3775,6 +3795,23 @@ mod tests {
         );
         assert_eq!(payload.get("user_round").and_then(Value::as_i64), Some(3));
         assert_eq!(payload.get("model_round").and_then(Value::as_i64), Some(2));
+    }
+
+    #[test]
+    fn resolve_round_context_occupancy_prefers_latest_model_usage_total() {
+        let first = resolve_usage_context_occupancy_tokens(&TokenUsage {
+            input: 11675,
+            output: 4104,
+            total: 15779,
+        });
+        let second = resolve_usage_context_occupancy_tokens(&TokenUsage {
+            input: 7509,
+            output: 1,
+            total: 7510,
+        });
+        assert_eq!(first, Some(15779));
+        assert_eq!(second, Some(7510));
+        assert_eq!(resolve_round_context_occupancy_tokens(second, 3241), 7510);
     }
 
     #[test]

@@ -55,6 +55,7 @@ import {
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
+import { installActiveChatRealtimeRecovery } from '@/views/messenger/activeChatRealtimeRecovery';
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
@@ -411,6 +412,8 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerControllerContext): void {
+  installActiveChatRealtimeRecovery(ctx);
+
   watch(() => String(ctx.chatStore.activeSessionId || '').trim(), (sessionId) => {
       if (!sessionId) {
           ctx.agentGoalComposerRequested.value = false;
@@ -583,6 +586,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.stopBeeroomRealtimeSync?.();
           ctx.startRealtimePulse?.();
           ctx.triggerRealtimePulseRefresh?.(`enter-${section}`);
+          if (section === 'messages') {
+              void ctx.chatStore.ensureActiveSessionRealtime?.({
+                  reason: 'enter-messages-section',
+                  hydrateIfCold: true
+              });
+          }
       }
       if (section === 'tools' &&
           !ctx.builtinTools.value.length &&
@@ -894,7 +903,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       });
   });
 
-  watch(() => [ctx.chatStore.messages.length, ctx.userWorldStore.activeMessages.length, ctx.sessionHub.activeConversationKey], () => {
+  watch(() => [
+      ctx.chatStore.messages.length,
+      ctx.chatStore.messageMutationVersion,
+      ctx.userWorldStore.activeMessages.length,
+      ctx.sessionHub.activeConversationKey
+  ], () => {
       ctx.pruneMessageVirtualHeightCache();
       void nextTick(() => {
           ctx.scheduleMessageViewportRefresh({
@@ -928,6 +942,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       const latestMessage = ctx.chatStore.messages[ctx.chatStore.messages.length - 1] as Record<string, unknown> | undefined;
       return [
           ctx.chatStore.activeSessionId,
+          ctx.chatStore.messageMutationVersion,
           ctx.latestAgentRenderableMessageKey.value,
           ctx.buildLatestAssistantLayoutSignature(latestMessage)
       ].join('::');

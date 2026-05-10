@@ -3683,11 +3683,12 @@ mod tests {
         let visible = maybe_content.or(maybe_preview).unwrap_or("");
         assert!(visible.chars().count() > OBSERVATION_HEAD_CHARS);
         assert!(data.get("content_head").and_then(Value::as_str).is_some());
-        assert!(data
-            .get("content_omitted_chars")
-            .and_then(Value::as_u64)
-            .unwrap_or_default()
-            > 0);
+        assert!(
+            data.get("content_omitted_chars")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                > 0
+        );
     }
 
     #[test]

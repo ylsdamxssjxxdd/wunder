@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-08T08:00:03.739512+00:00",
+  "generated_at": "2026-05-10T02:42:21.257573+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -3316,7 +3316,7 @@
       "language": "zh-CN",
       "title": "可观测性",
       "summary": "系统能解释自己发生了什么。事实层、回放层、画像层三层分明，排障和治理都有据可依。",
-      "updated_at": "2026-04-14",
+      "updated_at": "2026-05-10",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -5025,7 +5025,7 @@
       "language": "zh-CN",
       "title": "接入概览",
       "summary": "Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-05-10",
       "read_when": [
         "你准备把 Wunder 接入业务系统",
         "你不确定该从 `/wunder`、聊天域还是工作区接口开始"
@@ -9133,7 +9133,7 @@
       "language": "zh-CN",
       "title": "Token 与配额",
       "summary": "Token 账户是你的资源余额，Token 占用是当前上下文的实际负载。两个概念相关但不同，理解区别才能用好配额。",
-      "updated_at": "2026-04-14",
+      "updated_at": "2026-05-10",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -13011,7 +13011,7 @@
       "language": "en",
       "title": "Integration Overview",
       "summary": "Wunder's integration surface includes a unified execution entry, chat domain, workspace, channels, A2A, and MCP; pick the right layer first for a more stable integration.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-05-10",
       "read_when": [
         "You are about to integrate Wunder into your business system",
         "You are not sure whether to start with /wunder, the chat domain, or the workspace API"
@@ -14491,7 +14491,7 @@
       "language": "en",
       "title": "Operations Overview",
       "summary": "Wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just \"it started successfully.\"",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-05-10",
       "read_when": [
         "You are deploying or taking over a Wunder runtime environment",
         "You need to quickly locate operations and governance entry points"
@@ -14972,7 +14972,7 @@
       "language": "en",
       "title": "Monitoring and Benchmark",
       "summary": "Wunder's observability surface is not a single monitoring page, but composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and benchmark together.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-05-10",
       "read_when": [
         "You are troubleshooting thread, tool, or model pipeline issues",
         "You need to distinguish the responsibilities of monitor, throughput, performance, and benchmark"
@@ -15369,7 +15369,7 @@
       "language": "en",
       "title": "Stream Events",
       "summary": "When integrating with Wunder's streaming pipeline, the most important thing is not memorizing every event, but knowing which events carry true lifecycle semantics.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-05-10",
       "read_when": [
         "You are integrating SSE or WebSocket",
         "You want to understand why turn_terminal, approval_resolved, and thread_status matter"
@@ -16418,10 +16418,10 @@
       "language": "en",
       "title": "Token Account and Usage",
       "summary": "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-05-10",
       "read_when": [
         "You are looking at Token balance, daily grants, or session resource usage",
-        "You want to understand why the system emphasizes round_usage.total_tokens and context occupancy"
+        "You want to understand why the system distinguishes context_occupancy_tokens from request consumption"
       ],
       "source_docs": [
         "docs/API文档.md",

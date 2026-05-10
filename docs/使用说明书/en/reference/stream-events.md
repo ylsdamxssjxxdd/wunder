@@ -40,9 +40,9 @@ They tell you what the model and tools are doing, but they are not responsible f
 
 If you need to display token statistics, the event you should consume first is `round_usage`:
 
-- `round_usage.total_tokens`: the actual context occupancy after the current request completes
-- `round_usage.context_occupancy_tokens`: same as above, but with a more explicit field name
-- `round_usage.request_consumed_tokens`: the consumption of the current request; the cumulative consumption for the entire session is the sum of these values across requests
+- `round_usage.context_occupancy_tokens`: the current context occupancy after the request settles
+- `round_usage.total_tokens`: the consumption accumulated across model calls in the current request
+- `round_usage.request_consumed_tokens`: explicit alias for the current request consumption; the cumulative consumption for the entire session is the sum of these values across requests
 
 `token_usage` is still valuable, but it is more focused on individual model call details and is no longer the sole authority for thread-level context occupancy.
 

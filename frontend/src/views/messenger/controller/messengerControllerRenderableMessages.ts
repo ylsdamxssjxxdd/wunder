@@ -568,7 +568,9 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
   };
 
-  ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
+  ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
+      const _renderVersion = ctx.chatStore.messageMutationVersion;
+      return ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
       const message = (rawMessage || {}) as Record<string, unknown>;
       if (!ctx.shouldRenderAgentMessage(message)) {
           return acc;
@@ -579,7 +581,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           message
       });
       return acc;
-  }, []));
+  }, []);
+  });
 
   ctx.buildWorkflowSurfaceDebugSnapshot = () => {
       const renderable = ctx.agentRenderableMessages.value;
@@ -658,32 +661,30 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const workflowItems = Array.isArray(message.workflowItems)
           ? (message.workflowItems as unknown[])
           : [];
-      const workflowSignature = workflowItems
-          .map((item, index) => {
-          const record = (item || {}) as Record<string, unknown>;
-          return [
-              index,
-              String(record.id || record.toolCallId || record.eventType || '').trim(),
-              String(record.status || '').trim(),
-              String(record.title || record.toolName || '').length,
-              String(record.detail || '').length
-          ].join(':');
-      })
-          .join('|');
+      const renderVersion = ctx.chatStore.messageMutationVersion;
+      const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
+      const workflowSignature = lastWorkflowItem
+          ? [
+              workflowItems.length - 1,
+              String(lastWorkflowItem.id || lastWorkflowItem.toolCallId || lastWorkflowItem.eventType || '').trim(),
+              String(lastWorkflowItem.status || '').trim(),
+              String(lastWorkflowItem.title || lastWorkflowItem.toolName || '').length,
+              String(lastWorkflowItem.detail || '').length
+          ].join(':')
+          : '';
       const subagents = Array.isArray(message.subagents) ? message.subagents : [];
-      const subagentSignature = subagents
-          .map((item, index) => {
-          const record = (item || {}) as Record<string, unknown>;
-          return [
-              index,
-              String(record.key || record.run_id || record.session_id || '').trim(),
-              String(record.status || '').trim(),
-              String(record.summary || '').length
-          ].join(':');
-      })
-          .join('|');
+      const lastSubagent = subagents[subagents.length - 1] as Record<string, unknown> | undefined;
+      const subagentSignature = lastSubagent
+          ? [
+              subagents.length - 1,
+              String(lastSubagent.key || lastSubagent.run_id || lastSubagent.session_id || '').trim(),
+              String(lastSubagent.status || '').trim(),
+              String(lastSubagent.summary || '').length
+          ].join(':')
+          : '';
       return [
           ctx.latestAgentRenderableMessageKey.value,
+          renderVersion,
           String(message.id || message.localId || '').trim(),
           String(message.content || '').length,
           String(message.reasoning || '').length,
