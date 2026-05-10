@@ -221,7 +221,6 @@ export type WorkflowProcessorOptions = {
 
 export type UsageStatsOptions = {
   updateUsage?: boolean;
-  updateContextFromUsage?: boolean;
   round?: number | null;
   accumulateDurations?: boolean;
   includeInRoundAverage?: boolean;

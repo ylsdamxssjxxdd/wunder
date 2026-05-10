@@ -79,7 +79,7 @@ If you are doing new integrations, we recommend directly consuming these explici
 - `request_consumed_tokens`: Single request consumption
 - `consumed_tokens`: Cumulative consumption in aggregate APIs
 
-Fields like `context_usage` are more for process estimation, suitable for observation, not as the sole benchmark.
+Fields like `context_usage` now report the latest provider-observed context occupancy when available. After compaction, the value is marked as unobserved until the next model usage response arrives; local token estimates are not treated as authoritative occupancy.
 
 ## Token Account and Token Usage Are Not the Same Thing
 
@@ -103,7 +103,7 @@ So a request might:
 ## Implementation Suggestions
 
 - When checking if a user can continue to use, prioritize Token account fields.
-- For current context occupancy recorded by Wunder, prioritize `context_occupancy_tokens`.
+- For current context occupancy recorded by Wunder, prioritize provider-observed `context_occupancy_tokens`.
 - For cumulative consumption recorded by Wunder, sum up each request's `request_consumed_tokens` or `round_usage.total_tokens`.
 - Do not conflate single-call usage, context occupancy, cumulative consumption, Token account, and vendor billing into one concept.
 

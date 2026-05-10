@@ -467,9 +467,9 @@ impl Orchestrator {
             let tools_payload = function_tooling
                 .as_ref()
                 .map(|tooling| tooling.tools.as_slice());
-            // Reserve prompt budget for native tool schema payloads; message-only estimates
-            // undercount the real request size and can miss preemptive compaction.
-            let request_overhead_tokens = estimate_request_overhead_tokens(tools_payload);
+            // Context occupancy is authoritative only after the model provider reports usage.
+            // Local token estimates are deliberately excluded from compaction decisions.
+            let request_overhead_tokens = 0_i64;
             // If the previous turn died on context overflow, force a repair compaction before
             // sampling again so the session can self-heal instead of requiring a new thread.
             let mut force_compaction_on_entry = self
@@ -526,6 +526,12 @@ impl Orchestrator {
                     )
                     .await?;
                 messages = compaction_result.messages;
+                if compaction_result.compaction_id.is_some() {
+                    persisted_context_tokens = 0;
+                    self.workspace
+                        .save_session_context_tokens_async(&user_id, &session_id, 0)
+                        .await;
+                }
                 if force_compaction_on_entry {
                     let _ = self
                         .workspace
@@ -536,18 +542,15 @@ impl Orchestrator {
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
                 messages = context_compactor.compact_messages(messages);
-                let context_tokens = context_manager.estimate_context_tokens(&messages);
-                let projected_request_tokens =
-                    context_tokens.saturating_add(request_overhead_tokens);
-                self.workspace
-                    .save_session_context_tokens_async(&user_id, &session_id, context_tokens)
-                    .await;
-                persisted_context_tokens = context_tokens;
+                let context_tokens = persisted_context_tokens.max(0);
+                let projected_request_tokens = context_tokens;
                 let mut context_payload = json!({
                     "context_tokens": context_tokens,
                     "persisted_context_tokens": persisted_context_tokens,
+                    "observed_context_tokens": context_tokens,
                     "projected_request_tokens": projected_request_tokens,
                     "request_overhead_tokens": request_overhead_tokens,
+                    "context_usage_source": if context_tokens > 0 { "provider_observed" } else { "unobserved" },
                     "message_count": messages.len(),
                 });
                 if let Value::Object(ref mut map) = context_payload {
@@ -642,9 +645,7 @@ impl Orchestrator {
                                         .await;
                                 }
                             } else {
-                                let overflow_projected_tokens = context_manager
-                                    .estimate_context_tokens(&messages)
-                                    .saturating_add(request_overhead_tokens);
+                                let overflow_projected_tokens = persisted_context_tokens.max(0);
                                 let fallback_limit_hint =
                                     derive_recovery_context_window_limit_hint(
                                         overflow_projected_tokens,
@@ -701,9 +702,8 @@ impl Orchestrator {
                                 .delete_session_context_overflow_async(&user_id, &session_id)
                                 .await;
                             messages = context_manager.normalize_messages(messages);
-                            let recovered_tokens = context_manager.estimate_context_tokens(&messages);
-                            let recovered_request_tokens =
-                                recovered_tokens.saturating_add(request_overhead_tokens);
+                            let recovered_tokens = 0_i64;
+                            let recovered_request_tokens = recovered_tokens;
                             self.workspace
                                 .save_session_context_tokens_async(
                                     &user_id,
@@ -718,8 +718,10 @@ impl Orchestrator {
                                 "attempt": overflow_recovery_attempts,
                                 "max_attempts": MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS,
                                 "context_tokens_after": recovered_tokens,
+                                "observed_context_tokens_after": recovered_tokens,
                                 "projected_request_tokens_after": recovered_request_tokens,
                                 "request_overhead_tokens": request_overhead_tokens,
+                                "context_usage_source": "unobserved_after_compaction",
                             });
                             if let Value::Object(ref mut map) = compaction_payload {
                                 if let Some(max_context) = compaction_llm_config
@@ -764,12 +766,11 @@ impl Orchestrator {
                                         true,
                                     )
                                     .await;
-                                let overflow_tokens = context_manager.estimate_context_tokens(&messages);
                                 self.workspace
                                     .save_session_context_tokens_async(
                                         &user_id,
                                         &session_id,
-                                        overflow_tokens,
+                                        0,
                                     )
                                     .await;
                             }
@@ -783,6 +784,10 @@ impl Orchestrator {
                 last_model_usage = Some(usage.clone());
                 if let Some(context_tokens) = resolve_usage_context_occupancy_tokens(&usage) {
                     confirmed_context_occupancy_tokens = Some(context_tokens);
+                    persisted_context_tokens = context_tokens;
+                    self.workspace
+                        .save_session_context_tokens_async(&user_id, &session_id, context_tokens)
+                        .await;
                 }
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
@@ -2680,17 +2685,6 @@ fn derive_recovery_context_window_limit_hint(projected_request_tokens: i64, atte
     hint
 }
 
-fn estimate_request_overhead_tokens(tools: Option<&[Value]>) -> i64 {
-    let Some(tools) = tools else {
-        return 0;
-    };
-    if tools.is_empty() {
-        return 0;
-    }
-    let payload = serde_json::to_string(tools).unwrap_or_default();
-    approx_token_count(&payload).max(0)
-}
-
 fn extract_channel_display_question_override(config_overrides: Option<&Value>) -> Option<String> {
     let config_overrides = config_overrides?;
     config_overrides
@@ -3431,29 +3425,6 @@ mod tests {
         assert!(first > second);
         assert!(second > third);
         assert!(third >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-    }
-
-    #[test]
-    fn estimate_request_overhead_tokens_counts_tool_schema_payload() {
-        let tools = vec![json!({
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read a file from the workspace and return the content.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Path to the file"
-                        }
-                    },
-                    "required": ["path"]
-                }
-            }
-        })];
-        assert!(estimate_request_overhead_tokens(Some(&tools)) > 0);
-        assert_eq!(estimate_request_overhead_tokens(None), 0);
     }
 
     #[test]

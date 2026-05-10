@@ -174,25 +174,20 @@ const resolvePartialConsumedTokens = (source: Record<string, any> | null | undef
 const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
   return parsePositiveInteger(
-    stats.contextTokens ??
+    stats.context_occupancy_tokens ??
       stats.contextOccupancyTokens ??
-      stats.context_occupancy_tokens ??
-      stats.context_tokens ??
-      stats.context_tokens_total ??
       stats.context_usage?.context_occupancy_tokens ??
       stats.context_usage?.contextOccupancyTokens ??
-      stats.context_usage?.context_tokens ??
-      stats.context_usage?.contextTokens
+      stats.contextTokens ??
+      stats.context_tokens ??
+      stats.context_usage?.contextTokens ??
+      stats.context_usage?.context_tokens
   );
 };
 
 const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
-  return (
-    resolveUsageConsumedTokens(stats.usage) ??
-    resolveExplicitContextTokens(stats) ??
-    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage)
-  );
+  return resolveExplicitContextTokens(stats);
 };
 
 const resolveAssistantTurnConsumedTokens = (

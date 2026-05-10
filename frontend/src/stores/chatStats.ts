@@ -147,6 +147,7 @@ export const buildMessageStats = () => ({
   partialQuotaConsumed: 0,
   quotaSnapshot: null,
   contextTokens: null,
+  contextPreviewTokens: null,
   contextTotalTokens: null,
   interaction_start_ms: null,
   interaction_end_ms: null,
@@ -550,23 +551,28 @@ export const resolveExplicitContextTokens = (source) => {
   if (!source || typeof source !== 'object') return null;
   const record = source as Record<string, unknown>;
   const contextUsage = resolveContextUsageRecord(record);
-  const directContextUsage =
-    record.contextUsage !== null &&
-    record.contextUsage !== undefined &&
-    typeof record.contextUsage !== 'object'
-      ? record.contextUsage
-      : null;
   return normalizeContextTokens(
-    record.contextTokens ??
+    record.context_occupancy_tokens ??
       record.contextOccupancyTokens ??
-      record.context_occupancy_tokens ??
-      record.context_tokens ??
-      record.context_tokens_total ??
-      directContextUsage ??
       contextUsage?.context_occupancy_tokens ??
       contextUsage?.contextOccupancyTokens ??
-      contextUsage?.context_tokens ??
-      contextUsage?.contextTokens
+      record.contextTokens ??
+      record.context_tokens ??
+      contextUsage?.contextTokens ??
+      contextUsage?.context_tokens
+  );
+};
+
+export const resolveContextPreviewTokens = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  return normalizeContextTokens(
+    record.contextPreviewTokens ??
+      record.context_preview_tokens ??
+      record.contextEstimateTokens ??
+      record.context_estimate_tokens ??
+      record.estimatedContextTokens ??
+      record.estimated_context_tokens
   );
 };
 
@@ -967,17 +973,6 @@ export const normalizeUsagePayload = (payload) => {
   } satisfies NormalizedUsagePayload;
 };
 
-export const resolveUsageContextTokens = (usage: NormalizedUsagePayload | null): number | null => {
-  if (!usage) return null;
-  if (Number.isFinite(usage.total) && usage.total > 0) {
-    return usage.total;
-  }
-  if (Number.isFinite(usage.input) && usage.input > 0) {
-    return usage.input;
-  }
-  return null;
-};
-
 export const estimateStreamOutputTokens = estimateChatTextTokens;
 
 export const normalizeMessageStats = (stats) => {
@@ -989,6 +984,7 @@ export const normalizeMessageStats = (stats) => {
     stats.roundUsage ?? stats.round_usage ?? stats.round_usage_total ?? stats.billedUsage
   );
   const explicitContextTokens = resolveExplicitContextTokens(stats);
+  const contextPreviewTokens = resolveContextPreviewTokens(stats);
   const quotaSnapshot = normalizeQuotaSnapshot(
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
@@ -1055,6 +1051,7 @@ export const normalizeMessageStats = (stats) => {
     ),
     quotaSnapshot,
     contextTokens,
+    contextPreviewTokens,
     contextTotalTokens,
     interaction_start_ms: interactionStartMs,
     interaction_end_ms: interactionEndMs,
@@ -1107,6 +1104,7 @@ export const mergeMessageStats = (base, incoming) => {
     );
   const quotaSnapshot = right.quotaSnapshot || left.quotaSnapshot;
   const incomingExplicitContextTokens = resolveExplicitContextTokens(incoming);
+  const incomingPreviewContextTokens = resolveContextPreviewTokens(incoming);
   const contextTokens =
     incomingExplicitContextTokens === null || incomingExplicitContextTokens === undefined
       ? left.contextTokens
@@ -1150,6 +1148,10 @@ export const mergeMessageStats = (base, incoming) => {
     partialQuotaConsumed: Math.max(left.partialQuotaConsumed, right.partialQuotaConsumed),
     quotaSnapshot,
     contextTokens,
+    contextPreviewTokens:
+      incomingPreviewContextTokens === null || incomingPreviewContextTokens === undefined
+        ? left.contextPreviewTokens
+        : incomingPreviewContextTokens,
     contextTotalTokens,
     interaction_start_ms: startMs,
     interaction_end_ms: endMs,

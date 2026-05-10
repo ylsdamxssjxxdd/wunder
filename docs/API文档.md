@@ -1598,7 +1598,7 @@
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
 - `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
-- `session.context_tokens/context_tokens_peak` 汇总优先采用显式 `context_occupancy_tokens/context_tokens` 作为有效占用；`context_usage` 的本地估算值仍保留用于过程观测。
+- `session.context_tokens/context_tokens_peak` 汇总优先采用模型服务端返回的显式 `context_occupancy_tokens/context_tokens` 作为有效占用；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
 - `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
 - 新接入展示“当前上下文占用”时优先读取 `context_occupancy_tokens`，展示“单次请求消耗”或扣费统计时读取 `request_consumed_tokens`/`round_usage.total_tokens`。
 - Token 余额不足时返回 `USER_TOKEN_INSUFFICIENT`，错误明细会附带 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`，便于客户端直接刷新 Token 账户视图。

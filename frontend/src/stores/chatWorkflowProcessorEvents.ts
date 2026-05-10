@@ -133,7 +133,7 @@ import { applyPlanUpdate, buildToolIdentityMeta, buildWorkflowItem, hasPlanSteps
 import { applyDesktopOverlayEvent } from './chatPersist';
 import { STREAM_FLUSH_BASE_MS, resolveStreamFlushMs } from './chatRuntimeControls';
 import { resolveSessionKey, sessionSubagentsCache } from './chatRuntimeState';
-import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, resolveUsageContextTokens, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
+import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
 import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments } from './chatStreamIds';
 import { NormalizedUsagePayload, QuestionPanelApplyOptions, UsageStatsOptions, WorkflowProcessorOptions } from './chatTypes';
 import { buildDetail, cloneCompactionDebugPayload, createThinkTagStreamParser, extractFinalAnswerFromToolCalls, isFailedResult, normalizeAssistantOutput, normalizeReasoningText, normalizeSessionWorkflowState, pickString, pickText, resolveAssistantReasoning, resolveEventType, resolveToolCategory, toOptionalInt, updateWorkflowItem } from './chatWorkflowHydration';
@@ -953,8 +953,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           {
             round,
             accumulateDurations: true,
-            includeInRoundAverage: true,
-            updateContextFromUsage: false
+            includeInRoundAverage: true
           }
         );
         if (round !== null) {
@@ -1047,8 +1046,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           {
             round,
             updateUsage: true,
-            includeInRoundAverage: true,
-            updateContextFromUsage: false
+            includeInRoundAverage: true
           }
         );
         ctx.updateLiveContextUsageFromTokenUsage(usagePayload, data ?? payload ?? {});
@@ -1069,7 +1067,6 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           {
             round,
             updateUsage: !ctx.stats?.usage,
-            updateContextFromUsage: false,
             includeInRoundAverage: false
           }
         );

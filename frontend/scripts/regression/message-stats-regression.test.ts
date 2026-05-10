@@ -88,7 +88,7 @@ test('message stats shows backend average decode speed even when usage is absent
   assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
-test('message stats context keeps final model usage before round usage totals', () => {
+test('message stats context ignores final usage and round usage totals without occupancy', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -108,10 +108,10 @@ test('message stats context keeps final model usage before round usage totals', 
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '4080');
+  assert.equal(findEntryValue(entries, 'Context'), '-');
 });
 
-test('message stats context prefers final usage total over stale explicit occupancy aliases', () => {
+test('message stats context prefers explicit occupancy over final usage total', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -132,10 +132,10 @@ test('message stats context prefers final usage total over stale explicit occupa
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '7300');
+  assert.equal(findEntryValue(entries, 'Context'), '7101');
 });
 
-test('message stats context falls back to final usage total when explicit context is absent', () => {
+test('message stats context does not fall back to final usage total when explicit occupancy is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -150,10 +150,10 @@ test('message stats context falls back to final usage total when explicit contex
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '9268');
+  assert.equal(findEntryValue(entries, 'Context'), null);
 });
 
-test('message stats context falls back to final usage input when total is absent', () => {
+test('message stats context does not fall back to final usage input when explicit occupancy is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -167,7 +167,7 @@ test('message stats context falls back to final usage input when total is absent
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '4027');
+  assert.equal(findEntryValue(entries, 'Context'), null);
 });
 
 test('message stats context supports explicit context_occupancy_tokens alias', () => {
@@ -182,6 +182,48 @@ test('message stats context supports explicit context_occupancy_tokens alias', (
     t
   );
   assert.equal(findEntryValue(entries, 'Context'), '6123');
+});
+
+test('message stats context supports explicit contextOccupancyTokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        contextOccupancyTokens: 6124
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6124');
+});
+
+test('message stats context supports explicit contextTokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        contextTokens: 6125
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6125');
+});
+
+test('message stats context supports explicit context_tokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_tokens: 6126
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6126');
 });
 
 test('message stats context prefers explicit occupancy over accumulated round usage', () => {
@@ -203,7 +245,7 @@ test('message stats context prefers explicit occupancy over accumulated round us
   assert.equal(findEntryValue(entries, 'Context'), '7510');
 });
 
-test('message stats context keeps cached contextTokens ahead of occupancy alias', () => {
+test('message stats context prefers observed occupancy alias over cached contextTokens', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -215,7 +257,7 @@ test('message stats context keeps cached contextTokens ahead of occupancy alias'
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '8795');
+  assert.equal(findEntryValue(entries, 'Context'), '1693');
 });
 
 test('message stats shows quota consumed tokens for the user round', () => {
@@ -637,7 +679,7 @@ test('message stats sums explicit consumed tokens across assistant messages in t
   const entries = buildAssistantMessageStatsEntries(messages[2], t, messages);
 
   assert.equal(findEntryValue(entries, 'Quota'), '4200');
-  assert.equal(findEntryValue(entries, 'Context'), '3600');
+  assert.equal(findEntryValue(entries, 'Context'), '-');
 });
 
 test('conversation consumed tokens aggregate by user turn instead of context totals', () => {

@@ -281,26 +281,22 @@ impl Orchestrator {
         current_question: &str,
         log_payload: bool,
         persisted_context_tokens: i64,
-        request_overhead_tokens: i64,
+        _request_overhead_tokens: i64,
         force: bool,
         exclude_current_user: bool,
         run_mode: CompactionRunMode,
     ) -> Result<CompactionResult, OrchestratorError> {
         let compaction_profile = CompactionExecutionProfile::new(run_mode);
         let trigger_mode = Some(compaction_profile.trigger_mode());
-        let request_overhead_tokens = request_overhead_tokens.max(0);
+        let request_overhead_tokens = 0_i64;
         let persisted_context_tokens = persisted_context_tokens.max(0);
-        let context_tokens = estimate_messages_tokens(&messages);
-        let projected_request_tokens = resolve_projected_request_tokens(
-            context_tokens,
-            persisted_context_tokens,
-            request_overhead_tokens,
-        );
+        let context_tokens = persisted_context_tokens;
+        let projected_request_tokens = resolve_projected_request_tokens(context_tokens);
         let Some(limit) = resolve_compaction_limit(llm_config, projected_request_tokens, force)
         else {
             return Ok(CompactionResult::unchanged(messages));
         };
-        let message_budget = resolve_message_budget(limit, request_overhead_tokens);
+        let message_budget = resolve_message_budget(limit);
         let max_context = llm_config.max_context.unwrap_or(0) as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
@@ -335,6 +331,7 @@ impl Orchestrator {
         };
         let total_tokens = projected_request_tokens;
         let history_usage = context_tokens;
+        let estimated_message_tokens = estimate_messages_tokens(&messages);
         if !should_compact {
             return Ok(CompactionResult::unchanged(messages));
         }
@@ -477,6 +474,7 @@ impl Orchestrator {
                     "summary": "Context guard trimmed oversized user input before model call.",
                     "tokens_before": guard_stats.tokens_before,
                     "tokens_after": guard_stats.tokens_after,
+                    "estimated_message_tokens": guard_stats.tokens_after,
                     "request_overhead_tokens": request_overhead_tokens,
                     "message_budget": message_budget,
                     "current_user_trimmed": guard_stats.current_user_trimmed,
@@ -503,6 +501,9 @@ impl Orchestrator {
                 "fresh_memory_count": 0,
                 "history_usage": history_usage,
                 "context_tokens": history_usage,
+                "observed_context_tokens": history_usage,
+                "estimated_message_tokens": estimated_message_tokens,
+                "context_usage_source": if history_usage > 0 { "provider_observed" } else { "unobserved" },
                 "persisted_context_tokens": persisted_context_tokens,
                 "projected_request_tokens": projected_request_tokens,
                 "request_overhead_tokens": request_overhead_tokens,
@@ -690,6 +691,9 @@ impl Orchestrator {
                 "fresh_memory_total_count": fresh_memory_total_count,
                 "history_usage": history_usage,
                 "context_tokens": history_usage,
+                "observed_context_tokens": history_usage,
+                "estimated_message_tokens": estimated_message_tokens,
+                "context_usage_source": if history_usage > 0 { "provider_observed" } else { "unobserved" },
                 "persisted_context_tokens": persisted_context_tokens,
                 "projected_request_tokens": projected_request_tokens,
                 "request_overhead_tokens": request_overhead_tokens,
@@ -869,7 +873,7 @@ impl Orchestrator {
         clear_retained_interaction_markers(&mut rebuilt);
         clear_compaction_inflight_markers(&mut rebuilt);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
-        let rebuilt_request_tokens = rebuilt_tokens.saturating_add(request_overhead_tokens);
+        let observed_rebuilt_tokens = 0_i64;
         let committed_replacement_history_tokens =
             estimate_messages_tokens(&committed_replacement_history);
 
@@ -909,6 +913,7 @@ impl Orchestrator {
                 "summary": "Context guard trimmed oversized compaction payload.",
                 "tokens_before": guard_stats.tokens_before,
                 "tokens_after": guard_stats.tokens_after,
+                "estimated_message_tokens": guard_stats.tokens_after,
                 "request_overhead_tokens": request_overhead_tokens,
                 "message_budget": message_budget,
                 "current_user_replay_trimmed": current_user_message_for_history_trimmed,
@@ -1057,11 +1062,35 @@ impl Orchestrator {
         compaction_payload_map.insert("total_tokens".to_string(), json!(total_tokens));
         compaction_payload_map.insert(
             "total_tokens_after".to_string(),
-            json!(rebuilt_request_tokens),
+            json!(observed_rebuilt_tokens),
         );
         compaction_payload_map.insert("history_usage".to_string(), json!(history_usage));
         compaction_payload_map.insert("context_tokens".to_string(), json!(history_usage));
-        compaction_payload_map.insert("context_tokens_after".to_string(), json!(rebuilt_tokens));
+        compaction_payload_map.insert("observed_context_tokens".to_string(), json!(history_usage));
+        compaction_payload_map.insert(
+            "context_tokens_after".to_string(),
+            json!(observed_rebuilt_tokens),
+        );
+        compaction_payload_map.insert(
+            "observed_context_tokens_after".to_string(),
+            json!(observed_rebuilt_tokens),
+        );
+        compaction_payload_map.insert(
+            "estimated_message_tokens".to_string(),
+            json!(estimated_message_tokens),
+        );
+        compaction_payload_map.insert(
+            "estimated_message_tokens_after".to_string(),
+            json!(rebuilt_tokens),
+        );
+        compaction_payload_map.insert(
+            "context_usage_source".to_string(),
+            Value::String("provider_observed".to_string()),
+        );
+        compaction_payload_map.insert(
+            "context_usage_source_after".to_string(),
+            Value::String("unobserved_after_compaction".to_string()),
+        );
         compaction_payload_map.insert(
             "persisted_context_tokens".to_string(),
             json!(persisted_context_tokens),
@@ -1072,7 +1101,7 @@ impl Orchestrator {
         );
         compaction_payload_map.insert(
             "projected_request_tokens_after".to_string(),
-            json!(rebuilt_request_tokens),
+            json!(observed_rebuilt_tokens),
         );
         compaction_payload_map.insert(
             "request_overhead_tokens".to_string(),
@@ -1445,12 +1474,14 @@ impl Orchestrator {
             return Err(err);
         }
         let messages = context_manager.normalize_messages(messages);
-        let context_tokens = context_manager.estimate_context_tokens(&messages);
+        let context_tokens = 0_i64;
         self.workspace
             .save_session_context_tokens_async(user_id, session_id, context_tokens)
             .await;
         let mut context_payload = json!({
             "context_tokens": context_tokens,
+            "observed_context_tokens": context_tokens,
+            "context_usage_source": "unobserved_after_manual_compaction",
             "message_count": messages.len(),
         });
         if let Value::Object(ref mut map) = context_payload {
@@ -4249,18 +4280,12 @@ fn should_compact_by_context(
     (decision.by_history, decision.should_compact())
 }
 
-fn resolve_message_budget(limit: i64, request_overhead_tokens: i64) -> i64 {
-    limit.saturating_sub(request_overhead_tokens.max(0)).max(1)
+fn resolve_message_budget(limit: i64) -> i64 {
+    limit.max(1)
 }
 
-fn resolve_projected_request_tokens(
-    context_tokens: i64,
-    persisted_context_tokens: i64,
-    request_overhead_tokens: i64,
-) -> i64 {
-    context_tokens
-        .max(persisted_context_tokens)
-        .saturating_add(request_overhead_tokens.max(0))
+fn resolve_projected_request_tokens(context_tokens: i64) -> i64 {
+    context_tokens.max(0)
 }
 
 fn resolve_compaction_limit(
@@ -4493,9 +4518,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_message_budget_reserves_tool_overhead() {
-        assert_eq!(resolve_message_budget(4096, 512), 3584);
-        assert_eq!(resolve_message_budget(256, 4096), 1);
+    fn test_resolve_message_budget_uses_limit_only() {
+        assert_eq!(resolve_message_budget(4096), 4096);
+        assert_eq!(resolve_message_budget(0), 1);
     }
 
     #[test]
@@ -4756,9 +4781,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_projected_request_tokens_prefers_persisted_peak() {
-        assert_eq!(resolve_projected_request_tokens(2000, 3000, 400), 3400);
-        assert_eq!(resolve_projected_request_tokens(5000, 3000, 400), 5400);
+    fn test_resolve_projected_request_tokens_uses_observed_context_only() {
+        assert_eq!(resolve_projected_request_tokens(2000), 2000);
+        assert_eq!(resolve_projected_request_tokens(5000), 5000);
     }
 
     #[test]

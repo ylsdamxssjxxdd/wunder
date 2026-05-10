@@ -97,7 +97,7 @@ test('composer context display clears both values when total tokens are missing'
   });
 });
 
-test('composer context usage keeps completed assistant final value ahead of stale session estimate', () => {
+test('composer context usage ignores completed usage totals and keeps session occupancy', () => {
   const source = resolveComposerContextUsageSource(
     [
       {
@@ -115,13 +115,13 @@ test('composer context usage keeps completed assistant final value ahead of stal
       }
     ],
     {
-      context_tokens: 21024
+      context_occupancy_tokens: 21024
     },
     false
   );
 
   assert.equal(source.runningAssistant, false);
-  assert.equal(source.contextTokens, 25810);
+  assert.equal(source.contextTokens, 21024);
 });
 
 test('composer context usage prefers explicit occupancy over accumulated round usage', () => {
@@ -341,7 +341,7 @@ test('composer context usage ignores model usage totals while running without ex
   assert.equal(source.runningContextTokens, null);
 });
 
-test('composer context usage aligns completed assistant with final usage totals', () => {
+test('composer context usage ignores completed assistant usage totals without explicit occupancy', () => {
   const source = resolveComposerContextUsageSource(
     [
       {
@@ -365,10 +365,10 @@ test('composer context usage aligns completed assistant with final usage totals'
   );
 
   assert.equal(source.runningAssistant, false);
-  assert.equal(source.contextTokens, 27677);
+  assert.equal(source.contextTokens, 3504);
 });
 
-test('composer context usage replaces completed request estimates with final bubble usage', () => {
+test('composer context usage keeps observed occupancy ahead of completed usage totals', () => {
   const source = resolveComposerContextUsageSource(
     [
       {
@@ -393,10 +393,10 @@ test('composer context usage replaces completed request estimates with final bub
   );
 
   assert.equal(source.runningAssistant, false);
-  assert.equal(source.contextTokens, 25810);
+  assert.equal(source.contextTokens, 21024);
 });
 
-test('composer context usage and bubble stats align on completed final usage', () => {
+test('composer context usage and bubble stats align on observed occupancy', () => {
   const messages = [
     {
       role: 'assistant',
@@ -426,8 +426,8 @@ test('composer context usage and bubble stats align on completed final usage', (
     messages
   );
 
-  assert.equal(composerSource.contextTokens, 25810);
-  assert.equal(findEntryValue(bubbleEntries, 'Context'), '25810');
+  assert.equal(composerSource.contextTokens, 21024);
+  assert.equal(findEntryValue(bubbleEntries, 'Context'), '21024');
 });
 
 test('composer context usage keeps session max context after reload', () => {
@@ -444,7 +444,7 @@ test('composer context usage keeps session max context after reload', () => {
   assert.equal(source.contextTotalTokens, 128000);
 });
 
-test('composer context usage keeps cached contextTokens ahead of occupancy alias', () => {
+test('composer context usage prefers observed occupancy alias over cached contextTokens', () => {
   const source = resolveComposerContextUsageSource(
     [],
     {
@@ -455,7 +455,7 @@ test('composer context usage keeps cached contextTokens ahead of occupancy alias
     false
   );
 
-  assert.equal(source.contextTokens, 8795);
+  assert.equal(source.contextTokens, 1693);
   assert.equal(source.contextTotalTokens, 128000);
 });
 
@@ -480,6 +480,59 @@ test('composer context usage keeps assistant contextTokens ahead of session occu
   );
 
   assert.equal(source.contextTokens, 8795);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage uses preview only when no observed context exists', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextPreviewTokens: 8795,
+          usage: {
+            input_tokens: 8761,
+            output_tokens: 34,
+            total_tokens: 8795
+          }
+        }
+      }
+    ],
+    {
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 8795);
+  assert.equal(source.contextTotalTokens, 128000);
+});
+
+test('composer context usage keeps observed context ahead of preview fallback', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          context_occupancy_tokens: 3210,
+          contextPreviewTokens: 8795
+        }
+      }
+    ],
+    {
+      context_occupancy_tokens: 3500,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 3500);
   assert.equal(source.contextTotalTokens, 128000);
 });
 
@@ -549,7 +602,7 @@ test('composer context usage grows a new user round from the previous confirmed 
   assert.equal(state.stableTokens, 6268);
 });
 
-test('composer context usage keeps completed model usage total ahead of stale occupancy alias', () => {
+test('composer context usage keeps session occupancy ahead of completed model usage total', () => {
   const source = resolveComposerContextUsageSource(
     [
       {
@@ -573,11 +626,11 @@ test('composer context usage keeps completed model usage total ahead of stale oc
     false
   );
 
-  assert.equal(source.contextTokens, 8795);
+  assert.equal(source.contextTokens, 1693);
   assert.equal(source.contextTotalTokens, 128000);
 });
 
-test('composer context usage ignores trailing manual compaction marker and keeps the last real assistant final usage', () => {
+test('composer context usage ignores trailing manual compaction marker and keeps session occupancy', () => {
   const source = resolveComposerContextUsageSource(
     [
       {
@@ -620,11 +673,11 @@ test('composer context usage ignores trailing manual compaction marker and keeps
     false
   );
 
-  assert.equal(source.contextTokens, 20657);
+  assert.equal(source.contextTokens, 2641);
   assert.equal(source.contextTotalTokens, 128000);
 });
 
-test('composer context usage ignores goal divider messages and keeps the last real assistant final usage', () => {
+test('composer context usage ignores goal divider messages and keeps session occupancy', () => {
   const source = resolveComposerContextUsageSource(
     [
       {

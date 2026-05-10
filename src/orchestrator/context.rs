@@ -76,10 +76,6 @@ impl ContextManager {
         }
         output
     }
-
-    pub(super) fn estimate_context_tokens(&self, messages: &[Value]) -> i64 {
-        estimate_messages_tokens(messages).max(0)
-    }
 }
 
 fn extract_tool_calls(message: &Value) -> Vec<ToolCall> {

@@ -1318,14 +1318,14 @@ export const resolveSessionContextTokens = (store, sessionId) => {
   const session = store.sessions.find((item) => resolveSessionKey(item?.id) === key);
   if (!session || typeof session !== 'object') return null;
   return normalizeContextTokens(
-    session.contextTokens ??
-      session.context_tokens ??
+    session.context_occupancy_tokens ??
       session.contextOccupancyTokens ??
-      session.context_occupancy_tokens ??
-      session.context_usage?.context_tokens ??
-      session.context_usage?.contextTokens ??
       session.context_usage?.context_occupancy_tokens ??
-      session.context_usage?.contextOccupancyTokens
+      session.context_usage?.contextOccupancyTokens ??
+      session.contextTokens ??
+      session.context_tokens ??
+      session.context_usage?.contextTokens ??
+      session.context_usage?.context_tokens
   );
 };
 

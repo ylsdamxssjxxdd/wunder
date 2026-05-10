@@ -133,7 +133,7 @@ import { applyPlanUpdate, buildToolIdentityMeta, buildWorkflowItem, hasPlanSteps
 import { applyDesktopOverlayEvent } from './chatPersist';
 import { STREAM_FLUSH_BASE_MS, resolveStreamFlushMs } from './chatRuntimeControls';
 import { resolveSessionKey, sessionSubagentsCache } from './chatRuntimeState';
-import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, resolveUsageContextTokens, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
+import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveContextPreviewTokens, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
 import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments } from './chatStreamIds';
 import { NormalizedUsagePayload, QuestionPanelApplyOptions, UsageStatsOptions, WorkflowProcessorOptions } from './chatTypes';
 import { buildDetail, cloneCompactionDebugPayload, createThinkTagStreamParser, extractFinalAnswerFromToolCalls, isFailedResult, normalizeAssistantOutput, normalizeReasoningText, normalizeSessionWorkflowState, pickString, pickText, resolveAssistantReasoning, resolveEventType, resolveToolCategory, toOptionalInt, updateWorkflowItem } from './chatWorkflowHydration';
@@ -530,22 +530,11 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     const shouldUpdateUsage = Boolean(normalizedUsage && usageOptions.updateUsage !== false);
-    const shouldUpdateContextFromUsage = usageOptions.updateContextFromUsage === true;
-    const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
     const existingContextTokens = normalizeContextTokens(stats.contextTokens);
     if (shouldUpdateUsage) {
       stats.usage = normalizedUsage;
     }
-    if (shouldUpdateContextFromUsage && usageContextTokens !== null) {
-      const changed = existingContextTokens !== usageContextTokens;
-      stats.contextTokens = usageContextTokens;
-      contextEstimateBaseTokens = usageContextTokens;
-      if (changed) {
-        options.onContextUsage?.(usageContextTokens, stats.contextTotalTokens ?? null);
-      }
-    } else if (existingContextTokens !== null && existingContextTokens > 0) {
-      contextEstimateBaseTokens = existingContextTokens;
-    }
+    if (existingContextTokens !== null && existingContextTokens > 0) contextEstimateBaseTokens = existingContextTokens;
     const prefill = normalizeDurationValue(prefillDuration);
     const decode = normalizeDurationValue(decodeDuration);
     if (prefill !== null) {
@@ -597,6 +586,22 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     }
   };
 
+  const syncContextPreviewTokens = (nextContextTokens) => {
+    if (!stats) return;
+    const normalized = normalizeContextTokens(nextContextTokens);
+    if (normalized === null || normalized <= 0) return;
+    const existingContextTokens = normalizeContextTokens(stats.contextTokens);
+    // Preview is only a composer fallback. Once observed occupancy exists, never
+    // let estimates compete with the real session/bubble context value.
+    if (existingContextTokens !== null && existingContextTokens > 0) {
+      return;
+    }
+    const existingPreviewTokens = resolveContextPreviewTokens(stats);
+    if (existingPreviewTokens === normalized) return;
+    stats.contextPreviewTokens = normalized;
+    notifySnapshot(true);
+  };
+
   const resolveExplicitLiveContextTokens = (payload) => {
     return resolveExplicitContextTokens(payload);
   };
@@ -626,7 +631,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       confirmedContextTokens
     );
     if (previewContextTokens !== null) {
-      syncLiveContextTokens(previewContextTokens);
+      syncContextPreviewTokens(previewContextTokens);
     }
   };
 
@@ -1799,16 +1804,17 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     if (hasContentDelta && stats) {
       const baseTokens =
         normalizeContextTokens(contextEstimateBaseTokens) ??
-        normalizeContextTokens(stats.contextTokens);
+        normalizeContextTokens(stats.contextTokens) ??
+        resolveContextPreviewTokens(stats);
       if (baseTokens !== null && baseTokens > 0) {
         const estimatedOutputTokens = estimateStreamOutputTokens(outputContent);
         if (estimatedOutputTokens > 0) {
           const estimatedTotal = baseTokens + estimatedOutputTokens;
-          const currentTokens = normalizeContextTokens(stats.contextTokens);
+          const currentTokens =
+            normalizeContextTokens(stats.contextTokens) ??
+            resolveContextPreviewTokens(stats);
           if (currentTokens === null || estimatedTotal > currentTokens) {
-            stats.contextTokens = estimatedTotal;
-            options.onContextUsage?.(estimatedTotal, stats.contextTotalTokens ?? null);
-            notifySnapshot(true);
+            syncContextPreviewTokens(estimatedTotal);
           }
         }
       }
@@ -1974,12 +1980,6 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     syncReasoningToMessage();
-    const finalContextTokens =
-      resolveUsageContextTokens(normalizeUsagePayload(stats?.usage)) ??
-      resolveUsageContextTokens(normalizeUsagePayload(stats?.roundUsage));
-    if (finalContextTokens !== null) {
-      options.onContextUsage?.(finalContextTokens, stats?.contextTotalTokens ?? null);
-    }
     if (
       !normalizeFlag(assistantMessage.workflowStreaming)
       && !normalizeFlag(assistantMessage.stream_incomplete)
