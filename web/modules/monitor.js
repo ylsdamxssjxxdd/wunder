@@ -3715,6 +3715,157 @@ const normalizeMonitorExportTimestamp = (value) => {
   return "";
 };
 
+const resolveMonitorEventType = (event) =>
+  String(event?.type || event?.event || "unknown").trim() || "unknown";
+
+const normalizeMonitorBoolean = (value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return null;
+};
+
+const summarizeMonitorExportEvents = (events) => {
+  const summary = {
+    final_answer_present: false,
+    final_answer_preview: "",
+    turn_terminal_status: "",
+    turn_terminal_stop_reason: "",
+    thread_closure_reason: "",
+    final_tool_result_ok: null,
+    tool_call_count: 0,
+    tool_result_count: 0,
+    tool_retry_count: 0,
+    tool_results: [],
+  };
+  const toolMap = new Map();
+  events.forEach((event, index) => {
+    const eventType = resolveMonitorEventType(event).toLowerCase();
+    const data = unwrapMonitorEventData(event?.data);
+    const order = index + 1;
+    if (eventType === "final") {
+      const answer = String(data?.answer || "").trim();
+      if (answer) {
+        summary.final_answer_present = true;
+        summary.final_answer_preview = compactMonitorExportText(answer);
+      }
+    } else if (eventType === "turn_terminal") {
+      summary.turn_terminal_status = String(data?.status || "").trim();
+      summary.turn_terminal_stop_reason = String(data?.stop_reason || "").trim();
+    } else if (eventType === "thread_closed") {
+      summary.thread_closure_reason = String(data?.reason || "").trim();
+    } else if (eventType === "tool_call") {
+      summary.tool_call_count += 1;
+      const toolCallId = String(data?.tool_call_id || "").trim();
+      const fallbackId = `fallback_call_${order}`;
+      const key = toolCallId || fallbackId;
+      const existing = toolMap.get(key) || {
+        key,
+        tool_call_id: toolCallId || null,
+        tool: String(data?.tool_display_name || data?.tool || data?.name || "").trim(),
+        function_name: String(data?.tool_function_name || "").trim() || null,
+        call_order: order,
+        call_round: resolveMonitorEventRound(event) || null,
+        args: compactMonitorExportValue(data?.args ?? null),
+        attempts: 0,
+        retries: 0,
+        ok: null,
+        last_error: "",
+        result_order: null,
+        result_timestamp: "",
+      };
+      existing.tool = existing.tool || String(data?.tool_display_name || data?.tool || data?.name || "").trim();
+      existing.function_name =
+        existing.function_name || String(data?.tool_function_name || "").trim() || null;
+      existing.args =
+        existing.args ?? compactMonitorExportValue(data?.args ?? null);
+      toolMap.set(key, existing);
+    } else if (eventType === "tool_result") {
+      summary.tool_result_count += 1;
+      const toolCallId = String(data?.tool_call_id || "").trim();
+      const fallbackId = `fallback_result_${order}`;
+      const key = toolCallId || fallbackId;
+      const existing = toolMap.get(key) || {
+        key,
+        tool_call_id: toolCallId || null,
+        tool: String(data?.tool_display_name || data?.tool || data?.name || "").trim(),
+        function_name: String(data?.tool_function_name || "").trim() || null,
+        call_order: null,
+        call_round: resolveMonitorEventRound(event) || null,
+        args: null,
+        attempts: 0,
+        retries: 0,
+        ok: null,
+        last_error: "",
+        result_order: null,
+        result_timestamp: "",
+      };
+      existing.tool = existing.tool || String(data?.tool_display_name || data?.tool || data?.name || "").trim();
+      existing.function_name =
+        existing.function_name || String(data?.tool_function_name || "").trim() || null;
+      existing.attempts += 1;
+      existing.retries = Math.max(0, existing.attempts - 1);
+      const okValue = normalizeMonitorBoolean(data?.ok);
+      if (okValue !== null) {
+        existing.ok = okValue;
+      }
+      existing.result_order = order;
+      existing.result_timestamp = normalizeMonitorExportTimestamp(event?.timestamp);
+      const errorText = String(data?.error || data?.meta?.error_detail_head || "").trim();
+      if (errorText) {
+        existing.last_error = compactMonitorExportText(errorText);
+      }
+      toolMap.set(key, existing);
+    }
+  });
+  const toolResults = Array.from(toolMap.values())
+    .sort((left, right) => {
+      const leftOrder = Number.isFinite(left.call_order) ? left.call_order : left.result_order || Number.MAX_SAFE_INTEGER;
+      const rightOrder = Number.isFinite(right.call_order) ? right.call_order : right.result_order || Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder;
+    })
+    .map((item) => ({
+      tool_call_id: item.tool_call_id,
+      tool: item.tool || "",
+      function_name: item.function_name,
+      call_order: item.call_order,
+      call_round: item.call_round,
+      attempts: item.attempts,
+      retries: item.retries,
+      ok: item.ok,
+      last_error: item.last_error || null,
+      result_order: item.result_order,
+      result_timestamp: item.result_timestamp || "",
+      args: item.args,
+    }));
+  summary.tool_results = toolResults;
+  summary.tool_retry_count = toolResults.reduce((total, item) => total + Math.max(0, Number(item.retries) || 0), 0);
+  if (toolResults.length > 0) {
+    const lastResolved = [...toolResults]
+      .reverse()
+      .find((item) => typeof item.ok === "boolean");
+    if (lastResolved) {
+      summary.final_tool_result_ok = lastResolved.ok;
+    }
+  }
+  return summary;
+};
+
 const buildMonitorDetailExportLines = () => {
   const detail = state.monitor?.detail;
   if (!detail) {
@@ -3726,10 +3877,11 @@ const buildMonitorDetailExportLines = () => {
       : {};
   const events = Array.isArray(detail.events) ? detail.events : [];
   const feedback = Array.isArray(detail.feedback) ? detail.feedback : [];
+  const exportSummary = summarizeMonitorExportEvents(events);
   const eventTypes = Array.from(
     new Set(
       events.map((event) => {
-        const eventType = String(event?.type || event?.event || "unknown").trim();
+        const eventType = resolveMonitorEventType(event);
         return eventType || "unknown";
       })
     )
@@ -3737,13 +3889,23 @@ const buildMonitorDetailExportLines = () => {
   const lines = [
     {
       record_type: "meta",
-      export_schema_version: 2,
+      export_schema_version: 3,
       export_format: "jsonl",
       exported_at: new Date().toISOString(),
       summary: {
         event_count: events.length,
         feedback_count: feedback.length,
         event_types: eventTypes,
+        final_answer_present: exportSummary.final_answer_present,
+        final_answer_preview: exportSummary.final_answer_preview,
+        turn_terminal_status: exportSummary.turn_terminal_status,
+        turn_terminal_stop_reason: exportSummary.turn_terminal_stop_reason,
+        thread_closure_reason: exportSummary.thread_closure_reason,
+        final_tool_result_ok: exportSummary.final_tool_result_ok,
+        tool_call_count: exportSummary.tool_call_count,
+        tool_result_count: exportSummary.tool_result_count,
+        tool_retry_count: exportSummary.tool_retry_count,
+        tool_results: exportSummary.tool_results,
       },
       session: compactMonitorExportValue(session),
       compact_policy: {
@@ -3755,7 +3917,7 @@ const buildMonitorDetailExportLines = () => {
     },
   ];
   events.forEach((event, index) => {
-    const eventType = String(event?.type || event?.event || "unknown").trim() || "unknown";
+    const eventType = resolveMonitorEventType(event);
     lines.push({
       record_type: "event",
       order: index + 1,

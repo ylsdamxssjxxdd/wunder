@@ -96,6 +96,7 @@ use event_stream::StreamSignal;
 use limiter::RequestLimiter;
 use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
+use tool_calls::collect_tool_calls_from_payload;
 use tool_calls::collect_tool_calls_from_output;
 use tool_calls::compile_regex;
 use tool_calls::strip_tool_calls;

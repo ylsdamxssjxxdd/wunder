@@ -10,6 +10,9 @@ struct PendingToolCall {
     name: String,
 }
 
+const FINAL_RESPONSE_TOOL_NAME: &str = "final_response";
+const A2UI_TOOL_NAME: &str = "a2ui";
+
 impl ContextManager {
     pub(super) fn normalize_messages(&self, messages: Vec<Value>) -> Vec<Value> {
         if messages.is_empty() {
@@ -84,6 +87,7 @@ fn extract_tool_calls(message: &Value) -> Vec<ToolCall> {
     };
     collect_tool_calls_from_payload(&payload)
         .into_iter()
+        .filter(|call| !is_terminal_history_tool_call(call.name.as_str()))
         .filter(|call| !call.name.trim().is_empty())
         .collect()
 }
@@ -162,9 +166,14 @@ fn build_missing_tool_observation(tool_name: &str) -> String {
         "ok": false,
         "error": "missing tool result",
         "data": {},
-        "timestamp": Local::now().to_rfc3339(),
     });
     serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn is_terminal_history_tool_call(tool_name: &str) -> bool {
+    let cleaned = resolve_tool_name(tool_name.trim());
+    cleaned == resolve_tool_name(FINAL_RESPONSE_TOOL_NAME)
+        || cleaned == resolve_tool_name(A2UI_TOOL_NAME)
 }
 
 fn convert_orphan_tool_message_to_observation(message: &Value) -> Value {
@@ -324,5 +333,32 @@ mod tests {
             normalized[2].get("tool_call_id").and_then(Value::as_str),
             Some("call_expected")
         );
+    }
+
+    #[test]
+    fn test_normalize_ignores_terminal_tool_calls_for_replay_history() {
+        let manager = ContextManager;
+        let messages = vec![
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_final",
+                    "type": "function",
+                    "function": { "name": "final_response", "arguments": r#"{"content":"ok"}"# }
+                }]
+            }),
+            json!({ "role": "user", "content": "next" }),
+        ];
+        let normalized = manager.normalize_messages(messages);
+        assert_eq!(normalized.len(), 2);
+    }
+
+    #[test]
+    fn test_missing_tool_observation_is_deterministic() {
+        let first = build_missing_tool_observation("read_file");
+        let second = build_missing_tool_observation("read_file");
+        assert_eq!(first, second);
+        assert!(!first.contains("timestamp"));
     }
 }

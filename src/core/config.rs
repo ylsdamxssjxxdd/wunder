@@ -51,8 +51,6 @@ pub struct Config {
     #[serde(default)]
     pub gateway: GatewayConfig,
     #[serde(default)]
-    pub sandbox: SandboxConfig,
-    #[serde(default)]
     pub agent_queue: AgentQueueConfig,
     #[serde(default)]
     pub user_agents: UserAgentsConfig,
@@ -1410,36 +1408,6 @@ pub struct PostgresConfig {
     pub pool_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SandboxConfig {
-    #[serde(default)]
-    pub mode: String,
-    #[serde(default)]
-    pub endpoint: String,
-    #[serde(default)]
-    pub container_root: String,
-    #[serde(default)]
-    pub network: String,
-    #[serde(default)]
-    pub readonly_rootfs: bool,
-    #[serde(default)]
-    pub idle_ttl_s: u64,
-    #[serde(default)]
-    pub timeout_s: u64,
-    #[serde(default)]
-    pub resources: SandboxResources,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SandboxResources {
-    #[serde(default)]
-    pub cpu: f32,
-    #[serde(default)]
-    pub memory_mb: u64,
-    #[serde(default)]
-    pub pids: u64,
-}
-
 impl Config {
     // Normalize API key values and ignore blank placeholders.
     pub fn api_key(&self) -> Option<String> {
@@ -1979,9 +1947,6 @@ fn restore_generated_sparse_config_sections(config: &mut Config, example: &Confi
     if equals_default_section(&config.gateway) {
         config.gateway = example.gateway.clone();
     }
-    if equals_default_section(&config.sandbox) {
-        config.sandbox = example.sandbox.clone();
-    }
     if equals_default_section(&config.user_agents) {
         config.user_agents = example.user_agents.clone();
     }
@@ -2122,8 +2087,6 @@ storage:
     dsn: postgresql://wunder:wunder@postgres:5432/wunder
     connect_timeout_s: 5
     pool_size: 64
-sandbox:
-  endpoint: http://sandbox:9001
 "#,
         )
         .expect("parse base yaml");
@@ -2135,8 +2098,6 @@ storage:
   db_path: ''
   postgres:
     dsn: ''
-sandbox:
-  endpoint: ''
 "#,
         )
         .expect("parse override yaml");
@@ -2150,7 +2111,6 @@ sandbox:
             merged.storage.postgres.dsn,
             "postgresql://wunder:wunder@postgres:5432/wunder"
         );
-        assert_eq!(merged.sandbox.endpoint, "http://sandbox:9001");
     }
 
     #[test]

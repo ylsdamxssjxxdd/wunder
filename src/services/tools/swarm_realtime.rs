@@ -523,7 +523,7 @@ mod tests {
         build_tool_managed_summary, emit_swarm_run_started, reconcile_swarm_task_from_session_run,
     };
     use crate::a2a_store::A2aStore;
-    use crate::config::{Config, ObservabilityConfig, SandboxConfig};
+    use crate::config::{Config, ObservabilityConfig};
     use crate::lsp::LspManager;
     use crate::monitor::MonitorState;
     use crate::services::swarm::events::TEAM_START;
@@ -651,7 +651,6 @@ mod tests {
                     monitor_drop_event_types: Vec::new(),
                     ..ObservabilityConfig::default()
                 },
-                SandboxConfig::default(),
                 workspace_root.to_string_lossy().to_string(),
             ));
             Self {

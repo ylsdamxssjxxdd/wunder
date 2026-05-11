@@ -1,7 +1,7 @@
 server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
   host: ${WUNDER_HOST:-0.0.0.0} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
   port: ${WUNDER_PORT:-8000} # 服务监听端口（可用 WUNDER_PORT 覆盖）
-  mode: ${WUNDER_SERVER_MODE:-api} # 服务模式：API=api，沙盒服务=sandbox
+  mode: ${WUNDER_SERVER_MODE:-api} # 服务模式：API=api；桌面/CLI 运行态通过各自入口决定
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
   max_active_sessions: 300 # 全局最大并发会话数，超过后请求排队
   tool_failure_guard_threshold: 5 # 同一轮中同类工具连续失败阈值；达到后停止重试并返回可恢复提示
@@ -264,17 +264,4 @@ observability: # 可观测性配置
   monitor_drop_event_types: # 需要丢弃的事件类型列表（减少存储占用）
     - llm_output_delta
     - tool_output_delta
-
-sandbox: # 沙盒执行配置
-  mode: sandbox # 沙盒模式（local/sandbox）
-  endpoint: ${WUNDER_SANDBOX_ENDPOINT:-http://sandbox:9001} # 沙盒服务地址（可通过环境变量覆盖）
-  container_root: /workspaces # 容器内项目根目录
-  network: bridge # 容器网络模式（bridge/host）
-  readonly_rootfs: true # 是否以只读根文件系统运行容器
-  idle_ttl_s: 0 # 空闲回收秒数（0 表示不回收）
-  timeout_s: 300 # 单次执行超时时间（秒）
-  resources: # 资源限制配置
-    cpu: 8.0 # CPU 核心数限制
-    memory_mb: 8096 # 内存上限（MB）
-    pids: 256 # 进程数上限
 

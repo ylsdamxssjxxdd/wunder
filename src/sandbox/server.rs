@@ -2,12 +2,14 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -225,6 +227,37 @@ pub fn build_router() -> Router {
         .route("/health", get(health))
         .route("/sandboxes/execute_tool", post(execute_tool))
         .route("/sandboxes/release", post(release_sandbox))
+}
+
+pub fn validate_runtime_readonly(readonly_rootfs: bool) -> Result<()> {
+    if !readonly_rootfs {
+        return Ok(());
+    }
+
+    let config_path = std::env::var("WUNDER_CONFIG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/app/config/wunder.yaml"));
+    ensure_path_not_writable(&config_path, "sandbox config path")?;
+
+    let repo_probe = Path::new("/app/Cargo.toml");
+    if repo_probe.exists() {
+        ensure_path_not_writable(repo_probe, "sandbox repo mount")?;
+    }
+
+    Ok(())
+}
+
+fn ensure_path_not_writable(path: &Path, label: &str) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if OpenOptions::new().write(true).open(path).is_ok() {
+        return Err(anyhow!(
+            "{label} is writable while sandbox.readonly_rootfs=true: {}",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 async fn health() -> impl IntoResponse {
@@ -1261,6 +1294,8 @@ fn default_container_root() -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_timeout_secs_accepts_float_number_and_string() {
@@ -1293,5 +1328,25 @@ mod tests {
 
         assert_eq!(normalized, vec!["/".to_string()]);
         assert!(roots.iter().any(|root| root == Path::new("/")));
+    }
+
+    #[test]
+    fn ensure_path_not_writable_detects_writable_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("probe.txt");
+        fs::write(&path, "probe").expect("write probe");
+
+        let err = ensure_path_not_writable(&path, "probe").expect_err("probe should fail");
+        assert!(err.to_string().contains("probe"));
+    }
+
+    #[test]
+    fn validate_runtime_readonly_skips_probe_when_disabled() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("config.yaml");
+        fs::write(&path, "demo: true\n").expect("write config");
+
+        let _ = path;
+        validate_runtime_readonly(false).expect("readonly probe should be skipped");
     }
 }

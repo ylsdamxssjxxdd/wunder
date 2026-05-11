@@ -13,6 +13,15 @@ use std::time::Duration;
 use tracing::warn;
 use url::Url;
 
+pub const DEFAULT_SANDBOX_ENDPOINT: &str = "http://wunder-sandbox:9001";
+pub const DEFAULT_SANDBOX_CONTAINER_ROOT: &str = "/workspaces";
+pub const DEFAULT_SANDBOX_TIMEOUT_S: u64 = 300;
+pub const DEFAULT_SANDBOX_READONLY_ROOTFS: bool = true;
+pub const DEFAULT_SANDBOX_IDLE_TTL_S: u64 = 0;
+pub const DEFAULT_SANDBOX_CPU_LIMIT: f32 = 8.0;
+pub const DEFAULT_SANDBOX_MEMORY_MB: u64 = 8096;
+pub const DEFAULT_SANDBOX_PIDS_LIMIT: u64 = 256;
+
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn http_client() -> &'static reqwest::Client {
@@ -48,7 +57,7 @@ fn is_loopback_host(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1")
 }
 
-fn sandbox_endpoint_candidates(config: &Config) -> Vec<String> {
+fn sandbox_endpoint_candidates(_config: &Config) -> Vec<String> {
     fn push(candidates: &mut Vec<String>, seen: &mut HashSet<String>, raw: &str) {
         let Some(normalized) = normalize_endpoint(raw) else {
             return;
@@ -65,7 +74,7 @@ fn sandbox_endpoint_candidates(config: &Config) -> Vec<String> {
     if let Ok(value) = env::var("WUNDER_SANDBOX_ENDPOINT") {
         push(&mut candidates, &mut seen, &value);
     }
-    push(&mut candidates, &mut seen, &config.sandbox.endpoint);
+    push(&mut candidates, &mut seen, DEFAULT_SANDBOX_ENDPOINT);
 
     let mut has_loopback = false;
     let mut has_sandbox_host = false;
@@ -177,8 +186,8 @@ fn resolve_container_workspace_root(
     workspace: &WorkspaceManager,
     user_id: &str,
 ) -> String {
-    let container_root = normalize_container_path(&config.sandbox.container_root)
-        .unwrap_or_else(|| "/workspaces".to_string());
+    let container_root =
+        normalize_container_path(sandbox_container_root()).unwrap_or_else(|| "/workspaces".to_string());
     let container_root = container_root.trim_end_matches('/');
     let container_root = if container_root.is_empty() {
         "/".to_string()
@@ -253,7 +262,62 @@ fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> 
 }
 
 pub fn sandbox_enabled(config: &Config) -> bool {
-    config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox")
+    !config.server.mode.trim().eq_ignore_ascii_case("desktop")
+}
+
+pub fn sandbox_container_root() -> &'static str {
+    DEFAULT_SANDBOX_CONTAINER_ROOT
+}
+
+pub fn sandbox_timeout_seconds() -> u64 {
+    env::var("WUNDER_SANDBOX_TIMEOUT_S")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SANDBOX_TIMEOUT_S)
+}
+
+pub fn sandbox_idle_ttl_seconds() -> u64 {
+    env::var("WUNDER_SANDBOX_IDLE_TTL_S")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SANDBOX_IDLE_TTL_S)
+}
+
+pub fn sandbox_readonly_rootfs() -> bool {
+    env::var("WUNDER_SANDBOX_READONLY_ROOTFS")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(DEFAULT_SANDBOX_READONLY_ROOTFS)
+}
+
+pub fn sandbox_cpu_limit() -> f32 {
+    env::var("WUNDER_SANDBOX_CPU")
+        .ok()
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .filter(|value| *value > 0.0)
+        .unwrap_or(DEFAULT_SANDBOX_CPU_LIMIT)
+}
+
+pub fn sandbox_memory_mb() -> u64 {
+    env::var("WUNDER_SANDBOX_MEMORY_MB")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SANDBOX_MEMORY_MB)
+}
+
+pub fn sandbox_pids_limit() -> u64 {
+    env::var("WUNDER_SANDBOX_PIDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SANDBOX_PIDS_LIMIT)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -334,18 +398,18 @@ pub async fn execute_tool(
         "allow_paths": allow_paths,
         "deny_globs": deny_globs,
         "allow_commands": allow_commands,
-        "container_root": config.sandbox.container_root,
-        "network": config.sandbox.network,
-        "readonly_rootfs": config.sandbox.readonly_rootfs,
-        "idle_ttl_s": config.sandbox.idle_ttl_s,
+        "container_root": sandbox_container_root(),
+        "network": "bridge",
+        "readonly_rootfs": sandbox_readonly_rootfs(),
+        "idle_ttl_s": sandbox_idle_ttl_seconds(),
         "resources": {
-            "cpu": config.sandbox.resources.cpu,
-            "memory_mb": config.sandbox.resources.memory_mb,
-            "pids": config.sandbox.resources.pids,
+            "cpu": sandbox_cpu_limit(),
+            "memory_mb": sandbox_memory_mb(),
+            "pids": sandbox_pids_limit(),
         }
     });
 
-    let timeout_s = config.sandbox.timeout_s.max(1);
+    let timeout_s = sandbox_timeout_seconds().max(1);
     let mut last_error = json!({});
 
     for endpoint in &endpoints {
@@ -513,8 +577,7 @@ mod tests {
     #[test]
     fn test_sandbox_endpoint_candidates_adds_fallback() {
         with_env_var("WUNDER_SANDBOX_ENDPOINT", None, || {
-            let mut config = Config::default();
-            config.sandbox.endpoint = "http://127.0.0.1:9001".to_string();
+            let config = Config::default();
 
             let candidates = sandbox_endpoint_candidates(&config);
             assert!(candidates
@@ -537,7 +600,6 @@ mod tests {
 
         let mut config = Config::default();
         config.workspace.root = "./config/data/workspaces".to_string();
-        config.sandbox.container_root = "/workspaces".to_string();
 
         let resolved = resolve_container_workspace_root(&config, &workspace, "demo_user");
         assert_eq!(resolved, "/workspaces/demo_user");

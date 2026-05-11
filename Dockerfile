@@ -205,6 +205,14 @@ RUN cargo install tauri-cli --version ${TAURI_CLI_VERSION} --locked
 RUN apt-get update && apt-get install -y --no-install-recommends \
     file wget xdg-utils \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/wunder/bin /opt/wunder/config
+COPY scripts/docker-rust-entry.sh /opt/wunder/bin/docker-rust-entry.sh
+COPY config/fonts.conf /opt/wunder/config/fonts.conf
+COPY config/matplotlibrc /opt/wunder/config/matplotlibrc
+RUN printf '%s\n' '# sandbox runtime is environment-driven and does not load wunder.yaml' \
+    > /opt/wunder/config/sandbox-runtime.yaml
+RUN chmod +x /opt/wunder/bin/docker-rust-entry.sh
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]

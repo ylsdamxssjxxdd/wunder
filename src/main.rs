@@ -53,6 +53,13 @@ use tracing::{error, info, warn, Level};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     core::rustls_provider::install_process_default_provider();
+    let bootstrap_mode = std::env::var("WUNDER_SERVER_MODE")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if bootstrap_mode == "sandbox" {
+        return run_sandbox_mode().await;
+    }
     // 初始化配置存储，用于鉴权与路由行为保持一致。
     let config_path = ConfigStore::config_path_default();
     let config_store = ConfigStore::new(config_path.clone());
@@ -69,28 +76,6 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| "disabled".to_string()),
         "server bootstrap ready"
     );
-    if server_mode == "sandbox" {
-        let addr = bind_address(&config);
-        let app = sandbox::server::build_router()
-            .layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                    .on_response(DefaultOnResponse::new().level(Level::DEBUG))
-                    .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
-            )
-            .layer(from_fn(panic_guard));
-        let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
-        info!(bind_addr = %addr, "sandbox server listening");
-        let server = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown_signal());
-        if let Err(err) = server.await {
-            warn!(error = %err, "sandbox server exited unexpectedly");
-        }
-        return Ok(());
-    }
     let state = Arc::new(AppState::new(config_store.clone(), config.clone())?);
     state.lsp_manager.sync_with_config(&config).await;
     tokio::spawn(hydrate_enabled_mcp_tool_specs(state.clone()));
@@ -157,6 +142,56 @@ fn bind_address(config: &Config) -> String {
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(config.server.port);
     format!("{host}:{port}")
+}
+
+async fn run_sandbox_mode() -> anyhow::Result<()> {
+    let config = Config::default();
+    let server_mode = "sandbox".to_string();
+    let config_path = PathBuf::from(
+        std::env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "/app/config/wunder.yaml".to_string()),
+    );
+    let log_dir = logging::init_server_tracing(&config, &server_mode, &config_path)?;
+    i18n::configure_i18n(
+        Some(config.i18n.default_language.clone()),
+        Some(config.i18n.supported_languages.clone()),
+        Some(config.i18n.aliases.clone()),
+    );
+    sandbox::server::validate_runtime_readonly(sandbox::sandbox_readonly_rootfs())?;
+    let host = std::env::var("WUNDER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = std::env::var("WUNDER_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(9001);
+    let addr = format!("{host}:{port}");
+    info!(
+        server_mode = %server_mode,
+        bind_addr = %addr,
+        config_path = %config_path.display(),
+        log_dir = %log_dir
+            .as_ref()
+            .map(|item| item.display().to_string())
+            .unwrap_or_else(|| "disabled".to_string()),
+        "sandbox bootstrap ready"
+    );
+    let app = sandbox::server::build_router()
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG))
+                .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+        )
+        .layer(from_fn(panic_guard));
+    let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
+    info!(bind_addr = %addr, "sandbox server listening");
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal());
+    if let Err(err) = server.await {
+        warn!(error = %err, "sandbox server exited unexpectedly");
+    }
+    Ok(())
 }
 
 fn resolve_server_mode(config: &Config) -> String {

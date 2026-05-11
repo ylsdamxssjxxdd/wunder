@@ -112,6 +112,12 @@ enum TerminalTool {
     Final,
 }
 
+#[derive(Clone)]
+struct AssistantHistorySnapshot {
+    tool_calls: Option<Value>,
+    persisted_tool_calls: Option<Value>,
+}
+
 const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 1000;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = MIN_NON_ADMIN_MAX_ROUNDS;
@@ -419,6 +425,7 @@ impl Orchestrator {
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
             messages.push(user_message.clone());
+            messages = context_manager.normalize_messages(messages);
             let mut user_message_appended = false;
 
             let desktop_unlimited_rounds =
@@ -496,7 +503,6 @@ impl Orchestrator {
                 last_round_info = round_info;
                 let mut adaptive_recovery_limit_hint: Option<i64> = None;
                 self.ensure_not_cancelled(&session_id)?;
-                messages = context_manager.normalize_messages(messages);
                 messages = context_compactor.compact_messages(messages);
                 let compaction_llm_config = apply_context_window_limit_hint(
                     &llm_config,
@@ -851,7 +857,10 @@ impl Orchestrator {
 
                 let assistant_content = content.clone();
                 let assistant_reasoning = reasoning.clone();
-                let has_tool_calls_payload = tool_calls_payload
+                let assistant_history =
+                    build_assistant_history_snapshot(tool_calls_payload.as_ref(), &allowed_tool_names);
+                let has_tool_calls_payload = assistant_history
+                    .tool_calls
                     .as_ref()
                     .is_some_and(|payload| !matches!(payload, Value::Null));
                 if has_tool_calls_payload
@@ -865,20 +874,24 @@ impl Orchestrator {
                     if !assistant_reasoning.trim().is_empty() {
                         assistant_message["reasoning_content"] = json!(assistant_reasoning.clone());
                     }
-                    if let Some(tool_calls_payload) = tool_calls_payload.clone() {
+                    if let Some(tool_calls_payload) = assistant_history.tool_calls.clone() {
                         assistant_message["tool_calls"] = tool_calls_payload;
                     }
                     messages.push(assistant_message);
-                    let meta = json!({ "type": "tool_call" });
+                    let meta = if assistant_history.persisted_tool_calls.is_some() {
+                        Some(json!({ "type": "tool_call" }))
+                    } else {
+                        None
+                    };
                     self.append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
                         Some(&json!(assistant_content)),
                         None,
-                        Some(&meta),
+                        meta.as_ref(),
                         Some(&assistant_reasoning),
-                        tool_calls_payload.as_ref(),
+                        assistant_history.persisted_tool_calls.as_ref(),
                         None,
                     );
                 }
@@ -2500,6 +2513,56 @@ fn build_planned_tool_calls(
         .collect()
 }
 
+fn build_assistant_history_snapshot(
+    tool_calls_payload: Option<&Value>,
+    allowed_tool_names: &HashSet<String>,
+) -> AssistantHistorySnapshot {
+    let Some(payload) = tool_calls_payload.cloned() else {
+        return AssistantHistorySnapshot {
+            tool_calls: None,
+            persisted_tool_calls: None,
+        };
+    };
+    let calls = collect_tool_calls_from_payload(&payload);
+    let planned = build_planned_tool_calls(calls, allowed_tool_names);
+    let persisted = planned
+        .into_iter()
+        .filter(|planned| !is_terminal_tool_name(planned.name.as_str()))
+        .map(planned_tool_call_to_history_value)
+        .collect::<Vec<_>>();
+    let persisted_tool_calls = (!persisted.is_empty()).then_some(Value::Array(persisted));
+    AssistantHistorySnapshot {
+        tool_calls: persisted_tool_calls.clone(),
+        persisted_tool_calls,
+    }
+}
+
+fn planned_tool_call_to_history_value(planned: PlannedToolCall) -> Value {
+    let mut payload = json!({
+        "type": "function",
+        "function": {
+            "name": planned.function_name,
+            "arguments": serde_json::to_string(&planned.call.arguments)
+                .unwrap_or_else(|_| "{}".to_string()),
+        }
+    });
+    if let Some(id) = planned
+        .call
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload["id"] = Value::String(id.to_string());
+    }
+    payload
+}
+
+fn is_terminal_tool_name(tool_name: &str) -> bool {
+    let canonical = resolve_tool_name(tool_name.trim());
+    canonical == resolve_tool_name("final_response") || canonical == "a2ui"
+}
+
 fn uses_native_tool_api(tool_call_mode: ToolCallMode, llm_config: &LlmModelConfig) -> bool {
     match tool_call_mode {
         ToolCallMode::FunctionCall => true,
@@ -3709,6 +3772,78 @@ mod tests {
         let planned = build_planned_tool_calls(calls, &allowed);
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].name, resolve_tool_name("final_response"));
+    }
+
+    #[test]
+    fn assistant_history_snapshot_drops_terminal_tool_calls() {
+        let allowed = HashSet::from([
+            resolve_tool_name("final_response"),
+            resolve_tool_name("read_file"),
+        ]);
+        let payload = json!([
+            {
+                "id": "call_final",
+                "type": "function",
+                "function": {
+                    "name": "final_response",
+                    "arguments": "{\"content\":\"ok\"}"
+                }
+            },
+            {
+                "id": "call_read",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"a.txt\"}"
+                }
+            }
+        ]);
+        let snapshot = build_assistant_history_snapshot(Some(&payload), &allowed);
+        let persisted = snapshot
+            .persisted_tool_calls
+            .expect("persisted tool calls should remain");
+        let calls = persisted.as_array().expect("array");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0]["function"]["name"].as_str(),
+            Some("read_file")
+        );
+    }
+
+    #[test]
+    fn assistant_history_snapshot_omits_pure_terminal_payload() {
+        let allowed = HashSet::from([resolve_tool_name("final_response")]);
+        let payload = json!({
+            "id": "call_final",
+            "type": "function",
+            "function": {
+                "name": "final_response",
+                "arguments": "{\"content\":\"ok\"}"
+            }
+        });
+        let snapshot = build_assistant_history_snapshot(Some(&payload), &allowed);
+        assert!(snapshot.tool_calls.is_none());
+        assert!(snapshot.persisted_tool_calls.is_none());
+    }
+
+    #[test]
+    fn assistant_history_snapshot_keeps_single_tool_call_as_array() {
+        let allowed = HashSet::from([resolve_tool_name("skill_call")]);
+        let payload = json!([{
+            "id": "call_skill",
+            "type": "function",
+            "function": {
+                "name": "skill_call",
+                "arguments": "{\"name\":\"深度研究\"}"
+            }
+        }]);
+        let snapshot = build_assistant_history_snapshot(Some(&payload), &allowed);
+        let persisted = snapshot
+            .persisted_tool_calls
+            .expect("persisted tool calls should remain");
+        let calls = persisted.as_array().expect("tool calls should stay array");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["type"], json!("function"));
     }
 
     #[test]

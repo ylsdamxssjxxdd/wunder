@@ -908,7 +908,7 @@ impl Orchestrator {
         } else if timeout_s <= 0.0 {
             let fallback = DEFAULT_TOOL_TIMEOUT_S;
             let sandbox_timeout = if sandbox::sandbox_enabled(config) {
-                config.sandbox.timeout_s as f64
+                sandbox::sandbox_timeout_seconds() as f64
             } else {
                 0.0
             };

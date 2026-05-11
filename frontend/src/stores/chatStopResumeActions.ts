@@ -133,6 +133,7 @@ import { buildWorkflowItem, dismissStaleInquiryPanels, normalizeInquiryPanelStat
 import { applyGoalStreamEvent, writeSessionGoalState } from './chatPersist';
 import { WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeResumeStreamState, clearSlowClientResume, insertWatchUserMessage, markRuntimeResumeStreamActivity, markRuntimeResumeStreamStarted, resolveHiddenInternalUserEvent, resolveMaterializedMessageEventId, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
 import { applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, clearAssistantRetryState, resetAssistantWaitingOutputPhase, resolveTimestampMs } from './chatStats';
 import { assignStreamEventId, getRuntimeLastEventId, normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -202,6 +203,7 @@ export const chatStopResumeActions = {
           : 0;
       }
       if (Array.isArray(targetMessages)) {
+        settleTerminalAssistantArtifactsBase(targetMessages, { failed: true });
         cacheSessionMessages(targetSessionId, targetMessages);
         touchSessionUpdatedAt(this, targetSessionId, Date.now());
         notifySessionSnapshot(this, targetSessionId, targetMessages, true);
@@ -487,6 +489,11 @@ export const chatStopResumeActions = {
           if (!keepStreaming) {
             clearSlowClientResume(runtime);
           }
+        }
+        if (!keepStreaming) {
+          settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
+            failed: errorSeen || aborted
+          });
         }
         setSessionLoading(this, sessionId, keepStreaming);
         processor.finalize();

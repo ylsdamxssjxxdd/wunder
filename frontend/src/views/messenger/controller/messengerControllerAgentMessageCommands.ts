@@ -972,7 +972,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               suppressQueuedNotice: hasInquirySelection,
               approvalMode: normalizeAgentApprovalMode(ctx.composerApprovalMode.value || ctx.activeAgentApprovalMode.value)
           });
-          ctx.setRuntimeStateOverride(targetAgentId, 'done', 8000);
+          ctx.setRuntimeStateOverride(targetAgentId, 'idle', 0);
           if (ctx.chatStore.activeSessionId) {
               ctx.sessionHub.setActiveConversation({
                   kind: 'agent',

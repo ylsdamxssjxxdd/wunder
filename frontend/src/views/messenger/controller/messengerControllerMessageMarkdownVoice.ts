@@ -541,7 +541,7 @@ export function installMessengerControllerMessageMarkdownVoice(ctx: MessengerCon
       ctx.setRuntimeStateOverride(targetAgentId, 'running', 30000);
       try {
           await ctx.chatStore.resumeStream(sessionId, message, { force: true });
-          ctx.setRuntimeStateOverride(targetAgentId, 'done', 8000);
+          ctx.setRuntimeStateOverride(targetAgentId, 'idle', 0);
           await ctx.scrollMessagesToBottom();
       }
       catch (error) {

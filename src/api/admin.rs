@@ -3101,7 +3101,6 @@ fn normalize_string_list(values: Vec<String>) -> Vec<String> {
 }
 
 fn build_system_settings_payload(config: &Config) -> Value {
-    let sandbox_enabled = config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
     let exec_policy_mode = config
         .security
         .exec_policy_mode
@@ -3122,21 +3121,6 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "allow_paths": config.security.allow_paths.clone(),
             "deny_globs": config.security.deny_globs.clone(),
             "exec_policy_mode": exec_policy_mode,
-        },
-        "sandbox": {
-            "enabled": sandbox_enabled,
-            "mode": config.sandbox.mode.clone(),
-            "endpoint": config.sandbox.endpoint.clone(),
-            "container_root": config.sandbox.container_root.clone(),
-            "network": config.sandbox.network.clone(),
-            "readonly_rootfs": config.sandbox.readonly_rootfs,
-            "idle_ttl_s": config.sandbox.idle_ttl_s,
-            "timeout_s": config.sandbox.timeout_s,
-            "resources": {
-                "cpu": config.sandbox.resources.cpu,
-                "memory_mb": config.sandbox.resources.memory_mb,
-                "pids": config.sandbox.resources.pids,
-            }
         },
         "observability": {
             "log_level": config.observability.log_level.clone(),
@@ -3164,7 +3148,6 @@ async fn admin_system_update(
 ) -> Result<Json<Value>, Response> {
     let has_updates = payload.server.is_some()
         || payload.security.is_some()
-        || payload.sandbox.is_some()
         || payload.observability.is_some()
         || payload.cors.is_some();
     if !has_updates {
@@ -3264,44 +3247,6 @@ async fn admin_system_update(
                     }
                 }
             }
-            if let Some(sandbox) = payload.sandbox {
-                if let Some(enabled) = sandbox.enabled {
-                    config.sandbox.mode = if enabled {
-                        "sandbox".to_string()
-                    } else {
-                        "local".to_string()
-                    };
-                }
-                if let Some(endpoint) = sandbox.endpoint {
-                    config.sandbox.endpoint = endpoint.trim().to_string();
-                }
-                if let Some(container_root) = sandbox.container_root {
-                    config.sandbox.container_root = container_root.trim().to_string();
-                }
-                if let Some(network) = sandbox.network {
-                    config.sandbox.network = network.trim().to_string();
-                }
-                if let Some(readonly_rootfs) = sandbox.readonly_rootfs {
-                    config.sandbox.readonly_rootfs = readonly_rootfs;
-                }
-                if let Some(idle_ttl_s) = sandbox.idle_ttl_s {
-                    config.sandbox.idle_ttl_s = idle_ttl_s;
-                }
-                if let Some(timeout_s) = sandbox.timeout_s {
-                    config.sandbox.timeout_s = timeout_s;
-                }
-                if let Some(resources) = sandbox.resources {
-                    if let Some(cpu) = resources.cpu {
-                        config.sandbox.resources.cpu = cpu;
-                    }
-                    if let Some(memory_mb) = resources.memory_mb {
-                        config.sandbox.resources.memory_mb = memory_mb;
-                    }
-                    if let Some(pids) = resources.pids {
-                        config.sandbox.resources.pids = pids;
-                    }
-                }
-            }
             if let Some(observability) = payload.observability {
                 if let Some(log_level) = observability.log_level {
                     config.observability.log_level = log_level.trim().to_string();
@@ -3339,11 +3284,9 @@ async fn admin_system_update(
 
 async fn admin_server_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
-    let sandbox_enabled = config.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
     Ok(Json(json!({
         "server": {
-            "max_active_sessions": config.server.max_active_sessions,
-            "sandbox_enabled": sandbox_enabled
+            "max_active_sessions": config.server.max_active_sessions
         }
     })))
 }
@@ -3370,7 +3313,7 @@ async fn admin_server_update(
             ));
         }
     }
-    if payload.max_active_sessions.is_none() && payload.sandbox_enabled.is_none() {
+    if payload.max_active_sessions.is_none() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.param_required"),
@@ -3382,21 +3325,12 @@ async fn admin_server_update(
             if let Some(max_active_sessions) = payload.max_active_sessions {
                 config.server.max_active_sessions = max_active_sessions;
             }
-            if let Some(sandbox_enabled) = payload.sandbox_enabled {
-                config.sandbox.mode = if sandbox_enabled {
-                    "sandbox".to_string()
-                } else {
-                    "local".to_string()
-                };
-            }
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let sandbox_enabled = updated.sandbox.mode.trim().eq_ignore_ascii_case("sandbox");
     Ok(Json(json!({
         "server": {
-            "max_active_sessions": updated.server.max_active_sessions,
-            "sandbox_enabled": sandbox_enabled
+            "max_active_sessions": updated.server.max_active_sessions
         }
     })))
 }
@@ -7766,8 +7700,6 @@ struct SystemUpdateRequest {
     #[serde(default)]
     security: Option<SystemSecurityUpdateRequest>,
     #[serde(default)]
-    sandbox: Option<SystemSandboxUpdateRequest>,
-    #[serde(default)]
     observability: Option<SystemObservabilityUpdateRequest>,
     #[serde(default)]
     cors: Option<SystemCorsUpdateRequest>,
@@ -7804,36 +7736,6 @@ struct SystemSecurityUpdateRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct SystemSandboxUpdateRequest {
-    #[serde(default)]
-    enabled: Option<bool>,
-    #[serde(default)]
-    endpoint: Option<String>,
-    #[serde(default)]
-    container_root: Option<String>,
-    #[serde(default)]
-    network: Option<String>,
-    #[serde(default)]
-    readonly_rootfs: Option<bool>,
-    #[serde(default)]
-    idle_ttl_s: Option<u64>,
-    #[serde(default)]
-    timeout_s: Option<u64>,
-    #[serde(default)]
-    resources: Option<SystemSandboxResourceUpdateRequest>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SystemSandboxResourceUpdateRequest {
-    #[serde(default)]
-    cpu: Option<f32>,
-    #[serde(default)]
-    memory_mb: Option<u64>,
-    #[serde(default)]
-    pids: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
 struct SystemObservabilityUpdateRequest {
     #[serde(default)]
     log_level: Option<String>,
@@ -7861,8 +7763,6 @@ struct SystemCorsUpdateRequest {
 struct ServerUpdateRequest {
     #[serde(default)]
     max_active_sessions: Option<usize>,
-    #[serde(default)]
-    sandbox_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

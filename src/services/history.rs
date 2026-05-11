@@ -1,5 +1,6 @@
 // 历史管理：加载对话历史、压缩摘要与产物索引。
 use crate::config::LlmModelConfig;
+use crate::core::tool_args::normalize_tool_arguments_json;
 use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
@@ -7,6 +8,7 @@ use crate::orchestrator_constants::{
     OBSERVATION_PREFIX,
 };
 use crate::prompting::read_prompt_template;
+use crate::tools::resolve_tool_name;
 use crate::workspace::WorkspaceManager;
 use chrono::DateTime;
 use serde_json::{json, Value};
@@ -16,6 +18,9 @@ use std::sync::Arc;
 use tokio::task::spawn_blocking;
 
 pub struct HistoryManager;
+
+const FINAL_RESPONSE_TOOL_NAME: &str = "final_response";
+const A2UI_TOOL_NAME: &str = "a2ui";
 
 impl HistoryManager {
     pub fn format_compaction_summary(summary: &str) -> String {
@@ -424,7 +429,9 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
         }
     }
     if role == "assistant" {
-        if let Some(tool_calls) = extract_tool_calls_payload(item) {
+        if let Some(tool_calls) = extract_tool_calls_payload(item)
+            .and_then(filter_replay_tool_calls_payload)
+        {
             if let Value::Object(ref mut map) = message {
                 map.insert("tool_calls".to_string(), tool_calls);
             }
@@ -433,6 +440,9 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
             if let Value::Object(ref mut map) = message {
                 map.insert("tool_call_id".to_string(), Value::String(tool_call_id));
             }
+        }
+        if is_empty_assistant_replay_message(&message) {
+            return None;
         }
     }
     Some(message)
@@ -595,7 +605,8 @@ fn normalize_replacement_history_item(item: &Value) -> Option<Value> {
             Value::String(reasoning.to_string()),
         );
     }
-    if let Some(tool_calls) = extract_tool_calls_payload(item) {
+    if let Some(tool_calls) = extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)
+    {
         normalized.insert("tool_calls".to_string(), tool_calls);
     }
     if let Some(tool_call_id) = extract_tool_call_id(item) {
@@ -604,7 +615,125 @@ fn normalize_replacement_history_item(item: &Value) -> Option<Value> {
     if let Some(meta) = item.get("meta").cloned().filter(|value| !value.is_null()) {
         normalized.insert("meta".to_string(), meta);
     }
-    Some(Value::Object(normalized))
+    let normalized = Value::Object(normalized);
+    if role == "assistant" && is_empty_assistant_replay_message(&normalized) {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn filter_replay_tool_calls_payload(payload: Value) -> Option<Value> {
+    match payload {
+        Value::Array(items) => {
+            let filtered = items
+                .into_iter()
+                .filter(|item| !is_terminal_replay_tool_call(item))
+                .filter_map(normalize_replay_tool_call_payload)
+                .collect::<Vec<_>>();
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(Value::Array(filtered))
+            }
+        }
+        Value::Object(_) => {
+            if is_terminal_replay_tool_call(&payload) {
+                None
+            } else {
+                normalize_replay_tool_call_payload(payload)
+            }
+        }
+        Value::String(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(parsed) => filter_replay_tool_calls_payload(parsed),
+            Err(_) => Some(Value::String(text)),
+        },
+        other => Some(other),
+    }
+}
+
+fn is_terminal_replay_tool_call(payload: &Value) -> bool {
+    let Some(name) = extract_replay_tool_call_name(payload) else {
+        return false;
+    };
+    let canonical = resolve_tool_name(name.trim());
+    canonical == resolve_tool_name(FINAL_RESPONSE_TOOL_NAME)
+        || canonical == resolve_tool_name(A2UI_TOOL_NAME)
+}
+
+fn extract_replay_tool_call_name(payload: &Value) -> Option<&str> {
+    let map = payload.as_object()?;
+    map.get("function")
+        .and_then(Value::as_object)
+        .and_then(|function| function.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("name").and_then(Value::as_str))
+}
+
+fn normalize_replay_tool_call_payload(payload: Value) -> Option<Value> {
+    let Value::Object(map) = payload else {
+        return Some(payload);
+    };
+    let name = map
+        .get("function")
+        .and_then(Value::as_object)
+        .and_then(|function| function.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("name").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let arguments = map
+        .get("function")
+        .and_then(Value::as_object)
+        .and_then(|function| function.get("arguments"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("arguments").and_then(Value::as_str))
+        .map(normalize_tool_arguments_json)
+        .unwrap_or_else(|| "{}".to_string());
+    let id = map
+        .get("id")
+        .or_else(|| map.get("call_id"))
+        .or_else(|| map.get("tool_call_id"))
+        .or_else(|| map.get("toolCallId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let mut normalized = json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        }
+    });
+    if let Some(id) = id {
+        normalized["id"] = Value::String(id);
+    }
+    Some(normalized)
+}
+
+fn is_empty_assistant_replay_message(message: &Value) -> bool {
+    if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+    let has_tool_calls = extract_tool_calls_payload(message).is_some();
+    let has_reasoning = message
+        .get("reasoning_content")
+        .or_else(|| message.get("reasoning"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if has_tool_calls || has_reasoning {
+        return false;
+    }
+    match message.get("content").unwrap_or(&Value::Null) {
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        Value::Null => true,
+        other => other.to_string().trim().is_empty(),
+    }
 }
 
 fn extract_compaction_replacement_history(summary_item: Option<&Value>) -> Option<Vec<Value>> {
@@ -993,6 +1122,91 @@ mod tests {
             json!(format!("{summary_prefix}\nsummary two"))
         );
         assert_eq!(materialized[2]["content"], json!("future answer"));
+    }
+
+    #[test]
+    fn build_message_from_item_drops_terminal_tool_only_assistant_entries() {
+        let history = vec![
+            json!({
+                "role": "assistant",
+                "content": "",
+                "meta": { "type": "tool_call" },
+                "tool_calls": [{
+                    "id": "call_final",
+                    "type": "function",
+                    "function": {
+                        "name": "final_response",
+                        "arguments": "{\"content\":\"ok\"}"
+                    }
+                }]
+            }),
+            json!({
+                "role": "assistant",
+                "content": "final answer"
+            }),
+        ];
+
+        let messages = history
+            .iter()
+            .filter_map(|item| build_message_from_item(item, true))
+            .collect::<Vec<_>>();
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], json!("final answer"));
+    }
+
+    #[test]
+    fn build_message_from_item_filters_terminal_tool_calls_but_keeps_live_calls() {
+        let item = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_final",
+                    "type": "function",
+                    "function": {
+                        "name": "final_response",
+                        "arguments": "{\"content\":\"ok\"}"
+                    }
+                },
+                {
+                    "id": "call_read",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": "{\"path\":\"a.txt\"}"
+                    }
+                }
+            ]
+        });
+
+        let message = build_message_from_item(&item, true).expect("message");
+        let calls = message["tool_calls"].as_array().expect("tool calls array");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], json!("read_file"));
+    }
+
+    #[test]
+    fn build_message_from_item_normalizes_legacy_tool_call_shape_for_replay() {
+        let item = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_skill",
+                "name": "skill_call",
+                "arguments": "{\"name\":\"深度研究\"}"
+            }]
+        });
+
+        let message = build_message_from_item(&item, true).expect("message");
+        let calls = message["tool_calls"].as_array().expect("tool calls array");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["type"], json!("function"));
+        assert_eq!(calls[0]["function"]["name"], json!("skill_call"));
+        assert_eq!(
+            calls[0]["function"]["arguments"],
+            json!("{\"name\":\"深度研究\"}")
+        );
     }
 
     #[test]

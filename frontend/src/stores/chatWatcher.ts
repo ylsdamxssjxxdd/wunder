@@ -134,6 +134,7 @@ import { findAssistantMessageByRound, findAssistantMessageByUserRound } from './
 import { applyGoalStreamEvent } from './chatPersist';
 import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, insertWatchUserMessage, recoverRuntimeInteractiveControllers, resolveHiddenInternalUserEvent, resolveLastAssistantStreamEventId, resolveLastAssistantTimestampMs, resolveLastStreamEventId, resolveMaxStreamEventId, resolveMaxStreamRound, resolveStreamFlushMsForMessages, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
 import { applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
 import { buildMessage, resolveTimestampMs } from './chatStats';
@@ -633,10 +634,11 @@ export const startSessionWatcher = (store, sessionId) => {
         }
         if (running === false) {
           clearRuntimeInteractiveControllers(runtime, { abort: false });
-          clearSupersededPendingAssistantMessages(sessionMessagesRef);
-          clearTrailingPendingAssistantMessages(sessionMessagesRef);
+          const settledTerminalArtifacts = settleTerminalAssistantArtifactsBase(sessionMessagesRef);
           setSessionLoading(store, key, false);
-          notifySessionSnapshot(store, key, sessionMessagesRef, true);
+          if (settledTerminalArtifacts) {
+            notifySessionSnapshot(store, key, sessionMessagesRef, true);
+          }
           if (perfEnabled) {
             chatPerf.count('chat_watchdog_idle_complete', 1, { sessionId: key });
           }

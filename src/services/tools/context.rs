@@ -221,7 +221,6 @@ pub(crate) fn build_allow_roots(config: &Config) -> Vec<PathBuf> {
 
 fn is_desktop_local_mode(config: &Config) -> bool {
     config.server.mode.trim().eq_ignore_ascii_case("desktop")
-        && config.sandbox.mode.trim().eq_ignore_ascii_case("local")
 }
 
 #[cfg(windows)]
@@ -398,7 +397,6 @@ mod tests {
     fn desktop_local_mode_includes_filesystem_roots() {
         let mut config = Config::default();
         config.server.mode = "desktop".to_string();
-        config.sandbox.mode = "local".to_string();
 
         let roots = build_allow_roots(&config);
 

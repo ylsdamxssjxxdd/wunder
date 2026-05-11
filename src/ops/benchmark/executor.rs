@@ -3,9 +3,17 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
+
+fn resolve_tool_result_ok(payload: &Value) -> bool {
+    payload
+        .get("ok")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| payload.get("error").is_none())
+}
 
 pub async fn execute_prompt(
     orchestrator: Arc<Orchestrator>,
@@ -24,6 +32,7 @@ pub async fn execute_prompt(
     let mut last_output = String::new();
     let mut tool_calls = Vec::new();
     let mut tool_results = Vec::new();
+    let mut tool_call_names = HashMap::new();
     let mut usage = AttemptUsage::default();
     let mut error_code = String::new();
     let mut error_message = String::new();
@@ -55,6 +64,14 @@ pub async fn execute_prompt(
                     .trim()
                     .to_string();
                 if !name.is_empty() {
+                    if let Some(tool_call_id) = payload
+                        .get("tool_call_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        tool_call_names.insert(tool_call_id.to_string(), name.clone());
+                    }
                     tool_calls.push(ToolCallRecord {
                         name,
                         args: payload.get("args").cloned().unwrap_or(Value::Null),
@@ -66,19 +83,31 @@ pub async fn execute_prompt(
                 }
             }
             "tool_result" => {
+                let tool_call_id = payload
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string);
                 let name = payload
                     .get("tool")
                     .or_else(|| payload.get("name"))
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        tool_call_id
+                            .as_deref()
+                            .and_then(|id| tool_call_names.get(id).cloned())
+                    })
+                    .unwrap_or_default();
                 let preview = payload
                     .get("content")
                     .and_then(Value::as_str)
                     .map(|text| text.chars().take(240).collect::<String>())
                     .unwrap_or_else(|| truncate_json_preview(&payload, 240));
-                let ok = payload.get("error").is_none();
+                let ok = resolve_tool_result_ok(&payload);
                 tool_results.push(ToolResultRecord {
                     name,
                     ok,
@@ -189,4 +218,31 @@ fn truncate_json_preview(value: &Value, max_chars: usize) -> String {
         return text;
     }
     text.chars().take(max_chars).collect::<String>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_tool_result_ok, truncate_json_preview};
+    use serde_json::json;
+
+    #[test]
+    fn truncate_json_preview_keeps_short_text() {
+        let value = json!({ "ok": true, "data": "short" });
+        assert_eq!(
+            truncate_json_preview(&value, 1024),
+            value.to_string()
+        );
+    }
+
+    #[test]
+    fn resolve_tool_result_ok_prefers_top_level_ok_flag() {
+        assert!(!resolve_tool_result_ok(&json!({
+            "ok": false,
+            "error": "send tts request"
+        })));
+        assert!(resolve_tool_result_ok(&json!({
+            "ok": true,
+            "error": "legacy non-empty field should not flip success"
+        })));
+    }
 }

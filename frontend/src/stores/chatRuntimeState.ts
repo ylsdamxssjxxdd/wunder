@@ -123,6 +123,7 @@ import {
   mergeCompactionMarkersIntoMessages,
   shouldPreserveTerminalCompactionMarkerState
 } from './chatCompactionMarker';
+import { settleTerminalAssistantArtifacts } from './chatTerminalArtifacts';
 import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
@@ -1231,9 +1232,10 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
     const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
       ? store?.messages
       : getSessionMessages(targetId);
-    const clearedSuperseded = clearSupersededPendingAssistantMessages(targetMessages);
-    const clearedTrailing = clearTrailingPendingAssistantMessages(targetMessages) > 0;
-    if (clearedSuperseded || clearedTrailing) {
+    const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
+      failed: runtime.threadStatus === 'system_error'
+    });
+    if (settledTerminalArtifacts) {
       notifySessionSnapshot(store, targetId, targetMessages, true);
     }
     setSessionLoading(store, targetId, false);
@@ -1241,8 +1243,7 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
       sessionId: targetId,
       eventType,
       threadStatus: runtime.threadStatus,
-      clearedSuperseded,
-      clearedTrailing
+      settledTerminalArtifacts
     });
   }
   return runtime;

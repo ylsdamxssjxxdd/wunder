@@ -259,7 +259,6 @@ impl AppState {
         let monitor = Arc::new(MonitorState::new(
             storage.clone(),
             config.observability.clone(),
-            config.sandbox.clone(),
             config.workspace.root.clone(),
         ));
         let a2a_store = Arc::new(A2aStore::new());

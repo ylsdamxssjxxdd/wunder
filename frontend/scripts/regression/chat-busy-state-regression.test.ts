@@ -5,10 +5,12 @@ import {
   createChatRuntimeProjection,
   applyChatRuntimeEvent
 } from '../../src/realtime/chat/chatRuntimeReducer';
+import { hasAssistantWaitingForCurrentOutput } from '../../src/utils/assistantMessageRuntime';
 import {
   resolveMergedSessionBusy,
   resolveMergedSessionRuntimeStatus
 } from '../../src/stores/chatBusyState';
+import { settleTerminalAssistantArtifacts } from '../../src/stores/chatTerminalArtifacts';
 
 test('merged busy state keeps running when projection is stale idle but runtime is running', () => {
   const projection = createChatRuntimeProjection();
@@ -144,4 +146,45 @@ test('merged busy state suppresses stale busy projection after confirmed idle ru
     }),
     'idle'
   );
+});
+
+test('terminal settle clears stale assistant waiting artifacts, workflow items, and subagents', () => {
+  const waitingUpdatedAtMs = Date.now() - 1000;
+  const messages = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      reasoningStreaming: false,
+      waiting_updated_at_ms: waitingUpdatedAtMs,
+      waiting_first_output_at_ms: null,
+      stats: {},
+      workflowItems: [
+        { eventType: 'tool_call', status: 'loading' },
+        { eventType: 'tool_result', status: 'completed' }
+      ],
+      subagents: [
+        {
+          run_id: 'run_demo',
+          status: 'running',
+          terminal: false,
+          failed: false,
+          canTerminate: true,
+          updated_at_ms: 100
+        }
+      ]
+    }
+  ];
+
+  assert.equal(settleTerminalAssistantArtifacts(messages, { failed: false }), true);
+  assert.equal(messages[1].workflowItems[0].status, 'completed');
+  assert.equal(messages[1].workflowItems[1].status, 'completed');
+  assert.equal(messages[1].subagents[0].status, 'completed');
+  assert.equal(messages[1].subagents[0].terminal, true);
+  assert.equal(messages[1].subagents[0].canTerminate, false);
+  assert.equal(messages[1].workflowStreaming, false);
+  assert.equal(messages[1].stream_incomplete, false);
+  assert.equal(hasAssistantWaitingForCurrentOutput(messages[1]), false);
 });

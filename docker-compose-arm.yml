@@ -57,10 +57,8 @@ services:
       - CARGO_HOME=/app/.cargo/arm64
       - CARGO_TARGET_DIR=/app/target/arm64
       - WUNDER_PREFER_PREBUILT_BIN=${WUNDER_PREFER_PREBUILT_BIN:-0}
-    command: ["bash", "/app/scripts/docker-rust-entry.sh", "wait-or-run"]
+    command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
     depends_on:
-      wunder-sandbox:
-        condition: service_started
       extra-mcp:
         condition: service_started
       wunder-postgres:
@@ -79,38 +77,39 @@ services:
     image: wunder-arm
     pull_policy: never
     platform: linux/arm64
-    working_dir: /app
+    working_dir: /opt/wunder
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
     environment:
       - TZ=Asia/Shanghai
-      - FONTCONFIG_FILE=/app/config/fonts.conf
+      - FONTCONFIG_FILE=/opt/wunder/config/fonts.conf
       - XDG_CACHE_HOME=/workspaces/.cache
-      - MATPLOTLIBRC=/app/config/matplotlibrc
+      - MATPLOTLIBRC=/opt/wunder/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
-      - WUNDER_WEAVIATE_URL=${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
-      - WUNDER_WEAVIATE_API_KEY=${WUNDER_WEAVIATE_API_KEY:-}
-      - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
-      - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/config/data/user_tools}
-      - WUNDER_VECTOR_KNOWLEDGE_ROOT=${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/config/data/vector_knowledge}
-      - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/app/config/data/temp_dir}
+      - WUNDER_CONFIG_PATH=/opt/wunder/config/sandbox-runtime.yaml
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
-      - CARGO_HOME=/app/.cargo/arm64
-      - CARGO_TARGET_DIR=/app/target/arm64
+      - CARGO_TARGET_DIR=/opt/wunder/target/arm64
       - WUNDER_PREFER_PREBUILT_BIN=${WUNDER_PREFER_PREBUILT_BIN:-0}
     volumes:
-      - ./:/app
+      - ./target/arm64:/opt/wunder/target/arm64
       - ./config/data/workspaces:/workspaces
-      - ./config/data/browser:/app/config/data/browser
       - ./config/data/ms-playwright:/ms-playwright
       - ./config/fonts:/usr/share/fonts/wunder:ro
-    command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
+    command: ["bash", "/opt/wunder/bin/docker-rust-entry.sh", "wait-or-run"]
+    depends_on:
+      wunder-server:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
+      start_period: 300s
       interval: 5s
       timeout: 3s
       retries: 20

@@ -133,6 +133,7 @@ import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoC
 import { applyGoalStreamEvent, applyMainSession, persistAgentSession } from './chatPersist';
 import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
 import { applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, refreshRuntimeStreamLifecycle, resolveSessionContextTokens, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, resolveTimestampMs } from './chatStats';
 import { assignStreamEventId, getRuntimeLastEventId, normalizeApprovalMode, normalizeStreamEventId, updateRuntimeLastEventId } from './chatStreamIds';
@@ -562,6 +563,11 @@ export const chatSendActions = {
           if (!keepStreaming) {
             clearSlowClientResume(runtime);
           }
+        }
+        if (!keepStreaming) {
+          settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
+            failed: errorSeen || stopped
+          });
         }
         setSessionLoading(this, sessionId, keepStreaming);
         processor.finalize();

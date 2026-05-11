@@ -37,20 +37,6 @@ const securitySettings = {
   allowPaths: [],
   denyGlobs: [],
 };
-const sandboxSettings = {
-  enabled: null,
-  endpoint: "",
-  containerRoot: "",
-  network: "",
-  readonlyRootfs: null,
-  idleTtlS: null,
-  timeoutS: null,
-  resources: {
-    cpu: null,
-    memoryMb: null,
-    pids: null,
-  },
-};
 const observabilitySettings = {
   logLevel: "",
   monitorEventLimit: null,
@@ -217,17 +203,6 @@ const applyStreamChunkSize = (streamChunkSize) => {
   elements.settingsStreamChunkSize.value = "";
 };
 
-const applySandboxEnabled = (sandboxEnabled) => {
-  if (!elements.settingsSandboxEnabled) {
-    return;
-  }
-  if (typeof sandboxEnabled === "boolean") {
-    elements.settingsSandboxEnabled.checked = sandboxEnabled;
-    return;
-  }
-  elements.settingsSandboxEnabled.checked = true;
-};
-
 const applyServerSettings = (options = {}) => {
   applyMaxActiveSessions(options.maxActiveSessions);
   applyStreamChunkSize(options.streamChunkSize);
@@ -254,47 +229,6 @@ const applySecuritySettings = (options = {}) => {
   }
   if (elements.settingsDenyGlobs) {
     elements.settingsDenyGlobs.value = renderTextList(options.denyGlobs);
-  }
-};
-
-const applySandboxSettings = (options = {}) => {
-  applySandboxEnabled(options.enabled);
-  if (elements.settingsSandboxEndpoint) {
-    elements.settingsSandboxEndpoint.value = options.endpoint || "";
-  }
-  if (elements.settingsSandboxContainerRoot) {
-    elements.settingsSandboxContainerRoot.value = options.containerRoot || "";
-  }
-  if (elements.settingsSandboxNetwork) {
-    elements.settingsSandboxNetwork.value = options.network || "";
-  }
-  if (elements.settingsSandboxReadonly) {
-    elements.settingsSandboxReadonly.checked = options.readonlyRootfs === true;
-  }
-  if (elements.settingsSandboxIdleTtl) {
-    elements.settingsSandboxIdleTtl.value = Number.isFinite(options.idleTtlS)
-      ? String(options.idleTtlS)
-      : "";
-  }
-  if (elements.settingsSandboxTimeout) {
-    elements.settingsSandboxTimeout.value = Number.isFinite(options.timeoutS)
-      ? String(options.timeoutS)
-      : "";
-  }
-  if (elements.settingsSandboxCpu) {
-    elements.settingsSandboxCpu.value = Number.isFinite(options.resources?.cpu)
-      ? String(options.resources.cpu)
-      : "";
-  }
-  if (elements.settingsSandboxMemory) {
-    elements.settingsSandboxMemory.value = Number.isFinite(options.resources?.memoryMb)
-      ? String(options.resources.memoryMb)
-      : "";
-  }
-  if (elements.settingsSandboxPids) {
-    elements.settingsSandboxPids.value = Number.isFinite(options.resources?.pids)
-      ? String(options.resources.pids)
-      : "";
   }
 };
 
@@ -357,13 +291,6 @@ const resolveStreamChunkSize = () =>
     serverSettings.streamChunkSize,
     0
   );
-
-const resolveSandboxEnabled = () => {
-  if (!elements.settingsSandboxEnabled) {
-    return null;
-  }
-  return Boolean(elements.settingsSandboxEnabled.checked);
-};
 
 const fetchSystemSettings = async () => {
   const wunderBase = getWunderBase();
@@ -445,22 +372,6 @@ const applySystemSettings = (payload = {}) => {
   if (Object.prototype.hasOwnProperty.call(security, "api_key")) {
     applyDefaultApiKey(security.api_key);
   }
-
-  const sandbox = payload.sandbox || {};
-  sandboxSettings.enabled = typeof sandbox.enabled === "boolean" ? sandbox.enabled : true;
-  sandboxSettings.endpoint = String(sandbox.endpoint || "").trim();
-  sandboxSettings.containerRoot = String(sandbox.container_root || "").trim();
-  sandboxSettings.network = String(sandbox.network || "").trim();
-  sandboxSettings.readonlyRootfs = sandbox.readonly_rootfs === true;
-  sandboxSettings.idleTtlS = Number.isFinite(sandbox.idle_ttl_s) ? sandbox.idle_ttl_s : null;
-  sandboxSettings.timeoutS = Number.isFinite(sandbox.timeout_s) ? sandbox.timeout_s : null;
-  const resources = sandbox.resources || {};
-  sandboxSettings.resources.cpu = Number.isFinite(resources.cpu) ? resources.cpu : null;
-  sandboxSettings.resources.memoryMb = Number.isFinite(resources.memory_mb)
-    ? resources.memory_mb
-    : null;
-  sandboxSettings.resources.pids = Number.isFinite(resources.pids) ? resources.pids : null;
-  applySandboxSettings(sandboxSettings);
 
   const observability = payload.observability || {};
   observabilitySettings.logLevel = String(observability.log_level || "").trim();
@@ -632,94 +543,6 @@ const buildSystemUpdatePayload = () => {
     }
     if (Object.keys(security).length) {
       payload.security = security;
-    }
-  }
-
-  if (
-    elements.settingsSandboxEnabled ||
-    elements.settingsSandboxEndpoint ||
-    elements.settingsSandboxContainerRoot ||
-    elements.settingsSandboxNetwork ||
-    elements.settingsSandboxReadonly ||
-    elements.settingsSandboxIdleTtl ||
-    elements.settingsSandboxTimeout ||
-    elements.settingsSandboxCpu ||
-    elements.settingsSandboxMemory ||
-    elements.settingsSandboxPids
-  ) {
-    const sandbox = {};
-    if (elements.settingsSandboxEnabled) {
-      sandbox.enabled = resolveSandboxEnabled();
-    }
-    if (elements.settingsSandboxEndpoint) {
-      sandbox.endpoint = String(elements.settingsSandboxEndpoint.value || "").trim();
-    }
-    if (elements.settingsSandboxContainerRoot) {
-      sandbox.container_root = String(elements.settingsSandboxContainerRoot.value || "").trim();
-    }
-    if (elements.settingsSandboxNetwork) {
-      sandbox.network = String(elements.settingsSandboxNetwork.value || "").trim();
-    }
-    if (elements.settingsSandboxReadonly) {
-      sandbox.readonly_rootfs = Boolean(elements.settingsSandboxReadonly.checked);
-    }
-    if (elements.settingsSandboxIdleTtl) {
-      const value = resolveOptionalNumber(
-        elements.settingsSandboxIdleTtl.value,
-        sandboxSettings.idleTtlS,
-        0
-      );
-      if (value !== null) {
-        sandbox.idle_ttl_s = value;
-      }
-    }
-    if (elements.settingsSandboxTimeout) {
-      const value = resolveOptionalNumber(
-        elements.settingsSandboxTimeout.value,
-        sandboxSettings.timeoutS,
-        0
-      );
-      if (value !== null) {
-        sandbox.timeout_s = value;
-      }
-    }
-    const resources = {};
-    if (elements.settingsSandboxCpu) {
-      const value = resolveOptionalNumber(
-        elements.settingsSandboxCpu.value,
-        sandboxSettings.resources.cpu,
-        0,
-        { round: false }
-      );
-      if (value !== null) {
-        resources.cpu = value;
-      }
-    }
-    if (elements.settingsSandboxMemory) {
-      const value = resolveOptionalNumber(
-        elements.settingsSandboxMemory.value,
-        sandboxSettings.resources.memoryMb,
-        0
-      );
-      if (value !== null) {
-        resources.memory_mb = value;
-      }
-    }
-    if (elements.settingsSandboxPids) {
-      const value = resolveOptionalNumber(
-        elements.settingsSandboxPids.value,
-        sandboxSettings.resources.pids,
-        0
-      );
-      if (value !== null) {
-        resources.pids = value;
-      }
-    }
-    if (Object.keys(resources).length) {
-      sandbox.resources = resources;
-    }
-    if (Object.keys(sandbox).length) {
-      payload.sandbox = sandbox;
     }
   }
 

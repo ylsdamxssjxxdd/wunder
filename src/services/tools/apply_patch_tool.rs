@@ -2246,7 +2246,6 @@ mod tests {
         Arc::new(MonitorState::new(
             storage,
             config.observability.clone(),
-            config.sandbox.clone(),
             workspace_root.to_string_lossy().to_string(),
         ))
     }

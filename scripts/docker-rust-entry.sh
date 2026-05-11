@@ -31,7 +31,7 @@ case "${mode}" in
       run_binary
     fi
 
-    printf '%s\n' "wunder-server missing or stale, waiting for sandbox build..." >&2
+    printf '%s\n' "wunder-server missing or stale, waiting for shared build output..." >&2
     while true; do
       if binary_is_ready; then
         run_binary

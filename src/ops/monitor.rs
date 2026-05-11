@@ -1,5 +1,5 @@
 // 运行监控：记录会话状态、事件与系统资源指标，支持持久化恢复与取消控制。
-use crate::config::{ObservabilityConfig, SandboxConfig};
+use crate::config::ObservabilityConfig;
 use crate::core::llm_speed::{build_llm_speed_summary, LlmSpeedEvent};
 use crate::i18n;
 use crate::ops::sysinfo_compat::{
@@ -769,7 +769,6 @@ pub struct MonitorState {
     history_loading: AtomicBool,
     history_lock: Mutex<()>,
     app_start_ts: Mutex<f64>,
-    sandbox_config: SandboxConfig,
 }
 
 impl MonitorState {
@@ -783,7 +782,6 @@ impl MonitorState {
     pub fn new(
         storage: Arc<dyn StorageBackend>,
         observability: ObservabilityConfig,
-        sandbox: SandboxConfig,
         workspace_root: String,
     ) -> Self {
         let system = new_system();
@@ -829,7 +827,6 @@ impl MonitorState {
             history_loading: AtomicBool::new(false),
             history_lock: Mutex::new(()),
             app_start_ts: Mutex::new(now_ts()),
-            sandbox_config: sandbox,
         }
     }
 
@@ -1921,16 +1918,16 @@ impl MonitorState {
                     }
                 }
                 json!({
-                    "mode": self.sandbox_config.mode,
-                    "network": self.sandbox_config.network,
-                    "readonly_rootfs": self.sandbox_config.readonly_rootfs,
-                    "idle_ttl_s": self.sandbox_config.idle_ttl_s,
-                    "timeout_s": self.sandbox_config.timeout_s,
-                    "endpoint": self.sandbox_config.endpoint,
+                    "mode": "sandbox",
+                    "network": "bridge",
+                    "readonly_rootfs": crate::sandbox::sandbox_readonly_rootfs(),
+                    "idle_ttl_s": crate::sandbox::sandbox_idle_ttl_seconds(),
+                    "timeout_s": crate::sandbox::sandbox_timeout_seconds(),
+                    "endpoint": crate::sandbox::DEFAULT_SANDBOX_ENDPOINT,
                     "resources": {
-                        "cpu": self.sandbox_config.resources.cpu,
-                        "memory_mb": self.sandbox_config.resources.memory_mb,
-                        "pids": self.sandbox_config.resources.pids,
+                        "cpu": crate::sandbox::sandbox_cpu_limit(),
+                        "memory_mb": crate::sandbox::sandbox_memory_mb(),
+                        "pids": crate::sandbox::sandbox_pids_limit(),
                     },
                     "recent_calls": call_count,
                     "recent_sessions": session_ids.len(),
@@ -1978,16 +1975,16 @@ impl MonitorState {
 
     fn fallback_sandbox_metrics(&self) -> Value {
         json!({
-            "mode": self.sandbox_config.mode,
-            "network": self.sandbox_config.network,
-            "readonly_rootfs": self.sandbox_config.readonly_rootfs,
-            "idle_ttl_s": self.sandbox_config.idle_ttl_s,
-            "timeout_s": self.sandbox_config.timeout_s,
-            "endpoint": self.sandbox_config.endpoint,
+            "mode": "sandbox",
+            "network": "bridge",
+            "readonly_rootfs": crate::sandbox::sandbox_readonly_rootfs(),
+            "idle_ttl_s": crate::sandbox::sandbox_idle_ttl_seconds(),
+            "timeout_s": crate::sandbox::sandbox_timeout_seconds(),
+            "endpoint": crate::sandbox::DEFAULT_SANDBOX_ENDPOINT,
             "resources": {
-                "cpu": self.sandbox_config.resources.cpu,
-                "memory_mb": self.sandbox_config.resources.memory_mb,
-                "pids": self.sandbox_config.resources.pids,
+                "cpu": crate::sandbox::sandbox_cpu_limit(),
+                "memory_mb": crate::sandbox::sandbox_memory_mb(),
+                "pids": crate::sandbox::sandbox_pids_limit(),
             },
             "recent_calls": 0,
             "recent_sessions": 0,
@@ -2924,7 +2921,7 @@ mod tests {
         update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile, MonitorState,
         PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
-    use crate::config::{ObservabilityConfig, SandboxConfig};
+    use crate::config::ObservabilityConfig;
     use crate::services::user_store::{UserStore, DEFAULT_LEVEL_UP_TOKEN_REWARD};
     use crate::storage::{SqliteStorage, StorageBackend};
     use chrono::Local;
@@ -3080,7 +3077,6 @@ mod tests {
         let monitor = MonitorState::new(
             storage,
             ObservabilityConfig::default(),
-            SandboxConfig::default(),
             temp.path().to_string_lossy().to_string(),
         );
         let session_id = "sess-ctx";
@@ -3110,7 +3106,6 @@ mod tests {
         let monitor = MonitorState::new(
             storage,
             ObservabilityConfig::default(),
-            SandboxConfig::default(),
             temp.path().to_string_lossy().to_string(),
         );
         let session_id = "sess-cancel-source";
@@ -3239,7 +3234,6 @@ mod tests {
         let monitor = MonitorState::new(
             storage.clone(),
             ObservabilityConfig::default(),
-            SandboxConfig::default(),
             temp.path().to_string_lossy().to_string(),
         );
         monitor.finalize_user_experience_settlement(PendingExperienceAward {
