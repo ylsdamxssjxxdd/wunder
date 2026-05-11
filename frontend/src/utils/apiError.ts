@@ -1,9 +1,9 @@
-import { h } from 'vue';
-import { ElMessage, ElNotification } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import { t } from '@/i18n';
 
 const HEADER_TRACE_ID = 'x-trace-id';
+const TRACE_ID_RE = /\b(?:trace[_-]?id|err_[a-z0-9]+)\b[:=\s-]*[a-z0-9_-]*/gi;
 
 type HeaderBag = Headers | Record<string, unknown> | undefined | null;
 type UnknownRecord = Record<string, unknown>;
@@ -17,8 +17,6 @@ type ResolvedApiError = {
 };
 
 type NotificationOptions = {
-  title?: string;
-  copyLabel?: string;
   duration?: number;
 };
 
@@ -26,7 +24,10 @@ const asRecord = (value: unknown): UnknownRecord =>
   value && typeof value === 'object' ? (value as UnknownRecord) : {};
 
 const normalizeErrorText = (value: string): string => {
-  const text = String(value || '').trim();
+  const text = String(value || '')
+    .replace(TRACE_ID_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!text) return '';
   const lowered = text.toLowerCase();
   if (lowered === '[object object]' || lowered === 'object object') {
@@ -47,6 +48,107 @@ const readHeader = (headers: HeaderBag, key: string): string => {
     }
   }
   return '';
+};
+
+const containsChinese = (value: string): boolean => /[\u4e00-\u9fff]/.test(value);
+
+const includesAny = (value: string, patterns: string[]): boolean =>
+  patterns.some((pattern) => value.includes(pattern));
+
+export const localizeApiErrorText = (
+  message: string,
+  status: number | null,
+  fallback: string
+): string => {
+  const normalizedMessage = normalizeErrorText(message);
+  if (!normalizedMessage) {
+    return normalizeErrorText(fallback) || t('common.requestFailed');
+  }
+  if (containsChinese(normalizedMessage)) {
+    return normalizedMessage;
+  }
+  const lowered = normalizedMessage.toLowerCase();
+  if (
+    includesAny(lowered, [
+      'error parsing multipart/form-data request',
+      'invalid boundary',
+      'multipart',
+      'form-data'
+    ])
+  ) {
+    return '上传请求格式错误，请刷新页面后重试。';
+  }
+  if (
+    includesAny(lowered, [
+      'payload too large',
+      'request body too large',
+      'body too large',
+      'file too large',
+      'entity too large',
+      'content too large'
+    ])
+  ) {
+    return '上传内容过大，请压缩后重试。';
+  }
+  if (
+    includesAny(lowered, [
+      'network error',
+      'failed to fetch',
+      'load failed',
+      'network request failed',
+      'econnrefused',
+      'socket hang up',
+      'network'
+    ])
+  ) {
+    return '网络连接失败，请检查服务是否可用后重试。';
+  }
+  if (
+    includesAny(lowered, ['timeout', 'timed out', 'econnaborted', 'deadline has elapsed'])
+  ) {
+    return '请求超时，请稍后重试。';
+  }
+  if (
+    includesAny(lowered, [
+      'unauthorized',
+      'forbidden',
+      'auth required',
+      'authentication failed',
+      'invalid credentials',
+      'permission denied',
+      'access denied'
+    ])
+  ) {
+    return status === 401 ? '登录状态已失效，请重新登录。' : '没有权限执行此操作。';
+  }
+  if (
+    includesAny(lowered, [
+      'not found',
+      'file not found',
+      'skill not found',
+      'resource not found',
+      '404'
+    ])
+  ) {
+    return '目标内容不存在或已被删除。';
+  }
+  if (
+    includesAny(lowered, [
+      'bad request',
+      'invalid request',
+      'invalid parameter',
+      'invalid payload',
+      'validation failed',
+      'missing parameter',
+      'required'
+    ])
+  ) {
+    return normalizeErrorText(fallback) || '请求参数不正确，请检查后重试。';
+  }
+  if (status !== null && status >= 500) {
+    return '服务暂时异常，请稍后重试。';
+  }
+  return normalizeErrorText(fallback) || '操作失败，请稍后重试。';
 };
 
 const pickString = (...values: unknown[]): string => {
@@ -106,31 +208,6 @@ const parseErrorPayload = (payload: unknown) => {
   };
 };
 
-const copyWithExecCommand = (text: string): void => {
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', 'readonly');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const ok = document.execCommand('copy');
-  document.body.removeChild(textarea);
-  if (!ok) {
-    throw new Error('copy failed');
-  }
-};
-
-const copyTraceId = async (traceId: string): Promise<void> => {
-  if (!traceId) return;
-  if (navigator?.clipboard?.writeText) {
-    await navigator.clipboard.writeText(traceId);
-    return;
-  }
-  copyWithExecCommand(traceId);
-};
-
 export const resolveApiError = (source: unknown, fallback = ''): ResolvedApiError => {
   const sourceRecord = asRecord(source);
   const response = asRecord(sourceRecord.response);
@@ -139,7 +216,8 @@ export const resolveApiError = (source: unknown, fallback = ''): ResolvedApiErro
   const traceId = pickString(parsed.traceId, readHeader(response.headers as HeaderBag, HEADER_TRACE_ID));
   const rawStatus = Number(response.status);
   const status = Number.isFinite(rawStatus) ? rawStatus : null;
-  const message = pickString(parsed.message, sourceRecord.message, fallback, t('common.requestFailed'));
+  const rawMessage = pickString(parsed.message, sourceRecord.message);
+  const message = localizeApiErrorText(rawMessage, parsed.status || status, fallback);
   return {
     message,
     code: parsed.code,
@@ -147,34 +225,6 @@ export const resolveApiError = (source: unknown, fallback = ''): ResolvedApiErro
     status: parsed.status || status,
     hint: parsed.hint
   };
-};
-
-const buildNotificationMessage = (resolved: ResolvedApiError, options: NotificationOptions = {}) => {
-  const copyLabel = options.copyLabel || t('common.copy');
-  return h('div', { style: 'display:flex;flex-direction:column;gap:8px;line-height:1.5;' }, [
-    h('div', resolved.message),
-    h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;opacity:.92;' }, [
-      h('span', `${t('common.traceId')}: ${resolved.traceId}`),
-      h(
-        'button',
-        {
-          type: 'button',
-          style:
-            'border:1px solid var(--el-color-primary,#409eff);background:transparent;color:var(--el-color-primary,#409eff);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;',
-          onClick: async () => {
-            try {
-              await copyTraceId(resolved.traceId);
-              ElMessage.success(t('common.traceIdCopied'));
-            } catch {
-              ElMessage.error(t('common.traceIdCopyFailed'));
-            }
-          }
-        },
-        copyLabel
-      )
-    ]),
-    resolved.hint ? h('div', { style: 'font-size:12px;opacity:.9;' }, resolved.hint) : null
-  ]);
 };
 
 export const showApiError = (
@@ -186,14 +236,10 @@ export const showApiError = (
   if (!resolved.message) {
     return;
   }
-  if (!resolved.traceId) {
-    ElMessage.error(resolved.message);
-    return;
-  }
-  ElNotification({
-    title: options.title || t('common.requestFailed'),
+  ElMessage({
     type: 'error',
-    duration: Number.isFinite(options.duration) ? options.duration : 8000,
-    message: buildNotificationMessage(resolved, options)
+    duration: Number.isFinite(options.duration) ? options.duration : 3200,
+    showClose: true,
+    message: resolved.message
   });
 };

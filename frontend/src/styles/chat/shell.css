@@ -928,8 +928,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 2px 5px;
-  min-height: 24px;
+  padding: 3px 6px;
+  min-height: 28px;
   box-sizing: border-box;
   border-radius: 6px;
   border: none;
@@ -964,18 +964,18 @@
 
 .chat-shell .workspace-item-main {
   display: grid;
-  grid-template-columns: 14px 18px minmax(0, 1fr);
+  grid-template-columns: 16px 22px minmax(0, 1fr);
   align-items: center;
-  column-gap: 3px;
+  column-gap: 4px;
   min-width: 0;
   flex: 1 1 auto;
   padding-left: var(--workspace-indent, 0px);
 }
 
 .chat-shell .workspace-item-caret {
-  min-width: 14px;
-  width: 14px;
-  height: 14px;
+  min-width: 16px;
+  width: 16px;
+  height: 16px;
   border: none;
   background: transparent;
   display: inline-flex;
@@ -1006,10 +1006,10 @@
 }
 
 .chat-shell .workspace-item-icon {
-  min-width: 18px;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+  min-width: 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1023,8 +1023,8 @@
 
 .chat-shell .workspace-item-icon-img {
   display: block;
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
   pointer-events: none;
 }
@@ -1171,7 +1171,7 @@
 .chat-shell .workspace-item-name {
   min-width: 0;
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--chat-text);
   overflow: hidden;
   text-overflow: ellipsis;

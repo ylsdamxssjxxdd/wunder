@@ -287,6 +287,12 @@ export type DesktopOverlayBridge = {
 
 export type LoadSessionsOptions = {
   agent_id?: string | number | boolean | null | undefined;
+  traceId?: string;
+  traceSource?: string;
+  force?: boolean;
+  preferCache?: boolean;
+  backgroundRefresh?: boolean;
+  maxCacheAgeMs?: number;
 };
 
 export type ListSessionsByStatusOptions = {

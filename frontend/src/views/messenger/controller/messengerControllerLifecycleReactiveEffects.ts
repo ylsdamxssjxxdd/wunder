@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Cross-domain watchers, mounted listeners, realtime pulse wiring, and unmount cleanup.
 import type { MessengerControllerContext } from './messengerControllerContext';
-import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 import { createAgent as createAgentApi, deleteAgent as deleteAgentApi, listAgentUserRounds, listRunningAgents } from '@/api/agents';
@@ -514,10 +514,19 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           skills: ctx.showAgentRightDock.value,
           summary: ctx.sessionHub.activeSection === 'agents' || ctx.showAgentRightDock.value
       });
-      ctx.scheduleWorkspaceResourceHydration();
+      ctx.scheduleWorkspaceResourceHydration('profile-change');
   }, { immediate: true });
 
   watch(() => ctx.userAttachmentWorkspacePaths.value, (paths) => {
+      if (isChatDebugEnabled()) {
+          chatDebugLog('messenger.hydration', 'attachment-paths', {
+              activeSessionId: ctx.chatStore.activeSessionId,
+              activeConversationKey: ctx.sessionHub.activeConversationKey,
+              pathCount: paths.length,
+              virtualized: Boolean(ctx.shouldVirtualizeMessages?.value),
+              snapshot: ctx.buildMessageVirtualDebugSnapshot?.()
+          });
+      }
       paths.forEach((path) => {
           void ctx.ensureUserAttachmentResource(path);
       });
@@ -590,8 +599,17 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.startRealtimePulse?.();
           ctx.triggerRealtimePulseRefresh?.(`enter-${section}`);
           if (section === 'messages') {
+              if (isChatDebugEnabled()) {
+                  chatDebugLog('messenger.enter', 'messages-section', ctx.buildMessageVirtualDebugSnapshot?.());
+              }
               void nextTick(async () => {
                   const restored = await ctx.restoreConversationScroll?.();
+                  if (isChatDebugEnabled()) {
+                      chatDebugLog('messenger.enter', 'restore-scroll', {
+                          restored,
+                          snapshot: ctx.buildMessageVirtualDebugSnapshot?.()
+                      });
+                  }
                   if (!restored) {
                       await ctx.scrollMessagesToBottom(true);
                   }
@@ -804,7 +822,11 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.dismissedPlanMessages.value = new WeakSet<Record<string, unknown>>();
       ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
-      ctx.scheduleWorkspaceResourceHydration();
+      ctx.messageStatsEntryCache?.clear();
+      ctx.scheduleWorkspaceResourceHydration('conversation-key-change');
+      if (isChatDebugEnabled()) {
+          chatDebugLog('messenger.virtual', 'conversation-key-change', ctx.buildMessageVirtualDebugSnapshot?.());
+      }
       if (ctx.sessionHub.activeSection === 'messages') {
           void nextTick(async () => {
               const restored = await ctx.restoreConversationScroll?.();
@@ -919,7 +941,8 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   watch(() => ctx.showChatSettingsView.value, () => {
       ctx.scheduleMessageViewportRefresh({
           updateScrollState: true,
-          measure: true
+          measure: true,
+          reason: 'settings-view-change'
       });
   });
 
@@ -932,10 +955,14 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.pruneMessageVirtualHeightCache();
       void nextTick(() => {
           ctx.scheduleMessageViewportRefresh({
-              measure: true
+              measure: true,
+              reason: 'message-list-change'
           });
       });
-      ctx.scheduleWorkspaceResourceHydration();
+      ctx.scheduleWorkspaceResourceHydration('message-list-change');
+      if (isChatDebugEnabled()) {
+          chatDebugLog('messenger.virtual', 'message-list-change', ctx.buildMessageVirtualDebugSnapshot?.());
+      }
       if (ctx.pendingAssistantCenter &&
           ctx.isAgentConversationActive.value &&
           ctx.chatStore.messages.length > ctx.pendingAssistantCenterCount) {
@@ -977,12 +1004,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.buildLatestAssistantLayoutSignature(latestMessage)
       ].join('::');
   }, () => {
-      ctx.scheduleWorkspaceResourceHydration();
+      ctx.scheduleWorkspaceResourceHydration('latest-assistant-signature');
       ctx.refreshLatestAssistantMessageLayout('latest-assistant-signature');
   }, { flush: 'post' });
 
   watch(() => ctx.userWorldStore.activeMessages[ctx.userWorldStore.activeMessages.length - 1]?.content, () => {
-      ctx.scheduleWorkspaceResourceHydration();
+      ctx.scheduleWorkspaceResourceHydration('world-latest-content');
       const latestMessageKey = ctx.latestWorldRenderableMessageKey.value;
       ctx.scheduleMessageViewportRefresh({
           measure: true,
@@ -994,7 +1021,8 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.pruneMessageVirtualHeightCache();
       void nextTick(() => {
           ctx.scheduleMessageViewportRefresh({
-              measure: true
+              measure: true,
+              reason: 'renderable-length-change'
           });
       });
   });
@@ -1069,10 +1097,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.writeWorldDraft(ctx.activeWorldConversationId.value, value);
   });
 
-  onUpdated(() => {
-      ctx.scheduleWorkspaceResourceHydration();
-  });
-
   onMounted(async () => {
       if (typeof window !== 'undefined') {
           ctx.viewportResizeHandler = () => {
@@ -1086,7 +1110,8 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
                   ctx.syncContactVirtualMetrics();
                   ctx.scheduleMessageViewportRefresh({
                       updateScrollState: true,
-                      measure: true
+                      measure: true,
+                      reason: 'viewport-resize'
                   });
               });
           };
@@ -1119,9 +1144,10 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.refreshAudioRecordingSupport();
       ctx.scheduleMessageViewportRefresh({
           updateScrollState: true,
-          measure: true
+          measure: true,
+          reason: 'mounted'
       });
-      ctx.scheduleWorkspaceResourceHydration();
+      ctx.scheduleWorkspaceResourceHydration('mounted');
       ctx.warmMessengerUserToolsData({
           catalog: ctx.sessionHub.activeSection === 'agents' || ctx.sessionHub.activeSection === 'tools',
           skills: ctx.showAgentRightDock.value,

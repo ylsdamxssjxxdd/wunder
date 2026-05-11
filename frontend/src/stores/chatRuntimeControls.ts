@@ -363,6 +363,7 @@ export const abortWatchStream = (sessionId) => {
     runtime.watchController.abort();
     runtime.watchController = null;
   }
+  runtime.watchActiveRoundCount = 0;
   runtime.watchRequestId = null;
   clearWatchdog(runtime);
   refreshRuntimeStreamLifecycle(runtime);

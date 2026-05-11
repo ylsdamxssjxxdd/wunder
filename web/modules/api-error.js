@@ -2,6 +2,7 @@ import { t } from "./i18n.js?v=20260215-01";
 import { notify } from "./notify.js";
 
 const TRACE_HEADER = "x-trace-id";
+const TRACE_ID_RE = /\b(?:trace[_-]?id|err_[a-z0-9]+)\b[:=\s-]*[a-z0-9_-]*/gi;
 
 const pickString = (...values) => {
   for (const value of values) {
@@ -28,6 +29,115 @@ const readHeader = (headers, key) => {
     }
   }
   return "";
+};
+
+const normalizeErrorText = (value) => {
+  const text = String(value || "")
+    .replace(TRACE_ID_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) {
+    return "";
+  }
+  const lowered = text.toLowerCase();
+  if (lowered === "[object object]" || lowered === "object object") {
+    return "";
+  }
+  return text;
+};
+
+const containsChinese = (value) => /[\u4e00-\u9fff]/.test(value);
+
+const includesAny = (value, patterns) => patterns.some((pattern) => value.includes(pattern));
+
+const localizeErrorMessage = (message, status, fallbackMessage) => {
+  const normalizedMessage = normalizeErrorText(message);
+  if (!normalizedMessage) {
+    return normalizeErrorText(fallbackMessage) || t("common.requestFailed", { status: status || "-" });
+  }
+  if (containsChinese(normalizedMessage)) {
+    return normalizedMessage;
+  }
+  const lowered = normalizedMessage.toLowerCase();
+  if (
+    includesAny(lowered, [
+      "error parsing multipart/form-data request",
+      "invalid boundary",
+      "multipart",
+      "form-data",
+    ])
+  ) {
+    return "上传请求格式错误，请刷新页面后重试。";
+  }
+  if (
+    includesAny(lowered, [
+      "payload too large",
+      "request body too large",
+      "body too large",
+      "file too large",
+      "entity too large",
+      "content too large",
+    ])
+  ) {
+    return "上传内容过大，请压缩后重试。";
+  }
+  if (
+    includesAny(lowered, [
+      "network error",
+      "failed to fetch",
+      "load failed",
+      "network request failed",
+      "econnrefused",
+      "socket hang up",
+      "network",
+    ])
+  ) {
+    return "网络连接失败，请检查服务是否可用后重试。";
+  }
+  if (includesAny(lowered, ["timeout", "timed out", "econnaborted", "deadline has elapsed"])) {
+    return "请求超时，请稍后重试。";
+  }
+  if (
+    includesAny(lowered, [
+      "unauthorized",
+      "forbidden",
+      "auth required",
+      "authentication failed",
+      "invalid credentials",
+      "permission denied",
+      "access denied",
+    ])
+  ) {
+    return status === 401 ? "登录状态已失效，请重新登录。" : "没有权限执行此操作。";
+  }
+  if (
+    includesAny(lowered, [
+      "not found",
+      "file not found",
+      "skill not found",
+      "resource not found",
+      "404",
+    ])
+  ) {
+    return "目标内容不存在或已被删除。";
+  }
+  if (
+    includesAny(lowered, [
+      "bad request",
+      "invalid request",
+      "invalid parameter",
+      "invalid payload",
+      "validation failed",
+      "missing parameter",
+      "required",
+    ])
+  ) {
+    return normalizeErrorText(fallbackMessage) || "请求参数不正确，请检查后重试。";
+  }
+  if (status && status >= 500) {
+    return "服务暂时异常，请稍后重试。";
+  }
+  return normalizeErrorText(fallbackMessage) || "操作失败，请稍后重试。";
 };
 
 const normalizeDetailMessage = (detail) => {
@@ -90,10 +200,13 @@ export const resolveApiError = async (response, fallbackMessage = "") => {
   const parsed = parseApiErrorPayload(payload);
   const traceId = pickString(parsed.traceId, readHeader(response && response.headers, TRACE_HEADER));
   const status = parsed.status || (response && response.status ? Number(response.status) : null);
-  const message = pickString(
+  const message = localizeErrorMessage(
     parsed.message,
-    fallbackMessage,
-    status ? t("common.requestFailed", { status }) : t("common.requestFailed", { status: "-" })
+    status,
+    pickString(
+      fallbackMessage,
+      status ? t("common.requestFailed", { status }) : t("common.requestFailed", { status: "-" })
+    )
   );
   return {
     message,
@@ -104,26 +217,8 @@ export const resolveApiError = async (response, fallbackMessage = "") => {
   };
 };
 
-const TRACE_SUFFIX_LABEL = "trace_id";
-
-const normalizeTraceLabel = (label) => {
-  if (typeof label === "string" && label.trim()) {
-    return label.trim();
-  }
-  return TRACE_SUFFIX_LABEL;
-};
-
 export const formatApiErrorMessage = (resolved, fallbackMessage = "", options = {}) => {
-  const message = pickString(resolved && resolved.message, fallbackMessage);
-  if (!message) {
-    return "";
-  }
-  const traceId = pickString(resolved && resolved.traceId);
-  if (!traceId) {
-    return message;
-  }
-  const traceLabel = normalizeTraceLabel(options.traceLabel);
-  return `${message} (${traceLabel}: ${traceId})`;
+  return pickString(resolved && resolved.message, fallbackMessage);
 };
 
 export const resolveApiErrorMessage = async (response, fallbackMessage = "", options = {}) => {
@@ -136,16 +231,11 @@ export const notifyApiError = async (response, fallbackMessage = "", options = {
   notify(
     {
       message: resolved.message,
-      traceId: resolved.traceId,
       hint: resolved.hint,
     },
     "error",
     {
       duration: Number.isFinite(options.duration) ? options.duration : 5200,
-      actionLabel: options.actionLabel || t("common.copy"),
-      actionSuccess: options.actionSuccess || t("common.traceIdCopied"),
-      actionFailed: options.actionFailed || t("common.traceIdCopyFailed"),
-      traceLabel: options.traceLabel || t("common.traceId"),
     }
   );
   return resolved;

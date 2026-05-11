@@ -423,6 +423,7 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       updateScrollState?: boolean;
       measure?: boolean;
       measureKeys?: string[];
+      reason?: string;
   } = {}) => {
       ctx.messageViewportRuntime?.scheduleMessageViewportRefresh(options);
   };
@@ -511,7 +512,8 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
           ctx.scheduleMessageViewportRefresh({
               updateScrollState: true,
               measure: true,
-              measureKeys: latestMessageKey ? [latestMessageKey] : undefined
+              measureKeys: latestMessageKey ? [latestMessageKey] : undefined,
+              reason
           });
           if (ctx.autoStickToBottom.value) {
               void ctx.scrollMessagesToBottom();

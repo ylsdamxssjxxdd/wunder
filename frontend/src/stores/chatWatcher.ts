@@ -133,7 +133,7 @@ import { buildWorkflowItem, dismissStaleInquiryPanels, hydrateSessionCommandSess
 import { findAssistantMessageByRound, findAssistantMessageByUserRound } from './chatMessageLookup';
 import { applyGoalStreamEvent } from './chatPersist';
 import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, insertWatchUserMessage, recoverRuntimeInteractiveControllers, resolveHiddenInternalUserEvent, resolveLastAssistantStreamEventId, resolveLastAssistantTimestampMs, resolveLastStreamEventId, resolveMaxStreamEventId, resolveMaxStreamRound, resolveStreamFlushMsForMessages, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, applySessionRuntimeSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
 import { buildMessage, resolveTimestampMs } from './chatStats';
@@ -157,6 +157,7 @@ export const startSessionWatcher = (store, sessionId) => {
   if (runtime.sendController || runtime.resumeController) return;
   const perfEnabled = chatPerf.enabled();
   runtime.watchController = new AbortController();
+  runtime.watchActiveRoundCount = 0;
   refreshRuntimeStreamLifecycle(runtime);
   const controller = runtime.watchController;
   runtime.watchLastEventAt = Date.now();
@@ -168,6 +169,9 @@ export const startSessionWatcher = (store, sessionId) => {
   const workflowState = getSessionWorkflowState(key);
   const roundStates = new Map();
   const completedRounds = new Set();
+  const syncWatchActiveRoundCount = () => {
+    runtime.watchActiveRoundCount = roundStates.size;
+  };
   let maxKnownRound = resolveMaxStreamRound(sessionMessagesRef) || 0;
   const tailEventId =
     resolveLastStreamEventId(sessionMessagesRef) ||
@@ -253,6 +257,7 @@ export const startSessionWatcher = (store, sessionId) => {
       if (alreadyTracked) {
         if (!roundStates.has(normalizedRound)) {
           roundStates.set(normalizedRound, alreadyTracked);
+          syncWatchActiveRoundCount();
         }
         if (assignedRound === null || assignedRound !== normalizedRound) {
           candidate.stream_round = normalizedRound;
@@ -307,6 +312,7 @@ export const startSessionWatcher = (store, sessionId) => {
         );
         const state = { message: candidate, processor, userInserted: false };
         roundStates.set(normalizedRound, state);
+        syncWatchActiveRoundCount();
         return state;
       }
     }
@@ -347,6 +353,7 @@ export const startSessionWatcher = (store, sessionId) => {
     );
     const state = { message: assistantMessage, processor, userInserted: false };
     roundStates.set(normalizedRound, state);
+    syncWatchActiveRoundCount();
     return state;
   };
 
@@ -369,10 +376,12 @@ export const startSessionWatcher = (store, sessionId) => {
         completedRounds.add(roundKey);
       }
     });
+    syncWatchActiveRoundCount();
   };
 
   const finalizeAll = (aborted) => {
     Array.from(roundStates.keys()).forEach((round) => finalizeRound(round, aborted));
+    syncWatchActiveRoundCount();
     clearRuntimePendingManualCompaction(
       runtime,
       key,
@@ -795,10 +804,28 @@ export const startSessionWatcher = (store, sessionId) => {
               tryFinalizeWatchRound(directRoundNumber) ||
               tryFinalizeWatchRound(userRoundNumber) ||
               (roundStates.size === 1 && tryFinalizeWatchRound(Array.from(roundStates.keys())[0]));
-            if (finalizedByRound || roundStates.size === 0) {
+            if (finalizedByRound) {
               setSessionLoading(store, key, false);
               if (perfEnabled) {
                 chatPerf.count('chat_watch_terminal', 1, {
+                  eventType: normalizedEventType || eventType,
+                  sessionId: key
+                });
+              }
+              return;
+            }
+            if (roundStates.size === 0) {
+              chatDebugLog('chat.watch', 'ignore-duplicate-terminal', {
+                sessionId: key,
+                eventType: normalizedEventType || eventType,
+                eventId: normalizedEventId,
+                lastEventId,
+                directRoundNumber,
+                userRoundNumber,
+                runtime: buildRuntimeDebugSnapshot(runtime)
+              });
+              if (perfEnabled) {
+                chatPerf.count('chat_watch_duplicate_terminal', 1, {
                   eventType: normalizedEventType || eventType,
                   sessionId: key
                 });
@@ -952,6 +979,7 @@ export const startSessionWatcher = (store, sessionId) => {
       const runtimeSnapshot = getRuntime(key);
       if (runtimeSnapshot && runtimeSnapshot.watchController === controller) {
         runtimeSnapshot.watchController = null;
+        runtimeSnapshot.watchActiveRoundCount = 0;
         runtimeSnapshot.watchRequestId = null;
         clearWatchdog(runtimeSnapshot);
         refreshRuntimeStreamLifecycle(runtimeSnapshot);

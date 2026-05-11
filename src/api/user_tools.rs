@@ -31,7 +31,7 @@ use crate::user_access::{
 use crate::user_tools::{UserKnowledgeBase, UserMcpServer, UserToolsPayload};
 use crate::vector_knowledge;
 use axum::body::Body;
-use axum::extract::{Multipart, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
@@ -53,6 +53,7 @@ use walkdir::WalkDir;
 
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_SKILL_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
 
@@ -116,7 +117,10 @@ pub fn router() -> Router<Arc<AppState>> {
             get(user_skills_content),
         )
         .route("/wunder/user_tools/skills/export", get(user_skills_export))
-        .route("/wunder/user_tools/skills/upload", post(user_skills_upload))
+        .route(
+            "/wunder/user_tools/skills/upload",
+            post(user_skills_upload).layer(DefaultBodyLimit::max(MAX_SKILL_UPLOAD_BYTES)),
+        )
         .route(
             "/wunder/user_tools/knowledge",
             get(user_knowledge_get).post(user_knowledge_update),

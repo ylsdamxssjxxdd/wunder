@@ -715,14 +715,34 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       const container = ctx.messageListRef.value;
       if (!container)
           return;
-      const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+      const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const messageNodes = container.querySelectorAll('.messenger-message[data-virtual-key]');
+      const cards = messageNodes.length
+          ? Array.from(messageNodes).flatMap((node) => Array.from(node.querySelectorAll('.ai-resource-card[data-workspace-path]')))
+          : Array.from(container.querySelectorAll('.ai-resource-card[data-workspace-path]'));
       cards.forEach((card) => {
           void ctx.hydrateWorkspaceResourceCard(card as HTMLElement);
       });
-      hydrateExternalMarkdownImages(container);
+      if (messageNodes.length) {
+          messageNodes.forEach((node) => hydrateExternalMarkdownImages(node));
+      }
+      else {
+          hydrateExternalMarkdownImages(container);
+      }
+      if (isChatDebugEnabled()) {
+          const durationMs = Number(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt).toFixed(1));
+          chatDebugLog('messenger.hydration', 'workspace-scan', {
+              activeSection: ctx.sessionHub.activeSection,
+              activeConversationKey: ctx.sessionHub.activeConversationKey,
+              virtualized: Boolean(ctx.shouldVirtualizeMessages?.value),
+              messageNodeCount: messageNodes.length,
+              resourceCardCount: cards.length,
+              durationMs
+          });
+      }
   };
 
-  ctx.scheduleWorkspaceResourceHydration = () => {
+  ctx.scheduleWorkspaceResourceHydration = (reason = '') => {
       if (ctx.workspaceResourceHydrationFrame !== null || ctx.workspaceResourceHydrationPending)
           return;
       ctx.workspaceResourceHydrationPending = true;
@@ -732,6 +752,13 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               return;
           ctx.workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
               ctx.workspaceResourceHydrationFrame = null;
+              if (isChatDebugEnabled()) {
+                  chatDebugLog('messenger.hydration', 'workspace-run', {
+                      reason,
+                      activeSection: ctx.sessionHub.activeSection,
+                      activeConversationKey: ctx.sessionHub.activeConversationKey
+                  });
+              }
               ctx.hydrateWorkspaceResources();
           });
       });

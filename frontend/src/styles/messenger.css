@@ -1776,6 +1776,14 @@ button.messenger-chat-header-model {
   overscroll-behavior: contain;
 }
 
+.messenger-message-panel {
+  display: flex;
+  flex: 1 0 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: inherit;
+}
+
 .messenger-chat-body.is-settings {
   overflow-y: auto;
   overflow-x: hidden;

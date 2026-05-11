@@ -271,6 +271,10 @@
   gap: 14px;
 }
 
+.messenger-message-panel {
+  gap: inherit;
+}
+
 .messenger-chat-body.is-messages.is-agent {
   background: transparent;
 }

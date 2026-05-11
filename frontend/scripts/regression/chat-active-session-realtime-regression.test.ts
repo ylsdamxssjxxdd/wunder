@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveActiveSessionRealtimeRecoveryPlan } from '../../src/stores/chatActiveSessionRealtime';
+import {
+  resolveActiveSessionRealtimeRecoveryPlan,
+  shouldStartWatcherAfterSessionHydration
+} from '../../src/stores/chatActiveSessionRealtime';
 import { shouldShowAgentSettingsPanelForSection } from '../../src/views/messenger/settingsPanelVisibility';
 
 test('active session realtime recovery starts watch after returning to messages', () => {
@@ -55,6 +58,44 @@ test('active session realtime recovery hydrates a hot session with no pending bu
   );
 });
 
+test('active session realtime recovery skips an idle warm cached session', () => {
+  assert.equal(
+    resolveActiveSessionRealtimeRecoveryPlan({
+      targetSessionId: 'session_demo',
+      activeSessionId: 'session_demo',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false,
+      loading: false,
+      hasPendingAssistant: false,
+      hasRunningAssistant: false,
+      hydrateIfCold: true,
+      hasWarmDetail: true,
+      hasCachedMessages: true
+    }),
+    'skip_idle_session'
+  );
+});
+
+test('active session realtime recovery skips an idle cold cached session', () => {
+  assert.equal(
+    resolveActiveSessionRealtimeRecoveryPlan({
+      targetSessionId: 'session_demo',
+      activeSessionId: 'session_demo',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false,
+      loading: false,
+      hasPendingAssistant: false,
+      hasRunningAssistant: false,
+      hydrateIfCold: true,
+      hasWarmDetail: false,
+      hasCachedMessages: true
+    }),
+    'skip_idle_session'
+  );
+});
+
 test('active session realtime recovery does not race an interactive send stream', () => {
   assert.equal(
     resolveActiveSessionRealtimeRecoveryPlan({
@@ -86,6 +127,32 @@ test('active session realtime recovery does not restart an existing watcher', ()
       hydrateIfCold: true
     }),
     'skip_watching'
+  );
+});
+
+test('session hydration does not restart a watcher for an idle thread', () => {
+  assert.equal(
+    shouldStartWatcherAfterSessionHydration({
+      remoteRunning: false,
+      runtimeStatus: 'idle',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false
+    }),
+    false
+  );
+});
+
+test('session hydration restarts a watcher for a running thread', () => {
+  assert.equal(
+    shouldStartWatcherAfterSessionHydration({
+      remoteRunning: true,
+      runtimeStatus: 'running',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false
+    }),
+    true
   );
 });
 

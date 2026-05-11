@@ -1,3 +1,5 @@
+import { localizeApiErrorText } from '@/utils/apiError';
+
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
@@ -73,10 +75,11 @@ export const parseStructuredErrorPayload = (payload: unknown): StructuredErrorMe
     detailSummary && message && detailSummary !== message && !message.includes(detailSummary)
       ? `${message} (${detailSummary})`
       : message || detailSummary;
+  const status = parseStatus(error.status ?? root.status);
   return {
-    message: combinedMessage,
+    message: localizeApiErrorText(combinedMessage, status, ''),
     code: pickString(error.code, root.code, asRecord(detail).code),
-    status: parseStatus(error.status ?? root.status),
+    status,
     hint: pickString(error.hint, root.hint, asRecord(detail).hint),
     traceId: pickString(error.trace_id, root.trace_id, asRecord(detail).trace_id),
     detail

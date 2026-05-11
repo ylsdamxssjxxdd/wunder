@@ -34,6 +34,7 @@ import {
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
+import { buildMessageVirtualWindow, resolveVirtualOffsetTop } from '@/views/messenger/messageVirtualWindow';
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
@@ -128,6 +129,8 @@ import {
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
 import {
+  hasAssistantPendingQuestion,
+  isAssistantMessageRunning,
   hasAssistantWaitingForCurrentOutput,
   normalizeAssistantMessageRuntimeState,
   resolveAssistantMessageRuntimeState
@@ -390,6 +393,11 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
+type MessageVirtualSpacer = {
+  key: string;
+  height: number;
+};
+
 type AgentInquiryPanelRoute = { label: string; description?: string };
 
 type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
@@ -523,14 +531,13 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           .filter(Boolean);
   };
 
-  ctx.userAttachmentWorkspacePaths = computed(() => {
-      const _ = ctx.currentUserId.value;
+  ctx.collectUserAttachmentWorkspacePaths = (messages: Record<string, unknown>[]): string[] => {
       const paths = new Set<string>();
-      ctx.chatStore.messages.forEach((message) => {
-          if (String((message as Record<string, unknown>)?.role || '') !== 'user')
+      messages.forEach((message) => {
+          if (String(message?.role || '') !== 'user')
               return;
-          const attachments = Array.isArray((message as Record<string, unknown>)?.attachments)
-              ? ((message as Record<string, unknown>).attachments as unknown[])
+          const attachments = Array.isArray(message?.attachments)
+              ? (message.attachments as unknown[])
               : [];
           attachments.forEach((item) => {
               const record = (item || {}) as Record<string, unknown>;
@@ -549,6 +556,21 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           });
       });
       return Array.from(paths);
+  };
+
+  ctx.userAttachmentWorkspacePaths = computed(() => {
+      const _currentUserId = ctx.currentUserId.value;
+      if (!ctx.isAgentConversationActive.value) {
+          return [];
+      }
+      if (ctx.shouldVirtualizeMessages?.value && ctx.agentVirtualWindow?.value?.enabled) {
+          const renderable = [
+              ...(ctx.visibleAgentRenderableMessages?.value || []),
+              ...(ctx.pinnedAgentRenderableMessages?.value || [])
+          ];
+          return ctx.collectUserAttachmentWorkspacePaths(renderable.map((item) => item.message));
+      }
+      return ctx.collectUserAttachmentWorkspacePaths(ctx.chatStore.messages as Record<string, unknown>[]);
   });
 
   ctx.hasUserImageAttachments = (message: Record<string, unknown>): boolean => ctx.resolveUserImageAttachments(message).length > 0;
@@ -703,9 +725,25 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return String(latest?.key || '').trim();
   });
 
-  ctx.shouldVirtualizeMessages = computed(
-  // Messenger message virtualization is disabled because it repeatedly delayed live workflow rendering.
-  () => false);
+  ctx.MESSAGE_VIRTUAL_OVERSCAN = 10;
+
+  ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT = 8;
+
+  ctx.shouldVirtualizeMessages = computed(() => {
+      if (ctx.sessionHub.activeSection !== 'messages') {
+          return false;
+      }
+      if (ctx.showChatSettingsView.value) {
+          return false;
+      }
+      if (ctx.isAgentConversationActive.value) {
+          return ctx.agentRenderableMessages.value.length > 24;
+      }
+      if (ctx.isWorldConversationActive.value) {
+          return ctx.worldRenderableMessages.value.length > 24;
+      }
+      return false;
+  });
 
   ctx.resolveVirtualMessageHeight = (key: string): number => {
       const normalized = String(key || '').trim();
@@ -715,7 +753,123 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return ctx.messageVirtualHeightCache.get(normalized) || ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
   };
 
-  ctx.estimateVirtualOffsetTop = (_keys: string[], _index: number): number => 0;
+  ctx.estimateVirtualOffsetTop = (keys: string[], index: number): number => resolveVirtualOffsetTop(
+      Array.isArray(keys) ? keys : [],
+      index,
+      ctx.resolveVirtualMessageHeight
+  );
+
+  ctx.agentVirtualWindow = computed(() => buildMessageVirtualWindow({
+      items: ctx.agentRenderableMessages.value,
+      enabled: ctx.shouldVirtualizeMessages.value && ctx.isAgentConversationActive.value,
+      scrollTop: ctx.messageVirtualScrollTop.value,
+      viewportHeight: ctx.messageVirtualViewportHeight.value,
+      overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
+      tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
+      estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT,
+      resolveHeight: ctx.resolveVirtualMessageHeight
+  }));
+
+  ctx.agentVirtualTopSpacer = computed<MessageVirtualSpacer | null>(() => ctx.agentVirtualWindow.value.enabled &&
+      ctx.agentVirtualWindow.value.topPadding > 0
+      ? {
+          key: 'agent-virtual-top-spacer',
+          height: ctx.agentVirtualWindow.value.topPadding
+      }
+      : null);
+
+  ctx.agentVirtualBottomSpacer = computed<MessageVirtualSpacer | null>(() => ctx.agentVirtualWindow.value.enabled &&
+      ctx.agentVirtualWindow.value.bottomPadding > 0
+      ? {
+          key: 'agent-virtual-bottom-spacer',
+          height: ctx.agentVirtualWindow.value.bottomPadding
+      }
+      : null);
+
+  ctx.visibleAgentRenderableMessages = computed<AgentRenderableMessage[]>(() => ctx.agentVirtualWindow.value.enabled
+      ? ctx.agentVirtualWindow.value.visibleItems
+      : ctx.agentRenderableMessages.value);
+
+  ctx.pinnedAgentRenderableMessages = computed<AgentRenderableMessage[]>(() => ctx.agentVirtualWindow.value.enabled
+      ? ctx.agentVirtualWindow.value.tailItems
+      : []);
+
+  ctx.agentVirtualGroups = computed<AgentRenderableMessage[][]>(() => ctx.agentVirtualWindow.value.enabled
+      ? [ctx.visibleAgentRenderableMessages.value, ctx.pinnedAgentRenderableMessages.value]
+      : [ctx.visibleAgentRenderableMessages.value]);
+
+  ctx.buildMessageVirtualDebugSnapshot = () => {
+      const agentWindow = ctx.agentVirtualWindow.value;
+      const worldWindow = ctx.worldVirtualWindow?.value;
+      return {
+          activeSection: ctx.sessionHub.activeSection,
+          activeConversationKey: ctx.sessionHub.activeConversationKey,
+          conversationKind: ctx.resolvedMessageConversationKind?.value || '',
+          activeSessionId: ctx.chatStore.activeSessionId,
+          shouldVirtualize: Boolean(ctx.shouldVirtualizeMessages.value),
+          scrollTop: ctx.messageVirtualScrollTop.value,
+          viewportHeight: ctx.messageVirtualViewportHeight.value,
+          agent: {
+              total: ctx.agentRenderableMessages.value.length,
+              visible: ctx.visibleAgentRenderableMessages.value.length,
+              pinned: ctx.pinnedAgentRenderableMessages.value.length,
+              startIndex: agentWindow?.startIndex ?? 0,
+              endIndex: agentWindow?.endIndex ?? 0,
+              tailStartIndex: agentWindow?.tailStartIndex ?? 0,
+              topPadding: agentWindow?.topPadding ?? 0,
+              bottomPadding: agentWindow?.bottomPadding ?? 0
+          },
+          world: {
+              total: ctx.worldRenderableMessages.value.length,
+              visible: ctx.visibleWorldRenderableMessages?.value?.length ?? 0,
+              pinned: ctx.pinnedWorldRenderableMessages?.value?.length ?? 0,
+              startIndex: worldWindow?.startIndex ?? 0,
+              endIndex: worldWindow?.endIndex ?? 0,
+              tailStartIndex: worldWindow?.tailStartIndex ?? 0,
+              topPadding: worldWindow?.topPadding ?? 0,
+              bottomPadding: worldWindow?.bottomPadding ?? 0
+          }
+      };
+  };
+
+  ctx.worldVirtualWindow = computed(() => buildMessageVirtualWindow({
+      items: ctx.worldRenderableMessages.value,
+      enabled: ctx.shouldVirtualizeMessages.value && ctx.isWorldConversationActive.value,
+      scrollTop: ctx.messageVirtualScrollTop.value,
+      viewportHeight: ctx.messageVirtualViewportHeight.value,
+      overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,
+      tailPinCount: ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT,
+      estimatedHeight: ctx.MESSAGE_VIRTUAL_ESTIMATED_HEIGHT,
+      resolveHeight: ctx.resolveVirtualMessageHeight
+  }));
+
+  ctx.worldVirtualTopSpacer = computed<MessageVirtualSpacer | null>(() => ctx.worldVirtualWindow.value.enabled &&
+      ctx.worldVirtualWindow.value.topPadding > 0
+      ? {
+          key: 'world-virtual-top-spacer',
+          height: ctx.worldVirtualWindow.value.topPadding
+      }
+      : null);
+
+  ctx.worldVirtualBottomSpacer = computed<MessageVirtualSpacer | null>(() => ctx.worldVirtualWindow.value.enabled &&
+      ctx.worldVirtualWindow.value.bottomPadding > 0
+      ? {
+          key: 'world-virtual-bottom-spacer',
+          height: ctx.worldVirtualWindow.value.bottomPadding
+      }
+      : null);
+
+  ctx.visibleWorldRenderableMessages = computed<WorldRenderableMessage[]>(() => ctx.worldVirtualWindow.value.enabled
+      ? ctx.worldVirtualWindow.value.visibleItems
+      : ctx.worldRenderableMessages.value);
+
+  ctx.pinnedWorldRenderableMessages = computed<WorldRenderableMessage[]>(() => ctx.worldVirtualWindow.value.enabled
+      ? ctx.worldVirtualWindow.value.tailItems
+      : []);
+
+  ctx.worldVirtualGroups = computed<WorldRenderableMessage[][]>(() => ctx.worldVirtualWindow.value.enabled
+      ? [ctx.visibleWorldRenderableMessages.value, ctx.pinnedWorldRenderableMessages.value]
+      : [ctx.visibleWorldRenderableMessages.value]);
 
   ctx.isGreetingMessage = (message: Record<string, unknown>): boolean => String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
 
@@ -813,24 +967,112 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.messageStatsTimer = null;
 
-  ctx.buildMessageStatsEntries = (message: Record<string, unknown>) => (void ctx.messageStatsNowTick.value,
-      buildAssistantMessageStatsEntries(message as Record<string, any>, ctx.t, ctx.chatStore.messages as Record<string, any>[], ctx.messageStatsNowTick.value));
+  ctx.hasLiveAssistantStats = computed(() => ctx.chatStore.messages.some((rawMessage) => {
+      const message = (rawMessage || {}) as Record<string, unknown>;
+      if (String(message?.role || '') !== 'assistant' || message?.isGreeting) {
+          return false;
+      }
+      return Boolean(
+          message?.resume_available ||
+          message?.slow_client ||
+          message?.workflowStreaming ||
+          message?.reasoningStreaming ||
+          message?.stream_incomplete ||
+          hasAssistantPendingQuestion(message) ||
+          hasAssistantWaitingForCurrentOutput(message) ||
+          isAssistantMessageRunning(message) ||
+          hasActiveSubagentItems(message?.subagents) ||
+          Number.isFinite(Number(message?.retry_started_at_ms ?? message?.retryStartedAtMs)) ||
+          Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
+          Number.isFinite(Number(message?.retry_attempt ?? message?.retryAttempt)) ||
+          Number.isFinite(Number(message?.retry_max_attempts ?? message?.retryMaxAttempts))
+      );
+  }));
 
-  ctx.shouldShowMessageStats = (message: Record<string, unknown>): boolean => ctx.buildMessageStatsEntries(message).length > 0;
+  ctx.buildMessageStatsEntries = (message: Record<string, unknown>, index = 0) => {
+      const nowTick = ctx.messageStatsNowTick.value;
+      if (!message || String(message?.role || '') !== 'assistant' || message?.isGreeting) {
+          return [];
+      }
+      const sourceIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+      const messageKey = ctx.resolveAgentMessageKey(message, sourceIndex);
+      const workflowItems = Array.isArray(message.workflowItems) ? (message.workflowItems as unknown[]) : [];
+      const subagents = Array.isArray(message.subagents) ? (message.subagents as unknown[]) : [];
+      const signature = [
+          ctx.chatStore.activeSessionId,
+          ctx.chatStore.messageMutationVersion,
+          nowTick,
+          String(messageKey || '').trim(),
+          String(message.content || '').length,
+          String(message.reasoning || '').length,
+          String(message.state || '').trim(),
+          Boolean(message.workflowStreaming),
+          Boolean(message.reasoningStreaming),
+          Boolean(message.stream_incomplete),
+          Boolean(message.resume_available),
+          Boolean(message.slow_client),
+          workflowItems.length,
+          subagents.length,
+          String(message.retry_started_at_ms ?? message.retryStartedAtMs ?? ''),
+          String(message.retry_next_attempt_at_ms ?? message.retryNextAttemptAtMs ?? ''),
+          String(message.retry_attempt ?? message.retryAttempt ?? ''),
+          String(message.retry_max_attempts ?? message.retryMaxAttempts ?? ''),
+          JSON.stringify(message.stats || null)
+      ].join('::');
+      const cached = ctx.messageStatsEntryCache.get(messageKey);
+      if (cached?.signature === signature) {
+          return cached.entries;
+      }
+      const entries = buildAssistantMessageStatsEntries(message as Record<string, any>, ctx.t, ctx.chatStore.messages as Record<string, any>[], nowTick);
+      ctx.messageStatsEntryCache.set(messageKey, { signature, entries });
+      if (ctx.messageStatsEntryCache.size > 80) {
+          const firstKey = ctx.messageStatsEntryCache.keys().next().value;
+          if (firstKey) {
+              ctx.messageStatsEntryCache.delete(firstKey);
+          }
+      }
+      return entries;
+  };
 
-  onMounted(() => {
-      if (typeof window === 'undefined' || ctx.messageStatsTimer !== null)
-          return;
-      ctx.messageStatsTimer = window.setInterval(() => {
-          ctx.messageStatsNowTick.value = Date.now();
-      }, 1000);
-  });
+  ctx.shouldShowMessageStats = (message: Record<string, unknown>, index = 0): boolean => ctx.buildMessageStatsEntries(message, index).length > 0;
 
-  onBeforeUnmount(() => {
+  const stopMessageStatsTimer = () => {
       if (typeof window !== 'undefined' && ctx.messageStatsTimer !== null) {
           window.clearInterval(ctx.messageStatsTimer);
           ctx.messageStatsTimer = null;
       }
+  };
+
+  const ensureMessageStatsTimer = () => {
+      if (typeof window === 'undefined') {
+          return;
+      }
+      if (!ctx.hasLiveAssistantStats.value) {
+          stopMessageStatsTimer();
+          return;
+      }
+      if (ctx.messageStatsTimer !== null) {
+          return;
+      }
+      ctx.messageStatsTimer = window.setInterval(() => {
+          ctx.messageStatsNowTick.value = Date.now();
+      }, 1000);
+  };
+
+  watch(() => ctx.hasLiveAssistantStats.value, (enabled) => {
+      if (enabled) {
+          ensureMessageStatsTimer();
+          return;
+      }
+      stopMessageStatsTimer();
+  }, { immediate: true });
+
+  onMounted(() => {
+      ensureMessageStatsTimer();
+  });
+
+  onBeforeUnmount(() => {
+      stopMessageStatsTimer();
   });
 
   ctx.hasPlanSteps = (plan: unknown): boolean => Array.isArray((plan as {

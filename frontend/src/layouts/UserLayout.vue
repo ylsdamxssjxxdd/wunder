@@ -1,10 +1,14 @@
 <template>
-  <router-view />
+  <router-view v-slot="{ Component }">
+    <KeepAlive include="MessengerView">
+      <component :is="Component" />
+    </KeepAlive>
+  </router-view>
   <CompanionFloatingLayer />
 </template>
 
 <script setup lang="ts">
-import { onMounted, watch } from 'vue';
+import { KeepAlive, onMounted, watch } from 'vue';
 
 import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
 import { useAuthStore } from '@/stores/auth';

@@ -46,6 +46,7 @@ export type MessageViewportRuntime = {
     updateScrollState?: boolean;
     measure?: boolean;
     measureKeys?: string[];
+    reason?: string;
   }) => void;
   scheduleMessageVirtualMeasure: (measureKeys?: string[]) => void;
   updateMessageScrollState: () => void;
@@ -62,10 +63,13 @@ export const createMessageViewportRuntime = (
   let messageScrollFrame: number | null = null;
   let messageVirtualMeasureFrame: number | null = null;
   let messageViewportRefreshFrame: number | null = null;
+  let messageDeferredMeasureHandle: number | null = null;
+  let messageDeferredMeasureUsesIdleCallback = false;
   let scheduledViewportRefreshNeedsScrollState = false;
   let scheduledViewportRefreshNeedsMeasure = false;
   let scheduledViewportRefreshMeasureAll = false;
   let scheduledViewportRefreshMeasureKeys = new Set<string>();
+  let scheduledViewportRefreshReason = '';
   let scheduledVirtualMeasureAll = false;
   let scheduledVirtualMeasureKeys = new Set<string>();
   let messageResizeObserver: ResizeObserver | null = null;
@@ -248,6 +252,7 @@ export const createMessageViewportRuntime = (
   };
 
   const measureVisibleMessageHeights = (targetKeys?: string[]) => {
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const container = options.messageListRef.value;
     syncVisibleMessageResizeObserverTargets();
     if (!container || options.showChatSettingsView.value || !options.shouldVirtualizeMessages.value) {
@@ -270,12 +275,40 @@ export const createMessageViewportRuntime = (
     });
     if (changes.length) {
       options.messageVirtualLayoutVersion.value += 1;
-      logViewportDebug('measure-visible', {
-        targetKeys: normalizedTargetKeys,
-        changeCount: changes.length,
-        changes
-      });
     }
+    logViewportDebug('measure-visible', {
+      targetKeys: normalizedTargetKeys,
+      measuredNodeCount: nodes.length,
+      changeCount: changes.length,
+      durationMs: Number(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt).toFixed(1)),
+      changes: changes.slice(0, 12)
+    });
+  };
+
+  const scheduleDeferredVisibleMeasure = (reason = '') => {
+    if (typeof window === 'undefined') {
+      measureVisibleMessageHeights();
+      return;
+    }
+    if (messageDeferredMeasureHandle !== null) return;
+    const run = () => {
+      messageDeferredMeasureHandle = null;
+      messageDeferredMeasureUsesIdleCallback = false;
+      logViewportDebug('deferred-measure-run', { reason });
+      measureVisibleMessageHeights();
+    };
+    const requestIdle = (window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+    }).requestIdleCallback;
+    if (typeof requestIdle === 'function') {
+      messageDeferredMeasureUsesIdleCallback = true;
+      messageDeferredMeasureHandle = requestIdle(run, { timeout: 220 });
+      logViewportDebug('deferred-measure-scheduled', { reason, mode: 'idle' });
+      return;
+    }
+    messageDeferredMeasureUsesIdleCallback = false;
+    messageDeferredMeasureHandle = window.setTimeout(run, 64);
+    logViewportDebug('deferred-measure-scheduled', { reason, mode: 'timeout' });
   };
 
   const updateMessageScrollState = () => {
@@ -337,6 +370,7 @@ export const createMessageViewportRuntime = (
       updateScrollState?: boolean;
       measure?: boolean;
       measureKeys?: string[];
+      reason?: string;
     } = {}
   ) => {
     const shouldUpdateScrollState = refreshOptions.updateScrollState === true;
@@ -355,6 +389,11 @@ export const createMessageViewportRuntime = (
       scheduledViewportRefreshNeedsScrollState || shouldUpdateScrollState;
     scheduledViewportRefreshNeedsMeasure =
       scheduledViewportRefreshNeedsMeasure || shouldMeasure;
+    if (refreshOptions.reason) {
+      scheduledViewportRefreshReason = scheduledViewportRefreshReason
+        ? `${scheduledViewportRefreshReason},${refreshOptions.reason}`
+        : refreshOptions.reason;
+    }
     if (shouldMeasure) {
       markMeasureTargets(refreshOptions.measureKeys, 'viewport');
     }
@@ -367,16 +406,22 @@ export const createMessageViewportRuntime = (
       const nextMeasureKeys = shouldMeasureAll
         ? undefined
         : Array.from(scheduledViewportRefreshMeasureKeys);
+      const reason = scheduledViewportRefreshReason;
       scheduledViewportRefreshNeedsScrollState = false;
       scheduledViewportRefreshNeedsMeasure = false;
       scheduledViewportRefreshMeasureAll = false;
+      scheduledViewportRefreshReason = '';
       scheduledViewportRefreshMeasureKeys.clear();
       syncMessageVirtualMetrics();
       if (shouldFlushScrollState) {
         updateMessageScrollState();
       }
       if (shouldFlushMeasure) {
-        measureVisibleMessageHeights(nextMeasureKeys);
+        if (shouldMeasureAll && options.shouldVirtualizeMessages.value) {
+          scheduleDeferredVisibleMeasure(reason || 'viewport-refresh');
+        } else {
+          measureVisibleMessageHeights(nextMeasureKeys);
+        }
       }
     });
   };
@@ -517,12 +562,27 @@ export const createMessageViewportRuntime = (
       window.cancelAnimationFrame(messageViewportRefreshFrame);
       messageViewportRefreshFrame = null;
     }
+    if (typeof window !== 'undefined' && messageDeferredMeasureHandle !== null) {
+      if (messageDeferredMeasureUsesIdleCallback) {
+        const cancelIdle = (window as Window & {
+          cancelIdleCallback?: (handle: number) => void;
+        }).cancelIdleCallback;
+        if (typeof cancelIdle === 'function') {
+          cancelIdle(messageDeferredMeasureHandle);
+        }
+      } else {
+        window.clearTimeout(messageDeferredMeasureHandle);
+      }
+      messageDeferredMeasureHandle = null;
+      messageDeferredMeasureUsesIdleCallback = false;
+    }
     rememberCurrentScroll();
     releaseObservedMessageNodes();
     messageResizeObserver = null;
     scheduledViewportRefreshNeedsScrollState = false;
     scheduledViewportRefreshNeedsMeasure = false;
     scheduledViewportRefreshMeasureAll = false;
+    scheduledViewportRefreshReason = '';
     scheduledViewportRefreshMeasureKeys.clear();
     scheduledVirtualMeasureAll = false;
     scheduledVirtualMeasureKeys.clear();

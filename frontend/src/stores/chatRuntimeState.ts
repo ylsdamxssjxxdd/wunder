@@ -110,6 +110,11 @@ import {
   shouldKeepForegroundLiveMessages,
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
+import {
+  hasRuntimeControllers as hasRuntimeControllersBase,
+  resolveRuntimeDerivedStatus,
+  shouldPreserveWatchRunningStatus
+} from './chatRuntimeDerivedStatus';
 import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
 import {
   dedupeTerminalCompactionMarkersInPlace,
@@ -763,15 +768,37 @@ export const resolveInitialSessionIdFromList = (agentId, sourceSessions = []) =>
 
 export const resolveSessionListCacheKey = (agentId) => normalizeAgentKey(agentId);
 
-export const readSessionListCache = (agentId) => {
+export const readSessionListCache = (agentId, options: { maxAgeMs?: number } = {}) => {
   const cacheKey = resolveSessionListCacheKey(agentId);
   const cached = sessionListCache.get(cacheKey);
   if (!cached) return null;
-  if (!Number.isFinite(cached.cachedAt) || Date.now() - cached.cachedAt > SESSION_LIST_CACHE_TTL_MS) {
+  const requestedMaxAgeMs = Number(options?.maxAgeMs);
+  const maxAgeMs = Number.isFinite(requestedMaxAgeMs)
+    ? Math.max(0, requestedMaxAgeMs)
+    : SESSION_LIST_CACHE_TTL_MS;
+  if (!Number.isFinite(cached.cachedAt) || Date.now() - cached.cachedAt > maxAgeMs) {
     sessionListCache.delete(cacheKey);
     return null;
   }
   return cloneSessionList(cached.sessions);
+};
+
+export const readSessionListCacheEntry = (agentId, options: { maxAgeMs?: number } = {}) => {
+  const cacheKey = resolveSessionListCacheKey(agentId);
+  const cached = sessionListCache.get(cacheKey);
+  if (!cached) return null;
+  const requestedMaxAgeMs = Number(options?.maxAgeMs);
+  const maxAgeMs = Number.isFinite(requestedMaxAgeMs)
+    ? Math.max(0, requestedMaxAgeMs)
+    : SESSION_LIST_CACHE_TTL_MS;
+  if (!Number.isFinite(cached.cachedAt) || Date.now() - cached.cachedAt > maxAgeMs) {
+    sessionListCache.delete(cacheKey);
+    return null;
+  }
+  return {
+    cachedAt: cached.cachedAt,
+    sessions: cloneSessionList(cached.sessions)
+  };
 };
 
 export const writeSessionListCache = (agentId, sessions) => {
@@ -997,6 +1024,7 @@ export const ensureRuntime = (sessionId) => {
       resumeStartedAt: 0,
       resumeLastEventAt: 0,
       watchController: null,
+      watchActiveRoundCount: 0,
       watchRequestId: null,
       watchLastEventAt: 0,
       watchdogTimer: null,
@@ -1078,33 +1106,37 @@ export function resolveRuntimeLoading(store, sessionId, runtime) {
 }
 
 export function hasRuntimeControllers(runtime) {
-  if (!runtime) return false;
-  return Boolean(runtime?.sendController || runtime?.resumeController || runtime?.compactController);
+  return hasRuntimeControllersBase(runtime);
 }
 
 export function applyRuntimeDerivedStatus(store, sessionId, runtime) {
   if (!runtime) return 'not_loaded';
-  if (runtime.waitingForUserInput) {
-    runtime.threadStatus = 'waiting_user_input';
-    runtime.loaded = true;
-    return runtime.threadStatus;
-  }
-  if (Number(runtime.pendingApprovalCount) > 0) {
-    runtime.threadStatus = 'waiting_approval';
-    runtime.loaded = true;
-    return runtime.threadStatus;
-  }
   const loading = resolveRuntimeLoading(store, sessionId, runtime);
-  const current = normalizeThreadRuntimeStatus(runtime.threadStatus);
-  if (loading) {
-    runtime.threadStatus = 'running';
+  const nextStatus = resolveRuntimeDerivedStatus({ runtime, loading });
+  if (nextStatus === 'waiting_user_input') {
+    runtime.threadStatus = nextStatus;
     runtime.loaded = true;
     return runtime.threadStatus;
   }
-  if (current === 'system_error') {
-    return current;
+  if (nextStatus === 'waiting_approval') {
+    runtime.threadStatus = nextStatus;
+    runtime.loaded = true;
+    return runtime.threadStatus;
   }
-  runtime.threadStatus = runtime.loaded ? 'idle' : 'not_loaded';
+  if (nextStatus === 'running') {
+    if (shouldPreserveWatchRunningStatus(runtime, loading)) {
+      runtime.loaded = true;
+      chatDebugLog('chat.store.loading', 'preserve-watch-running', {
+        sessionId: resolveSessionKey(sessionId),
+        runtime: buildRuntimeDebugSnapshot(runtime)
+      });
+      return nextStatus;
+    }
+    runtime.threadStatus = nextStatus;
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  runtime.threadStatus = nextStatus;
   return runtime.threadStatus;
 }
 
@@ -1533,6 +1565,7 @@ export function buildRuntimeDebugSnapshot(runtime) {
     loaded: Boolean(runtime?.loaded),
     streamLifecycle: normalizeStreamLifecyclePhase(runtime?.streamLifecycle),
     hasWatchController: Boolean(runtime?.watchController),
+    watchActiveRoundCount: Number(runtime?.watchActiveRoundCount) || 0,
     hasSendController: Boolean(runtime?.sendController),
     hasResumeController: Boolean(runtime?.resumeController),
     sendAborted: runtime?.sendController?.signal?.aborted === true,

@@ -516,7 +516,12 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           },
           {
               sections: ['messages'],
-              run: () => ctx.chatStore.loadSessions()
+              run: () => ctx.chatStore.loadSessions({
+                  preferCache: true,
+                  backgroundRefresh: true,
+                  maxCacheAgeMs: 5 * 60 * 1000,
+                  traceSource: 'bootstrap'
+              })
           },
           {
               sections: shouldPrioritizeWorldBootstrap ? ['messages', 'users', 'groups'] : ['users', 'groups'],

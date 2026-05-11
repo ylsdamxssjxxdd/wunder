@@ -157,6 +157,39 @@ test('realtime pulse refreshes chat sessions only when condition is met', async 
   pulse.stop();
 });
 
+test('realtime pulse can be gated by a recent session refresh window', async (context) => {
+  const browser = installBrowserMocks('visible');
+  context.after(() => browser.cleanup());
+
+  let chatCount = 0;
+  let allowChatRefresh = false;
+
+  const pulse = createMessengerRealtimePulse({
+    refreshRunningAgents: () => undefined,
+    refreshCronAgentIds: () => undefined,
+    refreshChannelBoundAgentIds: () => undefined,
+    refreshChatSessions: () => {
+      chatCount += 1;
+    },
+    shouldRefreshChatSessions: () => allowChatRefresh
+  });
+
+  pulse.start();
+  await sleep(30);
+  assert.equal(chatCount, 0);
+
+  allowChatRefresh = true;
+  pulse.trigger('chat-refresh-1');
+  await waitFor(() => chatCount === 1);
+
+  allowChatRefresh = false;
+  pulse.trigger('chat-refresh-2');
+  await sleep(30);
+  assert.equal(chatCount, 1);
+
+  pulse.stop();
+});
+
 test('realtime pulse trigger while running schedules follow-up tick without overlap', async (context) => {
   const browser = installBrowserMocks('visible');
   context.after(() => browser.cleanup());

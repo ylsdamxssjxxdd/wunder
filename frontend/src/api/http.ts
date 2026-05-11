@@ -4,6 +4,7 @@ import type { AxiosError } from 'axios';
 import { resolveAccessToken } from '@/api/requestAuth';
 import { getCurrentLanguage } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
+import { localizeApiErrorText, resolveApiError } from '@/utils/apiError';
 import { FORCE_LOGOUT_LOGIN_PATH } from '@/utils/authNavigation';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
@@ -153,6 +154,38 @@ const shouldClearMaintenance = (error: unknown) => {
   return !isMaintenanceStatus(status);
 };
 
+const localizeResponseErrorPayload = (error: HttpError): void => {
+  const responseData = error.response?.data;
+  if (!responseData || typeof responseData !== 'object') {
+    return;
+  }
+  const payload = responseData as Record<string, unknown>;
+  const detail = payload.detail;
+  const status = error.response?.status ?? null;
+
+  if (typeof detail === 'string') {
+    payload.detail = localizeApiErrorText(detail, status, '');
+  } else if (detail && typeof detail === 'object') {
+    const detailRecord = detail as Record<string, unknown>;
+    if (typeof detailRecord.message === 'string') {
+      detailRecord.message = localizeApiErrorText(detailRecord.message, status, '');
+    }
+  }
+
+  if (typeof payload.message === 'string') {
+    payload.message = localizeApiErrorText(payload.message, status, '');
+  }
+  if (typeof payload.error_message === 'string') {
+    payload.error_message = localizeApiErrorText(payload.error_message, status, '');
+  }
+  if (payload.error && typeof payload.error === 'object') {
+    const errorRecord = payload.error as Record<string, unknown>;
+    if (typeof errorRecord.message === 'string') {
+      errorRecord.message = localizeApiErrorText(errorRecord.message, status, '');
+    }
+  }
+};
+
 api.interceptors.response.use(
   (response) => {
     clearMaintenance();
@@ -160,6 +193,15 @@ api.interceptors.response.use(
   },
   (error: unknown) => {
     const source = asHttpError(error);
+    const localized = resolveApiError(source, '');
+    if (localized.message) {
+      try {
+        source.message = localized.message;
+      } catch {
+        // ignore readonly message edge cases
+      }
+    }
+    localizeResponseErrorPayload(source);
     if (shouldForceAuthRedirect(source)) {
       clearMaintenance();
       forceLogoutAndRedirect();

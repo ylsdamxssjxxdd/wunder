@@ -28,42 +28,6 @@
   line-height: 1.45;
 }
 
-.toast-meta {
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  opacity: 0.9;
-}
-
-.toast-action {
-  border: 1px solid rgba(255, 255, 255, 0.75);
-  background: transparent;
-  color: #fff;
-  border-radius: 6px;
-  padding: 1px 8px;
-  font-size: 12px;
-  cursor: pointer;
-  box-shadow: none;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
-}
-
-.toast-action:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.92);
-}
-
-.toast-action:active:not(:disabled) {
-  opacity: 0.88;
-}
-
-.toast-action:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.95);
-  outline-offset: 2px;
-}
-
 .toast-hint {
   margin-top: 4px;
   font-size: 12px;

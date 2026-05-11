@@ -21,9 +21,7 @@ export const deleteUserSkill = (name: string) => api.delete('/user_tools/skills'
 export const uploadUserSkillZip = (file: Blob | File) => {
   const form = new FormData();
   form.append('file', file);
-  return api.post('/user_tools/skills/upload', form, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  });
+  return api.post('/user_tools/skills/upload', form);
 };
 
 export const fetchUserKnowledgeConfig = () => api.get('/user_tools/knowledge');
@@ -57,9 +55,7 @@ export const uploadUserKnowledgeFile = (base: string, file: Blob | File) => {
   const form = new FormData();
   form.append('base', base);
   form.append('file', file);
-  return api.post('/user_tools/knowledge/upload', form, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  });
+  return api.post('/user_tools/knowledge/upload', form);
 };
 
 export const fetchUserToolsSummary = () => api.get('/user_tools/tools');

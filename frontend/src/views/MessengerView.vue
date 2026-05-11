@@ -962,7 +962,10 @@
           </div>
         </template>
 
-        <template v-else>
+        <div
+          v-show="sessionHub.activeSection === 'messages'"
+          class="messenger-message-panel"
+        >
           <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
           <div
             v-else-if="!hasRetainedMessageConversationContext && resolvedMessageConversationKind === ''"
@@ -974,19 +977,27 @@
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
 
-          <template v-else-if="resolvedMessageConversationKind === 'agent'">
-            <template v-for="item in agentRenderableMessages" :key="item.key">
+          <div v-show="resolvedMessageConversationKind === 'agent'">
             <div
-              v-if="
-                !isHiddenInternalMessage(item.message)
-                  && (!isCompactionMarkerMessage(item.message) || shouldShowCompactionDivider(item.message))
-              "
-              class="messenger-message"
-              :class="{
-                mine: item.message.role === 'user',
-                'messenger-message--compaction': isCompactionMarkerMessage(item.message)
-              }"
-            >
+              v-if="agentVirtualTopSpacer"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${agentVirtualTopSpacer.height}px` }"
+              aria-hidden="true"
+            ></div>
+            <template v-for="group in agentVirtualGroups" :key="group.length ? group[0].key : 'empty-group'">
+              <template v-for="item in group" :key="item.key">
+              <div
+                v-if="
+                  !isHiddenInternalMessage(item.message)
+                    && (!isCompactionMarkerMessage(item.message) || shouldShowCompactionDivider(item.message))
+                "
+                class="messenger-message"
+                :data-virtual-key="item.key"
+                :class="{
+                  mine: item.message.role === 'user',
+                  'messenger-message--compaction': isCompactionMarkerMessage(item.message)
+                }"
+              >
               <div v-if="!isCompactionMarkerMessage(item.message)" class="messenger-message-side">
                 <button
                   v-if="item.message.role === 'user'"
@@ -1181,7 +1192,13 @@
                       :aria-label="imageItem.name"
                       @click="openImagePreview(imageItem.src, imageItem.name, imageItem.workspacePath)"
                     >
-                      <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" />
+                      <img
+                        :src="imageItem.src"
+                        :alt="imageItem.name"
+                        class="message-user-image"
+                        loading="lazy"
+                        decoding="async"
+                      />
                     </button>
                   </div>
                   <div
@@ -1210,12 +1227,12 @@
                   :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                 />
                 <div
-                  v-if="hasMessageContent(item.message.content) || shouldShowMessageStats(item.message)"
+                  v-if="hasMessageContent(item.message.content) || shouldShowMessageStats(item.message, item.sourceIndex)"
                   class="messenger-message-extra"
                 >
-                  <div v-if="shouldShowMessageStats(item.message)" class="messenger-message-stats">
+                  <div v-if="shouldShowMessageStats(item.message, item.sourceIndex)" class="messenger-message-stats">
                     <span
-                      v-for="entry in buildMessageStatsEntries(item.message)"
+                      v-for="entry in buildMessageStatsEntries(item.message, item.sourceIndex)"
                       :key="entry.key"
                       :class="[
                         'messenger-message-stat',
@@ -1294,18 +1311,33 @@
                 </div>
                 </template>
               </div>
-            </div>
+              </div>
             </template>
-          </template>
-
-          <template v-else-if="resolvedMessageConversationKind === 'world'">
+            </template>
             <div
-              v-for="item in worldRenderableMessages"
-              :key="item.key"
-              class="messenger-message"
-              :id="item.domId"
-              :class="{ mine: isOwnMessage(item.message) }"
-            >
+              v-if="agentVirtualBottomSpacer"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${agentVirtualBottomSpacer.height}px` }"
+              aria-hidden="true"
+            ></div>
+          </div>
+
+          <div v-show="resolvedMessageConversationKind === 'world'">
+            <div
+              v-if="worldVirtualTopSpacer"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${worldVirtualTopSpacer.height}px` }"
+              aria-hidden="true"
+            ></div>
+            <template v-for="group in worldVirtualGroups" :key="group.length ? group[0].key : 'empty-world-group'">
+              <div
+                v-for="item in group"
+                :key="item.key"
+                class="messenger-message"
+                :data-virtual-key="item.key"
+                :id="item.domId"
+                :class="{ mine: isOwnMessage(item.message) }"
+              >
               <div class="messenger-message-side">
                 <button
                   class="messenger-message-avatar"
@@ -1420,12 +1452,22 @@
                   </button>
                 </div>
               </div>
-            </div>
-          </template>
-          <div v-else class="messenger-chat-empty">
+              </div>
+            </template>
+            <div
+              v-if="worldVirtualBottomSpacer"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${worldVirtualBottomSpacer.height}px` }"
+              aria-hidden="true"
+            ></div>
+          </div>
+          <div
+            v-show="resolvedMessageConversationKind !== 'agent' && resolvedMessageConversationKind !== 'world'"
+            class="messenger-chat-empty"
+          >
             {{ t('messenger.empty.selectConversation') }}
           </div>
-        </template>
+        </div>
       </div>
 
       <footer
@@ -1720,6 +1762,10 @@
 </template>
 
 <script setup lang="ts">
+defineOptions({
+  name: 'MessengerView'
+});
+
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 
 const controller = useMessengerViewController();
@@ -1810,6 +1856,9 @@ const agentComposerViewRef = controller.agentComposerViewRef;
 const AgentQuickCreateDialog = controller.AgentQuickCreateDialog;
 const agentQuickCreateVisible = controller.agentQuickCreateVisible;
 const agentRenderableMessages = controller.agentRenderableMessages;
+const agentVirtualBottomSpacer = controller.agentVirtualBottomSpacer;
+const agentVirtualGroups = controller.agentVirtualGroups;
+const agentVirtualTopSpacer = controller.agentVirtualTopSpacer;
 const AgentRuntimeRecordsPanel = controller.AgentRuntimeRecordsPanel;
 const agentRuntimeStateHydrated = controller.agentRuntimeStateHydrated;
 const agentRuntimeStateMap = controller.agentRuntimeStateMap;
@@ -2984,6 +3033,9 @@ const worldQuickPanelCloseTimer = controller.worldQuickPanelCloseTimer;
 const worldQuickPanelMode = controller.worldQuickPanelMode;
 const worldRecentEmojis = controller.worldRecentEmojis;
 const worldRenderableMessages = controller.worldRenderableMessages;
+const worldVirtualBottomSpacer = controller.worldVirtualBottomSpacer;
+const worldVirtualGroups = controller.worldVirtualGroups;
+const worldVirtualTopSpacer = controller.worldVirtualTopSpacer;
 const worldUploading = controller.worldUploading;
 const worldVoiceDurationMs = controller.worldVoiceDurationMs;
 const worldVoiceLoadingMessageKey = controller.worldVoiceLoadingMessageKey;

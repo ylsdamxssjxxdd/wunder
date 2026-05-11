@@ -133,13 +133,32 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, MESSAGE_WINDOW_LIMIT, MESSAGE_WINDOW_MAX, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, setSessionLoading } from './chatRuntimeControls';
-import { applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, mergeSessionProtectedRealtimeMessages, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, shouldPreferCachedMessages, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, mergeSessionProtectedRealtimeMessages, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { mergeSnapshotIntoMessages, normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
+import {
+  ALL_SESSION_LIST_CACHE_KEY,
+  LOAD_SESSIONS_BACKGROUND_REFRESH_MIN_AGE_MS,
+  normalizeSessionListItems,
+  resolveLoadSessionsCacheKey as resolveLoadSessionsCacheKeyBase
+} from './chatSessionListLoadCache';
 import { AppendLocalMessageOptions, CreateSessionOptions, LoadSessionDetailOptions, LoadSessionsOptions, OpenDraftSessionOptions } from './chatTypes';
 import { abortResumeStream, startSessionWatcher } from './chatWatcher';
 import { attachWorkflowEvents, getSessionWorkflowState, summarizeCompactionRoundEvents } from './chatWorkflowHydration';
+import { shouldStartWatcherAfterSessionHydration } from './chatActiveSessionRealtime';
+
+const resolveLoadSessionsCacheKey = (agentId: string | null) =>
+  resolveLoadSessionsCacheKeyBase(agentId, resolveSessionListCacheKey);
+
+const readLoadSessionsCacheEntry = (agentId: string | null, maxAgeMs: number) =>
+  agentId === null
+    ? readSessionListCacheEntry(ALL_SESSION_LIST_CACHE_KEY, { maxAgeMs })
+    : readSessionListCacheEntry(agentId, { maxAgeMs });
+
+const writeLoadSessionsCache = (agentId: string | null, sessions: Record<string, unknown>[]) => {
+  writeSessionListCache(agentId === null ? ALL_SESSION_LIST_CACHE_KEY : agentId, sessions);
+};
 
 export const chatSessionOpenLoadActions = {
     appendLocalMessage(role: string, content: string, options: AppendLocalMessageOptions = {}) {
@@ -166,39 +185,184 @@ export const chatSessionOpenLoadActions = {
       let requestedAgentId: string | null = null;
       const traceId = String((options as Record<string, unknown> | null)?.traceId || '').trim();
       const traceSource = String((options as Record<string, unknown> | null)?.traceSource || '').trim();
+      const force = (options as Record<string, unknown> | null)?.force === true;
+      const preferCache = (options as Record<string, unknown> | null)?.preferCache === true;
+      const backgroundRefresh = (options as Record<string, unknown> | null)?.backgroundRefresh === true;
+      const requestedMaxCacheAgeMs = Number((options as Record<string, unknown> | null)?.maxCacheAgeMs);
+      const maxCacheAgeMs = Number.isFinite(requestedMaxCacheAgeMs)
+        ? Math.max(0, requestedMaxCacheAgeMs)
+        : 15000;
 
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
         requestedAgentId = String(options.agent_id ?? '');
         params.agent_id = requestedAgentId;
       }
+      const now = Date.now();
+      const activeSessionKey = resolveSessionKey(this.activeSessionId);
+      const activeRuntime = ensureRuntime(activeSessionKey);
+      const activeRuntimeHot = Boolean(
+        activeSessionKey &&
+          (
+            this.loadingBySession?.[activeSessionKey] ||
+            activeRuntime?.sendController ||
+            activeRuntime?.resumeController
+          )
+      );
+      const recentListRefreshAgeMs = now - Number(this.sessionsLoadedAt || 0);
+      if (
+        !force &&
+        traceSource === 'realtime-pulse' &&
+        requestedAgentId === null &&
+        !activeRuntimeHot &&
+        Number(this.sessionsLoadedAt || 0) > 0 &&
+        recentListRefreshAgeMs < 5000
+      ) {
+        chatDebugLog('messenger.conversation', 'load-sessions-skip', {
+          traceId,
+          traceSource,
+          requestedAgentId,
+          activeSessionId: activeSessionKey,
+          previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0,
+          ageMs: recentListRefreshAgeMs
+        });
+        return this.sessions;
+      }
+      const cacheKey = resolveLoadSessionsCacheKey(requestedAgentId);
+      const applyLoadedSessions = (
+        items: unknown,
+        source: string,
+        options: { writeCache?: boolean; loadedAt?: number } = {}
+      ) => {
+        const nextSessions = mergeSessionsByIdPreservingRuntimeFields(
+          this.sessions,
+          normalizeSessionListItems(items),
+          patchSessionRuntimeFields,
+          sortSessionsByActivity
+        );
+        this.sessions = mergeRetainedActiveSessionIntoList(this, nextSessions);
+        this.sessionsLoadedAt = Number.isFinite(Number(options.loadedAt))
+          ? Number(options.loadedAt)
+          : Date.now();
+        syncGoalsFromSessionList(this, this.sessions);
+        if (options.writeCache !== false) {
+          writeLoadSessionsCache(requestedAgentId, this.sessions);
+        }
+        syncDemoChatCache({ sessions: this.sessions });
+        chatDebugLog('messenger.conversation', source, {
+          traceId,
+          traceSource,
+          requestedAgentId,
+          cacheKey,
+          activeSessionId: resolveSessionKey(this.activeSessionId),
+          ageMs: Date.now() - Number(this.sessionsLoadedAt || 0),
+          nextSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
+        });
+        return this.sessions;
+      };
+      const refreshSessions = async (source: string) => {
+        const { data } = await listSessions(Object.keys(params).length ? params : undefined);
+        return applyLoadedSessions(data?.data?.items || [], source);
+      };
+      const scheduleBackgroundRefresh = (fallbackSessions: Record<string, unknown>[], ageMs: number) => {
+        let backgroundRequest = sessionListCacheInFlight.get(cacheKey);
+        if (!backgroundRequest) {
+          chatDebugLog('messenger.conversation', 'load-sessions-background-start', {
+            traceId,
+            traceSource,
+            requestedAgentId,
+            cacheKey,
+            activeSessionId: activeSessionKey,
+            previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0,
+            ageMs
+          });
+          backgroundRequest = refreshSessions('load-sessions-background-finish')
+            .catch((error) => {
+              chatDebugLog('messenger.conversation', 'load-sessions-background-error', {
+                traceId,
+                traceSource,
+                requestedAgentId,
+                cacheKey,
+                message: error instanceof Error ? error.message : String(error || '')
+              });
+              return fallbackSessions;
+            })
+            .finally(() => {
+              sessionListCacheInFlight.delete(cacheKey);
+            });
+          sessionListCacheInFlight.set(cacheKey, backgroundRequest);
+        }
+        return backgroundRequest;
+      };
+      if (!force && preferCache) {
+        const cachedEntry = readLoadSessionsCacheEntry(requestedAgentId, maxCacheAgeMs);
+        if (cachedEntry) {
+          const cachedAgeMs = Date.now() - Number(cachedEntry.cachedAt || 0);
+          const cached = applyLoadedSessions(cachedEntry.sessions, 'load-sessions-cache-hit', {
+            writeCache: false,
+            loadedAt: cachedEntry.cachedAt
+          });
+          if (
+            !backgroundRefresh ||
+            activeRuntimeHot ||
+            cachedAgeMs < LOAD_SESSIONS_BACKGROUND_REFRESH_MIN_AGE_MS
+          ) {
+            return cached;
+          }
+          scheduleBackgroundRefresh(cached, cachedAgeMs);
+          return cached;
+        }
+        const memorySessions = requestedAgentId === null
+          ? normalizeSessionListItems(this.sessions)
+          : normalizeSessionListItems(filterSessionsByAgent(requestedAgentId, this.sessions));
+        if (memorySessions.length) {
+          const loadedAt = Number(this.sessionsLoadedAt || 0);
+          const memoryAgeMs = loadedAt > 0 ? Date.now() - loadedAt : Number.POSITIVE_INFINITY;
+          const cached = applyLoadedSessions(memorySessions, 'load-sessions-memory-hit', {
+            writeCache: false,
+            loadedAt
+          });
+          if (
+            !backgroundRefresh ||
+            activeRuntimeHot ||
+            memoryAgeMs < LOAD_SESSIONS_BACKGROUND_REFRESH_MIN_AGE_MS
+          ) {
+            return cached;
+          }
+          scheduleBackgroundRefresh(cached, memoryAgeMs);
+          return cached;
+        }
+      }
+      const inFlight = !force ? sessionListCacheInFlight.get(cacheKey) : null;
+      if (inFlight) {
+        chatDebugLog('messenger.conversation', 'load-sessions-inflight-hit', {
+          traceId,
+          traceSource,
+          requestedAgentId,
+          cacheKey,
+          activeSessionId: activeSessionKey,
+          previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
+        });
+        return Promise.resolve(inFlight).then((sessions) =>
+          applyLoadedSessions(
+            Array.isArray(sessions) ? sessions : this.sessions,
+            'load-sessions-inflight-finish'
+          )
+        );
+      }
       chatDebugLog('messenger.conversation', 'load-sessions-start', {
         traceId,
         traceSource,
         requestedAgentId,
-        activeSessionId: resolveSessionKey(this.activeSessionId),
+        cacheKey,
+        activeSessionId: activeSessionKey,
         previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
       });
-      const { data } = await listSessions(Object.keys(params).length ? params : undefined);
-      const nextSessions = mergeSessionsByIdPreservingRuntimeFields(
-        this.sessions,
-        data.data.items || [],
-        patchSessionRuntimeFields,
-        sortSessionsByActivity
-      );
-      this.sessions = mergeRetainedActiveSessionIntoList(this, nextSessions);
-      syncGoalsFromSessionList(this, this.sessions);
-      if (requestedAgentId !== null) {
-        writeSessionListCache(requestedAgentId, this.sessions);
-      }
-      syncDemoChatCache({ sessions: this.sessions });
-      chatDebugLog('messenger.conversation', 'load-sessions-finish', {
-        traceId,
-        traceSource,
-        requestedAgentId,
-        activeSessionId: resolveSessionKey(this.activeSessionId),
-        nextSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0
-      });
-      return this.sessions;
+      const request = refreshSessions('load-sessions-finish')
+        .finally(() => {
+          sessionListCacheInFlight.delete(cacheKey);
+        });
+      sessionListCacheInFlight.set(cacheKey, request);
+      return request;
     },
     openDraftSession(options: OpenDraftSessionOptions = {}) {
       const currentSessionId = this.activeSessionId;
@@ -725,13 +889,17 @@ export const chatSessionOpenLoadActions = {
       }
       this.scheduleSnapshot(true);
       const shouldStartWatcher =
-        !preserveWatcher ||
         (
-          activeSessionKey === targetSessionId &&
-          !runtime?.watchController &&
-          !runtime?.sendController &&
-          !runtime?.resumeController
-        );
+          !preserveWatcher ||
+          activeSessionKey === targetSessionId
+        ) &&
+        shouldStartWatcherAfterSessionHydration({
+          remoteRunning,
+          runtimeStatus: runtime?.threadStatus,
+          hasWatchController: Boolean(runtime?.watchController),
+          hasSendController: Boolean(runtime?.sendController),
+          hasResumeController: Boolean(runtime?.resumeController)
+        });
       if (shouldStartWatcher) {
         startSessionWatcher(this, targetSessionId);
       }
