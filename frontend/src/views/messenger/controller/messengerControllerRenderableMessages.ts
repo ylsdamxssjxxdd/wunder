@@ -584,7 +584,23 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       Boolean((message?.subagents as unknown[])?.length) ||
       ctx.hasMessageContent(message?.reasoning);
 
+  ctx.isHiddenInternalMessage = (message: Record<string, unknown>): boolean => {
+      if (Boolean(message?.hiddenInternal || message?.hidden)) {
+          return true;
+      }
+      const meta = (message?.meta || {}) as Record<string, unknown>;
+      const metaType = String(meta?.type || '').trim();
+      return Boolean(
+          meta?.hidden === true ||
+          meta?.internal_user === true ||
+          metaType === 'model_context_internal'
+      );
+  };
+
   ctx.shouldRenderAgentMessage = (message: Record<string, unknown>): boolean => {
+      if (ctx.isHiddenInternalMessage(message)) {
+          return false;
+      }
       if (String(message?.role || '') === 'user')
           return true;
       return ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
@@ -872,8 +888,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       : [ctx.visibleWorldRenderableMessages.value]);
 
   ctx.isGreetingMessage = (message: Record<string, unknown>): boolean => String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
-
-  ctx.isHiddenInternalMessage = (message: Record<string, unknown>): boolean => Boolean(message?.hiddenInternal);
 
   ctx.isCompactionMarkerMessage = (message: Record<string, unknown>): boolean => {
       if (String(message?.role || '') !== 'assistant')

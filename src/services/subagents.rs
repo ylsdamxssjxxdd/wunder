@@ -952,6 +952,7 @@ fn build_parent_auto_wake_request(
         debug_payload: false,
         session_id: Some(parent_session_id.to_string()),
         agent_id: session.agent_id.clone(),
+        workspace_container_id: None,
         model_name: None,
         language: None,
         config_overrides: Some(build_auto_wake_request_overrides(config_overrides)),

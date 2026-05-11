@@ -443,7 +443,6 @@ fn apply_cli_defaults(
     config.agent_queue.enabled = false;
     config.cron.enabled = false;
 
-    config.sandbox.mode = "local".to_string();
     if config
         .security
         .approval_mode

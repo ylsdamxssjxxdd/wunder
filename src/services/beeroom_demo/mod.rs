@@ -732,6 +732,7 @@ fn build_mother_request(
         debug_payload: false,
         session_id: Some(mother_session_id.to_string()),
         agent_id: Some(plan.mother.agent_id.clone()),
+        workspace_container_id: None,
         model_name: Some(DEMO_MODEL_NAME.to_string()),
         language: Some("zh-CN".to_string()),
         config_overrides: Some(config_overrides),

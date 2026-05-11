@@ -1,4 +1,4 @@
-﻿use super::models::{AttemptUsage, ExecutionCapture, ToolCallRecord, ToolResultRecord};
+use super::models::{AttemptUsage, ExecutionCapture, ToolCallRecord, ToolResultRecord};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -228,10 +228,7 @@ mod tests {
     #[test]
     fn truncate_json_preview_keeps_short_text() {
         let value = json!({ "ok": true, "data": "short" });
-        assert_eq!(
-            truncate_json_preview(&value, 1024),
-            value.to_string()
-        );
+        assert_eq!(truncate_json_preview(&value, 1024), value.to_string());
     }
 
     #[test]

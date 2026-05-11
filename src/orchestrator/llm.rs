@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::llm_speed::LlmSpeedSummary;
+use sha2::{Digest, Sha256};
 
 #[derive(Default)]
 struct OutputTiming {
@@ -86,6 +87,123 @@ fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRe
         })
     });
     ChatMessageRepairReport { messages, repair }
+}
+
+fn build_context_cache_probe(
+    messages: &[ChatMessage],
+    tools: Option<&[Value]>,
+    request_payload: Option<&Value>,
+) -> Value {
+    let message_count = messages.len();
+    let message_value = serde_json::to_value(messages).unwrap_or_else(|_| Value::Array(vec![]));
+    let prefix_without_last_value = if message_count > 0 {
+        serde_json::to_value(&messages[..message_count - 1])
+            .unwrap_or_else(|_| Value::Array(vec![]))
+    } else {
+        Value::Array(vec![])
+    };
+    let prefix_without_last_two_value = if message_count > 1 {
+        serde_json::to_value(&messages[..message_count - 2])
+            .unwrap_or_else(|_| Value::Array(vec![]))
+    } else {
+        Value::Array(vec![])
+    };
+    let mut role_counts: HashMap<String, usize> = HashMap::new();
+    let mut tool_message_count = 0usize;
+    let mut assistant_tool_call_message_count = 0usize;
+    let mut content_chars = 0usize;
+    for message in messages {
+        let role = message.role.trim().to_ascii_lowercase();
+        *role_counts.entry(role.clone()).or_default() += 1;
+        if role == "tool" {
+            tool_message_count = tool_message_count.saturating_add(1);
+        }
+        if role == "assistant" && message.tool_calls.is_some() {
+            assistant_tool_call_message_count = assistant_tool_call_message_count.saturating_add(1);
+        }
+        content_chars = content_chars.saturating_add(json_content_len(&message.content));
+    }
+    let mut role_counts_json = Map::new();
+    let mut role_keys = role_counts.keys().cloned().collect::<Vec<_>>();
+    role_keys.sort();
+    for key in role_keys {
+        role_counts_json.insert(key.clone(), json!(role_counts[&key]));
+    }
+    let tail_start = message_count.saturating_sub(8);
+    let tail = messages
+        .iter()
+        .enumerate()
+        .skip(tail_start)
+        .map(|(index, message)| {
+            let mut item = json!({
+                "index": index,
+                "role": message.role,
+                "content_chars": json_content_len(&message.content),
+                "has_reasoning": message
+                    .reasoning_content
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty()),
+                "has_tool_calls": message.tool_calls.is_some(),
+            });
+            if let Some(tool_call_id) = message
+                .tool_call_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                item["tool_call_id"] = Value::String(tool_call_id.to_string());
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    let tools_value = tools
+        .map(|items| Value::Array(items.to_vec()))
+        .unwrap_or_else(|| Value::Array(vec![]));
+    let mut probe = json!({
+        "message_count": message_count,
+        "message_hash": stable_json_hash(&message_value),
+        "prefix_without_last_hash": stable_json_hash(&prefix_without_last_value),
+        "prefix_without_last_message_count": message_count.saturating_sub(1),
+        "prefix_without_last_two_hash": stable_json_hash(&prefix_without_last_two_value),
+        "prefix_without_last_two_message_count": message_count.saturating_sub(2),
+        "role_counts": Value::Object(role_counts_json),
+        "tool_message_count": tool_message_count,
+        "assistant_tool_call_message_count": assistant_tool_call_message_count,
+        "content_chars": content_chars,
+        "tail": tail,
+        "tools_count": tools.map_or(0, <[Value]>::len),
+        "tools_hash": stable_json_hash(&tools_value),
+    });
+    if let Some(system_message) = messages.first().filter(|message| message.role == "system") {
+        if let Ok(value) = serde_json::to_value(system_message) {
+            probe["system_message_hash"] = Value::String(stable_json_hash(&value));
+        }
+    }
+    if let Some(last_message) = messages.last() {
+        if let Ok(value) = serde_json::to_value(last_message) {
+            probe["last_message_hash"] = Value::String(stable_json_hash(&value));
+        }
+    }
+    if let Some(request_payload) = request_payload {
+        probe["request_payload_hash"] = Value::String(stable_json_hash(request_payload));
+    }
+    probe
+}
+
+fn stable_json_hash(value: &Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hex::encode(hasher.finalize());
+    digest.chars().take(16).collect()
+}
+
+fn json_content_len(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.chars().count(),
+        Value::Null => 0,
+        other => serde_json::to_string(other).map_or(0, |text| text.chars().count()),
+    }
 }
 
 impl Orchestrator {
@@ -440,24 +558,21 @@ impl Orchestrator {
         let client = build_llm_client(&effective_config, self.http.clone());
         let chat_messages = sanitize_chat_messages_for_request(&self.build_chat_messages(messages));
         let will_stream = stream;
+        let request_payload = log_payload.then(|| {
+            client.build_request_payload_with_tools(&chat_messages.messages, will_stream, tools)
+        });
+        let context_cache_probe =
+            build_context_cache_probe(&chat_messages.messages, tools, request_payload.as_ref());
 
         if emit_events {
             let mut request_payload = if log_payload {
-                let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
-                let payload_chat = sanitize_chat_messages_for_request(
-                    &self.build_chat_messages(&payload_messages),
-                );
-                let payload = client.build_request_payload_with_tools(
-                    &payload_chat.messages,
-                    will_stream,
-                    tools,
-                );
                 json!({
                     "provider": effective_config.provider,
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
                     "stream": will_stream,
-                    "payload": payload,
+                    "payload": request_payload.clone().unwrap_or(Value::Null),
+                    "context_cache_probe": context_cache_probe,
                 })
             } else {
                 json!({
@@ -466,6 +581,7 @@ impl Orchestrator {
                     "base_url": effective_config.base_url,
                     "stream": will_stream,
                     "payload_omitted": true,
+                    "context_cache_probe": context_cache_probe,
                 })
             };
             if let Value::Object(ref mut map) = request_payload {
@@ -897,11 +1013,23 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_llm_failure, extract_context_window_limit_hint, is_context_window_error_text,
-        is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
-        resolve_llm_retry_delay, LlmFailureKind, DEFAULT_LLM_MAX_ATTEMPTS,
-        LLM_UNAVAILABLE_MIN_RETRIES,
+        build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
+        is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
+        resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
+        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
     };
+    use crate::llm::ChatMessage;
+    use serde_json::json;
+
+    fn test_message(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: json!(content),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
 
     #[test]
     fn detects_context_window_error_from_common_phrases() {
@@ -1037,6 +1165,30 @@ mod tests {
         assert_eq!(
             resolve_llm_max_attempts(LlmFailureKind::ContextWindow),
             DEFAULT_LLM_MAX_ATTEMPTS
+        );
+    }
+
+    #[test]
+    fn context_cache_probe_hashes_append_only_prefixes() {
+        let previous = vec![
+            test_message("system", "stable system"),
+            test_message("user", "first"),
+            test_message("assistant", "answer"),
+        ];
+        let mut appended = previous.clone();
+        appended.push(test_message("assistant", "follow up answer"));
+        appended.push(test_message("user", "next"));
+
+        let previous_probe = build_context_cache_probe(&previous, None, None);
+        let appended_probe = build_context_cache_probe(&appended, None, None);
+
+        assert_eq!(
+            previous_probe.get("message_hash"),
+            appended_probe.get("prefix_without_last_two_hash")
+        );
+        assert_ne!(
+            previous_probe.get("message_hash"),
+            appended_probe.get("message_hash")
         );
     }
 }

@@ -315,7 +315,7 @@ scripts/init_skill.py <skill-name> --path <output-directory>
 
 ### 步骤5: 打包技能
 
-技能开发完成后,必须打包成可分发的.skill文件与用户共享。打包过程首先自动验证技能以确保满足所有要求:
+技能开发完成后,必须打包成可分发的.zip文件与用户共享。打包过程首先自动验证技能以确保满足所有要求:
 
 ```bash
 scripts/package_skill.py <path/to/skill-folder>
@@ -336,7 +336,7 @@ scripts/package_skill.py <path/to/skill-folder> ./dist
    - 描述完整性和质量
    - 文件组织和资源引用
 
-2. **打包** 技能(如果验证通过),创建以技能命名的.skill文件(例如`my-skill.skill`),包含所有文件并保持正确的目录结构以便分发。.skill文件是带有.skill扩展名的zip文件。
+2. **打包** 技能(如果验证通过),创建以技能命名的.zip文件(例如`my-skill.zip`),包含所有文件并保持正确的目录结构以便分发。
 
 如果验证失败,脚本会报告错误并退出而不创建包。修复任何验证错误并再次运行打包命令。
 
@@ -350,3 +350,9 @@ scripts/package_skill.py <path/to/skill-folder> ./dist
 2. 注意困难或低效之处
 3. 识别SKILL.md或打包资源应如何更新
 4. 实现更改并再次测试
+
+
+# 创建收尾
+
+- 默认将创建的技能放到当前工作目录中
+- 询问用户是否需要将技能安装到智能体中

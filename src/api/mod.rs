@@ -26,7 +26,9 @@ pub mod desktop_lan;
 pub mod doc2md;
 pub(crate) mod errors;
 pub mod external_links;
+pub mod external_workflows;
 pub mod gateway_ws;
+pub mod onlyoffice;
 pub mod team_runs;
 pub mod temp_dir;
 pub mod user_agents;
@@ -64,8 +66,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(core::router())
         .merge(cron::router())
         .merge(doc2md::router())
+        .merge(external_workflows::router())
         .merge(gateway_ws::router())
         .merge(temp_dir::router())
+        .merge(onlyoffice::router())
         .merge(workspace::router())
         .merge(admin::router())
         .merge(admin_bridge::router())
@@ -113,7 +117,9 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(desktop::router())
         .merge(desktop_lan::router())
         .merge(external_links::router())
+        .merge(external_workflows::router())
         .merge(temp_dir::router())
+        .merge(onlyoffice::router())
         .merge(workspace::router())
         .merge(user_tools::router())
         .merge(user_plaza::router())

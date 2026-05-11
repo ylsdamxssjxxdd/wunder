@@ -1322,6 +1322,12 @@ impl PostgresStorage {
                  ON chat_history USING brin (created_time)",
             ),
             (
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_model_context_entries_time \
+                 ON model_context_entries USING brin (created_time)",
+                "CREATE INDEX IF NOT EXISTS idx_model_context_entries_time \
+                 ON model_context_entries USING brin (created_time)",
+            ),
+            (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_artifact_logs_time \
                  ON artifact_logs USING brin (created_time)",
                 "CREATE INDEX IF NOT EXISTS idx_artifact_logs_time \
@@ -1420,6 +1426,16 @@ impl StorageBackend for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_chat_history_session
                   ON chat_history (user_id, session_id, id);
+                CREATE TABLE IF NOT EXISTS model_context_entries (
+                  id BIGSERIAL PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  payload TEXT NOT NULL,
+                  created_time DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_model_context_entries_session
+                  ON model_context_entries (user_id, session_id, id);
                 CREATE TABLE IF NOT EXISTS tool_logs (
                   id BIGSERIAL PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -2508,6 +2524,78 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
+    fn append_model_context_entry(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payload: &Value,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let role = payload
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if role.is_empty() {
+            return Ok(());
+        }
+        let payload_text = Self::json_to_string(payload);
+        let now = Self::now_ts();
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
+             VALUES ($1, $2, $3, $4, $5)",
+            &[&cleaned_user, &cleaned_session, &role, &payload_text, &now],
+        )?;
+        Ok(())
+    }
+
+    fn replace_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payloads: &[Value],
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM model_context_entries WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        )?;
+        for payload in payloads {
+            let role = payload
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if role.is_empty() {
+                continue;
+            }
+            let payload_text = Self::json_to_string(payload);
+            let now = Self::now_ts();
+            tx.execute(
+                "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
+                 VALUES ($1, $2, $3, $4, $5)",
+                &[&cleaned_user, &cleaned_session, &role, &payload_text, &now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let session_id = payload
@@ -2586,6 +2674,49 @@ impl StorageBackend for PostgresStorage {
             &[&user_id, &session_id, &kind, &name, &payload_text, &now],
         )?;
         Ok(())
+    }
+
+    fn load_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit_value = limit.filter(|value| *value > 0);
+        let mut conn = self.conn()?;
+        let mut rows: Vec<String> = if let Some(limit_value) = limit_value {
+            conn.query(
+                "SELECT payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
+                &[&cleaned_user, &cleaned_session, &limit_value],
+            )?
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect()
+        } else {
+            conn.query(
+                "SELECT payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
+                &[&cleaned_user, &cleaned_session],
+            )?
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect()
+        };
+        if limit_value.is_some() {
+            rows.reverse();
+        }
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
     }
 
     fn load_chat_history(
@@ -2914,6 +3045,7 @@ impl StorageBackend for PostgresStorage {
         let row = conn.query_one(
             "SELECT \
             COALESCE(pg_total_relation_size(to_regclass('chat_history')), 0) + \
+            COALESCE(pg_total_relation_size(to_regclass('model_context_entries')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('tool_logs')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('artifact_logs')), 0) + \
             COALESCE(pg_total_relation_size(to_regclass('monitor_sessions')), 0) + \
@@ -2933,6 +3065,10 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM chat_history WHERE user_id = $1", &[&cleaned])?;
+        let _ = conn.execute(
+            "DELETE FROM model_context_entries WHERE user_id = $1",
+            &[&cleaned],
+        );
         Ok(affected as i64)
     }
 
@@ -2948,6 +3084,10 @@ impl StorageBackend for PostgresStorage {
             "DELETE FROM chat_history WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
         )?;
+        let _ = conn.execute(
+            "DELETE FROM model_context_entries WHERE user_id = $1 AND session_id = $2",
+            &[&cleaned_user, &cleaned_session],
+        );
         Ok(affected as i64)
     }
 
@@ -4752,6 +4892,11 @@ impl StorageBackend for PostgresStorage {
         };
         let chat = delete_with_filter("DELETE FROM chat_history WHERE created_time < $1", false)?;
         results.insert("chat_history".to_string(), chat);
+        let model_context = delete_with_filter(
+            "DELETE FROM model_context_entries WHERE created_time < $1",
+            false,
+        )?;
+        results.insert("model_context_entries".to_string(), model_context);
         let tool = delete_with_filter("DELETE FROM tool_logs WHERE created_time < $1", false)?;
         results.insert("tool_logs".to_string(), tool);
         let artifact =

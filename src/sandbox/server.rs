@@ -1,8 +1,8 @@
+use anyhow::{anyhow, Result};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};

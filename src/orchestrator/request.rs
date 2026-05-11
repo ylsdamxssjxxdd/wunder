@@ -24,7 +24,11 @@ impl Orchestrator {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string());
-        let workspace_id = self.resolve_workspace_id(&user_id, agent_id.as_deref());
+        let workspace_id = self.resolve_workspace_id(
+            &user_id,
+            agent_id.as_deref(),
+            request.workspace_container_id,
+        );
         if let Err(err) = self.workspace.ensure_user_root(&workspace_id) {
             return Err(OrchestratorError::internal(format!(
                 "failed to prepare workspace: {err}"
@@ -96,7 +100,19 @@ impl Orchestrator {
         })
     }
 
-    pub(crate) fn resolve_workspace_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
+    pub(crate) fn resolve_workspace_id(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        workspace_container_id: Option<i32>,
+    ) -> String {
+        if let Some(container_id) =
+            workspace_container_id.map(crate::storage::normalize_workspace_container_id)
+        {
+            return self
+                .workspace
+                .scoped_user_id_by_container(user_id, container_id);
+        }
         let agent_id = agent_id.map(str::trim).filter(|value| !value.is_empty());
         if agent_id.is_none() || is_default_agent_alias(agent_id) {
             return self.workspace.scoped_user_id_by_container(

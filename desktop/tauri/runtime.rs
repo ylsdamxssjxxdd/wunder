@@ -1165,7 +1165,6 @@ fn apply_desktop_defaults(
     config.gateway.enabled = false;
     config.agent_queue.enabled = false;
     config.cron.enabled = true;
-    config.sandbox.mode = "local".to_string();
     if let Some(preset_worker_cards_root) = resolve_desktop_preset_worker_cards_root(
         &config.user_agents.worker_cards_root,
         repo_root,

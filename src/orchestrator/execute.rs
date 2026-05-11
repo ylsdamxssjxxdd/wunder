@@ -1,4 +1,4 @@
-use super::context_compactor::ContextCompactor;
+use super::context::normalize_model_context_message;
 use super::retry_governor::RetryGovernor;
 use super::thread_runtime::{
     thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
@@ -405,28 +405,52 @@ impl Orchestrator {
 
             let history_manager = HistoryManager;
             let context_manager = ContextManager;
-            let context_compactor = ContextCompactor;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
-            let history_limit = if is_admin {
-                0
-            } else {
-                config.workspace.max_history_items
-            };
-            let history_messages = history_manager
-                .load_history_messages_async(
-                    self.workspace.clone(),
-                    user_id.clone(),
-                    session_id.clone(),
-                    history_limit,
-                )
-                .await;
-            messages.extend(history_messages);
+            // Ensure the previous turn's async history/context writes are visible before
+            // building this turn's prompt. Otherwise fast follow-up user messages can miss
+            // the tail of the append-only model context and break KV cache reuse.
+            let _ = self.workspace.flush_writes_async().await;
+            let mut model_context_entries = self
+                .workspace
+                .load_model_context_entries(&user_id, &session_id, 0)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(normalize_model_context_message)
+                .collect::<Vec<_>>();
+            if model_context_entries.is_empty() {
+                model_context_entries = history_manager
+                    .load_history_messages_async(
+                        self.workspace.clone(),
+                        user_id.clone(),
+                        session_id.clone(),
+                        0,
+                    )
+                    .await
+                    .into_iter()
+                    .filter_map(normalize_model_context_message)
+                    .collect();
+                if !model_context_entries.is_empty() {
+                    if let Err(err) = self.workspace.replace_model_context_entries(
+                        &user_id,
+                        &session_id,
+                        &model_context_entries,
+                    ) {
+                        warn!(
+                            "replace model context entries failed for session {session_id}: {err}"
+                        );
+                    }
+                    let _ = self.workspace.flush_writes_async().await;
+                }
+            }
+            messages.extend(model_context_entries);
             let user_message = self
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
             messages.push(user_message.clone());
+            let persisted_user_model_message = user_message.clone();
             messages = context_manager.normalize_messages(messages);
             let mut user_message_appended = false;
+            let mut user_context_appended = false;
 
             let desktop_unlimited_rounds =
                 config.server.mode.trim().eq_ignore_ascii_case("desktop");
@@ -503,7 +527,6 @@ impl Orchestrator {
                 last_round_info = round_info;
                 let mut adaptive_recovery_limit_hint: Option<i64> = None;
                 self.ensure_not_cancelled(&session_id)?;
-                messages = context_compactor.compact_messages(messages);
                 let compaction_llm_config = apply_context_window_limit_hint(
                     &llm_config,
                     merge_context_window_limit_hint(
@@ -533,6 +556,9 @@ impl Orchestrator {
                     .await?;
                 messages = compaction_result.messages;
                 if compaction_result.compaction_id.is_some() {
+                    user_context_appended = true;
+                }
+                if compaction_result.compaction_id.is_some() {
                     persisted_context_tokens = 0;
                     self.workspace
                         .save_session_context_tokens_async(&user_id, &session_id, 0)
@@ -547,7 +573,6 @@ impl Orchestrator {
                 }
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
-                messages = context_compactor.compact_messages(messages);
                 let context_tokens = persisted_context_tokens.max(0);
                 let projected_request_tokens = context_tokens;
                 let mut context_payload = json!({
@@ -604,6 +629,14 @@ impl Orchestrator {
                         );
                     }
                     user_message_appended = true;
+                }
+                if !user_context_appended {
+                    self.append_model_context_entry(
+                        &user_id,
+                        &session_id,
+                        &persisted_user_model_message,
+                    );
+                    user_context_appended = true;
                 }
 
                 let mut overflow_recovery_attempts = 0_u32;
@@ -836,6 +869,18 @@ impl Orchestrator {
                     } else {
                         answer.clone()
                     };
+                    let mut assistant_model_message = json!({
+                        "role": "assistant",
+                        "content": content.clone(),
+                    });
+                    if !reasoning.trim().is_empty() {
+                        assistant_model_message["reasoning_content"] = json!(reasoning.clone());
+                    }
+                    self.append_model_context_entry(
+                        &user_id,
+                        &session_id,
+                        &assistant_model_message,
+                    );
                     if !assistant_content.trim().is_empty() {
                         self.append_chat(
                             &user_id,
@@ -857,16 +902,42 @@ impl Orchestrator {
 
                 let assistant_content = content.clone();
                 let assistant_reasoning = reasoning.clone();
+                let assistant_model_tool_calls =
+                    build_model_context_tool_calls_snapshot(tool_calls_payload.as_ref(), &allowed_tool_names);
+                let has_model_tool_calls_payload = assistant_model_tool_calls
+                    .as_ref()
+                    .is_some_and(|payload| !matches!(payload, Value::Null));
+                if has_model_tool_calls_payload
+                    || !assistant_content.trim().is_empty()
+                    || !assistant_reasoning.trim().is_empty()
+                {
+                    let mut assistant_model_message = json!({
+                        "role": "assistant",
+                        "content": assistant_content.clone(),
+                    });
+                    if !assistant_reasoning.trim().is_empty() {
+                        assistant_model_message["reasoning_content"] =
+                            json!(assistant_reasoning.clone());
+                    }
+                    if let Some(tool_calls_payload) = assistant_model_tool_calls {
+                        assistant_model_message["tool_calls"] = tool_calls_payload;
+                    }
+                    self.append_model_context_entry(
+                        &user_id,
+                        &session_id,
+                        &assistant_model_message,
+                    );
+                }
                 let assistant_history =
                     build_assistant_history_snapshot(tool_calls_payload.as_ref(), &allowed_tool_names);
                 let has_tool_calls_payload = assistant_history
                     .tool_calls
                     .as_ref()
                     .is_some_and(|payload| !matches!(payload, Value::Null));
-                if has_tool_calls_payload
+                let should_push_assistant_message = has_tool_calls_payload
                     || !assistant_content.trim().is_empty()
-                    || !assistant_reasoning.trim().is_empty()
-                {
+                    || !assistant_reasoning.trim().is_empty();
+                if should_push_assistant_message {
                     let mut assistant_message = json!({
                         "role": "assistant",
                         "content": assistant_content.clone(),
@@ -878,18 +949,15 @@ impl Orchestrator {
                         assistant_message["tool_calls"] = tool_calls_payload;
                     }
                     messages.push(assistant_message);
-                    let meta = if assistant_history.persisted_tool_calls.is_some() {
-                        Some(json!({ "type": "tool_call" }))
-                    } else {
-                        None
-                    };
+                }
+                if has_tool_calls_payload {
                     self.append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
                         Some(&json!(assistant_content)),
                         None,
-                        meta.as_ref(),
+                        Some(&json!({ "type": "tool_call" })),
                         Some(&assistant_reasoning),
                         assistant_history.persisted_tool_calls.as_ref(),
                         None,
@@ -1241,29 +1309,57 @@ impl Orchestrator {
                         } else {
                             None
                         };
-                        if uses_native_tool_api(tool_call_mode, &llm_config) {
+                        let observation_model_message = if uses_native_tool_api(tool_call_mode, &llm_config) {
                             if let Some(tool_call_id) = history_tool_call_id.as_ref() {
-                                messages.push(json!({
+                                json!({
                                     "role": "tool",
                                     "tool_call_id": tool_call_id,
                                     "content": observation.clone(),
-                                }));
+                                })
                             } else {
-                                messages.push(json!({
+                                json!({
                                     "role": "user",
                                     "content": format!("{OBSERVATION_PREFIX}{observation}"),
-                                }));
+                                })
                             }
                         } else {
-                            messages.push(json!({
+                            json!({
                                 "role": "user",
                                 "content": format!("{OBSERVATION_PREFIX}{observation}"),
-                            }));
-                        }
+                            })
+                        };
+                        messages.push(observation_model_message.clone());
+                        self.append_model_context_entry(
+                            &user_id,
+                            &session_id,
+                            &observation_model_message,
+                        );
                         if let Some(followup_message) = read_image_followup {
+                            self.append_model_context_entry(
+                                &user_id,
+                                &session_id,
+                                &followup_message,
+                            );
+                            self.append_internal_model_context_chat(
+                                &user_id,
+                                &session_id,
+                                &followup_message,
+                                "read_image_followup",
+                            );
                             messages.push(followup_message);
                         }
                         if let Some(followup_message) = desktop_followup {
+                            self.append_model_context_entry(
+                                &user_id,
+                                &session_id,
+                                &followup_message,
+                            );
+                            self.append_internal_model_context_chat(
+                                &user_id,
+                                &session_id,
+                                &followup_message,
+                                "desktop_followup",
+                            );
                             messages.push(followup_message);
                         }
                         self.append_chat(
@@ -1594,10 +1690,16 @@ impl Orchestrator {
                 if let Some(model_notice) = failure_reroute_notice.take() {
                     if !should_finish && answer.is_empty() {
                         let model_notice = encode_observation_prefixed_json(&model_notice);
-                        messages.push(json!({
+                        let model_notice_message = json!({
                             "role": "user",
                             "content": model_notice,
-                        }));
+                        });
+                        messages.push(model_notice_message.clone());
+                        self.append_model_context_entry(
+                            &user_id,
+                            &session_id,
+                            &model_notice_message,
+                        );
                         continue;
                     }
                 }
@@ -1624,10 +1726,16 @@ impl Orchestrator {
                             &tool_budget_limits,
                             &tool_budget_usage,
                         );
-                        messages.push(json!({
+                        let model_notice_message = json!({
                             "role": "user",
                             "content": format!("{OBSERVATION_PREFIX}{model_notice}"),
-                        }));
+                        });
+                        messages.push(model_notice_message.clone());
+                        self.append_model_context_entry(
+                            &user_id,
+                            &session_id,
+                            &model_notice_message,
+                        );
                         continue;
                     }
                 }
@@ -1640,6 +1748,13 @@ impl Orchestrator {
                             TerminalTool::A2ui => {
                                 let (uid, messages_payload, content) =
                                     self.resolve_a2ui_tool_payload(&args, &user_id, &session_id);
+                                append_terminal_tool_context_result(
+                                    self,
+                                    &user_id,
+                                    &session_id,
+                                    &terminal.call,
+                                    &name,
+                                );
                                 if let Some(messages_payload) = messages_payload.as_ref() {
                                     let mut a2ui_payload = json!({
                                         "uid": uid,
@@ -1690,6 +1805,13 @@ impl Orchestrator {
                             }
                             TerminalTool::Final => {
                                 answer = self.resolve_final_answer_from_tool(&args);
+                                append_terminal_tool_context_result(
+                                    self,
+                                    &user_id,
+                                    &session_id,
+                                    &terminal.call,
+                                    &name,
+                                );
                                 if !answer.trim().is_empty() {
                                     answer = self.reconcile_final_answer_workspace_images(
                                         &prepared.workspace_id,
@@ -2513,6 +2635,48 @@ fn build_planned_tool_calls(
         .collect()
 }
 
+fn append_terminal_tool_context_result(
+    orchestrator: &Orchestrator,
+    user_id: &str,
+    session_id: &str,
+    call: &ToolCall,
+    tool_name: &str,
+) {
+    let payload = json!({
+        "tool": tool_name,
+        "ok": true,
+        "data": {
+            "terminal": true,
+        },
+    });
+    let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
+    let use_native_tool_result = call.id.as_deref().is_some_and(|id| {
+        let cleaned = id.trim();
+        !cleaned.is_empty() && !cleaned.starts_with("call_terminal_")
+    });
+    if use_native_tool_result {
+        let tool_call_id = call.id.as_deref().unwrap().trim();
+        orchestrator.append_model_context_entry(
+            user_id,
+            session_id,
+            &json!({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": serialized,
+            }),
+        );
+    } else {
+        orchestrator.append_model_context_entry(
+            user_id,
+            session_id,
+            &json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{serialized}"),
+            }),
+        );
+    }
+}
+
 fn build_assistant_history_snapshot(
     tool_calls_payload: Option<&Value>,
     allowed_tool_names: &HashSet<String>,
@@ -2523,13 +2687,7 @@ fn build_assistant_history_snapshot(
             persisted_tool_calls: None,
         };
     };
-    let calls = collect_tool_calls_from_payload(&payload);
-    let planned = build_planned_tool_calls(calls, allowed_tool_names);
-    let persisted = planned
-        .into_iter()
-        .filter(|planned| !is_terminal_tool_name(planned.name.as_str()))
-        .map(planned_tool_call_to_history_value)
-        .collect::<Vec<_>>();
+    let persisted = extract_replayable_tool_call_payloads(&payload, allowed_tool_names);
     let persisted_tool_calls = (!persisted.is_empty()).then_some(Value::Array(persisted));
     AssistantHistorySnapshot {
         tool_calls: persisted_tool_calls.clone(),
@@ -2537,25 +2695,90 @@ fn build_assistant_history_snapshot(
     }
 }
 
-fn planned_tool_call_to_history_value(planned: PlannedToolCall) -> Value {
-    let mut payload = json!({
-        "type": "function",
-        "function": {
-            "name": planned.function_name,
-            "arguments": serde_json::to_string(&planned.call.arguments)
-                .unwrap_or_else(|_| "{}".to_string()),
-        }
-    });
-    if let Some(id) = planned
-        .call
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        payload["id"] = Value::String(id.to_string());
+fn build_model_context_tool_calls_snapshot(
+    tool_calls_payload: Option<&Value>,
+    allowed_tool_names: &HashSet<String>,
+) -> Option<Value> {
+    let payload = tool_calls_payload?;
+    let persisted = extract_model_context_tool_call_payloads(payload, allowed_tool_names);
+    (!persisted.is_empty()).then_some(Value::Array(persisted))
+}
+
+fn extract_model_context_tool_call_payloads(
+    payload: &Value,
+    allowed_tool_names: &HashSet<String>,
+) -> Vec<Value> {
+    let payload_items = match payload {
+        Value::Array(items) => items.clone(),
+        Value::Object(_) => vec![payload.clone()],
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .map(|parsed| extract_model_context_tool_call_payloads(&parsed, allowed_tool_names))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    payload_items
+        .into_iter()
+        .filter(|item| should_keep_model_context_tool_call_payload(item, allowed_tool_names))
+        .collect()
+}
+
+fn should_keep_model_context_tool_call_payload(
+    payload: &Value,
+    allowed_tool_names: &HashSet<String>,
+) -> bool {
+    let Some(name) = replay_tool_call_name(payload) else {
+        return false;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
     }
-    payload
+    let resolved = resolve_tool_name(name);
+    !resolved.trim().is_empty()
+        && (allowed_tool_names.contains(&resolved) || allowed_tool_names.contains(name))
+}
+
+fn extract_replayable_tool_call_payloads(
+    payload: &Value,
+    allowed_tool_names: &HashSet<String>,
+) -> Vec<Value> {
+    let payload_items = match payload {
+        Value::Array(items) => items.clone(),
+        Value::Object(_) => vec![payload.clone()],
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .map(|parsed| extract_replayable_tool_call_payloads(&parsed, allowed_tool_names))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    payload_items
+        .into_iter()
+        .filter(|item| should_replay_tool_call_payload(item, allowed_tool_names))
+        .collect()
+}
+
+fn should_replay_tool_call_payload(payload: &Value, allowed_tool_names: &HashSet<String>) -> bool {
+    let Some(name) = replay_tool_call_name(payload) else {
+        return false;
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    let resolved = resolve_tool_name(name);
+    !resolved.trim().is_empty()
+        && !is_terminal_tool_name(resolved.as_str())
+        && (allowed_tool_names.contains(&resolved) || allowed_tool_names.contains(name))
+}
+
+fn replay_tool_call_name(payload: &Value) -> Option<&str> {
+    let map = payload.as_object()?;
+    map.get("function")
+        .and_then(Value::as_object)
+        .and_then(|function| function.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("name").and_then(Value::as_str))
 }
 
 fn is_terminal_tool_name(tool_name: &str) -> bool {
@@ -3804,10 +4027,7 @@ mod tests {
             .expect("persisted tool calls should remain");
         let calls = persisted.as_array().expect("array");
         assert_eq!(calls.len(), 1);
-        assert_eq!(
-            calls[0]["function"]["name"].as_str(),
-            Some("read_file")
-        );
+        assert_eq!(calls[0]["function"]["name"].as_str(), Some("read_file"));
     }
 
     #[test]
@@ -3844,6 +4064,44 @@ mod tests {
         let calls = persisted.as_array().expect("tool calls should stay array");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0]["type"], json!("function"));
+    }
+
+    #[test]
+    fn assistant_history_snapshot_preserves_original_tool_arguments_order() {
+        let allowed = HashSet::from([resolve_tool_name("web_fetch")]);
+        let payload = json!([{
+            "id": "call_fetch",
+            "type": "function",
+            "function": {
+                "name": "web_fetch",
+                "arguments": "{\"url\":\"https://example.invalid/item\",\"extract_mode\":\"markdown\"}"
+            }
+        }]);
+        let snapshot = build_assistant_history_snapshot(Some(&payload), &allowed);
+        let persisted = snapshot
+            .persisted_tool_calls
+            .expect("persisted tool calls should remain");
+        assert_eq!(persisted, payload);
+    }
+
+    #[test]
+    fn model_context_tool_calls_keep_terminal_calls_for_exact_replay() {
+        let allowed = HashSet::from([resolve_tool_name("final_response")]);
+        let payload = json!([{
+            "id": "call_final",
+            "type": "function",
+            "function": {
+                "name": "final_response",
+                "arguments": "{\"content\":\"ok\"}"
+            }
+        }]);
+
+        let model_context =
+            build_model_context_tool_calls_snapshot(Some(&payload), &allowed).expect("tool calls");
+        let history = build_assistant_history_snapshot(Some(&payload), &allowed);
+
+        assert_eq!(model_context, payload);
+        assert!(history.tool_calls.is_none());
     }
 
     #[test]

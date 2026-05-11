@@ -1,3 +1,4 @@
+use super::context::model_context_entries_from_messages;
 use super::execute::{emit_turn_terminal_event, turn_terminal_status_for_error, TurnTerminalEvent};
 use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
@@ -914,6 +915,15 @@ impl Orchestrator {
             build_compaction_message_debug_entries(&committed_replacement_history);
         clear_retained_interaction_markers(&mut rebuilt);
         clear_compaction_inflight_markers(&mut rebuilt);
+        let compacted_model_context_entries = model_context_entries_from_messages(&rebuilt);
+        if let Err(err) = self.workspace.replace_model_context_entries(
+            user_id,
+            session_id,
+            &compacted_model_context_entries,
+        ) {
+            warn!("replace model context after compaction failed for session {session_id}: {err}");
+        }
+        let _ = self.workspace.flush_writes_async().await;
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
         let observed_rebuilt_tokens = 0_i64;
         let committed_replacement_history_tokens =
@@ -1397,7 +1407,7 @@ impl Orchestrator {
         let allowed_tool_names =
             self.apply_preview_skill_tool_policy(allowed_tool_names, preview_skill);
         let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
-        let workspace_id = self.resolve_workspace_id(user_id, agent_id);
+        let workspace_id = self.resolve_workspace_id(user_id, agent_id, None);
         let system_prompt = self
             .resolve_session_prompt(
                 &config,

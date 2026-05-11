@@ -1,3 +1,4 @@
+use super::context::{normalize_model_context_message, MODEL_CONTEXT_INTERNAL_META_TYPE};
 use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
@@ -221,6 +222,65 @@ impl Orchestrator {
         if let Err(err) = self.workspace.append_chat(user_id, &payload) {
             warn!("append chat failed for session {session_id} role {role}: {err}");
         }
+    }
+
+    pub(super) fn append_model_context_entry(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        message: &Value,
+    ) {
+        let Some(payload) = normalize_model_context_message(message.clone()) else {
+            return;
+        };
+        if let Err(err) = self
+            .workspace
+            .append_model_context_entry(user_id, session_id, &payload)
+        {
+            warn!("append model context failed for session {session_id}: {err}");
+        }
+    }
+
+    pub(super) fn append_internal_model_context_chat(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        message: &Value,
+        source: &str,
+    ) {
+        let Some(payload) = normalize_model_context_message(message.clone()) else {
+            return;
+        };
+        let role = payload
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
+        let content = payload.get("content").cloned().unwrap_or(Value::Null);
+        let mut meta = json!({
+            "type": MODEL_CONTEXT_INTERNAL_META_TYPE,
+            "hidden": true,
+            "internal_user": role == "user",
+            "source": source,
+        });
+        if let Value::Object(ref mut map) = meta {
+            if let Some(tool_call_id) = payload.get("tool_call_id").and_then(Value::as_str) {
+                map.insert(
+                    "tool_call_id".to_string(),
+                    Value::String(tool_call_id.to_string()),
+                );
+            }
+        }
+        self.append_chat(
+            user_id,
+            session_id,
+            role,
+            Some(&content),
+            None,
+            Some(&meta),
+            payload.get("reasoning_content").and_then(Value::as_str),
+            payload.get("tool_calls"),
+            payload.get("tool_call_id").and_then(Value::as_str),
+        );
     }
 
     pub(super) fn build_tool_observation(

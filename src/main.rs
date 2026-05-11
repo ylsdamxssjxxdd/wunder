@@ -22,8 +22,8 @@ pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
     a2a_store, attachment, cron, doc2md, history, knowledge, llm, mcp, memory, multimodal_models,
-    org_units, prompting, sim_lab, skills, swarm, tools, user_access, user_store, user_tools,
-    user_world, vector_knowledge, workspace,
+    onlyoffice, org_units, prompting, sim_lab, skills, swarm, tools, user_access, user_store,
+    user_tools, user_world, vector_knowledge, workspace,
 };
 
 use crate::core::logging;
@@ -148,7 +148,8 @@ async fn run_sandbox_mode() -> anyhow::Result<()> {
     let config = Config::default();
     let server_mode = "sandbox".to_string();
     let config_path = PathBuf::from(
-        std::env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "/app/config/wunder.yaml".to_string()),
+        std::env::var("WUNDER_CONFIG_PATH")
+            .unwrap_or_else(|_| "/app/config/wunder.yaml".to_string()),
     );
     let log_dir = logging::init_server_tracing(&config, &server_mode, &config_path)?;
     i18n::configure_i18n(

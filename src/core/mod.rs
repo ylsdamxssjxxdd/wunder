@@ -11,6 +11,7 @@ pub mod i18n;
 pub mod json_schema;
 pub(crate) mod llm_speed;
 pub mod logging;
+pub mod onlyoffice_config;
 pub mod path_utils;
 pub mod python_runtime;
 pub mod repo_assets;

@@ -20,6 +20,8 @@ pub struct WunderRequest {
     pub session_id: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+    #[serde(default, alias = "workspaceContainerId")]
+    pub workspace_container_id: Option<i32>,
     #[serde(default)]
     pub model_name: Option<String>,
     #[serde(default)]

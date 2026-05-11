@@ -275,6 +275,7 @@ async fn main() -> Result<()> {
         debug_payload: false,
         session_id: Some(mother_session_id.clone()),
         agent_id: Some(mother_agent_id),
+        workspace_container_id: None,
         model_name: Some(MOCK_MODEL_NAME.to_string()),
         language: Some("zh-CN".to_string()),
         config_overrides: None,

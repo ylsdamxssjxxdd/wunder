@@ -1145,6 +1145,7 @@ impl ChannelHub {
             debug_payload: false,
             session_id: Some(session_info.session_id.clone()),
             agent_id: resolved_agent_id.clone(),
+            workspace_container_id: None,
             model_name: None,
             language: Some(crate::i18n::get_language()),
             config_overrides,

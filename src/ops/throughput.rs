@@ -1118,6 +1118,7 @@ async fn run_request(
         debug_payload: true,
         session_id: Some(session_id.clone()),
         agent_id: None,
+        workspace_container_id: None,
         model_name,
         language: None,
         config_overrides,

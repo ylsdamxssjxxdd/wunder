@@ -1292,6 +1292,7 @@ fn build_task_request(
         debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: Some(agent.agent_id.clone()),
+        workspace_container_id: None,
         model_name: None,
         language: Some(i18n::get_language()),
         config_overrides: None,

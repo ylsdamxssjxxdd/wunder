@@ -397,6 +397,7 @@ async fn handle_ws(
                             debug_payload: payload.debug_payload,
                             session_id,
                             agent_id: payload.agent_id,
+                            workspace_container_id: None,
                             model_name: payload.model_name,
                             language: payload.language,
                             config_overrides: payload.config_overrides,

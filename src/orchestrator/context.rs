@@ -10,8 +10,7 @@ struct PendingToolCall {
     name: String,
 }
 
-const FINAL_RESPONSE_TOOL_NAME: &str = "final_response";
-const A2UI_TOOL_NAME: &str = "a2ui";
+pub(super) const MODEL_CONTEXT_INTERNAL_META_TYPE: &str = "model_context_internal";
 
 impl ContextManager {
     pub(super) fn normalize_messages(&self, messages: Vec<Value>) -> Vec<Value> {
@@ -81,13 +80,103 @@ impl ContextManager {
     }
 }
 
+pub(super) fn model_context_entries_from_messages(messages: &[Value]) -> Vec<Value> {
+    messages
+        .iter()
+        .cloned()
+        .filter_map(normalize_model_context_message)
+        .collect()
+}
+
+pub(super) fn normalize_model_context_message(message: Value) -> Option<Value> {
+    let obj = message.as_object()?;
+    let role = obj
+        .get("role")
+        .and_then(Value::as_str)?
+        .trim()
+        .to_ascii_lowercase();
+    if role == "system" {
+        return None;
+    }
+    if !matches!(role.as_str(), "user" | "assistant" | "tool") {
+        return None;
+    }
+
+    let content = normalize_model_context_content(obj.get("content").cloned());
+    let mut normalized = serde_json::Map::new();
+    normalized.insert("role".to_string(), Value::String(role.clone()));
+    normalized.insert("content".to_string(), content);
+    let tool_call_id = extract_tool_call_id(&Value::Object(obj.clone()));
+
+    if role == "assistant" {
+        if let Some(reasoning) = obj
+            .get("reasoning_content")
+            .or_else(|| obj.get("reasoning"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            normalized.insert(
+                "reasoning_content".to_string(),
+                Value::String(reasoning.to_string()),
+            );
+        }
+        if let Some(tool_calls) = extract_tool_calls_payload(&Value::Object(obj.clone())) {
+            normalized.insert("tool_calls".to_string(), tool_calls);
+        }
+        let candidate = Value::Object(normalized.clone());
+        if assistant_model_context_message_is_empty(&candidate) {
+            return None;
+        }
+    }
+
+    if let Some(tool_call_id) = tool_call_id {
+        normalized.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+    }
+
+    let candidate = Value::Object(normalized.clone());
+    if role == "tool" && extract_tool_call_id(&candidate).is_none() {
+        return None;
+    }
+
+    Some(Value::Object(normalized))
+}
+
+fn normalize_model_context_content(content: Option<Value>) -> Value {
+    match content.unwrap_or(Value::String(String::new())) {
+        Value::String(text) => Value::String(text),
+        Value::Array(items) => Value::Array(items),
+        Value::Object(map) => Value::Object(map),
+        Value::Null => Value::String(String::new()),
+        other => Value::String(other.to_string()),
+    }
+}
+
+fn assistant_model_context_message_is_empty(message: &Value) -> bool {
+    let has_tool_calls = extract_tool_calls_payload(message).is_some();
+    let has_reasoning = message
+        .get("reasoning_content")
+        .or_else(|| message.get("reasoning"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if has_tool_calls || has_reasoning {
+        return false;
+    }
+    match message.get("content").unwrap_or(&Value::Null) {
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        Value::Null => true,
+        other => other.to_string().trim().is_empty(),
+    }
+}
+
 fn extract_tool_calls(message: &Value) -> Vec<ToolCall> {
     let Some(payload) = extract_tool_calls_payload(message) else {
         return Vec::new();
     };
     collect_tool_calls_from_payload(&payload)
         .into_iter()
-        .filter(|call| !is_terminal_history_tool_call(call.name.as_str()))
         .filter(|call| !call.name.trim().is_empty())
         .collect()
 }
@@ -168,12 +257,6 @@ fn build_missing_tool_observation(tool_name: &str) -> String {
         "data": {},
     });
     serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
-}
-
-fn is_terminal_history_tool_call(tool_name: &str) -> bool {
-    let cleaned = resolve_tool_name(tool_name.trim());
-    cleaned == resolve_tool_name(FINAL_RESPONSE_TOOL_NAME)
-        || cleaned == resolve_tool_name(A2UI_TOOL_NAME)
 }
 
 fn convert_orphan_tool_message_to_observation(message: &Value) -> Value {
@@ -336,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_ignores_terminal_tool_calls_for_replay_history() {
+    fn test_normalize_closes_terminal_tool_calls_for_model_context() {
         let manager = ContextManager;
         let messages = vec![
             json!({
@@ -351,7 +434,15 @@ mod tests {
             json!({ "role": "user", "content": "next" }),
         ];
         let normalized = manager.normalize_messages(messages);
-        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized.len(), 3);
+        assert_eq!(
+            normalized[1].get("role").and_then(Value::as_str),
+            Some("tool")
+        );
+        assert_eq!(
+            normalized[1].get("tool_call_id").and_then(Value::as_str),
+            Some("call_final")
+        );
     }
 
     #[test]
@@ -360,5 +451,57 @@ mod tests {
         let second = build_missing_tool_observation("read_file");
         assert_eq!(first, second);
         assert!(!first.contains("timestamp"));
+    }
+
+    #[test]
+    fn model_context_normalization_preserves_llm_visible_tool_payload() {
+        let message = json!({
+            "role": "assistant",
+            "content": "",
+            "session_id": "session-ignored",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "meta": { "type": "tool_call" },
+            "tool_calls": [{
+                "id": "call_fetch",
+                "type": "function",
+                "function": {
+                    "name": "web_fetch",
+                    "arguments": "{\"url\":\"https://example.invalid/item\",\"extract_mode\":\"markdown\"}"
+                }
+            }]
+        });
+
+        let normalized = normalize_model_context_message(message).expect("context message");
+
+        assert_eq!(
+            normalized,
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_fetch",
+                    "type": "function",
+                    "function": {
+                        "name": "web_fetch",
+                        "arguments": "{\"url\":\"https://example.invalid/item\",\"extract_mode\":\"markdown\"}"
+                    }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn model_context_entries_exclude_system_messages() {
+        let messages = vec![
+            json!({ "role": "system", "content": "frozen" }),
+            json!({ "role": "user", "content": "hello" }),
+            json!({ "role": "assistant", "content": "hi" }),
+        ];
+
+        let entries = model_context_entries_from_messages(&messages);
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["role"], json!("user"));
+        assert_eq!(entries[1]["role"], json!("assistant"));
     }
 }

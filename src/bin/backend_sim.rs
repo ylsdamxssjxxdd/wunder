@@ -178,6 +178,7 @@ async fn run_one_request(
         debug_payload: false,
         session_id: Some(session_id.clone()),
         agent_id: None,
+        workspace_container_id: None,
         model_name: Some(MOCK_MODEL_NAME.to_string()),
         language: Some("zh-CN".to_string()),
         config_overrides: Some(config_overrides.as_ref().clone()),

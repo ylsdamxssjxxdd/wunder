@@ -186,8 +186,8 @@ fn resolve_container_workspace_root(
     workspace: &WorkspaceManager,
     user_id: &str,
 ) -> String {
-    let container_root =
-        normalize_container_path(sandbox_container_root()).unwrap_or_else(|| "/workspaces".to_string());
+    let container_root = normalize_container_path(sandbox_container_root())
+        .unwrap_or_else(|| "/workspaces".to_string());
     let container_root = container_root.trim_end_matches('/');
     let container_root = if container_root.is_empty() {
         "/".to_string()

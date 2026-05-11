@@ -1,6 +1,5 @@
 // 历史管理：加载对话历史、压缩摘要与产物索引。
 use crate::config::LlmModelConfig;
-use crate::core::tool_args::normalize_tool_arguments_json;
 use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
@@ -429,8 +428,8 @@ fn build_message_from_item(item: &Value, include_reasoning: bool) -> Option<Valu
         }
     }
     if role == "assistant" {
-        if let Some(tool_calls) = extract_tool_calls_payload(item)
-            .and_then(filter_replay_tool_calls_payload)
+        if let Some(tool_calls) =
+            extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)
         {
             if let Value::Object(ref mut map) = message {
                 map.insert("tool_calls".to_string(), tool_calls);
@@ -605,7 +604,8 @@ fn normalize_replacement_history_item(item: &Value) -> Option<Value> {
             Value::String(reasoning.to_string()),
         );
     }
-    if let Some(tool_calls) = extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)
+    if let Some(tool_calls) =
+        extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)
     {
         normalized.insert("tool_calls".to_string(), tool_calls);
     }
@@ -674,22 +674,29 @@ fn normalize_replay_tool_call_payload(payload: Value) -> Option<Value> {
     let Value::Object(map) = payload else {
         return Some(payload);
     };
-    let name = map
+    if map
         .get("function")
         .and_then(Value::as_object)
         .and_then(|function| function.get("name"))
         .and_then(Value::as_str)
-        .or_else(|| map.get("name").and_then(Value::as_str))
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Some(Value::Object(map));
+    }
+
+    let name = map
+        .get("name")
+        .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?
         .to_string();
     let arguments = map
-        .get("function")
-        .and_then(Value::as_object)
-        .and_then(|function| function.get("arguments"))
-        .and_then(Value::as_str)
-        .or_else(|| map.get("arguments").and_then(Value::as_str))
-        .map(normalize_tool_arguments_json)
+        .get("arguments")
+        .map(|value| match value {
+            Value::String(text) => text.clone(),
+            other => serde_json::to_string(other).unwrap_or_else(|_| "{}".to_string()),
+        })
         .unwrap_or_else(|| "{}".to_string());
     let id = map
         .get("id")
@@ -1207,6 +1214,24 @@ mod tests {
             calls[0]["function"]["arguments"],
             json!("{\"name\":\"深度研究\"}")
         );
+    }
+
+    #[test]
+    fn build_message_from_item_preserves_replay_tool_arguments_order() {
+        let item = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_fetch",
+                "type": "function",
+                "function": {
+                    "name": "web_fetch",
+                    "arguments": "{\"url\":\"https://example.invalid/item\",\"extract_mode\":\"markdown\"}"
+                }
+            }]
+        });
+        let message = build_message_from_item(&item, true).expect("message");
+        assert_eq!(message["tool_calls"], item["tool_calls"]);
     }
 
     #[test]

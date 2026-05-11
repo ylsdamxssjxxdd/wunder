@@ -6623,6 +6623,7 @@ pub(crate) async fn build_wunder_request(
         debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: resolved_agent,
+        workspace_container_id: None,
         model_name,
         language: global.language.clone(),
         config_overrides: request_overrides,

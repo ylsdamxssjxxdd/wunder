@@ -890,9 +890,27 @@ pub trait StorageBackend: Send + Sync {
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize>;
 
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()>;
+    fn append_model_context_entry(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payload: &Value,
+    ) -> Result<()>;
+    fn replace_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payloads: &[Value],
+    ) -> Result<()>;
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()>;
 
+    fn load_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>>;
     fn load_chat_history(
         &self,
         user_id: &str,

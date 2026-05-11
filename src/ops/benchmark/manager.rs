@@ -531,6 +531,7 @@ async fn run_attempt(
         debug_payload: false,
         session_id: Some(session_id.clone()),
         agent_id: None,
+        workspace_container_id: None,
         model_name: ctx.model_name.clone(),
         language: task
             .preferred_language()

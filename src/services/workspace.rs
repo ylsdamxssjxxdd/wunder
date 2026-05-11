@@ -114,10 +114,31 @@ struct SearchIndex {
 }
 
 enum StorageWrite {
-    Chat { user_id: String, payload: Value },
-    ToolLog { user_id: String, payload: Value },
-    ArtifactLog { user_id: String, payload: Value },
-    Flush { done: SyncSender<()> },
+    Chat {
+        user_id: String,
+        payload: Value,
+    },
+    ModelContextAppend {
+        user_id: String,
+        session_id: String,
+        payload: Value,
+    },
+    ModelContextReplace {
+        user_id: String,
+        session_id: String,
+        payloads: Vec<Value>,
+    },
+    ToolLog {
+        user_id: String,
+        payload: Value,
+    },
+    ArtifactLog {
+        user_id: String,
+        payload: Value,
+    },
+    Flush {
+        done: SyncSender<()>,
+    },
 }
 
 struct StorageWriteQueue {
@@ -156,6 +177,16 @@ impl StorageWriteQueue {
     fn apply_write(storage: &Arc<dyn StorageBackend>, task: StorageWrite) -> Result<()> {
         match task {
             StorageWrite::Chat { user_id, payload } => storage.append_chat(&user_id, &payload),
+            StorageWrite::ModelContextAppend {
+                user_id,
+                session_id,
+                payload,
+            } => storage.append_model_context_entry(&user_id, &session_id, &payload),
+            StorageWrite::ModelContextReplace {
+                user_id,
+                session_id,
+                payloads,
+            } => storage.replace_model_context_entries(&user_id, &session_id, &payloads),
             StorageWrite::ToolLog { user_id, payload } => {
                 storage.append_tool_log(&user_id, &payload)
             }
@@ -1093,6 +1124,47 @@ impl WorkspaceManager {
         Ok(())
     }
 
+    pub fn append_model_context_entry(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payload: &Value,
+    ) -> Result<()> {
+        self.write_queue.enqueue(StorageWrite::ModelContextAppend {
+            user_id: user_id.to_string(),
+            session_id: session_id.to_string(),
+            payload: payload.clone(),
+        })?;
+        self.maybe_schedule_retention_cleanup();
+        Ok(())
+    }
+
+    pub fn replace_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payloads: &[Value],
+    ) -> Result<()> {
+        self.write_queue
+            .enqueue(StorageWrite::ModelContextReplace {
+                user_id: user_id.to_string(),
+                session_id: session_id.to_string(),
+                payloads: payloads.to_vec(),
+            })?;
+        self.maybe_schedule_retention_cleanup();
+        Ok(())
+    }
+
+    pub fn load_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.storage
+            .load_model_context_entries(user_id, session_id, normalize_history_limit(limit))
+    }
+
     pub fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.write_queue.enqueue(StorageWrite::ToolLog {
             user_id: user_id.to_string(),
@@ -1634,6 +1706,12 @@ impl WorkspaceManager {
         self.clear_workspace_cache(&safe_id);
         self.mark_tree_dirty(&safe_id);
         Ok(removed)
+    }
+
+    pub fn clear_container_workspace(&self, user_id: &str, container_id: i32) -> Result<u64> {
+        let workspace_id = self.scoped_user_id_by_container(user_id, container_id);
+        self.ensure_user_root(&workspace_id)?;
+        self.clear_workspace_contents(&workspace_id)
     }
 
     pub fn clear_work_state_contents(&self, user_id: &str) -> Result<u64> {

@@ -1683,6 +1683,7 @@ pub(crate) async fn build_chat_request(
         debug_payload: request_overrides.debug_payload,
         session_id: Some(session_id),
         agent_id: record.agent_id.clone(),
+        workspace_container_id: None,
         model_name: selected_model_name,
         language: Some(i18n::get_language()),
         config_overrides,

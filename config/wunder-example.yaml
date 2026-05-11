@@ -247,6 +247,17 @@ workspace: # 工作区配置
   max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
+onlyoffice: # OnlyOffice 在线文档编辑配置
+  enabled: ${WUNDER_ONLYOFFICE_ENABLED:-false} # 是否启用 Office 文档在线编辑
+  document_server_url: ${WUNDER_ONLYOFFICE_DOCUMENT_SERVER_URL:-} # OnlyOffice Document Server 地址，如 https://office.example.com
+  api_url: ${WUNDER_ONLYOFFICE_API_URL:-} # 可选，默认拼接 /web-apps/apps/api/documents/api.js
+  public_base_url: ${WUNDER_PUBLIC_BASE_URL:-} # OnlyOffice 能访问到的 Wunder 外网地址，如 https://wunder.example.com；也可用 WUNDER_ONLYOFFICE_PUBLIC_BASE_URL
+  jwt_secret: ${WUNDER_ONLYOFFICE_JWT_SECRET:-} # OnlyOffice JWT 密钥，需与 Document Server 配置一致
+  jwt_header: Authorization # OnlyOffice JWT 请求头
+  token_ttl_s: 3600 # 文件拉取/保存回调短期令牌有效期
+  request_timeout_s: 60 # Wunder 从 OnlyOffice 下载保存结果的超时时间
+  max_download_bytes: 209715200 # 保存回写文件最大字节数
+
 storage: # 存储配置
   backend: ${WUNDER_STORAGE_BACKEND:-auto} # auto | sqlite | postgres
   db_path: ./config/data/wunder.db # SQLite 数据库路径（backend=sqlite 时使用）

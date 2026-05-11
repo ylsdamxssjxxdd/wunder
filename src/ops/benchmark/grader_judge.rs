@@ -36,6 +36,7 @@ pub async fn grade_with_judge(
         debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: None,
+        workspace_container_id: None,
         model_name: judge_model_name,
         language,
         config_overrides,

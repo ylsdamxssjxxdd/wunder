@@ -29,6 +29,8 @@ export const downloadWorkspaceFile = (params: QueryParams) =>
   api.get('/workspace/download', { params, responseType: 'blob' });
 export const downloadWorkspaceArchive = (params: QueryParams) =>
   api.get('/workspace/archive', { params, responseType: 'blob' });
+export const fetchWorkspaceOnlyOfficeConfig = (params: QueryParams) =>
+  api.get('/workspace/onlyoffice/config', { params });
 
 export const listWunderEntries = (params: QueryParams) => listWorkspaceEntries(params);
 export const listWunderWorkspace = (params: QueryParams) => listWorkspaceEntries(params);
@@ -44,3 +46,5 @@ export const saveWunderWorkspaceFile = (payload: ApiPayload) => saveWorkspaceFil
 export const deleteWunderWorkspaceEntry = (params: QueryParams) => deleteWorkspaceEntry(params);
 export const downloadWunderWorkspaceFile = (params: QueryParams) => downloadWorkspaceFile(params);
 export const downloadWunderWorkspaceArchive = (params: QueryParams) => downloadWorkspaceArchive(params);
+export const fetchWunderWorkspaceOnlyOfficeConfig = (params: QueryParams) =>
+  fetchWorkspaceOnlyOfficeConfig(params);

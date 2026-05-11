@@ -1732,6 +1732,7 @@ impl CronRuntime {
             debug_payload: false,
             session_id: Some(cleaned_session.to_string()),
             agent_id: record.agent_id.clone(),
+            workspace_container_id: None,
             model_name: None,
             language: None,
             config_overrides: None,

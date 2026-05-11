@@ -857,6 +857,16 @@ impl StorageBackend for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_chat_history_session
               ON chat_history (user_id, session_id, id);
+            CREATE TABLE IF NOT EXISTS model_context_entries (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              created_time REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_model_context_entries_session
+              ON model_context_entries (user_id, session_id, id);
             CREATE TABLE IF NOT EXISTS tool_logs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_id TEXT NOT NULL,
@@ -1938,6 +1948,85 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
+    fn append_model_context_entry(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payload: &Value,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let role = payload
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if role.is_empty() {
+            return Ok(());
+        }
+        let payload_text = Self::json_to_string(payload);
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
+             VALUES (?, ?, ?, ?, ?)",
+            params![cleaned_user, cleaned_session, role, payload_text, now],
+        )?;
+        Ok(())
+    }
+
+    fn replace_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        payloads: &[Value],
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "DELETE FROM model_context_entries WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        )?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
+                 VALUES (?, ?, ?, ?, ?)",
+            )?;
+            for payload in payloads {
+                let role = payload
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if role.is_empty() {
+                    continue;
+                }
+                let payload_text = Self::json_to_string(payload);
+                let now = Self::now_ts();
+                stmt.execute(params![
+                    cleaned_user,
+                    cleaned_session,
+                    role,
+                    payload_text,
+                    now
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let session_id = payload
@@ -2016,6 +2105,53 @@ impl StorageBackend for SqliteStorage {
             params![user_id, session_id, kind, name, payload_text, now],
         )?;
         Ok(())
+    }
+
+    fn load_model_context_entries(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Ok(Vec::new());
+        }
+        let limit_value = limit.filter(|value| *value > 0);
+        let conn = self.open()?;
+        let mut rows = if let Some(limit_value) = limit_value {
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
+            )?;
+            let rows = stmt
+                .query_map(params![cleaned_user, cleaned_session, limit_value], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<std::result::Result<Vec<String>, _>>()?;
+            rows
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
+            )?;
+            let rows = stmt
+                .query_map(params![cleaned_user, cleaned_session], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<std::result::Result<Vec<String>, _>>()?;
+            rows
+        };
+        if limit_value.is_some() {
+            rows.reverse();
+        }
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
     }
 
     fn load_chat_history(
@@ -2360,6 +2496,7 @@ impl StorageBackend for SqliteStorage {
         let dbstat_query = "SELECT COALESCE(SUM(pgsize), 0) \
             FROM dbstat WHERE name IN ( \
                 'chat_history', \
+                'model_context_entries', \
                 'tool_logs', \
                 'artifact_logs', \
                 'monitor_sessions', \
@@ -2372,6 +2509,7 @@ impl StorageBackend for SqliteStorage {
         let total: i64 = conn.query_row(
             "SELECT \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM chat_history) + \
+            (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM model_context_entries) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM tool_logs) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM artifact_logs) + \
             (SELECT COALESCE(SUM(length(CAST(payload AS BLOB))), 0) FROM monitor_sessions) + \
@@ -2394,6 +2532,10 @@ impl StorageBackend for SqliteStorage {
             "DELETE FROM chat_history WHERE user_id = ?",
             params![user_id],
         )?;
+        let _ = conn.execute(
+            "DELETE FROM model_context_entries WHERE user_id = ?",
+            params![user_id],
+        );
         Ok(affected as i64)
     }
 
@@ -2409,6 +2551,10 @@ impl StorageBackend for SqliteStorage {
             "DELETE FROM chat_history WHERE user_id = ? AND session_id = ?",
             params![cleaned_user, cleaned_session],
         )?;
+        let _ = conn.execute(
+            "DELETE FROM model_context_entries WHERE user_id = ? AND session_id = ?",
+            params![cleaned_user, cleaned_session],
+        );
         Ok(affected as i64)
     }
 
@@ -4411,6 +4557,8 @@ impl StorageBackend for SqliteStorage {
         };
         let chat = hookup_delete("chat_history", "created_time", false)?;
         results.insert("chat_history".to_string(), chat);
+        let model_context = hookup_delete("model_context_entries", "created_time", false)?;
+        results.insert("model_context_entries".to_string(), model_context);
         let tool = hookup_delete("tool_logs", "created_time", false)?;
         results.insert("tool_logs".to_string(), tool);
         let artifact = hookup_delete("artifact_logs", "created_time", false)?;
@@ -10361,6 +10509,7 @@ mod tests {
     use crate::storage::{StorageBackend, UserAccountRecord};
     use chrono::Local;
     use rusqlite::{params, Connection};
+    use serde_json::json;
     use tempfile::tempdir;
 
     fn sample_user(
@@ -10561,5 +10710,121 @@ mod tests {
         assert_eq!(account.token_granted_total, 150);
         assert_eq!(account.token_used_total, 3);
         assert_eq!(account.last_token_grant_date.as_deref(), Some("2026-04-10"));
+    }
+
+    #[test]
+    fn model_context_entries_append_and_replace_in_order() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("model-context.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+
+        storage
+            .append_model_context_entry(
+                "user-a",
+                "session-a",
+                &json!({
+                    "role": "user",
+                    "content": "first"
+                }),
+            )
+            .expect("append first");
+        storage
+            .append_model_context_entry(
+                "user-a",
+                "session-a",
+                &json!({
+                    "role": "assistant",
+                    "content": "second"
+                }),
+            )
+            .expect("append second");
+
+        let loaded = storage
+            .load_model_context_entries("user-a", "session-a", None)
+            .expect("load appended");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["content"], json!("first"));
+        assert_eq!(loaded[1]["content"], json!("second"));
+
+        storage
+            .replace_model_context_entries(
+                "user-a",
+                "session-a",
+                &[
+                    json!({ "role": "user", "content": "compacted" }),
+                    json!({ "role": "assistant", "content": "baseline" }),
+                ],
+            )
+            .expect("replace entries");
+
+        let replaced = storage
+            .load_model_context_entries("user-a", "session-a", None)
+            .expect("load replaced");
+        assert_eq!(
+            replaced,
+            vec![
+                json!({ "role": "user", "content": "compacted" }),
+                json!({ "role": "assistant", "content": "baseline" }),
+            ]
+        );
+    }
+
+    #[test]
+    fn cleanup_retention_removes_expired_model_context_entries() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("model-context-retention.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("regular", 0, 0, 0, None))
+            .expect("insert regular user");
+        let mut admin = sample_user("admin", 0, 0, 0, None);
+        admin.roles = vec!["admin".to_string()];
+        storage
+            .upsert_user_account(&admin)
+            .expect("insert admin user");
+
+        let conn = storage.open().expect("open sqlite");
+        let expired = SqliteStorage::now_ts() - 3.0 * 86400.0;
+        conn.execute(
+            "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time)
+             VALUES (?, ?, ?, ?, ?)",
+            params![
+                "regular",
+                "session-a",
+                "user",
+                r#"{"role":"user","content":"expired"}"#,
+                expired,
+            ],
+        )
+        .expect("insert expired context");
+        conn.execute(
+            "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time)
+             VALUES (?, ?, ?, ?, ?)",
+            params![
+                "admin",
+                "session-a",
+                "user",
+                r#"{"role":"user","content":"admin-kept"}"#,
+                expired,
+            ],
+        )
+        .expect("insert admin context");
+        drop(conn);
+
+        let deleted = storage.cleanup_retention(1).expect("cleanup retention");
+        assert_eq!(deleted.get("model_context_entries").copied(), Some(1));
+        assert!(storage
+            .load_model_context_entries("regular", "session-a", None)
+            .expect("load regular entries")
+            .is_empty());
+        assert_eq!(
+            storage
+                .load_model_context_entries("admin", "session-a", None)
+                .expect("load admin entries")
+                .len(),
+            1
+        );
     }
 }

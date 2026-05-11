@@ -1,4 +1,5 @@
 // Config loading and YAML utilities.
+use crate::core::onlyoffice_config::OnlyOfficeConfig;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -30,6 +31,8 @@ pub struct Config {
     pub cron: CronConfig,
     #[serde(default)]
     pub workspace: WorkspaceConfig,
+    #[serde(default)]
+    pub onlyoffice: OnlyOfficeConfig,
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]

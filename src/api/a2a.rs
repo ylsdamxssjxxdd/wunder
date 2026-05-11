@@ -731,6 +731,7 @@ impl A2aService {
             debug_payload: false,
             session_id: Some(session_id.clone()),
             agent_id: None,
+            workspace_container_id: None,
             model_name: if model_name.is_empty() {
                 None
             } else {
@@ -822,6 +823,7 @@ impl A2aService {
             debug_payload: false,
             session_id: Some(session_id.clone()),
             agent_id: None,
+            workspace_container_id: None,
             model_name: if model_name.is_empty() {
                 None
             } else {

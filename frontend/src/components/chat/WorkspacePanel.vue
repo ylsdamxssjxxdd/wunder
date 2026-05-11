@@ -172,7 +172,7 @@
           {{ t('common.refresh') }}
         </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuCanEdit" @click="handleEdit">
-          {{ t('common.edit') }}
+          {{ contextMenuEditLabel }}
         </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleRename">
           {{ t('workspace.menu.rename') }}
@@ -258,6 +258,15 @@
         </button>
       </template>
     </el-dialog>
+
+    <OnlyOfficeEditorDialog
+      v-model:visible="onlyOffice.visible"
+      :path="onlyOffice.entry?.path || ''"
+      :title="onlyOffice.entry?.name || t('workspace.onlyoffice.title')"
+      :agent-id="normalizedAgentId"
+      :container-id="normalizedContainerId"
+      @saved="handleOnlyOfficeSaved"
+    />
   </div>
 </template>
 
@@ -277,6 +286,7 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
 import {
   collectWorkspaceRefreshTargets,
@@ -511,6 +521,10 @@ const state = reactive({
     content: '',
     loading: false
   },
+  onlyOffice: {
+    visible: false,
+    entry: null
+  },
   contextMenu: {
     visible: false,
     x: 0,
@@ -527,6 +541,7 @@ const loading = computed(() => state.visualLoading);
 const draggingOver = computed(() => state.draggingOver);
 const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
+const onlyOffice = computed(() => state.onlyOffice);
 const contextMenu = computed(() => state.contextMenu);
 const emptyText = computed(() => {
   if (state.searchMode) return t('workspace.empty.search');
@@ -735,8 +750,14 @@ const contextMenuSingleEntry = computed(() => {
   return null;
 });
 const contextMenuHasSelection = computed(() => contextMenuSelectionPaths.value.length > 0);
-const contextMenuCanEdit = computed(
-  () => contextMenuSingleEntry.value && isWorkspaceTextEditable(contextMenuSingleEntry.value)
+const contextMenuCanEdit = computed(() => {
+  const entry = contextMenuSingleEntry.value;
+  return Boolean(entry && (isWorkspaceTextEditable(entry) || isWorkspaceOfficeEditable(entry)));
+});
+const contextMenuEditLabel = computed(() =>
+  contextMenuSingleEntry.value && isWorkspaceOfficeEditable(contextMenuSingleEntry.value)
+    ? t('workspace.onlyoffice.edit')
+    : t('common.edit')
 );
 const menuStyle = computed(() => ({ left: `${state.contextMenu.x}px`, top: `${state.contextMenu.y}px` }));
 const uploadProgressText = computed(() => {
@@ -913,6 +934,11 @@ const isWorkspaceTextEditable = (entry) => {
   if (!TEXT_EXTENSIONS.has(extension)) return false;
   const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
   return sizeValue <= MAX_TEXT_PREVIEW_SIZE;
+};
+
+const isWorkspaceOfficeEditable = (entry) => {
+  if (!entry || entry.type !== 'file') return false;
+  return OFFICE_EXTENSIONS.has(getWorkspaceExtension(entry));
 };
 
 const resolveWorkspaceFallbackFileIcon = (extension) => {
@@ -1874,6 +1900,10 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     openEditor(entry);
     return;
   }
+  if (isWorkspaceOfficeEditable(entry)) {
+    openOnlyOfficeEditor(entry);
+    return;
+  }
   openPreview(entry);
 };
 
@@ -1911,6 +1941,10 @@ const handleEdit = () => {
   const targetEntry = contextMenuSingleEntry.value;
   closeContextMenu();
   if (!targetEntry) return;
+  if (isWorkspaceOfficeEditable(targetEntry)) {
+    openOnlyOfficeEditor(targetEntry);
+    return;
+  }
   openEditor(targetEntry);
 };
 
@@ -2572,6 +2606,10 @@ const resolveWorkspaceArchiveFailedText = () =>
 
 const openPreview = async (entry) => {
   if (!entry || entry.type !== 'file') return;
+  if (isWorkspaceOfficeEditable(entry)) {
+    openOnlyOfficeEditor(entry);
+    return;
+  }
   state.preview.entry = entry;
   state.preview.visible = true;
   state.preview.content = '';
@@ -2667,6 +2705,27 @@ const openPreview = async (entry) => {
   } finally {
     state.preview.loading = false;
   }
+};
+
+const openOnlyOfficeEditor = (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  state.preview.visible = false;
+  state.onlyOffice.entry = entry;
+  state.onlyOffice.visible = true;
+};
+
+const handleOnlyOfficeSaved = async (payload: { path?: string } = {}) => {
+  const changedPath = normalizeWorkspacePath(payload.path || state.onlyOffice.entry?.path || '');
+  if (!changedPath) return;
+  await refreshWorkspacePathWithFallback(getWorkspaceParentPath(changedPath));
+  emitWorkspaceRefresh({
+    reason: 'workspace-onlyoffice-save',
+    sourceId: workspacePanelRefreshSourceId,
+    agentId: normalizedAgentId.value,
+    containerId: normalizedContainerId.value,
+    path: changedPath,
+    paths: [changedPath]
+  });
 };
 
 const closePreview = () => {

@@ -529,6 +529,7 @@ pub async fn build_continuation_request_from_session(
         debug_payload: false,
         session_id: Some(session.session_id.clone()),
         agent_id: session.agent_id.clone(),
+        workspace_container_id: None,
         model_name: None,
         language: Some(crate::i18n::get_language()),
         config_overrides: Some(build_goal_continuation_overrides(None)),

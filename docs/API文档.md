@@ -42,6 +42,7 @@
 - 渠道附件入站（2026-03-18）：QQBot URL 附件会在入站阶段下载到会话作用域工作区；Feishu/XMPP 保持既有落盘能力。
 - 渠道链接改写（2026-03-18）：`channel_outbox` 不仅会改写正文中的 `/workspaces/...`，也会改写 `attachments[].url` 中的工作区路径为 `/wunder/temp_dir/download`。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
+- OnlyOffice 在线编辑：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 `doc/docx/xls/xlsx/ppt/pptx` 可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置并保存回写；`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的主线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
@@ -126,6 +127,66 @@
 - WS 接管语义：客户端收到 `queued` 后应立即切换到 `watch`，而不是继续等待原始 `start` 请求流结束。
 - 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。
+
+### 4.1.A 外部一次性工作流 API
+
+- 用途：供外部系统后端把单个 Wunder 智能体嵌入到自有前端小部件。调用方指定目标用户、目标智能体、消息和上传文件；Wunder 会打断该智能体当前工作，新建主会话，在目标用户的 `container_id=10` 工作目录执行一次性任务，并返回中间事件、最终回复和可下载文件。
+- 鉴权：外部系统后端使用 `X-API-Key: <security.external_auth_key>` 或 `Authorization: Bearer <security.external_auth_key>`；管理员 token 也可访问。用户 Bearer Token 只能访问自身 run，不能跨用户指定目标。`external_auth_key` 未配置时按现有配置逻辑回退到 `security.api_key`。
+- 工作区语义：MVP 固定 `workspace_container_id=10`，创建 run 前会清空该用户 10 号目录；上传文件落到 `input/`，服务端会创建 `output/`，最终下载清单包含 `output/` 下文件，以及最终回答中引用到的 `input/...` 或 `output/...` 文件。该覆盖是请求级的，不修改智能体的持久 `sandbox_container_id`。
+- 并发与打断：同一 `user_id + container_id=10` 同时只允许一个外部工作流。默认已有外部工作流时返回 `409 EXTERNAL_WORKFLOW_BUSY`；传 `preempt_active_workflow=true` 会先取消旧外部工作流。一次性工作流始终要求 `preempt=true`，会取消目标智能体当前主线程工作并强制创建新的主会话。
+- 请求格式：创建接口使用 `multipart/form-data`，必须包含 `request` JSON 字段，可重复上传 `files` 或 `files[]` 文件字段。单次请求上限当前为 200MB。
+
+#### `POST /wunder/external/workflows:stream`
+
+- 返回：SSE 流，适合前端小部件实时展示。
+- `request` 字段：
+
+```json
+{
+  "user_name": "<target_user_name>",
+  "agent_name": "<target_agent_name>",
+  "message": "<task message>",
+  "preempt": true,
+  "preempt_active_workflow": false,
+  "workspace_container_id": 10,
+  "clear_workspace": true,
+  "timeout_s": 600,
+  "client_run_id": "<optional_external_id>",
+  "metadata": {}
+}
+```
+
+- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 3600 秒，默认 600 秒。
+- SSE 事件：
+  - `workflow.start`：返回 `run_id/session_id/user_id/agent_id/status/workspace_container_id/events_url/cancel_url`。
+  - `workflow.event`：转发内部编排事件，`data.type` 为内部事件类型，如 `tool_call/tool_result/tool_output_delta/approval_request/final/error/turn_terminal` 等。
+  - `workflow.final`：任务完成，返回 `answer/usage/stop_reason/files`。
+  - `workflow.error`：任务失败、取消或超时，返回 `status/error`。
+
+#### `POST /wunder/external/workflows`
+
+- 返回：`202 Accepted`，后台执行同一套工作流。
+- 返回体：`data.run_id/session_id/status/events_url/cancel_url/workspace_container_id`。
+- 后续通过状态、事件与文件接口补拉。
+
+#### `GET /wunder/external/workflows/{run_id}`
+
+- 返回 run 快照：`run_id/session_id/user_id/agent_id/status/answer/usage/stop_reason/files/created_at/started_at/finished_at/elapsed_s/error/metadata`。
+
+#### `GET /wunder/external/workflows/{run_id}/events`
+
+- Query：`after_event_id` 默认 0，`limit` 默认 200，最大 1000。
+- 返回：`data.events[]`，每项包含 `run_id/session_id/type/event_id/timestamp/data`。
+
+#### `POST /wunder/external/workflows/{run_id}/cancel`
+
+- 作用：取消当前外部工作流对应会话、排队任务和会话目标。
+- 返回：`run_id/session_id/status/cancel_requested`。运行中 run 会先进入 `cancelling`，后续流式终态会收敛为 `cancelled`。
+
+#### `GET /wunder/external/workflows/{run_id}/files/{file_id}`
+
+- 作用：下载本次 run 结果清单中的文件。
+- 约束：只能下载该 run 的 `files[]` 清单内文件，不能任意读取 10 号目录。
 
 ## 4.x 子智能体控制补充（2026-03-26）
 
@@ -1822,6 +1883,45 @@
   - `message`：提示信息
   - `tree_version`：工作区树版本号
   - `files`：保存的文件路径
+
+### 4.1.23.1 `/wunder/workspace/onlyoffice/config`
+
+- 方法：`GET`
+- 用途：为用户侧工作区中的 Office 文档生成 OnlyOffice Docs API 编辑器配置。
+- 鉴权：用户端 Bearer Token；管理员/API Key 调试仍可按工作区接口规则显式传 `user_id`。
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选，通常由 Token 解析）
+  - `agent_id`：智能体应用 id（可选）
+  - `container_id`：工作区容器编号（可选，优先于 `agent_id`）
+  - `path`：Office 文件相对路径
+  - `lang`：编辑器语言（可选，当前归一到 `zh-CN` 或 `en`）
+- 返回（JSON）：
+  - `enabled`：固定为 true
+  - `api_url`：OnlyOffice `api.js` 地址
+  - `config`：传给 `DocsAPI.DocEditor` 的编辑器配置，包含短期签名的文件拉取地址、保存回调地址和 `token`
+  - `path`：规范化后的文件路径
+  - `updated_time`：文件更新时间
+- 约束：仅支持 `doc/docx/xls/xlsx/ppt/pptx`；必须配置 `onlyoffice.enabled=true`、`onlyoffice.document_server_url` 或 `onlyoffice.api_url`、`onlyoffice.public_base_url` 以及 `onlyoffice.jwt_secret`。`public_base_url` 必须能被 OnlyOffice Document Server 访问。
+
+### 4.1.23.2 `/wunder/workspace/onlyoffice/file`
+
+- 方法：`GET`
+- 用途：OnlyOffice Document Server 通过短期令牌拉取待编辑文件。
+- 入参（Query）：
+  - `token`：由 `/wunder/workspace/onlyoffice/config` 生成的短期访问令牌
+- 返回：Office 文件流，`Content-Disposition` 为 inline。
+- 说明：该接口不使用用户 Bearer Token，访问权限完全由短期签名令牌约束。
+
+### 4.1.23.3 `/wunder/workspace/onlyoffice/callback`
+
+- 方法：`POST`
+- 用途：接收 OnlyOffice 保存回调，并在 `status=2` 或 `status=6` 时下载回写后的文档覆盖原文件。
+- 入参：
+  - Query `token`：由 `/wunder/workspace/onlyoffice/config` 生成的短期回调令牌
+  - Body：OnlyOffice Document Server 回调 JSON，其中保存状态需包含 `status` 与 `url`
+- 返回（JSON）：
+  - `error`：`0` 表示成功；非 0 表示保存失败
+- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，回写成功后会标记工作区目录树刷新。
 
 ### 4.1.24.0 `/`
 
