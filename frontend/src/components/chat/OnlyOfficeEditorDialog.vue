@@ -60,6 +60,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void;
   (event: 'saved', payload: { path: string }): void;
+  (event: 'fallback', payload: { path: string; message?: string }): void;
 }>();
 
 type OnlyOfficeWindow = Window & {
@@ -177,11 +178,14 @@ const openEditor = async () => {
       response?: { data?: { detail?: string; error?: string } };
       message?: string;
     };
-    errorText.value =
+    const message =
       source.response?.data?.detail ||
       source.response?.data?.error ||
       source.message ||
       t('workspace.onlyoffice.openFailed');
+    errorText.value = message;
+    emitFallback(message);
+    emit('update:visible', false);
   } finally {
     loading.value = false;
   }
@@ -189,6 +193,13 @@ const openEditor = async () => {
 
 const handleRefresh = async () => {
   await openEditor();
+};
+
+const emitFallback = (message = '') => {
+  emit('fallback', {
+    path: props.path,
+    message: String(message || '').trim()
+  });
 };
 
 const close = () => {

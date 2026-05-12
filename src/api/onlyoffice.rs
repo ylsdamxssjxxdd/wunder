@@ -230,6 +230,7 @@ async fn save_callback(
         );
         return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
     }
+    let bytes = preserve_text_file_encoding(&target, &extension, &bytes);
     if let Err(err) = atomic_write_bytes(&target, &bytes) {
         warn!("OnlyOffice callback write failed for {}: {err}", token.path);
         return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
@@ -363,6 +364,115 @@ fn extension_from_path(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase()
+}
+
+fn preserve_text_file_encoding(path: &Path, extension: &str, bytes: &[u8]) -> Vec<u8> {
+    if !is_textual_onlyoffice_extension(extension) || bytes.is_empty() {
+        return bytes.to_vec();
+    }
+    let Ok(existing) = std::fs::read(path) else {
+        return bytes.to_vec();
+    };
+    let wants_bom = existing.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let incoming_has_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let mut output = bytes.to_vec();
+
+    if wants_bom && !incoming_has_bom {
+        let mut with_bom = Vec::with_capacity(output.len().saturating_add(3));
+        with_bom.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+        with_bom.extend_from_slice(&output);
+        output = with_bom;
+    } else if !wants_bom && incoming_has_bom {
+        output.drain(0..3);
+    }
+
+    let existing_uses_crlf = existing.windows(2).any(|window| window == b"\r\n");
+    if existing_uses_crlf {
+        output = normalize_line_endings_crlf(&output);
+    }
+    output
+}
+
+fn is_textual_onlyoffice_extension(extension: &str) -> bool {
+    matches!(
+        extension.trim().to_ascii_lowercase().as_str(),
+        "txt"
+            | "md"
+            | "log"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "ini"
+            | "xml"
+            | "csv"
+            | "tsv"
+            | "py"
+            | "js"
+            | "ts"
+            | "css"
+            | "html"
+            | "htm"
+            | "sh"
+            | "bat"
+            | "ps1"
+            | "sql"
+            | "rs"
+            | "c"
+            | "cc"
+            | "cfg"
+            | "cmd"
+            | "conf"
+            | "cpp"
+            | "cs"
+            | "cxx"
+            | "dart"
+            | "fish"
+            | "go"
+            | "gradle"
+            | "h"
+            | "hpp"
+            | "java"
+            | "jl"
+            | "jsx"
+            | "kt"
+            | "kts"
+            | "less"
+            | "lua"
+            | "php"
+            | "pl"
+            | "pm"
+            | "r"
+            | "rb"
+            | "sass"
+            | "scss"
+            | "svelte"
+            | "swift"
+            | "tsx"
+            | "vue"
+            | "zsh"
+            | "astro"
+            | "bash"
+    )
+}
+
+fn normalize_line_endings_crlf(bytes: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(bytes.len().saturating_add(bytes.len() / 32));
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'\n' {
+            if index == 0 || bytes[index - 1] != b'\r' {
+                output.extend_from_slice(b"\r\n");
+            } else {
+                output.push(b'\n');
+            }
+            index += 1;
+            continue;
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    output
 }
 
 fn format_modified_time(metadata: &std::fs::Metadata) -> String {

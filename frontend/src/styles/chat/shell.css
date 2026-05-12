@@ -1652,6 +1652,7 @@
   width: 100%;
   height: 100%;
   color-scheme: light;
+  cursor: text;
 }
 
 .workspace-onlyoffice-frame .workspace-empty {

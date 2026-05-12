@@ -132,7 +132,7 @@ pub fn file_type(extension: &str) -> Option<&'static str> {
         "html" => Some("html"),
         "hwp" => Some("hwp"),
         "hwpx" => Some("hwpx"),
-        "md" => Some("md"),
+        "md" => Some("txt"),
         "mht" => Some("mht"),
         "mhtml" => Some("mhtml"),
         "odt" => Some("odt"),
@@ -203,7 +203,7 @@ pub fn content_type(extension: &str) -> &'static str {
         "dotx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
         "epub" => "application/epub+zip",
         "htm" | "html" => "text/html",
-        "md" => "text/markdown",
+        "md" => "text/plain",
         "odt" => "application/vnd.oasis.opendocument.text",
         "ott" => "application/vnd.oasis.opendocument.text-template",
         "rtf" => "application/rtf",
@@ -363,7 +363,12 @@ pub fn build_editor_config(
         "editorConfig": {
             "callbackUrl": public_callback_url(&resolved.public_base_url, &callback_token),
             "customization": {
-                "forcesave": editable
+                "features": {
+                    "spellcheck": false
+                },
+                "forcesave": editable,
+                "spellcheck": false,
+                "uiTheme": "theme-white"
             },
             "lang": normalize_language(language),
             "mode": if editable { "edit" } else { "view" },

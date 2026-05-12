@@ -286,6 +286,7 @@
       :path="onlyOffice.entry?.path || ''"
       :agent-id="normalizedAgentId"
       :container-id="normalizedContainerId"
+      @fallback="handleOnlyOfficeFallback"
       @saved="handleOnlyOfficeSaved"
     />
   </div>
@@ -682,7 +683,8 @@ const state = reactive({
   },
   onlyOffice: {
     visible: false,
-    entry: null
+    entry: null,
+    fallbackEntry: null
   },
   contextMenu: {
     visible: false,
@@ -2763,12 +2765,8 @@ const resolveWorkspaceArchiveFailedText = () =>
     ? t('workspace.download.exportArchiveFailed')
     : t('workspace.download.archiveFailed');
 
-const openPreview = async (entry) => {
+const openPreviewWithoutOnlyOffice = async (entry) => {
   if (!entry || entry.type !== 'file') return;
-  if (isWorkspaceOfficeEditable(entry)) {
-    openOnlyOfficeEditor(entry);
-    return;
-  }
   state.preview.entry = entry;
   state.preview.visible = true;
   state.preview.content = '';
@@ -2897,11 +2895,32 @@ const openPreview = async (entry) => {
   }
 };
 
+const openPreview = async (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  if (isWorkspaceOfficeEditable(entry)) {
+    openOnlyOfficeEditor(entry);
+    return;
+  }
+  await openPreviewWithoutOnlyOffice(entry);
+};
+
 const openOnlyOfficeEditor = (entry) => {
   if (!entry || entry.type !== 'file') return;
   state.preview.visible = false;
+  state.onlyOffice.fallbackEntry = entry;
   state.onlyOffice.entry = entry;
   state.onlyOffice.visible = true;
+};
+
+const handleOnlyOfficeFallback = async (payload: { path?: string; message?: string } = {}) => {
+  const fallbackPath = normalizeWorkspacePath(payload.path || '');
+  const fallbackEntry =
+    (fallbackPath && findWorkspaceEntryByPath(state.entries, fallbackPath)) || state.onlyOffice.fallbackEntry || null;
+  state.onlyOffice.visible = false;
+  state.onlyOffice.entry = null;
+  state.onlyOffice.fallbackEntry = null;
+  if (!fallbackEntry) return;
+  await openPreviewWithoutOnlyOffice(fallbackEntry);
 };
 
 const handleOnlyOfficeSaved = async (payload: { path?: string } = {}) => {
