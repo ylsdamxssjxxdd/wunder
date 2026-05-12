@@ -611,6 +611,8 @@
               :inquiry-active="Boolean(activeInquiryPanel)"
               :inquiry-selection="inquirySelection"
               :preset-questions="activeAgentPresetQuestions"
+              :workspace-agent-id="activeAgentId"
+              :workspace-container-id="activeSandboxContainerId"
               @send="handleComposerSend"
               @stop="handleStop"
             />

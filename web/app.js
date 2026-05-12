@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20260324-06";
+import { elements } from "./modules/elements.js?v=20260512-01";
 
 import { state } from "./modules/state.js";
 
@@ -66,7 +66,7 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260215-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260215-01";
 
-import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260215-01";
+import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260512-01";
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260215-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
@@ -80,7 +80,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20260508-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260215-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260512-01";
 
 
 

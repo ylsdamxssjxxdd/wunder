@@ -1200,7 +1200,9 @@ async fn collect_workflow_files(
             }
         }
     }
-    for relative in referenced_workflow_paths(final_answer.unwrap_or_default()) {
+    for relative in
+        referenced_workflow_paths(final_answer.unwrap_or_default(), &prepared.workspace_id)
+    {
         if files.iter().any(|item| item.path == relative) {
             continue;
         }
@@ -1235,14 +1237,14 @@ fn build_file_ref(run_id: &str, relative: &str, path: &Path) -> Option<WorkflowF
     })
 }
 
-fn referenced_workflow_paths(text: &str) -> Vec<String> {
+fn referenced_workflow_paths(text: &str, workspace_id: &str) -> Vec<String> {
     let mut output = Vec::new();
     let mut seen = HashSet::new();
     for caps in workflow_path_regex().captures_iter(text) {
         let Some(raw) = caps.get(0).map(|matched| matched.as_str()) else {
             continue;
         };
-        let cleaned = normalize_referenced_workflow_path(raw);
+        let cleaned = normalize_referenced_workflow_path_for_workspace(raw, workspace_id);
         if cleaned.is_empty() || seen.contains(&cleaned) {
             continue;
         }
@@ -1262,10 +1264,36 @@ fn normalize_referenced_workflow_path(raw: &str) -> String {
     .replace('\\', "/")
 }
 
+fn normalize_referenced_workflow_path_for_workspace(raw: &str, workspace_id: &str) -> String {
+    let cleaned = normalize_referenced_workflow_path(raw)
+        .trim_matches(|ch: char| matches!(ch, '.' | '。' | '，' | '；'))
+        .to_string();
+    if cleaned.starts_with("input/") || cleaned.starts_with("output/") {
+        return cleaned;
+    }
+    let Some(public_relative) = cleaned
+        .trim_start_matches('/')
+        .strip_prefix("workspaces/")
+        .map(|value| value.trim_start_matches('/'))
+    else {
+        return cleaned;
+    };
+    let scoped_prefix = workspace_id.trim_matches('/');
+    if let Some(relative) = public_relative
+        .strip_prefix(scoped_prefix)
+        .map(|value| value.trim_start_matches('/'))
+    {
+        return relative.to_string();
+    }
+    String::new()
+}
+
 fn workflow_path_regex() -> &'static regex::Regex {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
-        regex::Regex::new(r#"(?:input|output)/[^\s"'`<>()\[\]{}]+"#)
+        regex::Regex::new(
+            r#"(?:/?workspaces/[^\s"'`<>()\[\]{}]+|(?:input|output)/[^\s"'`<>()\[\]{}]+|[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9]{1,16})"#,
+        )
             .expect("valid external workflow file path regex")
     })
 }
@@ -1572,7 +1600,7 @@ where
 }
 
 fn build_content_disposition(filename: &str) -> String {
-    let ascii_name = sanitize_filename(filename);
+    let ascii_name = sanitize_ascii_filename(filename);
     if ascii_name == filename {
         return format!("attachment; filename=\"{ascii_name}\"");
     }
@@ -1588,6 +1616,27 @@ fn sanitize_filename(value: &str) -> String {
         .unwrap_or(value);
     let mut output = String::new();
     for ch in basename.chars() {
+        if ch == '/' || ch == '\\' || ch.is_control() {
+            output.push('_');
+        } else if matches!(ch, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            output.push('_');
+        } else {
+            output.push(ch);
+        }
+    }
+    let trimmed = output.trim_matches('.');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn sanitize_ascii_filename(value: &str) -> String {
+    let fallback = "download";
+    let cleaned = sanitize_filename(value);
+    let mut output = String::new();
+    for ch in cleaned.chars() {
         if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
             output.push(ch);
         } else {
@@ -1734,8 +1783,14 @@ mod tests {
     #[test]
     fn sanitize_filename_removes_path_and_unsafe_chars() {
         assert_eq!(sanitize_filename("../reports/final?.txt"), "final_.txt");
+        assert_eq!(sanitize_filename("需求.txt"), "需求.txt");
         assert_eq!(sanitize_filename(".."), "upload");
-        assert_eq!(sanitize_filename("space name.csv"), "space_name.csv");
+        assert_eq!(sanitize_filename("space name.csv"), "space name.csv");
+    }
+
+    #[test]
+    fn sanitize_ascii_filename_keeps_header_fallback_ascii() {
+        assert_eq!(sanitize_ascii_filename("需求.txt"), "__.txt");
     }
 
     #[test]
@@ -1745,12 +1800,14 @@ mod tests {
         assert_eq!(unique_filename("result.txt", &mut used), "result.txt");
         assert_eq!(unique_filename("result.txt", &mut used), "result_2.txt");
         assert_eq!(unique_filename("result.txt", &mut used), "result_3.txt");
+        assert_eq!(unique_filename("需求.txt", &mut used), "需求.txt");
     }
 
     #[test]
     fn referenced_workflow_paths_extracts_input_and_output_files() {
         let paths = referenced_workflow_paths(
             "See output/final.txt, output/final.txt and `input/source.csv`.",
+            "admin__c__10",
         );
 
         assert_eq!(
@@ -1760,5 +1817,22 @@ mod tests {
                 "input/source.csv".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn referenced_workflow_paths_extracts_public_workspace_links() {
+        let paths = referenced_workflow_paths(
+            "Image: ![heart](/workspaces/admin__c__10/heart.png) and code `heart.py`.",
+            "admin__c__10",
+        );
+
+        assert_eq!(paths, vec!["heart.png".to_string(), "heart.py".to_string()]);
+    }
+
+    #[test]
+    fn referenced_workflow_paths_extracts_plain_filenames() {
+        let paths = referenced_workflow_paths("Files: heart.png and `heart.py`.", "admin__c__10");
+
+        assert_eq!(paths, vec!["heart.png".to_string(), "heart.py".to_string()]);
     }
 }

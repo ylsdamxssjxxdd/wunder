@@ -2084,6 +2084,114 @@
                 </div>
               </div>
             </div>
+            <div class="settings-card settings-card-onlyoffice">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-file-pen"></i>
+                <span data-i18n="settings.card.onlyoffice">OnlyOffice</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--restart" data-i18n="settings.badge.restart">Restart</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="settingsOnlyOfficeEnabled" data-i18n="settings.label.onlyofficeEnabled">
+                      Enable OnlyOffice
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settingsOnlyOfficeEnabled" type="checkbox" />
+                      <span data-i18n="settings.option.onlyofficeEnabled">Enable online Office editing</span>
+                    </label>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsOnlyOfficeDocumentServerUrl" data-i18n="settings.label.onlyofficeDocumentServerUrl">
+                      Document Server URL
+                    </label>
+                    <input
+                      id="settingsOnlyOfficeDocumentServerUrl"
+                      type="url"
+                      placeholder="http://127.0.0.1:18080"
+                      data-i18n-placeholder="settings.placeholder.onlyofficeDocumentServerUrl"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.onlyofficeDocumentServerUrl">
+                      Browser-facing OnlyOffice Document Server address.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsOnlyOfficePublicBaseUrl" data-i18n="settings.label.onlyofficePublicBaseUrl">
+                      Wunder public URL
+                    </label>
+                    <input
+                      id="settingsOnlyOfficePublicBaseUrl"
+                      type="url"
+                      placeholder="http://host.docker.internal:18000"
+                      data-i18n-placeholder="settings.placeholder.onlyofficePublicBaseUrl"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.onlyofficePublicBaseUrl">
+                      Address that Document Server can use to call back into Wunder.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsOnlyOfficeApiUrl" data-i18n="settings.label.onlyofficeApiUrl">
+                      Docs API URL
+                    </label>
+                    <input
+                      id="settingsOnlyOfficeApiUrl"
+                      type="url"
+                      placeholder="Optional"
+                      data-i18n-placeholder="settings.placeholder.optional"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.onlyofficeApiUrl">
+                      Leave empty to use Document Server URL + /web-apps/apps/api/documents/api.js.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsOnlyOfficeJwtSecret" data-i18n="settings.label.onlyofficeJwtSecret">
+                      JWT secret
+                    </label>
+                    <input
+                      id="settingsOnlyOfficeJwtSecret"
+                      type="password"
+                      autocomplete="off"
+                      placeholder="Optional"
+                      data-i18n-placeholder="settings.placeholder.optional"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsOnlyOfficeJwtHeader" data-i18n="settings.label.onlyofficeJwtHeader">
+                      JWT header
+                    </label>
+                    <input
+                      id="settingsOnlyOfficeJwtHeader"
+                      type="text"
+                      placeholder="Authorization"
+                      data-i18n-placeholder="settings.placeholder.onlyofficeJwtHeader"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsOnlyOfficeTokenTtl" data-i18n="settings.label.onlyofficeTokenTtl">
+                      Token TTL (s)
+                    </label>
+                    <input id="settingsOnlyOfficeTokenTtl" type="number" min="60" step="60" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsOnlyOfficeRequestTimeout" data-i18n="settings.label.onlyofficeRequestTimeout">
+                      Save timeout (s)
+                    </label>
+                    <input id="settingsOnlyOfficeRequestTimeout" type="number" min="5" step="5" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsOnlyOfficeMaxDownloadBytes" data-i18n="settings.label.onlyofficeMaxDownloadBytes">
+                      Max save size (bytes)
+                    </label>
+                    <input id="settingsOnlyOfficeMaxDownloadBytes" type="number" min="1024" step="1048576" />
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.onlyoffice">
+                  Enables online editing for doc/docx/xls/xlsx/ppt/pptx in the user workspace.
+                </div>
+              </div>
+            </div>
           </div>
         </section><section id="mcpPanel" class="panel">
             <div class="list-header">
@@ -3243,7 +3351,7 @@
                     <div class="grid">
                       <div class="form-row">
                         <label for="llmImageSteps" data-i18n="llm.field.imageSteps">采样步数</label>
-                        <input id="llmImageSteps" type="number" min="1" max="200" step="1" />
+                        <input id="llmImageSteps" type="number" min="1" max="200" step="1" value="30" />
                       </div>
                       <div class="form-row">
                         <label for="llmImageGuidanceScale" data-i18n="llm.field.imageGuidanceScale">引导系数</label>
@@ -5596,7 +5704,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260507-01"></script>
+    <script type="module" src="./app.js?v=20260512-01"></script>
 </body>
 </html>
 

@@ -1569,6 +1569,11 @@ export default {
     'Requested {requested} FPS, applied {applied} FPS, {frames} frame(s) total',
   'chat.attachments.video.controlUnavailable':
     'This video no longer has a source reference for reprocessing',
+  'chat.workspaceDrop.failed': 'Failed to write files to the workspace',
+  'chat.workspaceDrop.noticeFooter': 'This is only new file information. Decide whether to read or process them based on the task.',
+  'chat.workspaceDrop.noticeHeader': '{count} new file(s) have been placed in the current workspace:',
+  'chat.workspaceDrop.uploaded': 'Placed {count} file(s) in the workspace',
+  'chat.workspaceDrop.uploading': 'Writing files to the workspace. Please wait.',
   'chat.code.copy': 'Copy code',
   'chat.error.generic': 'Request failed',
   'chat.error.requestFailed': 'Request failed',

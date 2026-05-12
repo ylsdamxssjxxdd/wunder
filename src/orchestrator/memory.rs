@@ -1406,7 +1406,8 @@ impl Orchestrator {
         });
         let allowed_tool_names =
             self.apply_preview_skill_tool_policy(allowed_tool_names, preview_skill);
-        let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
+        let tool_call_mode =
+            self.resolve_frozen_session_tool_call_mode(user_id, session_id, &llm_config);
         let workspace_id = self.resolve_workspace_id(user_id, agent_id, None);
         let system_prompt = self
             .resolve_session_prompt(

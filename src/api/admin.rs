@@ -3100,6 +3100,15 @@ fn normalize_string_list(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+fn normalize_optional_config_string(value: String) -> Option<String> {
+    let cleaned = value.trim().to_string();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 fn build_system_settings_payload(config: &Config) -> Value {
     let exec_policy_mode = config
         .security
@@ -3133,6 +3142,17 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "allow_methods": config.cors.allow_methods.clone(),
             "allow_headers": config.cors.allow_headers.clone(),
             "allow_credentials": config.cors.allow_credentials,
+        },
+        "onlyoffice": {
+            "enabled": config.onlyoffice.enabled,
+            "document_server_url": config.onlyoffice.document_server_url.clone().unwrap_or_default(),
+            "api_url": config.onlyoffice.api_url.clone().unwrap_or_default(),
+            "public_base_url": config.onlyoffice.public_base_url.clone().unwrap_or_default(),
+            "jwt_secret": config.onlyoffice.jwt_secret.clone().unwrap_or_default(),
+            "jwt_header": config.onlyoffice.jwt_header.clone(),
+            "token_ttl_s": config.onlyoffice.token_ttl_s,
+            "request_timeout_s": config.onlyoffice.request_timeout_s,
+            "max_download_bytes": config.onlyoffice.max_download_bytes,
         }
     })
 }
@@ -3149,7 +3169,8 @@ async fn admin_system_update(
     let has_updates = payload.server.is_some()
         || payload.security.is_some()
         || payload.observability.is_some()
-        || payload.cors.is_some();
+        || payload.cors.is_some()
+        || payload.onlyoffice.is_some();
     if !has_updates {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -3274,6 +3295,43 @@ async fn admin_system_update(
                 }
                 if let Some(allow_credentials) = cors.allow_credentials {
                     config.cors.allow_credentials = Some(allow_credentials);
+                }
+            }
+            if let Some(onlyoffice) = payload.onlyoffice {
+                if let Some(enabled) = onlyoffice.enabled {
+                    config.onlyoffice.enabled = enabled;
+                }
+                if let Some(document_server_url) = onlyoffice.document_server_url {
+                    config.onlyoffice.document_server_url =
+                        normalize_optional_config_string(document_server_url);
+                }
+                if let Some(api_url) = onlyoffice.api_url {
+                    config.onlyoffice.api_url = normalize_optional_config_string(api_url);
+                }
+                if let Some(public_base_url) = onlyoffice.public_base_url {
+                    config.onlyoffice.public_base_url =
+                        normalize_optional_config_string(public_base_url);
+                }
+                if let Some(jwt_secret) = onlyoffice.jwt_secret {
+                    config.onlyoffice.jwt_secret = normalize_optional_config_string(jwt_secret);
+                }
+                if let Some(jwt_header) = onlyoffice.jwt_header {
+                    let cleaned = jwt_header.trim();
+                    config.onlyoffice.jwt_header = if cleaned.is_empty() {
+                        "Authorization".to_string()
+                    } else {
+                        cleaned.to_string()
+                    };
+                }
+                if let Some(token_ttl_s) = onlyoffice.token_ttl_s {
+                    config.onlyoffice.token_ttl_s = token_ttl_s.clamp(60, 24 * 60 * 60);
+                }
+                if let Some(request_timeout_s) = onlyoffice.request_timeout_s {
+                    config.onlyoffice.request_timeout_s = request_timeout_s.clamp(5, 300);
+                }
+                if let Some(max_download_bytes) = onlyoffice.max_download_bytes {
+                    config.onlyoffice.max_download_bytes =
+                        max_download_bytes.clamp(1024, 1024 * 1024 * 1024);
                 }
             }
         })
@@ -7703,6 +7761,8 @@ struct SystemUpdateRequest {
     observability: Option<SystemObservabilityUpdateRequest>,
     #[serde(default)]
     cors: Option<SystemCorsUpdateRequest>,
+    #[serde(default)]
+    onlyoffice: Option<SystemOnlyOfficeUpdateRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7757,6 +7817,28 @@ struct SystemCorsUpdateRequest {
     allow_headers: Option<Vec<String>>,
     #[serde(default)]
     allow_credentials: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemOnlyOfficeUpdateRequest {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    document_server_url: Option<String>,
+    #[serde(default)]
+    api_url: Option<String>,
+    #[serde(default)]
+    public_base_url: Option<String>,
+    #[serde(default)]
+    jwt_secret: Option<String>,
+    #[serde(default)]
+    jwt_header: Option<String>,
+    #[serde(default)]
+    token_ttl_s: Option<u64>,
+    #[serde(default)]
+    request_timeout_s: Option<u64>,
+    #[serde(default)]
+    max_download_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

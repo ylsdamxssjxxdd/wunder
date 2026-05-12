@@ -11,6 +11,28 @@ type HmacSha256 = Hmac<Sha256>;
 
 pub const TOKEN_KIND_FILE: &str = "file";
 pub const TOKEN_KIND_CALLBACK: &str = "callback";
+const WORD_EXTENSIONS: &[&str] = &[
+    "doc", "docm", "docx", "dot", "dotm", "dotx", "epub", "fb2", "fodt", "hml", "htm", "html",
+    "hwp", "hwpx", "md", "mht", "mhtml", "odt", "ott", "pages", "rtf", "stw", "sxw", "txt", "wps",
+    "wpt", "xml",
+];
+const CELL_EXTENSIONS: &[&str] = &[
+    "csv", "et", "ett", "fods", "numbers", "ods", "ots", "sxc", "tsv", "xls", "xlsb", "xlsm",
+    "xlsx", "xlt", "xltm", "xltx",
+];
+const SLIDE_EXTENSIONS: &[&str] = &[
+    "dps", "dpt", "fodp", "key", "odg", "odp", "otp", "pot", "potm", "potx", "pps", "ppsm", "ppsx",
+    "ppt", "pptm", "pptx", "sxi",
+];
+const PDF_EXTENSIONS: &[&str] = &["djvu", "oxps", "pdf", "xps"];
+const DIAGRAM_EXTENSIONS: &[&str] = &["vsdm", "vsdx", "vssm", "vssx", "vstm", "vstx"];
+const PLAIN_TEXT_ALIAS_EXTENSIONS: &[&str] = &[
+    "astro", "bash", "bat", "c", "cc", "cfg", "cmd", "conf", "cpp", "cs", "css", "cxx", "dart",
+    "fish", "go", "gradle", "h", "hpp", "java", "jl", "js", "json", "jsx", "kt", "kts", "less",
+    "log", "lua", "php", "pl", "pm", "ps1", "py", "r", "rb", "rs", "sass", "scss", "sh", "sql",
+    "svelte", "swift", "toml", "ts", "tsx", "vue", "yaml", "yml", "zsh",
+];
+const DOCUMENT_KEY_VERSION: &str = "v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlyOfficeAccessToken {
@@ -24,6 +46,7 @@ pub struct OnlyOfficeAccessToken {
 #[derive(Debug, Clone)]
 pub struct OnlyOfficeResolvedConfig {
     pub api_url: String,
+    pub document_server_url: Option<String>,
     pub public_base_url: String,
     pub jwt_secret: Option<String>,
     pub token_ttl_s: u64,
@@ -45,6 +68,7 @@ pub fn resolve_config(
         .or_else(|| request_base_url.map(str::to_string))?;
     Some(OnlyOfficeResolvedConfig {
         api_url,
+        document_server_url: office.document_server_url(),
         public_base_url: public_base_url.trim_end_matches('/').to_string(),
         jwt_secret: office.jwt_secret(),
         token_ttl_s: office.token_ttl_s(),
@@ -54,29 +78,115 @@ pub fn resolve_config(
 }
 
 pub fn is_supported_extension(extension: &str) -> bool {
-    matches!(
-        extension.trim().to_ascii_lowercase().as_str(),
-        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx"
-    )
+    document_type(extension).is_some()
+}
+
+pub fn is_editable_extension(extension: &str) -> bool {
+    let normalized = extension.trim().to_ascii_lowercase();
+    WORD_EXTENSIONS.contains(&normalized.as_str())
+        || CELL_EXTENSIONS.contains(&normalized.as_str())
+        || SLIDE_EXTENSIONS.contains(&normalized.as_str())
+        || PLAIN_TEXT_ALIAS_EXTENSIONS.contains(&normalized.as_str())
+        || normalized == "pdf"
 }
 
 pub fn document_type(extension: &str) -> Option<&'static str> {
-    match extension.trim().to_ascii_lowercase().as_str() {
-        "doc" | "docx" => Some("word"),
-        "xls" | "xlsx" => Some("cell"),
-        "ppt" | "pptx" => Some("slide"),
-        _ => None,
+    let normalized = extension.trim().to_ascii_lowercase();
+    let value = normalized.as_str();
+    if WORD_EXTENSIONS.contains(&value) {
+        return Some("word");
     }
+    if CELL_EXTENSIONS.contains(&value) {
+        return Some("cell");
+    }
+    if SLIDE_EXTENSIONS.contains(&value) {
+        return Some("slide");
+    }
+    if PDF_EXTENSIONS.contains(&value) {
+        return Some("pdf");
+    }
+    if DIAGRAM_EXTENSIONS.contains(&value) {
+        return Some("diagram");
+    }
+    if PLAIN_TEXT_ALIAS_EXTENSIONS.contains(&value) {
+        return Some("word");
+    }
+    None
 }
 
 pub fn file_type(extension: &str) -> Option<&'static str> {
     match extension.trim().to_ascii_lowercase().as_str() {
         "doc" => Some("doc"),
+        "docm" => Some("docm"),
         "docx" => Some("docx"),
+        "dot" => Some("dot"),
+        "dotm" => Some("dotm"),
+        "dotx" => Some("dotx"),
+        "epub" => Some("epub"),
+        "fb2" => Some("fb2"),
+        "fodt" => Some("fodt"),
+        "hml" => Some("hml"),
+        "htm" => Some("htm"),
+        "html" => Some("html"),
+        "hwp" => Some("hwp"),
+        "hwpx" => Some("hwpx"),
+        "md" => Some("md"),
+        "mht" => Some("mht"),
+        "mhtml" => Some("mhtml"),
+        "odt" => Some("odt"),
+        "ott" => Some("ott"),
+        "pages" => Some("pages"),
+        "rtf" => Some("rtf"),
+        "stw" => Some("stw"),
+        "sxw" => Some("sxw"),
+        "txt" => Some("txt"),
+        "wps" => Some("wps"),
+        "wpt" => Some("wpt"),
+        "xml" => Some("xml"),
+        "csv" => Some("csv"),
+        "et" => Some("et"),
+        "ett" => Some("ett"),
+        "fods" => Some("fods"),
+        "numbers" => Some("numbers"),
+        "ods" => Some("ods"),
+        "ots" => Some("ots"),
+        "sxc" => Some("sxc"),
+        "tsv" => Some("tsv"),
         "xls" => Some("xls"),
+        "xlsb" => Some("xlsb"),
+        "xlsm" => Some("xlsm"),
         "xlsx" => Some("xlsx"),
+        "xlt" => Some("xlt"),
+        "xltm" => Some("xltm"),
+        "xltx" => Some("xltx"),
+        "dps" => Some("dps"),
+        "dpt" => Some("dpt"),
+        "fodp" => Some("fodp"),
+        "key" => Some("key"),
+        "odg" => Some("odg"),
+        "odp" => Some("odp"),
+        "otp" => Some("otp"),
+        "pot" => Some("pot"),
+        "potm" => Some("potm"),
+        "potx" => Some("potx"),
+        "pps" => Some("pps"),
+        "ppsm" => Some("ppsm"),
+        "ppsx" => Some("ppsx"),
         "ppt" => Some("ppt"),
+        "pptm" => Some("pptm"),
         "pptx" => Some("pptx"),
+        "sxi" => Some("sxi"),
+        "djvu" => Some("djvu"),
+        "oxps" => Some("oxps"),
+        "pdf" => Some("pdf"),
+        "xps" => Some("xps"),
+        "vsdm" => Some("vsdm"),
+        "vsdx" => Some("vsdx"),
+        "vssm" => Some("vssm"),
+        "vssx" => Some("vssx"),
+        "vstm" => Some("vstm"),
+        "vstx" => Some("vstx"),
+        value if PLAIN_TEXT_ALIAS_EXTENSIONS.contains(&value) => Some("txt"),
         _ => None,
     }
 }
@@ -84,11 +194,44 @@ pub fn file_type(extension: &str) -> Option<&'static str> {
 pub fn content_type(extension: &str) -> &'static str {
     match extension.trim().to_ascii_lowercase().as_str() {
         "doc" => "application/msword",
+        "docm" => "application/vnd.ms-word.document.macroenabled.12",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "dot" => "application/msword",
+        "dotm" => "application/vnd.ms-word.template.macroenabled.12",
+        "dotx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+        "epub" => "application/epub+zip",
+        "htm" | "html" => "text/html",
+        "md" => "text/markdown",
+        "odt" => "application/vnd.oasis.opendocument.text",
+        "ott" => "application/vnd.oasis.opendocument.text-template",
+        "rtf" => "application/rtf",
+        "txt" => "text/plain",
+        "xml" => "application/xml",
+        "csv" => "text/csv",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "ots" => "application/vnd.oasis.opendocument.spreadsheet-template",
         "xls" => "application/vnd.ms-excel",
+        "xlsb" => "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+        "xlsm" => "application/vnd.ms-excel.sheet.macroenabled.12",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xlt" => "application/vnd.ms-excel",
+        "xltm" => "application/vnd.ms-excel.template.macroenabled.12",
+        "xltx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+        "odg" => "application/vnd.oasis.opendocument.graphics",
+        "odp" => "application/vnd.oasis.opendocument.presentation",
+        "otp" => "application/vnd.oasis.opendocument.presentation-template",
+        "pot" => "application/vnd.ms-powerpoint",
+        "potm" => "application/vnd.ms-powerpoint.template.macroenabled.12",
+        "potx" => "application/vnd.openxmlformats-officedocument.presentationml.template",
+        "pps" => "application/vnd.ms-powerpoint",
+        "ppsm" => "application/vnd.ms-powerpoint.slideshow.macroenabled.12",
+        "ppsx" => "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
         "ppt" => "application/vnd.ms-powerpoint",
+        "pptm" => "application/vnd.ms-powerpoint.presentation.macroenabled.12",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pdf" => "application/pdf",
+        "xps" => "application/vnd.ms-xpsdocument",
+        value if PLAIN_TEXT_ALIAS_EXTENSIONS.contains(&value) => "text/plain",
         _ => "application/octet-stream",
     }
 }
@@ -159,7 +302,7 @@ pub fn build_document_key(
     size: u64,
     updated_epoch_ms: u128,
 ) -> String {
-    let raw = format!("{workspace_id}:{path}:{size}:{updated_epoch_ms}");
+    let raw = format!("{DOCUMENT_KEY_VERSION}:{workspace_id}:{path}:{size}:{updated_epoch_ms}");
     let digest = Sha256::digest(raw.as_bytes());
     hex::encode(digest)
 }
@@ -201,6 +344,7 @@ pub fn build_editor_config(
     let file_type = file_type(extension).ok_or_else(|| anyhow::anyhow!("unsupported file type"))?;
     let document_type =
         document_type(extension).ok_or_else(|| anyhow::anyhow!("unsupported file type"))?;
+    let editable = is_editable_extension(extension);
     let mut editor_config = json!({
         "document": {
             "fileType": file_type,
@@ -209,15 +353,18 @@ pub fn build_editor_config(
             "url": public_file_url(&resolved.public_base_url, &file_token),
             "permissions": {
                 "download": true,
-                "edit": true,
+                "edit": editable,
                 "print": true
             }
         },
         "documentType": document_type,
         "editorConfig": {
             "callbackUrl": public_callback_url(&resolved.public_base_url, &callback_token),
+            "customization": {
+                "forcesave": editable
+            },
             "lang": normalize_language(language),
-            "mode": "edit",
+            "mode": if editable { "edit" } else { "view" },
             "user": {
                 "id": user_id,
                 "name": user_id
@@ -313,8 +460,8 @@ fn percent_encode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_document_key, content_type, document_type, is_supported_extension, sign_access_token,
-        verify_access_token, TOKEN_KIND_FILE,
+        build_document_key, content_type, document_type, file_type, is_editable_extension,
+        is_supported_extension, sign_access_token, verify_access_token, TOKEN_KIND_FILE,
     };
 
     #[test]
@@ -326,7 +473,19 @@ mod tests {
             content_type("docx"),
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         );
-        assert!(!is_supported_extension("pdf"));
+        assert!(is_supported_extension("pdf"));
+        assert_eq!(document_type("pdf"), Some("pdf"));
+        assert!(is_editable_extension("pdf"));
+        assert!(is_supported_extension("odt"));
+        assert_eq!(document_type("ods"), Some("cell"));
+        assert_eq!(document_type("vsdx"), Some("diagram"));
+        assert_eq!(document_type("wps"), Some("word"));
+        assert_eq!(document_type("et"), Some("cell"));
+        assert_eq!(document_type("dps"), Some("slide"));
+        assert!(is_supported_extension("py"));
+        assert_eq!(document_type("py"), Some("word"));
+        assert_eq!(file_type("py"), Some("txt"));
+        assert!(!is_editable_extension("xps"));
     }
 
     #[test]

@@ -1,31 +1,45 @@
 <template>
   <el-dialog
     v-model="dialogVisible"
-    :title="title || t('workspace.onlyoffice.title')"
-    width="min(1180px, calc(100vw - 24px))"
-    top="12px"
+    width="calc(100vw - 16px)"
+    top="8px"
     class="workspace-dialog workspace-dialog--onlyoffice"
     append-to-body
     destroy-on-close
+    :show-close="false"
     @closed="handleClosed"
   >
-    <div class="workspace-onlyoffice-head">
-      <div class="workspace-preview-title">{{ title || t('workspace.onlyoffice.title') }}</div>
-      <div class="workspace-preview-meta" :title="path">{{ path }}</div>
-    </div>
+    <template #header>
+      <div class="workspace-onlyoffice-head">
+        <div class="workspace-preview-meta workspace-onlyoffice-path" :title="path">{{ path }}</div>
+        <div class="workspace-onlyoffice-actions">
+          <button
+            class="workspace-onlyoffice-icon-btn"
+            type="button"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            :disabled="loading"
+            @click="handleRefresh"
+          >
+            <i class="fa-solid fa-rotate" :class="{ 'fa-spin': loading }" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-onlyoffice-icon-btn"
+            type="button"
+            :title="t('common.close')"
+            :aria-label="t('common.close')"
+            @click="close"
+          >
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </template>
     <div v-if="errorText" class="workspace-preview-hint">{{ errorText }}</div>
     <div class="workspace-onlyoffice-frame">
       <div v-if="loading" class="workspace-empty">{{ t('workspace.onlyoffice.loading') }}</div>
       <div ref="hostRef" class="workspace-onlyoffice-host"></div>
     </div>
-    <template #footer>
-      <button class="workspace-btn secondary" type="button" @click="handleRefresh">
-        {{ t('common.refresh') }}
-      </button>
-      <button class="workspace-btn secondary" type="button" @click="close">
-        {{ t('common.close') }}
-      </button>
-    </template>
   </el-dialog>
 </template>
 
@@ -39,7 +53,6 @@ import { getCurrentLanguage, useI18n } from '@/i18n';
 const props = defineProps<{
   visible: boolean;
   path: string;
-  title?: string;
   agentId?: string;
   containerId?: number | string;
 }>();

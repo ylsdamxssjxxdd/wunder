@@ -1526,6 +1526,8 @@
             :approval-mode-syncing="composerApprovalModeSyncing"
             :model-name="agentHeaderModelDisplayName"
             :context-total-tokens="activeAgentUsingDesktopDefaultModel ? desktopDefaultModelMaxContext : null"
+            :workspace-agent-id="activeAgentIdForApi"
+            :workspace-container-id="currentContainerId"
             :goal-locked="activeSessionGoalLocked"
             :goal-editor-visible="agentGoalComposerVisible"
             :goal-objective="agentGoalComposerObjective"
@@ -2949,7 +2951,6 @@ const updateThemePalette = controller.updateThemePalette;
 const updateUiFontSize = controller.updateUiFontSize;
 const uploadUserSkillZip = controller.uploadUserSkillZip;
 const uploadWorldFilesToUserContainer = controller.uploadWorldFilesToUserContainer;
-const uploadWunderWorkspace = controller.uploadWunderWorkspace;
 const useAgentStore = controller.useAgentStore;
 const useAuthStore = controller.useAuthStore;
 const useBeeroomStore = controller.useBeeroomStore;

@@ -204,7 +204,15 @@
         <div class="workspace-preview-meta" :title="previewMeta">{{ previewMeta }}</div>
       </div>
       <div v-if="preview.hint" class="workspace-preview-hint">{{ preview.hint }}</div>
-      <div class="workspace-preview" :class="{ embed: preview.embed, 'is-svg': preview.type === 'svg' }">
+      <div
+        class="workspace-preview"
+        :class="{
+          embed: preview.embed,
+          'is-svg': preview.type === 'svg',
+          'is-audio': preview.type === 'audio',
+          'is-video': preview.type === 'video'
+        }"
+      >
         <div v-if="preview.loading" class="workspace-empty">
           {{ t('workspace.preview.loading') }}
         </div>
@@ -216,6 +224,20 @@
             :active="preview.visible"
           />
           <iframe v-else-if="preview.embed && (preview.type === 'pdf' || preview.type === 'svg')" :src="preview.url" />
+          <audio
+            v-else-if="preview.embed && preview.type === 'audio'"
+            class="workspace-preview-audio"
+            :src="preview.url"
+            controls
+            preload="metadata"
+          ></audio>
+          <video
+            v-else-if="preview.embed && preview.type === 'video'"
+            class="workspace-preview-video"
+            :src="preview.url"
+            controls
+            preload="metadata"
+          ></video>
           <pre v-else class="workspace-preview-text">{{ preview.content }}</pre>
         </template>
       </div>
@@ -262,7 +284,6 @@
     <OnlyOfficeEditorDialog
       v-model:visible="onlyOffice.visible"
       :path="onlyOffice.entry?.path || ''"
-      :title="onlyOffice.entry?.name || t('workspace.onlyoffice.title')"
       :agent-id="normalizedAgentId"
       :container-id="normalizedContainerId"
       @saved="handleOnlyOfficeSaved"
@@ -380,11 +401,149 @@ const IMAGE_MIME_TYPES = {
   webp: 'image/webp',
   svg: 'image/svg+xml'
 };
+const AUDIO_MIME_TYPES = {
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  wav: 'audio/wav'
+};
+const VIDEO_MIME_TYPES = {
+  avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska',
+  mov: 'video/quicktime',
+  mp4: 'video/mp4',
+  webm: 'video/webm'
+};
 const PDF_EXTENSIONS = new Set(['pdf']);
-const OFFICE_WORD_EXTENSIONS = new Set(['doc', 'docx']);
-const OFFICE_EXCEL_EXTENSIONS = new Set(['xls', 'xlsx']);
-const OFFICE_PPT_EXTENSIONS = new Set(['ppt', 'pptx']);
-const OFFICE_EXTENSIONS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']);
+const ONLYOFFICE_WORD_EXTENSIONS = new Set([
+  'doc',
+  'docm',
+  'docx',
+  'dot',
+  'dotm',
+  'dotx',
+  'epub',
+  'fb2',
+  'fodt',
+  'hml',
+  'htm',
+  'html',
+  'hwp',
+  'hwpx',
+  'md',
+  'mht',
+  'mhtml',
+  'odt',
+  'ott',
+  'pages',
+  'rtf',
+  'stw',
+  'sxw',
+  'txt',
+  'wps',
+  'wpt',
+  'xml'
+]);
+const ONLYOFFICE_EXCEL_EXTENSIONS = new Set([
+  'csv',
+  'et',
+  'ett',
+  'fods',
+  'numbers',
+  'ods',
+  'ots',
+  'sxc',
+  'tsv',
+  'xls',
+  'xlsb',
+  'xlsm',
+  'xlsx',
+  'xlt',
+  'xltm',
+  'xltx'
+]);
+const ONLYOFFICE_PPT_EXTENSIONS = new Set([
+  'dps',
+  'dpt',
+  'fodp',
+  'key',
+  'odg',
+  'odp',
+  'otp',
+  'pot',
+  'potm',
+  'potx',
+  'pps',
+  'ppsm',
+  'ppsx',
+  'ppt',
+  'pptm',
+  'pptx',
+  'sxi'
+]);
+const ONLYOFFICE_PDF_EXTENSIONS = new Set(['djvu', 'oxps', 'pdf', 'xps']);
+const ONLYOFFICE_DIAGRAM_EXTENSIONS = new Set(['vsdm', 'vsdx', 'vssm', 'vssx', 'vstm', 'vstx']);
+const ONLYOFFICE_TEXT_ALIAS_EXTENSIONS = new Set([
+  'astro',
+  'bash',
+  'bat',
+  'c',
+  'cc',
+  'cfg',
+  'cmd',
+  'conf',
+  'cpp',
+  'cs',
+  'css',
+  'cxx',
+  'dart',
+  'fish',
+  'go',
+  'gradle',
+  'h',
+  'hpp',
+  'java',
+  'jl',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'kts',
+  'less',
+  'log',
+  'lua',
+  'php',
+  'pl',
+  'pm',
+  'ps1',
+  'py',
+  'r',
+  'rb',
+  'rs',
+  'sass',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'vue',
+  'yaml',
+  'yml',
+  'zsh'
+]);
+const ONLYOFFICE_EXTENSIONS = new Set([
+  ...ONLYOFFICE_WORD_EXTENSIONS,
+  ...ONLYOFFICE_EXCEL_EXTENSIONS,
+  ...ONLYOFFICE_PPT_EXTENSIONS,
+  ...ONLYOFFICE_PDF_EXTENSIONS,
+  ...ONLYOFFICE_DIAGRAM_EXTENSIONS,
+  ...ONLYOFFICE_TEXT_ALIAS_EXTENSIONS
+]);
 const CODE_EXTENSIONS = new Set(['py', 'js', 'ts', 'css', 'html', 'htm', 'sh', 'bat', 'ps1', 'sql']);
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
@@ -938,20 +1097,20 @@ const isWorkspaceTextEditable = (entry) => {
 
 const isWorkspaceOfficeEditable = (entry) => {
   if (!entry || entry.type !== 'file') return false;
-  return OFFICE_EXTENSIONS.has(getWorkspaceExtension(entry));
+  return ONLYOFFICE_EXTENSIONS.has(getWorkspaceExtension(entry));
 };
 
 const resolveWorkspaceFallbackFileIcon = (extension) => {
   if (PDF_EXTENSIONS.has(extension)) {
     return WORKSPACE_PDF_FILE_ICON;
   }
-  if (OFFICE_WORD_EXTENSIONS.has(extension)) {
+  if (ONLYOFFICE_WORD_EXTENSIONS.has(extension)) {
     return WORKSPACE_WORD_FILE_ICON;
   }
-  if (OFFICE_EXCEL_EXTENSIONS.has(extension)) {
+  if (ONLYOFFICE_EXCEL_EXTENSIONS.has(extension)) {
     return WORKSPACE_EXCEL_FILE_ICON;
   }
-  if (OFFICE_PPT_EXTENSIONS.has(extension)) {
+  if (ONLYOFFICE_PPT_EXTENSIONS.has(extension)) {
     return WORKSPACE_PPT_FILE_ICON;
   }
   if (extension === 'html' || extension === 'htm' || extension === 'xhtml') {
@@ -1035,13 +1194,13 @@ const getEntryIcon = (entry) => {
   if (PDF_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.pdf') };
   }
-  if (OFFICE_WORD_EXTENSIONS.has(ext)) {
+  if (ONLYOFFICE_WORD_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.word') };
   }
-  if (OFFICE_EXCEL_EXTENSIONS.has(ext)) {
+  if (ONLYOFFICE_EXCEL_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.excel') };
   }
-  if (OFFICE_PPT_EXTENSIONS.has(ext)) {
+  if (ONLYOFFICE_PPT_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.ppt') };
   }
   if (ARCHIVE_EXTENSIONS.has(ext)) {
@@ -1059,7 +1218,7 @@ const getEntryIcon = (entry) => {
   if (TEXT_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.text') };
   }
-  if (OFFICE_EXTENSIONS.has(ext)) {
+  if (ONLYOFFICE_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.office') };
   }
   return { icon, className: 'icon-vscode', label: t('workspace.icon.file') };
@@ -1896,12 +2055,12 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     void toggleWorkspaceDirectory(entry);
     return;
   }
-  if (isWorkspaceTextEditable(entry)) {
-    openEditor(entry);
-    return;
-  }
   if (isWorkspaceOfficeEditable(entry)) {
     openOnlyOfficeEditor(entry);
+    return;
+  }
+  if (isWorkspaceTextEditable(entry)) {
+    openEditor(entry);
     return;
   }
   openPreview(entry);
@@ -2623,13 +2782,17 @@ const openPreview = async (entry) => {
   const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
   const canPreviewText = sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 
-  if (OFFICE_EXTENSIONS.has(extension)) {
+  if (ONLYOFFICE_EXTENSIONS.has(extension)) {
     state.preview.hint = resolvePreviewUnsupportedHint();
     state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
     return;
   }
-  const isMediaPreview = IMAGE_EXTENSIONS.has(extension) || PDF_EXTENSIONS.has(extension);
+  const isMediaPreview =
+    IMAGE_EXTENSIONS.has(extension) ||
+    PDF_EXTENSIONS.has(extension) ||
+    AUDIO_EXTENSIONS.has(extension) ||
+    VIDEO_EXTENSIONS.has(extension);
   if (!isMediaPreview && !canPreviewText) {
     state.preview.hint = resolvePreviewTooLargeHint();
     state.preview.content = t('workspace.preview.empty');
@@ -2665,7 +2828,12 @@ const openPreview = async (entry) => {
         // Fall back to download when content preview fails.
       }
     }
-    if (IMAGE_EXTENSIONS.has(extension) || PDF_EXTENSIONS.has(extension)) {
+    if (
+      IMAGE_EXTENSIONS.has(extension) ||
+      PDF_EXTENSIONS.has(extension) ||
+      AUDIO_EXTENSIONS.has(extension) ||
+      VIDEO_EXTENSIONS.has(extension)
+    ) {
       const response = await downloadWunderWorkspaceFile(withAgentParams({ path: entry.path }));
       let blob = response.data;
       if (IMAGE_EXTENSIONS.has(extension)) {
@@ -2678,6 +2846,28 @@ const openPreview = async (entry) => {
         }
         state.preview.embed = true;
         state.preview.type = extension === 'svg' ? 'svg' : 'image';
+        state.preview.url = URL.createObjectURL(blob);
+      } else if (AUDIO_EXTENSIONS.has(extension)) {
+        const expectedMime = AUDIO_MIME_TYPES[extension] || '';
+        if (
+          expectedMime &&
+          (!blob.type || blob.type === 'application/octet-stream' || blob.type !== expectedMime)
+        ) {
+          blob = blob.slice(0, blob.size, expectedMime);
+        }
+        state.preview.embed = true;
+        state.preview.type = 'audio';
+        state.preview.url = URL.createObjectURL(blob);
+      } else if (VIDEO_EXTENSIONS.has(extension)) {
+        const expectedMime = VIDEO_MIME_TYPES[extension] || '';
+        if (
+          expectedMime &&
+          (!blob.type || blob.type === 'application/octet-stream' || blob.type !== expectedMime)
+        ) {
+          blob = blob.slice(0, blob.size, expectedMime);
+        }
+        state.preview.embed = true;
+        state.preview.type = 'video';
         state.preview.url = URL.createObjectURL(blob);
       } else {
         state.preview.embed = true;

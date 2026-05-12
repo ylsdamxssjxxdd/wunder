@@ -328,6 +328,36 @@ const renderPreview = async (payload) => {
   clearPreview(t("multimodalDebug.preview.unsupported"));
 };
 
+const syncImageParamsFromModel = () => {
+  const modelName = String(elements.multimodalDebugImageModel?.value || "").trim();
+  const config = modelName ? state.llm.configs?.[modelName] : null;
+  // Sync steps: use model config value, or default to 30 if not set
+  const steps = config?.image_num_inference_steps ?? 30;
+  if (elements.multimodalDebugImageSteps) {
+    elements.multimodalDebugImageSteps.value = steps;
+  }
+  // Sync guidance scale
+  const guidance = config?.image_guidance_scale ?? "";
+  if (elements.multimodalDebugImageGuidance) {
+    elements.multimodalDebugImageGuidance.value = guidance;
+  }
+  // Sync negative prompt
+  const negativePrompt = config?.image_negative_prompt ?? "";
+  if (elements.multimodalDebugImageNegativePrompt) {
+    elements.multimodalDebugImageNegativePrompt.value = negativePrompt;
+  }
+  // Sync size
+  const size = config?.image_size ?? "";
+  if (elements.multimodalDebugImageSize) {
+    elements.multimodalDebugImageSize.value = size;
+  }
+  // Sync output format
+  const format = config?.image_output_format ?? "";
+  if (elements.multimodalDebugImageFormat) {
+    elements.multimodalDebugImageFormat.value = format;
+  }
+};
+
 const renderModelOptions = (select, type, defaultName) => {
   if (!select) {
     return;
@@ -618,6 +648,10 @@ export const initMultimodalDebugPanel = () => {
   bindButton(elements.multimodalDebugVideoRun, handleVideoRun);
   bindButton(elements.multimodalDebugClearBtn, async () => handleClear());
   bindButton(elements.multimodalDebugCopyResultBtn, handleCopyResult);
+  // Sync image params when model selection changes
+  if (elements.multimodalDebugImageModel) {
+    elements.multimodalDebugImageModel.addEventListener("change", syncImageParamsFromModel);
+  }
   window.addEventListener("wunder:llm-updated", () => {
     renderAllModelOptions();
   });
@@ -628,5 +662,7 @@ export const initMultimodalDebugPanel = () => {
 export const loadMultimodalDebugPanel = async () => {
   await ensureLlmConfigLoaded();
   renderAllModelOptions();
+  // Sync image params from default/selected model after loading
+  syncImageParamsFromModel();
   state.multimodalDebug.loaded = true;
 };

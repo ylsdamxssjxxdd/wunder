@@ -5,7 +5,7 @@ import {
   updateDefaultConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20260512-01";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260113-01";
 import { notify } from "./notify.js";
@@ -15,7 +15,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260215-01";
+} from "./i18n.js?v=20260512-01";
 import { getWunderBase } from "./api.js";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
@@ -48,6 +48,17 @@ const corsSettings = {
   allowMethods: [],
   allowHeaders: [],
   allowCredentials: null,
+};
+const onlyOfficeSettings = {
+  enabled: false,
+  documentServerUrl: "",
+  apiUrl: "",
+  publicBaseUrl: "",
+  jwtSecret: "",
+  jwtHeader: "Authorization",
+  tokenTtlS: 3600,
+  requestTimeoutS: 60,
+  maxDownloadBytes: 209715200,
 };
 let adminDefaultsLoaded = false;
 let adminDefaultsLoading = null;
@@ -270,6 +281,42 @@ const applyCorsSettings = (options = {}) => {
   }
 };
 
+const applyOnlyOfficeSettings = (options = {}) => {
+  if (elements.settingsOnlyOfficeEnabled) {
+    elements.settingsOnlyOfficeEnabled.checked = options.enabled === true;
+  }
+  if (elements.settingsOnlyOfficeDocumentServerUrl) {
+    elements.settingsOnlyOfficeDocumentServerUrl.value = options.documentServerUrl || "";
+  }
+  if (elements.settingsOnlyOfficeApiUrl) {
+    elements.settingsOnlyOfficeApiUrl.value = options.apiUrl || "";
+  }
+  if (elements.settingsOnlyOfficePublicBaseUrl) {
+    elements.settingsOnlyOfficePublicBaseUrl.value = options.publicBaseUrl || "";
+  }
+  if (elements.settingsOnlyOfficeJwtSecret) {
+    elements.settingsOnlyOfficeJwtSecret.value = options.jwtSecret || "";
+  }
+  if (elements.settingsOnlyOfficeJwtHeader) {
+    elements.settingsOnlyOfficeJwtHeader.value = options.jwtHeader || "Authorization";
+  }
+  if (elements.settingsOnlyOfficeTokenTtl) {
+    elements.settingsOnlyOfficeTokenTtl.value = Number.isFinite(options.tokenTtlS)
+      ? String(options.tokenTtlS)
+      : "";
+  }
+  if (elements.settingsOnlyOfficeRequestTimeout) {
+    elements.settingsOnlyOfficeRequestTimeout.value = Number.isFinite(options.requestTimeoutS)
+      ? String(options.requestTimeoutS)
+      : "";
+  }
+  if (elements.settingsOnlyOfficeMaxDownloadBytes) {
+    elements.settingsOnlyOfficeMaxDownloadBytes.value = Number.isFinite(options.maxDownloadBytes)
+      ? String(options.maxDownloadBytes)
+      : "";
+  }
+};
+
 const resolveMaxActiveSessions = () => {
   const raw = String(elements.settingsMaxActiveSessions?.value || "").trim();
   if (!raw && !Number.isFinite(serverSettings.maxActiveSessions)) {
@@ -397,6 +444,31 @@ const applySystemSettings = (payload = {}) => {
   corsSettings.allowCredentials =
     typeof cors.allow_credentials === "boolean" ? cors.allow_credentials : false;
   applyCorsSettings(corsSettings);
+
+  const onlyoffice = payload.onlyoffice || {};
+  onlyOfficeSettings.enabled = onlyoffice.enabled === true;
+  onlyOfficeSettings.documentServerUrl =
+    typeof onlyoffice.document_server_url === "string" ? onlyoffice.document_server_url.trim() : "";
+  onlyOfficeSettings.apiUrl =
+    typeof onlyoffice.api_url === "string" ? onlyoffice.api_url.trim() : "";
+  onlyOfficeSettings.publicBaseUrl =
+    typeof onlyoffice.public_base_url === "string" ? onlyoffice.public_base_url.trim() : "";
+  onlyOfficeSettings.jwtSecret =
+    typeof onlyoffice.jwt_secret === "string" ? onlyoffice.jwt_secret.trim() : "";
+  onlyOfficeSettings.jwtHeader =
+    typeof onlyoffice.jwt_header === "string" && onlyoffice.jwt_header.trim()
+      ? onlyoffice.jwt_header.trim()
+      : "Authorization";
+  onlyOfficeSettings.tokenTtlS = Number.isFinite(onlyoffice.token_ttl_s)
+    ? onlyoffice.token_ttl_s
+    : 3600;
+  onlyOfficeSettings.requestTimeoutS = Number.isFinite(onlyoffice.request_timeout_s)
+    ? onlyoffice.request_timeout_s
+    : 60;
+  onlyOfficeSettings.maxDownloadBytes = Number.isFinite(onlyoffice.max_download_bytes)
+    ? onlyoffice.max_download_bytes
+    : 209715200;
+  applyOnlyOfficeSettings(onlyOfficeSettings);
 };
 
 const loadSystemSettings = async (options = {}) => {
@@ -607,6 +679,76 @@ const buildSystemUpdatePayload = () => {
     }
     if (Object.keys(cors).length) {
       payload.cors = cors;
+    }
+  }
+
+  if (
+    elements.settingsOnlyOfficeEnabled ||
+    elements.settingsOnlyOfficeDocumentServerUrl ||
+    elements.settingsOnlyOfficeApiUrl ||
+    elements.settingsOnlyOfficePublicBaseUrl ||
+    elements.settingsOnlyOfficeJwtSecret ||
+    elements.settingsOnlyOfficeJwtHeader ||
+    elements.settingsOnlyOfficeTokenTtl ||
+    elements.settingsOnlyOfficeRequestTimeout ||
+    elements.settingsOnlyOfficeMaxDownloadBytes
+  ) {
+    const onlyoffice = {};
+    if (elements.settingsOnlyOfficeEnabled) {
+      onlyoffice.enabled = Boolean(elements.settingsOnlyOfficeEnabled.checked);
+    }
+    if (elements.settingsOnlyOfficeDocumentServerUrl) {
+      onlyoffice.document_server_url = String(
+        elements.settingsOnlyOfficeDocumentServerUrl.value || ""
+      ).trim();
+    }
+    if (elements.settingsOnlyOfficeApiUrl) {
+      onlyoffice.api_url = String(elements.settingsOnlyOfficeApiUrl.value || "").trim();
+    }
+    if (elements.settingsOnlyOfficePublicBaseUrl) {
+      onlyoffice.public_base_url = String(
+        elements.settingsOnlyOfficePublicBaseUrl.value || ""
+      ).trim();
+    }
+    if (elements.settingsOnlyOfficeJwtSecret) {
+      onlyoffice.jwt_secret = String(elements.settingsOnlyOfficeJwtSecret.value || "").trim();
+    }
+    if (elements.settingsOnlyOfficeJwtHeader) {
+      onlyoffice.jwt_header =
+        String(elements.settingsOnlyOfficeJwtHeader.value || "").trim() || "Authorization";
+    }
+    if (elements.settingsOnlyOfficeTokenTtl) {
+      const value = resolveOptionalNumber(
+        elements.settingsOnlyOfficeTokenTtl.value,
+        onlyOfficeSettings.tokenTtlS,
+        60
+      );
+      if (value !== null) {
+        onlyoffice.token_ttl_s = value;
+      }
+    }
+    if (elements.settingsOnlyOfficeRequestTimeout) {
+      const value = resolveOptionalNumber(
+        elements.settingsOnlyOfficeRequestTimeout.value,
+        onlyOfficeSettings.requestTimeoutS,
+        5
+      );
+      if (value !== null) {
+        onlyoffice.request_timeout_s = value;
+      }
+    }
+    if (elements.settingsOnlyOfficeMaxDownloadBytes) {
+      const value = resolveOptionalNumber(
+        elements.settingsOnlyOfficeMaxDownloadBytes.value,
+        onlyOfficeSettings.maxDownloadBytes,
+        1024
+      );
+      if (value !== null) {
+        onlyoffice.max_download_bytes = value;
+      }
+    }
+    if (Object.keys(onlyoffice).length) {
+      payload.onlyoffice = onlyoffice;
     }
   }
 

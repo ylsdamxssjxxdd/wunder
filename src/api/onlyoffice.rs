@@ -15,6 +15,8 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tokio_util::io::ReaderStream;
+use tracing::warn;
+use url::Url;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -204,14 +206,31 @@ async fn save_callback(
     if !target.exists() || !target.is_file() {
         return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
     }
-    let bytes = match download_onlyoffice_document(&office_config, download_url).await {
-        Ok(bytes) => bytes,
-        Err(_) => return Ok(Json(OnlyOfficeCallbackResponse::error(1))),
-    };
-    if bytes.len() > office_config.max_download_bytes {
+    let extension = extension_from_path(&target);
+    if !onlyoffice_service::is_editable_extension(&extension) {
         return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
     }
-    if atomic_write_bytes(&target, &bytes).is_err() {
+    let bytes = match download_onlyoffice_document(&office_config, download_url).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            warn!(
+                "OnlyOffice callback download failed for {}: {err}",
+                token.path
+            );
+            return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
+        }
+    };
+    if bytes.len() > office_config.max_download_bytes {
+        warn!(
+            "OnlyOffice callback download exceeded limit for {}: {} > {}",
+            token.path,
+            bytes.len(),
+            office_config.max_download_bytes
+        );
+        return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
+    }
+    if let Err(err) = atomic_write_bytes(&target, &bytes) {
+        warn!("OnlyOffice callback write failed for {}: {err}", token.path);
         return Ok(Json(OnlyOfficeCallbackResponse::error(1)));
     }
     state.workspace.mark_tree_dirty(&token.workspace_id);
@@ -225,7 +244,8 @@ async fn download_onlyoffice_document(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(config.request_timeout_s))
         .build()?;
-    let response = client.get(url).send().await?.error_for_status()?;
+    let download_url = resolve_onlyoffice_download_url(config, url);
+    let response = client.get(download_url).send().await?.error_for_status()?;
     let mut stream = response.bytes_stream();
     let mut output = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -236,6 +256,26 @@ async fn download_onlyoffice_document(
         output.extend_from_slice(&chunk);
     }
     Ok(output)
+}
+
+fn resolve_onlyoffice_download_url(
+    config: &onlyoffice_service::OnlyOfficeResolvedConfig,
+    url: &str,
+) -> String {
+    let trimmed = url.trim();
+    let Some(document_server_url) = config.document_server_url.as_deref() else {
+        return trimmed.to_string();
+    };
+    rewrite_url_origin(trimmed, document_server_url).unwrap_or_else(|| trimmed.to_string())
+}
+
+fn rewrite_url_origin(source: &str, target_origin: &str) -> Option<String> {
+    let mut source_url = Url::parse(source).ok()?;
+    let target_url = Url::parse(target_origin).ok()?;
+    source_url.set_scheme(target_url.scheme()).ok()?;
+    source_url.set_host(target_url.host_str()).ok()?;
+    source_url.set_port(target_url.port()).ok()?;
+    Some(source_url.to_string())
 }
 
 fn resolve_request_base_url(headers: &HeaderMap, config: &crate::config::Config) -> String {

@@ -1,0 +1,1095 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wunder 外部工作流 API 测试</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --panel-2: #f9faf7;
+      --line: #d9ded4;
+      --line-strong: #b8c1b0;
+      --text: #1f2520;
+      --muted: #65705f;
+      --accent: #2f7d5f;
+      --accent-2: #b36b23;
+      --danger: #b42318;
+      --ok: #1c7c54;
+      --warn: #9a6700;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .side {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 18px;
+      overflow: auto;
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .subtle {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+      gap: 16px;
+      padding: 16px;
+      overflow: auto;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-width: 0;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(47, 125, 95, 0.15);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 132px;
+      line-height: 1.45;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .checks {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--panel-2);
+    }
+
+    .check input {
+      width: auto;
+      margin: 0;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .actions .wide {
+      grid-column: 1 / -1;
+    }
+
+    button {
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button.warn {
+      border-color: var(--accent-2);
+      color: var(--accent-2);
+    }
+
+    button.danger {
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      padding: 3px 9px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .pill.ok {
+      border-color: rgba(28, 124, 84, 0.35);
+      color: var(--ok);
+    }
+
+    .pill.warn {
+      border-color: rgba(154, 103, 0, 0.35);
+      color: var(--warn);
+    }
+
+    .pill.danger {
+      border-color: rgba(180, 35, 24, 0.35);
+      color: var(--danger);
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+      min-width: 0;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr);
+      gap: 7px 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .kv code {
+      color: var(--text);
+      font-family: var(--mono);
+      overflow-wrap: anywhere;
+    }
+
+    .answer {
+      min-height: 156px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .events {
+      display: grid;
+      gap: 8px;
+      max-height: 520px;
+      overflow: auto;
+    }
+
+    .event-item {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      overflow: hidden;
+    }
+
+    .event-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .event-title span {
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      margin: 0;
+      max-height: 220px;
+      overflow: auto;
+      padding: 10px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .files {
+      display: grid;
+      gap: 8px;
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px 10px;
+      background: var(--panel-2);
+    }
+
+    .file-name {
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    .file-meta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+      overflow-wrap: anywhere;
+    }
+
+    .log {
+      max-height: 340px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #101510;
+      color: #dce7d7;
+      padding: 10px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 980px) {
+      .shell,
+      .content {
+        grid-template-columns: 1fr;
+      }
+
+      .side {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="side">
+      <div class="form-grid">
+        <div>
+          <h1>外部工作流 API 测试</h1>
+          <div class="subtle">原生 HTML + JavaScript</div>
+        </div>
+
+        <label>
+          服务地址
+          <input id="baseUrl" autocomplete="off" />
+        </label>
+
+        <div class="row">
+          <label>
+            鉴权头
+            <select id="authMode">
+              <option value="x-api-key">X-API-Key</option>
+              <option value="bearer">Bearer</option>
+              <option value="none">无</option>
+            </select>
+          </label>
+          <label>
+            超时秒数
+            <input id="timeoutS" type="number" min="1" max="3600" value="600" />
+          </label>
+        </div>
+
+        <label>
+          密钥或 Token
+          <input id="credential" type="password" autocomplete="off" />
+        </label>
+
+        <div class="row">
+          <label>
+            用户名
+            <input id="userName" autocomplete="off" />
+          </label>
+          <label>
+            用户 ID
+            <input id="userId" autocomplete="off" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label>
+            智能体名
+            <input id="agentName" autocomplete="off" />
+          </label>
+          <label>
+            智能体 ID
+            <input id="agentId" autocomplete="off" />
+          </label>
+        </div>
+
+        <label>
+          消息
+          <textarea id="message">请读取 input/ 中的文件，完成任务后把可下载结果写入 output/。</textarea>
+        </label>
+
+        <label>
+          上传文件
+          <input id="files" type="file" multiple />
+        </label>
+
+        <div class="checks">
+          <label class="check">
+            <input id="preemptActiveWorkflow" type="checkbox" />
+            覆盖旧外部 run
+          </label>
+          <label class="check">
+            <input id="clearWorkspace" type="checkbox" checked disabled />
+            清空 10 号目录
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="startStream" class="primary">流式执行</button>
+          <button id="startAsync">异步执行</button>
+          <button id="cancelRun" class="danger" disabled>取消 run</button>
+          <button id="queryRun" disabled>查询状态</button>
+          <button id="fetchEvents" disabled>拉取事件</button>
+          <button id="resetView" class="warn">重置页面</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="status-line">
+          <span id="statusPill" class="pill">idle</span>
+          <span id="eventCountPill" class="pill">events 0</span>
+          <span id="fileCountPill" class="pill">files 0</span>
+        </div>
+        <div class="subtle" id="clock"></div>
+      </header>
+
+      <section class="content">
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>运行状态</h2>
+            </div>
+            <div class="panel-body">
+              <div class="kv">
+                <span>run_id</span><code id="runId">-</code>
+                <span>session_id</span><code id="sessionId">-</code>
+                <span>status</span><code id="runStatus">-</code>
+                <span>agent_id</span><code id="currentAgentId">-</code>
+                <span>user_id</span><code id="currentUserId">-</code>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>最终回复</h2>
+            </div>
+            <div class="panel-body">
+              <div id="answer" class="answer"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>文件</h2>
+            </div>
+            <div class="panel-body">
+              <div id="filesList" class="files"></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>事件</h2>
+              <button id="clearEvents">清空</button>
+            </div>
+            <div class="panel-body">
+              <div id="events" class="events"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h2>日志</h2>
+              <button id="clearLog">清空</button>
+            </div>
+            <div class="panel-body">
+              <div id="log" class="log"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const state = {
+      controller: null,
+      runId: "",
+      sessionId: "",
+      status: "idle",
+      events: [],
+      files: [],
+      lastEventId: 0,
+    };
+
+    const fields = {
+      baseUrl: $("baseUrl"),
+      authMode: $("authMode"),
+      credential: $("credential"),
+      timeoutS: $("timeoutS"),
+      userName: $("userName"),
+      userId: $("userId"),
+      agentName: $("agentName"),
+      agentId: $("agentId"),
+      message: $("message"),
+      files: $("files"),
+      preemptActiveWorkflow: $("preemptActiveWorkflow"),
+      clearWorkspace: $("clearWorkspace"),
+    };
+
+    function init() {
+      fields.baseUrl.value = defaultBaseUrl();
+      setClock();
+      setInterval(setClock, 1000);
+      bindEvents();
+      render();
+      log("ready");
+    }
+
+    function defaultBaseUrl() {
+      if (location.protocol === "http:" || location.protocol === "https:") {
+        return location.origin;
+      }
+      return "http://127.0.0.1:8000";
+    }
+
+    function bindEvents() {
+      $("startStream").addEventListener("click", startStreamRun);
+      $("startAsync").addEventListener("click", startAsyncRun);
+      $("cancelRun").addEventListener("click", cancelRun);
+      $("queryRun").addEventListener("click", queryRun);
+      $("fetchEvents").addEventListener("click", fetchEvents);
+      $("resetView").addEventListener("click", resetView);
+      $("clearEvents").addEventListener("click", () => {
+        state.events = [];
+        state.lastEventId = 0;
+        render();
+      });
+      $("clearLog").addEventListener("click", () => {
+        $("log").textContent = "";
+      });
+    }
+
+    function setClock() {
+      $("clock").textContent = new Date().toLocaleString();
+    }
+
+    function buildRequestPayload() {
+      const request = {
+        message: fields.message.value.trim(),
+        preempt: true,
+        preempt_active_workflow: fields.preemptActiveWorkflow.checked,
+        workspace_container_id: 10,
+        clear_workspace: true,
+        timeout_s: Number(fields.timeoutS.value || 600),
+      };
+      assignIfPresent(request, "user_name", fields.userName.value);
+      assignIfPresent(request, "user_id", fields.userId.value);
+      assignIfPresent(request, "agent_name", fields.agentName.value);
+      assignIfPresent(request, "agent_id", fields.agentId.value);
+      request.metadata = {
+        source: "tests_external_workflow_api_demo",
+        page_url: location.href,
+      };
+      return request;
+    }
+
+    function assignIfPresent(target, key, value) {
+      const cleaned = String(value || "").trim();
+      if (cleaned) {
+        target[key] = cleaned;
+      }
+    }
+
+    function buildFormData() {
+      const form = new FormData();
+      form.append("request", JSON.stringify(buildRequestPayload()));
+      for (const file of fields.files.files) {
+        form.append("files", file, file.name);
+      }
+      return form;
+    }
+
+    function authHeaders(extra = {}) {
+      const headers = { ...extra };
+      const credential = fields.credential.value.trim();
+      if (!credential || fields.authMode.value === "none") {
+        return headers;
+      }
+      if (fields.authMode.value === "x-api-key") {
+        headers["X-API-Key"] = credential;
+      } else {
+        headers.Authorization = `Bearer ${credential}`;
+      }
+      return headers;
+    }
+
+    function endpoint(path) {
+      const base = fields.baseUrl.value.trim().replace(/\/+$/, "");
+      return `${base}${path}`;
+    }
+
+    async function startStreamRun() {
+      stopClientStream();
+      resetRunState();
+      state.status = "connecting";
+      state.controller = new AbortController();
+      render();
+      log("POST /wunder/external/workflows:stream");
+
+      try {
+        const response = await fetch(endpoint("/wunder/external/workflows:stream"), {
+          method: "POST",
+          headers: authHeaders({ Accept: "text/event-stream" }),
+          body: buildFormData(),
+          signal: state.controller.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(await responseText(response));
+        }
+
+        state.status = "streaming";
+        render();
+        await readSse(response.body, handleSseEvent);
+        if (state.status === "streaming") {
+          state.status = "closed";
+          render();
+        }
+      } catch (error) {
+        if (error.name === "AbortError") {
+          log("client stream aborted");
+          return;
+        }
+        state.status = "error";
+        logError(error);
+        render();
+      } finally {
+        state.controller = null;
+        render();
+      }
+    }
+
+    async function startAsyncRun() {
+      stopClientStream();
+      resetRunState();
+      state.status = "submitting";
+      render();
+      log("POST /wunder/external/workflows");
+
+      try {
+        const response = await fetch(endpoint("/wunder/external/workflows"), {
+          method: "POST",
+          headers: authHeaders(),
+          body: buildFormData(),
+        });
+        const payload = await parseJsonResponse(response);
+        applyRunPayload(payload.data || payload);
+        state.status = "running";
+        render();
+        log("async run accepted");
+      } catch (error) {
+        state.status = "error";
+        logError(error);
+        render();
+      }
+    }
+
+    async function queryRun() {
+      if (!state.runId) {
+        return;
+      }
+      try {
+        const response = await fetch(endpoint(`/wunder/external/workflows/${encodeURIComponent(state.runId)}`), {
+          headers: authHeaders(),
+        });
+        const payload = await parseJsonResponse(response);
+        applyRunPayload(payload.data || payload);
+        render();
+        log("run status updated");
+      } catch (error) {
+        logError(error);
+      }
+    }
+
+    async function fetchEvents() {
+      if (!state.runId) {
+        return;
+      }
+      try {
+        const params = new URLSearchParams({
+          after_event_id: String(state.lastEventId || 0),
+          limit: "200",
+        });
+        const response = await fetch(
+          endpoint(`/wunder/external/workflows/${encodeURIComponent(state.runId)}/events?${params}`),
+          { headers: authHeaders() },
+        );
+        const payload = await parseJsonResponse(response);
+        const rows = (payload.data && payload.data.events) || [];
+        for (const row of rows) {
+          recordEvent({
+            event: "workflow.event",
+            id: row.event_id ? String(row.event_id) : "",
+            data: row,
+          });
+        }
+        render();
+        log(`loaded ${rows.length} persisted events`);
+      } catch (error) {
+        logError(error);
+      }
+    }
+
+    async function cancelRun() {
+      if (!state.runId) {
+        stopClientStream();
+        return;
+      }
+      try {
+        const response = await fetch(endpoint(`/wunder/external/workflows/${encodeURIComponent(state.runId)}/cancel`), {
+          method: "POST",
+          headers: authHeaders(),
+        });
+        const payload = await parseJsonResponse(response);
+        applyRunPayload(payload.data || payload);
+        stopClientStream();
+        render();
+        log("cancel requested");
+      } catch (error) {
+        logError(error);
+      }
+    }
+
+    function stopClientStream() {
+      if (state.controller) {
+        state.controller.abort();
+        state.controller = null;
+        render();
+      }
+    }
+
+    async function readSse(body, onEvent) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split(/\r?\n\r?\n/);
+        buffer = parts.pop() || "";
+        for (const chunk of parts) {
+          const event = parseSseChunk(chunk);
+          if (event) {
+            onEvent(event);
+          }
+        }
+      }
+
+      buffer += decoder.decode();
+      const tail = buffer.trim();
+      if (tail) {
+        const event = parseSseChunk(tail);
+        if (event) {
+          onEvent(event);
+        }
+      }
+    }
+
+    function parseSseChunk(chunk) {
+      const event = { event: "message", id: "", data: "" };
+      const dataLines = [];
+      for (const line of chunk.split(/\r?\n/)) {
+        if (!line || line.startsWith(":")) {
+          continue;
+        }
+        const index = line.indexOf(":");
+        const field = index >= 0 ? line.slice(0, index) : line;
+        let value = index >= 0 ? line.slice(index + 1) : "";
+        if (value.startsWith(" ")) {
+          value = value.slice(1);
+        }
+        if (field === "event") {
+          event.event = value;
+        } else if (field === "id") {
+          event.id = value;
+        } else if (field === "data") {
+          dataLines.push(value);
+        }
+      }
+      event.data = dataLines.join("\n");
+      if (!event.data && !event.id) {
+        return null;
+      }
+      try {
+        event.data = JSON.parse(event.data);
+      } catch (_) {
+        // Keep non-JSON data unchanged.
+      }
+      return event;
+    }
+
+    function handleSseEvent(event) {
+      recordEvent(event);
+      const data = event.data && typeof event.data === "object" ? event.data : {};
+      if (event.event === "workflow.start") {
+        applyRunPayload(data);
+        state.status = "running";
+      } else if (event.event === "workflow.final") {
+        applyRunPayload(data);
+        state.status = data.status || "completed";
+      } else if (event.event === "workflow.error") {
+        applyRunPayload(data);
+        state.status = data.status || "error";
+      }
+      render();
+    }
+
+    function recordEvent(event) {
+      state.events.push(event);
+      const data = event.data && typeof event.data === "object" ? event.data : {};
+      const numericId = Number(event.id || data.event_id || 0);
+      if (Number.isFinite(numericId) && numericId > state.lastEventId) {
+        state.lastEventId = numericId;
+      }
+      log(`${event.event}${event.id ? ` #${event.id}` : ""}`);
+    }
+
+    function applyRunPayload(data) {
+      if (!data || typeof data !== "object") {
+        return;
+      }
+      state.runId = data.run_id || state.runId;
+      state.sessionId = data.session_id || state.sessionId;
+      state.status = data.status || state.status;
+      if (Array.isArray(data.files)) {
+        state.files = data.files;
+      }
+      $("answer").textContent = data.answer || $("answer").textContent || "";
+      $("currentAgentId").textContent = data.agent_id || $("currentAgentId").textContent || "-";
+      $("currentUserId").textContent = data.user_id || $("currentUserId").textContent || "-";
+    }
+
+    function resetRunState() {
+      state.runId = "";
+      state.sessionId = "";
+      state.status = "idle";
+      state.events = [];
+      state.files = [];
+      state.lastEventId = 0;
+      $("answer").textContent = "";
+      $("currentAgentId").textContent = "-";
+      $("currentUserId").textContent = "-";
+    }
+
+    function resetView() {
+      stopClientStream();
+      resetRunState();
+      $("log").textContent = "";
+      render();
+      log("view reset");
+    }
+
+    function render() {
+      $("runId").textContent = state.runId || "-";
+      $("sessionId").textContent = state.sessionId || "-";
+      $("runStatus").textContent = state.status || "-";
+
+      const statusPill = $("statusPill");
+      statusPill.textContent = state.status || "idle";
+      statusPill.className = `pill ${statusClass(state.status)}`;
+
+      $("eventCountPill").textContent = `events ${state.events.length}`;
+      $("fileCountPill").textContent = `files ${state.files.length}`;
+
+      $("cancelRun").disabled = !state.runId && !state.controller;
+      $("queryRun").disabled = !state.runId;
+      $("fetchEvents").disabled = !state.runId;
+      $("startStream").disabled = !!state.controller;
+
+      renderEvents();
+      renderFiles();
+    }
+
+    function statusClass(status) {
+      if (["completed", "success", "closed"].includes(status)) {
+        return "ok";
+      }
+      if (["running", "streaming", "connecting", "submitting", "cancelling", "timeout"].includes(status)) {
+        return "warn";
+      }
+      if (["error", "failed", "cancelled"].includes(status)) {
+        return "danger";
+      }
+      return "";
+    }
+
+    function renderEvents() {
+      const target = $("events");
+      target.innerHTML = "";
+      for (const event of state.events) {
+        const data = event.data && typeof event.data === "object" ? event.data : { data: event.data };
+        const type = data.type || event.event;
+        const item = document.createElement("div");
+        item.className = "event-item";
+        const title = document.createElement("div");
+        title.className = "event-title";
+        title.innerHTML = `<span>${escapeHtml(type)}</span><span>${escapeHtml(event.id || data.event_id || "")}</span>`;
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(data, null, 2);
+        item.append(title, pre);
+        target.appendChild(item);
+      }
+      target.scrollTop = target.scrollHeight;
+    }
+
+    function renderFiles() {
+      const target = $("filesList");
+      target.innerHTML = "";
+      if (!state.files.length) {
+        const empty = document.createElement("div");
+        empty.className = "subtle";
+        empty.textContent = "暂无文件";
+        target.appendChild(empty);
+        return;
+      }
+      for (const file of state.files) {
+        const row = document.createElement("div");
+        row.className = "file-row";
+        const info = document.createElement("div");
+        const name = document.createElement("div");
+        name.className = "file-name";
+        name.textContent = file.name || file.path || file.file_id;
+        const meta = document.createElement("div");
+        meta.className = "file-meta";
+        meta.textContent = `${file.path || ""} ${formatBytes(file.size)}`;
+        info.append(name, meta);
+
+        const button = document.createElement("button");
+        button.textContent = "下载";
+        button.addEventListener("click", () => downloadFile(file));
+        row.append(info, button);
+        target.appendChild(row);
+      }
+    }
+
+    async function downloadFile(file) {
+      if (!state.runId || !file.file_id) {
+        return;
+      }
+      try {
+        const response = await fetch(endpoint(`/wunder/external/workflows/${encodeURIComponent(state.runId)}/files/${encodeURIComponent(file.file_id)}`), {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          throw new Error(await responseText(response));
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name || file.file_id;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        log(`downloaded ${file.name || file.file_id}`);
+      } catch (error) {
+        logError(error);
+      }
+    }
+
+    async function parseJsonResponse(response) {
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch (_) {
+        payload = { raw: text };
+      }
+      if (!response.ok) {
+        throw new Error(JSON.stringify(payload, null, 2));
+      }
+      return payload;
+    }
+
+    async function responseText(response) {
+      const text = await response.text();
+      return text || `${response.status} ${response.statusText}`;
+    }
+
+    function log(message) {
+      const line = `[${new Date().toLocaleTimeString()}] ${message}\n`;
+      $("log").textContent += line;
+      $("log").scrollTop = $("log").scrollHeight;
+    }
+
+    function logError(error) {
+      log(error && error.message ? error.message : String(error));
+    }
+
+    function formatBytes(value) {
+      const size = Number(value || 0);
+      if (size < 1024) {
+        return `${size} B`;
+      }
+      if (size < 1024 * 1024) {
+        return `${(size / 1024).toFixed(1)} KB`;
+      }
+      return `${(size / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    init();
+  </script>
+</body>
+</html>

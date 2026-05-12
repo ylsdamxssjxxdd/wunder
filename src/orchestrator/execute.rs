@@ -150,6 +150,8 @@ const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
 ];
 const WORKSPACE_EVENT_NESTED_OBJECT_KEYS: [&str; 5] =
     ["data", "meta", "result", "output", "payload"];
+const CANCELLED_GENERATION_CONTEXT_MARKER: &str =
+    "Previous run cancelled by user before an assistant response was produced.";
 
 fn should_enable_local_full_event_logs(server_mode: &str) -> bool {
     matches!(
@@ -363,7 +365,8 @@ impl Orchestrator {
                 allowed_tool_names,
                 prepared.preview_skill,
             );
-            let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
+            let tool_call_mode =
+                self.resolve_frozen_session_tool_call_mode(&user_id, &session_id, &llm_config);
             let function_tooling = if uses_native_tool_api(tool_call_mode, &llm_config)
                 && !prepared.skip_tool_calls
             {
@@ -812,6 +815,14 @@ impl Orchestrator {
                                         0,
                                     )
                                     .await;
+                            }
+                            if err.code() == "CANCELLED" {
+                                append_cancelled_generation_context_marker(
+                                    self,
+                                    &user_id,
+                                    &session_id,
+                                    &messages,
+                                );
                             }
                             return Err(err);
                         }
@@ -2695,6 +2706,38 @@ fn build_assistant_history_snapshot(
     }
 }
 
+fn append_cancelled_generation_context_marker(
+    orchestrator: &Orchestrator,
+    user_id: &str,
+    session_id: &str,
+    messages: &[Value],
+) {
+    if !should_append_cancelled_generation_context_marker(messages) {
+        return;
+    }
+    let marker_message = json!({
+        "role": "assistant",
+        "content": CANCELLED_GENERATION_CONTEXT_MARKER,
+    });
+    orchestrator.append_model_context_entry(user_id, session_id, &marker_message);
+    orchestrator.append_internal_model_context_chat(
+        user_id,
+        session_id,
+        &marker_message,
+        "cancelled_generation_marker",
+    );
+}
+
+fn should_append_cancelled_generation_context_marker(messages: &[Value]) -> bool {
+    matches!(
+        messages
+            .last()
+            .and_then(|message| message.get("role"))
+            .and_then(Value::as_str),
+        Some("user" | "tool")
+    )
+}
+
 fn build_model_context_tool_calls_snapshot(
     tool_calls_payload: Option<&Value>,
     allowed_tool_names: &HashSet<String>,
@@ -2784,6 +2827,61 @@ fn replay_tool_call_name(payload: &Value) -> Option<&str> {
 fn is_terminal_tool_name(tool_name: &str) -> bool {
     let canonical = resolve_tool_name(tool_name.trim());
     canonical == resolve_tool_name("final_response") || canonical == "a2ui"
+}
+
+fn tool_call_mode_key(mode: ToolCallMode) -> &'static str {
+    match mode {
+        ToolCallMode::ToolCall => "tool_call",
+        ToolCallMode::FunctionCall => "function_call",
+        ToolCallMode::FreeformCall => "freeform_call",
+    }
+}
+
+impl Orchestrator {
+    pub(super) fn resolve_frozen_session_tool_call_mode(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        llm_config: &LlmModelConfig,
+    ) -> ToolCallMode {
+        if let Some(stored) = self
+            .workspace
+            .load_session_frozen_tool_call_mode(user_id, session_id)
+        {
+            return crate::llm::normalize_tool_call_mode(Some(stored.as_str()));
+        }
+        let mode = self
+            .workspace
+            .load_session_system_prompt(user_id, session_id, None)
+            .ok()
+            .flatten()
+            .and_then(|prompt| infer_tool_call_mode_from_frozen_system_prompt(&prompt))
+            .unwrap_or_else(|| crate::llm::resolve_tool_call_mode(llm_config));
+        self.workspace.save_session_frozen_tool_call_mode(
+            user_id,
+            session_id,
+            tool_call_mode_key(mode),
+        );
+        mode
+    }
+}
+
+fn infer_tool_call_mode_from_frozen_system_prompt(prompt: &str) -> Option<ToolCallMode> {
+    let cleaned = prompt.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let lowered = cleaned.to_ascii_lowercase();
+    let has_prompt_tool_protocol = cleaned.contains("[工具协议]")
+        || lowered.contains("[tools protocol]")
+        || (lowered.contains("<tools>") && lowered.contains("<tool_call>"));
+    if !has_prompt_tool_protocol {
+        return Some(ToolCallMode::FunctionCall);
+    }
+    if lowered.contains("freeform") || cleaned.contains("apply_patch 专用规则") {
+        return Some(ToolCallMode::FreeformCall);
+    }
+    Some(ToolCallMode::ToolCall)
 }
 
 fn uses_native_tool_api(tool_call_mode: ToolCallMode, llm_config: &LlmModelConfig) -> bool {
@@ -4105,6 +4203,30 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_generation_marker_applies_after_prompt_tail() {
+        assert!(should_append_cancelled_generation_context_marker(&[
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "{}",
+            })
+        ]));
+        assert!(should_append_cancelled_generation_context_marker(&[
+            json!({
+                "role": "user",
+                "content": "question",
+            })
+        ]));
+        assert!(!should_append_cancelled_generation_context_marker(&[
+            json!({
+                "role": "assistant",
+                "content": "partial",
+            })
+        ]));
+        assert!(!should_append_cancelled_generation_context_marker(&[]));
+    }
+
+    #[test]
     fn resolve_db_query_tool_budget_uses_extended_only_for_full_scan_intent() {
         assert_eq!(
             resolve_db_query_tool_budget("请全量导出所有记录"),
@@ -4289,5 +4411,39 @@ mod tests {
             ToolCallMode::FreeformCall,
             &freeform_chat_config,
         ));
+    }
+
+    #[test]
+    fn tool_call_mode_key_uses_config_values() {
+        assert_eq!(
+            tool_call_mode_key(ToolCallMode::FunctionCall),
+            "function_call"
+        );
+        assert_eq!(tool_call_mode_key(ToolCallMode::ToolCall), "tool_call");
+        assert_eq!(
+            tool_call_mode_key(ToolCallMode::FreeformCall),
+            "freeform_call"
+        );
+    }
+
+    #[test]
+    fn infers_tool_call_mode_from_frozen_system_prompt() {
+        assert_eq!(
+            infer_tool_call_mode_from_frozen_system_prompt(
+                "stable system\n\n[工具协议]\n<tools></tools>\n<tool_call>{}</tool_call>"
+            ),
+            Some(ToolCallMode::ToolCall)
+        );
+        assert_eq!(
+            infer_tool_call_mode_from_frozen_system_prompt(
+                "stable system\n\n[Tools Protocol]\nfreeform\n<tools></tools>\n<tool_call></tool_call>"
+            ),
+            Some(ToolCallMode::FreeformCall)
+        );
+        assert_eq!(
+            infer_tool_call_mode_from_frozen_system_prompt("stable system without tools"),
+            Some(ToolCallMode::FunctionCall)
+        );
+        assert_eq!(infer_tool_call_mode_from_frozen_system_prompt(" "), None);
     }
 }

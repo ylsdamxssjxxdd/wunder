@@ -159,6 +159,7 @@ fn build_context_cache_probe(
     let tools_value = tools
         .map(|items| Value::Array(items.to_vec()))
         .unwrap_or_else(|| Value::Array(vec![]));
+    let has_native_tools = tools.is_some_and(|items| !items.is_empty());
     let mut probe = json!({
         "message_count": message_count,
         "message_hash": stable_json_hash(&message_value),
@@ -173,7 +174,13 @@ fn build_context_cache_probe(
         "tail": tail,
         "tools_count": tools.map_or(0, <[Value]>::len),
         "tools_hash": stable_json_hash(&tools_value),
+        "tool_transport": if has_native_tools { "native_tools" } else { "prompt_protocol" },
     });
+    if has_native_tools {
+        probe["raw_prompt_prefix_stability_risk"] = json!(
+            "native tools may be injected by the model server chat template outside the message prefix"
+        );
+    }
     if let Some(system_message) = messages.first().filter(|message| message.role == "system") {
         if let Ok(value) = serde_json::to_value(system_message) {
             probe["system_message_hash"] = Value::String(stable_json_hash(&value));
@@ -1189,6 +1196,28 @@ mod tests {
         assert_ne!(
             previous_probe.get("message_hash"),
             appended_probe.get("message_hash")
+        );
+    }
+
+    #[test]
+    fn context_cache_probe_marks_native_tools_prefix_risk() {
+        let messages = vec![test_message("system", "stable system")];
+        let tools = vec![json!({
+            "type": "function",
+            "function": {
+                "name": "demo",
+                "description": "Demo tool",
+                "parameters": { "type": "object" },
+            }
+        })];
+        let probe = build_context_cache_probe(&messages, Some(&tools), None);
+
+        assert_eq!(probe.get("tool_transport"), Some(&json!("native_tools")));
+        assert_eq!(
+            probe.get("raw_prompt_prefix_stability_risk"),
+            Some(&json!(
+                "native tools may be injected by the model server chat template outside the message prefix"
+            ))
         );
     }
 }

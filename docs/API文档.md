@@ -20,6 +20,7 @@
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
+- 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
 - 配置加载：运行时只读取单一配置文件 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会直接写回当前生效的配置文件，不再额外维护独立覆盖层。
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
@@ -42,7 +43,7 @@
 - 渠道附件入站（2026-03-18）：QQBot URL 附件会在入站阶段下载到会话作用域工作区；Feishu/XMPP 保持既有落盘能力。
 - 渠道链接改写（2026-03-18）：`channel_outbox` 不仅会改写正文中的 `/workspaces/...`，也会改写 `attachments[].url` 中的工作区路径为 `/wunder/temp_dir/download`。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
-- OnlyOffice 在线编辑：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 `doc/docx/xls/xlsx/ppt/pptx` 可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置并保存回写；`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址。
+- OnlyOffice 在线编辑/查看：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置；可编辑格式保存后回写，查看类格式只读打开。`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的主线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
@@ -1410,6 +1411,15 @@
   - `cors.allow_methods`：允许方法列表
   - `cors.allow_headers`：允许请求头列表
   - `cors.allow_credentials`：是否允许携带凭证
+  - `onlyoffice.enabled`：是否启用用户侧工作区 Office 在线编辑
+  - `onlyoffice.document_server_url`：OnlyOffice Document Server 地址
+  - `onlyoffice.api_url`：OnlyOffice Docs API 脚本地址（可选，留空时由 `document_server_url` 拼接）
+  - `onlyoffice.public_base_url`：OnlyOffice Document Server 可访问到的 Wunder 外部地址
+  - `onlyoffice.jwt_secret`：OnlyOffice JWT 密钥
+  - `onlyoffice.jwt_header`：OnlyOffice JWT 请求头（默认 `Authorization`）
+  - `onlyoffice.token_ttl_s`：文件拉取/保存回调短期令牌有效期
+  - `onlyoffice.request_timeout_s`：Wunder 下载 OnlyOffice 保存结果的超时时间
+  - `onlyoffice.max_download_bytes`：保存回写文件最大字节数
 - `POST` 入参：以上字段均可选，支持分组更新
 - `POST` 返回：同 `GET`
 
@@ -1887,29 +1897,29 @@
 ### 4.1.23.1 `/wunder/workspace/onlyoffice/config`
 
 - 方法：`GET`
-- 用途：为用户侧工作区中的 Office 文档生成 OnlyOffice Docs API 编辑器配置。
+- 用途：为用户侧工作区中的 OnlyOffice 支持文档生成 OnlyOffice Docs API 编辑器配置。
 - 鉴权：用户端 Bearer Token；管理员/API Key 调试仍可按工作区接口规则显式传 `user_id`。
 - 入参（Query）：
   - `user_id`：用户唯一标识（可选，通常由 Token 解析）
   - `agent_id`：智能体应用 id（可选）
   - `container_id`：工作区容器编号（可选，优先于 `agent_id`）
-  - `path`：Office 文件相对路径
+  - `path`：文件相对路径
   - `lang`：编辑器语言（可选，当前归一到 `zh-CN` 或 `en`）
 - 返回（JSON）：
   - `enabled`：固定为 true
   - `api_url`：OnlyOffice `api.js` 地址
-  - `config`：传给 `DocsAPI.DocEditor` 的编辑器配置，包含短期签名的文件拉取地址、保存回调地址和 `token`
+  - `config`：传给 `DocsAPI.DocEditor` 的编辑器配置，包含短期签名的文件拉取地址、`token`，以及可编辑格式的保存回调地址
   - `path`：规范化后的文件路径
   - `updated_time`：文件更新时间
-- 约束：仅支持 `doc/docx/xls/xlsx/ppt/pptx`；必须配置 `onlyoffice.enabled=true`、`onlyoffice.document_server_url` 或 `onlyoffice.api_url`、`onlyoffice.public_base_url` 以及 `onlyoffice.jwt_secret`。`public_base_url` 必须能被 OnlyOffice Document Server 访问。
+- 约束：支持 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式（如 `doc/docx/xls/xlsx/ppt/pptx/wps/wpt/et/ett/dps/dpt/pdf/txt/md/py/js/json/odt/ods/odp/csv/rtf/vsdx` 等）；必须配置 `onlyoffice.enabled=true`、`onlyoffice.document_server_url` 或 `onlyoffice.api_url`、`onlyoffice.public_base_url` 以及 `onlyoffice.jwt_secret`。纯文本/代码类扩展以 `txt` 类型交给 OnlyOffice 打开并回写原路径；XPS/DjVu/Visio 图等查看类格式以只读模式打开。`public_base_url` 必须能被 OnlyOffice Document Server 访问。
 
 ### 4.1.23.2 `/wunder/workspace/onlyoffice/file`
 
 - 方法：`GET`
-- 用途：OnlyOffice Document Server 通过短期令牌拉取待编辑文件。
+- 用途：OnlyOffice Document Server 通过短期令牌拉取待编辑或查看文件。
 - 入参（Query）：
   - `token`：由 `/wunder/workspace/onlyoffice/config` 生成的短期访问令牌
-- 返回：Office 文件流，`Content-Disposition` 为 inline。
+- 返回：文件流，`Content-Disposition` 为 inline。
 - 说明：该接口不使用用户 Bearer Token，访问权限完全由短期签名令牌约束。
 
 ### 4.1.23.3 `/wunder/workspace/onlyoffice/callback`
@@ -1921,7 +1931,7 @@
   - Body：OnlyOffice Document Server 回调 JSON，其中保存状态需包含 `status` 与 `url`
 - 返回（JSON）：
   - `error`：`0` 表示成功；非 0 表示保存失败
-- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，回写成功后会标记工作区目录树刷新。
+- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，回写成功后会标记工作区目录树刷新；回调下载地址会按 `onlyoffice.document_server_url` 重写到 Wunder 可访问的 OnlyOffice 源站，避免 Docker 内部地址导致保存失败；只读查看格式不会执行回写。
 
 ### 4.1.24.0 `/`
 

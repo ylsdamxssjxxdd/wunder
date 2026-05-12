@@ -6801,7 +6801,18 @@ button.messenger-chat-header-model {
 }
 
 .workspace-dialog--onlyoffice.el-dialog {
-  width: min(1180px, calc(100vw - 24px)) !important;
+  width: calc(100vw - 16px) !important;
+  max-height: calc(var(--app-viewport-height, 100vh) - 16px);
+  margin: 8px auto !important;
+}
+
+.workspace-dialog--onlyoffice .el-dialog__header {
+  padding: 8px 10px;
+}
+
+.workspace-dialog--onlyoffice .el-dialog__body {
+  padding: 0 10px 10px;
+  gap: 6px;
 }
 
 .workspace-onlyoffice-head {
@@ -6809,19 +6820,61 @@ button.messenger-chat-header-model {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
+  min-width: 0;
+  padding-right: 2px;
+}
+
+.workspace-onlyoffice-path {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.workspace-onlyoffice-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-onlyoffice-icon-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #f7f7f7;
+  color: #4b5563;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.workspace-onlyoffice-icon-btn:not(:disabled):hover,
+.workspace-onlyoffice-icon-btn:not(:disabled):focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  outline: none;
+}
+
+.workspace-onlyoffice-icon-btn:disabled {
+  opacity: 0.65;
+  cursor: progress;
 }
 
 .workspace-onlyoffice-frame {
   flex: 1 1 auto;
-  min-height: 70vh;
-  height: calc(var(--app-viewport-height, 100vh) - 180px);
+  min-height: 0;
+  height: calc(var(--app-viewport-height, 100vh) - 68px);
   overflow: hidden;
   position: relative;
   border: 1px solid #cfd8e3;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #ffffff;
+  cursor: default;
 }
 
 .workspace-onlyoffice-host,
@@ -6829,6 +6882,7 @@ button.messenger-chat-header-model {
 .workspace-onlyoffice-editor iframe {
   width: 100%;
   height: 100%;
+  cursor: auto;
 }
 
 .workspace-onlyoffice-frame .workspace-empty {
@@ -6848,6 +6902,18 @@ button.messenger-chat-header-model {
 
 .workspace-dialog--file-preview .workspace-preview iframe {
   min-height: 280px;
+  height: 100%;
+}
+
+.workspace-dialog--file-preview .workspace-preview.is-audio {
+  min-height: 120px;
+}
+
+.workspace-dialog--file-preview .workspace-preview.is-video {
+  min-height: 280px;
+}
+
+.workspace-dialog--file-preview .workspace-preview-video {
   height: 100%;
 }
 

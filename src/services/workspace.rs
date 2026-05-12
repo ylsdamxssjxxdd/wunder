@@ -641,6 +641,27 @@ impl WorkspaceManager {
         format!("session_frozen_tool_overrides:{safe_user}:{safe_session}")
     }
 
+    fn session_frozen_tool_call_mode_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_frozen_tool_call_mode:{safe_user}:{safe_session}")
+    }
+
     fn maybe_schedule_retention_cleanup(&self) {
         if self.retention_days <= 0 {
             return;
@@ -995,6 +1016,21 @@ impl WorkspaceManager {
         .unwrap_or(None)
     }
 
+    pub async fn load_session_frozen_tool_call_mode_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.load_session_frozen_tool_call_mode(&user_id, &session_id)
+        })
+        .await
+        .unwrap_or(None)
+    }
+
     pub async fn load_session_context_tokens_async(
         self: &Arc<Self>,
         user_id: &str,
@@ -1274,6 +1310,36 @@ impl WorkspaceManager {
         let key = self.session_frozen_tool_overrides_key(user_id, session_id);
         let serialized = serde_json::to_string(tool_overrides).unwrap_or_else(|_| "[]".to_string());
         let _ = self.storage.set_meta(&key, &serialized);
+    }
+
+    pub fn load_session_frozen_tool_call_mode(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<String> {
+        let key = self.session_frozen_tool_call_mode_key(user_id, session_id);
+        self.storage.get_meta(&key).ok().flatten().and_then(|raw| {
+            let cleaned = raw.trim();
+            if matches!(cleaned, "tool_call" | "function_call" | "freeform_call") {
+                Some(cleaned.to_string())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn save_session_frozen_tool_call_mode(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        tool_call_mode: &str,
+    ) {
+        let cleaned = tool_call_mode.trim();
+        if !matches!(cleaned, "tool_call" | "function_call" | "freeform_call") {
+            return;
+        }
+        let key = self.session_frozen_tool_call_mode_key(user_id, session_id);
+        let _ = self.storage.set_meta(&key, cleaned);
     }
 
     pub fn load_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {

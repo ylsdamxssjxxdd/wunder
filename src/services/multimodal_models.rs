@@ -808,11 +808,12 @@ fn build_image_payload(
         {
             map.insert("negative_prompt".to_string(), json!(negative_prompt));
         }
-        if let Some(num_inference_steps) = request
+        // Default to 30 inference steps for image generation if not specified
+        let num_inference_steps = request
             .num_inference_steps
             .or(config.image_num_inference_steps)
-            .filter(|value| *value > 0)
-        {
+            .unwrap_or(30);
+        if num_inference_steps > 0 {
             map.insert(
                 "num_inference_steps".to_string(),
                 json!(num_inference_steps),

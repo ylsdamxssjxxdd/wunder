@@ -228,23 +228,13 @@
         <button
           class="messenger-world-tool-btn"
           type="button"
-          :title="t('chat.attachments.upload')"
-          :aria-label="t('chat.attachments.upload')"
-          :disabled="attachmentBusy > 0 || voiceRecording || stopButtonActive"
-          @click="triggerUpload"
-        >
-          <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
-        </button>
-        <button
-          class="messenger-world-tool-btn"
-          type="button"
           :class="{
             'messenger-world-tool-btn--recording': voiceRecording,
             'messenger-world-tool-btn--transcribing': voiceTranscribing
           }"
           :title="voiceButtonTitle"
           :aria-label="voiceButtonTitle"
-          :disabled="attachmentBusy > 0 || stopButtonActive || voiceTranscribing"
+          :disabled="composerBusy > 0 || stopButtonActive || voiceTranscribing"
           @click="handleToggleVoiceRecord"
         >
           <i
@@ -272,7 +262,7 @@
             :title="t('chat.attachments.screenshot')"
             :aria-label="t('chat.attachments.screenshot')"
             :aria-expanded="screenshotMenuVisible"
-            :disabled="attachmentBusy > 0 || voiceRecording || stopButtonActive"
+            :disabled="composerBusy > 0 || voiceRecording || stopButtonActive"
             @click.stop.prevent="toggleScreenshotMenu"
           >
             <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
@@ -422,16 +412,6 @@
         </div>
       </template>
       <template v-else>
-        <button
-          class="input-icon-btn upload-btn"
-          type="button"
-          :title="t('chat.attachments.upload')"
-          :aria-label="t('chat.attachments.upload')"
-          :disabled="attachmentBusy > 0 || stopButtonActive"
-          @click="triggerUpload"
-        >
-          <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
-        </button>
         <div
           v-if="desktopScreenshotSupported"
           ref="screenshotMenuAnchorRef"
@@ -444,7 +424,7 @@
             :aria-label="t('chat.attachments.screenshot')"
             :aria-expanded="screenshotMenuVisible"
             :class="{ active: screenshotMenuVisible }"
-            :disabled="attachmentBusy > 0 || stopButtonActive"
+            :disabled="composerBusy > 0 || stopButtonActive"
             @click.stop.prevent="toggleScreenshotMenu"
           >
             <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
@@ -469,15 +449,6 @@
         </button>
       </template>
     </div>
-
-    <input
-      ref="uploadInputRef"
-      type="file"
-      hidden
-      multiple
-      :accept="uploadAccept"
-      @change="handleUploadInput"
-    />
 
     <Teleport to="body">
       <div
@@ -510,7 +481,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus';
 import ChatGoalComposer from '@/components/chat/ChatGoalComposer.vue';
 
-import { convertChatAttachment, processChatMediaAttachment } from '@/api/chat';
+import { processChatMediaAttachment } from '@/api/chat';
+import { uploadWunderWorkspace } from '@/api/workspace';
 import {
   clearComposerDraftState,
   readComposerDraftState,
@@ -520,6 +492,8 @@ import {
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
+import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
 import {
@@ -649,6 +623,14 @@ const props = defineProps({
   presetQuestions: {
     type: Array,
     default: () => []
+  },
+  workspaceAgentId: {
+    type: String,
+    default: ''
+  },
+  workspaceContainerId: {
+    type: [Number, String],
+    default: 1
   }
 });
 
@@ -670,9 +652,9 @@ const normalizeOptionalNumber = (value: unknown): number | null => {
 
 const inputText = ref('');
 const inputRef = ref(null);
-const uploadInputRef = ref(null);
 const attachments = ref<ComposerDraftAttachment[]>([]);
 const attachmentBusy = ref(0);
+const workspaceDropBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
 type WorldCommandPanelType = 'preset' | 'system';
@@ -698,7 +680,6 @@ let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
 const chatStore = useChatStore();
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp']);
 const IMAGE_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -706,8 +687,6 @@ const IMAGE_MIME_TYPES = new Set([
   'image/bmp',
   'image/webp'
 ]);
-const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'opus', 'aac', 'flac', 'm4a', 'webm']);
-const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'mkv', 'avi', 'webm', 'mpeg', 'mpg', 'm4v']);
 
 type AttachmentPayload = {
   type: string;
@@ -765,6 +744,30 @@ type ScreenshotCaptureOption = {
   label: string;
 };
 
+type DirectoryReaderLike = {
+  readEntries: (
+    successCallback: (entries: FileSystemEntryLike[]) => void,
+    errorCallback?: (reason: DOMException) => void
+  ) => void;
+};
+
+type FileSystemEntryLike = {
+  isFile?: boolean;
+  isDirectory?: boolean;
+  name?: string;
+  file?: (successCallback: (file: File) => void, errorCallback?: (reason: DOMException) => void) => void;
+  createReader?: () => DirectoryReaderLike;
+};
+
+type DataTransferItemLike = DataTransferItem & {
+  webkitGetAsEntry?: () => FileSystemEntryLike | null;
+};
+
+type WorkspaceDroppedFile = {
+  file: File;
+  relativePath: string;
+};
+
 type ApprovalModeOption = {
   value: string;
   label: string;
@@ -777,40 +780,10 @@ type SlashCommandDefinition = {
   aliases: string[];
   descriptionKey: string;
 };
-const DOC_EXTENSIONS = [
-  '.txt',
-  '.md',
-  '.markdown',
-  '.html',
-  '.htm',
-  '.py',
-  '.c',
-  '.cpp',
-  '.cc',
-  '.h',
-  '.hpp',
-  '.json',
-  '.js',
-  '.ts',
-  '.css',
-  '.ini',
-  '.cfg',
-  '.log',
-  '.doc',
-  '.docx',
-  '.odt',
-  '.pptx',
-  '.odp',
-  '.xlsx',
-  '.ods',
-  '.wps',
-  '.et',
-  '.dps'
-];
-const uploadAccept = ['image/*', 'audio/*', 'video/*', ...DOC_EXTENSIONS].join(',');
 const INPUT_MAX_HEIGHT = 180;
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
 const WORLD_COMMAND_PANEL_CLOSE_DELAY_MS = 160;
+const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const resolveDraftKey = (): string => String(props.draftKey || '').trim();
 const clampWorldComposerHeight = (value: unknown): number => {
   const parsed = Number(value);
@@ -895,7 +868,11 @@ const composerContextUsageSource = computed(() =>
   )
 );
 
+const composerBusy = computed(() => attachmentBusy.value + workspaceDropBusy.value);
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
+const chatBusyMessage = computed(() =>
+  workspaceDropBusy.value > 0 ? t('chat.workspaceDrop.uploading') : t('chat.attachments.busy')
+);
 const composerModelName = computed(() => String(props.modelName || '').trim());
 const composerModelJumpHint = computed(() => String(props.modelJumpHint || '').trim());
 const composerModelMissing = computed(() => {
@@ -1272,14 +1249,13 @@ const stopButtonActive = computed(() => Boolean(props.loading || props.goalLocke
 const canSendOrStop = computed(() => {
 
   if (stopButtonActive.value) return true;
-  if (attachmentBusy.value > 0) return false;
+  if (composerBusy.value > 0) return false;
   return (
     Boolean(inputText.value.trim()) ||
     attachments.value.length > 0 ||
     hasInquirySelection.value
   );
 });
-
 const slashCommandDefinitions: SlashCommandDefinition[] = [
   { command: '/new', aliases: ['/reset'], descriptionKey: 'chat.commandMenu.new' },
   { command: '/stop', aliases: ['/cancel'], descriptionKey: 'chat.commandMenu.stop' },
@@ -1352,6 +1328,22 @@ const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slic
 const resolveUploadError = (error, fallback) =>
   error?.response?.data?.detail || error?.message || fallback;
 
+const formatBytes = (value: unknown): string => {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = bytes;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const digits = size >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+};
+
 const resolveFileExtension = (filename) => {
   const parts = String(filename || '').trim().split('.');
   if (parts.length < 2) return '';
@@ -1394,26 +1386,6 @@ const resolveSupportedImageMimeType = (file): string => {
   }
   const inferred = inferImageMimeTypeFromExtension(file?.name);
   return IMAGE_MIME_TYPES.has(inferred) ? inferred : '';
-};
-
-const isImageFile = (file) => {
-  return Boolean(resolveSupportedImageMimeType(file));
-};
-
-const isAudioFile = (file) => {
-  if (file?.type && file.type.startsWith('audio/')) {
-    return true;
-  }
-  const ext = resolveFileExtension(file?.name);
-  return ext ? AUDIO_EXTENSIONS.has(ext) : false;
-};
-
-const isVideoFile = (file) => {
-  if (file?.type && file.type.startsWith('video/')) {
-    return true;
-  }
-  const ext = resolveFileExtension(file?.name);
-  return ext ? VIDEO_EXTENSIONS.has(ext) : false;
 };
 
 const validateImageFile = async (file: File): Promise<void> => {
@@ -1590,7 +1562,7 @@ const collectPayloadAttachments = (attachment: ComposerDraftAttachment): Attachm
   return [payload];
 };
 
-// 发送时只保留 Wunder 需要的字段，避免 UI 状态混入请求
+// Keep only fields the backend needs so UI-only state never leaks into requests.
 const buildAttachmentPayload = () => attachments.value.flatMap((item) => collectPayloadAttachments(item));
 
 const resizeInput = () => {
@@ -1986,15 +1958,174 @@ const resetInputHeight = () => {
   el.style.overflowY = 'hidden';
 };
 
-const triggerUpload = () => {
-  if (stopButtonActive.value || goalEditorVisible.value) return;
-  if (!uploadInputRef.value) return;
-  closeScreenshotMenu();
-  uploadInputRef.value.value = '';
-  uploadInputRef.value.click();
+const hasFileDrag = (event): boolean => {
+  const transfer = event?.dataTransfer;
+  if (!transfer) return false;
+  if (transfer.files && transfer.files.length > 0) return true;
+  if (transfer.items && transfer.items.length > 0) {
+    const items = Array.from(transfer.items) as DataTransferItem[];
+    if (items.some((item) => String(item?.kind || '').toLowerCase() === 'file')) {
+      return true;
+    }
+  }
+  const types = Array.from(transfer.types || []).map((item) => String(item || ''));
+  return types.includes('Files') || types.includes('application/x-moz-file');
 };
 
-const hasFileDrag = (event) => Array.from(event?.dataTransfer?.types || []).includes('Files');
+const normalizeWorkspaceContainerId = (value: unknown): number => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(10, Math.max(0, parsed));
+};
+
+const resolveWorkspaceDropPath = (path: unknown): string => {
+  const normalized = normalizeWorkspacePath(path);
+  return normalized;
+};
+
+const resolveComposerWorkspaceContainerId = (): number => {
+  const explicit = String(props.workspaceContainerId ?? '').trim();
+  if (explicit) {
+    return normalizeWorkspaceContainerId(explicit);
+  }
+  return 1;
+};
+
+const resolveUploadedWorkspacePaths = (payload: unknown): string[] => {
+  const source = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  return Array.isArray(source.files)
+    ? source.files.map((item) => normalizeWorkspacePath(item)).filter(Boolean)
+    : [];
+};
+
+const buildWorkspaceFileNotice = (paths: string[], items: WorkspaceDroppedFile[]): string => {
+  const normalized = paths.map((item) => normalizeWorkspacePath(item)).filter(Boolean);
+  const fileNames = items
+    .map((item) => normalizeWorkspacePath(item.relativePath || item.file?.name || 'upload'))
+    .filter(Boolean);
+  const displayPaths = normalized.length ? normalized : fileNames;
+  if (!displayPaths.length) return '';
+  const lines = [
+    t('chat.workspaceDrop.noticeHeader', { count: displayPaths.length })
+  ];
+  displayPaths.forEach((path, index) => {
+    lines.push(`${index + 1}. ${path}`);
+  });
+  lines.push(t('chat.workspaceDrop.noticeFooter'));
+  return lines.join('\n');
+};
+
+const appendWorkspaceFileNotice = (paths: string[], items: WorkspaceDroppedFile[]) => {
+  const notice = buildWorkspaceFileNotice(paths, items);
+  if (!notice) return;
+  appendTextToComposer(notice);
+};
+
+const readDirectoryEntries = (reader: DirectoryReaderLike): Promise<FileSystemEntryLike[]> =>
+  new Promise((resolve) => {
+    const entries: FileSystemEntryLike[] = [];
+    const readBatch = () => {
+      reader.readEntries(
+        (batch: FileSystemEntryLike[]) => {
+          if (!batch.length) {
+            resolve(entries);
+            return;
+          }
+          entries.push(...batch);
+          readBatch();
+        },
+        () => resolve(entries)
+      );
+    };
+    readBatch();
+  });
+
+const walkDroppedEntry = async (
+  entry: FileSystemEntryLike,
+  prefix: string
+): Promise<WorkspaceDroppedFile[]> => {
+  if (!entry) return [];
+  if (entry.isFile) {
+    const file = await new Promise<File | null>((resolve) => {
+      entry.file?.((target) => resolve(target), () => resolve(null));
+    });
+    if (!file) return [];
+    return [{ file, relativePath: `${prefix}${file.name}` }];
+  }
+  if (entry.isDirectory) {
+    const reader = entry.createReader?.();
+    if (!reader) return [];
+    const nextPrefix = `${prefix}${entry.name || ''}/`;
+    const children = await readDirectoryEntries(reader);
+    const nested = await Promise.all(children.map((child) => walkDroppedEntry(child, nextPrefix)));
+    return nested.flat();
+  }
+  return [];
+};
+
+const collectDroppedWorkspaceFiles = async (
+  dataTransfer: DataTransfer | null | undefined
+): Promise<WorkspaceDroppedFile[]> => {
+  const items = Array.from(dataTransfer?.items || []) as DataTransferItemLike[];
+  if (items.length) {
+    const batches = await Promise.all(
+      items.map((item) => {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) {
+          return walkDroppedEntry(entry, '');
+        }
+        const file = item.getAsFile();
+        return file ? [{ file, relativePath: file.name || 'upload' }] : [];
+      })
+    );
+    return batches.flat();
+  }
+  return Array.from(dataTransfer?.files || []).map((file) => ({
+    file,
+    relativePath: file.webkitRelativePath || file.name || 'upload'
+  }));
+};
+
+const uploadDroppedFilesToWorkspace = async (items: WorkspaceDroppedFile[]): Promise<string[]> => {
+  const fileList = items.map((item) => item.file).filter(Boolean);
+  if (!fileList.length) return [];
+  const totalBytes = fileList.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
+  if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
+    throw new Error(t('workspace.upload.tooLarge', { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) }));
+  }
+  const formData = new FormData();
+  formData.append('path', resolveWorkspaceDropPath(''));
+  const agentId = String(props.workspaceAgentId || '').trim();
+  const containerId = resolveComposerWorkspaceContainerId();
+  if (agentId) {
+    formData.append('agent_id', agentId);
+  }
+  formData.append('container_id', String(containerId));
+  fileList.forEach((file, index) => {
+    formData.append('files', file, file.name || 'upload');
+    formData.append('relative_paths', normalizeWorkspacePath(items[index]?.relativePath || file.name || 'upload'));
+  });
+  const response = await uploadWunderWorkspace(formData);
+  const uploadedPaths = resolveUploadedWorkspacePaths(response?.data);
+  const refreshDetail = {
+    reason: 'composer-drop-upload',
+    containerId,
+    container_id: containerId,
+    paths: uploadedPaths,
+    treeVersion: response?.data?.tree_version,
+    tree_version: response?.data?.tree_version
+  };
+  emitWorkspaceRefresh(
+    agentId
+      ? {
+          ...refreshDetail,
+          agentId,
+          agent_id: agentId
+        }
+      : refreshDetail
+  );
+  return uploadedPaths;
+};
 
 const handleDragEnter = (event) => {
   if (stopButtonActive.value || goalEditorVisible.value) return;
@@ -2003,7 +2134,7 @@ const handleDragEnter = (event) => {
   dragCounter.value += 1;
   dragActive.value = true;
   if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = 'copy';
+    event.dataTransfer.dropEffect = composerBusy.value > 0 ? 'none' : 'copy';
   }
 };
 
@@ -2012,7 +2143,7 @@ const handleDragOver = (event) => {
   if (!hasFileDrag(event)) return;
   event.preventDefault();
   if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = 'copy';
+    event.dataTransfer.dropEffect = composerBusy.value > 0 ? 'none' : 'copy';
   }
 };
 
@@ -2030,10 +2161,22 @@ const handleDrop = async (event) => {
   event.preventDefault();
   dragCounter.value = 0;
   dragActive.value = false;
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (!files.length) return;
-  for (const file of files) {
-    await handleAttachmentSelection(file);
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
+    return;
+  }
+  const droppedItems = await collectDroppedWorkspaceFiles(event.dataTransfer);
+  if (!droppedItems.length) return;
+  closeScreenshotMenu();
+  workspaceDropBusy.value += 1;
+  try {
+    const uploadedPaths = await uploadDroppedFilesToWorkspace(droppedItems);
+    appendWorkspaceFileNotice(uploadedPaths, droppedItems);
+    ElMessage.success(t('chat.workspaceDrop.uploaded', { count: uploadedPaths.length || droppedItems.length }));
+  } catch (error) {
+    ElMessage.error(resolveUploadError(error, t('chat.workspaceDrop.failed')));
+  } finally {
+    workspaceDropBusy.value = Math.max(0, workspaceDropBusy.value - 1);
   }
 };
 
@@ -2058,30 +2201,6 @@ const buildImageDraftAttachment = (
   attachment.type = 'image';
   attachment.name = attachment.name || filename;
   attachment.content = '';
-  return attachment;
-};
-
-const buildAudioDraftAttachment = (
-  filename: string,
-  payload: ProcessedMediaResponse
-): ComposerDraftAttachment => {
-  const attachment = Array.isArray(payload.attachments)
-    ? payload.attachments
-        .map((item) => normalizeProcessedMediaAttachment(item, 'audio'))
-        .find(Boolean) || null
-    : null;
-  if (!attachment) {
-    throw new Error(t('chat.attachments.emptyResult'));
-  }
-  attachment.id = buildAttachmentId();
-  attachment.type = 'audio';
-  attachment.name = attachment.name || filename;
-  if (payload.warnings?.length) {
-    attachment.warnings = payload.warnings;
-  }
-  if (Number.isFinite(payload.duration_ms)) {
-    attachment.duration_ms = Number(payload.duration_ms);
-  }
   return attachment;
 };
 
@@ -2138,12 +2257,6 @@ const pushAttachment = (attachment: ComposerDraftAttachment) => {
   syncVideoAttachmentDrafts();
 };
 
-const processAudioFile = async (file: File): Promise<ComposerDraftAttachment> => {
-  const formData = new FormData();
-  formData.append('file', file);
-  return buildAudioDraftAttachment(file.name || 'audio', await requestMediaProcessing(formData));
-};
-
 const processImageFile = async (file: File): Promise<ComposerDraftAttachment> => {
   const formData = new FormData();
   formData.append('file', file);
@@ -2152,19 +2265,6 @@ const processImageFile = async (file: File): Promise<ComposerDraftAttachment> =>
     return buildVideoDraftAttachment(file.name || 'gif', payload, undefined, 'gif');
   }
   return buildImageDraftAttachment(file.name || 'image', payload);
-};
-
-const processVideoFile = async (
-  file: File,
-  requestedFrameRate?: string
-): Promise<ComposerDraftAttachment> => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('frame_rate', String(requestedFrameRate || '1').trim() || '1');
-  return buildVideoDraftAttachment(
-    file.name || 'video',
-    await requestMediaProcessing(formData)
-  );
 };
 
 const applyVideoFrameRate = async (attachmentId: string) => {
@@ -2236,99 +2336,6 @@ const applyGifFrameStep = async (attachmentId: string) => {
   }
 };
 
-// 附件处理遵循 Wunder 调试面板：图片走 data URL，文件先转 Markdown
-const handleAttachmentSelection = async (file) => {
-  if (stopButtonActive.value) return;
-  if (!file) return;
-  const filename = file.name || 'upload';
-  attachmentBusy.value += 1;
-  try {
-    if (isImageFile(file)) {
-      const mimeType = resolveSupportedImageMimeType(file);
-      if (!mimeType) {
-        throw new Error(t('chat.attachments.imageInvalid'));
-      }
-      await validateImageFile(file);
-      const attachment = await processImageFile(file);
-      attachment.mime_type = mimeType;
-      pushAttachment(attachment);
-      syncVideoAttachmentDrafts();
-      if (attachment.type === 'gif') {
-        expandedVideoAttachmentId.value = attachment.id;
-        ElMessage.success(t('chat.attachments.gifAdded', { name: filename }));
-      } else {
-        ElMessage.success(t('chat.attachments.imageAdded', { name: filename }));
-      }
-      return;
-    }
-
-    if (isAudioFile(file)) {
-      const attachment = await processAudioFile(file);
-      pushAttachment(attachment);
-      if (attachment.warnings?.length) {
-        ElMessage.warning(attachment.warnings[0]);
-      } else {
-        ElMessage.success(t('chat.attachments.audioAdded', { name: filename }));
-      }
-      return;
-    }
-
-    if (isVideoFile(file)) {
-      const attachment = await processVideoFile(file);
-      pushAttachment(attachment);
-      expandedVideoAttachmentId.value = attachment.id;
-      if (attachment.warnings?.length) {
-        ElMessage.warning(attachment.warnings[0]);
-      } else {
-        ElMessage.success(t('chat.attachments.videoAdded', { name: filename }));
-      }
-      return;
-    }
-
-    const extension = resolveFileExtension(filename);
-    if (!extension || !DOC_EXTENSIONS.includes(`.${extension}`)) {
-      throw new Error(
-        t('chat.attachments.unsupportedType', { ext: extension || t('common.unknown') })
-      );
-    }
-
-    const response = await convertChatAttachment(file);
-    const payload = response?.data?.data || {};
-    const content = typeof payload.content === 'string' ? payload.content : '';
-    if (!content.trim()) {
-      throw new Error(t('chat.attachments.emptyResult'));
-    }
-    attachments.value.push({
-      id: buildAttachmentId(),
-      type: 'file',
-      name: payload.name || filename,
-      content,
-      mime_type: file.type || '',
-      converter: payload.converter || ''
-    });
-    syncVideoAttachmentDrafts();
-    const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
-    if (warnings.length) {
-      ElMessage.warning(t('chat.attachments.convertWarning', { message: warnings[0] }));
-    } else {
-      ElMessage.success(t('chat.attachments.fileParsed', { name: payload.name || filename }));
-    }
-  } catch (error) {
-    ElMessage.error(resolveUploadError(error, t('chat.attachments.processFailed')));
-  } finally {
-    attachmentBusy.value = Math.max(0, attachmentBusy.value - 1);
-  }
-};
-
-const handleUploadInput = async (event) => {
-  if (stopButtonActive.value) return;
-  const files = Array.from(event.target.files || []);
-  if (!files.length) return;
-  for (const file of files) {
-    await handleAttachmentSelection(file);
-  }
-};
-
 const removeAttachment = (id) => {
   attachments.value = attachments.value.filter((item) => item.id !== id);
   markAttachmentProcessing(id, false);
@@ -2340,6 +2347,7 @@ const clearAttachments = () => {
   attachmentProcessingIds.value = [];
   expandedVideoAttachmentId.value = '';
   videoFrameRateDrafts.value = {};
+  gifFrameStepDrafts.value = {};
 };
 
 const closeScreenshotMenu = () => {
@@ -2349,8 +2357,8 @@ const closeScreenshotMenu = () => {
 
 const toggleScreenshotMenu = () => {
   if (stopButtonActive.value) return;
-  if (attachmentBusy.value > 0) {
-    ElMessage.warning(t('chat.attachments.busy'));
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
     return;
   }
   closeWorldCommandPanel();
@@ -2377,8 +2385,8 @@ const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOptio
     ElMessage.warning(t('chat.attachments.screenshotUnavailable'));
     return;
   }
-  if (attachmentBusy.value > 0) {
-    ElMessage.warning(t('chat.attachments.busy'));
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
     return;
   }
   attachmentBusy.value += 1;
@@ -2405,12 +2413,16 @@ const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOptio
       name = appendFileNameSuffix(name, '-region');
     }
     const mimeType = normalizeImageMimeType(String(result.mimeType || '').trim() || 'image/png') || 'image/png';
+    if (!IMAGE_MIME_TYPES.has(mimeType)) {
+      throw new Error(t('chat.attachments.imageInvalid'));
+    }
     const byteString = atob(dataUrl.split(',', 2)[1] || '');
     const bytes = new Uint8Array(byteString.length);
     for (let index = 0; index < byteString.length; index += 1) {
       bytes[index] = byteString.charCodeAt(index);
     }
     const screenshotFile = new File([bytes], name, { type: mimeType });
+    await validateImageFile(screenshotFile);
     const attachment = await processImageFile(screenshotFile);
     attachment.mime_type = mimeType;
     pushAttachment(attachment);
@@ -2568,8 +2580,8 @@ const sendQuickCommand = async (command: string) => {
     }
     return;
   }
-  if (attachmentBusy.value > 0) {
-    ElMessage.warning(t('chat.attachments.busy'));
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
     return;
   }
   emit('send', { content: command, attachments: [] });
@@ -2612,9 +2624,9 @@ const handleSend = async () => {
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
     return;
   }
-  // 附件解析未完成时禁止发送，避免请求缺少必要内容
-  if (attachmentBusy.value > 0) {
-    ElMessage.warning(t('chat.attachments.busy'));
+  // Prevent sending while generated attachments or workspace drop uploads are still settling.
+  if (composerBusy.value > 0) {
+    ElMessage.warning(chatBusyMessage.value);
     return;
   }
   const content = inputText.value.trim();
