@@ -214,11 +214,19 @@ export const clearSlowClientResume = (runtime) => {
   runtime.slowClientResumeAfterEventId = 0;
 };
 
-export function clearRuntimeSendStreamState(runtime, options: { abort?: boolean } = {}) {
+type RuntimeStreamAbortReason = 'user_stop' | 'local_recovery' | 'teardown';
+
+type ClearRuntimeStreamStateOptions = {
+  abort?: boolean;
+  abortReason?: RuntimeStreamAbortReason;
+};
+
+export function clearRuntimeSendStreamState(runtime, options: ClearRuntimeStreamStateOptions = {}) {
   if (!runtime) return false;
   const controller = runtime.sendController;
   if (!controller) return false;
   if (options.abort === true && controller?.signal?.aborted !== true) {
+    runtime.sendAbortReason = runtime.sendAbortReason || options.abortReason || 'teardown';
     controller.abort();
   }
   runtime.sendController = null;
@@ -228,11 +236,12 @@ export function clearRuntimeSendStreamState(runtime, options: { abort?: boolean 
   return true;
 }
 
-export function clearRuntimeResumeStreamState(runtime, options: { abort?: boolean } = {}) {
+export function clearRuntimeResumeStreamState(runtime, options: ClearRuntimeStreamStateOptions = {}) {
   if (!runtime) return false;
   const controller = runtime.resumeController;
   if (!controller) return false;
   if (options.abort === true && controller?.signal?.aborted !== true) {
+    runtime.resumeAbortReason = runtime.resumeAbortReason || options.abortReason || 'teardown';
     controller.abort();
   }
   runtime.resumeController = null;
@@ -256,6 +265,7 @@ export function clearRuntimeInteractiveControllers(runtime, options: { abort?: b
 export function markRuntimeSendStreamStarted(runtime) {
   if (!runtime) return;
   const now = Date.now();
+  runtime.sendAbortReason = '';
   runtime.sendStartedAt = now;
   runtime.sendLastEventAt = now;
 }
@@ -263,6 +273,7 @@ export function markRuntimeSendStreamStarted(runtime) {
 export function markRuntimeResumeStreamStarted(runtime) {
   if (!runtime) return;
   const now = Date.now();
+  runtime.resumeAbortReason = '';
   runtime.resumeStartedAt = now;
   runtime.resumeLastEventAt = now;
 }
@@ -335,7 +346,8 @@ export function recoverRuntimeInteractiveControllers(
       remoteLastEventId
     });
     changed = clearRuntimeSendStreamState(runtime, {
-      abort: sendReason !== 'aborted' && sendReason !== 'remote_idle'
+      abort: sendReason !== 'aborted' && sendReason !== 'remote_idle',
+      abortReason: 'local_recovery'
     }) || changed;
   }
   if (resumeReason) {
@@ -347,7 +359,8 @@ export function recoverRuntimeInteractiveControllers(
       remoteLastEventId
     });
     changed = clearRuntimeResumeStreamState(runtime, {
-      abort: resumeReason !== 'aborted' && resumeReason !== 'remote_idle'
+      abort: resumeReason !== 'aborted' && resumeReason !== 'remote_idle',
+      abortReason: 'local_recovery'
     }) || changed;
   }
   if (changed) {

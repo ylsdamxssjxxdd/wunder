@@ -1020,6 +1020,8 @@ export const ensureRuntime = (sessionId) => {
       resumeController: null,
       sendRequestId: null,
       resumeRequestId: null,
+      sendAbortReason: '',
+      resumeAbortReason: '',
       sendStartedAt: 0,
       sendLastEventAt: 0,
       resumeStartedAt: 0,
@@ -1571,6 +1573,8 @@ export function buildRuntimeDebugSnapshot(runtime) {
     hasResumeController: Boolean(runtime?.resumeController),
     sendAborted: runtime?.sendController?.signal?.aborted === true,
     resumeAborted: runtime?.resumeController?.signal?.aborted === true,
+    sendAbortReason: String(runtime?.sendAbortReason || ''),
+    resumeAbortReason: String(runtime?.resumeAbortReason || ''),
     pendingManualCompaction: Boolean(runtime?.pendingManualCompaction),
     pendingManualCompactionAgeMs:
       Number.isFinite(pendingManualCompactionStartedAt) && pendingManualCompactionStartedAt > 0

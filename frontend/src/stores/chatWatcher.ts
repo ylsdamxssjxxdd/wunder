@@ -1015,7 +1015,7 @@ export const abortResumeStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
   clearSlowClientResume(runtime);
-  clearRuntimeResumeStreamState(runtime, { abort: true });
+  clearRuntimeResumeStreamState(runtime, { abort: true, abortReason: 'teardown' });
   refreshRuntimeStreamLifecycle(runtime);
 };
 
@@ -1023,7 +1023,7 @@ export const abortSendStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
   clearSlowClientResume(runtime);
-  clearRuntimeSendStreamState(runtime, { abort: true });
+  clearRuntimeSendStreamState(runtime, { abort: true, abortReason: 'teardown' });
   refreshRuntimeStreamLifecycle(runtime);
 };
 

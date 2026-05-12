@@ -585,6 +585,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', 
   const downloadLabel = resolveWorkspaceResourceActionLabel();
   const previewLabel = escapeHtml(t('workspace.preview.dialogTitle'));
   const fileActionLabel = escapeHtml(`${previewLabel} ${displayName}`);
+  const fileDownloadLabel = escapeHtml(`${downloadLabel} ${displayName}`);
   const fileIcon = resolveWorkspaceFileCardIconPath(fallback || displayName);
   const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';
   const imageLoadingLabel = escapeHtml(t('chat.resourceImageLoading'));
@@ -593,23 +594,33 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', 
   const header = `
     <div class="ai-resource-header">
       <div class="ai-resource-title">
-        <span class="ai-resource-name">${safeName}</span>
-        ${metaInline}
+        <span class="ai-resource-name" title="${safeName}">${safeName}</span>
+        ${metaText ? `<span class="ai-resource-meta-inline" title="${metaText}">${metaText}</span>` : ''}
       </div>
-      <button class="ai-resource-btn" type="button" data-workspace-action="download">${downloadLabel}</button>
     </div>
   `;
   const fileBody = `
     <div class="ai-resource-body ai-resource-file">
-      <button
-        class="ai-resource-file-icon"
-        type="button"
-        data-workspace-action="preview"
-        title="${fileActionLabel}"
-        aria-label="${fileActionLabel}"
-      >
-        <img class="ai-resource-file-icon-img" src="${fileIcon}" alt="${escapeHtml(fileBadge)}" aria-hidden="true" />
-      </button>
+      <div class="ai-resource-file-row">
+        <button
+          class="ai-resource-file-icon"
+          type="button"
+          data-workspace-action="preview"
+          title="${fileActionLabel}"
+          aria-label="${fileActionLabel}"
+        >
+          <img class="ai-resource-file-icon-img" src="${fileIcon}" alt="${escapeHtml(fileBadge)}" aria-hidden="true" />
+        </button>
+        <button
+          class="ai-resource-file-download"
+          type="button"
+          data-workspace-action="download"
+          title="${fileDownloadLabel}"
+          aria-label="${fileDownloadLabel}"
+        >
+          <i class="fa-solid fa-download" aria-hidden="true"></i>
+        </button>
+      </div>
     </div>
   `;
   const imageBody = `

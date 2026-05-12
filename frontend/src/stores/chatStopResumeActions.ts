@@ -155,6 +155,8 @@ export const chatStopResumeActions = {
       const runtime = ensureRuntime(targetSessionId);
       if (runtime) {
         runtime.stopRequested = true;
+        runtime.sendAbortReason = 'user_stop';
+        runtime.resumeAbortReason = 'user_stop';
       }
       abortSendStream(targetSessionId);
       abortCompactRequest(targetSessionId);
@@ -255,6 +257,7 @@ export const chatStopResumeActions = {
         refreshRuntimeStreamLifecycle(runtime);
       }
       let aborted = false;
+      let recoveredByRealtime = false;
       let finalSeen = false;
       let errorSeen = false;
       let slowClientResumeAfterEventId = 0;
@@ -445,7 +448,10 @@ export const chatStopResumeActions = {
           cancelOnAbort: false
         });
       } catch (error) {
-        if (error?.name === 'AbortError') {
+        const abortReason = String(runtime?.resumeAbortReason || '').trim();
+        if (error?.name === 'AbortError' && abortReason === 'local_recovery') {
+          recoveredByRealtime = true;
+        } else if (error?.name === 'AbortError') {
           aborted = true;
         } else {
           const transient =
@@ -475,16 +481,17 @@ export const chatStopResumeActions = {
       } finally {
         const finishedRequestId = runtime?.resumeRequestId || '';
         const terminalSeen = finalSeen || errorSeen;
-        let keepStreaming = !aborted && !terminalSeen;
+        let keepStreaming = recoveredByRealtime || (!aborted && !terminalSeen);
         if (keepStreaming && runtime && isTerminalRuntimeStatus(runtime.threadStatus)) {
           keepStreaming = false;
         }
         message.workflowStreaming = keepStreaming;
-        if (!aborted) {
+        if (!aborted || recoveredByRealtime) {
           message.stream_incomplete = keepStreaming;
         }
         if (runtime) {
           clearRuntimeResumeStreamState(runtime);
+          runtime.resumeAbortReason = '';
           refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {
             clearSlowClientResume(runtime);

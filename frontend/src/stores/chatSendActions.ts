@@ -308,6 +308,7 @@ export const chatSendActions = {
       );
       let queued = false;
       let interruptedByStop = false;
+      let recoveredByRealtime = false;
       let finalSeen = false;
       let errorSeen = false;
       let slowClientResumeAfterEventId = 0;
@@ -474,7 +475,10 @@ export const chatSendActions = {
           cancelOnAbort: false
         });
       } catch (error) {
-        if (error?.name === 'AbortError' || runtime?.stopRequested || chatPageLifecycle.pageUnloading) {
+        const abortReason = String(runtime?.sendAbortReason || '').trim();
+        if (error?.name === 'AbortError' && abortReason === 'local_recovery') {
+          recoveredByRealtime = true;
+        } else if (error?.name === 'AbortError' || runtime?.stopRequested || chatPageLifecycle.pageUnloading) {
           interruptedByStop = true;
           assistantMessage.reasoningStreaming = false;
           if (!chatPageLifecycle.pageUnloading) {
@@ -548,7 +552,7 @@ export const chatSendActions = {
       } finally {
         const stopped = interruptedByStop || Boolean(runtime?.stopRequested);
         const terminalSeen = finalSeen || errorSeen;
-        let keepStreaming = !stopped && !terminalSeen;
+        let keepStreaming = recoveredByRealtime || (!stopped && !terminalSeen);
         if (keepStreaming && runtime && isTerminalRuntimeStatus(runtime.threadStatus)) {
           keepStreaming = false;
         }
@@ -558,6 +562,7 @@ export const chatSendActions = {
         assistantMessage.stream_incomplete = keepStreaming;
         if (runtime) {
           clearRuntimeSendStreamState(runtime);
+          runtime.sendAbortReason = '';
           runtime.stopRequested = false;
           refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {

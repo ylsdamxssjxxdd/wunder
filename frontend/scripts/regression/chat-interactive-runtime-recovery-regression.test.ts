@@ -29,6 +29,22 @@ test('interactive controller recovery clears when remote runtime is already idle
   );
 });
 
+test('interactive controller recovery reports remote-ahead as local handoff candidate', () => {
+  assert.equal(
+    resolveInteractiveControllerRecoveryReason({
+      hasController: true,
+      controllerAborted: false,
+      startedAt: 1000,
+      lastEventAt: 1000,
+      localLastEventId: 12,
+      remoteLastEventId: 18,
+      loading: true,
+      nowMs: 9000
+    }),
+    'remote_ahead'
+  );
+});
+
 test('interactive controller recovery clears stale lock when remote event id keeps advancing', () => {
   assert.equal(
     shouldRecoverInteractiveController({

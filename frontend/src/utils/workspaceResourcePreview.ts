@@ -331,7 +331,9 @@ export const normalizeWorkspacePreviewBlob = (
   return blob;
 };
 
-const fallbackDocIcon = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons/other.png`;
+const DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
+const fallbackDocIcon = `${DOC_ICON_BASE}/other.png`;
+const drawioDocIcon = `${DOC_ICON_BASE}/processon_flow.png`;
 
 const theme = (workspaceIconsTheme || {}) as WorkspaceIconTheme;
 const iconDefinitions = (theme.iconDefinitions || {}) as Record<string, { iconPath?: string }>;
@@ -348,7 +350,8 @@ const normalizeThemeIconPath = (iconPath: string | undefined): string => {
   if (!rawPath) {
     return '';
   }
-  return `${WORKSPACE_ICON_BASE}/${rawPath.replace(WORKSPACE_ICON_PATH_RE, '')}`;
+  const normalizedPath = rawPath.replace(WORKSPACE_ICON_PATH_RE, '');
+  return `${WORKSPACE_ICON_BASE}/${normalizedPath}`;
 };
 
 const resolveThemeIconPathById = (iconId = ''): string => {
@@ -361,6 +364,9 @@ const resolveThemeIconPathById = (iconId = ''): string => {
 export const resolveWorkspaceFileCardIconPath = (filename = ''): string => {
   const normalizedName = String(filename || '').trim().toLowerCase();
   const extension = extractWorkspaceResourceExtension(filename);
+  if (DRAWIO_EXTENSIONS.has(extension)) {
+    return drawioDocIcon;
+  }
   const directId =
     (normalizedName && fileNames.get(normalizedName)) ||
     (extension && fileExtensions.get(extension)) ||
