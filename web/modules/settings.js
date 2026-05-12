@@ -5,7 +5,7 @@ import {
   updateDefaultConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260512-01";
+import { elements } from "./elements.js?v=20260512-02";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260113-01";
 import { notify } from "./notify.js";
@@ -15,7 +15,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260512-01";
+} from "./i18n.js?v=20260512-02";
 import { getWunderBase } from "./api.js";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
@@ -52,6 +52,7 @@ const corsSettings = {
 const onlyOfficeSettings = {
   enabled: false,
   documentServerUrl: "",
+  internalDocumentServerUrl: "",
   apiUrl: "",
   publicBaseUrl: "",
   jwtSecret: "",
@@ -288,6 +289,10 @@ const applyOnlyOfficeSettings = (options = {}) => {
   if (elements.settingsOnlyOfficeDocumentServerUrl) {
     elements.settingsOnlyOfficeDocumentServerUrl.value = options.documentServerUrl || "";
   }
+  if (elements.settingsOnlyOfficeInternalDocumentServerUrl) {
+    elements.settingsOnlyOfficeInternalDocumentServerUrl.value =
+      options.internalDocumentServerUrl || "";
+  }
   if (elements.settingsOnlyOfficeApiUrl) {
     elements.settingsOnlyOfficeApiUrl.value = options.apiUrl || "";
   }
@@ -449,6 +454,10 @@ const applySystemSettings = (payload = {}) => {
   onlyOfficeSettings.enabled = onlyoffice.enabled === true;
   onlyOfficeSettings.documentServerUrl =
     typeof onlyoffice.document_server_url === "string" ? onlyoffice.document_server_url.trim() : "";
+  onlyOfficeSettings.internalDocumentServerUrl =
+    typeof onlyoffice.internal_document_server_url === "string"
+      ? onlyoffice.internal_document_server_url.trim()
+      : "";
   onlyOfficeSettings.apiUrl =
     typeof onlyoffice.api_url === "string" ? onlyoffice.api_url.trim() : "";
   onlyOfficeSettings.publicBaseUrl =
@@ -685,6 +694,7 @@ const buildSystemUpdatePayload = () => {
   if (
     elements.settingsOnlyOfficeEnabled ||
     elements.settingsOnlyOfficeDocumentServerUrl ||
+    elements.settingsOnlyOfficeInternalDocumentServerUrl ||
     elements.settingsOnlyOfficeApiUrl ||
     elements.settingsOnlyOfficePublicBaseUrl ||
     elements.settingsOnlyOfficeJwtSecret ||
@@ -700,6 +710,11 @@ const buildSystemUpdatePayload = () => {
     if (elements.settingsOnlyOfficeDocumentServerUrl) {
       onlyoffice.document_server_url = String(
         elements.settingsOnlyOfficeDocumentServerUrl.value || ""
+      ).trim();
+    }
+    if (elements.settingsOnlyOfficeInternalDocumentServerUrl) {
+      onlyoffice.internal_document_server_url = String(
+        elements.settingsOnlyOfficeInternalDocumentServerUrl.value || ""
       ).trim();
     }
     if (elements.settingsOnlyOfficeApiUrl) {

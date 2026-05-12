@@ -43,7 +43,7 @@
 - 渠道附件入站（2026-03-18）：QQBot URL 附件会在入站阶段下载到会话作用域工作区；Feishu/XMPP 保持既有落盘能力。
 - 渠道链接改写（2026-03-18）：`channel_outbox` 不仅会改写正文中的 `/workspaces/...`，也会改写 `attachments[].url` 中的工作区路径为 `/wunder/temp_dir/download`。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
-- OnlyOffice 在线编辑/查看：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置；可编辑格式保存后回写，查看类格式只读打开。`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址。
+- OnlyOffice 在线编辑/查看：配置 `onlyoffice.enabled/document_server_url/public_base_url/jwt_secret` 后，用户侧工作区中的 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式可通过 `/wunder/workspace/onlyoffice/*` 生成编辑器配置；可编辑格式保存后回写，查看类格式只读打开。`public_base_url` 必须是 OnlyOffice Document Server 可访问的 Wunder 外部地址；容器部署中 Wunder 后端访问 Document Server 的地址不同于浏览器地址时，可配置 `onlyoffice.internal_document_server_url`。仓库 compose 默认提供 `wunder-onlyoffice` 服务，挂载 `config/fonts` 到 OnlyOffice custom-fonts 并在启动时刷新字体索引。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的主线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
@@ -1413,6 +1413,7 @@
   - `cors.allow_credentials`：是否允许携带凭证
   - `onlyoffice.enabled`：是否启用用户侧工作区 Office 在线编辑
   - `onlyoffice.document_server_url`：OnlyOffice Document Server 地址
+  - `onlyoffice.internal_document_server_url`：Wunder 后端下载 OnlyOffice 保存结果时访问 Document Server 的内部地址（可选，留空时使用 `document_server_url`）
   - `onlyoffice.api_url`：OnlyOffice Docs API 脚本地址（可选，留空时由 `document_server_url` 拼接）
   - `onlyoffice.public_base_url`：OnlyOffice Document Server 可访问到的 Wunder 外部地址
   - `onlyoffice.jwt_secret`：OnlyOffice JWT 密钥
@@ -1931,7 +1932,7 @@
   - Body：OnlyOffice Document Server 回调 JSON，其中保存状态需包含 `status` 与 `url`
 - 返回（JSON）：
   - `error`：`0` 表示成功；非 0 表示保存失败
-- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，回写成功后会标记工作区目录树刷新；回调下载地址会按 `onlyoffice.document_server_url` 重写到 Wunder 可访问的 OnlyOffice 源站，避免 Docker 内部地址导致保存失败；只读查看格式不会执行回写。
+- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，回写成功后会标记工作区目录树刷新；回调下载地址会优先按 `onlyoffice.internal_document_server_url` 重写，未配置时回退到 `onlyoffice.document_server_url`，避免 Docker/反向代理场景下浏览器地址与 Wunder 后端可访问地址不同导致保存失败；只读查看格式不会执行回写。
 
 ### 4.1.24.0 `/`
 

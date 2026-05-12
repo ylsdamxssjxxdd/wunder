@@ -50,6 +50,10 @@ services:
       - WUNDER_MCP_HOST=${WUNDER_MCP_HOST:-extra-mcp}
       - WUNDER_MCP_PORT=${WUNDER_MCP_PORT:-18004}
       - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
+      - WUNDER_ONLYOFFICE_DOCUMENT_SERVER_URL=${WUNDER_ONLYOFFICE_DOCUMENT_SERVER_URL:-http://127.0.0.1:${ONLYOFFICE_PORT:-18080}}
+      - WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL=${WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL:-http://wunder-onlyoffice}
+      - WUNDER_ONLYOFFICE_PUBLIC_BASE_URL=${WUNDER_ONLYOFFICE_PUBLIC_BASE_URL:-http://wunder-server:${WUNDER_PORT:-18000}}
+      - WUNDER_ONLYOFFICE_JWT_SECRET=${WUNDER_ONLYOFFICE_JWT_SECRET:-5b8708066a5460cd960836b07ff355a786128b22cf5d1f8c9031feb5afec4bcc}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_LOG_COLOR=${WUNDER_LOG_COLOR:-always}
       - WUNDER_ATOMIC_WRITE_MODE=${WUNDER_ATOMIC_WRITE_MODE:-relaxed}
@@ -70,6 +74,38 @@ services:
         condition: service_healthy
       wunder-weaviate:
         condition: service_started
+    restart: always
+
+  wunder-onlyoffice:
+    container_name: wunder-onlyoffice
+    image: onlyoffice/documentserver:latest
+    shm_size: "2gb"
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "0.0.0.0:${ONLYOFFICE_PORT:-18080}:80"
+    environment:
+      - TZ=Asia/Shanghai
+      - JWT_ENABLED=${WUNDER_ONLYOFFICE_JWT_ENABLED:-true}
+      - JWT_SECRET=${WUNDER_ONLYOFFICE_JWT_SECRET:-5b8708066a5460cd960836b07ff355a786128b22cf5d1f8c9031feb5afec4bcc}
+      - JWT_HEADER=${WUNDER_ONLYOFFICE_JWT_HEADER:-Authorization}
+      - ALLOW_PRIVATE_IP_ADDRESS=${ONLYOFFICE_ALLOW_PRIVATE_IP_ADDRESS:-true}
+      - ALLOW_META_IP_ADDRESS=${ONLYOFFICE_ALLOW_META_IP_ADDRESS:-true}
+      - ONLYOFFICE_GENERATE_WUNDER_FONTS=${ONLYOFFICE_GENERATE_WUNDER_FONTS:-true}
+    volumes:
+      - wunder_win_onlyoffice_logs:/var/log/onlyoffice
+      - wunder_win_onlyoffice_lib:/var/lib/onlyoffice
+      - wunder_win_onlyoffice_postgresql:/var/lib/postgresql
+      - ./config/fonts:/var/www/onlyoffice/Data/custom-fonts:ro
+      - ./scripts/onlyoffice-documentserver-entrypoint.sh:/app/wunder-onlyoffice-entrypoint.sh:ro
+    entrypoint: ["bash", "/app/wunder-onlyoffice-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/healthcheck | grep -q true"]
+      start_period: 120s
+      interval: 10s
+      timeout: 5s
+      retries: 30
     restart: always
 
   wunder-sandbox:
@@ -265,6 +301,9 @@ volumes:
   wunder_win_cargo_target:
   wunder_win_postgres:
   wunder_win_weaviate:
+  wunder_win_onlyoffice_logs:
+  wunder_win_onlyoffice_lib:
+  wunder_win_onlyoffice_postgresql:
   wunder_win_frontend_node_modules:
   wunder_win_frontend_dist:
   wunder_win_frontend_dist_tmp:

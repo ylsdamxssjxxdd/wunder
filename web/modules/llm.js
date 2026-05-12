@@ -466,7 +466,7 @@ const normalizeLlmConfig = (raw) => {
     image_num_inference_steps:
       typeof raw?.image_num_inference_steps === "number" && !Number.isNaN(raw.image_num_inference_steps)
         ? raw.image_num_inference_steps
-        : null,
+        : 30,
     image_guidance_scale:
       typeof raw?.image_guidance_scale === "number" && !Number.isNaN(raw.image_guidance_scale)
         ? raw.image_guidance_scale
@@ -766,7 +766,7 @@ const applyLlmConfigToForm = (name, config) => {
   if (elements.llmImageOutputFormat) {
     elements.llmImageOutputFormat.value = normalizeImageOutputFormat(llm.image_output_format);
   }
-  if (elements.llmImageSteps) elements.llmImageSteps.value = llm.image_num_inference_steps ?? "";
+  if (elements.llmImageSteps) elements.llmImageSteps.value = llm.image_num_inference_steps ?? 30;
   if (elements.llmImageGuidanceScale) {
     elements.llmImageGuidanceScale.value = llm.image_guidance_scale ?? "";
   }

@@ -250,6 +250,7 @@ workspace: # 工作区配置
 onlyoffice: # OnlyOffice 在线文档编辑配置
   enabled: ${WUNDER_ONLYOFFICE_ENABLED:-false} # 是否启用 Office 文档在线编辑
   document_server_url: ${WUNDER_ONLYOFFICE_DOCUMENT_SERVER_URL:-} # OnlyOffice Document Server 地址，如 https://office.example.com
+  internal_document_server_url: ${WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL:-} # Wunder 后端访问 Document Server 的内部地址，同 compose 网络可填 http://wunder-onlyoffice，宿主机映射可填 http://host.docker.internal:18080
   api_url: ${WUNDER_ONLYOFFICE_API_URL:-} # 可选，默认拼接 /web-apps/apps/api/documents/api.js
   public_base_url: ${WUNDER_PUBLIC_BASE_URL:-} # OnlyOffice 能访问到的 Wunder 外网地址，如 https://wunder.example.com；也可用 WUNDER_ONLYOFFICE_PUBLIC_BASE_URL
   jwt_secret: ${WUNDER_ONLYOFFICE_JWT_SECRET:-} # OnlyOffice JWT 密钥，需与 Document Server 配置一致

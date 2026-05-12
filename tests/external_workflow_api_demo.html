@@ -470,6 +470,7 @@
           <button id="cancelRun" class="danger" disabled>取消 run</button>
           <button id="queryRun" disabled>查询状态</button>
           <button id="fetchEvents" disabled>拉取事件</button>
+          <button id="generateApiExample">API 示例</button>
           <button id="resetView" class="warn">重置页面</button>
         </div>
       </div>
@@ -522,6 +523,16 @@
         </div>
 
         <div class="stack">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>API 示例</h2>
+              <button id="copyApiExample">复制</button>
+            </div>
+            <div class="panel-body">
+              <pre id="apiExample">点击左侧“API 示例”生成可复制的接口示例。</pre>
+            </div>
+          </section>
+
           <section class="panel">
             <div class="panel-head">
               <h2>事件</h2>
@@ -596,6 +607,8 @@
       $("cancelRun").addEventListener("click", cancelRun);
       $("queryRun").addEventListener("click", queryRun);
       $("fetchEvents").addEventListener("click", fetchEvents);
+      $("generateApiExample").addEventListener("click", generateApiExample);
+      $("copyApiExample").addEventListener("click", copyApiExample);
       $("resetView").addEventListener("click", resetView);
       $("clearEvents").addEventListener("click", () => {
         state.events = [];
@@ -664,6 +677,150 @@
     function endpoint(path) {
       const base = fields.baseUrl.value.trim().replace(/\/+$/, "");
       return `${base}${path}`;
+    }
+
+    function generateApiExample() {
+      const request = buildRequestPayload();
+      const base = fields.baseUrl.value.trim().replace(/\/+$/, "") || "http://127.0.0.1:8000";
+      const authHeader = exampleAuthHeader();
+      const requestJson = JSON.stringify(request, null, 2);
+      const selectedFiles = Array.from(fields.files.files).map((file) => file.name);
+      const curlFileLines = selectedFiles.length
+        ? selectedFiles.map((name) => `  -F "files=@./${shellEscape(name)}" \\`).join("\n")
+        : '  -F "files=@./需求.txt" \\';
+      const fetchFileNote = selectedFiles.length
+        ? selectedFiles.map((name) => `// form.append("files", fileInput.files[...] /* ${jsString(name)} */);`).join("\n")
+        : '// form.append("files", fileInput.files[0], fileInput.files[0].name);';
+      const authFetchLine = authHeader
+        ? `    ${JSON.stringify(authHeader.name)}: ${JSON.stringify(authHeader.value)},\n`
+        : "";
+      const authCurlLine = authHeader
+        ? `  -H "${authHeader.name}: ${shellEscape(authHeader.value)}" \\\n`
+        : "";
+      const runIdExpr = state.runId || "run_xxx";
+
+      $("apiExample").textContent = `# Wunder 外部一次性工作流 API 示例
+
+## 鉴权
+外部系统后端建议使用 security.external_auth_key。
+
+${authHeader ? `${authHeader.name}: ${authHeader.value}` : "当前示例未设置鉴权头。"}
+
+## 创建并流式执行
+
+Endpoint:
+POST ${base}/wunder/external/workflows:stream
+Content-Type: multipart/form-data
+Accept: text/event-stream
+
+request 字段 JSON:
+\`\`\`json
+${requestJson}
+\`\`\`
+
+curl:
+\`\`\`bash
+cat > request.json <<'JSON'
+${requestJson}
+JSON
+
+curl -N "${base}/wunder/external/workflows:stream" \\
+  -H "Accept: text/event-stream" \\
+${authCurlLine}  -F "request=<request.json" \\
+${curlFileLines}
+\`\`\`
+
+原生 fetch:
+\`\`\`js
+const form = new FormData();
+form.append("request", JSON.stringify(${requestJson}));
+${fetchFileNote}
+
+const response = await fetch("${base}/wunder/external/workflows:stream", {
+  method: "POST",
+  headers: {
+    Accept: "text/event-stream",
+${authFetchLine}  },
+  body: form,
+});
+
+// response.body 是 SSE 文本流：
+// event: workflow.start
+// event: workflow.event
+// event: workflow.final
+// event: workflow.error
+\`\`\`
+
+## 异步创建
+\`\`\`bash
+curl "${base}/wunder/external/workflows" \\
+${authCurlLine}  -F "request=<request.json" \\
+${curlFileLines}
+\`\`\`
+
+## 查询状态
+\`\`\`bash
+curl "${base}/wunder/external/workflows/${runIdExpr}" \\
+${authCurlLine.trimEnd()}
+\`\`\`
+
+## 拉取事件
+\`\`\`bash
+curl "${base}/wunder/external/workflows/${runIdExpr}/events?after_event_id=0&limit=200" \\
+${authCurlLine.trimEnd()}
+\`\`\`
+
+## 取消
+\`\`\`bash
+curl -X POST "${base}/wunder/external/workflows/${runIdExpr}/cancel" \\
+${authCurlLine.trimEnd()}
+\`\`\`
+
+## 下载文件
+先从最终响应 data.files[] 中读取 file_id，再下载：
+\`\`\`bash
+curl -L "${base}/wunder/external/workflows/${runIdExpr}/files/file_xxx" \\
+${authCurlLine.trimEnd()}  -o result.bin
+\`\`\`
+`;
+      log("api example generated");
+    }
+
+    async function copyApiExample() {
+      const text = $("apiExample").textContent.trim();
+      if (!text) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        log("api example copied");
+      } catch (_) {
+        const range = document.createRange();
+        range.selectNodeContents($("apiExample"));
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        log("api example selected");
+      }
+    }
+
+    function exampleAuthHeader() {
+      const credential = fields.credential.value.trim();
+      if (!credential || fields.authMode.value === "none") {
+        return null;
+      }
+      if (fields.authMode.value === "x-api-key") {
+        return { name: "X-API-Key", value: credential };
+      }
+      return { name: "Authorization", value: `Bearer ${credential}` };
+    }
+
+    function shellEscape(value) {
+      return String(value).replace(/'/g, "'\\''");
+    }
+
+    function jsString(value) {
+      return String(value).replace(/\\/g, "\\\\").replace(/\*\//g, "*\\/");
     }
 
     async function startStreamRun() {

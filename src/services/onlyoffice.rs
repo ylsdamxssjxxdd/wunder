@@ -32,7 +32,7 @@ const PLAIN_TEXT_ALIAS_EXTENSIONS: &[&str] = &[
     "log", "lua", "php", "pl", "pm", "ps1", "py", "r", "rb", "rs", "sass", "scss", "sh", "sql",
     "svelte", "swift", "toml", "ts", "tsx", "vue", "yaml", "yml", "zsh",
 ];
-const DOCUMENT_KEY_VERSION: &str = "v2";
+const DOCUMENT_KEY_VERSION: &str = "v3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlyOfficeAccessToken {
@@ -47,6 +47,7 @@ pub struct OnlyOfficeAccessToken {
 pub struct OnlyOfficeResolvedConfig {
     pub api_url: String,
     pub document_server_url: Option<String>,
+    pub internal_document_server_url: Option<String>,
     pub public_base_url: String,
     pub jwt_secret: Option<String>,
     pub token_ttl_s: u64,
@@ -69,6 +70,7 @@ pub fn resolve_config(
     Some(OnlyOfficeResolvedConfig {
         api_url,
         document_server_url: office.document_server_url(),
+        internal_document_server_url: office.internal_document_server_url(),
         public_base_url: public_base_url.trim_end_matches('/').to_string(),
         jwt_secret: office.jwt_secret(),
         token_ttl_s: office.token_ttl_s(),

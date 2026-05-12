@@ -3146,6 +3146,7 @@ fn build_system_settings_payload(config: &Config) -> Value {
         "onlyoffice": {
             "enabled": config.onlyoffice.enabled,
             "document_server_url": config.onlyoffice.document_server_url.clone().unwrap_or_default(),
+            "internal_document_server_url": config.onlyoffice.internal_document_server_url.clone().unwrap_or_default(),
             "api_url": config.onlyoffice.api_url.clone().unwrap_or_default(),
             "public_base_url": config.onlyoffice.public_base_url.clone().unwrap_or_default(),
             "jwt_secret": config.onlyoffice.jwt_secret.clone().unwrap_or_default(),
@@ -3304,6 +3305,11 @@ async fn admin_system_update(
                 if let Some(document_server_url) = onlyoffice.document_server_url {
                     config.onlyoffice.document_server_url =
                         normalize_optional_config_string(document_server_url);
+                }
+                if let Some(internal_document_server_url) = onlyoffice.internal_document_server_url
+                {
+                    config.onlyoffice.internal_document_server_url =
+                        normalize_optional_config_string(internal_document_server_url);
                 }
                 if let Some(api_url) = onlyoffice.api_url {
                     config.onlyoffice.api_url = normalize_optional_config_string(api_url);
@@ -7825,6 +7831,8 @@ struct SystemOnlyOfficeUpdateRequest {
     enabled: Option<bool>,
     #[serde(default)]
     document_server_url: Option<String>,
+    #[serde(default)]
+    internal_document_server_url: Option<String>,
     #[serde(default)]
     api_url: Option<String>,
     #[serde(default)]

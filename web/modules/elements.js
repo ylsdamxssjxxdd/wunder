@@ -300,6 +300,7 @@ export const elements = {
   settingsMonitorDropTypes: document.getElementById("settingsMonitorDropTypes"),
   settingsOnlyOfficeEnabled: document.getElementById("settingsOnlyOfficeEnabled"),
   settingsOnlyOfficeDocumentServerUrl: document.getElementById("settingsOnlyOfficeDocumentServerUrl"),
+  settingsOnlyOfficeInternalDocumentServerUrl: document.getElementById("settingsOnlyOfficeInternalDocumentServerUrl"),
   settingsOnlyOfficeApiUrl: document.getElementById("settingsOnlyOfficeApiUrl"),
   settingsOnlyOfficePublicBaseUrl: document.getElementById("settingsOnlyOfficePublicBaseUrl"),
   settingsOnlyOfficeJwtSecret: document.getElementById("settingsOnlyOfficeJwtSecret"),

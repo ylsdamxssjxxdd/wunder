@@ -2,6 +2,7 @@ use crate::api::user_context::resolve_user;
 use crate::core::atomic_write::atomic_write_bytes;
 use crate::onlyoffice as onlyoffice_service;
 use crate::state::AppState;
+use anyhow::Context;
 use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -245,7 +246,13 @@ async fn download_onlyoffice_document(
         .timeout(std::time::Duration::from_secs(config.request_timeout_s))
         .build()?;
     let download_url = resolve_onlyoffice_download_url(config, url);
-    let response = client.get(download_url).send().await?.error_for_status()?;
+    let response = client
+        .get(&download_url)
+        .send()
+        .await
+        .with_context(|| format!("requesting {download_url} from OnlyOffice callback"))?
+        .error_for_status()
+        .with_context(|| format!("downloading {download_url} from OnlyOffice callback"))?;
     let mut stream = response.bytes_stream();
     let mut output = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -263,7 +270,11 @@ fn resolve_onlyoffice_download_url(
     url: &str,
 ) -> String {
     let trimmed = url.trim();
-    let Some(document_server_url) = config.document_server_url.as_deref() else {
+    let Some(document_server_url) = config
+        .internal_document_server_url
+        .as_deref()
+        .or(config.document_server_url.as_deref())
+    else {
         return trimmed.to_string();
     };
     rewrite_url_origin(trimmed, document_server_url).unwrap_or_else(|| trimmed.to_string())

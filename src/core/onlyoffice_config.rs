@@ -8,6 +8,8 @@ pub struct OnlyOfficeConfig {
     #[serde(default)]
     pub document_server_url: Option<String>,
     #[serde(default)]
+    pub internal_document_server_url: Option<String>,
+    #[serde(default)]
     pub api_url: Option<String>,
     #[serde(default)]
     pub public_base_url: Option<String>,
@@ -28,6 +30,7 @@ impl Default for OnlyOfficeConfig {
         Self {
             enabled: false,
             document_server_url: None,
+            internal_document_server_url: None,
             api_url: None,
             public_base_url: None,
             jwt_secret: None,
@@ -44,6 +47,14 @@ impl OnlyOfficeConfig {
         clean_inline_or_env(
             self.document_server_url.as_deref(),
             "WUNDER_ONLYOFFICE_DOCUMENT_SERVER_URL",
+        )
+        .map(trim_trailing_slashes)
+    }
+
+    pub fn internal_document_server_url(&self) -> Option<String> {
+        clean_inline_or_env(
+            self.internal_document_server_url.as_deref(),
+            "WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL",
         )
         .map(trim_trailing_slashes)
     }
