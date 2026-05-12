@@ -1035,6 +1035,8 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub allow_tools: Vec<String>,
     #[serde(default)]
+    pub packaged: bool,
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub transport: Option<String>,

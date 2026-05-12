@@ -6,13 +6,21 @@ import {
   normalizeWorkspaceBareRelativePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
+import {
+  decodeWorkspaceResourceLabel,
+  extractWorkspaceResourceExtension,
+  normalizeWorkspacePreviewFilename,
+  resolveWorkspaceFileCardIconPath
+} from '@/utils/workspaceResourcePreview';
 
 type WorkspacePathResolver = (rawPath: string) => string;
 type MarkdownRenderEnv = {
   resolveWorkspacePath?: WorkspacePathResolver;
+  workspacePreviewMode?: 'download' | 'preview';
 };
 type MarkdownRenderOptions = {
   resolveWorkspacePath?: WorkspacePathResolver;
+  workspacePreviewMode?: 'download' | 'preview';
 };
 
 const BROKEN_TABLE_DIVIDER_REGEX = /^[\s|:-]+$/;
@@ -188,51 +196,6 @@ const HIGHLIGHT_CACHE_MAX_LENGTH = 8000;
 const CODE_BLOCK_MAX_LENGTH = 20000;
 const CODE_BLOCK_MAX_LINES = 400;
 const NUMBER_TOKEN_REGEX = /^-?\\d/;
-const FILE_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
-const FILE_ICON_MAP = new Map([
-  ['doc', 'doc'],
-  ['docx', 'docx'],
-  ['dot', 'dot'],
-  ['wps', 'wps'],
-  ['wpt', 'wpt'],
-  ['kw', 'kw'],
-  ['dps', 'dps'],
-  ['dpt', 'dpt'],
-  ['ppt', 'ppt'],
-  ['pptx', 'pptx'],
-  ['pot', 'pot'],
-  ['xls', 'xls'],
-  ['xlsx', 'xlsx'],
-  ['xlt', 'xlt'],
-  ['csv', 'xls'],
-  ['et', 'et'],
-  ['ett', 'ett'],
-  ['ksheet', 'ksheet'],
-  ['pdf', 'pdf'],
-  ['txt', 'txt'],
-  ['md', 'txt'],
-  ['markdown', 'txt'],
-  ['log', 'txt'],
-  ['html', 'html'],
-  ['htm', 'html'],
-  ['ofd', 'ofd'],
-  ['uot', 'uot'],
-  ['otl', 'otl'],
-  ['opg', 'opg'],
-  ['form', 'form'],
-  ['e-book', 'e-book'],
-  ['epub', 'e-book'],
-  ['mobi', 'e-book'],
-  ['azw', 'e-book'],
-  ['azw3', 'e-book'],
-  ['wpsnote', 'wpsnote'],
-  ['ckt', 'ckt'],
-  ['dbt', 'dbt'],
-  ['resh', 'resh'],
-  ['processon_flow', 'processon_flow'],
-  ['processon_mind', 'processon_mind']
-]);
-
 const SCRIPT_KEYWORDS = [
   'await',
   'async',
@@ -483,8 +446,13 @@ export function renderMarkdown(content = '', options: MarkdownRenderOptions = {}
   if (!content) return '';
   const normalizedContent = normalizeMarkdownForRender(String(content));
   const env: MarkdownRenderEnv | undefined =
-    typeof options.resolveWorkspacePath === 'function'
-      ? { resolveWorkspacePath: options.resolveWorkspacePath }
+    typeof options.resolveWorkspacePath === 'function' || options.workspacePreviewMode
+      ? {
+          ...(typeof options.resolveWorkspacePath === 'function'
+            ? { resolveWorkspacePath: options.resolveWorkspacePath }
+            : {}),
+          ...(options.workspacePreviewMode ? { workspacePreviewMode: options.workspacePreviewMode } : {})
+        }
       : undefined;
   return markdown.render(normalizedContent, env);
 }
@@ -605,26 +573,30 @@ const resolveWorkspaceResourceActionLabel = (): string =>
   isDesktopLocalModeEnabled() ? t('workspace.action.exportCopy') : t('common.download');
 
 function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', fallbackText = '') {
-  const title = decodeResourceLabel(label);
-  const fallback = decodeResourceLabel(filename);
-  const displayName = title || fallback || 'resource';
+  const title = decodeWorkspaceResourceLabel(label);
+  const fallback = decodeWorkspaceResourceLabel(filename);
+  const displayName = normalizeWorkspacePreviewFilename(title, fallback);
   const safeName = escapeHtml(displayName);
   const safePath = escapeHtml(publicPath);
   const safeKind = kind === 'image' ? 'image' : 'file';
   const metaText = title && fallback && title !== fallback ? escapeHtml(fallback) : '';
   const metaInline = metaText ? `<span class="ai-resource-meta-inline">${metaText}</span>` : '';
-  const fileExt = extractFileExtension(fallback || displayName);
+  const fileExt = extractWorkspaceResourceExtension(fallback || displayName);
   const downloadLabel = resolveWorkspaceResourceActionLabel();
-  const fileActionLabel = escapeHtml(`${downloadLabel} ${displayName}`);
-  const fileIcon = resolveFileIconPath(fileExt);
+  const previewLabel = escapeHtml(t('workspace.preview.dialogTitle'));
+  const fileActionLabel = escapeHtml(`${previewLabel} ${displayName}`);
+  const fileIcon = resolveWorkspaceFileCardIconPath(fallback || displayName);
   const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';
   const imageLoadingLabel = escapeHtml(t('chat.resourceImageLoading'));
   const safeFallbackText = fallbackText ? escapeHtml(fallbackText) : '';
   const fallbackAttr = safeFallbackText ? ` data-workspace-fallback="${safeFallbackText}"` : '';
-  const fileHeader = `
-    <div class="ai-resource-file-header">
-      <div class="ai-resource-file-title" title="${safeName}">${safeName}</div>
-      ${metaText ? `<div class="ai-resource-file-meta" title="${metaText}">${metaText}</div>` : ''}
+  const header = `
+    <div class="ai-resource-header">
+      <div class="ai-resource-title">
+        <span class="ai-resource-name">${safeName}</span>
+        ${metaInline}
+      </div>
+      <button class="ai-resource-btn" type="button" data-workspace-action="download">${downloadLabel}</button>
     </div>
   `;
   const fileBody = `
@@ -632,7 +604,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', 
       <button
         class="ai-resource-file-icon"
         type="button"
-        data-workspace-action="download"
+        data-workspace-action="preview"
         title="${fileActionLabel}"
         aria-label="${fileActionLabel}"
       >
@@ -646,52 +618,12 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', 
       <img class="ai-resource-preview" alt="${safeName}" loading="lazy" />
     </div>
   `;
-  const imageHeader = `
-      <div class="ai-resource-header">
-        <div class="ai-resource-title">
-          <span class="ai-resource-name">${safeName}</span>
-          ${metaInline}
-        </div>
-        <button class="ai-resource-btn" type="button" data-workspace-action="download">${downloadLabel}</button>
-      </div>
-  `;
-  const cardAction = safeKind === 'file' ? ' data-workspace-action="download"' : '';
   return `
-    <div class="ai-resource-card ai-resource-${safeKind}" data-workspace-kind="${safeKind}" data-workspace-path="${safePath}"${cardAction}${fallbackAttr}>
-      ${safeKind === 'image' ? imageHeader : ''}
-      ${safeKind === 'image' ? '' : fileHeader}
+    <div class="ai-resource-card ai-resource-${safeKind}" data-workspace-kind="${safeKind}" data-workspace-path="${safePath}" data-workspace-action="preview"${fallbackAttr}>
+      ${header}
       ${safeKind === 'image' ? imageBody : fileBody}
     </div>
   `;
-}
-
-function decodeResourceLabel(value = '') {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (!/%[0-9a-fA-F]{2}/.test(text)) return text;
-  try {
-    return decodeURIComponent(text);
-  } catch (error) {
-    return text;
-  }
-}
-
-function extractFileExtension(value = '') {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  const base = raw.split('?')[0].split('#')[0];
-  const name = base.split('/').pop() || '';
-  const dotIndex = name.lastIndexOf('.');
-  if (dotIndex <= 0 || dotIndex >= name.length - 1) return '';
-  const ext = name.slice(dotIndex + 1).toLowerCase();
-  if (!ext || ext.length > 8) return '';
-  return ext;
-}
-
-function resolveFileIconPath(extension = '') {
-  const key = String(extension || '').toLowerCase();
-  const iconName = FILE_ICON_MAP.get(key) || 'other';
-  return `${FILE_ICON_BASE}/${iconName}.png`;
 }
 
 function renderCodeBlock(content = '', info = '') {

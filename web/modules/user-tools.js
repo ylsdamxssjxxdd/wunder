@@ -225,6 +225,7 @@ const buildUserMcpStructPreview = (server) => {
   const config = {
     type: server.transport || undefined,
     description: server.description || undefined,
+    packaged: server.packaged === true ? true : undefined,
     name: server.display_name || server.name,
     baseUrl: server.endpoint,
     headers: server.headers && Object.keys(server.headers).length ? server.headers : undefined,
@@ -254,6 +255,7 @@ const normalizeUserMcpServer = (server) => {
     headers,
     auth: server?.auth || "",
     allow_tools: [],
+    packaged: server?.packaged === true,
     shared_tools: Array.isArray(server?.shared_tools) ? server.shared_tools : [],
     enabled: true,
     tool_specs: rawToolSpecs,
@@ -289,6 +291,7 @@ const buildUserMcpServerFromConfig = (serverId, rawConfig) => {
     headers,
     auth: config.auth || "",
     allow_tools: [],
+    packaged: config.packaged === true,
     enabled: true,
     tool_specs: [],
   });
@@ -306,6 +309,7 @@ const upsertUserMcpServer = (incoming) => {
       ...previous,
       ...incoming,
       allow_tools: [],
+      packaged: incoming.packaged === true,
       enabled: true,
       tool_specs: toolSpecs,
     };
@@ -329,6 +333,10 @@ const closeUserMcpImportModal = () => {
 const openUserMcpModal = (title) => {
   if (elements.userMcpModalTitle) {
     elements.userMcpModalTitle.textContent = title || t("userTools.mcp.modal.editTitle");
+  }
+  const server = getActiveUserMcpServer();
+  if (elements.userMcpPackaged) {
+    elements.userMcpPackaged.checked = server?.packaged === true;
   }
   elements.userMcpModal.classList.add("active");
   updateUserMcpStructPreview();
@@ -408,10 +416,18 @@ const getActiveUserMcpServer = () =>
   state.userTools.mcp.servers[state.userTools.mcp.selectedIndex] || null;
 
 const updateUserMcpStructPreview = () => {
-  const server = getActiveUserMcpServer();
   if (!elements.userMcpStructPreview) {
     return;
   }
+  const active = getActiveUserMcpServer();
+  const server = active
+    ? {
+        ...active,
+        packaged: elements.userMcpPackaged
+          ? elements.userMcpPackaged.checked === true
+          : active.packaged === true,
+      }
+    : null;
   const preview = buildUserMcpStructPreview(server);
   elements.userMcpStructPreview.value = preview || t("mcp.struct.preview.empty");
 };
@@ -439,6 +455,9 @@ const renderUserMcpServers = () => {
       subtitleParts.push(`ID: ${server.name}`);
     }
     subtitleParts.push(server.endpoint || "-");
+    if (server.packaged === true) {
+      subtitleParts.push(t("mcp.status.packaged"));
+    }
     item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" · ")}</small>`;
     item.addEventListener("click", () => {
       state.userTools.mcp.selectedIndex = index;
@@ -460,6 +479,7 @@ const toggleUserMcpDetailDisabled = (disabled) => {
     elements.userMcpTransport,
     elements.userMcpDescription,
     elements.userMcpHeaders,
+    elements.userMcpPackaged,
   ];
   fields.forEach((field) => {
     if (field) {
@@ -493,6 +513,9 @@ const renderUserMcpDetail = () => {
     elements.userMcpTransport.value = "";
     elements.userMcpDescription.value = "";
     elements.userMcpHeaders.value = "";
+    if (elements.userMcpPackaged) {
+      elements.userMcpPackaged.checked = false;
+    }
     elements.userMcpHeadersError.textContent = "";
     updateUserMcpStructPreview();
     toggleUserMcpDetailDisabled(true);
@@ -510,6 +533,9 @@ const renderUserMcpDetail = () => {
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
   }
+  if (server.packaged === true) {
+    metaParts.push(t("mcp.status.packaged"));
+  }
   elements.userMcpDetailTitle.textContent = title;
   elements.userMcpDetailMeta.textContent = metaParts.join(" · ");
   elements.userMcpDetailDesc.textContent = server.description || "";
@@ -522,6 +548,9 @@ const renderUserMcpDetail = () => {
     server.headers && Object.keys(server.headers).length
       ? JSON.stringify(server.headers, null, 2)
       : "";
+  if (elements.userMcpPackaged) {
+    elements.userMcpPackaged.checked = server.packaged === true;
+  }
   elements.userMcpHeadersError.textContent = "";
   updateUserMcpStructPreview();
   toggleUserMcpDetailDisabled(false);
@@ -695,6 +724,7 @@ const saveUserMcpServers = async () => {
       auth: server.auth || "",
       tool_specs: Array.isArray(server.tool_specs) ? server.tool_specs : [],
       allow_tools: [],
+      packaged: server.packaged === true,
       shared_tools: Array.isArray(server.shared_tools) ? server.shared_tools : [],
       enabled: true,
     })),
@@ -837,6 +867,7 @@ const addUserMcpServer = () => {
     description: "",
     headers: {},
     allow_tools: [],
+    packaged: false,
     shared_tools: [],
     tool_specs: [],
   });
@@ -935,6 +966,18 @@ const bindUserMcpInputs = () => {
     updateUserMcpStructPreview();
     scheduleUserMcpSave();
   });
+  if (elements.userMcpPackaged) {
+    elements.userMcpPackaged.addEventListener("change", (event) => {
+      const server = getActiveUserMcpServer();
+      if (!server) {
+        return;
+      }
+      server.packaged = event.target.checked === true;
+      renderUserMcpServers();
+      updateUserMcpStructPreview();
+      scheduleUserMcpSave();
+    });
+  }
 };
 
 // 技能自建工具：上传、启用与共享

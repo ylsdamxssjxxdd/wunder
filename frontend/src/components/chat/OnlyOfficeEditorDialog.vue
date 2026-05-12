@@ -53,6 +53,7 @@ import { getCurrentLanguage, useI18n } from '@/i18n';
 const props = defineProps<{
   visible: boolean;
   path: string;
+  userId?: string;
   agentId?: string;
   containerId?: number | string;
 }>();
@@ -96,6 +97,10 @@ const requestParams = (): QueryParams => {
     container_id: normalizedContainerId.value,
     lang: getCurrentLanguage()
   };
+  const userId = String(props.userId || '').trim();
+  if (userId) {
+    params.user_id = userId;
+  }
   const agentId = String(props.agentId || '').trim();
   if (agentId) {
     params.agent_id = agentId;
@@ -214,7 +219,7 @@ const handleClosed = () => {
 };
 
 watch(
-  () => [props.visible, props.path, props.agentId, props.containerId],
+  () => [props.visible, props.path, props.userId, props.agentId, props.containerId],
   () => {
     if (props.visible) {
       void openEditor();

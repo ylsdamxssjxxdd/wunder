@@ -6,6 +6,7 @@ use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::schemas::ToolSpec;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
+use crate::tools::{mcp_pack_runtime_name, mcp_pack_spec_for_server};
 use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
@@ -24,6 +25,8 @@ pub struct UserMcpServer {
     pub endpoint: String,
     #[serde(default)]
     pub allow_tools: Vec<String>,
+    #[serde(default)]
+    pub packaged: bool,
     #[serde(default)]
     pub shared_tools: Vec<String>,
     #[serde(default)]
@@ -703,6 +706,40 @@ impl UserToolManager {
                         if enabled_names.is_empty() {
                             continue;
                         }
+                        if server.packaged {
+                            let mut server_config = user_mcp_to_config(server);
+                            server_config.allow_tools = enabled_names.iter().cloned().collect();
+                            let Some(pack_spec) = mcp_pack_spec_for_server(&server_config) else {
+                                continue;
+                            };
+                            let alias_name = self
+                                .store
+                                .build_alias_name(owner_id, &mcp_pack_runtime_name(server_name));
+                            if shared_only {
+                                if let Some(filter) = shared_tools_filter.as_ref() {
+                                    if !filter.contains(&alias_name) {
+                                        continue;
+                                    }
+                                }
+                            }
+                            append_alias(
+                                alias_name.clone(),
+                                ToolSpec {
+                                    name: alias_name.clone(),
+                                    title: pack_spec.title,
+                                    description: pack_spec.description,
+                                    input_schema: pack_spec.input_schema,
+                                },
+                                UserToolKind::Mcp,
+                                owner_id.to_string(),
+                                mcp_pack_runtime_name(server_name),
+                            );
+                            mcp_servers
+                                .entry(owner_id.to_string())
+                                .or_default()
+                                .insert(server_name.to_string(), server_config);
+                            continue;
+                        }
                         let owner_map = mcp_servers.entry(owner_id.to_string()).or_default();
                         owner_map
                             .entry(server_name.to_string())
@@ -1051,6 +1088,13 @@ fn collect_mcp_tool_names(config: &Config) -> HashSet<String> {
         if !server.enabled {
             continue;
         }
+        if server.packaged {
+            let runtime_name = mcp_pack_runtime_name(&server.name);
+            if !runtime_name.trim().is_empty() {
+                names.insert(runtime_name);
+            }
+            continue;
+        }
         if server.tool_specs.is_empty() {
             continue;
         }
@@ -1117,6 +1161,10 @@ fn parse_user_mcp_server(value: &Value) -> Option<UserMcpServer> {
         .trim()
         .to_string();
     let allow_tools = parse_name_list(obj.get("allow_tools"));
+    let packaged = obj
+        .get("packaged")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut shared_tools = parse_name_list(obj.get("shared_tools"));
     if !allow_tools.is_empty() {
         let allow_set: HashSet<String> = allow_tools.iter().cloned().collect();
@@ -1133,6 +1181,7 @@ fn parse_user_mcp_server(value: &Value) -> Option<UserMcpServer> {
         name,
         endpoint,
         allow_tools,
+        packaged,
         shared_tools,
         enabled,
         transport: obj
@@ -1225,6 +1274,9 @@ fn normalize_mcp_servers(mut servers: Vec<UserMcpServer>) -> Vec<UserMcpServer> 
         server.allow_tools = Vec::new();
         server.shared_tools.clear();
         server.enabled = true;
+        if server.tool_specs.is_empty() {
+            server.packaged = false;
+        }
     }
     servers
 }
@@ -1310,6 +1362,7 @@ fn user_mcp_server_to_value(server: &UserMcpServer) -> Value {
         "auth": server.auth,
         "tool_specs": server.tool_specs,
         "allow_tools": server.allow_tools,
+        "packaged": server.packaged,
         "shared_tools": server.shared_tools,
         "enabled": server.enabled
     })
@@ -1380,11 +1433,6 @@ fn user_mcp_to_config(server: &UserMcpServer) -> McpServerConfig {
         if name.is_empty() {
             continue;
         }
-        let description = tool
-            .get("description")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
         tool_specs.push(McpToolSpec {
             name: name.to_string(),
             title: tool
@@ -1392,7 +1440,7 @@ fn user_mcp_to_config(server: &UserMcpServer) -> McpServerConfig {
                 .and_then(Value::as_str)
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            description,
+            description: resolve_mcp_description(server, tool),
             input_schema: serde_yaml::to_value(normalize_mcp_input_schema(tool))
                 .unwrap_or(serde_yaml::Value::Null),
         });
@@ -1400,7 +1448,13 @@ fn user_mcp_to_config(server: &UserMcpServer) -> McpServerConfig {
     McpServerConfig {
         name: server.name.clone(),
         endpoint: server.endpoint.clone(),
-        allow_tools: Vec::new(),
+        allow_tools: server
+            .allow_tools
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect(),
+        packaged: server.packaged,
         enabled: true,
         transport: if server.transport.trim().is_empty() {
             None

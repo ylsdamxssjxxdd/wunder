@@ -2253,6 +2253,7 @@ impl TuiApp {
                 name: name.to_string(),
                 endpoint: endpoint.to_string(),
                 allow_tools: Vec::new(),
+                packaged: false,
                 shared_tools: Vec::new(),
                 enabled: true,
                 transport: transport.to_string(),

@@ -4,7 +4,9 @@ use crate::i18n;
 use crate::schemas::{StreamEvent, TokenUsage, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
+use crate::services::external::provision_external_launch_session;
 use crate::services::stream_events::StreamEventService;
+use crate::services::user_agent_presets::ensure_user_preset_agents;
 use crate::state::AppState;
 use crate::storage::{
     SessionRunRecord, UpdateAgentTaskStatusParams, UserAccountRecord, UserAgentRecord,
@@ -766,20 +768,23 @@ async fn resolve_target_user(
             let user_store = state.user_store.clone();
             let lookup = user_key.to_string();
             let user = tokio::task::spawn_blocking(move || {
-                user_store
-                    .get_user_by_id(&lookup)?
-                    .or_else(|| user_store.get_user_by_username(&lookup).ok().flatten())
-                    .ok_or_else(|| anyhow::anyhow!("user not found"))
+                resolve_or_provision_external_workflow_user(user_store.as_ref(), &lookup)
             })
             .await
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-            .map_err(|_| {
+            .map_err(|err| {
                 error_with_code(
-                    StatusCode::NOT_FOUND,
-                    "USER_NOT_FOUND",
-                    "target user not found".to_string(),
+                    StatusCode::BAD_REQUEST,
+                    "USER_PROVISION_FAILED",
+                    err.to_string(),
                 )
             })?;
+            if let Err(err) = ensure_user_preset_agents(state, &user).await {
+                warn!(
+                    "failed to sync preset agents for external workflow user {}: {err}",
+                    user.user_id
+                );
+            }
             return Ok(user);
         }
     }
@@ -828,6 +833,43 @@ async fn resolve_target_agent(
             "agent_name or agent_id is required".to_string(),
         ))
     }
+}
+
+fn resolve_or_provision_external_workflow_user(
+    user_store: &UserStore,
+    user_key: &str,
+) -> anyhow::Result<UserAccountRecord> {
+    let lookup = user_key.trim();
+    if lookup.is_empty() {
+        return Err(anyhow::anyhow!("user is required"));
+    }
+    if let Some(user) = user_store.get_user_by_id(lookup)? {
+        ensure_external_workflow_user_active(&user)?;
+        return Ok(user);
+    }
+    if let Some(user) = user_store.get_user_by_username(lookup)? {
+        ensure_external_workflow_user_active(&user)?;
+        return Ok(user);
+    }
+    let (session, _, _) = provision_external_launch_session(
+        user_store,
+        lookup,
+        None,
+        None,
+        false,
+        UserStore::default_session_scope(),
+    )?;
+    Ok(session.user)
+}
+
+fn ensure_external_workflow_user_active(user: &UserAccountRecord) -> anyhow::Result<()> {
+    if UserStore::is_admin(user) {
+        return Err(anyhow::anyhow!("admin account is protected"));
+    }
+    if user.status.trim().to_lowercase() != "active" {
+        return Err(anyhow::anyhow!("user disabled"));
+    }
+    Ok(())
 }
 
 fn resolve_agent_by_name(
@@ -1779,6 +1821,8 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::external::DEFAULT_EXTERNAL_LAUNCH_PASSWORD;
+    use crate::storage::{SqliteStorage, StorageBackend};
 
     #[test]
     fn sanitize_filename_removes_path_and_unsafe_chars() {
@@ -1834,5 +1878,35 @@ mod tests {
         let paths = referenced_workflow_paths("Files: heart.png and `heart.py`.", "admin__c__10");
 
         assert_eq!(paths, vec!["heart.png".to_string(), "heart.py".to_string()]);
+    }
+
+    #[test]
+    fn external_workflow_user_resolution_provisions_missing_user() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("external-workflow-user.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage as Arc<dyn StorageBackend>);
+
+        let user = resolve_or_provision_external_workflow_user(&store, "external_api_user")
+            .expect("provision user");
+
+        assert_eq!(user.user_id, "external_api_user");
+        let login = store
+            .login("external_api_user", DEFAULT_EXTERNAL_LAUNCH_PASSWORD)
+            .expect("login with default external password");
+        assert_eq!(login.user.user_id, "external_api_user");
+    }
+
+    #[test]
+    fn external_workflow_user_resolution_rejects_default_admin() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("external-workflow-admin.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage as Arc<dyn StorageBackend>);
+
+        let err = resolve_or_provision_external_workflow_user(&store, "admin")
+            .expect_err("admin should not be provisioned");
+
+        assert!(err.to_string().contains("admin account is protected"));
     }
 }

@@ -109,13 +109,39 @@
     @update:visible="updateAgentPromptPreviewVisible"
   />
 
-  <MessengerImagePreviewDialog
-    :visible="imagePreviewVisible"
-    :image-url="imagePreviewUrl"
-    :title="imagePreviewTitle"
-    :workspace-path="imagePreviewWorkspacePath"
-    @download="handleImagePreviewDownload"
-    @close="closeImagePreview"
+  <MessengerResourcePreviewDialog
+    :visible="resourcePreviewVisible"
+    :loading="resourcePreviewLoading"
+    :title="resourcePreviewTitle"
+    :meta="resourcePreviewMeta"
+    :hint="resourcePreviewHint"
+    :src="resourcePreviewUrl"
+    :content="resourcePreviewContent"
+    :preview-kind="resourcePreviewKind"
+    @download="handleResourcePreviewDownload"
+    @close="closeResourcePreview"
+  />
+
+  <OnlyOfficeEditorDialog
+    :visible="onlyOfficeVisible"
+    :path="onlyOfficePath"
+    :agent-id="activeAgentId"
+    :container-id="currentContainerId"
+    :user-id="onlyOfficeUserId"
+    @update:visible="handleOnlyOfficeVisibleChange"
+    @saved="handleWorkspaceEditorSaved"
+    @fallback="handleWorkspaceEditorFallback"
+  />
+
+  <DrawioEditorDialog
+    :visible="drawioVisible"
+    :path="drawioPath"
+    :agent-id="activeAgentId"
+    :container-id="currentContainerId"
+    :user-id="drawioUserId"
+    @update:visible="handleDrawioVisibleChange"
+    @saved="handleWorkspaceEditorSaved"
+    @fallback="handleWorkspaceEditorFallback"
   />
 
   <MessengerGroupCreateDialog
@@ -136,15 +162,18 @@
 
 <script setup lang="ts">
 import { useI18n } from '@/i18n';
+import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
+import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
 import {
   MessengerGroupCreateDialog,
-  MessengerImagePreviewDialog,
+  MessengerResourcePreviewDialog,
   MessengerPromptPreviewDialog,
   MessengerTimelineDetailDialog,
   MessengerWorldHistoryDialog
 } from './asyncDialogs';
 import type { WorldHistoryCategory, WorldHistoryRecord } from '@/views/messenger/model';
 import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
+import type { WorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
 
 type MessengerWorldHistoryTabOption = {
   key: WorldHistoryCategory;
@@ -180,12 +209,26 @@ const {
   agentPromptPreviewToolingMode,
   agentPromptPreviewToolingContent,
   agentPromptPreviewToolingItems,
-  imagePreviewVisible,
-  imagePreviewUrl,
-  imagePreviewTitle,
-  imagePreviewWorkspacePath,
-  handleImagePreviewDownload,
-  closeImagePreview,
+  resourcePreviewVisible,
+  resourcePreviewLoading,
+  resourcePreviewUrl,
+  resourcePreviewTitle,
+  resourcePreviewMeta,
+  resourcePreviewHint,
+  resourcePreviewContent,
+  resourcePreviewKind,
+  handleResourcePreviewDownload,
+  closeResourcePreview,
+  onlyOfficeVisible,
+  onlyOfficePath,
+  onlyOfficeUserId,
+  drawioVisible,
+  drawioPath,
+  drawioUserId,
+  activeAgentId,
+  currentContainerId,
+  handleWorkspaceEditorSaved,
+  handleWorkspaceEditorFallback,
   groupCreateVisible,
   groupCreateName,
   groupCreateKeyword,
@@ -221,12 +264,26 @@ const {
   agentPromptPreviewToolingMode: string;
   agentPromptPreviewToolingContent: string;
   agentPromptPreviewToolingItems: PromptToolingPreviewItem[];
-  imagePreviewVisible: boolean;
-  imagePreviewUrl: string;
-  imagePreviewTitle: string;
-  imagePreviewWorkspacePath: string;
-  handleImagePreviewDownload: () => void | Promise<void>;
-  closeImagePreview: () => void;
+  resourcePreviewVisible: boolean;
+  resourcePreviewLoading: boolean;
+  resourcePreviewUrl: string;
+  resourcePreviewTitle: string;
+  resourcePreviewMeta: string;
+  resourcePreviewHint: string;
+  resourcePreviewContent: string;
+  resourcePreviewKind: WorkspaceResourcePreviewKind;
+  handleResourcePreviewDownload: () => void | Promise<void>;
+  closeResourcePreview: () => void;
+  onlyOfficeVisible: boolean;
+  onlyOfficePath: string;
+  onlyOfficeUserId: string;
+  drawioVisible: boolean;
+  drawioPath: string;
+  drawioUserId: string;
+  activeAgentId: string;
+  currentContainerId: number;
+  handleWorkspaceEditorSaved: (payload?: { path?: string }) => void | Promise<void>;
+  handleWorkspaceEditorFallback: (payload?: { path?: string; message?: string }) => void | Promise<void>;
   groupCreateVisible: boolean;
   groupCreateName: string;
   groupCreateKeyword: string;
@@ -246,6 +303,8 @@ const emit = defineEmits<{
   (event: 'update:worldContainerPickerVisible', value: boolean): void;
   (event: 'update:worldContainerPickerKeyword', value: string): void;
   (event: 'update:agentPromptPreviewVisible', value: boolean): void;
+  (event: 'update:onlyOfficeVisible', value: boolean): void;
+  (event: 'update:drawioVisible', value: boolean): void;
   (event: 'update:groupCreateVisible', value: boolean): void;
   (event: 'update:groupCreateName', value: string): void;
   (event: 'update:groupCreateKeyword', value: string): void;
@@ -282,6 +341,14 @@ const updateWorldContainerPickerKeyword = (value: string) => {
 
 const updateAgentPromptPreviewVisible = (value: boolean) => {
   emit('update:agentPromptPreviewVisible', value);
+};
+
+const handleOnlyOfficeVisibleChange = (value: boolean) => {
+  emit('update:onlyOfficeVisible', value);
+};
+
+const handleDrawioVisibleChange = (value: boolean) => {
+  emit('update:drawioVisible', value);
 };
 
 const updateGroupCreateVisible = (value: boolean) => {

@@ -16,6 +16,7 @@ mod context;
 mod desktop_control;
 mod dispatch;
 mod freeform;
+mod mcp_pack;
 mod memory_manager_tool;
 mod multimodal_generation_tool;
 mod read_file_guard;
@@ -58,6 +59,10 @@ pub use dispatch::{execute_builtin_tool, execute_tool};
 pub(crate) use freeform::{
     build_responses_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
     render_prompt_tool_spec,
+};
+pub(crate) use mcp_pack::{
+    runtime_name as mcp_pack_runtime_name, schema as mcp_pack_schema,
+    spec_for_server as mcp_pack_spec_for_server, MCP_PACK_TOOL_NAME,
 };
 pub(crate) use memory_manager_tool::execute_memory_manager_tool;
 pub(crate) use thread_control_tool::execute_thread_control_tool;
@@ -5889,6 +5894,17 @@ async fn execute_user_mcp_tool(
     let Some(server_config) = server_config else {
         return Err(anyhow!(i18n::t("tool.invoke.mcp_server_unavailable")));
     };
+    if tool_name == mcp_pack::MCP_PACK_TOOL_NAME {
+        let result = mcp_pack::execute(context.config, server_config, args)
+            .await
+            .map_err(|err| {
+                anyhow!(i18n::t_with_params(
+                    "tool.invoke.mcp_call_failed",
+                    &HashMap::from([("detail".to_string(), err.to_string())]),
+                ))
+            })?;
+        return Ok(result);
+    }
     let result = mcp::call_tool_with_server(context.config, server_config, tool_name, args)
         .await
         .map_err(|err| {
@@ -9674,6 +9690,19 @@ fn split_mcp_tool_name(name: &str) -> Result<(String, String)> {
 
 async fn execute_mcp_tool(context: &ToolContext<'_>, name: &str, args: &Value) -> Result<Value> {
     let (server_name, tool_name) = split_mcp_tool_name(name)?;
+    if tool_name == mcp_pack::MCP_PACK_TOOL_NAME {
+        let server = context
+            .config
+            .mcp
+            .servers
+            .iter()
+            .find(|item| item.name == server_name)
+            .ok_or_else(|| anyhow!("MCP server not found: {server_name}"))?;
+        if !server.packaged {
+            return Err(anyhow!("MCP server is not packaged: {server_name}"));
+        }
+        return mcp_pack::execute(context.config, server, args).await;
+    }
     mcp::call_tool(context.config, &server_name, &tool_name, args).await
 }
 

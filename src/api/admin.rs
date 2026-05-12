@@ -793,6 +793,7 @@ async fn admin_mcp_tools(
         name: payload.name,
         endpoint: payload.endpoint,
         allow_tools: Vec::new(),
+        packaged: false,
         enabled: true,
         transport: payload.transport,
         description: None,

@@ -1214,7 +1214,7 @@ export default {
   'chat.transport.current': 'Current transport: {transport}',
   'chat.currentAgent': 'Current Agent',
   'chat.newSession': 'New Thread',
-  'chat.newConversation': 'New Conversation',
+  'chat.newConversation': 'New Task',
   'chat.newSessionOpened': 'Switched to a new thread',
   'chat.newSessionAlreadyCurrent': 'You are already in a new thread',
   'chat.history': 'Timeline',

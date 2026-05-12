@@ -1184,7 +1184,7 @@ export default {
   'chat.transport.current': '当前通道：{transport}',
   'chat.currentAgent': '当前智能体',
   'chat.newSession': '新建线程',
-  'chat.newConversation': '新建对话',
+  'chat.newConversation': '新建任务',
   'chat.newSessionOpened': '已切换到新线程',
   'chat.newSessionAlreadyCurrent': '已经是新线程了',
   'chat.history': '时间线',

@@ -133,7 +133,7 @@
 ### 4.1.A 外部一次性工作流 API
 
 - 用途：供外部系统后端把单个 Wunder 智能体嵌入到自有前端小部件。调用方指定目标用户、目标智能体、消息和上传文件；Wunder 会打断该智能体当前工作，新建主会话，在目标用户的 `container_id=10` 工作目录执行一次性任务，并返回中间事件、最终回复和可下载文件。
-- 鉴权：外部系统后端使用 `X-API-Key: <security.external_auth_key>` 或 `Authorization: Bearer <security.external_auth_key>`；管理员 token 也可访问。用户 Bearer Token 只能访问自身 run，不能跨用户指定目标。`external_auth_key` 未配置时按现有配置逻辑回退到 `security.api_key`。
+- 鉴权：外部系统后端使用 `X-API-Key: <security.external_auth_key>` 或 `Authorization: Bearer <security.external_auth_key>`；管理员 token 也可访问。用户 Bearer Token 只能访问自身 run，不能跨用户指定目标。`external_auth_key` 未配置时按现有配置逻辑回退到 `security.api_key`。外部密钥路径下指定未注册普通用户时会自动开通账号，并同步该用户的预设智能体。
 - 工作区语义：MVP 固定 `workspace_container_id=10`，创建 run 前会清空该用户 10 号目录；上传文件落到 `input/`，服务端会创建 `output/`，最终下载清单包含 `output/` 下文件，以及最终回答中引用到的 `input/...` 或 `output/...` 文件。该覆盖是请求级的，不修改智能体的持久 `sandbox_container_id`。
 - 并发与打断：同一 `user_id + container_id=10` 同时只允许一个外部工作流。默认已有外部工作流时返回 `409 EXTERNAL_WORKFLOW_BUSY`；传 `preempt_active_workflow=true` 会先取消旧外部工作流。一次性工作流始终要求 `preempt=true`，会取消目标智能体当前主线程工作并强制创建新的主会话。
 - 请求格式：创建接口使用 `multipart/form-data`，必须包含 `request` JSON 字段，可重复上传 `files` 或 `files[]` 文件字段。单次请求上限当前为 200MB。
@@ -285,6 +285,7 @@
   - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空或 `null`）
   - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
   - 说明：`runtime_name` 是持久化与实际调用使用的唯一名；`display_name` 用于界面展示。系统 MCP 工具会优先以去掉 `server@` 前缀后的最小限定别名展示。
+  - MCP 服务配置 `packaged=true` 时，不再展开远端全部工具，而是返回单个聚合工具 `server@__mcp_pack__`；该工具入参 `action=list|get|call`，并继续受 `allow_tools` 约束。
 - 说明：
   - 用户自建工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
   - `items[]` 为新的统一能力输出；旧的分组字段继续保留，便于前端与旧调用方平滑迁移。
@@ -522,12 +523,12 @@
 - `GET` 入参（Query）：
   - `user_id`：字符串，用户唯一标识
 - `GET` 返回（JSON）：
-  - `servers`：用户 MCP 服务列表（name/endpoint/allow_tools/shared_tools/enabled/transport/description/display_name/headers/auth/tool_specs）
+  - `servers`：用户 MCP 服务列表（name/endpoint/allow_tools/packaged/shared_tools/enabled/transport/description/display_name/headers/auth/tool_specs）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
   - `servers`：用户 MCP 服务列表（字段同上）
 - `POST` 返回：同 `GET`
-- 说明：`shared_tools` 为兼容字段，当前保存与返回时固定为空数组。
+- 说明：`packaged=true` 时该用户 MCP 服务在模型侧作为单个聚合工具暴露；聚合工具内部可 `list/get/call` 已加载且允许的远端工具。`shared_tools` 为兼容字段，当前保存与返回时固定为空数组。
 
 ### 4.1.2.2 `/wunder/user_tools/mcp/tools`
 
@@ -1114,9 +1115,10 @@
 
 - 方法：`GET/POST`
 - `GET` 返回：
-  - `servers`：MCP 服务列表（name/endpoint/allow_tools/enabled）
+  - `servers`：MCP 服务列表（name/endpoint/allow_tools/packaged/enabled/transport/description/display_name/headers/auth/tool_specs）
 - `POST` 入参：
   - `servers`：完整 MCP 服务列表，用于保存配置
+- 说明：`packaged=true` 会把该服务暴露为单个聚合工具 `server@__mcp_pack__`，聚合工具支持 `list`（列出可用工具摘要）、`get`（获取指定工具结构体）、`call`（调用指定远端工具），用于降低工具数量多时的上下文膨胀。
 
 ### 4.1.3.1 `/wunder/admin/lsp`
 

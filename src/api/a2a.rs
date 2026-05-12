@@ -4,7 +4,10 @@ use crate::orchestrator::OrchestratorError;
 use crate::schemas::{StreamEvent, WunderRequest};
 use crate::state::AppState;
 use crate::storage::UserTokenBalanceStatus;
-use crate::tools::{builtin_aliases, builtin_tool_specs, resolve_tool_name};
+use crate::tools::{
+    builtin_aliases, builtin_tool_specs, mcp_pack_spec_for_server, resolve_tool_name,
+    MCP_PACK_TOOL_NAME,
+};
 use crate::user_store::UserStore;
 use anyhow::Error;
 use axum::body::Bytes;
@@ -271,6 +274,18 @@ fn build_mcp_tooling(config: &Config) -> Vec<Value> {
     let mut items = Vec::new();
     for server in &config.mcp.servers {
         if !server.enabled {
+            continue;
+        }
+        if server.packaged {
+            if let Some(spec) = mcp_pack_spec_for_server(server) {
+                items.push(json!({
+                    "name": spec.name,
+                    "description": spec.description,
+                    "server": server.name,
+                    "tool": MCP_PACK_TOOL_NAME,
+                    "packaged": true
+                }));
+            }
             continue;
         }
         let allow = server.allow_tools.iter().cloned().collect::<HashSet<_>>();

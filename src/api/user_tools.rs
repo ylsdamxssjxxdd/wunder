@@ -22,7 +22,7 @@ use crate::state::AppState;
 use crate::storage::StorageBackend;
 use crate::tools::{
     a2a_service_schema, build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
-    resolve_tool_name,
+    mcp_pack_spec_for_server, resolve_tool_name,
 };
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
@@ -228,6 +228,7 @@ async fn user_mcp_tools(
         name: payload.name,
         endpoint: payload.endpoint,
         allow_tools: Vec::new(),
+        packaged: false,
         enabled: true,
         transport: payload.transport,
         description: None,
@@ -2461,6 +2462,14 @@ fn build_user_tools_summary(
         if !server.enabled {
             continue;
         }
+        if server.packaged {
+            if let Some(spec) = mcp_pack_spec_for_server(server) {
+                if allowed.contains(&spec.name) {
+                    mcp_tools.push(spec);
+                }
+            }
+            continue;
+        }
         let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
         for tool in &server.tool_specs {
             if tool.name.is_empty() {
@@ -2655,7 +2664,7 @@ fn build_user_tools_summary(
         if alias_info.owner_id == user_id {
             let tool = ToolSpec {
                 name: alias.clone(),
-                title: None,
+                title: spec.title.clone(),
                 description: spec.description.clone(),
                 input_schema: spec.input_schema.clone(),
             };
@@ -3451,6 +3460,8 @@ struct UserMcpServerPayload {
     #[serde(default)]
     allow_tools: Vec<String>,
     #[serde(default)]
+    packaged: bool,
+    #[serde(default)]
     shared_tools: Vec<String>,
     #[serde(default = "default_true")]
     enabled: bool,
@@ -3474,6 +3485,7 @@ impl From<UserMcpServerPayload> for UserMcpServer {
             name: payload.name,
             endpoint: payload.endpoint,
             allow_tools: payload.allow_tools,
+            packaged: payload.packaged,
             shared_tools: payload.shared_tools,
             enabled: payload.enabled,
             transport: payload.transport.unwrap_or_default(),
@@ -3492,6 +3504,7 @@ impl From<&UserMcpServer> for UserMcpServerPayload {
             name: server.name.clone(),
             endpoint: server.endpoint.clone(),
             allow_tools: server.allow_tools.clone(),
+            packaged: server.packaged,
             shared_tools: server.shared_tools.clone(),
             enabled: server.enabled,
             transport: if server.transport.trim().is_empty() {

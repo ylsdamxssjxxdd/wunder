@@ -14,6 +14,7 @@ use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{
     a2a_service_schema, build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
+    mcp_pack_runtime_name, mcp_pack_schema, mcp_pack_spec_for_server,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserMcpServer, UserToolStore, UserToolsPayload};
@@ -244,6 +245,24 @@ async fn wunder_tools(
         if !server.enabled {
             continue;
         }
+        if server.packaged {
+            if let Some(spec) = mcp_pack_spec_for_server(server) {
+                mcp_tools.push(spec);
+            } else {
+                let name = mcp_pack_runtime_name(&server.name);
+                mcp_tools.push(ToolSpec {
+                    name,
+                    title: None,
+                    description: server
+                        .description
+                        .clone()
+                        .or_else(|| server.display_name.clone())
+                        .unwrap_or_default(),
+                    input_schema: mcp_pack_schema(),
+                });
+            }
+            continue;
+        }
         let allow: std::collections::HashSet<String> = server.allow_tools.iter().cloned().collect();
         for tool in &server.tool_specs {
             if tool.name.is_empty() {
@@ -357,6 +376,7 @@ async fn wunder_tools(
             let mut append_user_tool =
                 |bucket: &mut Vec<ToolSpec>,
                  runtime_name: String,
+                 title: Option<String>,
                  description: String,
                  input_schema: Value| {
                     if used_names.contains(&runtime_name) {
@@ -365,7 +385,7 @@ async fn wunder_tools(
                     used_names.insert(runtime_name.clone());
                     bucket.push(ToolSpec {
                         name: runtime_name,
-                        title: None,
+                        title,
                         description,
                         input_schema,
                     });
@@ -380,10 +400,11 @@ async fn wunder_tools(
                 &payload,
                 &owner_id,
                 false,
-                &mut |owner_id, tool_name, description, input_schema| {
+                &mut |owner_id, tool_name, title, description, input_schema| {
                     append_user_tool(
                         &mut user_mcp_tools,
                         state.user_tool_store.build_alias_name(owner_id, tool_name),
+                        title,
                         description,
                         input_schema,
                     );
@@ -399,6 +420,7 @@ async fn wunder_tools(
                         state
                             .user_tool_store
                             .build_user_skill_name(owner_id, owner_id, tool_name),
+                        None,
                         description,
                         input_schema,
                     );
@@ -414,6 +436,7 @@ async fn wunder_tools(
                     append_user_tool(
                         &mut user_knowledge_tools,
                         state.user_tool_store.build_alias_name(owner_id, tool_name),
+                        None,
                         description,
                         input_schema,
                     );
@@ -456,7 +479,7 @@ fn collect_user_mcp_tools<F>(
     shared_only: bool,
     append: &mut F,
 ) where
-    F: FnMut(&str, &str, String, Value),
+    F: FnMut(&str, &str, Option<String>, String, Value),
 {
     for server in &payload.mcp_servers {
         let server_name = server.name.trim();
@@ -490,6 +513,21 @@ fn collect_user_mcp_tools<F>(
         if enabled_names.is_empty() {
             continue;
         }
+        if server.packaged {
+            let mut config = user_mcp_server_to_config(server);
+            config.allow_tools = enabled_names.iter().cloned().collect();
+            let Some(spec) = mcp_pack_spec_for_server(&config) else {
+                continue;
+            };
+            append(
+                owner_id,
+                &mcp_pack_runtime_name(server_name),
+                spec.title,
+                spec.description,
+                spec.input_schema,
+            );
+            continue;
+        }
         for tool in &server.tool_specs {
             let tool_name = tool
                 .get("name")
@@ -504,10 +542,69 @@ fn collect_user_mcp_tools<F>(
             append(
                 owner_id,
                 &format!("{server_name}@{tool_name}"),
+                None,
                 description,
                 schema,
             );
         }
+    }
+}
+
+fn user_mcp_server_to_config(server: &UserMcpServer) -> crate::config::McpServerConfig {
+    let tool_specs = server
+        .tool_specs
+        .iter()
+        .filter_map(|tool| {
+            let name = tool.get("name")?.as_str()?.trim().to_string();
+            if name.is_empty() {
+                return None;
+            }
+            Some(crate::config::McpToolSpec {
+                name,
+                title: tool
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned),
+                description: resolve_user_mcp_description(server, tool),
+                input_schema: serde_yaml::to_value(normalize_mcp_input_schema(tool))
+                    .unwrap_or(serde_yaml::Value::Null),
+            })
+        })
+        .collect();
+    crate::config::McpServerConfig {
+        name: server.name.clone(),
+        endpoint: server.endpoint.clone(),
+        allow_tools: server
+            .allow_tools
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect(),
+        packaged: server.packaged,
+        enabled: true,
+        transport: if server.transport.trim().is_empty() {
+            None
+        } else {
+            Some(server.transport.clone())
+        },
+        description: if server.description.trim().is_empty() {
+            None
+        } else {
+            Some(server.description.clone())
+        },
+        display_name: if server.display_name.trim().is_empty() {
+            None
+        } else {
+            Some(server.display_name.clone())
+        },
+        headers: server.headers.clone(),
+        auth: server
+            .auth
+            .as_ref()
+            .and_then(|value| serde_yaml::to_value(value).ok()),
+        tool_specs,
     }
 }
 

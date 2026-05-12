@@ -1,3 +1,4 @@
+use super::mcp_pack;
 use super::{
     browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool,
     self_status_tool, sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
@@ -146,6 +147,24 @@ pub fn build_mcp_tool_alias_entries(config: &Config) -> Vec<McpToolAliasEntry> {
     let mut raw_entries = Vec::new();
     for server in &config.mcp.servers {
         if !server.enabled {
+            continue;
+        }
+        if server.packaged {
+            let server_name = server.name.trim();
+            if server_name.is_empty() {
+                continue;
+            }
+            let tool_title = server
+                .display_name
+                .as_ref()
+                .map(|value| format!("{} MCP package", value.trim()))
+                .filter(|value| !value.trim().is_empty());
+            raw_entries.push((
+                mcp_pack::runtime_name(server_name),
+                server_name.to_string(),
+                "mcp_package".to_string(),
+                tool_title,
+            ));
             continue;
         }
         let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
@@ -1516,6 +1535,12 @@ pub fn collect_available_tool_names(
         if !server.enabled {
             continue;
         }
+        if server.packaged {
+            if let Some(spec) = mcp_pack::spec_for_server(server) {
+                names.insert(spec.name);
+            }
+            continue;
+        }
         let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
         for tool in &server.tool_specs {
             if tool.name.is_empty() {
@@ -1600,6 +1625,12 @@ pub fn collect_enabled_tool_names_for_catalog(
     }
     for server in &config.mcp.servers {
         if !server.enabled {
+            continue;
+        }
+        if server.packaged {
+            if let Some(spec) = mcp_pack::spec_for_server(server) {
+                names.insert(spec.name);
+            }
             continue;
         }
         let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
@@ -1717,40 +1748,46 @@ pub fn collect_prompt_tool_specs_with_language(
         });
     }
     let mcp_alias_entries = build_mcp_tool_alias_entries(config);
-    let mcp_tool_lookup: HashMap<String, (&str, &YamlValue)> = config
-        .mcp
-        .servers
-        .iter()
-        .filter(|server| server.enabled)
-        .flat_map(|server| {
-            let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
-            server.tool_specs.iter().filter_map(move |tool| {
-                if tool.name.is_empty() {
-                    return None;
-                }
-                if !allow.is_empty() && !allow.contains(&tool.name) {
-                    return None;
-                }
-                Some((
-                    format!("{}@{}", server.name, tool.name),
-                    (tool.description.as_str(), &tool.input_schema),
-                ))
-            })
-        })
-        .collect();
+    let mut mcp_tool_lookup: HashMap<String, ToolSpec> = HashMap::new();
+    for server in config.mcp.servers.iter().filter(|server| server.enabled) {
+        if server.packaged {
+            if let Some(spec) = mcp_pack::spec_for_server(server) {
+                mcp_tool_lookup.insert(spec.name.clone(), spec);
+            }
+            continue;
+        }
+        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+        for tool in &server.tool_specs {
+            if tool.name.is_empty() {
+                continue;
+            }
+            if !allow.is_empty() && !allow.contains(&tool.name) {
+                continue;
+            }
+            mcp_tool_lookup.insert(
+                format!("{}@{}", server.name, tool.name),
+                ToolSpec {
+                    name: tool.name.clone(),
+                    title: tool.title.clone(),
+                    description: tool.description.clone(),
+                    input_schema: yaml_to_json(&tool.input_schema),
+                },
+            );
+        }
+    }
     for entry in mcp_alias_entries {
         if !allowed_names.contains(&entry.runtime_name) || !seen.insert(entry.display_name.clone())
         {
             continue;
         }
-        let Some((description, input_schema)) = mcp_tool_lookup.get(&entry.runtime_name) else {
+        let Some(spec) = mcp_tool_lookup.get(&entry.runtime_name) else {
             continue;
         };
         output.push(ToolSpec {
             name: entry.display_name.clone(),
-            title: None,
-            description: (*description).to_string(),
-            input_schema: yaml_to_json(input_schema),
+            title: spec.title.clone(),
+            description: spec.description.clone(),
+            input_schema: spec.input_schema.clone(),
         });
     }
     for service in &config.a2a.services {
@@ -1852,11 +1889,12 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
 mod tests {
     use super::{
         build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
-        collect_available_tool_names, resolve_tool_name,
+        collect_available_tool_names, collect_prompt_tool_specs_with_language, resolve_tool_name,
     };
     use crate::config::Config;
     use crate::skills::SkillRegistry;
     use serde_json::Value;
+    use std::collections::HashSet;
 
     #[test]
     fn read_file_spec_clarifies_plain_text_only_in_english() {
@@ -1951,6 +1989,59 @@ mod tests {
         assert!(aliases
             .iter()
             .any(|item| item.display_name == "search__ragflow"));
+    }
+
+    #[test]
+    fn packaged_mcp_exposes_single_runtime_tool() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![crate::config::McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            packaged: true,
+            tool_specs: vec![crate::config::McpToolSpec {
+                name: "search".to_string(),
+                title: None,
+                description: String::new(),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
+            }],
+            ..Default::default()
+        }];
+
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        assert!(available.contains("extra_mcp@__mcp_pack__"));
+        assert!(!available.contains("extra_mcp@search"));
+    }
+
+    #[test]
+    fn packaged_mcp_prompt_spec_uses_package_schema() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![crate::config::McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            packaged: true,
+            tool_specs: vec![crate::config::McpToolSpec {
+                name: "search".to_string(),
+                title: None,
+                description: String::new(),
+                input_schema: serde_yaml::Value::Mapping(Default::default()),
+            }],
+            ..Default::default()
+        }];
+        let allowed = HashSet::from(["extra_mcp@__mcp_pack__".to_string()]);
+
+        let specs = collect_prompt_tool_specs_with_language(
+            &config,
+            &SkillRegistry::default(),
+            &allowed,
+            None,
+            "en-US",
+        );
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "mcp_package");
+        assert_eq!(specs[0].input_schema["required"][0], "action");
     }
 
     #[test]

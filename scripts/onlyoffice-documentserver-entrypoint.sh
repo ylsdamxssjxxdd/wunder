@@ -10,11 +10,13 @@ CACHE_DIR="${STATE_DIR}/font-index-cache"
 CACHE_ALL_FONTS_WEB="${CACHE_DIR}/AllFonts.sdkjs.js"
 CACHE_ALL_FONTS_BIN="${CACHE_DIR}/AllFonts.converter.js"
 CACHE_FONT_SELECTION_BIN="${CACHE_DIR}/font_selection.bin"
-SCRIPT_SCHEMA_VERSION="v2"
+CACHE_FONT_ASSETS_DIR="${CACHE_DIR}/fonts"
+SCRIPT_SCHEMA_VERSION="v3"
 DOCSERVICE_BIN="${ONLYOFFICE_DOCSERVICE_BIN:-/var/www/onlyoffice/documentserver/server/DocService/docservice}"
 ALL_FONTS_WEB="${ONLYOFFICE_ALL_FONTS_WEB:-/var/www/onlyoffice/documentserver/sdkjs/common/AllFonts.js}"
 ALL_FONTS_BIN="${ONLYOFFICE_ALL_FONTS_BIN:-/var/www/onlyoffice/documentserver/server/FileConverter/bin/AllFonts.js}"
 FONT_SELECTION_BIN="${ONLYOFFICE_FONT_SELECTION_BIN:-/var/www/onlyoffice/documentserver/server/FileConverter/bin/font_selection.bin}"
+FONT_ASSETS_DIR="${ONLYOFFICE_FONT_ASSETS_DIR:-/var/www/onlyoffice/documentserver/fonts}"
 
 font_files() {
   [ -d "${CUSTOM_FONT_DIR}" ] || return 1
@@ -31,12 +33,22 @@ count_custom_fonts() {
   font_files 2>/dev/null | wc -l | tr -d ' '
 }
 
+dir_has_files() {
+  [ -d "$1" ] && [ -n "$(find "$1" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null)" ]
+}
+
 font_outputs_exist() {
-  [ -s "${ALL_FONTS_WEB}" ] && [ -s "${ALL_FONTS_BIN}" ] && [ -s "${FONT_SELECTION_BIN}" ]
+  [ -s "${ALL_FONTS_WEB}" ] &&
+    [ -s "${ALL_FONTS_BIN}" ] &&
+    [ -s "${FONT_SELECTION_BIN}" ] &&
+    dir_has_files "${FONT_ASSETS_DIR}"
 }
 
 cached_font_outputs_exist() {
-  [ -s "${CACHE_ALL_FONTS_WEB}" ] && [ -s "${CACHE_ALL_FONTS_BIN}" ] && [ -s "${CACHE_FONT_SELECTION_BIN}" ]
+  [ -s "${CACHE_ALL_FONTS_WEB}" ] &&
+    [ -s "${CACHE_ALL_FONTS_BIN}" ] &&
+    [ -s "${CACHE_FONT_SELECTION_BIN}" ] &&
+    dir_has_files "${CACHE_FONT_ASSETS_DIR}"
 }
 
 build_font_state() {
@@ -68,14 +80,21 @@ cache_font_outputs() {
   cp -f "${ALL_FONTS_WEB}" "${CACHE_ALL_FONTS_WEB}"
   cp -f "${ALL_FONTS_BIN}" "${CACHE_ALL_FONTS_BIN}"
   cp -f "${FONT_SELECTION_BIN}" "${CACHE_FONT_SELECTION_BIN}"
+  rm -rf "${CACHE_FONT_ASSETS_DIR}.tmp"
+  mkdir -p "${CACHE_FONT_ASSETS_DIR}.tmp"
+  cp -a "${FONT_ASSETS_DIR}/." "${CACHE_FONT_ASSETS_DIR}.tmp/"
+  rm -rf "${CACHE_FONT_ASSETS_DIR}"
+  mv "${CACHE_FONT_ASSETS_DIR}.tmp" "${CACHE_FONT_ASSETS_DIR}"
 }
 
 restore_cached_font_outputs() {
   cached_font_outputs_exist || return 1
-  mkdir -p "$(dirname "${ALL_FONTS_WEB}")" "$(dirname "${ALL_FONTS_BIN}")" "$(dirname "${FONT_SELECTION_BIN}")"
+  mkdir -p "$(dirname "${ALL_FONTS_WEB}")" "$(dirname "${ALL_FONTS_BIN}")" "$(dirname "${FONT_SELECTION_BIN}")" "${FONT_ASSETS_DIR}"
   cp -f "${CACHE_ALL_FONTS_WEB}" "${ALL_FONTS_WEB}"
   cp -f "${CACHE_ALL_FONTS_BIN}" "${ALL_FONTS_BIN}"
   cp -f "${CACHE_FONT_SELECTION_BIN}" "${FONT_SELECTION_BIN}"
+  find "${FONT_ASSETS_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  cp -a "${CACHE_FONT_ASSETS_DIR}/." "${FONT_ASSETS_DIR}/"
 }
 
 refresh_font_indexes() {

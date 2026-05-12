@@ -36,6 +36,7 @@ const normalizeMcpServer = (server) => {
     headers,
     auth: server.auth || "",
     allow_tools: Array.isArray(server.allow_tools) ? server.allow_tools : [],
+    packaged: server.packaged === true,
     enabled: server.enabled !== false,
     headers_error: server.headers_error || "",
     tool_specs: rawToolSpecs,
@@ -72,6 +73,7 @@ const buildServerFromMcpConfig = (serverId, rawConfig) => {
     headers,
     auth: config.auth || "",
     allow_tools: config.allow_tools || config.allowTools || [],
+    packaged: config.packaged === true,
     enabled: config.isActive ?? config.enabled ?? true,
   });
 };
@@ -85,6 +87,7 @@ const buildMcpStructPreview = (server) => {
     type: server.transport || undefined,
     description: server.description || undefined,
     isActive: server.enabled !== false,
+    packaged: server.packaged === true ? true : undefined,
     name: server.display_name || server.name,
     baseUrl: server.endpoint,
     headers: server.headers && Object.keys(server.headers).length ? server.headers : undefined,
@@ -109,6 +112,7 @@ const collectModalServer = () => {
     transport: elements.mcpTransport.value.trim(),
     description: elements.mcpDescription.value.trim(),
     headers,
+    packaged: elements.mcpPackaged?.checked === true,
     enabled: elements.mcpEnabled.checked,
   });
 };
@@ -622,6 +626,9 @@ const renderMcpServers = () => {
       subtitleParts.push(`ID: ${server.name}`);
     }
     subtitleParts.push(server.endpoint || "-");
+    if (server.packaged === true) {
+      subtitleParts.push(t("mcp.status.packaged"));
+    }
     item.innerHTML = `<div>${title}</div><small>${subtitleParts.join(" · ")}</small>`;
     item.addEventListener("click", () => {
       state.mcp.selectedIndex = index;
@@ -655,6 +662,9 @@ const renderMcpHeader = () => {
   }
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
+  }
+  if (server.packaged === true) {
+    metaParts.push(t("mcp.status.packaged"));
   }
   metaParts.push(
     server.enabled !== false ? t("mcp.status.enabled") : t("mcp.status.disabled")
@@ -832,6 +842,7 @@ const saveMcpServers = async (options = {}) => {
     auth: server.auth || null,
     tool_specs: Array.isArray(server.tool_specs) ? server.tool_specs : [],
     allow_tools: Array.isArray(server.allow_tools) ? server.allow_tools : [],
+    packaged: server.packaged === true,
     enabled: server.enabled !== false,
   }));
   const response = await fetch(endpoint, {
@@ -991,6 +1002,9 @@ const openMcpModal = (index) => {
       : "";
   elements.mcpHeadersError.textContent = "";
   elements.mcpEnabled.checked = server ? server.enabled !== false : true;
+  if (elements.mcpPackaged) {
+    elements.mcpPackaged.checked = server?.packaged === true;
+  }
   elements.mcpModal.classList.add("active");
   updateMcpStructPreview();
 };
@@ -1044,6 +1058,7 @@ const applyMcpModal = () => {
       state.mcpModal.index !== null ? state.mcp.servers[state.mcpModal.index]?.allow_tools : [],
     tool_specs:
       state.mcpModal.index !== null ? state.mcp.servers[state.mcpModal.index]?.tool_specs : [],
+    packaged: elements.mcpPackaged?.checked === true,
     enabled: elements.mcpEnabled.checked,
   });
   if (state.mcpModal.index === null) {
@@ -1088,6 +1103,7 @@ const upsertMcpServer = (incoming) => {
       ...previous,
       ...incoming,
       allow_tools: allowTools,
+      packaged: incoming.packaged === true,
       tool_specs: toolSpecs,
     };
     return targetIndex;
@@ -1278,6 +1294,9 @@ export const initMcpPanel = () => {
   elements.mcpDescription.addEventListener("input", updateMcpStructPreview);
   elements.mcpTransport.addEventListener("change", updateMcpStructPreview);
   elements.mcpEnabled.addEventListener("change", updateMcpStructPreview);
+  if (elements.mcpPackaged) {
+    elements.mcpPackaged.addEventListener("change", updateMcpStructPreview);
+  }
   elements.mcpImportConfirm.addEventListener("click", applyMcpImportModal);
   elements.mcpImportCancel.addEventListener("click", closeMcpImportModal);
   elements.mcpImportClose.addEventListener("click", closeMcpImportModal);

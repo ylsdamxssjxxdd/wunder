@@ -4439,6 +4439,15 @@
             </label>
           </div>
           <div class="form-row">
+            <label>
+              <input id="mcpPackaged" type="checkbox" />
+              <span data-i18n="mcp.form.packaged">打包为单工具</span>
+            </label>
+            <div class="tips" data-i18n="mcp.form.packagedTip">
+              打包后模型只看到一个 MCP 聚合工具，内部可 list/get/call 允许的远端工具。
+            </div>
+          </div>
+          <div class="form-row">
             <label for="mcpStructPreview" data-i18n="mcp.form.preview">JSON 结构体预览（可复制）</label>
             <textarea id="mcpStructPreview" class="code-preview" readonly></textarea>
           </div>
@@ -5029,6 +5038,15 @@
             <label for="userMcpHeaders" data-i18n="mcp.form.headers">Headers JSON（可选）</label>
             <textarea id="userMcpHeaders" placeholder='{"Authorization":"Bearer ..."}'></textarea>
             <div id="userMcpHeadersError" class="error-text"></div>
+          </div>
+          <div class="form-row">
+            <label>
+              <input id="userMcpPackaged" type="checkbox" />
+              <span data-i18n="mcp.form.packaged">打包为单工具</span>
+            </label>
+            <div class="tips" data-i18n="mcp.form.packagedTip">
+              打包后模型只看到一个 MCP 聚合工具，内部可 list/get/call 允许的远端工具。
+            </div>
           </div>
           <div class="form-row">
             <label for="userMcpStructPreview" data-i18n="mcp.form.preview">JSON 结构体预览（可复制）</label>

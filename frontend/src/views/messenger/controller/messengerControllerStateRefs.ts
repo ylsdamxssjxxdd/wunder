@@ -636,13 +636,37 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.agentPromptPreviewPayloadCache = null;
 
-  ctx.imagePreviewVisible = ref(false);
+  ctx.resourcePreviewVisible = ref(false);
 
-  ctx.imagePreviewUrl = ref('');
+  ctx.resourcePreviewLoading = ref(false);
 
-  ctx.imagePreviewTitle = ref('');
+  ctx.resourcePreviewUrl = ref('');
 
-  ctx.imagePreviewWorkspacePath = ref('');
+  ctx.resourcePreviewTitle = ref('');
+
+  ctx.resourcePreviewMeta = ref('');
+
+  ctx.resourcePreviewHint = ref('');
+
+  ctx.resourcePreviewContent = ref('');
+
+  ctx.resourcePreviewWorkspacePath = ref('');
+
+  ctx.resourcePreviewKind = ref('image');
+
+  ctx.resourcePreviewUserId = ref('');
+
+  ctx.onlyOfficeVisible = ref(false);
+
+  ctx.onlyOfficePath = ref('');
+
+  ctx.onlyOfficeUserId = ref('');
+
+  ctx.drawioVisible = ref(false);
+
+  ctx.drawioPath = ref('');
+
+  ctx.drawioUserId = ref('');
 
   ctx.agentPromptToolSummary = ref<Record<string, unknown> | null>(null);
 

@@ -804,4 +804,28 @@ mod tests {
             Some("extra_mcp@db_query_company_all_personnel")
         );
     }
+
+    #[test]
+    fn build_prompt_tool_name_map_includes_packaged_mcp_runtime() {
+        let mut config = Config::default();
+        config.mcp.servers = vec![McpServerConfig {
+            name: "extra_mcp".to_string(),
+            endpoint: "http://127.0.0.1:9010/mcp".to_string(),
+            enabled: true,
+            packaged: true,
+            display_name: Some("Extra MCP".to_string()),
+            ..Default::default()
+        }];
+        let allowed = HashSet::from(["extra_mcp@__mcp_pack__".to_string()]);
+        let map = build_prompt_tool_name_map(&config, &allowed);
+
+        assert_eq!(
+            map.get("Extra MCP MCP package").map(String::as_str),
+            Some("extra_mcp@__mcp_pack__")
+        );
+        assert_eq!(
+            map.get("extra_mcp@__mcp_pack__").map(String::as_str),
+            Some("extra_mcp@__mcp_pack__")
+        );
+    }
 }

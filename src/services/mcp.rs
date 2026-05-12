@@ -126,6 +126,10 @@ impl WunderMcpServer {
             if !server.enabled {
                 continue;
             }
+            if server.packaged {
+                names.insert(crate::tools::mcp_pack_runtime_name(&server.name));
+                continue;
+            }
             for tool in &server.tool_specs {
                 if tool.name.is_empty() {
                     continue;

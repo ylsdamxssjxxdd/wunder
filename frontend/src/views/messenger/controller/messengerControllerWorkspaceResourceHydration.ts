@@ -174,6 +174,16 @@ import {
   scheduleWorkspaceLoadingLabel
 } from '@/utils/workspaceResourceCards';
 import {
+  WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES,
+  decodeWorkspaceResourceLabel,
+  extractWorkspaceResourceExtension,
+  normalizeWorkspacePreviewFilename,
+  normalizeWorkspacePreviewBlob,
+  resolveWorkspacePreviewTooLargeHint,
+  resolveWorkspacePreviewUnsupportedHint,
+  resolveWorkspaceResourcePreviewKind
+} from '@/utils/workspaceResourcePreview';
+import {
   extractWorkspaceRefreshPaths,
   isWorkspacePathAffected
 } from '@/utils/workspaceRefresh';
@@ -927,35 +937,192 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
   };
 
-  ctx.openImagePreview = (src: string, title = '', workspacePath = '') => {
-      const normalizedSrc = String(src || '').trim();
-      if (!normalizedSrc)
+  ctx.openResourcePreview = async (options: {
+      src?: string;
+      title?: string;
+      workspacePath?: string;
+      userId?: string;
+      content?: string;
+      hint?: string;
+      meta?: string;
+      kind?: string;
+  } = {}) => {
+      const workspacePath = String(options.workspacePath || '').trim();
+      const title = String(options.title || '').trim() || ctx.t('workspace.preview.dialogTitle');
+      const meta = String(options.meta || workspacePath || title).trim();
+      const userId = String(options.userId || '').trim();
+      const initialKind = String(options.kind || '').trim();
+      const fileName = normalizeWorkspacePreviewFilename(title, workspacePath.split('/').pop() || '');
+      const previewKind = initialKind || resolveWorkspaceResourcePreviewKind(fileName);
+      ctx.resourcePreviewVisible.value = true;
+      ctx.resourcePreviewLoading.value = false;
+      ctx.resourcePreviewTitle.value = title;
+      ctx.resourcePreviewMeta.value = meta;
+      ctx.resourcePreviewHint.value = String(options.hint || '').trim();
+      ctx.resourcePreviewContent.value = String(options.content || '').trim();
+      ctx.resourcePreviewWorkspacePath.value = workspacePath;
+      ctx.resourcePreviewUrl.value = String(options.src || '').trim();
+      ctx.resourcePreviewKind.value = previewKind || 'image';
+      ctx.resourcePreviewUserId.value = userId;
+      if (!workspacePath) {
           return;
-      ctx.imagePreviewUrl.value = normalizedSrc;
-      ctx.imagePreviewTitle.value = String(title || '').trim() || ctx.t('chat.imagePreview');
-      ctx.imagePreviewWorkspacePath.value = String(workspacePath || '').trim();
-      ctx.imagePreviewVisible.value = true;
-  };
-
-  ctx.handleImagePreviewDownload = async () => {
-      const workspacePath = String(ctx.imagePreviewWorkspacePath.value || '').trim();
-      if (workspacePath) {
-          await ctx.downloadWorkspaceResource(workspacePath);
       }
-      else {
-          // External image: download directly from URL
-          const url = String(ctx.imagePreviewUrl.value || '').trim();
-          if (url) {
-              await ctx.downloadExternalImage(url);
+      if (previewKind === 'drawio') {
+          const resource = ctx.resolveWorkspaceResource(workspacePath);
+          const relativePath = String(resource?.relativePath || workspacePath).trim();
+          ctx.resourcePreviewVisible.value = false;
+          ctx.drawioVisible.value = true;
+          ctx.drawioPath.value = relativePath;
+          ctx.drawioUserId.value = String(resource?.requestUserId || userId).trim();
+          return;
+      }
+      if (previewKind === 'onlyoffice') {
+          const resource = ctx.resolveWorkspaceResource(workspacePath);
+          const relativePath = String(resource?.relativePath || workspacePath).trim();
+          ctx.resourcePreviewVisible.value = false;
+          ctx.onlyOfficeVisible.value = true;
+          ctx.onlyOfficePath.value = relativePath;
+          ctx.onlyOfficeUserId.value = String(resource?.requestUserId || userId).trim();
+          return;
+      }
+      const resource = ctx.resolveWorkspaceResource(workspacePath);
+      if (!resource || !resource.allowed) {
+          ctx.resourcePreviewHint.value = ctx.t('chat.resourceUnavailable');
+          ctx.resourcePreviewKind.value = 'unsupported';
+          return;
+      }
+      if (previewKind === 'unsupported') {
+          ctx.resourcePreviewHint.value = resolveWorkspacePreviewUnsupportedHint();
+          return;
+      }
+      ctx.resourcePreviewLoading.value = true;
+      try {
+          if (previewKind === 'text') {
+              const response = await fetchWunderWorkspaceContent({
+                  path: String(resource.relativePath || ''),
+                  ...(resource.requestUserId ? { user_id: resource.requestUserId } : {}),
+                  ...(resource.requestAgentId ? { agent_id: resource.requestAgentId } : {}),
+                  ...(resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)
+                      ? { container_id: String(resource.requestContainerId) }
+                      : {}),
+                  include_content: true,
+                  max_bytes: WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES
+              });
+              const payload = response.data || {};
+              if (payload.truncated) {
+                  ctx.resourcePreviewHint.value = ctx.t('workspace.preview.truncatedHint');
+              }
+              ctx.resourcePreviewContent.value = typeof payload.content === 'string'
+                  ? payload.content || ctx.t('workspace.preview.emptyContent')
+                  : ctx.t('workspace.preview.emptyContent');
+              return;
+          }
+          const entry = await ctx.fetchWorkspaceResource(resource);
+          const extension = extractWorkspaceResourceExtension(fileName);
+          const cacheEntry = ctx.workspaceResourceCache.get(resource.publicPath);
+          if (cacheEntry?.objectUrl && previewKind !== 'pdf') {
+              ctx.resourcePreviewUrl.value = cacheEntry.objectUrl;
+              return;
+          }
+          const response = await downloadWunderWorkspaceFile({
+              path: String(resource.relativePath || ''),
+              ...(resource.requestUserId ? { user_id: resource.requestUserId } : {}),
+              ...(resource.requestAgentId ? { agent_id: resource.requestAgentId } : {}),
+              ...(resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)
+                  ? { container_id: String(resource.requestContainerId) }
+                  : {})
+          });
+          const blob = normalizeWorkspacePreviewBlob(response.data as Blob, previewKind as never, extension);
+          ctx.resourcePreviewUrl.value = URL.createObjectURL(blob);
+          ctx.resourcePreviewContent.value = '';
+          ctx.resourcePreviewHint.value = '';
+          void entry;
+      }
+      catch (error) {
+          const missing = ctx.isWorkspaceResourceMissing(error);
+          ctx.resourcePreviewHint.value = missing
+              ? ctx.t('chat.resourceMissing')
+              : previewKind === 'text'
+                  ? ctx.t('workspace.preview.loadFailedHint')
+                  : resolveWorkspacePreviewTooLargeHint();
+          if (previewKind === 'text') {
+              ctx.resourcePreviewContent.value = ctx.t('workspace.preview.empty');
           }
       }
+      finally {
+          ctx.resourcePreviewLoading.value = false;
+      }
   };
 
-  ctx.closeImagePreview = () => {
-      ctx.imagePreviewVisible.value = false;
-      ctx.imagePreviewUrl.value = '';
-      ctx.imagePreviewTitle.value = '';
-      ctx.imagePreviewWorkspacePath.value = '';
+  ctx.handleResourcePreviewDownload = async () => {
+      const workspacePath = String(ctx.resourcePreviewWorkspacePath.value || '').trim();
+      if (workspacePath) {
+          await ctx.downloadWorkspaceResource(workspacePath);
+          return;
+      }
+      const url = String(ctx.resourcePreviewUrl.value || '').trim();
+      if (url) {
+          await ctx.downloadExternalImage(url);
+      }
+  };
+
+  ctx.closeResourcePreview = () => {
+      const currentUrl = String(ctx.resourcePreviewUrl.value || '').trim();
+      const currentWorkspacePath = String(ctx.resourcePreviewWorkspacePath.value || '').trim();
+      if (currentUrl && currentWorkspacePath && currentUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(currentUrl);
+      }
+      ctx.resourcePreviewVisible.value = false;
+      ctx.resourcePreviewLoading.value = false;
+      ctx.resourcePreviewUrl.value = '';
+      ctx.resourcePreviewTitle.value = '';
+      ctx.resourcePreviewMeta.value = '';
+      ctx.resourcePreviewHint.value = '';
+      ctx.resourcePreviewContent.value = '';
+      ctx.resourcePreviewWorkspacePath.value = '';
+      ctx.resourcePreviewKind.value = 'image';
+      ctx.resourcePreviewUserId.value = '';
+  };
+
+  ctx.handleWorkspaceEditorSaved = async (payload: { path?: string } = {}) => {
+      const changedPath = String(payload.path || ctx.onlyOfficePath.value || ctx.drawioPath.value || '').trim();
+      if (!changedPath)
+          return;
+      emitWorkspaceRefresh({
+          path: changedPath,
+          changed_paths: [changedPath],
+          agent_id: ctx.activeAgentId.value || '',
+          container_id: ctx.currentContainerId.value
+      });
+      if (ctx.resourcePreviewVisible.value) {
+          await ctx.openResourcePreview({
+              title: ctx.resourcePreviewTitle.value,
+              workspacePath: ctx.resourcePreviewWorkspacePath.value,
+              userId: ctx.resourcePreviewUserId.value,
+              meta: ctx.resourcePreviewMeta.value,
+              kind: ctx.resourcePreviewKind.value
+          });
+      }
+  };
+
+  ctx.handleWorkspaceEditorFallback = async (payload: { path?: string; message?: string } = {}) => {
+      const path = String(payload.path || '').trim() || ctx.onlyOfficePath.value || ctx.drawioPath.value;
+      ctx.onlyOfficeVisible.value = false;
+      ctx.drawioVisible.value = false;
+      ctx.onlyOfficePath.value = '';
+      ctx.drawioPath.value = '';
+      ctx.onlyOfficeUserId.value = '';
+      ctx.drawioUserId.value = '';
+      if (!path)
+          return;
+      await ctx.openResourcePreview({
+          title: ctx.resourcePreviewTitle.value || path.split('/').pop() || '',
+          workspacePath: path,
+          userId: ctx.resourcePreviewUserId.value,
+          meta: path,
+          hint: String(payload.message || '').trim(),
+          kind: path
+      });
   };
 
   ctx.handleMessageContentClick = async (event: MouseEvent) => {
@@ -970,7 +1137,12 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           if (!src)
               return;
           const title = String(card?.dataset?.externalImageAlt || externalImage.getAttribute('alt') || '').trim();
-          ctx.openImagePreview(src, title, '');
+          await ctx.openResourcePreview({
+              src,
+              title,
+              meta: title,
+              kind: 'image'
+          });
           return;
       }
       // Handle workspace resource image preview
@@ -984,7 +1156,13 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               return;
           const title = String(card?.querySelector('.ai-resource-name')?.textContent || '').trim();
           const workspacePath = String(card?.dataset?.workspacePath || '').trim();
-          ctx.openImagePreview(src, title, workspacePath);
+          await ctx.openResourcePreview({
+              src,
+              title,
+              workspacePath,
+              meta: workspacePath,
+              kind: 'image'
+          });
           return;
       }
       // Handle external image download button
@@ -1006,7 +1184,18 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           if (!publicPath)
               return;
           event.preventDefault();
-          await ctx.downloadWorkspaceResource(publicPath);
+          const action = String(resourceButton.dataset?.workspaceAction || container?.dataset?.workspaceAction || '').trim().toLowerCase();
+          if (action === 'download') {
+              await ctx.downloadWorkspaceResource(publicPath);
+              return;
+          }
+          const title = String(container?.querySelector('.ai-resource-name')?.textContent || '').trim();
+          await ctx.openResourcePreview({
+              title: decodeWorkspaceResourceLabel(title),
+              workspacePath: publicPath,
+              meta: publicPath,
+              kind: resolveWorkspaceResourcePreviewKind(publicPath || title)
+          });
           return;
       }
       const resourceLink = target.closest('a.ai-resource-link[data-workspace-path]') as HTMLElement | null;
@@ -1015,7 +1204,13 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           if (!publicPath)
               return;
           event.preventDefault();
-          await ctx.downloadWorkspaceResource(publicPath);
+          const title = String(resourceLink.textContent || '').trim();
+          await ctx.openResourcePreview({
+              title: decodeWorkspaceResourceLabel(title),
+              workspacePath: publicPath,
+              meta: publicPath,
+              kind: resolveWorkspaceResourcePreviewKind(publicPath || title)
+          });
           return;
       }
       const copyButton = target.closest('.ai-code-copy') as HTMLElement | null;

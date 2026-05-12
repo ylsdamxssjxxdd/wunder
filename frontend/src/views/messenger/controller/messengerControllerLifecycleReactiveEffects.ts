@@ -1246,7 +1246,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
       ctx.pendingRightDockPointerX = null;
       ctx.clearKeywordDebounce();
-      ctx.closeImagePreview();
+      ctx.closeResourcePreview();
       ctx.stopWorldComposerResize();
       void ctx.cancelAgentVoiceRecording();
       void ctx.cancelWorldVoiceRecording();
