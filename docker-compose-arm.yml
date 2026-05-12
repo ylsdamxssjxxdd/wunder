@@ -116,6 +116,19 @@ services:
       - TZ=Asia/Shanghai
     restart: always
 
+  drawio-mcp:
+    container_name: drawio-mcp
+    image: simonkurtzmsft/drawio-mcp-server:latest
+    platform: linux/arm64
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "${DRAWIO_MCP_BIND_HOST:-0.0.0.0}:${DRAWIO_MCP_PORT:-18082}:8080"
+    environment:
+      - TZ=Asia/Shanghai
+    restart: always
+
   wunder-sandbox:
     container_name: wunder-sandbox
     build: *rust-build
@@ -298,8 +311,6 @@ services:
       - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
     ports:
       - "${NGINX_PORT:-18001}:80"
-
-
 
 
 

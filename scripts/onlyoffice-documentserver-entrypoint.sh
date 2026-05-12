@@ -6,6 +6,10 @@ GENERATE_FONTS="${ONLYOFFICE_GENERATE_WUNDER_FONTS:-true}"
 FORCE_REBUILD="${ONLYOFFICE_FORCE_FONT_REBUILD:-false}"
 STATE_DIR="${ONLYOFFICE_WUNDER_STATE_DIR:-/var/lib/onlyoffice/.wunder}"
 STATE_FILE="${STATE_DIR}/font-index-state.sha256"
+CACHE_DIR="${STATE_DIR}/font-index-cache"
+CACHE_ALL_FONTS_WEB="${CACHE_DIR}/AllFonts.sdkjs.js"
+CACHE_ALL_FONTS_BIN="${CACHE_DIR}/AllFonts.converter.js"
+CACHE_FONT_SELECTION_BIN="${CACHE_DIR}/font_selection.bin"
 SCRIPT_SCHEMA_VERSION="v2"
 DOCSERVICE_BIN="${ONLYOFFICE_DOCSERVICE_BIN:-/var/www/onlyoffice/documentserver/server/DocService/docservice}"
 ALL_FONTS_WEB="${ONLYOFFICE_ALL_FONTS_WEB:-/var/www/onlyoffice/documentserver/sdkjs/common/AllFonts.js}"
@@ -31,6 +35,10 @@ font_outputs_exist() {
   [ -s "${ALL_FONTS_WEB}" ] && [ -s "${ALL_FONTS_BIN}" ] && [ -s "${FONT_SELECTION_BIN}" ]
 }
 
+cached_font_outputs_exist() {
+  [ -s "${CACHE_ALL_FONTS_WEB}" ] && [ -s "${CACHE_ALL_FONTS_BIN}" ] && [ -s "${CACHE_FONT_SELECTION_BIN}" ]
+}
+
 build_font_state() {
   {
     echo "schema=${SCRIPT_SCHEMA_VERSION}"
@@ -54,6 +62,22 @@ write_state() {
   printf '%s\n' "$1" > "${STATE_FILE}"
 }
 
+cache_font_outputs() {
+  font_outputs_exist || return 1
+  mkdir -p "${CACHE_DIR}"
+  cp -f "${ALL_FONTS_WEB}" "${CACHE_ALL_FONTS_WEB}"
+  cp -f "${ALL_FONTS_BIN}" "${CACHE_ALL_FONTS_BIN}"
+  cp -f "${FONT_SELECTION_BIN}" "${CACHE_FONT_SELECTION_BIN}"
+}
+
+restore_cached_font_outputs() {
+  cached_font_outputs_exist || return 1
+  mkdir -p "$(dirname "${ALL_FONTS_WEB}")" "$(dirname "${ALL_FONTS_BIN}")" "$(dirname "${FONT_SELECTION_BIN}")"
+  cp -f "${CACHE_ALL_FONTS_WEB}" "${ALL_FONTS_WEB}"
+  cp -f "${CACHE_ALL_FONTS_BIN}" "${ALL_FONTS_BIN}"
+  cp -f "${CACHE_FONT_SELECTION_BIN}" "${FONT_SELECTION_BIN}"
+}
+
 refresh_font_indexes() {
   echo "[wunder-onlyoffice] refreshing fontconfig cache from ${CUSTOM_FONT_DIR}"
   fc-cache -f "${CUSTOM_FONT_DIR}" || fc-cache -f || true
@@ -68,6 +92,15 @@ if [ "${GENERATE_FONTS}" = "true" ]; then
   saved_state="$(current_state || true)"
   rebuild_reason=""
 
+  if [ "${FORCE_REBUILD}" != "true" ] &&
+    ! font_outputs_exist &&
+    [ -n "${saved_state}" ] &&
+    [ "${saved_state}" = "${desired_state}" ] &&
+    cached_font_outputs_exist; then
+    echo "[wunder-onlyoffice] restoring cached font indexes"
+    restore_cached_font_outputs || true
+  fi
+
   if [ "${FORCE_REBUILD}" = "true" ]; then
     rebuild_reason="forced"
   elif ! font_outputs_exist; then
@@ -81,8 +114,10 @@ if [ "${GENERATE_FONTS}" = "true" ]; then
   if [ -n "${rebuild_reason}" ]; then
     echo "[wunder-onlyoffice] rebuilding font indexes (${rebuild_reason})"
     refresh_font_indexes
+    cache_font_outputs || true
     write_state "${desired_state}"
   else
+    cache_font_outputs || true
     if [ -z "${saved_state}" ]; then
       write_state "${desired_state}"
     fi

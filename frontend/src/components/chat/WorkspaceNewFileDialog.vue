@@ -9,7 +9,7 @@
     @closed="handleClosed"
   >
     <div class="workspace-new-file-body">
-      <label class="workspace-new-file-field">
+      <div class="workspace-new-file-field">
         <span class="workspace-new-file-label">{{ t('workspace.createFile.typeLabel') }}</span>
         <div class="workspace-new-file-type-grid" role="listbox" :aria-label="t('workspace.createFile.typeLabel')">
           <button
@@ -29,11 +29,12 @@
             </span>
           </button>
         </div>
-      </label>
+      </div>
 
-      <label class="workspace-new-file-field">
-        <span class="workspace-new-file-label">{{ t('workspace.createFile.nameLabel') }}</span>
+      <div class="workspace-new-file-field">
+        <label class="workspace-new-file-label" for="workspace-new-file-name-input">{{ t('workspace.createFile.nameLabel') }}</label>
         <input
+          id="workspace-new-file-name-input"
           ref="nameInputRef"
           v-model="fileName"
           class="workspace-new-file-input"
@@ -41,7 +42,7 @@
           :placeholder="t('workspace.createFile.placeholder')"
           @keydown.enter.prevent="confirm"
         />
-      </label>
+      </div>
 
       <div class="workspace-new-file-hint">{{ selectedTypeHint }}</div>
     </div>
@@ -151,6 +152,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 16px;
+  color: #202020;
 }
 
 .workspace-new-file-field {
@@ -162,7 +164,7 @@ watch(
 .workspace-new-file-label {
   font-size: 13px;
   font-weight: 600;
-  color: var(--chat-text, var(--el-text-color-primary, #1f2937));
+  color: #202020;
 }
 
 .workspace-new-file-type-grid {
@@ -180,7 +182,7 @@ watch(
   border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.18);
   border-radius: 10px;
   background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.04);
-  color: inherit;
+  color: #202020;
   cursor: pointer;
   text-align: left;
   transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
@@ -224,11 +226,12 @@ watch(
 .workspace-new-file-type-name {
   font-size: 13px;
   font-weight: 600;
+  color: #202020;
 }
 
 .workspace-new-file-type-ext {
   font-size: 12px;
-  color: var(--chat-muted, var(--el-text-color-secondary, #64748b));
+  color: #6b7280;
 }
 
 .workspace-new-file-input {
@@ -238,8 +241,12 @@ watch(
   border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.2);
   border-radius: 10px;
   background: transparent;
-  color: inherit;
+  color: #202020;
   font: inherit;
+}
+
+.workspace-new-file-input::placeholder {
+  color: #9ca3af;
 }
 
 .workspace-new-file-input:focus {
@@ -250,7 +257,7 @@ watch(
 .workspace-new-file-hint {
   font-size: 12px;
   line-height: 1.6;
-  color: var(--chat-muted, var(--el-text-color-secondary, #64748b));
+  color: #6b7280;
 }
 
 @media (max-width: 640px) {

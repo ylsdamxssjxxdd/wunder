@@ -294,8 +294,12 @@ const handleEditorMessage = async (event: MessageEvent) => {
     pendingAutosaveXml = '';
     clearAutosaveTimer();
     const persisted = await persistXml(message.xml, { notify: true, showSaving: true });
-    if (persisted) {
-      postToEditor({ action: 'status', messageKey: 'allChangesSaved', modified: false });
+    if (!persisted) {
+      return;
+    }
+    postToEditor({ action: 'status', messageKey: 'allChangesSaved', modified: false });
+    if (message.exit) {
+      await close({ flushPending: false });
     }
     return;
   }
