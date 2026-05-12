@@ -11,12 +11,15 @@ CACHE_ALL_FONTS_WEB="${CACHE_DIR}/AllFonts.sdkjs.js"
 CACHE_ALL_FONTS_BIN="${CACHE_DIR}/AllFonts.converter.js"
 CACHE_FONT_SELECTION_BIN="${CACHE_DIR}/font_selection.bin"
 CACHE_FONT_ASSETS_DIR="${CACHE_DIR}/fonts"
-SCRIPT_SCHEMA_VERSION="v3"
+CACHE_FONT_THUMBNAILS_DIR="${CACHE_DIR}/font-thumbnails"
+SCRIPT_SCHEMA_VERSION="v4"
 DOCSERVICE_BIN="${ONLYOFFICE_DOCSERVICE_BIN:-/var/www/onlyoffice/documentserver/server/DocService/docservice}"
 ALL_FONTS_WEB="${ONLYOFFICE_ALL_FONTS_WEB:-/var/www/onlyoffice/documentserver/sdkjs/common/AllFonts.js}"
 ALL_FONTS_BIN="${ONLYOFFICE_ALL_FONTS_BIN:-/var/www/onlyoffice/documentserver/server/FileConverter/bin/AllFonts.js}"
 FONT_SELECTION_BIN="${ONLYOFFICE_FONT_SELECTION_BIN:-/var/www/onlyoffice/documentserver/server/FileConverter/bin/font_selection.bin}"
 FONT_ASSETS_DIR="${ONLYOFFICE_FONT_ASSETS_DIR:-/var/www/onlyoffice/documentserver/fonts}"
+FONT_THUMBNAILS_DIR="${ONLYOFFICE_FONT_THUMBNAILS_DIR:-/var/www/onlyoffice/documentserver/sdkjs/common/Images}"
+FONT_THUMBNAILS_GLOB="${ONLYOFFICE_FONT_THUMBNAILS_GLOB:-fonts_thumbnail*}"
 
 font_files() {
   [ -d "${CUSTOM_FONT_DIR}" ] || return 1
@@ -37,18 +40,24 @@ dir_has_files() {
   [ -d "$1" ] && [ -n "$(find "$1" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null)" ]
 }
 
+dir_has_glob_files() {
+  [ -d "$1" ] && [ -n "$(find "$1" -mindepth 1 -maxdepth 1 -type f -name "$2" -print -quit 2>/dev/null)" ]
+}
+
 font_outputs_exist() {
   [ -s "${ALL_FONTS_WEB}" ] &&
     [ -s "${ALL_FONTS_BIN}" ] &&
     [ -s "${FONT_SELECTION_BIN}" ] &&
-    dir_has_files "${FONT_ASSETS_DIR}"
+    dir_has_files "${FONT_ASSETS_DIR}" &&
+    dir_has_glob_files "${FONT_THUMBNAILS_DIR}" "${FONT_THUMBNAILS_GLOB}"
 }
 
 cached_font_outputs_exist() {
   [ -s "${CACHE_ALL_FONTS_WEB}" ] &&
     [ -s "${CACHE_ALL_FONTS_BIN}" ] &&
     [ -s "${CACHE_FONT_SELECTION_BIN}" ] &&
-    dir_has_files "${CACHE_FONT_ASSETS_DIR}"
+    dir_has_files "${CACHE_FONT_ASSETS_DIR}" &&
+    dir_has_files "${CACHE_FONT_THUMBNAILS_DIR}"
 }
 
 build_font_state() {
@@ -85,16 +94,24 @@ cache_font_outputs() {
   cp -a "${FONT_ASSETS_DIR}/." "${CACHE_FONT_ASSETS_DIR}.tmp/"
   rm -rf "${CACHE_FONT_ASSETS_DIR}"
   mv "${CACHE_FONT_ASSETS_DIR}.tmp" "${CACHE_FONT_ASSETS_DIR}"
+  rm -rf "${CACHE_FONT_THUMBNAILS_DIR}.tmp"
+  mkdir -p "${CACHE_FONT_THUMBNAILS_DIR}.tmp"
+  find "${FONT_THUMBNAILS_DIR}" -mindepth 1 -maxdepth 1 -type f -name "${FONT_THUMBNAILS_GLOB}" \
+    -exec cp -a {} "${CACHE_FONT_THUMBNAILS_DIR}.tmp/" \;
+  rm -rf "${CACHE_FONT_THUMBNAILS_DIR}"
+  mv "${CACHE_FONT_THUMBNAILS_DIR}.tmp" "${CACHE_FONT_THUMBNAILS_DIR}"
 }
 
 restore_cached_font_outputs() {
   cached_font_outputs_exist || return 1
-  mkdir -p "$(dirname "${ALL_FONTS_WEB}")" "$(dirname "${ALL_FONTS_BIN}")" "$(dirname "${FONT_SELECTION_BIN}")" "${FONT_ASSETS_DIR}"
+  mkdir -p "$(dirname "${ALL_FONTS_WEB}")" "$(dirname "${ALL_FONTS_BIN}")" "$(dirname "${FONT_SELECTION_BIN}")" "${FONT_ASSETS_DIR}" "${FONT_THUMBNAILS_DIR}"
   cp -f "${CACHE_ALL_FONTS_WEB}" "${ALL_FONTS_WEB}"
   cp -f "${CACHE_ALL_FONTS_BIN}" "${ALL_FONTS_BIN}"
   cp -f "${CACHE_FONT_SELECTION_BIN}" "${FONT_SELECTION_BIN}"
   find "${FONT_ASSETS_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   cp -a "${CACHE_FONT_ASSETS_DIR}/." "${FONT_ASSETS_DIR}/"
+  find "${FONT_THUMBNAILS_DIR}" -mindepth 1 -maxdepth 1 -type f -name "${FONT_THUMBNAILS_GLOB}" -delete
+  cp -a "${CACHE_FONT_THUMBNAILS_DIR}/." "${FONT_THUMBNAILS_DIR}/"
 }
 
 refresh_font_indexes() {
