@@ -15,15 +15,15 @@ mod storage;
 
 pub use channels::ChannelHub;
 pub use core::{
-    auth, command_utils, config, config_store, exec_policy, i18n, path_utils, schemas, shutdown,
-    state, token_utils,
+    auth, command_utils, config, config_store, drawio_config, exec_policy, i18n, path_utils,
+    schemas, shutdown, state, token_utils,
 };
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
-    a2a_store, attachment, cron, doc2md, history, knowledge, llm, mcp, memory, multimodal_models,
-    onlyoffice, org_units, prompting, sim_lab, skills, swarm, tools, user_access, user_store,
-    user_tools, user_world, vector_knowledge, workspace,
+    a2a_store, attachment, cron, doc2md, drawio, history, knowledge, llm, mcp, memory,
+    multimodal_models, onlyoffice, org_units, prompting, sim_lab, skills, swarm, tools,
+    user_access, user_store, user_tools, user_world, vector_knowledge, workspace,
 };
 
 use crate::core::logging;

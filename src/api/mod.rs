@@ -24,6 +24,7 @@ pub mod cron;
 pub mod desktop;
 pub mod desktop_lan;
 pub mod doc2md;
+pub mod drawio;
 pub(crate) mod errors;
 pub mod external_links;
 pub mod external_workflows;
@@ -69,6 +70,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(external_workflows::router())
         .merge(gateway_ws::router())
         .merge(temp_dir::router())
+        .merge(drawio::router())
         .merge(onlyoffice::router())
         .merge(workspace::router())
         .merge(admin::router())
@@ -119,6 +121,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(external_links::router())
         .merge(external_workflows::router())
         .merge(temp_dir::router())
+        .merge(drawio::router())
         .merge(onlyoffice::router())
         .merge(workspace::router())
         .merge(user_tools::router())

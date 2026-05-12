@@ -1648,7 +1648,8 @@
 
 .workspace-onlyoffice-host,
 .workspace-onlyoffice-editor,
-.workspace-onlyoffice-editor iframe {
+.workspace-onlyoffice-editor iframe,
+.workspace-drawio-editor {
   width: 100%;
   height: 100%;
   color-scheme: light;

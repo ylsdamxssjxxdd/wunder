@@ -3154,6 +3154,11 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "token_ttl_s": config.onlyoffice.token_ttl_s,
             "request_timeout_s": config.onlyoffice.request_timeout_s,
             "max_download_bytes": config.onlyoffice.max_download_bytes,
+        },
+        "drawio": {
+            "enabled": config.drawio.enabled(),
+            "editor_url": config.drawio.editor_url.clone().unwrap_or_default(),
+            "max_file_bytes": config.drawio.max_file_bytes,
         }
     })
 }
@@ -3171,7 +3176,8 @@ async fn admin_system_update(
         || payload.security.is_some()
         || payload.observability.is_some()
         || payload.cors.is_some()
-        || payload.onlyoffice.is_some();
+        || payload.onlyoffice.is_some()
+        || payload.drawio.is_some();
     if !has_updates {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -3338,6 +3344,17 @@ async fn admin_system_update(
                 if let Some(max_download_bytes) = onlyoffice.max_download_bytes {
                     config.onlyoffice.max_download_bytes =
                         max_download_bytes.clamp(1024, 1024 * 1024 * 1024);
+                }
+            }
+            if let Some(drawio) = payload.drawio {
+                if let Some(enabled) = drawio.enabled {
+                    config.drawio.enabled = enabled;
+                }
+                if let Some(editor_url) = drawio.editor_url {
+                    config.drawio.editor_url = normalize_optional_config_string(editor_url);
+                }
+                if let Some(max_file_bytes) = drawio.max_file_bytes {
+                    config.drawio.max_file_bytes = max_file_bytes.clamp(1024, 200 * 1024 * 1024);
                 }
             }
         })
@@ -7769,6 +7786,8 @@ struct SystemUpdateRequest {
     cors: Option<SystemCorsUpdateRequest>,
     #[serde(default)]
     onlyoffice: Option<SystemOnlyOfficeUpdateRequest>,
+    #[serde(default)]
+    drawio: Option<SystemDrawioUpdateRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7847,6 +7866,16 @@ struct SystemOnlyOfficeUpdateRequest {
     request_timeout_s: Option<u64>,
     #[serde(default)]
     max_download_bytes: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemDrawioUpdateRequest {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    editor_url: Option<String>,
+    #[serde(default)]
+    max_file_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

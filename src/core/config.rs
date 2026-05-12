@@ -1,4 +1,5 @@
 // Config loading and YAML utilities.
+use crate::core::drawio_config::DrawioConfig;
 use crate::core::onlyoffice_config::OnlyOfficeConfig;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,8 @@ pub struct Config {
     pub workspace: WorkspaceConfig,
     #[serde(default)]
     pub onlyoffice: OnlyOfficeConfig,
+    #[serde(default)]
+    pub drawio: DrawioConfig,
     #[serde(default)]
     pub mcp: McpConfig,
     #[serde(default)]

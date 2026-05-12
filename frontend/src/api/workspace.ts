@@ -31,6 +31,8 @@ export const downloadWorkspaceArchive = (params: QueryParams) =>
   api.get('/workspace/archive', { params, responseType: 'blob' });
 export const fetchWorkspaceOnlyOfficeConfig = (params: QueryParams) =>
   api.get('/workspace/onlyoffice/config', { params });
+export const fetchWorkspaceDrawioConfig = (params: QueryParams) =>
+  api.get('/workspace/drawio/config', { params });
 
 export const listWunderEntries = (params: QueryParams) => listWorkspaceEntries(params);
 export const listWunderWorkspace = (params: QueryParams) => listWorkspaceEntries(params);
@@ -48,3 +50,5 @@ export const downloadWunderWorkspaceFile = (params: QueryParams) => downloadWork
 export const downloadWunderWorkspaceArchive = (params: QueryParams) => downloadWorkspaceArchive(params);
 export const fetchWunderWorkspaceOnlyOfficeConfig = (params: QueryParams) =>
   fetchWorkspaceOnlyOfficeConfig(params);
+export const fetchWunderWorkspaceDrawioConfig = (params: QueryParams) =>
+  fetchWorkspaceDrawioConfig(params);

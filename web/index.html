@@ -2206,6 +2206,51 @@
                 </div>
               </div>
             </div>
+            <div class="settings-card settings-card-drawio">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-diagram-project"></i>
+                <span data-i18n="settings.card.drawio">draw.io</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--runtime" data-i18n="settings.badge.runtime">Live</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="settingsDrawioEnabled" data-i18n="settings.label.drawioEnabled">
+                      Enable draw.io
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settingsDrawioEnabled" type="checkbox" />
+                      <span data-i18n="settings.option.drawioEnabled">Enable online diagram editing</span>
+                    </label>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsDrawioEditorUrl" data-i18n="settings.label.drawioEditorUrl">
+                      Editor URL
+                    </label>
+                    <input
+                      id="settingsDrawioEditorUrl"
+                      type="url"
+                      placeholder="http://127.0.0.1:18081"
+                      data-i18n-placeholder="settings.placeholder.drawioEditorUrl"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.drawioEditorUrl">
+                      Browser-facing diagrams.net/draw.io editor address.
+                    </div>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsDrawioMaxFileBytes" data-i18n="settings.label.drawioMaxFileBytes">
+                      Max file size (bytes)
+                    </label>
+                    <input id="settingsDrawioMaxFileBytes" type="number" min="1024" step="1048576" />
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.drawio">
+                  Enables online editing for .drawio/.dio files in the user workspace.
+                </div>
+              </div>
+            </div>
           </div>
         </section><section id="mcpPanel" class="panel">
             <div class="list-header">

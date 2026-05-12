@@ -48,6 +48,8 @@ services:
       - WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL=${WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL:-http://wunder-onlyoffice}
       - WUNDER_ONLYOFFICE_PUBLIC_BASE_URL=${WUNDER_ONLYOFFICE_PUBLIC_BASE_URL:-http://wunder-server:${WUNDER_PORT:-18000}}
       - WUNDER_ONLYOFFICE_JWT_SECRET=${WUNDER_ONLYOFFICE_JWT_SECRET:-5b8708066a5460cd960836b07ff355a786128b22cf5d1f8c9031feb5afec4bcc}
+      - WUNDER_DRAWIO_ENABLED=${WUNDER_DRAWIO_ENABLED:-true}
+      - WUNDER_DRAWIO_EDITOR_URL=${WUNDER_DRAWIO_EDITOR_URL:-http://127.0.0.1:${DRAWIO_PORT:-18081}}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_LOG_COLOR=${WUNDER_LOG_COLOR:-always}
       - FONTCONFIG_FILE=/app/config/fonts.conf
@@ -61,12 +63,8 @@ services:
       - CARGO_TARGET_DIR=/app/target/x86
     command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
     depends_on:
-      extra-mcp:
-        condition: service_started
       wunder-postgres:
         condition: service_healthy
-      wunder-weaviate:
-        condition: service_started
     restart: always
 
   wunder-onlyoffice:
@@ -99,6 +97,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+    restart: always
+
+  wunder-drawio:
+    container_name: wunder-drawio
+    image: jgraph/drawio:latest
+    shm_size: "1gb"
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "0.0.0.0:${DRAWIO_PORT:-18081}:8080"
+    environment:
+      - TZ=Asia/Shanghai
     restart: always
 
   wunder-sandbox:

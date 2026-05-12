@@ -61,6 +61,11 @@ const onlyOfficeSettings = {
   requestTimeoutS: 60,
   maxDownloadBytes: 209715200,
 };
+const drawioSettings = {
+  enabled: false,
+  editorUrl: "",
+  maxFileBytes: 52428800,
+};
 let adminDefaultsLoaded = false;
 let adminDefaultsLoading = null;
 
@@ -322,6 +327,20 @@ const applyOnlyOfficeSettings = (options = {}) => {
   }
 };
 
+const applyDrawioSettings = (options = {}) => {
+  if (elements.settingsDrawioEnabled) {
+    elements.settingsDrawioEnabled.checked = options.enabled === true;
+  }
+  if (elements.settingsDrawioEditorUrl) {
+    elements.settingsDrawioEditorUrl.value = options.editorUrl || "";
+  }
+  if (elements.settingsDrawioMaxFileBytes) {
+    elements.settingsDrawioMaxFileBytes.value = Number.isFinite(options.maxFileBytes)
+      ? String(options.maxFileBytes)
+      : "";
+  }
+};
+
 const resolveMaxActiveSessions = () => {
   const raw = String(elements.settingsMaxActiveSessions?.value || "").trim();
   if (!raw && !Number.isFinite(serverSettings.maxActiveSessions)) {
@@ -478,6 +497,15 @@ const applySystemSettings = (payload = {}) => {
     ? onlyoffice.max_download_bytes
     : 209715200;
   applyOnlyOfficeSettings(onlyOfficeSettings);
+
+  const drawio = payload.drawio || {};
+  drawioSettings.enabled = drawio.enabled === true;
+  drawioSettings.editorUrl =
+    typeof drawio.editor_url === "string" ? drawio.editor_url.trim() : "";
+  drawioSettings.maxFileBytes = Number.isFinite(drawio.max_file_bytes)
+    ? drawio.max_file_bytes
+    : 52428800;
+  applyDrawioSettings(drawioSettings);
 };
 
 const loadSystemSettings = async (options = {}) => {
@@ -764,6 +792,33 @@ const buildSystemUpdatePayload = () => {
     }
     if (Object.keys(onlyoffice).length) {
       payload.onlyoffice = onlyoffice;
+    }
+  }
+
+  if (
+    elements.settingsDrawioEnabled ||
+    elements.settingsDrawioEditorUrl ||
+    elements.settingsDrawioMaxFileBytes
+  ) {
+    const drawio = {};
+    if (elements.settingsDrawioEnabled) {
+      drawio.enabled = Boolean(elements.settingsDrawioEnabled.checked);
+    }
+    if (elements.settingsDrawioEditorUrl) {
+      drawio.editor_url = String(elements.settingsDrawioEditorUrl.value || "").trim();
+    }
+    if (elements.settingsDrawioMaxFileBytes) {
+      const value = resolveOptionalNumber(
+        elements.settingsDrawioMaxFileBytes.value,
+        drawioSettings.maxFileBytes,
+        1024
+      );
+      if (value !== null) {
+        drawio.max_file_bytes = value;
+      }
+    }
+    if (Object.keys(drawio).length) {
+      payload.drawio = drawio;
     }
   }
 

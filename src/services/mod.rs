@@ -19,6 +19,7 @@ pub mod default_agent_sync;
 pub mod default_tool_profile;
 pub mod desktop_lan;
 pub mod doc2md;
+pub mod drawio;
 pub mod external;
 pub mod external_auth;
 pub mod goal;

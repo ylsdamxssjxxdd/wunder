@@ -93,7 +93,7 @@
           ]"
           :style="{ '--workspace-indent': `${item.depth * 16}px` }"
           :data-workspace-path="item.entry.path"
-          draggable="true"
+          :draggable="state.renamingPath === item.entry.path ? 'false' : 'true'"
           @click="handleWorkspaceItemClick($event, item.entry)"
           @dblclick="handleWorkspaceItemDoubleClick(item.entry)"
           @contextmenu.prevent.stop="openContextMenu($event, item.entry)"
@@ -134,7 +134,10 @@
                 class="workspace-item-rename"
                 type="text"
                 :data-rename-path="item.entry.path"
+                draggable="false"
                 @click.stop
+                @pointerdown.stop
+                @mousedown.stop
                 @keydown.enter.prevent="finishWorkspaceRename(item.entry, state.renamingValue)"
                 @keydown.esc.prevent="cancelWorkspaceRename"
                 @blur="finishWorkspaceRename(item.entry, state.renamingValue)"
@@ -289,6 +292,21 @@
       @fallback="handleOnlyOfficeFallback"
       @saved="handleOnlyOfficeSaved"
     />
+
+    <DrawioEditorDialog
+      v-model:visible="drawio.visible"
+      :path="drawio.entry?.path || ''"
+      :agent-id="normalizedAgentId"
+      :container-id="normalizedContainerId"
+      @fallback="handleDrawioFallback"
+      @saved="handleDrawioSaved"
+    />
+
+    <WorkspaceNewFileDialog
+      v-model:visible="state.newFileDialog.visible"
+      :file-type-options="workspaceNewFileTemplates"
+      @confirm="handleWorkspaceNewFileConfirm"
+    />
   </div>
 </template>
 
@@ -308,7 +326,11 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
 import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
+import WorkspaceNewFileDialog, {
+  type WorkspaceNewFileTemplate
+} from '@/components/chat/WorkspaceNewFileDialog.vue';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
 import {
   collectWorkspaceRefreshTargets,
@@ -545,6 +567,7 @@ const ONLYOFFICE_EXTENSIONS = new Set([
   ...ONLYOFFICE_DIAGRAM_EXTENSIONS,
   ...ONLYOFFICE_TEXT_ALIAS_EXTENSIONS
 ]);
+const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio']);
 const CODE_EXTENSIONS = new Set(['py', 'js', 'ts', 'css', 'html', 'htm', 'sh', 'bat', 'ps1', 'sql']);
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
@@ -558,6 +581,8 @@ const WORKSPACE_PDF_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pdf.png`;
 const WORKSPACE_WORD_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/docx.png`;
 const WORKSPACE_EXCEL_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/xlsx.png`;
 const WORKSPACE_PPT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pptx.png`;
+const WORKSPACE_DIAGRAM_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.png`;
+const WORKSPACE_DRAWIO_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.png`;
 const WORKSPACE_ICON_IDLE_TIMEOUT = 1200;
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 // 沙盒容器上传总大小上限（对齐 Wunder 配置）
@@ -686,6 +711,14 @@ const state = reactive({
     entry: null,
     fallbackEntry: null
   },
+  drawio: {
+    visible: false,
+    entry: null,
+    fallbackEntry: null
+  },
+  newFileDialog: {
+    visible: false
+  },
   contextMenu: {
     visible: false,
     x: 0,
@@ -703,6 +736,69 @@ const draggingOver = computed(() => state.draggingOver);
 const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
 const onlyOffice = computed(() => state.onlyOffice);
+const drawio = computed(() => state.drawio);
+const workspaceNewFileTemplates = computed<WorkspaceNewFileTemplate[]>(() => [
+  {
+    id: 'text',
+    label: t('workspace.createFile.type.text'),
+    extension: 'txt',
+    extensionLabel: '.txt',
+    icon: WORKSPACE_TEXT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.text'),
+    defaultName: 'untitled.txt',
+    content: ''
+  },
+  {
+    id: 'markdown',
+    label: t('workspace.createFile.type.markdown'),
+    extension: 'md',
+    extensionLabel: '.md',
+    icon: WORKSPACE_TEXT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.markdown'),
+    defaultName: 'notes.md',
+    content: '# Title\n'
+  },
+  {
+    id: 'word',
+    label: t('workspace.createFile.type.word'),
+    extension: 'docx',
+    extensionLabel: '.docx',
+    icon: WORKSPACE_WORD_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.word'),
+    defaultName: 'document.docx',
+    content: ''
+  },
+  {
+    id: 'sheet',
+    label: t('workspace.createFile.type.sheet'),
+    extension: 'xlsx',
+    extensionLabel: '.xlsx',
+    icon: WORKSPACE_EXCEL_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.sheet'),
+    defaultName: 'sheet.xlsx',
+    content: ''
+  },
+  {
+    id: 'slides',
+    label: t('workspace.createFile.type.slides'),
+    extension: 'pptx',
+    extensionLabel: '.pptx',
+    icon: WORKSPACE_PPT_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.slides'),
+    defaultName: 'slides.pptx',
+    content: ''
+  },
+  {
+    id: 'diagram',
+    label: t('workspace.createFile.type.flowchart'),
+    extension: 'drawio',
+    extensionLabel: '.drawio',
+    icon: WORKSPACE_DIAGRAM_FILE_ICON,
+    hint: t('workspace.createFile.typeHint.flowchart'),
+    defaultName: 'flowchart.drawio',
+    content: '<mxfile><diagram name=\"Flowchart\"></diagram></mxfile>'
+  }
+]);
 const contextMenu = computed(() => state.contextMenu);
 const emptyText = computed(() => {
   if (state.searchMode) return t('workspace.empty.search');
@@ -913,10 +1009,14 @@ const contextMenuSingleEntry = computed(() => {
 const contextMenuHasSelection = computed(() => contextMenuSelectionPaths.value.length > 0);
 const contextMenuCanEdit = computed(() => {
   const entry = contextMenuSingleEntry.value;
-  return Boolean(entry && (isWorkspaceTextEditable(entry) || isWorkspaceOfficeEditable(entry)));
+  return Boolean(
+    entry &&
+    (isWorkspaceTextEditable(entry) || isWorkspaceOfficeEditable(entry) || isWorkspaceDrawioEditable(entry))
+  );
 });
 const contextMenuEditLabel = computed(() =>
-  contextMenuSingleEntry.value && isWorkspaceOfficeEditable(contextMenuSingleEntry.value)
+  contextMenuSingleEntry.value &&
+  (isWorkspaceOfficeEditable(contextMenuSingleEntry.value) || isWorkspaceDrawioEditable(contextMenuSingleEntry.value))
     ? t('workspace.onlyoffice.edit')
     : t('common.edit')
 );
@@ -995,6 +1095,9 @@ const joinWorkspacePath = (basePath, name) =>
 const getWorkspaceExtension = (entry) => {
   const rawName = String(entry?.name || entry?.path || '');
   const baseName = rawName.split('/').pop().split('\\').pop();
+  if (baseName.toLowerCase().endsWith('.drawio.xml')) {
+    return 'drawio.xml';
+  }
   const dotIndex = baseName.lastIndexOf('.');
   if (dotIndex === -1 || dotIndex === baseName.length - 1) return '';
   return baseName.slice(dotIndex + 1).toLowerCase();
@@ -1102,9 +1205,18 @@ const isWorkspaceOfficeEditable = (entry) => {
   return ONLYOFFICE_EXTENSIONS.has(getWorkspaceExtension(entry));
 };
 
+const isWorkspaceDrawioEditable = (entry) => {
+  if (!entry || entry.type !== 'file') return false;
+  const extension = getWorkspaceExtension(entry);
+  return DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml';
+};
+
 const resolveWorkspaceFallbackFileIcon = (extension) => {
   if (PDF_EXTENSIONS.has(extension)) {
     return WORKSPACE_PDF_FILE_ICON;
+  }
+  if (DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml') {
+    return WORKSPACE_DRAWIO_FILE_ICON;
   }
   if (ONLYOFFICE_WORD_EXTENSIONS.has(extension)) {
     return WORKSPACE_WORD_FILE_ICON;
@@ -1187,6 +1299,9 @@ const getEntryIcon = (entry) => {
     };
   }
   const ext = getWorkspaceExtension(entry);
+  if (DRAWIO_EXTENSIONS.has(ext) || ext === 'drawio.xml') {
+    return { icon: WORKSPACE_DRAWIO_FILE_ICON, className: 'icon-vscode', label: t('workspace.icon.diagram') };
+  }
   const icon =
     workspaceThemeIconResolver.value?.resolveFileIconPath(String(entry?.name || entry?.path || ''), ext) ||
     resolveWorkspaceFallbackFileIcon(ext);
@@ -2057,6 +2172,10 @@ const handleWorkspaceItemDoubleClick = (entry) => {
     void toggleWorkspaceDirectory(entry);
     return;
   }
+  if (isWorkspaceDrawioEditable(entry)) {
+    openDrawioEditor(entry);
+    return;
+  }
   if (isWorkspaceOfficeEditable(entry)) {
     openOnlyOfficeEditor(entry);
     return;
@@ -2102,6 +2221,10 @@ const handleEdit = () => {
   const targetEntry = contextMenuSingleEntry.value;
   closeContextMenu();
   if (!targetEntry) return;
+  if (isWorkspaceDrawioEditable(targetEntry)) {
+    openDrawioEditor(targetEntry);
+    return;
+  }
   if (isWorkspaceOfficeEditable(targetEntry)) {
     openOnlyOfficeEditor(targetEntry);
     return;
@@ -2349,12 +2472,15 @@ const resolveWorkspaceCreationDirectoryPath = () => {
 };
 
 const createWorkspaceFile = async () => {
-  const fileName = await promptInput(t('workspace.createFile.prompt'), {
-    placeholder: t('workspace.createFile.placeholder'),
-    defaultValue: 'untitled.txt'
-  });
-  if (fileName === null) return;
-  const trimmed = String(fileName || '').trim();
+  state.newFileDialog.visible = true;
+};
+
+const handleWorkspaceNewFileConfirm = async (payload: {
+  name: string;
+  content: string;
+  typeId: string;
+}) => {
+  const trimmed = String(payload.name || '').trim();
   if (!isValidWorkspaceName(trimmed)) {
     ElMessage.warning(t('workspace.name.invalid'));
     return;
@@ -2363,8 +2489,9 @@ const createWorkspaceFile = async () => {
   const targetPath = joinWorkspacePath(targetDir, trimmed);
   try {
     await saveWunderWorkspaceFile(
-      withAgentParams({ path: targetPath, content: '', create_if_missing: true })
+      withAgentParams({ path: targetPath, content: payload.content || '', create_if_missing: true })
     );
+    state.newFileDialog.visible = false;
     await refreshWorkspacePathWithFallback(targetDir);
     ElMessage.success(t('workspace.createFile.success', { name: trimmed }));
   } catch (error) {
@@ -2592,6 +2719,10 @@ const handleListDrop = async (event) => {
 };
 
 const handleItemDragStart = (event, entry) => {
+  if (state.renamingPath === entry?.path) {
+    event.preventDefault();
+    return;
+  }
   if (!event.dataTransfer || !entry?.path) return;
   if (!state.selectedPaths.has(entry.path)) {
     setWorkspaceSelection([entry.path], entry.path);
@@ -2786,6 +2917,12 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
     state.preview.loading = false;
     return;
   }
+  if (DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml') {
+    state.preview.hint = resolvePreviewUnsupportedHint();
+    state.preview.content = t('workspace.preview.empty');
+    state.preview.loading = false;
+    return;
+  }
   const isMediaPreview =
     IMAGE_EXTENSIONS.has(extension) ||
     PDF_EXTENSIONS.has(extension) ||
@@ -2897,6 +3034,10 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
 
 const openPreview = async (entry) => {
   if (!entry || entry.type !== 'file') return;
+  if (isWorkspaceDrawioEditable(entry)) {
+    openDrawioEditor(entry);
+    return;
+  }
   if (isWorkspaceOfficeEditable(entry)) {
     openOnlyOfficeEditor(entry);
     return;
@@ -2910,6 +3051,39 @@ const openOnlyOfficeEditor = (entry) => {
   state.onlyOffice.fallbackEntry = entry;
   state.onlyOffice.entry = entry;
   state.onlyOffice.visible = true;
+};
+
+const openDrawioEditor = (entry) => {
+  if (!entry || entry.type !== 'file') return;
+  state.preview.visible = false;
+  state.drawio.fallbackEntry = entry;
+  state.drawio.entry = entry;
+  state.drawio.visible = true;
+};
+
+const handleDrawioFallback = async (payload: { path?: string; message?: string } = {}) => {
+  const fallbackPath = normalizeWorkspacePath(payload.path || '');
+  const fallbackEntry =
+    (fallbackPath && findWorkspaceEntryByPath(state.entries, fallbackPath)) || state.drawio.fallbackEntry || null;
+  state.drawio.visible = false;
+  state.drawio.entry = null;
+  state.drawio.fallbackEntry = null;
+  if (!fallbackEntry) return;
+  await openPreviewWithoutOnlyOffice(fallbackEntry);
+};
+
+const handleDrawioSaved = async (payload: { path?: string } = {}) => {
+  const changedPath = normalizeWorkspacePath(payload.path || state.drawio.entry?.path || '');
+  if (!changedPath) return;
+  await refreshWorkspacePathWithFallback(getWorkspaceParentPath(changedPath));
+  emitWorkspaceRefresh({
+    reason: 'workspace-drawio-save',
+    sourceId: workspacePanelRefreshSourceId,
+    agentId: normalizedAgentId.value,
+    containerId: normalizedContainerId.value,
+    path: changedPath,
+    paths: [changedPath]
+  });
 };
 
 const handleOnlyOfficeFallback = async (payload: { path?: string; message?: string } = {}) => {

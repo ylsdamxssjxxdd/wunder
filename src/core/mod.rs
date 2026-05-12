@@ -6,6 +6,7 @@ pub mod command_utils;
 pub mod config;
 pub mod config_store;
 pub mod dpi;
+pub mod drawio_config;
 pub mod exec_policy;
 pub mod i18n;
 pub mod json_schema;
