@@ -201,7 +201,11 @@ async fn benchmark_export(
         "wunderbench-{}-export.json",
         sanitize_export_filename_component(&run_id)
     );
-    Ok(download_bytes_response(bytes, &filename, "application/json; charset=utf-8"))
+    Ok(download_bytes_response(
+        bytes,
+        &filename,
+        "application/json; charset=utf-8",
+    ))
 }
 
 async fn benchmark_delete(

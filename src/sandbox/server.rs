@@ -19,10 +19,13 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
+use crate::a2a_store::A2aStore;
 use crate::command_utils;
+use crate::config::Config;
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::i18n;
+use crate::lsp::LspManager;
 use crate::services::tools::command_options::{
     apply_time_budget_secs, parse_command_budget, parse_dry_run,
 };
@@ -34,6 +37,10 @@ use crate::services::tools::tool_error::{
     build_execute_command_failure_data, build_execute_command_failure_message, with_error_meta,
     ToolErrorMeta,
 };
+use crate::skills::SkillRegistry;
+use crate::storage;
+use crate::tools::{execute_builtin_tool, ToolContext};
+use crate::workspace::WorkspaceManager;
 
 const DEFAULT_WORKSPACE_ROOT: &str = "/workspaces";
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
@@ -108,6 +115,7 @@ struct SandboxReleaseResponse {
 
 struct SandboxContext {
     workspace_root: PathBuf,
+    container_root: PathBuf,
     allow_roots: Arc<Vec<PathBuf>>,
     deny_globs: Arc<Vec<Regex>>,
     allow_commands: Arc<HashSet<String>>,
@@ -321,6 +329,7 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
 
     let context = SandboxContext {
         workspace_root,
+        container_root,
         allow_roots: rules.allow_roots,
         deny_globs: rules.deny_globs,
         allow_commands: rules.allow_commands,
@@ -335,6 +344,9 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
     let result = match request.tool.as_str() {
         "执行命令" => execute_command(&context, &args).await,
         "ptc" => execute_ptc(&context, &args).await,
+        "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "应用补丁" => {
+            execute_builtin_file_tool(&request, &context, &args).await
+        }
         _ => ToolResult {
             ok: false,
             data: json!({}),
@@ -657,6 +669,113 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
             "budget": command_budget.to_json()
         }),
         error: String::new(),
+    }
+}
+
+async fn execute_builtin_file_tool(
+    request: &SandboxToolRequest,
+    context: &SandboxContext,
+    args: &Value,
+) -> ToolResult {
+    let mut config = Config::default();
+    config.server.mode = "desktop".to_string();
+    config.workspace.root = context.container_root.to_string_lossy().to_string();
+    config.storage.backend = "sqlite".to_string();
+    config.storage.db_path = "/tmp/wunder-sandbox-tools.db".to_string();
+    config.security.allow_paths = vec!["*".to_string()];
+    config.security.deny_globs = request.deny_globs.clone();
+    config.lsp.enabled = false;
+
+    let workspace_id = context
+        .workspace_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(request.user_id.as_str())
+        .to_string();
+    let mut container_roots = HashMap::new();
+    container_roots.insert(1, context.workspace_root.to_string_lossy().to_string());
+    config.workspace.container_roots = container_roots.clone();
+
+    let storage = match storage::build_storage(&config.storage) {
+        Ok(storage) => storage,
+        Err(err) => {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({ "detail": err.to_string() }),
+                    ToolErrorMeta::new(
+                        "SANDBOX_STORAGE_INIT_FAILED",
+                        Some("sandbox 文件工具初始化本地存储失败。".to_string()),
+                        true,
+                        Some(200),
+                    ),
+                ),
+                error: "sandbox storage initialization failed".to_string(),
+            };
+        }
+    };
+    let workspace = Arc::new(WorkspaceManager::new(
+        &config.workspace.root,
+        Arc::clone(&storage),
+        config.workspace.retention_days,
+        &config.workspace.container_roots,
+    ));
+    let lsp_manager = LspManager::new(Arc::clone(&workspace));
+    let a2a_store = A2aStore::new();
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let filesystem_roots = Arc::new(vec![PathBuf::from("/")]);
+    let tool_context = ToolContext {
+        user_id: request.user_id.as_str(),
+        session_id: request.session_id.as_str(),
+        workspace_id: workspace_id.as_str(),
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: false,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        beeroom_realtime: None,
+        workspace,
+        lsp_manager,
+        config: &config,
+        a2a_store: &a2a_store,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: Some(Arc::clone(&filesystem_roots)),
+        read_roots: Some(filesystem_roots),
+        command_sessions: None,
+        event_emitter: None,
+        http: &http,
+    };
+
+    match execute_builtin_tool(&tool_context, request.tool.as_str(), args).await {
+        Ok(result) => ToolResult {
+            ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
+            data: result,
+            error: String::new(),
+        },
+        Err(err) => ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "detail": err.to_string() }),
+                ToolErrorMeta::new(
+                    "SANDBOX_FILE_TOOL_FAILED",
+                    Some("sandbox 文件工具执行失败。".to_string()),
+                    true,
+                    Some(200),
+                ),
+            ),
+            error: err.to_string(),
+        },
     }
 }
 

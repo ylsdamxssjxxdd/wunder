@@ -26,6 +26,16 @@
           <button
             class="workspace-onlyoffice-icon-btn"
             type="button"
+            :title="t('common.download')"
+            :aria-label="t('common.download')"
+            :disabled="loading || saving"
+            @click="handleDownload"
+          >
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-onlyoffice-icon-btn"
+            type="button"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
             :disabled="loading || saving"
@@ -65,12 +75,14 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import {
+  downloadWunderWorkspaceFile,
   fetchWunderWorkspaceContent,
   fetchWunderWorkspaceDrawioConfig,
   saveWunderWorkspaceFile
 } from '@/api/workspace';
 import type { QueryParams } from '@/api/types';
 import { getCurrentLanguage, useI18n } from '@/i18n';
+import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 
 const props = defineProps<{
   visible: boolean;
@@ -414,6 +426,32 @@ const requestSave = () => {
 
 const handleRefresh = async () => {
   await loadEditor();
+};
+
+const handleDownload = async () => {
+  if (!props.path || loading.value || saving.value) return;
+  try {
+    const response = await downloadWunderWorkspaceFile(requestParams());
+    const objectUrl = URL.createObjectURL(response.data);
+    const fallbackName = props.path.split('/').pop() || 'download';
+    const filename = getFilenameFromHeaders(
+      response.headers as Record<string, unknown>,
+      fallbackName
+    );
+    saveObjectUrlAsFile(objectUrl, filename);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (error) {
+    const source = error as {
+      response?: { data?: { detail?: string; error?: string } | string };
+      message?: string;
+    };
+    const data = source.response?.data;
+    errorText.value =
+      (typeof data === 'object' && (data.detail || data.error)) ||
+      (typeof data === 'string' ? data : '') ||
+      source.message ||
+      t('workspace.download.failed');
+  }
 };
 
 const handleClosed = () => {

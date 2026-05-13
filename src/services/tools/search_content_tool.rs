@@ -257,6 +257,9 @@ struct SearchAttemptResult {
 }
 
 pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    if let Some(result) = super::execute_in_sandbox(context, "搜索内容", args).await {
+        return Ok(result);
+    }
     let dry_run = parse_dry_run(args);
     let params = match parse_search_params(args) {
         Ok(value) => value,

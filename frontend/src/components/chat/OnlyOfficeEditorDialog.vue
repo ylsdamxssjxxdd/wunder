@@ -16,6 +16,16 @@
           <button
             class="workspace-onlyoffice-icon-btn"
             type="button"
+            :title="t('common.download')"
+            :aria-label="t('common.download')"
+            :disabled="loading"
+            @click="handleDownload"
+          >
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-onlyoffice-icon-btn"
+            type="button"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
             :disabled="loading"
@@ -46,9 +56,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
-import { fetchWunderWorkspaceOnlyOfficeConfig } from '@/api/workspace';
+import { downloadWunderWorkspaceFile, fetchWunderWorkspaceOnlyOfficeConfig } from '@/api/workspace';
 import type { QueryParams } from '@/api/types';
 import { getCurrentLanguage, useI18n } from '@/i18n';
+import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
 
 const props = defineProps<{
   visible: boolean;
@@ -203,6 +214,31 @@ const openEditor = async () => {
 
 const handleRefresh = async () => {
   await openEditor();
+};
+
+const handleDownload = async () => {
+  if (!props.path || loading.value) return;
+  try {
+    const response = await downloadWunderWorkspaceFile(requestParams());
+    const objectUrl = URL.createObjectURL(response.data);
+    const fallbackName = props.path.split('/').pop() || 'download';
+    const filename = getFilenameFromHeaders(
+      response.headers as Record<string, unknown>,
+      fallbackName
+    );
+    saveObjectUrlAsFile(objectUrl, filename);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch (error) {
+    const source = error as {
+      response?: { data?: { detail?: string; error?: string } };
+      message?: string;
+    };
+    errorText.value =
+      source.response?.data?.detail ||
+      source.response?.data?.error ||
+      source.message ||
+      t('workspace.download.failed');
+  }
 };
 
 const emitFallback = (message = '') => {

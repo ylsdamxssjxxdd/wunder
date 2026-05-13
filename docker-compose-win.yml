@@ -69,6 +69,12 @@ services:
       - CARGO_HOME=/app/.cargo/x86
       - CARGO_TARGET_DIR=/app/target/x86
     command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${WUNDER_PORT:-18000}/wunder/i18n >/dev/null || exit 1"]
+      start_period: 900s
+      interval: 5s
+      timeout: 3s
+      retries: 60
     depends_on:
       wunder-postgres:
         condition: service_healthy
@@ -174,7 +180,7 @@ services:
     command: ["bash", "/usr/local/bin/wunder-docker-rust-entry.sh", "wait-or-run"]
     depends_on:
       wunder-server:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
       start_period: 300s

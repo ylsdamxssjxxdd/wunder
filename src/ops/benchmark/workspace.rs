@@ -194,14 +194,9 @@ mod tests {
             workspace.scoped_user_id_by_container("benchmark_admin", DEFAULT_SANDBOX_CONTAINER_ID);
         let task = task_with_inline_file();
 
-        let (attempt_dir, attempt_root) = prepare_attempt_workspace(
-            &workspace,
-            &workspace_id,
-            "run_1",
-            &task,
-            1,
-        )
-        .expect("prepare workspace");
+        let (attempt_dir, attempt_root) =
+            prepare_attempt_workspace(&workspace, &workspace_id, "run_1", &task, 1)
+                .expect("prepare workspace");
 
         assert_eq!(attempt_root, "benchmark/run_1/sample_task/attempt_1");
         assert!(attempt_dir.starts_with(workspace.workspace_root(&workspace_id)));

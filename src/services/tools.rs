@@ -273,6 +273,29 @@ fn collect_orchestration_aware_allow_roots(context: &ToolContext<'_>) -> Vec<Pat
     roots
 }
 
+pub(crate) async fn execute_in_sandbox(
+    context: &ToolContext<'_>,
+    tool: &str,
+    args: &Value,
+) -> Option<Value> {
+    if !sandbox::sandbox_enabled(context.config) {
+        return None;
+    }
+    Some(
+        sandbox::execute_tool(
+            context.config,
+            context.workspace.as_ref(),
+            context.user_id,
+            context.workspace_id,
+            context.session_id,
+            tool,
+            args,
+            context.user_tool_bindings,
+        )
+        .await,
+    )
+}
+
 pub(crate) fn tool_result_data(value: &Value) -> &Value {
     value.get("data").unwrap_or(value)
 }
@@ -7112,18 +7135,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         }
         return Ok(result);
     }
-    if sandbox::sandbox_enabled(context.config) {
-        let result = sandbox::execute_tool(
-            context.config,
-            context.workspace.as_ref(),
-            context.user_id,
-            context.workspace_id,
-            context.session_id,
-            "执行命令",
-            &args,
-            context.user_tool_bindings,
-        )
-        .await;
+    if let Some(result) = execute_in_sandbox(context, "执行命令", &args).await {
         if !dry_run {
             context.workspace.mark_tree_dirty(context.workspace_id);
         }
@@ -7482,18 +7494,7 @@ fn recover_tool_args_value(args: &Value) -> Value {
 
 async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
-    if sandbox::sandbox_enabled(context.config) {
-        let result = sandbox::execute_tool(
-            context.config,
-            context.workspace.as_ref(),
-            context.user_id,
-            context.workspace_id,
-            context.session_id,
-            "ptc",
-            &args,
-            context.user_tool_bindings,
-        )
-        .await;
+    if let Some(result) = execute_in_sandbox(context, "ptc", &args).await {
         context.workspace.mark_tree_dirty(context.workspace_id);
         return Ok(result);
     }
@@ -7650,6 +7651,9 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 }
 
 async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    if let Some(result) = execute_in_sandbox(context, "列出文件", args).await {
+        return Ok(result);
+    }
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -8415,6 +8419,9 @@ fn compact_read_file_summary_for_model(summary: &Value) -> Value {
 
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
+    if let Some(result) = execute_in_sandbox(context, "读取文件", &args).await {
+        return Ok(result);
+    }
     let dry_run = parse_dry_run(&args);
     let read_budget = parse_read_budget(&args);
     let mut specs = match parse_read_file_specs(&args) {
@@ -9250,6 +9257,12 @@ struct WriteFileOutcome {
 
 async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
+    if let Some(result) = execute_in_sandbox(context, "写入文件", &args).await {
+        if !parse_dry_run(&args) {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+        }
+        return Ok(result);
+    }
     let path = args
         .get("path")
         .and_then(Value::as_str)

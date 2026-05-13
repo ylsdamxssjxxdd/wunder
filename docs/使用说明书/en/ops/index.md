@@ -40,6 +40,10 @@ The goal: keep the system **running stably for 10+ years**, not just "it started
     <strong>Monitoring and WunderBench</strong>
     <span>Throughput, latency, errors, and capacity assessment.</span>
   </a>
+  <a class="docs-card" href="/docs/en/ops/wunderbench/">
+    <strong>WunderBench Model Evaluation</strong>
+    <span>Three profiles, scoring, exports, and task extension.</span>
+  </a>
   <a class="docs-card" href="/docs/en/ops/desktop-local-mode/">
     <strong>Desktop Local Mode</strong>
     <span>Local runtime boundaries and governance essentials.</span>
@@ -249,5 +253,6 @@ When something goes wrong, investigate in this order:
 ## Next Steps
 
 - Having issues? See [Troubleshooting](/docs/en/help/troubleshooting/)
+- Evaluating models? See [WunderBench Model Evaluation](/docs/en/ops/wunderbench/)
 - Looking for references? See [Reference Overview](/docs/en/reference/)
 - Have questions? See [FAQ](/docs/en/help/faq/)

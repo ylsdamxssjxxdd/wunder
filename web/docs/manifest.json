@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-13T02:57:35.491775+00:00",
+  "generated_at": "2026-05-13T03:57:05.627337+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -533,6 +533,12 @@
                     "title": "监控与 WunderBench",
                     "summary": "观测能力各有分工：会话监控看线程、工具统计看热点、性能采样看链路、WunderBench 看模型能力质量。",
                     "url": "/docs/zh-CN/ops/benchmark-and-observability/"
+                  },
+                  {
+                    "slug": "zh-CN/ops/wunderbench",
+                    "title": "WunderBench 模型评测",
+                    "summary": "使用三档评测自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
+                    "url": "/docs/zh-CN/ops/wunderbench/"
                   },
                   {
                     "slug": "zh-CN/ops/channel-runtime",
@@ -1233,6 +1239,12 @@
                     "url": "/docs/en/ops/benchmark-and-observability/"
                   },
                   {
+                    "slug": "en/ops/wunderbench",
+                    "title": "WunderBench Model Evaluation",
+                    "summary": "Use three evaluation profiles to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
+                    "url": "/docs/en/ops/wunderbench/"
+                  },
+                  {
                     "slug": "en/ops/channel-runtime",
                     "title": "Channel Runtime",
                     "summary": "Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.",
@@ -1482,6 +1494,7 @@
     "zh-CN/ops/desktop-local-mode",
     "zh-CN/ops/auth-and-security",
     "zh-CN/ops/benchmark-and-observability",
+    "zh-CN/ops/wunderbench",
     "zh-CN/ops/channel-runtime",
     "zh-CN/reference/index",
     "zh-CN/reference/api-index",
@@ -1571,6 +1584,7 @@
     "en/ops/desktop-local-mode",
     "en/ops/auth-and-security",
     "en/ops/benchmark-and-observability",
+    "en/ops/wunderbench",
     "en/ops/channel-runtime",
     "en/reference/index",
     "en/reference/api-index",
@@ -7233,9 +7247,128 @@
         }
       ],
       "prev_slug": "zh-CN/ops/auth-and-security",
-      "next_slug": "zh-CN/ops/channel-runtime",
+      "next_slug": "zh-CN/ops/wunderbench",
       "source_path": "zh-CN/ops/benchmark-and-observability.md",
       "output_path": "zh-CN/ops/benchmark-and-observability/index.html"
+    },
+    "zh-CN/ops/wunderbench": {
+      "slug": "zh-CN/ops/wunderbench",
+      "language": "zh-CN",
+      "title": "WunderBench 模型评测",
+      "summary": "使用三档评测自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
+      "updated_at": "2026-05-13",
+      "read_when": [
+        "你需要评估模型在 Wunder 中的真实任务完成能力",
+        "你需要导出完整评测记录，复盘模型日志、工具调用和工作区结果",
+        "你准备为 WunderBench 新增或调整评测题目"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "config/benchmark/tasks",
+        "src/ops/benchmark"
+      ],
+      "tab": "运维",
+      "group": "部署与治理",
+      "group_path": [
+        "部署与治理"
+      ],
+      "url": "/docs/zh-CN/ops/wunderbench/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "WunderBench 模型评测"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "入口"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "三个评测档位"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "被测模型与裁判模型"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "当前题库覆盖"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "如何阅读结果"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Attempt、产物与日志"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "导出评测记录"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "新增题目"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "评分方式"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "题目设计原则"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "排障"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "模型说目录为空"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "自动评分全是 0"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "裁判分数波动大"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "运行卡住或耗时过长"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "与其他观测能力的关系"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/ops/benchmark-and-observability",
+      "next_slug": "zh-CN/ops/channel-runtime",
+      "source_path": "zh-CN/ops/wunderbench.md",
+      "output_path": "zh-CN/ops/wunderbench/index.html"
     },
     "zh-CN/ops/channel-runtime": {
       "slug": "zh-CN/ops/channel-runtime",
@@ -7333,7 +7466,7 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/ops/benchmark-and-observability",
+      "prev_slug": "zh-CN/ops/wunderbench",
       "next_slug": "zh-CN/reference/index",
       "source_path": "zh-CN/ops/channel-runtime.md",
       "output_path": "zh-CN/ops/channel-runtime/index.html"
@@ -15081,9 +15214,128 @@
         }
       ],
       "prev_slug": "en/ops/auth-and-security",
-      "next_slug": "en/ops/channel-runtime",
+      "next_slug": "en/ops/wunderbench",
       "source_path": "en/ops/benchmark-and-observability.md",
       "output_path": "en/ops/benchmark-and-observability/index.html"
+    },
+    "en/ops/wunderbench": {
+      "slug": "en/ops/wunderbench",
+      "language": "en",
+      "title": "WunderBench Model Evaluation",
+      "summary": "Use three evaluation profiles to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
+      "updated_at": "2026-05-13",
+      "read_when": [
+        "You need to evaluate model quality inside Wunder's real agent pipeline",
+        "You need to export full benchmark records with model logs, tool calls, and workspace artifacts",
+        "You plan to add or adjust WunderBench tasks"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "config/benchmark/tasks",
+        "src/ops/benchmark"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/wunderbench/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "WunderBench Model Evaluation"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Entry Point"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Three Profiles"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Tested Model and Judge Model"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Current Coverage"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Reading Results"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Attempts, Artifacts, and Logs"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Exporting Evaluation Records"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Adding Tasks"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Grading Methods"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Task Design Principles"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Troubleshooting"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "The model says the directory is empty"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Automated scores are all zero"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "Judge scores vary too much"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "Runs hang or take too long"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Relation to Other Observability Tools"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "Further Reading"
+        }
+      ],
+      "prev_slug": "en/ops/benchmark-and-observability",
+      "next_slug": "en/ops/channel-runtime",
+      "source_path": "en/ops/wunderbench.md",
+      "output_path": "en/ops/wunderbench/index.html"
     },
     "en/ops/channel-runtime": {
       "slug": "en/ops/channel-runtime",
@@ -15147,7 +15399,7 @@
           "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/ops/benchmark-and-observability",
+      "prev_slug": "en/ops/wunderbench",
       "next_slug": "en/reference/index",
       "source_path": "en/ops/channel-runtime.md",
       "output_path": "en/ops/channel-runtime/index.html"

@@ -106,6 +106,7 @@ Wunder 的观测不是单一监控页，而是四类各有分工的能力：
 - 在 WunderBench 页面点击“导出评测记录”，或调用 `GET /wunder/admin/wunderbench/runs/{run_id}/export`。
 - 导出的 JSON 包含运行信息、任务聚合、attempt 明细、题目规格、产物摘要、transcript，以及每个模型 attempt 对应的 monitor 持久化日志。
 - 新启动的 WunderBench 会使用管理员调试日志记录评测线程，导出文件可用于复盘模型请求、模型输出、工具调用、工具结果、工作区更新与 token/速度统计。
+- 详细使用、评分口径和题库扩展说明见 [WunderBench 模型评测](/docs/zh-CN/ops/wunderbench/)。
 
 ## 关键指标
 
@@ -179,5 +180,6 @@ Server 模式下，运行日志保存在 `config/data/logs/server/`：
 ## 延伸阅读
 
 - [可观测性](/docs/zh-CN/concepts/core-observability/) —— 观测的设计原则
+- [WunderBench 模型评测](/docs/zh-CN/ops/wunderbench/) —— 三档评测、导出和题库扩展
 - [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 状态指标含义
 - [管理端面板指南](/docs/zh-CN/reference/admin-panels/) —— 监控入口

@@ -98,6 +98,7 @@ Exporting evaluation records:
 - Use the WunderBench page's export button or `GET /wunder/admin/wunderbench/runs/{run_id}/export`.
 - The export is a JSON replay package containing run metadata, task aggregates, attempts, task specs, artifacts, transcripts, and persisted monitor logs for each model attempt.
 - New WunderBench runs use admin debug logging for benchmark threads, so exported records include fuller model/tool/runtime events for model and system optimization.
+- For profile usage, scoring semantics, exports, and task authoring, see [WunderBench Model Evaluation](/docs/en/ops/wunderbench/).
 
 ## Why Separate Them
 
@@ -139,6 +140,7 @@ Many issues require looking at monitor, tool_usage, and channel runtime together
 
 ## Further Reading
 
+- [WunderBench Model Evaluation](/docs/en/ops/wunderbench/)
 - [Channel Runtime](/docs/en/ops/channel-runtime/)
 - [Stream Events Reference](/docs/en/reference/stream-events/)
 - [Admin Panels Index](/docs/en/reference/admin-panels/)

@@ -195,6 +195,7 @@
                   "zh-CN/ops/desktop-local-mode",
                   "zh-CN/ops/auth-and-security",
                   "zh-CN/ops/benchmark-and-observability",
+                  "zh-CN/ops/wunderbench",
                   "zh-CN/ops/channel-runtime"
                 ]
               }
@@ -440,6 +441,7 @@
                   "en/ops/desktop-local-mode",
                   "en/ops/auth-and-security",
                   "en/ops/benchmark-and-observability",
+                  "en/ops/wunderbench",
                   "en/ops/channel-runtime"
                 ]
               }

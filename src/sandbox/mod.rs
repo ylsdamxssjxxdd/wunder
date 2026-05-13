@@ -496,7 +496,10 @@ fn rewrite_sandbox_paths(
     tool: &str,
     mut data: Value,
 ) -> Value {
-    if !matches!(tool, "ptc" | "执行命令") {
+    if !matches!(
+        tool,
+        "ptc" | "执行命令" | "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "应用补丁"
+    ) {
         return data;
     }
     replace_paths_in_value(&mut data, container_root, public_root);

@@ -264,6 +264,12 @@ fn build_patch_error_result(error: anyhow::Error) -> Value {
 }
 
 pub(super) async fn apply_patch(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    if let Some(result) = super::execute_in_sandbox(context, "应用补丁", args).await {
+        if !parse_dry_run(args) {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+        }
+        return Ok(result);
+    }
     match apply_patch_inner(context, args).await {
         Ok(value) => Ok(value),
         Err(error) => Ok(build_patch_error_result(error)),
