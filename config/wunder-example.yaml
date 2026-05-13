@@ -247,22 +247,21 @@ workspace: # 工作区配置
   max_history_items: 0 # 保留的历史条目上限（<=0 表示不限制，注意会增加上下文与内存占用）
   retention_days: 0 # 历史保留天数（<=0 表示不清理）
 
-onlyoffice: # OnlyOffice 在线文档编辑配置
-  enabled: ${WUNDER_ONLYOFFICE_ENABLED:-false} # 是否启用 Office 文档在线编辑
-  document_server_url: ${WUNDER_ONLYOFFICE_DOCUMENT_SERVER_URL:-} # OnlyOffice Document Server 地址，如 https://office.example.com
-  internal_document_server_url: ${WUNDER_ONLYOFFICE_INTERNAL_DOCUMENT_SERVER_URL:-} # Wunder 后端访问 Document Server 的内部地址，同 compose 网络可填 http://wunder-onlyoffice，宿主机映射可填 http://host.docker.internal:18080
-  api_url: ${WUNDER_ONLYOFFICE_API_URL:-} # 可选，默认拼接 /web-apps/apps/api/documents/api.js
-  public_base_url: ${WUNDER_PUBLIC_BASE_URL:-} # OnlyOffice 能访问到的 Wunder 外网地址，如 https://wunder.example.com；也可用 WUNDER_ONLYOFFICE_PUBLIC_BASE_URL
-  jwt_secret: ${WUNDER_ONLYOFFICE_JWT_SECRET:-} # OnlyOffice JWT 密钥，需与 Document Server 配置一致
-  jwt_header: Authorization # OnlyOffice JWT 请求头
-  token_ttl_s: 3600 # 文件拉取/保存回调短期令牌有效期
-  request_timeout_s: 60 # Wunder 从 OnlyOffice 下载保存结果的超时时间
-  max_download_bytes: 209715200 # 保存回写文件最大字节数
-
-drawio: # diagrams.net/draw.io 在线图表编辑配置
-  enabled: ${WUNDER_DRAWIO_ENABLED:-false} # 是否启用 .drawio/.dio/.drawio.xml 在线编辑
-  editor_url: ${WUNDER_DRAWIO_EDITOR_URL:-} # 浏览器访问 draw.io 编辑器的地址，如 http://127.0.0.1:18081
-  max_file_bytes: 52428800 # 可在线编辑的图表文件大小上限
+onlyoffice:
+  enabled: true
+  document_server_url: http://127.0.0.1:18080
+  internal_document_server_url: http://wunder-onlyoffice
+  api_url: null
+  public_base_url: http://wunder-server:18000
+  jwt_secret: 5b8708066a5460cd960836b07ff355a786128b22cf5d1f8c9031feb5afec4bcc
+  jwt_header: Authorization
+  token_ttl_s: 3600
+  request_timeout_s: 60
+  max_download_bytes: 209715200
+drawio:
+  enabled: true
+  editor_url: http://127.0.0.1:18081
+  max_file_bytes: 52428800
 
 storage: # 存储配置
   backend: ${WUNDER_STORAGE_BACKEND:-auto} # auto | sqlite | postgres
