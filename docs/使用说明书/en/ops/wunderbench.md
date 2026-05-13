@@ -150,10 +150,10 @@ The exported JSON is a replay package for one run:
 | Field | Content |
 |-------|---------|
 | `run` | Run metadata, status, models, profile, scores, and scorecard |
-| `task_aggregates` | Per-task aggregate scores, pass rates, and variance |
+| `task_aggregates` | Per-task aggregate scores, pass rates, variance, and lightweight `attempt_refs` |
 | `attempts` | Attempt results, scores, artifact summaries, and transcripts |
 | `task_specs` | The task specs used during that run |
-| `attempt_logs` | Monitor logs for model and judge attempts |
+| `attempt_logs` | Monitor logs plus lightweight `attempt_ref` for model and judge attempts |
 | `diagnostics` | Export notes, missing-log hints, and compatibility notes |
 
 Export when:

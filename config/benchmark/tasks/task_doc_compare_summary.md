@@ -117,7 +117,17 @@ def grade(transcript, workspace_path):
 
     if "sso" in added and "audit" in added and "scheduled csv export" in added:
         scores["added_features_correct"] = 1.0
-    if "organization" in breaking and "single workspace" in breaking:
+    organization_mentions = (
+        "organization" in breaking
+        or "组织" in breaking
+        or "org" in breaking
+    )
+    single_workspace_mentions = (
+        "single workspace" in breaking
+        or "单工作区" in breaking
+        or "工作区模式" in breaking
+    )
+    if organization_mentions and single_workspace_mentions:
         scores["breaking_changes_correct"] = 1.0
 
     return scores

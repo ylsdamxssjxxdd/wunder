@@ -150,10 +150,10 @@ GET /wunder/admin/wunderbench/runs/{run_id}/export
 | 字段 | 内容 |
 |------|------|
 | `run` | 运行基本信息、状态、模型、profile、总分和 scorecard |
-| `task_aggregates` | 每个任务的聚合分数、通过率、波动情况 |
+| `task_aggregates` | 每个任务的聚合分数、通过率、波动情况和轻量 `attempt_refs` |
 | `attempts` | 每次 attempt 的执行结果、评分、产物摘要和 transcript |
 | `task_specs` | 当时使用的题目规格，避免题库后续变化导致无法复盘 |
-| `attempt_logs` | 对应 monitor 日志，包含模型和工具链路事件 |
+| `attempt_logs` | 对应 monitor 日志与轻量 `attempt_ref`，包含模型和工具链路事件 |
 | `diagnostics` | 导出说明、缺失日志提示和兼容性提示 |
 
 建议在这些场景导出：

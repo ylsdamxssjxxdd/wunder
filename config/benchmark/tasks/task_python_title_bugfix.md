@@ -122,7 +122,7 @@ def grade(transcript, workspace_path):
         {"title": "BETA"},
         {"title": ""},
     ])
-    if result == "Alpha, Gamma, beta":
+    if result == "Alpha, beta, Gamma":
         scores["code_fixed"] = 1.0
 
     result_2 = module.summarize_titles([

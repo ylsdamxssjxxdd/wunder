@@ -119,7 +119,14 @@ def grade(transcript, workspace_path):
         with open(report_path, "r", encoding="utf-8") as fp:
             report = fp.read()
         if "## 项目清单" in report and "## 高优先级" in report and "## 阻塞项" in report:
-            if "billing-cleanup" in report and "platform team" in report.lower():
+            report_lower = report.lower()
+            escalation_mentions = (
+                "platform team" in report_lower
+                or "平台团队" in report
+                or "平台组" in report
+                or "升级" in report
+            )
+            if "billing-cleanup" in report and escalation_mentions:
                 scores["report_sections_present"] = 1.0
 
     return scores

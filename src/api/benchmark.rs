@@ -398,6 +398,10 @@ fn build_benchmark_export_payload(state: &AppState, run_id: &str) -> anyhow::Res
             (id, task_to_export_spec(task))
         })
         .collect::<BTreeMap<_, _>>();
+    let task_aggregates = tasks
+        .into_iter()
+        .map(compact_task_aggregate_for_export)
+        .collect::<Vec<_>>();
     let attempt_logs = attempts
         .iter()
         .map(|attempt| build_attempt_log_export(state, cleaned_run_id, attempt))
@@ -416,7 +420,7 @@ fn build_benchmark_export_payload(state: &AppState, run_id: &str) -> anyhow::Res
         "exported_at": chrono::Utc::now().to_rfc3339(),
         "run_id": cleaned_run_id,
         "run": run,
-        "task_aggregates": tasks,
+        "task_aggregates": task_aggregates,
         "attempts": attempts,
         "task_specs": task_spec_map,
         "attempt_logs": attempt_logs,
@@ -425,6 +429,8 @@ fn build_benchmark_export_payload(state: &AppState, run_id: &str) -> anyhow::Res
             "missing_monitor_records": missing_logs,
             "notes": [
                 "attempt.transcript is captured from the benchmark stream.",
+                "task_aggregates contains aggregate fields and attempt_refs only; full attempt payloads are exported once in attempts.",
+                "attempt_logs contains monitor records keyed by attempt, without duplicating the full attempt payload.",
                 "attempt_logs.monitor_record contains the raw persisted monitor events for model/tool/runtime analysis.",
                 "For historical runs created before debug logging was enabled, llm_request payloads may be summarized by monitor policy."
             ]
@@ -445,26 +451,69 @@ fn build_attempt_log_export(state: &AppState, run_id: &str, attempt: &Value) -> 
     let session_id = format!("bench-{run_id}-{task_id}-{attempt_no}");
     let judge_session_id = format!("{session_id}-judge");
     let monitor_record = state.monitor.get_record(&session_id).unwrap_or(Value::Null);
-    let monitor_detail = state.monitor.get_detail(&session_id).unwrap_or(Value::Null);
+    let monitor_detail = compact_monitor_detail_for_export(
+        state.monitor.get_detail(&session_id).unwrap_or(Value::Null),
+        !monitor_record.is_null(),
+    );
     let judge_monitor_record = state
         .monitor
         .get_record(&judge_session_id)
         .unwrap_or(Value::Null);
-    let judge_monitor_detail = state
-        .monitor
-        .get_detail(&judge_session_id)
-        .unwrap_or(Value::Null);
+    let judge_monitor_detail = compact_monitor_detail_for_export(
+        state
+            .monitor
+            .get_detail(&judge_session_id)
+            .unwrap_or(Value::Null),
+        !judge_monitor_record.is_null(),
+    );
     json!({
         "task_id": task_id,
         "attempt_no": attempt_no,
         "session_id": session_id,
         "judge_session_id": judge_session_id,
-        "attempt_summary": attempt,
+        "attempt_ref": build_attempt_log_ref(attempt),
         "monitor_record": monitor_record,
         "monitor_detail": monitor_detail,
         "judge_monitor_record": judge_monitor_record,
         "judge_monitor_detail": judge_monitor_detail,
     })
+}
+
+fn compact_task_aggregate_for_export(mut task: Value) -> Value {
+    let Some(map) = task.as_object_mut() else {
+        return task;
+    };
+    if let Some(attempts) = map.remove("attempts") {
+        let refs = attempts
+            .as_array()
+            .map(|items| items.iter().map(build_attempt_log_ref).collect::<Vec<_>>())
+            .unwrap_or_default();
+        map.entry("attempt_refs".to_string())
+            .or_insert_with(|| json!(refs));
+    }
+    task
+}
+
+fn build_attempt_log_ref(attempt: &Value) -> Value {
+    json!({
+        "task_id": attempt.get("task_id").and_then(Value::as_str).unwrap_or(""),
+        "attempt_no": attempt.get("attempt_no").and_then(Value::as_u64).unwrap_or(0),
+        "status": attempt.get("status").and_then(Value::as_str).unwrap_or(""),
+        "final_score": attempt.get("final_score").and_then(Value::as_f64),
+        "elapsed_s": attempt.get("elapsed_s").and_then(Value::as_f64),
+        "error": attempt.get("error").and_then(Value::as_str).unwrap_or(""),
+    })
+}
+
+fn compact_monitor_detail_for_export(mut detail: Value, record_has_events: bool) -> Value {
+    if !record_has_events {
+        return detail;
+    }
+    let Some(map) = detail.as_object_mut() else {
+        return detail;
+    };
+    map.remove("events");
+    detail
 }
 
 fn task_to_export_spec(task: BenchmarkTaskSpec) -> Value {

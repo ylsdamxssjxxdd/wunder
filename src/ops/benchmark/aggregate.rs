@@ -62,8 +62,23 @@ pub fn build_task_aggregate(task: &BenchmarkTaskSpec, attempts: &[Value]) -> Val
         "max_score": round6(max_value(&scores)),
         "pass_rate": round6(pass_rate),
         "mean_elapsed_s": round6(mean(&elapsed)),
-        "attempts": attempts,
+        "attempt_refs": build_attempt_refs(attempts),
     })
+}
+
+fn build_attempt_refs(attempts: &[Value]) -> Vec<Value> {
+    attempts
+        .iter()
+        .map(|attempt| {
+            json!({
+                "attempt_no": attempt.get("attempt_no").and_then(Value::as_u64).unwrap_or(0),
+                "status": attempt.get("status").and_then(Value::as_str).unwrap_or(""),
+                "final_score": attempt.get("final_score").and_then(Value::as_f64),
+                "elapsed_s": attempt.get("elapsed_s").and_then(Value::as_f64),
+                "error": attempt.get("error").and_then(Value::as_str).unwrap_or(""),
+            })
+        })
+        .collect()
 }
 
 pub fn build_run_summary(
@@ -234,5 +249,7 @@ mod tests {
         assert_eq!(aggregate["status"], "cancelled");
         assert_eq!(aggregate["attempt_count"], 0);
         assert_eq!(aggregate["mean_score"], 0.0);
+        assert_eq!(aggregate["attempt_refs"], serde_json::json!([]));
+        assert!(aggregate.get("attempts").is_none());
     }
 }

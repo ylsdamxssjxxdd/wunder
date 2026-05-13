@@ -2711,6 +2711,8 @@
 - 方法：`GET`
 - 返回：`application/json` 附件下载，文件名形如 `wunderbench-{run_id}-export.json`。
 - 内容：导出单次评测的完整复盘包，包含 `run`、`task_aggregates`、`attempts`、`task_specs`、`attempt_logs` 与 `diagnostics`。
+- `task_aggregates` 仅保留聚合分数和 `attempt_refs` 轻量引用，完整 attempt payload 只在顶层 `attempts` 出现一次，避免导出文件重复膨胀。
+- `attempt_logs` 仅保留 `attempt_ref`、主执行线程与裁判线程 monitor 记录，不再重复嵌入完整 attempt。
 - `attempt_logs` 会按 `bench-{run_id}-{task_id}-{attempt_no}` 和 `bench-{run_id}-{task_id}-{attempt_no}-judge` 收集主执行与裁判线程的 monitor 记录，包含已持久化的模型请求、模型输出、工具调用、工具结果、工作区更新、token/速度统计等事件。
 - 新启动的 WunderBench 会使用管理员调试日志模式记录评测线程，便于导出后进行模型行为与系统链路复盘；历史运行若创建于该能力上线前，`llm_request` 可能只包含摘要。
 

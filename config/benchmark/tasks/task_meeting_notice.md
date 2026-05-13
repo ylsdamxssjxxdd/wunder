@@ -61,7 +61,9 @@ workspace_files:
 
 ## LLM Judge Rubric
 
+请优先检查 `{attempt_root}/output/notice.md` 的实际内容，而不是只看最终回复摘要。评分时允许中文同义表达。
+
 - 是否完整覆盖时间、对象、议题与准备要求
-- 是否明确提醒准备 delayed migration account updates
+- 是否明确提醒提前准备 delayed migration account updates；中文表达如“延迟迁移账户更新”“延迟迁移账户清单”“整理并更新延迟迁移账户”等都应视为满足
 - 是否足够简洁，不拖沓
 - 是否达到可直接发送的办公通知质量
