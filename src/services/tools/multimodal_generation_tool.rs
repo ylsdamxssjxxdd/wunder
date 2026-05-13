@@ -4,8 +4,11 @@ use crate::services::multimodal_models::{
     VideoGenerationRequest,
 };
 use anyhow::{anyhow, Result};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::path::Path;
 use tokio::fs;
 
 pub const TOOL_GENERATE_SPEECH: &str = "语音生成";
@@ -36,6 +39,14 @@ pub struct GenerateSpeechArgs {
     pub response_format: Option<String>,
     #[serde(default)]
     pub speed: Option<f32>,
+    #[serde(default)]
+    pub reference_path: Option<String>,
+    #[serde(default)]
+    pub ref_audio: Option<String>,
+    #[serde(default)]
+    pub ref_text: Option<String>,
+    #[serde(default)]
+    pub model_specific_params: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,6 +166,21 @@ pub async fn tool_generate_speech(context: &ToolContext<'_>, args: &Value) -> Re
     if text.is_empty() {
         return Err(anyhow!("text is required"));
     }
+    let reference_path = normalize_optional_string(payload.reference_path.as_deref());
+    let direct_ref_audio = normalize_optional_string(payload.ref_audio.as_deref());
+    let ref_audio =
+        resolve_reference_audio(context, reference_path.as_deref(), direct_ref_audio).await?;
+    let ref_text = normalize_optional_string(payload.ref_text.as_deref());
+    if ref_text.is_some() && ref_audio.is_none() {
+        return Err(anyhow!(
+            "ref_text requires reference_path or ref_audio for voice cloning"
+        ));
+    }
+    let model_specific_params = match payload.model_specific_params {
+        Some(Value::Object(map)) => Some(Value::Object(map)),
+        Some(_) => return Err(anyhow!("model_specific_params must be a JSON object")),
+        None => None,
+    };
     let result = multimodal_models::synthesize_speech(
         context.config,
         SpeechSynthesisRequest {
@@ -164,6 +190,9 @@ pub async fn tool_generate_speech(context: &ToolContext<'_>, args: &Value) -> Re
             instructions: normalize_optional_string(payload.instructions.as_deref()),
             response_format: normalize_optional_string(payload.response_format.as_deref()),
             speed: payload.speed,
+            ref_audio: ref_audio.clone(),
+            ref_text: ref_text.clone(),
+            model_specific_params: model_specific_params.clone(),
         },
     )
     .await?;
@@ -186,6 +215,10 @@ pub async fn tool_generate_speech(context: &ToolContext<'_>, args: &Value) -> Re
             "path": saved.public_path,
             "workspace_relative_path": saved.workspace_relative_path,
             "bytes": saved.size_bytes,
+            "reference_path": reference_path,
+            "voice_clone": ref_audio.is_some(),
+            "ref_text": ref_text,
+            "model_specific_params": model_specific_params,
         }),
     ))
 }
@@ -377,6 +410,53 @@ async fn load_image_input_file(
         filename,
         None,
     ))
+}
+
+async fn resolve_reference_audio(
+    context: &ToolContext<'_>,
+    reference_path: Option<&str>,
+    direct_ref_audio: Option<String>,
+) -> Result<Option<String>> {
+    if let Some(ref_audio) = direct_ref_audio {
+        return Ok(Some(ref_audio));
+    }
+    let Some(reference_path) = reference_path else {
+        return Ok(None);
+    };
+    let resolved = context
+        .workspace
+        .resolve_path(context.workspace_id, reference_path)?;
+    if !resolved.exists() || !resolved.is_file() {
+        return Err(anyhow!("reference audio file not found: {reference_path}"));
+    }
+    let bytes = fs::read(&resolved).await?;
+    if bytes.is_empty() {
+        return Err(anyhow!("reference audio file is empty: {reference_path}"));
+    }
+    let mime = audio_content_type_from_path(&resolved);
+    Ok(Some(format!(
+        "data:{mime};base64,{}",
+        STANDARD.encode(bytes)
+    )))
+}
+
+fn audio_content_type_from_path(path: &Path) -> &'static str {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "opus" => "audio/opus",
+        "aac" => "audio/aac",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        "webm" => "audio/webm",
+        _ => "application/octet-stream",
+    }
 }
 
 pub async fn tool_generate_video(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

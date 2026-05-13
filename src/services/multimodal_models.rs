@@ -103,6 +103,9 @@ pub struct SpeechSynthesisRequest {
     pub instructions: Option<String>,
     pub response_format: Option<String>,
     pub speed: Option<f32>,
+    pub ref_audio: Option<String>,
+    pub ref_text: Option<String>,
+    pub model_specific_params: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -676,6 +679,49 @@ fn build_speech_payload(
         let speed = request.speed.or(config.tts_speed);
         if let Some(speed) = speed.filter(|value| value.is_finite() && *value > 0.0) {
             map.insert("speed".to_string(), json!(speed.clamp(0.25, 4.0)));
+        }
+        if let Some(ref_audio) = request
+            .ref_audio
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert("ref_audio".to_string(), json!(ref_audio));
+        }
+        if let Some(ref_text) = request
+            .ref_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert("ref_text".to_string(), json!(ref_text));
+        }
+        if let Some(extra) = request
+            .model_specific_params
+            .as_ref()
+            .and_then(Value::as_object)
+        {
+            for (key, value) in extra {
+                let normalized = key.trim();
+                if normalized.is_empty() {
+                    continue;
+                }
+                if matches!(
+                    normalized,
+                    "model"
+                        | "input"
+                        | "voice"
+                        | "instructions"
+                        | "response_format"
+                        | "stream"
+                        | "speed"
+                        | "ref_audio"
+                        | "ref_text"
+                ) {
+                    continue;
+                }
+                map.insert(normalized.to_string(), value.clone());
+            }
         }
     }
     payload
@@ -1411,6 +1457,9 @@ mod tests {
             instructions: None,
             response_format: None,
             speed: None,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
         };
 
         let payload = build_speech_payload(&config, "tts-model", &request, "wav", None);
@@ -1428,10 +1477,53 @@ mod tests {
             instructions: None,
             response_format: None,
             speed: None,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
         };
 
         let payload = build_speech_payload(&config, "tts-model", &request, "wav", Some("Vivian"));
 
+        assert_eq!(payload.get("voice").and_then(Value::as_str), Some("Vivian"));
+    }
+
+    #[test]
+    fn tts_payload_forwards_voice_clone_and_model_specific_params() {
+        let config = model("tts");
+        let request = super::SpeechSynthesisRequest {
+            text: "hello".to_string(),
+            model_name: None,
+            voice: Some("default".to_string()),
+            instructions: None,
+            response_format: Some("wav".to_string()),
+            speed: Some(1.25),
+            ref_audio: Some("data:audio/wav;base64,AAAA".to_string()),
+            ref_text: Some("reference".to_string()),
+            model_specific_params: Some(serde_json::json!({
+                "task_type": "Base",
+                "x_vector_only_mode": false,
+                "voice": "should_be_ignored"
+            })),
+        };
+
+        let payload = build_speech_payload(&config, "tts-model", &request, "wav", Some("Vivian"));
+
+        assert_eq!(
+            payload.get("ref_audio").and_then(Value::as_str),
+            Some("data:audio/wav;base64,AAAA")
+        );
+        assert_eq!(
+            payload.get("ref_text").and_then(Value::as_str),
+            Some("reference")
+        );
+        assert_eq!(
+            payload.get("task_type").and_then(Value::as_str),
+            Some("Base")
+        );
+        assert_eq!(
+            payload.get("x_vector_only_mode").and_then(Value::as_bool),
+            Some(false)
+        );
         assert_eq!(payload.get("voice").and_then(Value::as_str), Some("Vivian"));
     }
 

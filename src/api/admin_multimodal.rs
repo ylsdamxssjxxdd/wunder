@@ -337,6 +337,9 @@ async fn admin_generate_speech(
             instructions: normalize_optional_string(payload.instructions.as_deref()),
             response_format: response_format.clone(),
             speed: payload.speed,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
         },
     )
     .await

@@ -606,7 +606,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "voice": {"type": "string", "description": t("tool.spec.generate_speech.args.voice")},
                     "instructions": {"type": "string", "description": t("tool.spec.generate_speech.args.instructions")},
                     "response_format": {"type": "string", "description": t("tool.spec.generate_speech.args.response_format")},
-                    "speed": {"type": "number", "description": t("tool.spec.generate_speech.args.speed")}
+                    "speed": {"type": "number", "description": t("tool.spec.generate_speech.args.speed")},
+                    "reference_path": {"type": "string", "description": t("tool.spec.generate_speech.args.reference_path")},
+                    "ref_audio": {"type": "string", "description": t("tool.spec.generate_speech.args.ref_audio")},
+                    "ref_text": {"type": "string", "description": t("tool.spec.generate_speech.args.ref_text")},
+                    "model_specific_params": {"type": "object", "description": t("tool.spec.generate_speech.args.model_specific_params")}
                 },
                 "required": ["text"],
                 "additionalProperties": false

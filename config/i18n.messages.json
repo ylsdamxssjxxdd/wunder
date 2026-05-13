@@ -2215,6 +2215,22 @@
     "en-US": "Optional playback speed.",
     "zh-CN": "可选，播放速度。"
   },
+  "tool.spec.generate_speech.args.reference_path": {
+    "en-US": "Optional workspace-relative path to a reference audio file for voice cloning. The server converts it to a data URL before calling the upstream TTS API.",
+    "zh-CN": "可选，用于声音克隆的工作区相对参考音频路径。服务端会先转成 data URL 再调用上游文转声接口。"
+  },
+  "tool.spec.generate_speech.args.ref_audio": {
+    "en-US": "Optional direct reference audio for voice cloning. Supports HTTP(S) URLs and data URLs.",
+    "zh-CN": "可选，直接提供用于声音克隆的参考音频。支持 HTTP(S) 链接和 data URL。"
+  },
+  "tool.spec.generate_speech.args.ref_text": {
+    "en-US": "Optional transcript of the reference audio. Some upstream clone models require this field.",
+    "zh-CN": "可选，参考音频的转写文本。部分上游克隆模型要求提供此字段。"
+  },
+  "tool.spec.generate_speech.args.model_specific_params": {
+    "en-US": "Optional extra JSON object forwarded to the upstream TTS API for model-specific clone parameters such as task_type.",
+    "zh-CN": "可选，透传给上游文转声接口的额外 JSON 对象，可用于 task_type 等模型特定克隆参数。"
+  },
   "tool.spec.transcribe_speech.description": {
     "en-US": "Transcribe an audio file in the current workspace with the configured speech-to-text model and return the recognized text.",
     "zh-CN": "使用已配置的声转文模型转写当前工作区中的音频文件，并返回识别文本。"

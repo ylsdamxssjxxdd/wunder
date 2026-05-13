@@ -2424,6 +2424,9 @@ async fn synthesize_chat_tts(
             instructions: payload.instructions,
             response_format: payload.response_format,
             speed: payload.speed,
+            ref_audio: None,
+            ref_text: None,
+            model_specific_params: None,
         },
     )
     .await
