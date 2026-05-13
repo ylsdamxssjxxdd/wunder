@@ -4,6 +4,7 @@ use super::grader_auto::grade_automated;
 use super::grader_judge::grade_with_judge;
 use super::loader::{default_tasks_dir, load_task_specs};
 use super::models::BenchmarkEvent;
+use super::profiles::resolve_profile_tasks;
 use super::spec::{BenchmarkGradingType, BenchmarkTaskSpec};
 use super::workspace::{
     apply_task_placeholders, build_artifact_manifest, build_attempt_root, prepare_attempt_workspace,
@@ -16,7 +17,7 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
 use crate::skills::SkillRegistry;
-use crate::storage::StorageBackend;
+use crate::storage::{StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID};
 use crate::tools::{builtin_aliases, collect_available_tool_names, resolve_tool_name};
 use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::workspace::WorkspaceManager;
@@ -57,6 +58,7 @@ struct BenchmarkRunContext {
     run_id: String,
     started_time: f64,
     user_id: String,
+    profile: String,
     model_name: Option<String>,
     judge_model_name: Option<String>,
     suite_ids: Vec<String>,
@@ -121,23 +123,23 @@ impl BenchmarkManager {
             &request.tool_names,
         );
 
-        let mut tasks = load_task_specs(&default_tasks_dir())?;
-        tasks = filter_tasks(tasks, &request.suite_ids, &request.task_ids);
+        let tasks = load_task_specs(&default_tasks_dir())?;
+        let selection = resolve_profile_tasks(
+            tasks,
+            request.profile.as_deref(),
+            &request.suite_ids,
+            &request.task_ids,
+        );
+        let tasks = selection.tasks;
         if tasks.is_empty() {
-            return Err(anyhow!("no benchmark tasks available"));
+            return Err(anyhow!("no wunderbench tasks available"));
         }
-        let suite_ids = if request.suite_ids.is_empty() {
-            let mut values = tasks
-                .iter()
-                .map(|task| task.frontmatter.suite.clone())
-                .collect::<Vec<_>>();
-            values.sort();
-            values.dedup();
-            values
-        } else {
-            request.suite_ids.clone()
-        };
-        let runs_per_task = request.runs_per_task.unwrap_or(3).clamp(1, 10);
+        let profile = selection.profile;
+        let suite_ids = selection.suite_ids;
+        let runs_per_task = request
+            .runs_per_task
+            .unwrap_or_else(|| default_runs_per_task(&profile))
+            .clamp(1, 10);
         let capture_artifacts = request.capture_artifacts.unwrap_or(true);
         let capture_transcript = request.capture_transcript.unwrap_or(true);
         let run_id = Uuid::new_v4().simple().to_string();
@@ -145,6 +147,8 @@ impl BenchmarkManager {
         let mut tool_snapshot = allowed_tool_names.into_iter().collect::<Vec<_>>();
         tool_snapshot.sort();
         let run_payload = json!({
+            "benchmark": "wunderbench",
+            "profile": profile,
             "run_id": run_id,
             "user_id": user_id,
             "model_name": model_name.clone().unwrap_or_default(),
@@ -183,6 +187,7 @@ impl BenchmarkManager {
             run_id: run_id.clone(),
             started_time,
             user_id: user_id.to_string(),
+            profile,
             model_name,
             judge_model_name,
             suite_ids: suite_ids.clone(),
@@ -208,6 +213,8 @@ impl BenchmarkManager {
         Ok(json!({
             "run_id": run_id,
             "status": "running",
+            "benchmark": "wunderbench",
+            "profile": run_payload["profile"],
             "task_count": run_payload["task_count"],
             "attempt_count": run_payload["attempt_count"],
             "suite_ids": suite_ids,
@@ -270,8 +277,14 @@ impl BenchmarkManager {
             .get("config_overrides")
             .cloned()
             .unwrap_or(Value::Null);
+        let profile = run_payload
+            .get("profile")
+            .and_then(Value::as_str)
+            .unwrap_or("quick")
+            .to_string();
         let summary = build_run_summary(
             cleaned,
+            &profile,
             run_payload
                 .get("user_id")
                 .and_then(Value::as_str)
@@ -295,6 +308,11 @@ impl BenchmarkManager {
         );
 
         if let Value::Object(ref mut map) = run_payload {
+            map.insert(
+                "benchmark".to_string(),
+                Value::String("wunderbench".to_string()),
+            );
+            map.insert("profile".to_string(), Value::String(profile.to_string()));
             map.insert("status".to_string(), Value::String("cancelled".to_string()));
             map.insert("task_count".to_string(), json!(task_aggregates.len()));
             map.insert("attempt_count".to_string(), json!(attempts.len()));
@@ -431,6 +449,7 @@ async fn run_benchmark(ctx: BenchmarkRunContext) {
     let finished_time = now_ts();
     let summary = build_run_summary(
         &ctx.run_id,
+        &ctx.profile,
         &ctx.user_id,
         ctx.model_name.as_deref().unwrap_or(""),
         ctx.judge_model_name.as_deref().unwrap_or(""),
@@ -444,6 +463,8 @@ async fn run_benchmark(ctx: BenchmarkRunContext) {
         &ctx.config_overrides.clone().unwrap_or(Value::Null),
     );
     let run_payload = json!({
+        "benchmark": "wunderbench",
+        "profile": ctx.profile,
         "run_id": ctx.run_id,
         "user_id": ctx.user_id,
         "model_name": ctx.model_name.unwrap_or_default(),
@@ -476,9 +497,13 @@ async fn run_attempt(
 ) -> Value {
     let started_time = now_ts();
     let session_id = format!("bench-{}-{}-{attempt_no}", ctx.run_id, task.id());
+    let workspace_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
+    let workspace_id = ctx
+        .workspace
+        .scoped_user_id_by_container(&ctx.user_id, workspace_container_id);
     let (workspace_dir, attempt_root) = match prepare_attempt_workspace(
         &ctx.workspace,
-        &ctx.user_id,
+        &workspace_id,
         &ctx.run_id,
         task,
         attempt_no,
@@ -528,10 +553,10 @@ async fn run_attempt(
         tool_names: ctx.requested_tool_names.clone(),
         skip_tool_calls: false,
         stream: true,
-        debug_payload: false,
+        debug_payload: true,
         session_id: Some(session_id.clone()),
         agent_id: None,
-        workspace_container_id: None,
+        workspace_container_id: Some(workspace_container_id),
         model_name: ctx.model_name.clone(),
         language: task
             .preferred_language()
@@ -541,7 +566,7 @@ async fn run_attempt(
         preview_skill: false,
         attachments: None,
         allow_queue: true,
-        is_admin: false,
+        is_admin: true,
         approval_tx: None,
     };
 
@@ -842,30 +867,11 @@ fn resolve_model_name(requested: Option<&str>, config: &Config) -> Option<String
         .map(|(name, _)| name.clone())
 }
 
-fn filter_tasks(
-    tasks: Vec<BenchmarkTaskSpec>,
-    suite_ids: &[String],
-    task_ids: &[String],
-) -> Vec<BenchmarkTaskSpec> {
-    let suite_filter = suite_ids
-        .iter()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty())
-        .collect::<HashSet<_>>();
-    let task_filter = task_ids
-        .iter()
-        .map(|value| value.trim().to_lowercase())
-        .filter(|value| !value.is_empty())
-        .collect::<HashSet<_>>();
-    tasks
-        .into_iter()
-        .filter(|task| {
-            (suite_filter.is_empty()
-                || suite_filter.contains(&task.frontmatter.suite.to_lowercase()))
-                && (task_filter.is_empty()
-                    || task_filter.contains(&task.frontmatter.id.to_lowercase()))
-        })
-        .collect()
+fn default_runs_per_task(profile: &str) -> u32 {
+    match profile {
+        "quick" => 1,
+        _ => 2,
+    }
 }
 
 fn read_string_list(value: Option<&Value>) -> Vec<String> {

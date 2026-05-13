@@ -5,6 +5,7 @@ pub mod grader_judge;
 pub mod loader;
 pub mod manager;
 pub mod models;
+pub mod profiles;
 pub mod spec;
 pub mod workspace;
 

@@ -167,6 +167,7 @@ services:
       - ./config/fonts.conf:/run/wunder-fonts.conf:ro
       - ./config/matplotlibrc:/run/wunder-matplotlibrc:ro
       - ./config/sandbox-runtime.yaml:/run/wunder-sandbox-runtime.yaml:ro
+      - ./config/skills:/app/config/skills:ro
       - wunder_win_workspaces:/workspaces
       - wunder_win_playwright:/ms-playwright
       - ./config/fonts:/usr/share/fonts/wunder:ro

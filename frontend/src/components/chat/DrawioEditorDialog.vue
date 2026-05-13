@@ -77,7 +77,7 @@ const props = defineProps<{
   path: string;
   userId?: string;
   agentId?: string;
-  containerId?: number | string;
+  containerId?: number | string | null;
 }>();
 
 const emit = defineEmits<{
@@ -126,18 +126,23 @@ const dialogVisible = computed({
   set: (value: boolean) => emit('update:visible', value)
 });
 
-const normalizedContainerId = computed(() => {
+const normalizedContainerId = computed<number | null>(() => {
+  if (props.containerId === null || props.containerId === undefined || String(props.containerId).trim() === '') {
+    return null;
+  }
   const parsed = Number.parseInt(String(props.containerId ?? ''), 10);
-  if (!Number.isFinite(parsed)) return 0;
+  if (!Number.isFinite(parsed)) return null;
   return Math.min(10, Math.max(0, parsed));
 });
 
 const requestParams = (): QueryParams => {
   const params: QueryParams = {
     path: props.path,
-    container_id: normalizedContainerId.value,
     lang: getCurrentLanguage()
   };
+  if (normalizedContainerId.value !== null) {
+    params.container_id = normalizedContainerId.value;
+  }
   const userId = String(props.userId || '').trim();
   if (userId) {
     params.user_id = userId;

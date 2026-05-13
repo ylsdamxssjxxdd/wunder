@@ -662,11 +662,19 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.onlyOfficeUserId = ref('');
 
+  ctx.onlyOfficeAgentId = ref('');
+
+  ctx.onlyOfficeContainerId = ref<number | null>(null);
+
   ctx.drawioVisible = ref(false);
 
   ctx.drawioPath = ref('');
 
   ctx.drawioUserId = ref('');
+
+  ctx.drawioAgentId = ref('');
+
+  ctx.drawioContainerId = ref<number | null>(null);
 
   ctx.agentPromptToolSummary = ref<Record<string, unknown> | null>(null);
 

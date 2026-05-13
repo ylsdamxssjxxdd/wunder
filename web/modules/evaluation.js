@@ -11,14 +11,13 @@ const RUN_POLL_INTERVAL_MS = 2500;
 const benchmarkState = {
   initialized: false,
   refs: null,
-  suites: [],
+  profiles: [],
   history: [],
   activeRunId: "",
   activeStatus: "idle",
   viewRunId: "",
   viewDetail: null,
-  selectedSuiteIds: new Set(),
-  suiteSelectionTouched: false,
+  selectedProfileId: "quick",
   progress: { completedAttempts: 0, totalAttempts: 0, currentTaskId: "", hint: "" },
   refreshTimer: null,
   elapsedTimer: null,
@@ -28,6 +27,7 @@ const benchmarkState = {
   catalogLoaded: false,
   actionPending: false,
   cancelPending: false,
+  exportPending: false,
 };
 
 function isFinishedStatus(status) {
@@ -112,6 +112,20 @@ function formatScore(value) {
   return Number.isFinite(Number(value)) ? Number(value).toFixed(3) : "-";
 }
 
+function formatPercentScore(value) {
+  return Number.isFinite(Number(value)) ? `${Math.round(Number(value) * 100)}%` : "-";
+}
+
+function formatReadiness(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return {
+    production_ready: "生产可用",
+    usable: "可用",
+    risky: "有风险",
+    not_ready: "暂不可用",
+  }[normalized] || "-";
+}
+
 function formatInteger(value) {
   return Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : "-";
 }
@@ -153,6 +167,31 @@ function buildApiUrl(path, params = {}) {
   return `${apiBase()}${path}${query ? `?${query}` : ""}`;
 }
 
+function parseDownloadFilename(disposition, fallback) {
+  const raw = String(disposition || "");
+  const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch (_) {
+      return utf8Match[1];
+    }
+  }
+  const asciiMatch = raw.match(/filename="([^"]+)"/i) || raw.match(/filename=([^;]+)/i);
+  return String(asciiMatch?.[1] || fallback || "wunderbench-export.json").trim();
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "wunderbench-export.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function fetchJson(path, options = {}) {
   const response = await fetch(buildApiUrl(path), {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
@@ -174,21 +213,14 @@ function cacheRefs() {
     panel,
     startBtn: panel.querySelector("#benchmarkStartBtn"),
     historyBtn: panel.querySelector("#benchmarkHistoryBtn"),
+    exportBtn: panel.querySelector("#benchmarkExportBtn"),
     statusIndicator: panel.querySelector("#benchmarkStatusIndicator"),
     userId: panel.querySelector("#benchmarkUserId"),
+    profileList: panel.querySelector("#benchmarkProfileList"),
     modelSelect: panel.querySelector("#benchmarkModelSelect"),
     judgeModelSelect: panel.querySelector("#benchmarkJudgeModelSelect"),
-    runsPerTask: panel.querySelector("#benchmarkRunsPerTask"),
-    captureArtifacts: panel.querySelector("#benchmarkCaptureArtifacts"),
-    captureTranscript: panel.querySelector("#benchmarkCaptureTranscript"),
-    suiteList: panel.querySelector("#benchmarkSuiteList"),
     formStatus: panel.querySelector("#benchmarkFormStatus"),
-    runId: panel.querySelector("#benchmarkRunId"),
-    runStatus: panel.querySelector("#benchmarkRunStatus"),
-    startedAt: panel.querySelector("#benchmarkRunStartedAt"),
-    elapsed: panel.querySelector("#benchmarkRunElapsed"),
-    totalScore: panel.querySelector("#benchmarkTotalScore"),
-    contextTokens: panel.querySelector("#benchmarkContextTokens"),
+    summaryText: panel.querySelector("#benchmarkSummaryText"),
     progressFill: panel.querySelector("#benchmarkProgressFill"),
     progressText: panel.querySelector("#benchmarkProgressText"),
     currentTask: panel.querySelector("#benchmarkCurrentTask"),
@@ -264,14 +296,20 @@ function updatePrimaryAction() {
       label.textContent = benchmarkState.catalogLoaded ? "\u5f00\u59cb\u8fd0\u884c" : "\u52a0\u8f7d\u4efb\u52a1\u7ec4\u4e2d...";
     }
   }
+  updateExportAction();
 }
 
-function getSelectedSuiteIds() {
-  const ids = Array.from(benchmarkState.selectedSuiteIds).filter(Boolean);
-  if (!benchmarkState.suiteSelectionTouched) {
-    return benchmarkState.suites.map((suite) => suite.suite_id).filter(Boolean);
+function updateExportAction() {
+  const button = benchmarkState.refs?.exportBtn;
+  if (!button) {
+    return;
   }
-  return ids;
+  const label = button.querySelector("span");
+  const runId = String(benchmarkState.viewRunId || benchmarkState.activeRunId || "").trim();
+  button.disabled = benchmarkState.exportPending || !runId;
+  if (label) {
+    label.textContent = benchmarkState.exportPending ? "导出中..." : "导出评测记录";
+  }
 }
 
 function renderModelOptions() {
@@ -303,45 +341,55 @@ function renderModelOptions() {
   });
 }
 
-function buildSuiteSummary(suite) {
-  const taskCount = Number(suite.task_count) || 0;
-  const recommendedRuns = Number(suite.recommended_runs) || 0;
-  const categoryNames = Object.keys(suite.categories || {}).filter(Boolean);
-  const compactCategories = categoryNames.slice(0, 3).join(" / ");
-  const parts = [`${taskCount} \u4e2a\u4efb\u52a1`, `\u63a8\u8350 ${recommendedRuns || 1} \u8f6e`];
-  if (compactCategories) {
-    parts.push(compactCategories);
+function renderProfileOptions() {
+  const list = benchmarkState.refs?.profileList;
+  if (!list) {
+    return;
   }
-  return parts.join(" \u00b7 ");
+  list.textContent = "";
+  const profiles = benchmarkState.profiles.length
+    ? benchmarkState.profiles
+    : [
+        { id: "quick", name: "Quick Smoke", task_count: 0, recommended_runs: 1 },
+        { id: "core", name: "Core Capability", task_count: 0, recommended_runs: 2 },
+        { id: "full", name: "Full Suite", task_count: 0, recommended_runs: 2 },
+      ];
+  const fallback = profiles.find((profile) => profile.default)?.id || profiles[0]?.id || "quick";
+  if (!profiles.some((profile) => profile.id === benchmarkState.selectedProfileId)) {
+    benchmarkState.selectedProfileId = fallback;
+  }
+  profiles.forEach((profile) => {
+    const profileId = String(profile.id || "");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "benchmark-profile-option";
+    button.dataset.profileId = profileId;
+    button.classList.toggle("is-active", profileId === benchmarkState.selectedProfileId);
+    const taskText = Number(profile.task_count) > 0 ? `${profile.task_count} 题` : "自动题集";
+    const runsText = Number(profile.recommended_runs) > 0 ? `${profile.recommended_runs} 轮` : "推荐轮次";
+    button.innerHTML = `
+      <strong>${formatProfileName(profileId, profile.name)}</strong>
+      <span>${taskText} · ${runsText}</span>
+      <small>${formatProfileDescription(profileId, profile.description)}</small>
+    `;
+    list.appendChild(button);
+  });
 }
 
-function renderSuiteList() {
-  const refs = benchmarkState.refs;
-  if (!refs?.suiteList) {
-    return;
-  }
+function formatProfileName(profileId, fallback) {
+  return {
+    quick: "快速",
+    core: "标准",
+    full: "全量",
+  }[profileId] || fallback || profileId || "-";
+}
 
-  refs.suiteList.textContent = "";
-  if (!benchmarkState.suites.length) {
-    refs.suiteList.textContent = "\u6682\u65e0\u53ef\u7528\u4efb\u52a1\u7ec4";
-    return;
-  }
-
-  benchmarkState.suites.forEach((suite) => {
-    const checked = benchmarkState.suiteSelectionTouched
-      ? benchmarkState.selectedSuiteIds.has(suite.suite_id)
-      : true;
-    const item = document.createElement("label");
-    item.className = "benchmark-check-item";
-    item.innerHTML = `
-      <input type="checkbox" data-suite-id="${suite.suite_id}" ${checked ? "checked" : ""} />
-      <div>
-        <strong>${suite.suite_id}</strong>
-        <span>${buildSuiteSummary(suite)}</span>
-      </div>
-    `;
-    refs.suiteList.appendChild(item);
-  });
+function formatProfileDescription(profileId, fallback) {
+  return {
+    quick: "快速巡检，适合日常验证",
+    core: "标准评估，适合模型对比",
+    full: "全量回归，适合发布前确认",
+  }[profileId] || fallback || "";
 }
 
 function renderHistory() {
@@ -365,6 +413,7 @@ function renderHistory() {
       <td>${formatScore(run.total_score)}</td>
       <td>${run.model_name || "\u9ed8\u8ba4"}</td>
       <td class="benchmark-row-actions">
+        <button type="button" class="icon-btn" data-action="export" data-run-id="${run.run_id}" title="导出评测记录"><i class="fa-solid fa-file-export"></i></button>
         <button type="button" class="icon-btn" data-action="delete" data-run-id="${run.run_id}" title="\u5220\u9664"><i class="fa-solid fa-trash"></i></button>
       </td>
     `;
@@ -441,17 +490,16 @@ function clearDetail() {
     return;
   }
 
-  [refs.runId, refs.runStatus, refs.startedAt, refs.elapsed, refs.totalScore, refs.contextTokens, refs.efficiency].forEach((node) => {
-    if (node) {
-      node.textContent = "-";
-    }
-  });
+  if (refs.summaryText) {
+    refs.summaryText.textContent = "暂无运行。选择快速、标准或全量档位后开始评测。";
+  }
   refs.progressFill.style.width = "0%";
   refs.progressText.textContent = "0 / 0";
   refs.currentTask.textContent = "";
   refs.runHint.textContent = "";
   refs.attemptBody.textContent = "";
   refs.attemptEmpty.style.display = "block";
+  updateExportAction();
   if (refs.detailPre) {
     refs.detailPre.textContent = "\u6682\u65e0\u660e\u7ec6";
   }
@@ -508,6 +556,26 @@ function renderAttempts(attempts) {
   });
 }
 
+function buildSummaryText(run = {}, summary = {}, scorecard = {}, efficiency = {}, attempts = []) {
+  const weakestSuites = Array.isArray(scorecard.weakest_suites) ? scorecard.weakest_suites : [];
+  const topFailures = Array.isArray(scorecard.top_failures) ? scorecard.top_failures : [];
+  const lines = [
+    `Run ID：${run.run_id || "-"}`,
+    `档位：${formatProfileName(String(run.profile || summary.profile || ""), run.profile || summary.profile)}`,
+    `状态：${run.status || "-"}    开始：${formatDateTime(Number(run.started_time))}    耗时：${formatDuration(Number(run.elapsed_s))}`,
+    `总分：${formatScore(run.total_score ?? summary.total_score)}    结论：${formatReadiness(scorecard.readiness)}`,
+    `可靠性：${formatPercentScore(scorecard.reliability_score)}    工具成功率：${formatPercentScore(scorecard.tool_success_score)}    稳定性：${formatPercentScore(scorecard.stability_score)}    效率：${formatPercentScore(scorecard.efficiency_score)}`,
+    `上下文 Token：${formatContextTokens(efficiency.total_context_tokens)}    任务：${Number(summary.task_count || run.task_count || 0)}    Attempt：${attempts.length || Number(summary.attempt_count || run.attempt_count || 0)}`,
+  ];
+  if (weakestSuites.length) {
+    lines.push(`薄弱任务组：${weakestSuites.map((item) => `${item.suite || "-"} ${formatScore(item.mean_score)}`).join(" / ")}`);
+  }
+  if (topFailures.length) {
+    lines.push(`需复查任务：${topFailures.map((item) => `${item.task_id || "-"} ${formatScore(item.score)}`).join(" / ")}`);
+  }
+  return lines.join("\n");
+}
+
 function renderRunDetail(detail) {
   const refs = benchmarkState.refs;
   if (!refs) {
@@ -518,6 +586,7 @@ function renderRunDetail(detail) {
   const attempts = Array.isArray(detail?.attempts) ? detail.attempts : [];
   const summary = run.summary || {};
   const efficiency = summary.efficiency || {};
+  const scorecard = summary.scorecard || {};
   const viewingActiveRun = Boolean(run.run_id) && run.run_id === benchmarkState.activeRunId;
   const trackedTotalAttempts = viewingActiveRun ? Number(benchmarkState.progress.totalAttempts) || 0 : 0;
   const trackedCompletedAttempts = viewingActiveRun ? Number(benchmarkState.progress.completedAttempts) || 0 : 0;
@@ -525,18 +594,16 @@ function renderRunDetail(detail) {
   const completedAttempts = viewingActiveRun ? Math.max(trackedCompletedAttempts, attempts.length) : attempts.length;
   const ratio = totalAttempts > 0 ? Math.min(1, completedAttempts / totalAttempts) : 0;
 
-  refs.runId.textContent = run.run_id || "-";
-  refs.runStatus.textContent = run.status || "-";
-  refs.startedAt.textContent = formatDateTime(Number(run.started_time));
-  refs.elapsed.textContent = formatDuration(Number(run.elapsed_s));
-  refs.totalScore.textContent = formatScore(run.total_score ?? summary.total_score);
-  refs.contextTokens.textContent = formatContextTokens(efficiency.total_context_tokens);
+  if (refs.summaryText) {
+    refs.summaryText.textContent = buildSummaryText(run, summary, scorecard, efficiency, attempts);
+  }
   refs.progressFill.style.width = `${Math.round(ratio * 100)}%`;
   refs.progressText.textContent = `${completedAttempts} / ${totalAttempts || attempts.length}`;
   refs.currentTask.textContent = viewingActiveRun && benchmarkState.progress.currentTaskId ? `\u5f53\u524d\u4efb\u52a1\uff1a${benchmarkState.progress.currentTaskId}` : "";
   refs.runHint.textContent = viewingActiveRun ? benchmarkState.progress.hint || "" : "";
   renderAttempts(attempts);
   updateIndicator(run.status || benchmarkState.activeStatus);
+  updateExportAction();
 }
 
 function refreshElapsedClock() {
@@ -548,11 +615,24 @@ function refreshElapsedClock() {
   }
 
   benchmarkState.elapsedTimer = window.setInterval(() => {
-    if (!benchmarkState.refs?.elapsed) {
+    if (!benchmarkState.refs?.summaryText) {
       clearElapsedClock();
       return;
     }
-    benchmarkState.refs.elapsed.textContent = formatDuration(Math.max(0, Date.now() / 1000 - Number(run.started_time)));
+    const detail = benchmarkState.viewDetail || {};
+    const currentRun = detail.run || run;
+    const summary = currentRun.summary || {};
+    const displayRun = {
+      ...currentRun,
+      elapsed_s: Math.max(0, Date.now() / 1000 - Number(currentRun.started_time)),
+    };
+    benchmarkState.refs.summaryText.textContent = buildSummaryText(
+      displayRun,
+      summary,
+      summary.scorecard || {},
+      summary.efficiency || {},
+      Array.isArray(detail.attempts) ? detail.attempts : []
+    );
   }, 1000);
 }
 
@@ -575,20 +655,17 @@ async function loadCatalog() {
   benchmarkState.catalogLoaded = false;
   updatePrimaryAction();
 
-  const payload = await fetchJson("/admin/benchmark/suites");
-  benchmarkState.suites = Array.isArray(payload.suites) ? payload.suites : [];
-  if (!benchmarkState.suiteSelectionTouched) {
-    benchmarkState.selectedSuiteIds = new Set(benchmarkState.suites.map((suite) => suite.suite_id).filter(Boolean));
-  }
+  const payload = await fetchJson("/admin/wunderbench/profiles");
+  benchmarkState.profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
 
   benchmarkState.catalogLoaded = true;
-  renderSuiteList();
+  renderProfileOptions();
   updatePrimaryAction();
-  setFormStatus(`\u5df2\u52a0\u8f7d ${benchmarkState.suites.length} \u7ec4\u4efb\u52a1`);
+  setFormStatus("选择快速、标准或全量后开始评测");
 }
 
 async function loadHistory() {
-  const payload = await fetchJson("/admin/benchmark/runs");
+  const payload = await fetchJson("/admin/wunderbench/runs");
   benchmarkState.history = Array.isArray(payload.runs) ? payload.runs : [];
   renderHistory();
   return benchmarkState.history;
@@ -599,7 +676,7 @@ async function loadRunDetail(runId, options = {}) {
     return null;
   }
 
-  const payload = await fetchJson(`/admin/benchmark/runs/${encodeURIComponent(runId)}`);
+  const payload = await fetchJson(`/admin/wunderbench/runs/${encodeURIComponent(runId)}`);
   benchmarkState.viewRunId = runId;
   benchmarkState.viewDetail = payload;
 
@@ -640,11 +717,6 @@ async function loadRunDetail(runId, options = {}) {
 function buildStartPayload() {
   const refs = benchmarkState.refs;
   const userId = String(refs.userId?.value || DEFAULT_USER_ID).trim() || DEFAULT_USER_ID;
-  const suiteIds = getSelectedSuiteIds();
-
-  if (!suiteIds.length) {
-    throw new Error("\u8bf7\u81f3\u5c11\u9009\u62e9\u4e00\u7ec4\u4efb\u52a1");
-  }
 
   if (refs.userId && !String(refs.userId.value || "").trim()) {
     refs.userId.value = userId;
@@ -652,27 +724,26 @@ function buildStartPayload() {
 
   return {
     user_id: userId,
+    profile: benchmarkState.selectedProfileId || "quick",
     model_name: String(refs.modelSelect?.value || "").trim() || undefined,
     judge_model_name: String(refs.judgeModelSelect?.value || "").trim() || undefined,
-    suite_ids: suiteIds,
-    runs_per_task: Math.max(1, Math.min(10, Number(refs.runsPerTask?.value || 1) || 1)),
-    capture_artifacts: Boolean(refs.captureArtifacts?.checked),
-    capture_transcript: Boolean(refs.captureTranscript?.checked),
+    capture_artifacts: true,
+    capture_transcript: true,
   };
 }
 
 async function startBenchmark() {
   if (isRunning()) {
-    throw new Error("\u5f53\u524d\u5df2\u6709\u8fd0\u884c\u4e2d\u7684 benchmark\uff0c\u8bf7\u5148\u505c\u6b62\u6216\u7b49\u5f85\u5b8c\u6210");
+    throw new Error("当前已有运行中的 WunderBench，请先停止或等待完成");
   }
 
   benchmarkState.actionPending = true;
   benchmarkState.cancelPending = false;
   updatePrimaryAction();
-  setFormStatus("\u6b63\u5728\u542f\u52a8 benchmark...");
+  setFormStatus("正在启动 WunderBench...");
 
   try {
-    const response = await fetchJson("/admin/benchmark/start", {
+    const response = await fetchJson("/admin/wunderbench/start", {
       method: "POST",
       body: JSON.stringify(buildStartPayload()),
     });
@@ -686,7 +757,7 @@ async function startBenchmark() {
     };
     updateIndicator(benchmarkState.activeStatus);
     setRunHint(`\u5df2\u521b\u5efa\u8fd0\u884c ${response.run_id}`);
-    setFormStatus("Benchmark \u5df2\u542f\u52a8");
+    setFormStatus("WunderBench 已启动");
     await loadHistory();
     await loadRunDetail(benchmarkState.activeRunId, { followRunning: true });
   } finally {
@@ -707,7 +778,7 @@ async function cancelBenchmark() {
   setFormStatus("\u6b63\u5728\u53d1\u9001\u505c\u6b62\u8bf7\u6c42...");
 
   try {
-    const response = await fetchJson(`/admin/benchmark/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+    const response = await fetchJson(`/admin/wunderbench/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
     setRunHint(response?.message || "\u505c\u6b62\u8bf7\u6c42\u5df2\u53d1\u9001");
     setFormStatus("\u505c\u6b62\u8bf7\u6c42\u5df2\u53d1\u9001");
     await loadRunDetail(runId, { followRunning: true, silent: true });
@@ -730,7 +801,7 @@ async function deleteBenchmarkRun(runId) {
     return;
   }
 
-  await fetchJson(`/admin/benchmark/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+  await fetchJson(`/admin/wunderbench/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
 
   if (benchmarkState.viewRunId === runId) {
     benchmarkState.viewRunId = "";
@@ -749,6 +820,33 @@ async function deleteBenchmarkRun(runId) {
   updatePrimaryAction();
   updateIndicator(benchmarkState.activeStatus);
   setFormStatus(`\u5df2\u5220\u9664\u8fd0\u884c ${runId}`);
+}
+
+async function exportBenchmarkRun(runId) {
+  const cleaned = String(runId || benchmarkState.viewRunId || benchmarkState.activeRunId || "").trim();
+  if (!cleaned) {
+    throw new Error("请先选择一条评测记录");
+  }
+  benchmarkState.exportPending = true;
+  updateExportAction();
+  setFormStatus("正在导出评测记录...");
+  try {
+    const response = await fetch(buildApiUrl(`/admin/wunderbench/runs/${encodeURIComponent(cleaned)}/export`));
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload?.error?.message || payload?.detail?.message || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const filename = parseDownloadFilename(
+      response.headers.get("Content-Disposition"),
+      `wunderbench-${cleaned}-export.json`
+    );
+    downloadBlob(blob, filename);
+    setFormStatus(`已导出评测记录 ${cleaned}`);
+  } finally {
+    benchmarkState.exportPending = false;
+    updateExportAction();
+  }
 }
 
 async function handlePrimaryAction() {
@@ -783,19 +881,21 @@ function bindEvents() {
     }
   });
 
-  refs.suiteList?.addEventListener("change", (event) => {
-    const input = event.target;
-    if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
+  refs.exportBtn?.addEventListener("click", () => {
+    exportBenchmarkRun().catch((error) => {
+      setFormStatus(error.message || "导出评测记录失败");
+    });
+  });
+
+  refs.profileList?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("button[data-profile-id]") : null;
+    if (!button) {
       return;
     }
-    const suiteId = String(input.dataset.suiteId || "");
-    benchmarkState.suiteSelectionTouched = true;
-    if (input.checked) {
-      benchmarkState.selectedSuiteIds.add(suiteId);
-    } else {
-      benchmarkState.selectedSuiteIds.delete(suiteId);
-    }
-    setFormStatus(`\u5f53\u524d\u9009\u4e2d ${getSelectedSuiteIds().length} \u7ec4\u4efb\u52a1`);
+    benchmarkState.selectedProfileId = String(button.dataset.profileId || "quick") || "quick";
+    renderProfileOptions();
+    const selected = benchmarkState.profiles.find((profile) => profile.id === benchmarkState.selectedProfileId);
+    setFormStatus(`当前档位：${formatProfileName(benchmarkState.selectedProfileId, selected?.name)}`);
   });
 
   refs.historyBody?.addEventListener("click", (event) => {
@@ -804,7 +904,9 @@ function bindEvents() {
     if (button) {
       const action = button.dataset.action;
       const runId = button.dataset.runId;
-      if (action === "delete") {
+      if (action === "export") {
+        exportBenchmarkRun(runId).catch((error) => setFormStatus(error.message || "导出评测记录失败"));
+      } else if (action === "delete") {
         deleteBenchmarkRun(runId).catch((error) => setFormStatus(error.message || "\u5220\u9664\u8fd0\u884c\u5931\u8d25"));
       }
       return;
@@ -869,10 +971,12 @@ export async function initEvaluationPanel() {
 
   bindEvents();
   renderModelOptions();
+  renderProfileOptions();
   clearDetail();
   updateIndicator(benchmarkState.activeStatus);
   updatePrimaryAction();
-  setFormStatus("\u6b63\u5728\u52a0\u8f7d\u4efb\u52a1\u7ec4...");
+  updateExportAction();
+  setFormStatus("正在加载评测档位...");
 
   try {
     await Promise.all([loadCatalog(), loadHistory()]);
@@ -883,6 +987,6 @@ export async function initEvaluationPanel() {
   } catch (error) {
     benchmarkState.catalogLoaded = false;
     updatePrimaryAction();
-    setFormStatus(error.message || "\u521d\u59cb\u5316 benchmark \u9762\u677f\u5931\u8d25");
+    setFormStatus(error.message || "初始化 WunderBench 面板失败");
   }
 }

@@ -1,3 +1,4 @@
+use super::profiles::build_scorecard;
 use super::spec::BenchmarkTaskSpec;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -67,6 +68,7 @@ pub fn build_task_aggregate(task: &BenchmarkTaskSpec, attempts: &[Value]) -> Val
 
 pub fn build_run_summary(
     run_id: &str,
+    profile: &str,
     user_id: &str,
     model_name: &str,
     judge_model_name: &str,
@@ -132,6 +134,8 @@ pub fn build_run_summary(
         .collect::<BTreeMap<_, _>>();
 
     json!({
+        "benchmark": "wunderbench",
+        "profile": profile,
         "run_id": run_id,
         "user_id": user_id,
         "model_name": model_name,
@@ -143,6 +147,7 @@ pub fn build_run_summary(
         "attempt_count": attempts.len(),
         "total_score": round6(total_score),
         "suite_scores": suite_scores,
+        "scorecard": build_scorecard(task_aggregates, attempts),
         "efficiency": {
             "total_context_tokens": total_context_tokens,
             "total_elapsed_s": round6(total_elapsed_s),

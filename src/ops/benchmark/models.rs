@@ -5,6 +5,8 @@ use serde_json::Value;
 pub struct BenchmarkStartRequest {
     pub user_id: String,
     #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
     pub model_name: Option<String>,
     #[serde(default)]
     pub judge_model_name: Option<String>,

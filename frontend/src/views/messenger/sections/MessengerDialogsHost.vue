@@ -125,8 +125,8 @@
   <OnlyOfficeEditorDialog
     :visible="onlyOfficeVisible"
     :path="onlyOfficePath"
-    :agent-id="activeAgentId"
-    :container-id="currentContainerId"
+    :agent-id="onlyOfficeAgentId"
+    :container-id="onlyOfficeContainerId"
     :user-id="onlyOfficeUserId"
     @update:visible="handleOnlyOfficeVisibleChange"
     @saved="handleWorkspaceEditorSaved"
@@ -136,8 +136,8 @@
   <DrawioEditorDialog
     :visible="drawioVisible"
     :path="drawioPath"
-    :agent-id="activeAgentId"
-    :container-id="currentContainerId"
+    :agent-id="drawioAgentId"
+    :container-id="drawioContainerId"
     :user-id="drawioUserId"
     @update:visible="handleDrawioVisibleChange"
     @saved="handleWorkspaceEditorSaved"
@@ -277,9 +277,13 @@ const {
   onlyOfficeVisible: boolean;
   onlyOfficePath: string;
   onlyOfficeUserId: string;
+  onlyOfficeAgentId: string;
+  onlyOfficeContainerId: number | null;
   drawioVisible: boolean;
   drawioPath: string;
   drawioUserId: string;
+  drawioAgentId: string;
+  drawioContainerId: number | null;
   activeAgentId: string;
   currentContainerId: number;
   handleWorkspaceEditorSaved: (payload?: { path?: string }) => void | Promise<void>;

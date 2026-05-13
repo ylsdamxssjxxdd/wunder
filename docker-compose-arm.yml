@@ -166,6 +166,7 @@ services:
       - ./config/fonts.conf:/run/wunder-fonts.conf:ro
       - ./config/matplotlibrc:/run/wunder-matplotlibrc:ro
       - ./config/sandbox-runtime.yaml:/run/wunder-sandbox-runtime.yaml:ro
+      - ./config/skills:/app/config/skills:ro
       - ./config/data/workspaces:/workspaces
       - ./config/data/ms-playwright:/ms-playwright
       - ./config/fonts:/usr/share/fonts/wunder:ro
@@ -315,4 +316,3 @@ services:
       - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
     ports:
       - "${NGINX_PORT:-18001}:80"
-

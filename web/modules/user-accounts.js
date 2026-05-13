@@ -14,6 +14,12 @@ const MAX_TEST_USERS_PER_UNIT = 200;
 const USER_ACCOUNT_ONLINE_REFRESH_MS = 12000;
 let userAccountOnlineRefreshTimer = null;
 
+const USER_FRONTEND_PORT_BY_ADMIN_PORT = {
+  "18000": "18001",
+  "18001": "18001",
+  "18002": "18002",
+};
+
 const ensureUserAccountsState = () => {
   if (!state.userAccounts) {
     state.userAccounts = {
@@ -375,6 +381,18 @@ const renderUserAccountRows = () => {
     activityCell.innerHTML = buildActivitySparkline(user.activity_series);
 
     const actionCell = document.createElement("td");
+    actionCell.className = "user-account-actions";
+
+    const loginBtn = document.createElement("button");
+    loginBtn.type = "button";
+    loginBtn.className = "secondary";
+    loginBtn.textContent = t("userAccounts.action.login");
+    loginBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openUserFrontend(user);
+    });
+    actionCell.appendChild(loginBtn);
+
     const settingsBtn = document.createElement("button");
     settingsBtn.type = "button";
     settingsBtn.className = "secondary";
@@ -396,6 +414,90 @@ const renderUserAccountRows = () => {
   });
   elements.userAccountTableBody.appendChild(fragment);
   renderUserAccountPagination();
+};
+
+const resolveUserFrontendOrigin = () => {
+  if (typeof window === "undefined" || !window.location) {
+    return "";
+  }
+  const { protocol, hostname, port, origin } = window.location;
+  const mappedPort = USER_FRONTEND_PORT_BY_ADMIN_PORT[String(port || "").trim()];
+  if (mappedPort && mappedPort !== String(port || "").trim()) {
+    return `${protocol}//${hostname}:${mappedPort}`;
+  }
+  return origin || "";
+};
+
+const buildUserFrontendUrl = (userId) => {
+  const trimmedUserId = String(userId || "").trim();
+  if (!trimmedUserId) {
+    return "";
+  }
+  const origin = resolveUserFrontendOrigin();
+  if (!origin) {
+    return "";
+  }
+  const url = new URL("/app/chat", origin);
+  url.searchParams.set("section", "messages");
+  url.searchParams.set("entry", "default");
+  return url.toString();
+};
+
+const issueUserFrontendAccessToken = async (userId) => {
+  const wunderBase = getWunderBase();
+  const response = await fetch(`${wunderBase}/auth/external/token_login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Wunder-Session-Scope": "user_web",
+    },
+    body: JSON.stringify({
+      token: "",
+      user_id: userId,
+    }),
+  });
+  if (!response.ok) {
+    const message = await extractResponseMessage(
+      response,
+      t("common.requestFailed", { status: response.status })
+    );
+    throw new Error(message);
+  }
+  const payload = await response.json();
+  const accessToken = String(payload?.data?.access_token || "").trim();
+  if (!accessToken) {
+    throw new Error(t("userAccounts.toast.loginTokenEmpty"));
+  }
+  return accessToken;
+};
+
+const openUserFrontend = async (user) => {
+  const userId = String(user?.id || "").trim();
+  if (!userId) {
+    notify(t("userAccounts.toast.loginOpenFailed"), "error");
+    return;
+  }
+  const targetUrl = buildUserFrontendUrl(userId);
+  if (!targetUrl) {
+    notify(t("userAccounts.toast.loginOpenFailed"), "error");
+    return;
+  }
+  try {
+    const accessToken = await issueUserFrontendAccessToken(userId);
+    const url = new URL(targetUrl);
+    url.searchParams.set("access_token", accessToken);
+    const opened = window.open(url.toString(), "_blank", "noopener,noreferrer");
+    if (!opened) {
+      notify(t("userAccounts.toast.loginOpenFailed"), "error");
+    }
+  } catch (error) {
+    notify(
+      t("userAccounts.toast.loginOpenFailedWithMessage", {
+        message: error?.message || t("common.unknownError"),
+      }),
+      "error"
+    );
+  }
 };
 
 const openModal = (modal) => {

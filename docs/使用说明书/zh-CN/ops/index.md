@@ -16,7 +16,7 @@ Wunder 的运维可以理解为**五条主线**：部署、存储、安全、渠
   <a class="docs-card" href="/docs/zh-CN/ops/data-and-storage/"><strong>数据与存储</strong><span>数据库、工作区、知识库的数据管理。</span></a>
   <a class="docs-card" href="/docs/zh-CN/ops/auth-and-security/"><strong>账户与安全</strong><span>账户体系、权限边界、安全配置。</span></a>
   <a class="docs-card" href="/docs/zh-CN/ops/channel-runtime/"><strong>渠道管理</strong><span>飞书、微信等外部渠道的接入与运维。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/ops/benchmark-and-observability/"><strong>监控与评估</strong><span>系统健康、性能观测、能力评估。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/ops/benchmark-and-observability/"><strong>监控与 WunderBench</strong><span>系统健康、性能观测、模型评测。</span></a>
   <a class="docs-card" href="/docs/zh-CN/ops/desktop-local-mode/"><strong>Desktop 本地模式</strong><span>桌面端本地运行的特点与维护。</span></a>
 </div>
 
@@ -62,7 +62,7 @@ Wunder 的运维可以理解为**五条主线**：部署、存储、安全、渠
 - 消息收发是否正常
 - 出站是否卡在队列
 
-### 5. 监控与评估
+### 5. 监控与 WunderBench
 
 **目标**：提前发现问题、量化系统表现。
 

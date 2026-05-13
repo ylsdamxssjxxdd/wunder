@@ -9,13 +9,13 @@ use walkdir::WalkDir;
 
 pub fn prepare_attempt_workspace(
     workspace: &WorkspaceManager,
-    user_id: &str,
+    workspace_id: &str,
     run_id: &str,
     task: &BenchmarkTaskSpec,
     attempt_no: u32,
 ) -> Result<(PathBuf, String)> {
     let relative_root = build_attempt_root(run_id, task.id(), attempt_no);
-    let target = workspace.resolve_path(user_id, &relative_root)?;
+    let target = workspace.resolve_path(workspace_id, &relative_root)?;
     if target.exists() {
         std::fs::remove_dir_all(&target)
             .with_context(|| format!("清理 benchmark 工作区失败: {target:?}"))?;
@@ -26,7 +26,7 @@ pub fn prepare_attempt_workspace(
     for file in &task.frontmatter.workspace_files {
         write_workspace_file(&target, run_id, task.id(), attempt_no, &relative_root, file)?;
     }
-    workspace.bump_version(user_id);
+    workspace.bump_version(workspace_id);
     Ok((target, relative_root))
 }
 
@@ -132,4 +132,83 @@ fn write_workspace_file(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::{SqliteStorage, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID};
+    use crate::workspace::WorkspaceManager;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    fn build_workspace_manager() -> (WorkspaceManager, tempfile::TempDir) {
+        let dir = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("benchmark-workspace-tests.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        storage
+            .ensure_initialized()
+            .expect("initialize sqlite storage");
+        let manager = WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+        (manager, dir)
+    }
+
+    fn task_with_inline_file() -> BenchmarkTaskSpec {
+        serde_json::from_value(json!({
+            "frontmatter": {
+                "id": "sample_task",
+                "name": "Sample task",
+                "suite": "sample",
+                "category": "sample",
+                "grading_type": "automated",
+                "workspace_files": [
+                    {
+                        "path": "src/sample.txt",
+                        "content": "hello {attempt_root}"
+                    }
+                ]
+            },
+            "prompt": "update {attempt_root}/src/sample.txt",
+            "expected_behavior": "",
+            "grading_criteria": [],
+            "automated_checks": "",
+            "file_path": "inline"
+        }))
+        .expect("task spec")
+    }
+
+    #[test]
+    fn prepare_attempt_workspace_uses_tool_visible_container_workspace() {
+        let (workspace, _dir) = build_workspace_manager();
+        let workspace_id =
+            workspace.scoped_user_id_by_container("benchmark_admin", DEFAULT_SANDBOX_CONTAINER_ID);
+        let task = task_with_inline_file();
+
+        let (attempt_dir, attempt_root) = prepare_attempt_workspace(
+            &workspace,
+            &workspace_id,
+            "run_1",
+            &task,
+            1,
+        )
+        .expect("prepare workspace");
+
+        assert_eq!(attempt_root, "benchmark/run_1/sample_task/attempt_1");
+        assert!(attempt_dir.starts_with(workspace.workspace_root(&workspace_id)));
+        assert!(attempt_dir.join("src").join("sample.txt").exists());
+        assert!(!workspace
+            .workspace_root("benchmark_admin")
+            .join(&attempt_root)
+            .exists());
+    }
 }

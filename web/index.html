@@ -4053,7 +4053,7 @@
         </section>
                         <section id="evaluationPanel" class="panel benchmark-panel">
           <div class="list-header">
-            <h1 data-i18n="panel.evaluation">能力评估</h1>
+            <h1 data-i18n="panel.evaluation">WunderBench</h1>
             <div class="header-actions evaluation-header-actions">
               <button id="benchmarkStartBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-play"></i>
@@ -4063,44 +4063,35 @@
                 <i class="fa-solid fa-clock-rotate-left"></i>
                 <span>运行历史</span>
               </button>
+              <button id="benchmarkExportBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-file-export"></i>
+                <span>导出评测记录</span>
+              </button>
               <div id="benchmarkStatusIndicator" class="status-indicator" data-status="idle" aria-live="polite">
                 <span class="status-dot"></span>
                 <span class="status-text">空闲</span>
               </div>
             </div>
           </div>
-          <div class="tips">按 PinchBench 的任务组方式执行评测，重点呈现结果、效率与稳定性，避免把评测页面做得过细过杂。</div>
+          <div class="tips">面向 Wunder 智能体运行链路的一键模型评测：自动准备任务、执行工具、记录产物，并生成可直接用于选型的评分画像。</div>
           <div class="evaluation-layout benchmark-layout">
             <div class="evaluation-side">
               <div class="monitor-block benchmark-control-card">
                 <div class="monitor-block-title"><i class="fa-solid fa-sliders"></i><span>运行配置</span></div>
+                <div id="benchmarkProfileList" class="benchmark-profile-list"></div>
                 <div class="benchmark-form-grid">
                   <div class="form-row"><label for="benchmarkUserId">user_id</label><input id="benchmarkUserId" type="text" value="benchmark_admin" placeholder="benchmark_admin" /></div>
-                  <div class="form-row"><label for="benchmarkRunsPerTask">每题轮次</label><input id="benchmarkRunsPerTask" type="number" min="1" max="10" value="2" /></div>
                   <div class="form-row"><label for="benchmarkModelSelect">被测模型</label><select id="benchmarkModelSelect"></select></div>
                   <div class="form-row"><label for="benchmarkJudgeModelSelect">裁判模型</label><select id="benchmarkJudgeModelSelect"></select></div>
                 </div>
-                <div class="benchmark-inline-options">
-                  <label class="checkbox-inline"><input id="benchmarkCaptureArtifacts" type="checkbox" checked /><span>保留产物</span></label>
-                  <label class="checkbox-inline"><input id="benchmarkCaptureTranscript" type="checkbox" checked /><span>保留记录</span></label>
-                </div>
                 <div id="benchmarkFormStatus" class="muted benchmark-form-status"></div>
-                <div class="benchmark-section-title">任务组</div>
-                <div id="benchmarkSuiteList" class="benchmark-selection-list"></div>
               </div>
             </div>
             <div class="evaluation-main">
               <div class="evaluation-results benchmark-results">
                 <div class="monitor-block benchmark-summary-card">
                   <div class="monitor-block-title"><i class="fa-solid fa-flag-checkered"></i><span>运行概览</span></div>
-                  <div class="benchmark-summary-grid">
-                    <div class="benchmark-summary-item"><span>Run ID</span><strong id="benchmarkRunId">-</strong></div>
-                    <div class="benchmark-summary-item"><span>状态</span><strong id="benchmarkRunStatus">-</strong></div>
-                    <div class="benchmark-summary-item"><span>开始时间</span><strong id="benchmarkRunStartedAt">-</strong></div>
-                    <div class="benchmark-summary-item"><span>耗时</span><strong id="benchmarkRunElapsed">-</strong></div>
-                    <div class="benchmark-summary-item"><span>总分</span><strong id="benchmarkTotalScore">-</strong></div>
-                    <div class="benchmark-summary-item"><span>上下文 Token</span><strong id="benchmarkContextTokens">-</strong></div>
-                  </div>
+                  <pre id="benchmarkSummaryText" class="benchmark-summary-text">暂无运行。选择快速、标准或全量档位后开始评测。</pre>
                   <div class="evaluation-progress">
                     <div class="evaluation-progress-bar"><span id="benchmarkProgressFill"></span></div>
                     <div id="benchmarkProgressText" class="muted">0 / 0</div>

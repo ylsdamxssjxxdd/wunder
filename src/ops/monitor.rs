@@ -2355,11 +2355,11 @@ impl MonitorState {
         data: &Value,
         log_profile: MonitorLogProfile,
     ) -> Value {
-        if event_type == "llm_request" {
-            return summarize_llm_request_event(data, self.payload_limit);
-        }
         if log_profile.keeps_full_payload() {
             return data.clone();
+        }
+        if event_type == "llm_request" {
+            return summarize_llm_request_event(data, self.payload_limit);
         }
         if !data.is_object() {
             return data.clone();

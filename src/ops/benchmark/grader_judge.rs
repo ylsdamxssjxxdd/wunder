@@ -4,6 +4,7 @@ use super::spec::BenchmarkTaskSpec;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
+use crate::storage::DEFAULT_SANDBOX_CONTAINER_ID;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicBool;
@@ -33,10 +34,10 @@ pub async fn grade_with_judge(
         tool_names: Vec::new(),
         skip_tool_calls: true,
         stream: true,
-        debug_payload: false,
+        debug_payload: true,
         session_id: Some(session_id.to_string()),
         agent_id: None,
-        workspace_container_id: None,
+        workspace_container_id: Some(DEFAULT_SANDBOX_CONTAINER_ID),
         model_name: judge_model_name,
         language,
         config_overrides,
@@ -44,7 +45,7 @@ pub async fn grade_with_judge(
         preview_skill: false,
         attachments: None,
         allow_queue: true,
-        is_admin: false,
+        is_admin: true,
         approval_tx: None,
     };
     let result = execute_prompt(orchestrator, monitor, request, cancel_flag, session_id)

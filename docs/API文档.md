@@ -2669,49 +2669,63 @@
   - 每个并发点会执行两轮采样，返回两轮平均耗时。
   - 用于不同并发下的性能采样，不涉及模型调用。
 
-### 4.1.48 `/wunder/admin/benchmark/*`
+### 4.1.48 `/wunder/admin/wunderbench/*`
 
 - 旧 `/wunder/admin/evaluation/*` 能力评估接口已移除。
-- 当前统一使用 PinchBench 风格的 `/wunder/admin/benchmark/*` 基准测试接口，详见下文 `PinchBench Benchmark API`。
+- 当前统一使用 WunderBench 模型评测接口，旧 `/wunder/admin/benchmark/*` 作为兼容别名保留；旧 `start` 入口在未传筛选条件时仍按历史行为运行 `full` 档位。
+- WunderBench 复用 Wunder 真实智能体执行链路，按任务档位自动选择用例、准备工作区、执行工具、记录产物，并输出自动评分、LLM 裁判评分与 scorecard。
 
-### PinchBench Benchmark API
+### WunderBench API
 
-#### `GET /wunder/admin/benchmark/suites`
+#### `GET /wunder/admin/wunderbench/profiles`
 - 方法：`GET`
-- 返回（JSON）：`{ "suites": [...] }`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "profiles": [...] }`
+- 每个 profile 包含 `id`、`name`、`description`、`task_count`、`recommended_runs`、`default`。内置档位为 `quick`、`core`、`full`。
+
+#### `GET /wunder/admin/wunderbench/suites`
+- 方法：`GET`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "profiles": [...], "suites": [...] }`
 - 每个 suite 项包含 `suite_id`、`task_count`、`categories`、`grading_types`、`recommended_runs`，用于管理端快速构建套件筛选与推荐轮次。
 
-#### `GET /wunder/admin/benchmark/tasks`
+#### `GET /wunder/admin/wunderbench/tasks`
 - 方法：`GET`
 - 入参（Query，可选）：`suite`、`category`、`grading_type`。
-- 返回（JSON）：`{ "tasks": [...] }`。每个任务项包含 `id`、`name`、`suite`、`category`、`grading_type`、`timeout_seconds`、`runs_recommended`、`difficulty`、`required_tools`、`tags`、`languages`、`criteria_count`、`has_automated_checks`、`has_judge_rubric`、`prompt`、`expected_behavior`。
+- 返回（JSON）：`{ "benchmark": "wunderbench", "tasks": [...] }`。每个任务项包含 `id`、`name`、`suite`、`category`、`grading_type`、`timeout_seconds`、`runs_recommended`、`difficulty`、`required_tools`、`tags`、`languages`、`criteria_count`、`has_automated_checks`、`has_judge_rubric`、`coverage`、`prompt`、`expected_behavior`。
 
-#### `POST /wunder/admin/benchmark/start`
+#### `POST /wunder/admin/wunderbench/start`
 - 方法：`POST`
-- 入参（JSON）：`user_id`（必填）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
-- 返回（JSON）：`run_id`、`status`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 benchmark。
+- 入参（JSON）：`user_id`（必填）、`profile`（可选，默认 `quick`）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
+- 说明：未传 `suite_ids/task_ids` 时按 `profile` 自动选择任务；传入后进入手动筛选模式。
+- 返回（JSON）：`run_id`、`status`、`benchmark`、`profile`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 WunderBench。
 
-#### `GET /wunder/admin/benchmark/runs`
+#### `GET /wunder/admin/wunderbench/runs`
 - 方法：`GET`
 - 入参（Query，可选）：`user_id`、`status`、`model_name`、`since_time`、`until_time`、`limit`。
-- 返回（JSON）：`{ "runs": [...] }`，每项为 benchmark 运行快照，包含运行状态、总分、suite 列表、效率摘要、开始/结束时间等信息。
+- 返回（JSON）：`{ "runs": [...] }`，每项为 WunderBench 运行快照，包含运行状态、总分、profile、suite 列表、效率摘要、开始/结束时间等信息。
 
-#### `GET /wunder/admin/benchmark/runs/{run_id}`
+#### `GET /wunder/admin/wunderbench/runs/{run_id}`
 - 方法：`GET`
-- 返回（JSON）：`{ "run": ..., "tasks": [...], "attempts": [...] }`。其中 `tasks` 为任务聚合结果，`attempts` 为逐轮明细，便于历史回放与问题定位。
+- 返回（JSON）：`{ "run": ..., "tasks": [...], "attempts": [...] }`。其中 `run.summary.scorecard` 包含 `readiness`、`overall_score`、`reliability_score`、`tool_success_score`、`stability_score`、`efficiency_score`、`weakest_suites`、`top_failures`。
 
-#### `POST /wunder/admin/benchmark/runs/{run_id}/cancel`
+#### `GET /wunder/admin/wunderbench/runs/{run_id}/export`
+- 方法：`GET`
+- 返回：`application/json` 附件下载，文件名形如 `wunderbench-{run_id}-export.json`。
+- 内容：导出单次评测的完整复盘包，包含 `run`、`task_aggregates`、`attempts`、`task_specs`、`attempt_logs` 与 `diagnostics`。
+- `attempt_logs` 会按 `bench-{run_id}-{task_id}-{attempt_no}` 和 `bench-{run_id}-{task_id}-{attempt_no}-judge` 收集主执行与裁判线程的 monitor 记录，包含已持久化的模型请求、模型输出、工具调用、工具结果、工作区更新、token/速度统计等事件。
+- 新启动的 WunderBench 会使用管理员调试日志模式记录评测线程，便于导出后进行模型行为与系统链路复盘；历史运行若创建于该能力上线前，`llm_request` 可能只包含摘要。
+
+#### `POST /wunder/admin/wunderbench/runs/{run_id}/cancel`
 - 方法：`POST`
 - 返回（JSON）：`{ "ok": true, "run_id": "...", "message": "cancel requested" }`。仅对仍在内存中的运行实例生效。
 
-#### `DELETE /wunder/admin/benchmark/runs/{run_id}`
+#### `DELETE /wunder/admin/wunderbench/runs/{run_id}`
 - 方法：`DELETE`
 - 返回（JSON）：`{ "ok": true, "run_id": "...", "deleted": N }`。会同时删除该 run 关联的 attempt 与 task aggregate 持久化结果。
 
-#### `GET /wunder/admin/benchmark/runs/{run_id}/stream`
+#### `GET /wunder/admin/wunderbench/runs/{run_id}/stream`
 - 方法：`GET`（SSE）
 - 返回：SSE 事件流；事件名包括 `benchmark_started`、`task_attempt_started`、`task_attempt_finished`、`task_aggregated`、`benchmark_progress`、`benchmark_log`、`benchmark_finished`。
-- 说明：仅能订阅仍在运行中的 benchmark；运行结束后需要改用明细接口查询最终结果。
+- 说明：仅能订阅仍在运行中的 WunderBench；运行结束后需要改用明细接口查询最终结果。
 
 ## 2026-03-22 增补：weixin（微信 iLink）渠道接入（P0）
 

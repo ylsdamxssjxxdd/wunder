@@ -974,6 +974,11 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           ctx.drawioVisible.value = true;
           ctx.drawioPath.value = relativePath;
           ctx.drawioUserId.value = String(resource?.requestUserId || userId).trim();
+          ctx.drawioAgentId.value = String(resource?.requestAgentId || '').trim();
+          ctx.drawioContainerId.value =
+              resource?.requestContainerId !== null && Number.isFinite(resource?.requestContainerId)
+                  ? resource.requestContainerId
+                  : null;
           return;
       }
       if (previewKind === 'onlyoffice') {
@@ -983,6 +988,11 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           ctx.onlyOfficeVisible.value = true;
           ctx.onlyOfficePath.value = relativePath;
           ctx.onlyOfficeUserId.value = String(resource?.requestUserId || userId).trim();
+          ctx.onlyOfficeAgentId.value = String(resource?.requestAgentId || '').trim();
+          ctx.onlyOfficeContainerId.value =
+              resource?.requestContainerId !== null && Number.isFinite(resource?.requestContainerId)
+                  ? resource.requestContainerId
+                  : null;
           return;
       }
       const resource = ctx.resolveWorkspaceResource(workspacePath);
@@ -1088,11 +1098,25 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       const changedPath = String(payload.path || ctx.onlyOfficePath.value || ctx.drawioPath.value || '').trim();
       if (!changedPath)
           return;
+      const editorAgentId = ctx.onlyOfficeVisible.value
+          ? ctx.onlyOfficeAgentId.value
+          : ctx.drawioVisible.value
+              ? ctx.drawioAgentId.value
+              : ctx.activeAgentId.value;
+      const explicitEditorContainerId = ctx.onlyOfficeVisible.value
+          ? ctx.onlyOfficeContainerId.value
+          : ctx.drawioVisible.value
+              ? ctx.drawioContainerId.value
+              : null;
+      const editorContainerId =
+          explicitEditorContainerId !== null && Number.isFinite(explicitEditorContainerId)
+              ? explicitEditorContainerId
+              : ctx.currentContainerId.value;
       emitWorkspaceRefresh({
           path: changedPath,
           changed_paths: [changedPath],
-          agent_id: ctx.activeAgentId.value || '',
-          container_id: ctx.currentContainerId.value
+          agent_id: editorAgentId || '',
+          container_id: editorContainerId
       });
       if (ctx.resourcePreviewVisible.value) {
           await ctx.openResourcePreview({
@@ -1113,6 +1137,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       ctx.drawioPath.value = '';
       ctx.onlyOfficeUserId.value = '';
       ctx.drawioUserId.value = '';
+      ctx.onlyOfficeAgentId.value = '';
+      ctx.drawioAgentId.value = '';
+      ctx.onlyOfficeContainerId.value = null;
+      ctx.drawioContainerId.value = null;
       if (!path)
           return;
       await ctx.openResourcePreview({
