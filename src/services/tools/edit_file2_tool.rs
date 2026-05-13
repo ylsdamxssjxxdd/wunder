@@ -660,6 +660,8 @@ fn find_all_positions(text: &str, needle: &str) -> Vec<usize> {
 mod tests {
     use super::*;
     use crate::workspace::WorkspaceManager;
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     #[test]
@@ -728,7 +730,9 @@ mod tests {
                 .to_string_lossy()
                 .to_string(),
         );
-        let workspace = WorkspaceManager::new(storage.clone());
+        let workspace_root_text = workspace_root.to_string_lossy().to_string();
+        let workspace =
+            WorkspaceManager::new(&workspace_root_text, Arc::new(storage), 0, &HashMap::new());
         let user_id = "tester";
         let user_root = workspace.ensure_user_root(user_id).expect("user root");
         let file_path = user_root.join("demo.txt");
