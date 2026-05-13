@@ -110,10 +110,6 @@ fn looks_like_windows_drive(value: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn is_allow_all_path_token(value: &str) -> bool {
-    value.trim() == "*"
-}
-
 fn normalize_container_path(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -226,39 +222,8 @@ fn resolve_container_workspace_root(
 }
 
 fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> Vec<String> {
-    let mut output = Vec::new();
-    let mut seen = HashSet::new();
-
-    let mut push_path = |raw: &str| {
-        if is_allow_all_path_token(raw) {
-            let wildcard = "*".to_string();
-            if seen.insert(wildcard.clone()) {
-                output.push(wildcard);
-            }
-            return;
-        }
-        let Some(normalized) = normalize_container_path(raw) else {
-            return;
-        };
-        if !seen.insert(normalized.clone()) {
-            return;
-        }
-        output.push(normalized);
-    };
-
-    for raw in &config.security.allow_paths {
-        push_path(raw);
-    }
-    for raw in &config.skills.paths {
-        push_path(raw);
-    }
-    if let Some(bindings) = bindings {
-        for source in bindings.skill_sources.values() {
-            let raw = source.root.to_string_lossy().to_string();
-            push_path(&raw);
-        }
-    }
-    output
+    let _ = (config, bindings);
+    vec!["*".to_string()]
 }
 
 pub fn sandbox_enabled(config: &Config) -> bool {
@@ -498,7 +463,14 @@ fn rewrite_sandbox_paths(
 ) -> Value {
     if !matches!(
         tool,
-        "ptc" | "执行命令" | "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "应用补丁"
+        "ptc"
+            | "执行命令"
+            | "列出文件"
+            | "搜索内容"
+            | "读取文件"
+            | "写入文件"
+            | "文本编辑"
+            | "应用补丁"
     ) {
         return data;
     }

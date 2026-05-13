@@ -1,6 +1,6 @@
 ---
 title: Workspace Files
-summary: The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.
+summary: The latest arguments and return structures for `list_files`, `search_content`, `read_file`, `write_file`, and `edit_file2`.
 read_when:
   - You need to browse the workspace, search code, read files, or write files
 source_docs:
@@ -17,6 +17,7 @@ This page covers the four most commonly used local tools:
 - `search_content`
 - `read_file`
 - `write_file`
+- `edit_file2`
 
 All four now use the unified success and failure envelope.
 
@@ -26,6 +27,7 @@ All four now use the unified success and failure envelope.
 - To locate a keyword first: `search_content`
 - To read a known path and a specific range: `read_file`
 - To create or overwrite a whole file: `write_file`
+- To do simple text replacement, insertion, or append operations: `edit_file2`
 
 ## `list_files`
 
@@ -207,6 +209,65 @@ Important fields:
 - `files`: the per-file summary
 - `continuation_required`: appears when the default window was not enough or output was truncated by budget
 
+## `edit_file2`
+
+### Minimum arguments
+
+```json
+{
+  "path": "docs/demo.md",
+  "edits": [
+    {
+      "action": "replace",
+      "old_text": "old",
+      "new_text": "new",
+      "expected_count": 1
+    }
+  ]
+}
+```
+
+### Good fit
+
+- `replace`: replace exact old text
+- `replace_between`: replace the block between two markers
+- `insert_before` / `insert_after`: insert around an anchor
+- `append` / `prepend`: add text at the end or beginning
+
+### Success result
+
+```json
+{
+  "ok": true,
+  "action": "edit_file2",
+  "state": "completed",
+  "summary": "Updated file docs/demo.md with 1 edit steps.",
+  "data": {
+    "path": "docs/demo.md",
+    "dry_run": false,
+    "ensure_newline": false,
+    "existed": true,
+    "previous_bytes": 12,
+    "bytes": 12,
+    "edit_count": 1,
+    "edits": [
+      {
+        "action": "replace",
+        "changed": true,
+        "matches": 1,
+        "bytes": 3
+      }
+    ]
+  }
+}
+```
+
+### When to prefer it
+
+- `apply_patch` is too strict for the current model and keeps failing on patch syntax
+- A full `write_file` replacement would be too broad
+- You can provide exact old text, markers, or anchors
+
 ## `write_file`
 
 ### Minimum arguments
@@ -246,7 +307,8 @@ Important fields:
 
 ### When not to use it
 
-- Do not use `write_file` for small, precise code edits. Use [Apply Patch](/docs/en/tools/apply-patch/) instead.
+- For small code edits with clear context, prefer [Apply Patch](/docs/en/tools/apply-patch/).
+- For simpler text replacement or insertion workflows that weaker models can follow more reliably, use `edit_file2`.
 - Do not use it to run scripts or builds. Use [Execute Command](/docs/en/tools/exec/) instead.
 
 ## How to read failures

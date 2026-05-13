@@ -727,6 +727,46 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
+            name: "文本编辑".to_string(),
+            title: None,
+            description: t("tool.spec.edit2.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": t("tool.spec.edit2.args.path")},
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": t("tool.spec.edit2.args.edits"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "description": t("tool.spec.edit2.args.edits.action"),
+                                    "enum": ["replace", "replace_between", "insert_before", "insert_after", "append", "prepend"]
+                                },
+                                "old_text": {"type": "string", "description": t("tool.spec.edit2.args.edits.old_text")},
+                                "new_text": {"type": "string", "description": t("tool.spec.edit2.args.edits.new_text")},
+                                "start_marker": {"type": "string", "description": t("tool.spec.edit2.args.edits.start_marker")},
+                                "end_marker": {"type": "string", "description": t("tool.spec.edit2.args.edits.end_marker")},
+                                "anchor": {"type": "string", "description": t("tool.spec.edit2.args.edits.anchor")},
+                                "replace_all": {"type": "boolean", "description": t("tool.spec.edit2.args.edits.replace_all")},
+                                "expected_count": {"type": "integer", "minimum": 1, "description": t("tool.spec.edit2.args.edits.expected_count")},
+                                "unique": {"type": "boolean", "description": t("tool.spec.edit2.args.edits.unique")}
+                            },
+                            "required": ["action", "new_text"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "ensure_newline": {"type": "boolean", "description": t("tool.spec.edit2.args.ensure_newline")},
+                    "dry_run": {"type": "boolean", "description": "Preview whether the requested text edits match and would change the file, without writing to disk."}
+                },
+                "required": ["path", "edits"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
             name: "应用补丁".to_string(),
             title: None,
             description: t("tool.spec.apply_patch.description"),
@@ -1214,6 +1254,7 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("skill_call".to_string(), "技能调用".to_string());
     map.insert("skill_get".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
+    map.insert("edit_file2".to_string(), "文本编辑".to_string());
     map.insert("apply_patch".to_string(), "应用补丁".to_string());
     map.insert("lsp".to_string(), "LSP查询".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
@@ -2745,6 +2786,18 @@ mod tests {
         assert!(write_spec.description.contains("已存在文件会被覆盖"));
         assert_eq!(
             write_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let edit_file2_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("edit_file2"))
+            .expect("edit_file2 spec");
+        assert!(edit_file2_spec.description.contains("weaker models"));
+        assert!(edit_file2_spec.input_schema["properties"]["path"].is_object());
+        assert!(edit_file2_spec.input_schema["properties"]["edits"].is_object());
+        assert_eq!(
+            edit_file2_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
         );
 

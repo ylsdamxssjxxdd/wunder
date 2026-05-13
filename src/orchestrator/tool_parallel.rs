@@ -102,6 +102,14 @@ mod tests {
     }
 
     #[test]
+    fn edit_file2_is_forced_to_exclusive_execution() {
+        assert!(!tool_call_supports_parallel(
+            "edit_file2",
+            &json!({ "path": "a.txt", "edits": [{ "action": "append", "new_text": "x" }] })
+        ));
+    }
+
+    #[test]
     fn memory_recall_is_parallel_but_memory_write_is_not() {
         assert!(tool_call_supports_parallel(
             "memory_manager",

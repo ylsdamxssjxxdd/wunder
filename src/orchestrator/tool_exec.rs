@@ -464,6 +464,7 @@ impl Orchestrator {
         let file_actions = HashMap::from([
             ("读取文件", "read"),
             ("写入文件", "write"),
+            ("文本编辑", "edit"),
             ("应用补丁", "patch"),
         ]);
         if let Some(action) = file_actions.get(tool_name) {
@@ -1831,7 +1832,10 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         return;
     };
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
-    let keep_path_in_data = matches!(canonical.as_str(), "写入文件" | "write_file");
+    let keep_path_in_data = matches!(
+        canonical.as_str(),
+        "写入文件" | "write_file" | "文本编辑" | "edit_file2"
+    );
     if matches!(canonical.as_str(), "apply_patch" | "应用补丁") {
         let maybe_compacted = map
             .get("data")

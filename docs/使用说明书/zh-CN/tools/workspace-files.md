@@ -17,6 +17,7 @@ updated_at: 2026-04-10
 - `search_content`
 - `read_file`
 - `write_file`
+- `edit_file2`
 
 它们都已经走统一成功/失败骨架。
 
@@ -206,6 +207,65 @@ updated_at: 2026-04-10
 - `content`：拼好的可直接阅读文本
 - `files`：每个文件的摘要
 - `continuation_required`：默认窗口不够或预算截断时会出现
+
+## `edit_file2`
+
+### ????
+
+```json
+{
+  "path": "docs/demo.md",
+  "edits": [
+    {
+      "action": "replace",
+      "old_text": "old",
+      "new_text": "new",
+      "expected_count": 1
+    }
+  ]
+}
+```
+
+### ??????
+
+- `replace`??????????
+- `replace_between`??????????????
+- `insert_before` / `insert_after`????????
+- `append` / `prepend`????????????
+
+### ????
+
+```json
+{
+  "ok": true,
+  "action": "edit_file2",
+  "state": "completed",
+  "summary": "Updated file docs/demo.md with 1 edit steps.",
+  "data": {
+    "path": "docs/demo.md",
+    "dry_run": false,
+    "ensure_newline": false,
+    "existed": true,
+    "previous_bytes": 12,
+    "bytes": 12,
+    "edit_count": 1,
+    "edits": [
+      {
+        "action": "replace",
+        "changed": true,
+        "matches": 1,
+        "bytes": 3
+      }
+    ]
+  }
+}
+```
+
+### ????????
+
+- `apply_patch` ???????????? patch ????
+- ???????? `write_file` ??
+- ??????????????????????
 
 ## `write_file`
 

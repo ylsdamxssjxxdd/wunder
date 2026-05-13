@@ -13,6 +13,7 @@ const DEFAULT_BUILTIN_TOOL_NAMES: &[&str] = &[
     "网页抓取",
     "技能调用",
     "写入文件",
+    "文本编辑",
     "应用补丁",
 ];
 

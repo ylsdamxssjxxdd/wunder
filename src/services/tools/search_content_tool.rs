@@ -4,7 +4,7 @@ use super::{
     tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES,
     MAX_SEARCH_MATCHES,
 };
-use crate::core::{command_utils::is_not_found_error, tool_fs_filter};
+use crate::core::command_utils::is_not_found_error;
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -48,16 +48,6 @@ const RG_RELATIVE_DIRS: &[&str] = &[
     "tools",
     "bin",
 ];
-const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
-    "**/.git/**",
-    "**/target/**",
-    "**/node_modules/**",
-    "**/.next/**",
-    "**/.nuxt/**",
-    "**/.turbo/**",
-    "**/.cache/**",
-];
-
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum QueryMode {
     Literal,
@@ -1192,7 +1182,7 @@ fn build_rg_search_command(
     query: &str,
     query_mode: QueryMode,
     params: &SearchParams,
-    unrestricted_paths: bool,
+    _unrestricted_paths: bool,
 ) -> Command {
     let mut command = Command::new(program);
     command
@@ -1214,24 +1204,17 @@ fn build_rg_search_command(
             command.arg("--regexp").arg(query);
         }
     }
-    if unrestricted_paths {
-        command
-            .arg("--hidden")
-            .arg("--no-ignore")
-            .arg("--no-ignore-global")
-            .arg("--no-ignore-parent")
-            .arg("--no-ignore-vcs");
-    }
+    command
+        .arg("--hidden")
+        .arg("--no-ignore")
+        .arg("--no-ignore-global")
+        .arg("--no-ignore-parent")
+        .arg("--no-ignore-vcs");
     if !params.case_sensitive {
         command.arg("--ignore-case");
     }
     if params.max_depth > 0 {
         command.arg("--max-depth").arg(params.max_depth.to_string());
-    }
-    if !unrestricted_paths {
-        for glob in DEFAULT_EXCLUDE_GLOBS {
-            command.arg("--glob").arg(format!("!{glob}"));
-        }
     }
     for item in &params.file_pattern_items {
         command.arg("--glob").arg(item);
@@ -1468,7 +1451,7 @@ fn search_content_with_candidates(
     matcher: &Regex,
     file_filter: Option<&GlobSet>,
     params: &SearchParams,
-    unrestricted_paths: bool,
+    _unrestricted_paths: bool,
     deadline: Instant,
 ) -> Result<SearchComputation> {
     let display_base = if root.is_dir() {
@@ -1486,9 +1469,6 @@ fn search_content_with_candidates(
         if Instant::now() >= deadline {
             timeout_hit = true;
             break;
-        }
-        if !unrestricted_paths && tool_fs_filter::should_skip_path(&candidate) {
-            continue;
         }
         let rel = candidate
             .strip_prefix(&display_base)
@@ -1546,7 +1526,7 @@ fn search_content_walk(
     matcher: &Regex,
     file_filter: Option<&GlobSet>,
     params: &SearchParams,
-    unrestricted_paths: bool,
+    _unrestricted_paths: bool,
     deadline: Instant,
 ) -> Result<SearchComputation> {
     let hit_list = Arc::new(Mutex::new(Vec::<SearchHit>::new()));
@@ -1569,11 +1549,11 @@ fn search_content_walk(
 
     let mut walker = WalkBuilder::new(root.as_ref());
     walker.hidden(false);
-    walker.ignore(!unrestricted_paths);
-    walker.parents(!unrestricted_paths);
-    walker.git_ignore(!unrestricted_paths);
-    walker.git_global(!unrestricted_paths);
-    walker.git_exclude(!unrestricted_paths);
+    walker.ignore(false);
+    walker.parents(false);
+    walker.git_ignore(false);
+    walker.git_global(false);
+    walker.git_exclude(false);
     walker.max_filesize(Some(MAX_READ_BYTES as u64));
     if params.max_depth > 0 {
         walker.max_depth(Some(params.max_depth));
@@ -1611,12 +1591,6 @@ fn search_content_walk(
             let path = entry.path();
             let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
             if is_dir {
-                if !unrestricted_paths && tool_fs_filter::should_skip_path(path) {
-                    return WalkState::Skip;
-                }
-                return WalkState::Continue;
-            }
-            if !unrestricted_paths && tool_fs_filter::should_skip_path(path) {
                 return WalkState::Continue;
             }
 

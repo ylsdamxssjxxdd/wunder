@@ -117,19 +117,87 @@ const CHANNEL_FORM_SCHEMAS = {
     mode: "config",
     configRoot: "xmpp",
     fields: [
-      { key: "jid", label: "JID", required: true },
-      { key: "password", label: "Password", type: "password", required: true },
-      { key: "domain", label: "Domain", advanced: true },
-      { key: "host", label: "Host" },
-      { key: "port", label: "Port" },
-      { key: "muc_nick", label: "MUC Nick", advanced: true },
-      { key: "muc_rooms", label: "MUC Rooms (comma separated)", advanced: true },
-      { key: "direct_tls", label: "Direct TLS", type: "checkbox", defaultValue: false, advanced: true },
-      { key: "trust_self_signed", label: "Trust Self Signed", type: "checkbox", defaultValue: true },
-      { key: "heartbeat_enabled", label: "Heartbeat Enabled", type: "checkbox", defaultValue: true, advanced: true },
-      { key: "heartbeat_interval_s", label: "Heartbeat Interval (s)", advanced: true },
-      { key: "heartbeat_timeout_s", label: "Heartbeat Timeout (s)", advanced: true },
-      { key: "respond_ping", label: "Respond Ping", type: "checkbox", defaultValue: true, advanced: true },
+      {
+        key: "jid",
+        label: "登录 JID",
+        placeholder: "例如 bot@example.com",
+        required: true,
+      },
+      {
+        key: "password",
+        label: "账号密码",
+        placeholder: "请输入账号密码",
+        type: "password",
+        required: true,
+      },
+      {
+        key: "domain",
+        label: "SRV 域名（可选）",
+        placeholder: "例如 example.com",
+        advanced: true,
+      },
+      {
+        key: "host",
+        label: "服务器地址（可选）",
+        placeholder: "例如 xmpp.example.com",
+      },
+      {
+        key: "port",
+        label: "服务器端口（可选）",
+        placeholder: "默认 5222/5223",
+      },
+      {
+        key: "trust_self_signed",
+        label: "信任自有证书（默认）",
+        type: "checkbox",
+        defaultValue: true,
+      },
+      {
+        key: "resource",
+        label: "Resource（资源标识）",
+        placeholder: "默认 coplat",
+        defaultValue: "coplat",
+        advanced: true,
+      },
+      {
+        key: "direct_tls",
+        label: "使用 Direct TLS（5223）",
+        type: "checkbox",
+        defaultValue: false,
+        advanced: true,
+      },
+      {
+        key: "muc_rooms",
+        label: "自动加入房间（可选）",
+        placeholder: "room1@conference.example.com,room2@conference.example.com",
+        advanced: true,
+      },
+      {
+        key: "heartbeat_enabled",
+        label: "启用主动心跳",
+        type: "checkbox",
+        defaultValue: true,
+        advanced: true,
+      },
+      {
+        key: "heartbeat_interval_s",
+        label: "心跳间隔（秒）",
+        placeholder: "默认 60",
+        advanced: true,
+      },
+      {
+        key: "heartbeat_timeout_s",
+        label: "心跳超时（秒）",
+        placeholder: "默认 20",
+        advanced: true,
+      },
+      {
+        key: "respond_ping",
+        label: "应答对端 Ping",
+        type: "checkbox",
+        defaultValue: true,
+        advanced: true,
+      },
     ],
   },
 };
@@ -729,6 +797,10 @@ const renderChannelDynamicFields = () => {
     toggle.appendChild(input);
     toggle.appendChild(text);
     controls.appendChild(toggle);
+    const hint = document.createElement("div");
+    hint.className = "muted";
+    hint.textContent = "仅在需要自定义 SRV、群聊房间或心跳策略时再开启。";
+    controls.appendChild(hint);
   }
   if (!controls.childElementCount) {
     controls.remove();

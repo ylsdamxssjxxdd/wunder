@@ -1591,6 +1591,58 @@
     "en-US": "Apply structured line-based edits to a text file.",
     "zh-CN": "对现有文本文件应用结构化的行级编辑。"
   },
+  "tool.spec.edit2.args.edits": {
+    "en-US": "Basic text edit steps to apply in order.",
+    "zh-CN": "???????????????"
+  },
+  "tool.spec.edit2.args.edits.action": {
+    "en-US": "Edit action: replace, replace_between, insert_before, insert_after, append, or prepend.",
+    "zh-CN": "?????replace?replace_between?insert_before?insert_after?append ? prepend?"
+  },
+  "tool.spec.edit2.args.edits.old_text": {
+    "en-US": "Existing text to find for replace.",
+    "zh-CN": "replace ??????????"
+  },
+  "tool.spec.edit2.args.edits.new_text": {
+    "en-US": "New text to insert or replace with.",
+    "zh-CN": "????????????"
+  },
+  "tool.spec.edit2.args.edits.start_marker": {
+    "en-US": "Start marker for replace_between. The tool replaces text after this marker until end_marker.",
+    "zh-CN": "replace_between ????????????????? end_marker ??????"
+  },
+  "tool.spec.edit2.args.edits.end_marker": {
+    "en-US": "End marker for replace_between.",
+    "zh-CN": "replace_between ??????"
+  },
+  "tool.spec.edit2.args.edits.anchor": {
+    "en-US": "Anchor text used by insert_before or insert_after.",
+    "zh-CN": "insert_before ? insert_after ????????"
+  },
+  "tool.spec.edit2.args.edits.replace_all": {
+    "en-US": "When true, replace every match instead of only the first one.",
+    "zh-CN": "? true ??????????????????"
+  },
+  "tool.spec.edit2.args.edits.expected_count": {
+    "en-US": "Expected number of matches. The tool fails if the real match count differs.",
+    "zh-CN": "?????????????????????"
+  },
+  "tool.spec.edit2.args.edits.unique": {
+    "en-US": "Require the target marker or old_text to match exactly once.",
+    "zh-CN": "????????????????"
+  },
+  "tool.spec.edit2.args.ensure_newline": {
+    "en-US": "Ensure the final file ends with a newline.",
+    "zh-CN": "????????????"
+  },
+  "tool.spec.edit2.args.path": {
+    "en-US": "Text file path to edit.",
+    "zh-CN": "???????????"
+  },
+  "tool.spec.edit2.description": {
+    "en-US": "Edit a text file with very basic operations that weaker models can use reliably: replace exact text, replace text between two markers, insert before or after an anchor, append, or prepend. Prefer this tool when apply_patch is too strict but full write_file replacement would be too broad. Recommended workflow: read_file first, then submit one or a few simple edit steps with exact old_text or markers; set expected_count or unique whenever possible; use dry_run first if you are unsure.",
+    "zh-CN": "?????????????????????????????????????????????????????????????? apply_patch ???????? write_file ???????????????????? read_file ?????????????????????????? old_text ? marker???? expected_count ? unique ???????????? dry_run?"
+  },
   "tool.spec.lsp.args.operation": {
     "en-US": "LSP operation: definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy.",
     "zh-CN": "LSP 操作类型：definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy。"

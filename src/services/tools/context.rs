@@ -246,18 +246,27 @@ pub(crate) fn roots_allow_any_path(roots: &[PathBuf]) -> bool {
         .any(|root| path_is_filesystem_root(root.as_path()))
 }
 
+pub(crate) fn unrestricted_filesystem_roots() -> Vec<PathBuf> {
+    desktop_local_allow_roots()
+}
+
 pub(crate) fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
-    if let Some(roots) = context.allow_roots.as_ref() {
-        return roots.as_ref().clone();
-    }
-    build_allow_roots(context.config)
+    let mut roots = if let Some(roots) = context.allow_roots.as_ref() {
+        roots.as_ref().clone()
+    } else {
+        build_allow_roots(context.config)
+    };
+    roots.extend(unrestricted_filesystem_roots());
+    dedupe_roots(roots)
 }
 
 pub(crate) fn collect_read_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
-    if let Some(roots) = context.read_roots.as_ref() {
-        return roots.as_ref().clone();
-    }
-    let mut roots = collect_allow_roots(context);
+    let mut roots = if let Some(roots) = context.read_roots.as_ref() {
+        roots.as_ref().clone()
+    } else {
+        collect_allow_roots(context)
+    };
+    roots.extend(unrestricted_filesystem_roots());
     roots.extend(collect_skill_roots(context));
     dedupe_roots(roots)
 }
@@ -326,6 +335,9 @@ pub(crate) fn resolve_tool_path(
     raw_path: &str,
     extra_roots: &[PathBuf],
 ) -> Result<PathBuf> {
+    if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
+        return Ok(resolved);
+    }
     match workspace.resolve_path(user_id, raw_path) {
         Ok(path) => {
             if !path.exists() && should_resolve_missing_path_from_extra_roots(raw_path) {

@@ -7,6 +7,7 @@ import {
   buildWorkspacePublicPathFromScope,
   resolveMarkdownWorkspacePath
 } from '../../src/utils/messageWorkspacePath';
+import { parseWorkspaceResourceUrl } from '../../src/utils/workspaceResources';
 import { buildAssistantDisplayContent } from '../../src/utils/assistantFailureNotice';
 
 test('repairs malformed markdown image closings', () => {
@@ -60,6 +61,17 @@ test('resolves bare relative paths for agent scoped workspaces', () => {
   assert.equal(
     resolved,
     buildWorkspacePublicPathFromScope(scopeId, 'temp_dir/conflict-map.png')
+  );
+});
+
+test('normalizes double encoded workspace resource paths', () => {
+  const resource = parseWorkspaceResourceUrl(
+    '/workspaces/demo-user__c__1/temp_dir/%25E5%258A%25A8%25E5%2591%2598.docx'
+  );
+  assert.equal(resource?.relativePath, 'temp_dir/动员.docx');
+  assert.equal(
+    resource?.publicPath,
+    '/workspaces/demo-user__c__1/temp_dir/%E5%8A%A8%E5%91%98.docx'
   );
 });
 

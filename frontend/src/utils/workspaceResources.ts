@@ -6,6 +6,8 @@ const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 's
 const ABSOLUTE_URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 const FILE_URI_SCHEME_RE = /^file:/i;
 const WINDOWS_DRIVE_RE = /^[a-zA-Z]:[\\/]/;
+const PERCENT_ENCODED_BYTE_RE = /%[0-9a-fA-F]{2}/;
+const MAX_PATH_DECODE_PASSES = 3;
 
 const getBaseOrigin = () => {
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -15,11 +17,30 @@ const getBaseOrigin = () => {
 };
 
 const decodePath = (value) => {
-  try {
-    return decodeURIComponent(value);
-  } catch (error) {
-    return value;
+  let output = String(value || '');
+  for (let pass = 0; pass < MAX_PATH_DECODE_PASSES; pass += 1) {
+    if (!PERCENT_ENCODED_BYTE_RE.test(output)) {
+      break;
+    }
+    try {
+      const decoded = decodeURIComponent(output);
+      if (decoded === output) {
+        break;
+      }
+      output = decoded;
+    } catch (error) {
+      break;
+    }
   }
+  return output;
+};
+
+const encodePath = (value) => {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
 };
 
 const splitPathWithSuffix = (value) => {
@@ -240,7 +261,7 @@ export const parseWorkspaceResourceUrl = (raw) => {
   if (!relativeRaw) return null;
   const relativePath = decodePath(relativeRaw);
   const filename = relativePath.split('/').pop() || decodePath(parts[parts.length - 1] || '');
-  const publicPath = `${WORKSPACE_PUBLIC_PREFIX}${workspaceId}/${relativeRaw}`;
+  const publicPath = `${WORKSPACE_PUBLIC_PREFIX}${workspaceId}/${encodePath(relativePath)}`;
   return {
     userId: workspaceId,
     workspaceId,

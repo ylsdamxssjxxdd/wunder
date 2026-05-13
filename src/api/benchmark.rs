@@ -350,7 +350,7 @@ fn task_to_summary(task: BenchmarkTaskSpec) -> Value {
             "workspace": task.frontmatter.required_tools.iter().any(|tool| {
                 matches!(
                     tool.as_str(),
-                    "read_file" | "write_file" | "edit_file" | "list_files" | "execute_command"
+                    "read_file" | "write_file" | "edit_file" | "edit_file2" | "list_files" | "execute_command"
                 )
             }),
             "judge": task.has_judge_rubric(),

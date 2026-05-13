@@ -5,7 +5,7 @@ use super::multimodal_generation_tool;
 use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
 use super::{
-    a2a_observe, a2a_wait, agent_swarm, compact_cron_tool_result, execute_a2a_service,
+    a2a_observe, a2a_wait, agent_swarm, compact_cron_tool_result, edit_file2, execute_a2a_service,
     execute_command, execute_knowledge_tool, execute_mcp_tool, execute_memory_manager_tool,
     execute_node_invoke, execute_plan_tool, execute_ptc, execute_question_panel_tool,
     execute_skill_call, execute_thread_control_tool, execute_user_tool, find_knowledge_base,
@@ -87,6 +87,7 @@ pub async fn execute_builtin_tool(
         }
         "技能调用" => execute_skill_call(context, args).await,
         "写入文件" => write_file(context, args).await,
+        "文本编辑" => edit_file2(context, args).await,
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,
         "LSP查询" => lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,

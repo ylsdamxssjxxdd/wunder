@@ -3180,7 +3180,10 @@ fn infer_next_step_after_successful_tool(
     if payload.get("ok").and_then(Value::as_bool) != Some(true) {
         return None;
     }
-    if matches!(tool_name.trim(), "写入文件" | "write_file") {
+    if matches!(
+        tool_name.trim(),
+        "写入文件" | "write_file" | "文本编辑" | "edit_file2"
+    ) {
         let data = payload.get("data").and_then(Value::as_object)?;
         let path = data
             .get("path")
@@ -3557,7 +3560,10 @@ fn summarize_compaction_write_file_observation(
     tool_name: &str,
     payload: &Map<String, Value>,
 ) -> Option<String> {
-    if !matches!(tool_name.trim(), "写入文件" | "write_file") {
+    if !matches!(
+        tool_name.trim(),
+        "写入文件" | "write_file" | "文本编辑" | "edit_file2"
+    ) {
         return None;
     }
     let data = payload.get("data")?.as_object()?;

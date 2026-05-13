@@ -10,6 +10,8 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+const MAX_PATH_DECODE_PASSES: usize = 3;
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/wunder/workspace/drawio/config", get(editor_config))
 }
@@ -96,12 +98,49 @@ fn normalize_agent_id(value: Option<&str>) -> Option<&str> {
 }
 
 fn normalize_relative_path(value: &str) -> String {
-    let trimmed = value.replace('\\', "/");
+    let trimmed = percent_decode_path(value).replace('\\', "/");
     let trimmed = trimmed.trim();
     if trimmed.is_empty() || trimmed == "." || trimmed == "/" {
         return String::new();
     }
     trimmed.trim_start_matches('/').to_string()
+}
+
+fn percent_decode_path(value: &str) -> String {
+    let mut output = value.to_string();
+    for _ in 0..MAX_PATH_DECODE_PASSES {
+        if !output.as_bytes().windows(3).any(|window| {
+            window[0] == b'%' && window[1].is_ascii_hexdigit() && window[2].is_ascii_hexdigit()
+        }) {
+            break;
+        }
+        let decoded = percent_decode_once(&output);
+        if decoded == output {
+            break;
+        }
+        output = decoded;
+    }
+    output
+}
+
+fn percent_decode_once(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(hex_text) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
+                if let Ok(raw) = u8::from_str_radix(hex_text, 16) {
+                    output.push(raw);
+                    index += 3;
+                    continue;
+                }
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).to_string()
 }
 
 fn resolve_workspace_id(
@@ -138,6 +177,24 @@ fn format_modified_time(metadata: &std::fs::Metadata) -> String {
 
 fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_relative_path_decodes_double_encoded_utf8_path() {
+        assert_eq!(
+            normalize_relative_path("%25E6%25B5%2581%25E7%25A8%258B.drawio"),
+            "流程.drawio"
+        );
+    }
+
+    #[test]
+    fn normalize_relative_path_keeps_plus_literal() {
+        assert_eq!(normalize_relative_path("a+b.drawio"), "a+b.drawio");
+    }
 }
 
 #[derive(Debug, Deserialize)]

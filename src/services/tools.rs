@@ -15,6 +15,7 @@ pub mod command_sessions;
 mod context;
 mod desktop_control;
 mod dispatch;
+mod edit_file2_tool;
 mod freeform;
 mod mcp_pack;
 mod memory_manager_tool;
@@ -76,7 +77,6 @@ use crate::config::{
 use crate::core::atomic_write::atomic_write_text;
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
-use crate::core::tool_fs_filter;
 use crate::gateway::GatewayNodeInvokeRequest;
 use crate::history::HistoryManager;
 use crate::i18n;
@@ -272,6 +272,8 @@ fn collect_orchestration_aware_allow_roots(context: &ToolContext<'_>) -> Vec<Pat
     roots.extend(collect_orchestration_run_roots(context));
     roots
 }
+
+pub(crate) use edit_file2_tool::edit_file2;
 
 pub(crate) async fn execute_in_sandbox(
     context: &ToolContext<'_>,
@@ -7806,53 +7808,28 @@ fn list_files_inner(
     let mut seen_entries: usize = 0;
     let mut has_more = false;
     let unrestricted_paths = roots_allow_any_path(extra_roots);
-    if unrestricted_paths {
-        for entry in WalkDir::new(&root)
-            .min_depth(1)
-            .max_depth(max_depth.saturating_add(1))
-            .into_iter()
-            .filter_map(|item| item.ok())
-        {
-            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-            let mut display = rel.to_string_lossy().replace('\\', "/");
-            if entry.file_type().is_dir() {
-                display.push('/');
-            }
-            if seen_entries < page_start {
-                seen_entries += 1;
-                continue;
-            }
-            if items.len() >= page_limit {
-                has_more = true;
-                break;
-            }
-            items.push(display);
-            seen_entries += 1;
+    let _ = unrestricted_paths;
+    for entry in WalkDir::new(&root)
+        .min_depth(1)
+        .max_depth(max_depth.saturating_add(1))
+        .into_iter()
+        .filter_map(|item| item.ok())
+    {
+        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+        let mut display = rel.to_string_lossy().replace('\\', "/");
+        if entry.file_type().is_dir() {
+            display.push('/');
         }
-    } else {
-        for entry in WalkDir::new(&root)
-            .min_depth(1)
-            .max_depth(max_depth.saturating_add(1))
-            .into_iter()
-            .filter_entry(|entry| !tool_fs_filter::should_skip_walk_entry(entry))
-            .filter_map(|item| item.ok())
-        {
-            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-            let mut display = rel.to_string_lossy().replace('\\', "/");
-            if entry.file_type().is_dir() {
-                display.push('/');
-            }
-            if seen_entries < page_start {
-                seen_entries += 1;
-                continue;
-            }
-            if items.len() >= page_limit {
-                has_more = true;
-                break;
-            }
-            items.push(display);
+        if seen_entries < page_start {
             seen_entries += 1;
+            continue;
         }
+        if items.len() >= page_limit {
+            has_more = true;
+            break;
+        }
+        items.push(display);
+        seen_entries += 1;
     }
     let returned = items.len();
     let next_offset = page_start.saturating_add(returned);
@@ -8193,6 +8170,7 @@ fn normalize_read_path_hint(path: String) -> String {
 }
 
 fn normalize_read_path_for_workspace(raw_path: &str, workspace_id: &str) -> String {
+    let _ = workspace_id;
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -8205,15 +8183,6 @@ fn normalize_read_path_for_workspace(raw_path: &str, workspace_id: &str) -> Stri
             let candidate = value.trim_matches('/').trim();
             if candidate.is_empty() {
                 return String::new();
-            }
-            let mut segments = candidate.splitn(2, '/');
-            let owner = segments.next().unwrap_or("").trim();
-            let rest = segments.next().unwrap_or("").trim();
-            if rest.is_empty() {
-                return owner.to_string();
-            }
-            if owner == workspace_id {
-                return rest.to_string();
             }
             return format!("/workspaces/{candidate}");
         }

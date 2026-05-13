@@ -70,11 +70,13 @@ pub fn evaluate_tool_call(
     let exec_tool_name = resolve_tool_name("execute_command");
     let ptc_tool_name = resolve_tool_name("ptc");
     let write_tool_name = resolve_tool_name("write_file");
+    let edit_tool_name = resolve_tool_name("edit_file2");
     let patch_tool_name = resolve_tool_name("apply_patch");
     let controller_tool_name = resolve_tool_name("desktop_controller");
     let monitor_tool_name = resolve_tool_name("desktop_monitor");
     let is_exec_tool = tool_name == exec_tool_name || tool_name == ptc_tool_name;
-    let is_write_tool = tool_name == write_tool_name || tool_name == patch_tool_name;
+    let is_write_tool =
+        tool_name == write_tool_name || tool_name == edit_tool_name || tool_name == patch_tool_name;
     let is_control_tool = tool_name == controller_tool_name || tool_name == monitor_tool_name;
     if !is_exec_tool && !is_write_tool && !is_control_tool {
         return None;

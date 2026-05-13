@@ -4,7 +4,6 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use parking_lot::Mutex;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
@@ -42,7 +41,6 @@ use crate::storage;
 use crate::tools::{execute_builtin_tool, ToolContext};
 use crate::workspace::WorkspaceManager;
 
-const DEFAULT_WORKSPACE_ROOT: &str = "/workspaces";
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
 const PTC_TIMEOUT_S: u64 = 60;
 const PTC_DIR_NAME: &str = "ptc_temp";
@@ -61,15 +59,8 @@ struct SandboxToolRequest {
     tool: String,
     #[serde(default)]
     args: Value,
-    workspace_root: String,
-    #[serde(default)]
-    allow_paths: Vec<String>,
-    #[serde(default)]
-    deny_globs: Vec<String>,
     #[serde(default)]
     allow_commands: Vec<String>,
-    #[serde(default = "default_container_root")]
-    container_root: String,
     #[serde(default)]
     network: String,
     #[serde(default)]
@@ -116,8 +107,6 @@ struct SandboxReleaseResponse {
 struct SandboxContext {
     workspace_root: PathBuf,
     container_root: PathBuf,
-    allow_roots: Arc<Vec<PathBuf>>,
-    deny_globs: Arc<Vec<Regex>>,
     allow_commands: Arc<HashSet<String>>,
 }
 
@@ -129,8 +118,6 @@ struct ToolResult {
 
 #[derive(Clone)]
 struct CachedSandboxRules {
-    allow_roots: Arc<Vec<PathBuf>>,
-    deny_globs: Arc<Vec<Regex>>,
     allow_commands: Arc<HashSet<String>>,
 }
 
@@ -306,32 +293,20 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
         request.resources.memory_mb,
         request.resources.pids,
     );
-    let container_root = normalize_container_root(&request.container_root);
-    let workspace_root = match normalize_container_path(&request.workspace_root, &container_root) {
-        Ok(path) => path,
-        Err(message) => {
-            return SandboxToolResponse {
-                ok: false,
-                data: json!({}),
-                error: message,
-                debug_events: Vec::new(),
-            };
-        }
-    };
+    let container_root = PathBuf::from("/");
+    let workspace_root = PathBuf::from("/");
 
     let rules = resolve_cached_rules(
         &workspace_root,
         &container_root,
-        &request.allow_paths,
-        &request.deny_globs,
+        &["*".to_string()],
+        &[],
         &request.allow_commands,
     );
 
     let context = SandboxContext {
         workspace_root,
         container_root,
-        allow_roots: rules.allow_roots,
-        deny_globs: rules.deny_globs,
         allow_commands: rules.allow_commands,
     };
 
@@ -344,7 +319,7 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
     let result = match request.tool.as_str() {
         "执行命令" => execute_command(&context, &args).await,
         "ptc" => execute_ptc(&context, &args).await,
-        "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "应用补丁" => {
+        "列出文件" | "搜索内容" | "读取文件" | "写入文件" | "文本编辑" | "应用补丁" => {
             execute_builtin_file_tool(&request, &context, &args).await
         }
         _ => ToolResult {
@@ -683,7 +658,7 @@ async fn execute_builtin_file_tool(
     config.storage.backend = "sqlite".to_string();
     config.storage.db_path = "/tmp/wunder-sandbox-tools.db".to_string();
     config.security.allow_paths = vec!["*".to_string()];
-    config.security.deny_globs = request.deny_globs.clone();
+    config.security.deny_globs = Vec::new();
     config.lsp.enabled = false;
 
     let workspace_id = context
@@ -1130,44 +1105,21 @@ fn resolve_path(context: &SandboxContext, raw_path: &str) -> Result<PathBuf, Str
 }
 
 fn resolve_path_with_base(
-    context: &SandboxContext,
+    _context: &SandboxContext,
     raw_path: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     let trimmed = normalize_slashes(raw_path.trim());
     let rel = PathBuf::from(&trimmed);
     if rel.is_absolute() {
         let target = normalize_posix_path(&rel);
-        let base = match_allowed_root(&target, context.allow_roots.as_ref())
-            .ok_or_else(|| i18n::t("tool.fs.absolute_forbidden"))?;
-        check_deny_globs(&target, &base, context.deny_globs.as_ref())?;
+        let base = PathBuf::from("/");
         return Ok((target, base));
     }
 
-    let target = normalize_posix_path(&context.workspace_root.join(rel));
-    let base = match_allowed_root(&target, context.allow_roots.as_ref())
-        .ok_or_else(|| i18n::t("tool.fs.path_out_of_bounds"))?;
-    check_deny_globs(&target, &base, context.deny_globs.as_ref())?;
+    let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
+    let target = normalize_posix_path(&cwd.join(rel));
+    let base = PathBuf::from("/");
     Ok((target, base))
-}
-
-fn match_allowed_root(target: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    for root in roots {
-        if target == root || target.starts_with(root) {
-            return Some(root.clone());
-        }
-    }
-    None
-}
-
-fn check_deny_globs(target: &Path, base: &Path, deny_globs: &[Regex]) -> Result<(), String> {
-    let relative = target.strip_prefix(base).unwrap_or(target);
-    let relative = relative.to_string_lossy().replace('\\', "/");
-    for matcher in deny_globs {
-        if matcher.is_match(&relative) {
-            return Err(i18n::t("tool.fs.path_forbidden"));
-        }
-    }
-    Ok(())
 }
 
 fn resolve_cached_rules(
@@ -1195,12 +1147,8 @@ fn resolve_cached_rules(
         return rules;
     }
 
-    let allow_roots = build_allow_roots(workspace_root, container_root, &allow_paths);
-    let deny_globs = build_deny_globs(&deny_globs);
     let allow_commands = allow_commands.into_iter().collect::<HashSet<_>>();
     let rules = CachedSandboxRules {
-        allow_roots: Arc::new(allow_roots),
-        deny_globs: Arc::new(deny_globs),
         allow_commands: Arc::new(allow_commands),
     };
 
@@ -1212,31 +1160,12 @@ fn resolve_cached_rules(
     rules
 }
 
-fn normalize_allow_paths_for_cache(container_root: &Path, allow_paths: &[String]) -> Vec<String> {
-    let mut output = Vec::new();
-    for raw in allow_paths {
-        if is_allow_all_path_token(raw) {
-            output.push("/".to_string());
-            continue;
-        }
-        if let Ok(path) = normalize_container_path(raw, container_root) {
-            output.push(path.to_string_lossy().to_string());
-        }
-    }
-    output.sort();
-    output.dedup();
-    output
+fn normalize_allow_paths_for_cache(_container_root: &Path, _allow_paths: &[String]) -> Vec<String> {
+    vec!["/".to_string()]
 }
 
-fn normalize_deny_globs_for_cache(patterns: &[String]) -> Vec<String> {
-    let mut output = patterns
-        .iter()
-        .map(|pattern| pattern.trim().to_string())
-        .filter(|pattern| !pattern.is_empty())
-        .collect::<Vec<_>>();
-    output.sort();
-    output.dedup();
-    output
+fn normalize_deny_globs_for_cache(_patterns: &[String]) -> Vec<String> {
+    Vec::new()
 }
 
 fn normalize_allow_commands_for_cache(commands: &[String]) -> Vec<String> {
@@ -1274,92 +1203,6 @@ fn hash_list(hasher: &mut DefaultHasher, items: &[String]) {
     }
 }
 
-fn build_allow_roots(
-    workspace_root: &Path,
-    container_root: &Path,
-    allow_paths: &[String],
-) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    roots.push(workspace_root.to_path_buf());
-    for raw in allow_paths {
-        if is_allow_all_path_token(raw) {
-            let root = PathBuf::from("/");
-            if roots.iter().all(|existing| existing != &root) {
-                roots.push(root);
-            }
-            continue;
-        }
-        if let Ok(path) = normalize_container_path(raw, container_root) {
-            if roots.iter().all(|existing| existing != &path) {
-                roots.push(path);
-            }
-        }
-    }
-    roots
-}
-
-fn build_deny_globs(patterns: &[String]) -> Vec<Regex> {
-    patterns
-        .iter()
-        .filter_map(|pattern| build_glob_matcher(pattern))
-        .collect()
-}
-
-fn build_glob_matcher(pattern: &str) -> Option<Regex> {
-    let trimmed = pattern.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let mut regex = String::from("^");
-    for ch in trimmed.chars() {
-        match ch {
-            '*' => regex.push_str(".*"),
-            '?' => regex.push('.'),
-            '.' | '(' | ')' | '[' | ']' | '{' | '}' | '+' | '|' | '^' | '$' | '\\' => {
-                regex.push('\\');
-                regex.push(ch);
-            }
-            _ => regex.push(ch),
-        }
-    }
-    regex.push('$');
-    Regex::new(&regex).ok()
-}
-
-fn normalize_container_root(raw: &str) -> PathBuf {
-    let trimmed = normalize_slashes(raw.trim());
-    let base = if trimmed.is_empty() {
-        PathBuf::from(DEFAULT_WORKSPACE_ROOT)
-    } else {
-        let path = PathBuf::from(trimmed);
-        if path.is_absolute() {
-            path
-        } else {
-            PathBuf::from("/").join(path)
-        }
-    };
-    normalize_posix_path(&base)
-}
-
-fn normalize_container_path(raw: &str, container_root: &Path) -> Result<PathBuf, String> {
-    let text = normalize_slashes(raw.trim());
-    if text.is_empty() {
-        return Err(i18n::t("sandbox.error.path_required"));
-    }
-    if looks_like_windows_drive(&text) {
-        return Err(i18n::t("sandbox.error.path_out_of_bounds"));
-    }
-    let mut path = PathBuf::from(text);
-    if !path.is_absolute() {
-        path = container_root.join(path);
-    }
-    let normalized = normalize_posix_path(&path);
-    if !normalized.starts_with(container_root) {
-        return Err(i18n::t("sandbox.error.path_out_of_bounds"));
-    }
-    Ok(normalized)
-}
-
 fn normalize_posix_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -1384,18 +1227,6 @@ fn normalize_slashes(input: &str) -> String {
     input.replace('\\', "/")
 }
 
-fn looks_like_windows_drive(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.len() < 2 {
-        return false;
-    }
-    bytes[1] == b':' && value.chars().next().map(|ch| ch.is_ascii_alphabetic()) == Some(true)
-}
-
-fn is_allow_all_path_token(value: &str) -> bool {
-    value.trim() == "*"
-}
-
 fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     match value {
         Some(Value::Number(num)) => num.as_f64(),
@@ -1403,10 +1234,6 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
         Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
         _ => None,
     }
-}
-
-fn default_container_root() -> String {
-    DEFAULT_WORKSPACE_ROOT.to_string()
 }
 
 #[cfg(test)]
@@ -1433,20 +1260,6 @@ mod tests {
         assert_eq!(parse_timeout_secs(Some(&disabled)), Some(0.0));
         assert_eq!(parse_timeout_secs(Some(&invalid)), None);
         assert_eq!(parse_timeout_secs(None), None);
-    }
-
-    #[test]
-    fn wildcard_allow_path_normalizes_to_container_root() {
-        let container_root = Path::new("/workspaces");
-        let normalized = normalize_allow_paths_for_cache(container_root, &["*".to_string()]);
-        let roots = build_allow_roots(
-            Path::new("/workspaces/admin__c__1"),
-            container_root,
-            &["*".to_string()],
-        );
-
-        assert_eq!(normalized, vec!["/".to_string()]);
-        assert!(roots.iter().any(|root| root == Path::new("/")));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // 工作区管理：路径校验、文件读写、目录操作与压缩打包。
 use crate::core::atomic_write::atomic_write_text;
 use crate::i18n;
-use crate::path_utils::is_within_root;
+use crate::path_utils::normalize_target_path;
 use crate::services::orchestration_context::filter_orchestration_suppressed_messages;
 use crate::storage::{
     normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
@@ -18,7 +18,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
 use std::thread;
@@ -728,54 +728,31 @@ impl WorkspaceManager {
 
     pub fn resolve_path(&self, user_id: &str, path: &str) -> Result<PathBuf> {
         let trimmed = path.trim();
+        if trimmed.is_empty() || trimmed == "." {
+            return Ok(self.user_root(user_id));
+        }
         let user_root = self.user_root(user_id);
         let public_like = trimmed.replace('\\', "/");
         if let Some(public_relative) = public_like.strip_prefix("workspaces/") {
             let public_target = PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(public_relative);
             if let Some(mapped) = self.map_public_path(user_id, &public_target) {
-                if is_within_root(&user_root, &mapped) {
-                    return Ok(mapped);
-                }
+                return Ok(mapped);
             }
-            return Err(anyhow!("路径越界"));
+            return Ok(public_target);
         }
         let target_path = Path::new(trimmed);
         if target_path.is_absolute() {
-            if is_within_root(&user_root, target_path) {
-                return Ok(target_path.to_path_buf());
-            }
             if let Some(mapped) = self.map_public_path(user_id, target_path) {
-                if is_within_root(&user_root, &mapped) {
-                    return Ok(mapped);
-                }
+                return Ok(mapped);
             }
-            return Err(anyhow!("路径越界"));
+            return Ok(target_path.to_path_buf());
         }
         if let Some(ref guard) = self.path_guard {
             if guard.is_match(trimmed) && !trimmed.is_empty() {
                 return Err(anyhow!("路径包含非法字符"));
             }
         }
-        for component in target_path.components() {
-            match component {
-                Component::Prefix(_) | Component::RootDir => {
-                    return Err(anyhow!("路径不能为绝对路径"));
-                }
-                Component::ParentDir => {
-                    return Err(anyhow!("路径不能包含 .."));
-                }
-                Component::CurDir => {}
-                Component::Normal(_) => {}
-            }
-        }
-        let target = if trimmed.is_empty() || trimmed == "." {
-            user_root.clone()
-        } else {
-            user_root.join(trimmed)
-        };
-        if !is_within_root(&user_root, &target) {
-            return Err(anyhow!("路径越界"));
-        }
+        let target = normalize_target_path(&user_root.join(target_path));
         Ok(target)
     }
 

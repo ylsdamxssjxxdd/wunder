@@ -241,6 +241,7 @@ The usual sequence is:
 ### Edit code
 
 - For small and precise edits, use [Apply Patch](/docs/en/tools/apply-patch/)
+- For simpler replace/insert workflows that weaker models can follow reliably, use `edit_file2`
 - For full-file creation or replacement, use `write_file` from [Workspace Files](/docs/en/tools/workspace-files/)
 - For compilation, tests, or scripts, use [Execute Command](/docs/en/tools/exec/)
 - For a temporary Python helper, use [ptc](/docs/en/tools/ptc/)

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-13T07:18:46.579949+00:00",
+  "generated_at": "2026-05-13T09:34:53.549111+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -892,7 +892,7 @@
                   {
                     "slug": "en/tools/workspace-files",
                     "title": "Workspace Files",
-                    "summary": "The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.",
+                    "summary": "The latest arguments and return structures for `list_files`, `search_content`, `read_file`, `write_file`, and `edit_file2`.",
                     "url": "/docs/en/tools/workspace-files/"
                   },
                   {
@@ -3668,25 +3668,50 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "writefile"
+          "text": "editfile2"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "最小参数"
+          "text": "????"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "成功返回"
+          "text": "??????"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "什么时候不要用它"
+          "text": "????"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "????????"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "writefile"
+        },
+        {
+          "id": "section-19",
+          "level": 3,
+          "text": "最小参数"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "成功返回"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "什么时候不要用它"
+        },
+        {
+          "id": "section-22",
           "level": 2,
           "text": "失败返回怎么读"
         }
@@ -11704,7 +11729,7 @@
       "slug": "en/tools/workspace-files",
       "language": "en",
       "title": "Workspace Files",
-      "summary": "The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.",
+      "summary": "The latest arguments and return structures for `list_files`, `search_content`, `read_file`, `write_file`, and `edit_file2`.",
       "updated_at": "2026-04-10",
       "read_when": [
         "You need to browse the workspace, search code, read files, or write files"
@@ -11783,7 +11808,7 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "writefile"
+          "text": "editfile2"
         },
         {
           "id": "section-14",
@@ -11793,15 +11818,40 @@
         {
           "id": "section-15",
           "level": 3,
-          "text": "Success result"
+          "text": "Good fit"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "When not to use it"
+          "text": "Success result"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "When to prefer it"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "writefile"
+        },
+        {
+          "id": "section-19",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "When not to use it"
+        },
+        {
+          "id": "section-22",
           "level": 2,
           "text": "How to read failures"
         }
