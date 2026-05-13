@@ -251,7 +251,10 @@ export function clearRuntimeResumeStreamState(runtime, options: ClearRuntimeStre
   return true;
 }
 
-export function clearRuntimeInteractiveControllers(runtime, options: { abort?: boolean } = {}) {
+export function clearRuntimeInteractiveControllers(
+  runtime,
+  options: ClearRuntimeStreamStateOptions = {}
+) {
   if (!runtime) return false;
   const clearedSend = clearRuntimeSendStreamState(runtime, options);
   const clearedResume = clearRuntimeResumeStreamState(runtime, options);

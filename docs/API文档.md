@@ -1344,7 +1344,7 @@
 ### 4.1.6.1.2 `/wunder/admin/multimodal/image`
 
 - 方法：`POST`
-- 说明：管理员侧多模调试中的图像生成测试接口。服务端按指定或默认图像生成模型生成图片，将结果写入指定工作区后返回保存路径与结构化结果。
+- 说明：管理员侧多模调试中的图像生成/编辑测试接口。未传输入图时按 OpenAI 兼容 `/v1/images/generations` 文生图；传 `input_path` 或 `input_paths` 时读取同一工作区图片并按 `/v1/images/edits` multipart 图生图/编辑，将结果写入指定工作区后返回保存路径与结构化结果。
 - 入参（JSON）：
   - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
   - `prompt`：图像生成提示词
@@ -1355,6 +1355,15 @@
   - `num_inference_steps`：采样步数（可选）
   - `guidance_scale`：引导系数（可选）
   - `seed`：随机种子（可选）
+  - `input_path`：工作区输入图片路径（可选；填写后进入图生图/编辑模式）
+  - `input_paths`：工作区输入图片路径列表（可选；用于支持多图编辑的模型）
+  - `mask_path`：工作区蒙版图片路径（可选；用于局部重绘/局部编辑）
+  - `reference_path`：工作区参考图片路径（可选；用于支持额外参考图的模型）
+  - `strength`：编辑强度（可选，转发给兼容模型）
+  - `true_cfg_scale`：true CFG 引导系数（可选，转发给兼容模型）
+  - `output_compression`：输出压缩质量 0-100（可选，转发给兼容模型）
+  - `layers`：分层图像模型输出图层数（可选）
+  - `resolution`：分层图像模型分辨率提示（可选）
 - 返回（JSON）：
   - `data.kind`：固定为 `image`
   - 其余结构同 `/wunder/admin/multimodal/speech`

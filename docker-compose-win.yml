@@ -140,16 +140,16 @@ services:
       - seccomp:unconfined
     image: wunder-x86
     pull_policy: never
-    working_dir: /opt/wunder
+    working_dir: /tmp
     read_only: true
     tmpfs:
       - /tmp
       - /var/tmp
     environment:
       - TZ=Asia/Shanghai
-      - FONTCONFIG_FILE=/opt/wunder/config/fonts.conf
+      - FONTCONFIG_FILE=/run/wunder-fonts.conf
       - XDG_CACHE_HOME=/workspaces/.cache
-      - MATPLOTLIBRC=/opt/wunder/config/matplotlibrc
+      - MATPLOTLIBRC=/run/wunder-matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
@@ -157,16 +157,20 @@ services:
       - WUNDER_ATOMIC_WRITE_MODE=${WUNDER_ATOMIC_WRITE_MODE:-relaxed}
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
-      - WUNDER_CONFIG_PATH=/opt/wunder/config/sandbox-runtime.yaml
+      - WUNDER_CONFIG_PATH=/run/wunder-sandbox-runtime.yaml
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
-      - CARGO_TARGET_DIR=/opt/wunder/target/x86
+      - CARGO_TARGET_DIR=/cargo-target
     volumes:
-      - wunder_win_cargo_target:/opt/wunder/target/x86
+      - wunder_win_cargo_target:/cargo-target
+      - ./scripts/docker-rust-entry.sh:/usr/local/bin/wunder-docker-rust-entry.sh:ro
+      - ./config/fonts.conf:/run/wunder-fonts.conf:ro
+      - ./config/matplotlibrc:/run/wunder-matplotlibrc:ro
+      - ./config/sandbox-runtime.yaml:/run/wunder-sandbox-runtime.yaml:ro
       - wunder_win_workspaces:/workspaces
       - wunder_win_playwright:/ms-playwright
       - ./config/fonts:/usr/share/fonts/wunder:ro
-    command: ["bash", "/opt/wunder/bin/docker-rust-entry.sh", "wait-or-run"]
+    command: ["bash", "/usr/local/bin/wunder-docker-rust-entry.sh", "wait-or-run"]
     depends_on:
       wunder-server:
         condition: service_started

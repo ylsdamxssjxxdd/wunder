@@ -26,6 +26,8 @@ type ActiveSessionRealtimeRecoveryInput = {
   hasCachedMessages?: unknown;
 };
 
+export const INTERACTIVE_STREAM_RECONCILE_IDLE_MS = 20000;
+
 const normalizeSessionId = (value: unknown): string => String(value || '').trim();
 
 const normalizeFlag = (value: unknown): boolean => {
@@ -119,4 +121,22 @@ export const shouldStartWatcherAfterSessionHydration = (input: {
     return true;
   }
   return isThreadRuntimeBusy(input.runtimeStatus);
+};
+
+const resolveLastInteractiveStreamActivityMs = (runtime: Record<string, unknown> | null): number => {
+  if (!runtime) return 0;
+  return Math.max(
+    Number(runtime.sendLastEventAt || 0),
+    Number(runtime.resumeLastEventAt || 0),
+    Number(runtime.sendStartedAt || 0),
+    Number(runtime.resumeStartedAt || 0)
+  );
+};
+
+export const shouldReconcileInteractiveStream = (
+  runtime: Record<string, unknown> | null
+): boolean => {
+  if (!runtime?.sendController && !runtime?.resumeController) return false;
+  const lastActivityMs = resolveLastInteractiveStreamActivityMs(runtime);
+  return lastActivityMs > 0 && Date.now() - lastActivityMs >= INTERACTIVE_STREAM_RECONCILE_IDLE_MS;
 };

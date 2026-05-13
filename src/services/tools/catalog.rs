@@ -648,7 +648,20 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "negative_prompt": {"type": "string", "description": t("tool.spec.generate_image.args.negative_prompt")},
                     "num_inference_steps": {"type": "integer", "description": t("tool.spec.generate_image.args.num_inference_steps")},
                     "guidance_scale": {"type": "number", "description": t("tool.spec.generate_image.args.guidance_scale")},
-                    "seed": {"type": "integer", "description": t("tool.spec.generate_image.args.seed")}
+                    "seed": {"type": "integer", "description": t("tool.spec.generate_image.args.seed")},
+                    "input_path": {"type": "string", "description": t("tool.spec.generate_image.args.input_path")},
+                    "input_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": t("tool.spec.generate_image.args.input_paths")
+                    },
+                    "mask_path": {"type": "string", "description": t("tool.spec.generate_image.args.mask_path")},
+                    "reference_path": {"type": "string", "description": t("tool.spec.generate_image.args.reference_path")},
+                    "strength": {"type": "number", "description": t("tool.spec.generate_image.args.strength")},
+                    "true_cfg_scale": {"type": "number", "description": t("tool.spec.generate_image.args.true_cfg_scale")},
+                    "output_compression": {"type": "integer", "description": t("tool.spec.generate_image.args.output_compression")},
+                    "layers": {"type": "integer", "description": t("tool.spec.generate_image.args.layers")},
+                    "resolution": {"type": "integer", "description": t("tool.spec.generate_image.args.resolution")}
                 },
                 "required": ["prompt"],
                 "additionalProperties": false

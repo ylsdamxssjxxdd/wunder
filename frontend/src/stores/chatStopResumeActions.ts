@@ -132,7 +132,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { buildWorkflowItem, dismissStaleInquiryPanels, normalizeInquiryPanelState, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent, writeSessionGoalState } from './chatPersist';
 import { WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeResumeStreamState, clearSlowClientResume, insertWatchUserMessage, markRuntimeResumeStreamActivity, markRuntimeResumeStreamStarted, resolveHiddenInternalUserEvent, resolveMaterializedMessageEventId, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, clearAssistantRetryState, resetAssistantWaitingOutputPhase, resolveTimestampMs } from './chatStats';
@@ -159,18 +159,10 @@ export const chatStopResumeActions = {
         runtime.resumeAbortReason = 'user_stop';
       }
       abortSendStream(targetSessionId);
+      abortResumeStream(targetSessionId);
       abortCompactRequest(targetSessionId);
+      abortWatchStream(targetSessionId);
       let cancelled = false;
-      try {
-        const { data } = await cancelMessageStream(targetSessionId);
-        cancelled = Boolean(data?.data?.cancelled);
-        if (data?.data?.goal_cleared === true) {
-          writeSessionGoalState(this, targetSessionId, null, { clear: true });
-          cancelled = true;
-        }
-      } catch (error) {
-        // Ignore cancel API failures; local stop behavior still applies.
-      }
       const targetMessages =
         String(this.activeSessionId || '').trim() === targetSessionId
           ? this.messages
@@ -197,6 +189,23 @@ export const chatStopResumeActions = {
         cancelled = true;
       }
       this.dismissPendingInquiryPanel();
+      if (Array.isArray(targetMessages)) {
+        settleTerminalAssistantArtifactsBase(targetMessages, { failed: true });
+        cacheSessionMessages(targetSessionId, targetMessages);
+        touchSessionUpdatedAt(this, targetSessionId, Date.now());
+        notifySessionSnapshot(this, targetSessionId, targetMessages, true);
+      }
+      const locallyStopped = settleUserStoppedSessionRuntime(this, targetSessionId);
+      try {
+        const { data } = await cancelMessageStream(targetSessionId);
+        cancelled = Boolean(data?.data?.cancelled) || cancelled;
+        if (data?.data?.goal_cleared === true) {
+          writeSessionGoalState(this, targetSessionId, null, { clear: true });
+          cancelled = true;
+        }
+      } catch (error) {
+        // Ignore cancel API failures; local stop behavior still applies.
+      }
       let terminatedSubagentCount = 0;
       if (options.terminateSubagents !== false) {
         const termination = await this.terminateSessionSubagentTree(targetSessionId, { force: true });
@@ -204,14 +213,7 @@ export const chatStopResumeActions = {
           ? termination.terminatedSessionIds.length
           : 0;
       }
-      if (Array.isArray(targetMessages)) {
-        settleTerminalAssistantArtifactsBase(targetMessages, { failed: true });
-        cacheSessionMessages(targetSessionId, targetMessages);
-        touchSessionUpdatedAt(this, targetSessionId, Date.now());
-        notifySessionSnapshot(this, targetSessionId, targetMessages, true);
-      }
-      setSessionLoading(this, targetSessionId, false);
-      return cancelled || terminatedSubagentCount > 0;
+      return locallyStopped || cancelled || terminatedSubagentCount > 0;
     },
     async stopStream() {
       return this.stopSessionActivity(this.activeSessionId, { terminateSubagents: true });

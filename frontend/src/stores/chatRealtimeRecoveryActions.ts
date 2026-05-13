@@ -16,11 +16,18 @@ import {
   getSessionMessages,
   hasKnownSessionInStore,
   isSessionDetailWarm,
-  resolveSessionKey
+  isSessionUnavailableStatus,
+  loadSessionEventsSnapshot,
+  resolveChatHttpStatus,
+  resolveSessionKey,
+  settleTerminalSessionRuntime
 } from './chatRuntimeState';
+import { normalizeStreamEventId } from './chatStreamIds';
+import { isTerminalRuntimeStatus } from './chatWorkflowHydration';
 import { startSessionWatcher } from './chatWatcher';
 import {
-  resolveActiveSessionRealtimeRecoveryPlan
+  resolveActiveSessionRealtimeRecoveryPlan,
+  shouldReconcileInteractiveStream
 } from './chatActiveSessionRealtime';
 
 const normalizeErrorMessage = (error: unknown): string =>
@@ -69,6 +76,67 @@ export const chatRealtimeRecoveryActions = {
       hasWarmDetail,
       hasCachedMessages
     });
+
+    if (plan === 'skip_interactive_stream' && shouldReconcileInteractiveStream(runtime)) {
+      try {
+        const localLastEventId = resolveMaterializedMessageEventId(messages);
+        const snapshot = await loadSessionEventsSnapshot(targetSessionId, {
+          allowCached: false,
+          dedupeInFlight: false,
+          minLastEventId: localLastEventId
+        });
+        const remoteLastEventId = normalizeStreamEventId(
+          snapshot?.last_event_id ?? snapshot?.lastEventId
+        );
+        const rawRuntimeStatus = snapshot?.runtime?.thread_status ?? snapshot?.runtime?.status;
+        const hasRuntimeStatus = String(rawRuntimeStatus ?? '').trim().length > 0;
+        const remoteRuntimeStatus = normalizeThreadRuntimeStatus(rawRuntimeStatus);
+        recoverRuntimeInteractiveControllers(this, targetSessionId, runtime, {
+          remoteRunning: snapshot?.running,
+          remoteLastEventId,
+          localLastEventId
+        });
+        if (
+          snapshot?.running === false ||
+          (hasRuntimeStatus && isTerminalRuntimeStatus(remoteRuntimeStatus))
+        ) {
+          if (remoteRuntimeStatus !== 'not_loaded') {
+            runtime.threadStatus = remoteRuntimeStatus;
+            runtime.loaded = true;
+          }
+          settleTerminalSessionRuntime(this, targetSessionId, {
+            eventType: 'interactive_reconcile',
+            failed: remoteRuntimeStatus === 'system_error'
+          });
+          chatDebugLog('messenger.conversation', 'active-realtime-interactive-settled', {
+            sessionId: targetSessionId,
+            reason: String(options.reason || '').trim(),
+            remoteLastEventId,
+            localLastEventId,
+            runtime: buildRuntimeDebugSnapshot(runtime)
+          });
+          return { status: 'settled', plan, sessionId: targetSessionId };
+        }
+        chatDebugLog('messenger.conversation', 'active-realtime-interactive-still-running', {
+          sessionId: targetSessionId,
+          reason: String(options.reason || '').trim(),
+          remoteRunning: snapshot?.running,
+          remoteRuntimeStatus,
+          remoteLastEventId,
+          localLastEventId,
+          runtime: buildRuntimeDebugSnapshot(runtime)
+        });
+      } catch (error) {
+        if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+          throw error;
+        }
+        chatDebugLog('messenger.conversation', 'active-realtime-interactive-reconcile-failed', {
+          sessionId: targetSessionId,
+          reason: String(options.reason || '').trim(),
+          error: normalizeErrorMessage(error)
+        });
+      }
+    }
 
     chatDebugLog('messenger.conversation', 'active-realtime-recovery-plan', {
       sessionId: targetSessionId,

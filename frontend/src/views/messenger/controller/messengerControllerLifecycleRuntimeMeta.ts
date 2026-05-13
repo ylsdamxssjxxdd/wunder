@@ -704,6 +704,10 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
               traceId,
               traceSource: ctx.messengerSessionRefreshTraceSource.value
           });
+          await ctx.chatStore.ensureActiveSessionRealtime?.({
+              reason: 'realtime-pulse',
+              hydrateIfCold: true
+          });
       }
       finally {
           chatDebugLog('messenger.conversation', 'session-refresh-finish', {

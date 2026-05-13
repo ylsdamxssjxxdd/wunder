@@ -2256,8 +2256,8 @@
     "zh-CN": "可选，源音频的 MIME 类型覆盖值。"
   },
   "tool.spec.generate_image.description": {
-    "en-US": "Generate an image with the configured image model, save it into the current workspace, and return the saved file path.",
-    "zh-CN": "使用已配置的图像生成模型生成图片，保存到当前工作区，并返回生成文件路径。"
+    "en-US": "Use the configured AI image model for creative raster image generation or image editing. With only prompt it creates an image from text; with input_path/input_paths it edits or transforms existing workspace images; mask_path/reference_path are optional edit controls. Do not use this for scientific plotting, charts, coordinate-accurate diagrams, formulas, or reproducible data graphics; create those with code such as Python/matplotlib and save the file instead. The result is saved into the current workspace and the saved path is returned.",
+    "zh-CN": "使用已配置的 AI 图像模型生成或编辑创意类位图图片。只传 prompt 时是文生图；传 input_path/input_paths 时会编辑或转换工作区已有图片；mask_path/reference_path 是可选编辑控制。不要用它做科学绘图、数据图表、坐标精确示意图、公式图或可复现实验图，这类任务应使用 Python/matplotlib 等代码生成并保存文件。本工具会把结果保存到当前工作区并返回文件路径。"
   },
   "tool.spec.generate_image.args.prompt": {
     "en-US": "Prompt describing the target image.",
@@ -2294,6 +2294,42 @@
   "tool.spec.generate_image.args.seed": {
     "en-US": "Optional random seed.",
     "zh-CN": "可选，随机种子。"
+  },
+  "tool.spec.generate_image.args.input_path": {
+    "en-US": "Optional workspace image path for image-to-image or editing mode. When omitted, the tool uses text-to-image generation.",
+    "zh-CN": "可选，工作区中的输入图片路径；填写后进入图生图或编辑模式，不填则为文生图。"
+  },
+  "tool.spec.generate_image.args.input_paths": {
+    "en-US": "Optional workspace image paths for multi-image editing models.",
+    "zh-CN": "可选，多图编辑模型使用的工作区输入图片路径列表。"
+  },
+  "tool.spec.generate_image.args.mask_path": {
+    "en-US": "Optional workspace mask image path for inpainting or local edits.",
+    "zh-CN": "可选，局部重绘或局部编辑使用的工作区蒙版图片路径。"
+  },
+  "tool.spec.generate_image.args.reference_path": {
+    "en-US": "Optional workspace reference image path for models that support an additional reference image.",
+    "zh-CN": "可选，支持参考图模型使用的工作区参考图片路径。"
+  },
+  "tool.spec.generate_image.args.strength": {
+    "en-US": "Optional image edit strength for image-to-image models.",
+    "zh-CN": "可选，图生图或编辑强度。"
+  },
+  "tool.spec.generate_image.args.true_cfg_scale": {
+    "en-US": "Optional true CFG scale for compatible image models.",
+    "zh-CN": "可选，兼容图像模型的 true CFG 引导系数。"
+  },
+  "tool.spec.generate_image.args.output_compression": {
+    "en-US": "Optional output compression from 0 to 100 for compatible image models.",
+    "zh-CN": "可选，兼容图像模型的输出压缩质量，范围 0 到 100。"
+  },
+  "tool.spec.generate_image.args.layers": {
+    "en-US": "Optional output layer count for layered image models.",
+    "zh-CN": "可选，分层图像模型的输出图层数。"
+  },
+  "tool.spec.generate_image.args.resolution": {
+    "en-US": "Optional resolution hint for compatible layered image models.",
+    "zh-CN": "可选，兼容分层图像模型的分辨率提示。"
   },
   "tool.spec.generate_video.description": {
     "en-US": "Generate a video with the configured video model, save it into the current workspace, and return the saved file path.",

@@ -8,12 +8,14 @@ use bytes::Bytes;
 use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 const AUDIO_SPEECH_RESOURCE: &str = "audio/speech";
 const AUDIO_TRANSCRIPTIONS_RESOURCE: &str = "audio/transcriptions";
 const IMAGES_GENERATIONS_RESOURCE: &str = "images/generations";
+const IMAGES_EDITS_RESOURCE: &str = "images/edits";
 const VIDEOS_RESOURCE: &str = "videos";
 const AUDIO_VOICES_RESOURCE: &str = "audio/voices";
 const DEFAULT_ASR_RESPONSE_FORMAT: &str = "json";
@@ -129,6 +131,13 @@ pub struct AudioTranscriptionResponse {
 }
 
 #[derive(Debug, Clone)]
+pub struct ImageInputFile {
+    pub bytes: Bytes,
+    pub filename: String,
+    pub content_type: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ImageGenerationRequest {
     pub prompt: String,
     pub model_name: Option<String>,
@@ -138,6 +147,14 @@ pub struct ImageGenerationRequest {
     pub num_inference_steps: Option<u32>,
     pub guidance_scale: Option<f32>,
     pub seed: Option<u64>,
+    pub input_images: Vec<ImageInputFile>,
+    pub mask_image: Option<ImageInputFile>,
+    pub reference_image: Option<ImageInputFile>,
+    pub strength: Option<f32>,
+    pub true_cfg_scale: Option<f32>,
+    pub output_compression: Option<u32>,
+    pub layers: Option<u32>,
+    pub resolution: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -720,6 +737,12 @@ async fn generate_image_with_model(
     config: &LlmModelConfig,
     request: &ImageGenerationRequest,
 ) -> Result<ImageGenerationResponse> {
+    if !request.input_images.is_empty()
+        || request.mask_image.is_some()
+        || request.reference_image.is_some()
+    {
+        return edit_image_with_model(config, request).await;
+    }
     let base_url =
         resolve_model_base_url(config).ok_or_else(|| anyhow!("image base_url is required"))?;
     let endpoint = build_openai_model_resource_endpoint(&base_url, IMAGES_GENERATIONS_RESOURCE)
@@ -752,7 +775,71 @@ async fn generate_image_with_model(
             truncate_for_error(&body, 1024)
         ));
     }
-    let value: Value = serde_json::from_str(&body).context("parse image response json")?;
+    parse_image_generation_response(
+        &body,
+        request
+            .output_format
+            .as_deref()
+            .or(config.image_output_format.as_deref()),
+    )
+}
+
+async fn edit_image_with_model(
+    config: &LlmModelConfig,
+    request: &ImageGenerationRequest,
+) -> Result<ImageGenerationResponse> {
+    if request.input_images.is_empty() {
+        return Err(anyhow!("input image is required for image editing"));
+    }
+    let base_url =
+        resolve_model_base_url(config).ok_or_else(|| anyhow!("image base_url is required"))?;
+    let endpoint = build_openai_model_resource_endpoint(&base_url, IMAGES_EDITS_RESOURCE)
+        .ok_or_else(|| anyhow!("image edit base_url is invalid"))?;
+    let model = config
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("image model is required"))?;
+    let timeout_s = config.timeout_s.unwrap_or(DEFAULT_IMAGE_TIMEOUT_S).max(10);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(timeout_s))
+        .build()?;
+    let form = build_image_edit_form(config, model, request)?;
+    let response = client
+        .post(endpoint)
+        .headers(build_model_auth_headers(
+            config.api_key.as_deref().unwrap_or(""),
+        ))
+        .multipart(form)
+        .send()
+        .await
+        .context("send image edit request")?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("read image edit response body")?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "image edit request failed: {status} {}",
+            truncate_for_error(&body, 1024)
+        ));
+    }
+    parse_image_generation_response(
+        &body,
+        request
+            .output_format
+            .as_deref()
+            .or(config.image_output_format.as_deref()),
+    )
+}
+
+fn parse_image_generation_response(
+    body: &str,
+    requested_output_format: Option<&str>,
+) -> Result<ImageGenerationResponse> {
+    let value: Value = serde_json::from_str(body).context("parse image response json")?;
     let b64 = value
         .get("data")
         .and_then(Value::as_array)
@@ -766,12 +853,11 @@ async fn generate_image_with_model(
     if bytes.is_empty() {
         return Err(anyhow!("image response is empty"));
     }
-    let output_format = normalize_image_output_format(
-        request
-            .output_format
-            .as_deref()
-            .or(config.image_output_format.as_deref()),
-    );
+    let response_output_format = value
+        .get("output_format")
+        .and_then(Value::as_str)
+        .or(requested_output_format);
+    let output_format = normalize_image_output_format(response_output_format);
     Ok(ImageGenerationResponse {
         bytes,
         content_type: image_mime_type(&output_format).to_string(),
@@ -829,8 +915,158 @@ fn build_image_payload(
         if let Some(seed) = request.seed {
             map.insert("seed".to_string(), json!(seed));
         }
+        if let Some(true_cfg_scale) = request
+            .true_cfg_scale
+            .filter(|value| value.is_finite() && *value >= 0.0)
+        {
+            map.insert("true_cfg_scale".to_string(), json!(true_cfg_scale));
+        }
+        if let Some(output_compression) = request.output_compression.filter(|value| *value <= 100) {
+            map.insert("output_compression".to_string(), json!(output_compression));
+        }
+        if let Some(layers) = request.layers.filter(|value| *value > 0) {
+            map.insert("layers".to_string(), json!(layers));
+        }
+        if let Some(resolution) = request.resolution.filter(|value| *value > 0) {
+            map.insert("resolution".to_string(), json!(resolution));
+        }
     }
     payload
+}
+
+fn build_image_edit_form(
+    config: &LlmModelConfig,
+    model: &str,
+    request: &ImageGenerationRequest,
+) -> Result<Form> {
+    let mut form = Form::new()
+        .text("model", model.to_string())
+        .text("prompt", request.prompt.clone())
+        .text("response_format", "b64_json".to_string());
+    let output_format = normalize_image_output_format(
+        request
+            .output_format
+            .as_deref()
+            .or(config.image_output_format.as_deref()),
+    );
+    form = form.text("output_format", output_format);
+    let size = request
+        .size
+        .as_deref()
+        .or(config.image_size.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("auto");
+    form = form.text("size", size.to_string());
+    let image_field = if request.input_images.len() > 1 {
+        "image[]"
+    } else {
+        "image"
+    };
+    for input in &request.input_images {
+        form = form.part(image_field, image_file_part(input)?);
+    }
+    if let Some(mask) = &request.mask_image {
+        form = form.part("mask_image", image_file_part(mask)?);
+    }
+    if let Some(reference) = &request.reference_image {
+        form = form.part("reference_image", image_file_part(reference)?);
+    }
+    if let Some(negative_prompt) = request
+        .negative_prompt
+        .as_deref()
+        .or(config.image_negative_prompt.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        form = form.text("negative_prompt", negative_prompt.to_string());
+    }
+    let num_inference_steps = request
+        .num_inference_steps
+        .or(config.image_num_inference_steps)
+        .unwrap_or(30);
+    if num_inference_steps > 0 {
+        form = form.text("num_inference_steps", num_inference_steps.to_string());
+    }
+    if let Some(guidance_scale) = request
+        .guidance_scale
+        .or(config.image_guidance_scale)
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        form = form.text("guidance_scale", guidance_scale.to_string());
+    }
+    if let Some(seed) = request.seed {
+        form = form.text("seed", seed.to_string());
+    }
+    if let Some(strength) = request
+        .strength
+        .filter(|value| value.is_finite() && *value >= 0.0)
+    {
+        form = form.text("strength", strength.to_string());
+    }
+    if let Some(true_cfg_scale) = request
+        .true_cfg_scale
+        .filter(|value| value.is_finite() && *value >= 0.0)
+    {
+        form = form.text("true_cfg_scale", true_cfg_scale.to_string());
+    }
+    if let Some(output_compression) = request.output_compression.filter(|value| *value <= 100) {
+        form = form.text("output_compression", output_compression.to_string());
+    }
+    if let Some(layers) = request.layers.filter(|value| *value > 0) {
+        form = form.text("layers", layers.to_string());
+    }
+    if let Some(resolution) = request.resolution.filter(|value| *value > 0) {
+        form = form.text("resolution", resolution.to_string());
+    }
+    Ok(form)
+}
+
+fn image_file_part(input: &ImageInputFile) -> Result<Part> {
+    let mut part = Part::bytes(input.bytes.to_vec()).file_name(input.filename.clone());
+    if !input.content_type.trim().is_empty() {
+        part = part
+            .mime_str(input.content_type.trim())
+            .context("image input mime type is invalid")?;
+    }
+    Ok(part)
+}
+
+pub fn image_input_file_from_bytes(
+    bytes: Bytes,
+    filename: impl Into<String>,
+    content_type: Option<&str>,
+) -> ImageInputFile {
+    let filename = filename.into();
+    let resolved_content_type = content_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| detect_image_content_type_from_filename(&filename).map(ToString::to_string))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    ImageInputFile {
+        bytes,
+        filename,
+        content_type: resolved_content_type,
+    }
+}
+
+fn detect_image_content_type_from_filename(filename: &str) -> Option<&'static str> {
+    let extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        "tif" | "tiff" => Some("image/tiff"),
+        _ => None,
+    }
 }
 
 async fn resolve_tts_voice(
@@ -1080,11 +1316,13 @@ pub fn image_generation_resource_path() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_speech_payload, list_asr_model_names, list_image_model_names, list_tts_model_names,
-        list_video_model_names, normalize_asr_response_format, resolve_asr_model,
-        resolve_image_model, resolve_tts_model, resolve_video_model,
+        build_image_payload, build_speech_payload, image_input_file_from_bytes,
+        list_asr_model_names, list_image_model_names, list_tts_model_names, list_video_model_names,
+        normalize_asr_response_format, resolve_asr_model, resolve_image_model, resolve_tts_model,
+        resolve_video_model,
     };
     use crate::config::{Config, LlmModelConfig};
+    use bytes::Bytes;
     use serde_json::Value;
 
     fn model(model_type: &str) -> LlmModelConfig {
@@ -1195,5 +1433,52 @@ mod tests {
         let payload = build_speech_payload(&config, "tts-model", &request, "wav", Some("Vivian"));
 
         assert_eq!(payload.get("voice").and_then(Value::as_str), Some("Vivian"));
+    }
+
+    #[test]
+    fn image_payload_forwards_omni_extensions_without_inputs() {
+        let mut config = model("image");
+        config.image_size = Some("768x512".to_string());
+        let request = super::ImageGenerationRequest {
+            prompt: "draw".to_string(),
+            model_name: None,
+            size: None,
+            output_format: Some("webp".to_string()),
+            negative_prompt: Some("blur".to_string()),
+            num_inference_steps: Some(12),
+            guidance_scale: Some(5.5),
+            seed: Some(42),
+            input_images: Vec::new(),
+            mask_image: None,
+            reference_image: None,
+            strength: Some(0.7),
+            true_cfg_scale: Some(3.0),
+            output_compression: Some(90),
+            layers: Some(4),
+            resolution: Some(1024),
+        };
+
+        let payload = build_image_payload(&config, "image-model", &request);
+
+        assert_eq!(payload["model"], "image-model");
+        assert_eq!(payload["prompt"], "draw");
+        assert_eq!(payload["size"], "768x512");
+        assert_eq!(payload["negative_prompt"], "blur");
+        assert_eq!(payload["num_inference_steps"], 12);
+        assert_eq!(payload["guidance_scale"], 5.5);
+        assert_eq!(payload["seed"], 42);
+        assert_eq!(payload["true_cfg_scale"], 3.0);
+        assert_eq!(payload["output_compression"], 90);
+        assert_eq!(payload["layers"], 4);
+        assert_eq!(payload["resolution"], 1024);
+    }
+
+    #[test]
+    fn image_input_file_infers_mime_from_filename() {
+        let file = image_input_file_from_bytes(Bytes::from_static(b"abc"), "source.webp", None);
+
+        assert_eq!(file.filename, "source.webp");
+        assert_eq!(file.content_type, "image/webp");
+        assert_eq!(file.bytes, Bytes::from_static(b"abc"));
     }
 }

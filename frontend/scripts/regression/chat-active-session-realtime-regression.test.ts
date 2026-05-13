@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  INTERACTIVE_STREAM_RECONCILE_IDLE_MS,
   resolveActiveSessionRealtimeRecoveryPlan,
-  shouldStartWatcherAfterSessionHydration
+  shouldStartWatcherAfterSessionHydration,
+  shouldReconcileInteractiveStream
 } from '../../src/stores/chatActiveSessionRealtime';
 import { shouldShowAgentSettingsPanelForSection } from '../../src/views/messenger/settingsPanelVisibility';
 
@@ -110,6 +112,33 @@ test('active session realtime recovery does not race an interactive send stream'
       hydrateIfCold: true
     }),
     'skip_interactive_stream'
+  );
+});
+
+test('active session realtime recovery reconciles only stale interactive streams', () => {
+  const now = Date.now();
+  assert.equal(
+    shouldReconcileInteractiveStream({
+      sendController: {},
+      sendStartedAt: now - INTERACTIVE_STREAM_RECONCILE_IDLE_MS - 1000,
+      sendLastEventAt: now - INTERACTIVE_STREAM_RECONCILE_IDLE_MS - 1000
+    }),
+    true
+  );
+  assert.equal(
+    shouldReconcileInteractiveStream({
+      sendController: {},
+      sendStartedAt: now - INTERACTIVE_STREAM_RECONCILE_IDLE_MS - 1000,
+      sendLastEventAt: now - 1000
+    }),
+    false
+  );
+  assert.equal(
+    shouldReconcileInteractiveStream({
+      sendStartedAt: now - INTERACTIVE_STREAM_RECONCILE_IDLE_MS - 1000,
+      sendLastEventAt: now - INTERACTIVE_STREAM_RECONCILE_IDLE_MS - 1000
+    }),
+    false
   );
 });
 

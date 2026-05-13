@@ -1,4 +1,4 @@
-import { localizeApiErrorText } from '@/utils/apiError';
+import { localizeApiErrorText } from '@/utils/apiErrorText';
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};

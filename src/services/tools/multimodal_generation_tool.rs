@@ -79,6 +79,24 @@ pub struct GenerateImageArgs {
     pub guidance_scale: Option<f32>,
     #[serde(default)]
     pub seed: Option<u64>,
+    #[serde(default)]
+    pub input_path: Option<String>,
+    #[serde(default)]
+    pub input_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub mask_path: Option<String>,
+    #[serde(default)]
+    pub reference_path: Option<String>,
+    #[serde(default)]
+    pub strength: Option<f32>,
+    #[serde(default)]
+    pub true_cfg_scale: Option<f32>,
+    #[serde(default)]
+    pub output_compression: Option<u32>,
+    #[serde(default)]
+    pub layers: Option<u32>,
+    #[serde(default)]
+    pub resolution: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +257,11 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
     if prompt.is_empty() {
         return Err(anyhow!("prompt is required"));
     }
+    let input_paths = collect_image_input_paths(&payload);
+    let input_images = load_image_input_files(context, &input_paths).await?;
+    let mask_image = load_optional_image_input_file(context, payload.mask_path.as_deref()).await?;
+    let reference_image =
+        load_optional_image_input_file(context, payload.reference_path.as_deref()).await?;
     let result = multimodal_models::generate_image(
         context.config,
         ImageGenerationRequest {
@@ -250,6 +273,14 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             num_inference_steps: payload.num_inference_steps,
             guidance_scale: payload.guidance_scale,
             seed: payload.seed,
+            input_images,
+            mask_image,
+            reference_image,
+            strength: payload.strength,
+            true_cfg_scale: payload.true_cfg_scale,
+            output_compression: payload.output_compression,
+            layers: payload.layers,
+            resolution: payload.resolution,
         },
     )
     .await?;
@@ -272,7 +303,79 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             "path": saved.public_path,
             "workspace_relative_path": saved.workspace_relative_path,
             "bytes": saved.size_bytes,
+            "mode": if input_paths.is_empty() { "text_to_image" } else { "image_edit" },
+            "input_paths": input_paths,
+            "mask_path": normalize_optional_string(payload.mask_path.as_deref()),
+            "reference_path": normalize_optional_string(payload.reference_path.as_deref()),
         }),
+    ))
+}
+
+fn collect_image_input_paths(payload: &GenerateImageArgs) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(path) = normalize_optional_string(payload.input_path.as_deref()) {
+        paths.push(path);
+    }
+    if let Some(items) = &payload.input_paths {
+        paths.extend(
+            items
+                .iter()
+                .filter_map(|item| normalize_optional_string(Some(item))),
+        );
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+async fn load_image_input_files(
+    context: &ToolContext<'_>,
+    paths: &[String],
+) -> Result<Vec<multimodal_models::ImageInputFile>> {
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        files.push(load_image_input_file(context, path).await?);
+    }
+    Ok(files)
+}
+
+async fn load_optional_image_input_file(
+    context: &ToolContext<'_>,
+    path: Option<&str>,
+) -> Result<Option<multimodal_models::ImageInputFile>> {
+    let Some(path) = normalize_optional_string(path) else {
+        return Ok(None);
+    };
+    Ok(Some(load_image_input_file(context, &path).await?))
+}
+
+async fn load_image_input_file(
+    context: &ToolContext<'_>,
+    public_or_relative_path: &str,
+) -> Result<multimodal_models::ImageInputFile> {
+    let resolved = context
+        .workspace
+        .resolve_path(context.workspace_id, public_or_relative_path)?;
+    if !resolved.exists() || !resolved.is_file() {
+        return Err(anyhow!(
+            "image input file not found: {public_or_relative_path}"
+        ));
+    }
+    let bytes = fs::read(&resolved).await?;
+    if bytes.is_empty() {
+        return Err(anyhow!(
+            "image input file is empty: {public_or_relative_path}"
+        ));
+    }
+    let filename = resolved
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "image.png".to_string());
+    Ok(multimodal_models::image_input_file_from_bytes(
+        bytes.into(),
+        filename,
+        None,
     ))
 }
 

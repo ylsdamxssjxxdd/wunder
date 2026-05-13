@@ -11,6 +11,7 @@ import {
   resolveMergedSessionRuntimeStatus
 } from '../../src/stores/chatBusyState';
 import { settleTerminalAssistantArtifacts } from '../../src/stores/chatTerminalArtifacts';
+import { settleStoppedRuntimeLocalState } from '../../src/stores/chatRuntimeStopSettlement';
 
 test('merged busy state keeps running when projection is stale idle but runtime is running', () => {
   const projection = createChatRuntimeProjection();
@@ -187,4 +188,71 @@ test('terminal settle clears stale assistant waiting artifacts, workflow items, 
   assert.equal(messages[1].workflowStreaming, false);
   assert.equal(messages[1].stream_incomplete, false);
   assert.equal(hasAssistantWaitingForCurrentOutput(messages[1]), false);
+});
+
+test('user stop settlement clears local runtime locks that would keep composer busy', () => {
+  const sessionId = 'sess_user_stop_local_settle';
+  const waitingUpdatedAtMs = Date.now() - 1000;
+  const sendController = new AbortController();
+  const resumeController = new AbortController();
+  const watchController = new AbortController();
+  const compactController = new AbortController();
+  const messages = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      waiting_updated_at_ms: waitingUpdatedAtMs,
+      waiting_first_output_at_ms: null,
+      stats: {}
+    }
+  ];
+  const runtime = {
+    sendController,
+    resumeController,
+    watchController,
+    compactController,
+    watchActiveRoundCount: 1,
+    activeTurnId: 'turn_running',
+    pendingApprovalIds: ['approval_running'],
+    pendingApprovalCount: 1,
+    waitingForUserInput: true,
+    stopRequested: true,
+    threadStatus: 'running',
+    loaded: true,
+    streamLifecycle: 'watching',
+    sendAbortReason: '',
+    resumeAbortReason: ''
+  };
+
+  assert.equal(settleStoppedRuntimeLocalState(runtime, { abortReason: 'user_stop' }), true);
+  assert.equal(sendController.signal.aborted, true);
+  assert.equal(resumeController.signal.aborted, true);
+  assert.equal(watchController.signal.aborted, true);
+  assert.equal(compactController.signal.aborted, true);
+  assert.equal(runtime.sendController, null);
+  assert.equal(runtime.resumeController, null);
+  assert.equal(runtime.watchController, null);
+  assert.equal(runtime.compactController, null);
+  assert.equal(runtime.watchActiveRoundCount, 0);
+  assert.equal(runtime.activeTurnId, '');
+  assert.equal(runtime.pendingApprovalCount, 0);
+  assert.equal(runtime.waitingForUserInput, false);
+  assert.equal(runtime.stopRequested, false);
+  assert.equal(runtime.threadStatus, 'idle');
+  assert.equal(runtime.streamLifecycle, 'idle');
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection: null,
+      sessionId,
+      loading: false,
+      messages,
+      runtimeStatus: runtime.threadStatus,
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    false
+  );
 });

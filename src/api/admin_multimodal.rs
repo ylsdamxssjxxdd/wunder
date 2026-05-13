@@ -81,6 +81,24 @@ struct AdminImageRequest {
     guidance_scale: Option<f32>,
     #[serde(default)]
     seed: Option<u64>,
+    #[serde(default)]
+    input_path: Option<String>,
+    #[serde(default)]
+    input_paths: Option<Vec<String>>,
+    #[serde(default)]
+    mask_path: Option<String>,
+    #[serde(default)]
+    reference_path: Option<String>,
+    #[serde(default)]
+    strength: Option<f32>,
+    #[serde(default)]
+    true_cfg_scale: Option<f32>,
+    #[serde(default)]
+    output_compression: Option<u32>,
+    #[serde(default)]
+    layers: Option<u32>,
+    #[serde(default)]
+    resolution: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +418,24 @@ async fn admin_generate_image(
     let output_format = normalize_optional_string(payload.output_format.as_deref());
     let negative_prompt = normalize_optional_string(payload.negative_prompt.as_deref());
     let size = normalize_optional_string(payload.size.as_deref());
+    let input_paths = collect_admin_image_input_paths(&payload);
+    let input_images = load_admin_image_input_files(state.as_ref(), &workspace_id, &input_paths)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mask_image = load_optional_admin_image_input_file(
+        state.as_ref(),
+        &workspace_id,
+        payload.mask_path.as_deref(),
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let reference_image = load_optional_admin_image_input_file(
+        state.as_ref(),
+        &workspace_id,
+        payload.reference_path.as_deref(),
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let result = multimodal_models::generate_image(
         &config,
         ImageGenerationRequest {
@@ -411,6 +447,14 @@ async fn admin_generate_image(
             num_inference_steps: payload.num_inference_steps,
             guidance_scale: payload.guidance_scale,
             seed: payload.seed,
+            input_images,
+            mask_image,
+            reference_image,
+            strength: payload.strength,
+            true_cfg_scale: payload.true_cfg_scale,
+            output_compression: payload.output_compression,
+            layers: payload.layers,
+            resolution: payload.resolution,
         },
     )
     .await
@@ -452,6 +496,15 @@ async fn admin_generate_image(
                 "num_inference_steps": payload.num_inference_steps,
                 "guidance_scale": payload.guidance_scale,
                 "seed": payload.seed,
+                "mode": if input_paths.is_empty() { "text_to_image" } else { "image_edit" },
+                "input_paths": input_paths,
+                "mask_path": normalize_optional_string(payload.mask_path.as_deref()),
+                "reference_path": normalize_optional_string(payload.reference_path.as_deref()),
+                "strength": payload.strength,
+                "true_cfg_scale": payload.true_cfg_scale,
+                "output_compression": payload.output_compression,
+                "layers": payload.layers,
+                "resolution": payload.resolution,
             }
         }
     })))
@@ -609,6 +662,79 @@ async fn persist_generated_media(
         workspace_relative_path: relative.replace('\\', "/"),
         size_bytes: bytes.len(),
     })
+}
+
+fn collect_admin_image_input_paths(payload: &AdminImageRequest) -> Vec<String> {
+    let mut paths = Vec::new();
+    if let Some(path) = normalize_optional_string(payload.input_path.as_deref()) {
+        paths.push(path);
+    }
+    if let Some(items) = &payload.input_paths {
+        paths.extend(
+            items
+                .iter()
+                .filter_map(|item| normalize_optional_string(Some(item))),
+        );
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+async fn load_admin_image_input_files(
+    state: &AppState,
+    workspace_id: &str,
+    paths: &[String],
+) -> anyhow::Result<Vec<multimodal_models::ImageInputFile>> {
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        files.push(load_admin_image_input_file(state, workspace_id, path).await?);
+    }
+    Ok(files)
+}
+
+async fn load_optional_admin_image_input_file(
+    state: &AppState,
+    workspace_id: &str,
+    path: Option<&str>,
+) -> anyhow::Result<Option<multimodal_models::ImageInputFile>> {
+    let Some(path) = normalize_optional_string(path) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        load_admin_image_input_file(state, workspace_id, &path).await?,
+    ))
+}
+
+async fn load_admin_image_input_file(
+    state: &AppState,
+    workspace_id: &str,
+    public_or_relative_path: &str,
+) -> anyhow::Result<multimodal_models::ImageInputFile> {
+    let resolved = state
+        .workspace
+        .resolve_path(workspace_id, public_or_relative_path)?;
+    if !resolved.exists() || !resolved.is_file() {
+        return Err(anyhow::anyhow!(
+            "image input file not found: {public_or_relative_path}"
+        ));
+    }
+    let bytes = fs::read(&resolved).await?;
+    if bytes.is_empty() {
+        return Err(anyhow::anyhow!(
+            "image input file is empty: {public_or_relative_path}"
+        ));
+    }
+    let filename = resolved
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "image.png".to_string());
+    Ok(multimodal_models::image_input_file_from_bytes(
+        bytes.into(),
+        filename,
+        None,
+    ))
 }
 
 fn requested_user_id(value: Option<&str>) -> String {

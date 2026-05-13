@@ -20,6 +20,11 @@ export type MessageStatsEntry = {
   iconClass?: string;
 };
 
+export type AssistantMessageStatsOptions = {
+  activeSessionBusy?: boolean;
+  latestVisibleAssistant?: boolean;
+};
+
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 type WorkflowItemLike = Record<string, any>;
 type MessageLike = Record<string, any>;
@@ -418,6 +423,7 @@ const hasAssistantActivitySignals = (message: Record<string, any> | null | undef
   if (!message || message.role !== 'assistant' || message.isGreeting) return false;
   return Boolean(
     hasAssistantPendingQuestion(message) ||
+      hasAssistantWaitingForCurrentOutput(message) ||
       isAssistantMessageRunning(message) ||
       message?.resume_available ||
       message?.slow_client ||
@@ -552,9 +558,12 @@ const resolveAssistantStatusEntry = (
   message: Record<string, any>,
   t: TranslateFn,
   allMessages?: MessageLike[] | null,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  options?: AssistantMessageStatsOptions
 ): MessageStatsEntry | null => {
-  if (!hasAssistantActivitySignals(message)) return null;
+  const latestActiveAssistantBusy =
+    options?.activeSessionBusy === true && options?.latestVisibleAssistant === true;
+  if (!latestActiveAssistantBusy && !hasAssistantActivitySignals(message)) return null;
 
   if (resolveAssistantFailureNotice(message, t)) {
     return buildStatusEntry(t('messenger.messageStatus.error'), 'error', false, 'fa-solid fa-triangle-exclamation');
@@ -673,6 +682,9 @@ const resolveAssistantStatusEntry = (
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true, 'fa-solid fa-screwdriver-wrench');
   }
+  if (latestActiveAssistantBusy && !hasAssistantVisibleOutput(message) && latestOutput.index < 0) {
+    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
+  }
   if (hasAssistantWaitingForCurrentOutput(message)) {
     return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
@@ -685,6 +697,12 @@ const resolveAssistantStatusEntry = (
     }
     if (latestRequest.index >= 0 || hasAssistantUnfinishedWaitingWindow(message)) {
       return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
+    }
+    return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
+  }
+  if (latestActiveAssistantBusy) {
+    if (hasAssistantVisibleOutput(message) || latestOutput.index >= 0) {
+      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true, 'fa-solid fa-comment-dots');
     }
     return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true, 'fa-solid fa-paper-plane');
   }
@@ -702,17 +720,19 @@ export const buildAssistantMessageStatsEntries = (
   message: Record<string, any> | null | undefined,
   t: TranslateFn,
   allMessages?: MessageLike[] | null,
-  nowMs = Date.now()
+  nowMs = Date.now(),
+  options?: AssistantMessageStatsOptions
 ): MessageStatsEntry[] => {
   if (!message || message.role !== 'assistant' || message.isGreeting) {
     return [];
   }
-  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs);
+  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs, options);
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return statusEntry ? [statusEntry] : [];
   if (
     isAssistantMessageRunning(message) ||
     hasAssistantWaitingForCurrentOutput(message) ||
+    (options?.activeSessionBusy === true && options?.latestVisibleAssistant === true) ||
     hasActiveSubagentItems(message?.subagents)
   ) {
     return statusEntry ? [statusEntry] : [];

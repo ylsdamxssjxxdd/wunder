@@ -134,14 +134,16 @@ import {
 } from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
+import { chatWatcherSharedState } from './chatSharedState';
 
 import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { DEFAULT_AGENT_KEY, applyMainSession, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
-import { MESSAGE_WINDOW_LIMIT, MESSAGE_WINDOW_THRESHOLD, abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, isWindowingEnabled, setSessionLoading } from './chatRuntimeControls';
+import { MESSAGE_WINDOW_LIMIT, MESSAGE_WINDOW_THRESHOLD, abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, setSessionLoading } from './chatRuntimeControls';
 import { clearChatSnapshot, findLiveAssistantInsertionIndex, findSnapshotAssistantIndexExcluding, mergeSnapshotAssistant, scheduleChatSnapshot } from './chatSnapshot';
 import { buildMessage, clearAssistantRetryState, normalizeContextTokens, normalizeContextTotalTokens, normalizeMessageSubagents, parseOptionalCount, resolveTimestampIso, resolveTimestampMs } from './chatStats';
 import { assignStreamEventId, normalizeFlag, normalizeStreamEventId, normalizeStreamRound } from './chatStreamIds';
 import { SessionDetailSnapshotCacheEntry, SessionEventsSnapshotCacheEntry, ThreadControlSession } from './chatTypes';
+import { settleStoppedRuntimeLocalState } from './chatRuntimeStopSettlement';
 import { abortResumeStream, abortSendStream } from './chatWatcher';
 import { isTerminalRuntimeStatus, normalizeAssistantContent, normalizeStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
 
@@ -1215,40 +1217,79 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   syncChatRuntimeProjectionStatus(store, targetId, runtime.threadStatus, {
     eventType: eventType === 'thread_closed' ? 'session_idle' : 'session_runtime'
   });
-  const terminalRuntimeStatus = isTerminalRuntimeStatus(runtime.threadStatus);
-  if (terminalRuntimeStatus) {
-    // Terminal runtime status is authoritative for this thread; clear stale interactive
-    // controllers so they cannot keep the session in a phantom "running" state.
-    clearRuntimeInteractiveControllers(runtime, { abort: false });
-    chatDebugLog('chat.store.runtime', 'terminal-runtime-event', {
-      sessionId: targetId,
+  if (isTerminalRuntimeStatus(runtime.threadStatus)) {
+    settleTerminalSessionRuntime(store, targetId, {
       eventType,
-      threadStatus: runtime.threadStatus,
-      runtime: buildRuntimeDebugSnapshot(runtime)
-    });
-  }
-  const shouldSettleTerminalState =
-    !hasRuntimeControllers(runtime)
-    && terminalRuntimeStatus;
-  if (shouldSettleTerminalState) {
-    const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
-      ? store?.messages
-      : getSessionMessages(targetId);
-    const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
       failed: runtime.threadStatus === 'system_error'
-    });
-    if (settledTerminalArtifacts) {
-      notifySessionSnapshot(store, targetId, targetMessages, true);
-    }
-    setSessionLoading(store, targetId, false);
-    chatDebugLog('chat.store.runtime', 'settle-terminal-state', {
-      sessionId: targetId,
-      eventType,
-      threadStatus: runtime.threadStatus,
-      settledTerminalArtifacts
     });
   }
   return runtime;
+}
+
+export function settleTerminalSessionRuntime(
+  store,
+  sessionId,
+  options: { eventType?: string; failed?: boolean } = {}
+) {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return false;
+  const runtime = ensureRuntime(targetId);
+  if (!runtime) return false;
+  const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
+  // Server terminal state is authoritative; local stream controllers are only UI locks here.
+  clearRuntimeInteractiveControllers(runtime, {
+    abort: true,
+    abortReason: 'local_recovery'
+  });
+  clearWatchdog(runtime);
+  runtime.stopRequested = false;
+  runtime.pendingApprovalIds = [];
+  runtime.pendingApprovalCount = 0;
+  runtime.waitingForUserInput = false;
+  if (runtime.threadStatus === 'running') {
+    runtime.threadStatus = 'idle';
+  }
+  const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
+    ? store?.messages
+    : getSessionMessages(targetId);
+  const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
+    failed: options.failed === true || runtime.threadStatus === 'system_error'
+  });
+  setSessionLoading(store, targetId, false);
+  if (settledTerminalArtifacts) {
+    notifySessionSnapshot(store, targetId, targetMessages, true);
+  }
+  chatDebugLog('chat.store.runtime', 'settle-terminal-state', {
+    sessionId: targetId,
+    eventType: options.eventType || 'terminal_runtime',
+    threadStatus: runtime.threadStatus,
+    settledTerminalArtifacts,
+    beforeRuntime,
+    afterRuntime: buildRuntimeDebugSnapshot(runtime)
+  });
+  return true;
+}
+
+export function settleUserStoppedSessionRuntime(store, sessionId) {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return false;
+  const runtime = ensureRuntime(targetId);
+  if (!runtime) return false;
+  const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
+  settleStoppedRuntimeLocalState(runtime, { abortReason: 'user_stop' });
+  if (chatWatcherSharedState.sessionWatchSessionId === targetId) {
+    chatWatcherSharedState.sessionWatchSessionId = '';
+  }
+  if (typeof store?.clearPendingApprovals === 'function') {
+    store.clearPendingApprovals({ sessionId: targetId });
+  }
+  setSessionLoading(store, targetId, false);
+  chatDebugLog('chat.store.runtime', 'settle-user-stopped-state', {
+    sessionId: targetId,
+    beforeRuntime,
+    afterRuntime: buildRuntimeDebugSnapshot(runtime)
+  });
+  return true;
 }
 
 export function syncSessionPendingApprovalRuntime(store, sessionId) {

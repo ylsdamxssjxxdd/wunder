@@ -18,6 +18,7 @@ const createTranslator = () => {
     'chat.stats.contextTokens': 'Context',
     'chat.stats.quota': 'Quota',
     'chat.stats.toolCalls': 'Tools',
+    'chat.stats.userRoundStatus': 'User round {round}',
     'messenger.messageStatus.compacting': 'Compacting',
     'messenger.messageStatus.requesting': 'Requesting',
     'messenger.messageStatus.waitingInput': 'Waiting input',
@@ -517,6 +518,63 @@ test('message stats keeps requesting for bare running assistant placeholder', ()
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.value, 'Requesting');
   assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+});
+
+test('message stats keeps latest active assistant requesting when message runtime flags lag behind session busy state', () => {
+  const t = createTranslator();
+  const messages = [
+    { role: 'user', content: 'hello' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [],
+      stream_round: 1,
+      stats: {}
+    }
+  ];
+  const entries = buildAssistantMessageStatsEntries(
+    messages[1],
+    t,
+    messages,
+    Date.UTC(2026, 4, 1, 10, 39, 47),
+    {
+      activeSessionBusy: true,
+      latestVisibleAssistant: true
+    }
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Requesting');
+  assert.equal(entries[0]?.live, true);
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-paper-plane');
+});
+
+test('message stats still shows completed round for inactive assistant without runtime flags', () => {
+  const t = createTranslator();
+  const messages = [
+    { role: 'user', content: 'hello' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [],
+      stream_round: 1,
+      stats: {}
+    }
+  ];
+  const entries = buildAssistantMessageStatsEntries(
+    messages[1],
+    t,
+    messages,
+    Date.UTC(2026, 4, 1, 10, 39, 48),
+    {
+      activeSessionBusy: false,
+      latestVisibleAssistant: true
+    }
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'User round 1');
+  assert.equal(entries[0]?.live, false);
 });
 
 test('message stats keeps requesting when progress updates interaction end before output', () => {
