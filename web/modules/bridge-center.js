@@ -147,6 +147,13 @@ const CHANNEL_FORM_SCHEMAS = {
         placeholder: "默认 5222/5223",
       },
       {
+        key: "tls_enabled",
+        label: "启用 TLS 加密",
+        type: "checkbox",
+        defaultValue: true,
+        advanced: true,
+      },
+      {
         key: "trust_self_signed",
         label: "信任自有证书（默认）",
         type: "checkbox",

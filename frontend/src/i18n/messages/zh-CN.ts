@@ -816,6 +816,7 @@ export default {
   'channels.form.xmpp.hostPlaceholder': '例如 xmpp.example.com',
   'channels.form.xmpp.port': '服务器端口（可选）',
   'channels.form.xmpp.portPlaceholder': '默认 5222/5223',
+  'channels.form.xmpp.tlsEnabled': '启用 TLS 加密',
   'channels.form.xmpp.resource': 'Resource（资源标识）',
   'channels.form.xmpp.resourcePlaceholder': '默认 coplat',
   'channels.form.xmpp.trustSelfSigned': '信任自有证书（默认）',

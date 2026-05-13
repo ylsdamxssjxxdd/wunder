@@ -838,6 +838,7 @@ export default {
   'channels.form.xmpp.hostPlaceholder': 'For example: xmpp.example.com',
   'channels.form.xmpp.port': 'Server Port (Optional)',
   'channels.form.xmpp.portPlaceholder': 'Default 5222/5223',
+  'channels.form.xmpp.tlsEnabled': 'Enable TLS Encryption',
   'channels.form.xmpp.resource': 'Resource',
   'channels.form.xmpp.resourcePlaceholder': 'Default: coplat',
   'channels.form.xmpp.trustSelfSigned': 'Trust private certificate (default)',
