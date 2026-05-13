@@ -40,6 +40,9 @@ use crate::skills::SkillRegistry;
 use crate::storage;
 use crate::tools::{execute_builtin_tool, ToolContext};
 use crate::workspace::WorkspaceManager;
+use std::fs;
+use std::io::ErrorKind;
+use tracing::warn;
 
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
 const PTC_TIMEOUT_S: u64 = 60;
@@ -240,6 +243,36 @@ pub fn validate_runtime_readonly(readonly_rootfs: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn warn_if_rootfs_is_readonly(readonly_rootfs: bool) {
+    if readonly_rootfs {
+        return;
+    }
+
+    let probe_path = PathBuf::from(format!("/.wunder-rootfs-write-probe-{}", std::process::id()));
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe_path)
+    {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe_path);
+        }
+        Err(err) if err.kind() == ErrorKind::ReadOnlyFilesystem => {
+            warn!(
+                error = %err,
+                "sandbox root filesystem is still read-only while WUNDER_SANDBOX_READONLY_ROOTFS is disabled; check docker compose read_only or container runtime flags"
+            );
+        }
+        Err(err) if err.kind() != ErrorKind::AlreadyExists => {
+            warn!(
+                error = %err,
+                "sandbox root filesystem write probe failed while WUNDER_SANDBOX_READONLY_ROOTFS is disabled"
+            );
+        }
+        Err(_) => {}
+    }
 }
 
 fn ensure_path_not_writable(path: &Path, label: &str) -> Result<()> {

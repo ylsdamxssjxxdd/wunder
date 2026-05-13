@@ -214,7 +214,7 @@ def last_non_empty_line(text: str) -> str:
 
 def summarize_observations(long_output: str) -> list[str]:
     observations: list[str] = []
-    if "InvalidEndOfLine" in long_output or "??????????????" in long_output:
+    if "InvalidEndOfLine" in long_output or "does not support &&" in long_output:
         observations.append("PowerShell execute_command does not support &&; the model must switch to ; or multi-line commands.")
     if ("All 8 tests passed!" in long_output or "test result: ok." in long_output) and (
         "?? (exit=1)" in long_output or "failed (exit=1)" in long_output

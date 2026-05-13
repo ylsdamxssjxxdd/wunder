@@ -157,7 +157,9 @@ async fn run_sandbox_mode() -> anyhow::Result<()> {
         Some(config.i18n.supported_languages.clone()),
         Some(config.i18n.aliases.clone()),
     );
-    sandbox::server::validate_runtime_readonly(sandbox::sandbox_readonly_rootfs())?;
+    let readonly_rootfs = sandbox::sandbox_readonly_rootfs();
+    sandbox::server::validate_runtime_readonly(readonly_rootfs)?;
+    sandbox::server::warn_if_rootfs_is_readonly(readonly_rootfs);
     let host = std::env::var("WUNDER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("WUNDER_PORT")
         .ok()

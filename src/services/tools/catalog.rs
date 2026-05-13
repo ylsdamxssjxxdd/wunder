@@ -192,7 +192,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
     let mut specs = vec![
         ToolSpec {
             name: "最终回复".to_string(),
-            title: Some("???????????".to_string()),
+            title: Some(if language.starts_with("zh") {
+                "最终回复".to_string()
+            } else {
+                "Final response".to_string()
+            }),
             description: t("tool.spec.final.description"),
             input_schema: json!({
                 "type": "object",

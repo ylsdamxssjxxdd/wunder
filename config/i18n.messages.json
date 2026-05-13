@@ -1593,55 +1593,55 @@
   },
   "tool.spec.edit2.args.edits": {
     "en-US": "Basic text edit steps to apply in order.",
-    "zh-CN": "???????????????"
+    "zh-CN": "按顺序执行的基础文本编辑步骤。"
   },
   "tool.spec.edit2.args.edits.action": {
     "en-US": "Edit action: replace, replace_between, insert_before, insert_after, append, or prepend.",
-    "zh-CN": "?????replace?replace_between?insert_before?insert_after?append ? prepend?"
+    "zh-CN": "编辑动作类型：replace、replace_between、insert_before、insert_after、append 或 prepend。"
   },
   "tool.spec.edit2.args.edits.old_text": {
     "en-US": "Existing text to find for replace.",
-    "zh-CN": "replace ??????????"
+    "zh-CN": "用于 replace 的目标旧文本。"
   },
   "tool.spec.edit2.args.edits.new_text": {
     "en-US": "New text to insert or replace with.",
-    "zh-CN": "????????????"
+    "zh-CN": "要插入或替换成的新文本。"
   },
   "tool.spec.edit2.args.edits.start_marker": {
     "en-US": "Start marker for replace_between. The tool replaces text after this marker until end_marker.",
-    "zh-CN": "replace_between ????????????????? end_marker ??????"
+    "zh-CN": "replace_between 的起始标记。工具会替换从该标记之后到 end_marker 之前的文本。"
   },
   "tool.spec.edit2.args.edits.end_marker": {
     "en-US": "End marker for replace_between.",
-    "zh-CN": "replace_between ??????"
+    "zh-CN": "replace_between 的结束标记。"
   },
   "tool.spec.edit2.args.edits.anchor": {
     "en-US": "Anchor text used by insert_before or insert_after.",
-    "zh-CN": "insert_before ? insert_after ????????"
+    "zh-CN": "insert_before 或 insert_after 使用的锚点文本。"
   },
   "tool.spec.edit2.args.edits.replace_all": {
     "en-US": "When true, replace every match instead of only the first one.",
-    "zh-CN": "? true ??????????????????"
+    "zh-CN": "为 true 时替换所有匹配项，而不只替换第一个。"
   },
   "tool.spec.edit2.args.edits.expected_count": {
     "en-US": "Expected number of matches. The tool fails if the real match count differs.",
-    "zh-CN": "?????????????????????"
+    "zh-CN": "期望的匹配数量。实际匹配数不一致时工具会失败。"
   },
   "tool.spec.edit2.args.edits.unique": {
     "en-US": "Require the target marker or old_text to match exactly once.",
-    "zh-CN": "????????????????"
+    "zh-CN": "要求目标标记或 old_text 恰好只匹配一次。"
   },
   "tool.spec.edit2.args.ensure_newline": {
     "en-US": "Ensure the final file ends with a newline.",
-    "zh-CN": "????????????"
+    "zh-CN": "确保最终文件以换行结尾。"
   },
   "tool.spec.edit2.args.path": {
     "en-US": "Text file path to edit.",
-    "zh-CN": "???????????"
+    "zh-CN": "要编辑的文本文件路径。"
   },
   "tool.spec.edit2.description": {
     "en-US": "Edit a text file with very basic operations that weaker models can use reliably: replace exact text, replace text between two markers, insert before or after an anchor, append, or prepend. Prefer this tool when apply_patch is too strict but full write_file replacement would be too broad. Recommended workflow: read_file first, then submit one or a few simple edit steps with exact old_text or markers; set expected_count or unique whenever possible; use dry_run first if you are unsure.",
-    "zh-CN": "?????????????????????????????????????????????????????????????? apply_patch ???????? write_file ???????????????????? read_file ?????????????????????????? old_text ? marker???? expected_count ? unique ???????????? dry_run?"
+    "zh-CN": "用能力较弱的模型也能稳定使用的基础操作来编辑文本文件：精确替换文本、替换两个标记之间的文本、在锚点前后插入、追加或前置内容。当 apply_patch 过于严格，而整文件 write_file 替换又太宽泛时，优先使用这个工具。推荐流程：先 read_file，再提交一个或少量简单编辑步骤，并尽量提供精确的 old_text 或 marker；能设置 expected_count 或 unique 时尽量设置；不确定时先用 dry_run。"
   },
   "tool.spec.lsp.args.operation": {
     "en-US": "LSP operation: definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy.",

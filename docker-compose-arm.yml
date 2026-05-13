@@ -146,7 +146,7 @@ services:
     pull_policy: never
     platform: linux/arm64
     working_dir: /tmp
-    read_only: true
+    read_only: ${WUNDER_SANDBOX_DOCKER_READ_ONLY:-false}
     tmpfs:
       - /tmp
       - /var/tmp

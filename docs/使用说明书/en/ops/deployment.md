@@ -96,6 +96,7 @@ These endpoints can all be mounted under the same service domain—don't wait un
 - `WUNDER_API_KEY`
 - `WUNDER_POSTGRES_DSN`
 - `WUNDER_SANDBOX_ENDPOINT`
+- `WUNDER_SANDBOX_DOCKER_READ_ONLY`
 - `WUNDER_MCP_HOST`
 - `WUNDER_CONFIG_PATH`
 - `WUNDER_USER_TOOLS_ROOT`
@@ -106,12 +107,17 @@ These endpoints can all be mounted under the same service domain—don't wait un
 - Current Compose defaults to enabling `WUNDER_BROWSER_ENABLED=true`, `WUNDER_BROWSER_TOOL_ENABLED=true`, and `WUNDER_BROWSER_DOCKER_ENABLED=true`
 - `shm_size: 2gb` reserves space for Chromium's `/dev/shm`, avoiding crashes, freezes, blank pages, or screenshot failures due to insufficient shared memory in the container
 
+## Sandbox Write Permissions Under Docker
+
+Current Compose keeps the `wunder-sandbox` container root filesystem writable by default so file tools can write arbitrary container paths. `WUNDER_SANDBOX_READONLY_ROOTFS` controls Wunder's request-level sandbox flag; Docker Compose's container-level `read_only` flag is controlled separately by `WUNDER_SANDBOX_DOCKER_READ_ONLY`, which defaults to `false`. If a file tool writes a root path such as `/test_file.txt` and gets `Read-only file system (os error 30)`, check whether the running sandbox container was created from an older `read_only: true` config and recreate it.
+
 ## Most Overlooked Deployment Issues
 
 - Started only the server, but didn't prepare Postgres
 - Enabled MCP configuration, but the target service isn't connected
 - Workspaces not persisted, causing outputs to be lost
 - Put long-term business data into the `config/data/` runtime directory
+- Sandbox file tools still fail with `Read-only file system` because an old `wunder-sandbox` container was created with Docker `read_only: true`
 - Mistakenly treated desktop local mode as a server deployment method
 
 ## Further Reading

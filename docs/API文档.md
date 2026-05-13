@@ -18,7 +18,7 @@
 - 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。
 - `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
-- 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
+- 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址；compose 下 `wunder-sandbox` 默认不再启用容器级只读根文件系统，确需恢复 Docker `read_only` 时设置 `WUNDER_SANDBOX_DOCKER_READ_ONLY=true`。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
@@ -1411,7 +1411,7 @@
   - `sandbox.endpoint`：沙盒服务地址
   - `sandbox.container_root`：容器内根目录
   - `sandbox.network`：网络模式
-  - `sandbox.readonly_rootfs`：只读根文件系统开关
+  - `sandbox.readonly_rootfs`：Wunder 沙盒请求层的只读根文件系统开关；Docker Compose 的容器级 `read_only` 由 `WUNDER_SANDBOX_DOCKER_READ_ONLY` 单独控制，默认关闭
   - `sandbox.idle_ttl_s`：空闲回收秒数
   - `sandbox.timeout_s`：单次执行超时秒数
   - `sandbox.resources`：资源限制（cpu/memory_mb/pids）
