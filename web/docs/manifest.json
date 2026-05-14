@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-13T15:23:08.789927+00:00",
+  "generated_at": "2026-05-14T00:59:31.333357+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -3692,26 +3692,31 @@
         },
         {
           "id": "section-18",
-          "level": 2,
-          "text": "writefile"
-        },
-        {
-          "id": "section-19",
-          "level": 3,
-          "text": "最小参数"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "成功返回"
-        },
-        {
-          "id": "section-21",
           "level": 3,
           "text": "什么时候不要用它"
         },
         {
+          "id": "section-19",
+          "level": 2,
+          "text": "writefile"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "最小参数"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "成功返回"
+        },
+        {
           "id": "section-22",
+          "level": 3,
+          "text": "什么时候不要用它"
+        },
+        {
+          "id": "section-23",
           "level": 2,
           "text": "失败返回怎么读"
         }
@@ -11837,26 +11842,31 @@
         },
         {
           "id": "section-18",
-          "level": 2,
-          "text": "writefile"
-        },
-        {
-          "id": "section-19",
-          "level": 3,
-          "text": "Minimum arguments"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "Success result"
-        },
-        {
-          "id": "section-21",
           "level": 3,
           "text": "When not to use it"
         },
         {
+          "id": "section-19",
+          "level": 2,
+          "text": "writefile"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
           "id": "section-22",
+          "level": 3,
+          "text": "When not to use it"
+        },
+        {
+          "id": "section-23",
           "level": 2,
           "text": "How to read failures"
         }

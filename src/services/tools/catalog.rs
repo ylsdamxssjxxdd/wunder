@@ -738,35 +738,12 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": t("tool.spec.edit2.args.path")},
-                    "edits": {
-                        "type": "array",
-                        "minItems": 1,
-                        "description": t("tool.spec.edit2.args.edits"),
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "action": {
-                                    "type": "string",
-                                    "description": t("tool.spec.edit2.args.edits.action"),
-                                    "enum": ["replace", "replace_between", "insert_before", "insert_after", "append", "prepend"]
-                                },
-                                "old_text": {"type": "string", "description": t("tool.spec.edit2.args.edits.old_text")},
-                                "new_text": {"type": "string", "description": t("tool.spec.edit2.args.edits.new_text")},
-                                "start_marker": {"type": "string", "description": t("tool.spec.edit2.args.edits.start_marker")},
-                                "end_marker": {"type": "string", "description": t("tool.spec.edit2.args.edits.end_marker")},
-                                "anchor": {"type": "string", "description": t("tool.spec.edit2.args.edits.anchor")},
-                                "replace_all": {"type": "boolean", "description": t("tool.spec.edit2.args.edits.replace_all")},
-                                "expected_count": {"type": "integer", "minimum": 1, "description": t("tool.spec.edit2.args.edits.expected_count")},
-                                "unique": {"type": "boolean", "description": t("tool.spec.edit2.args.edits.unique")}
-                            },
-                            "required": ["action", "new_text"],
-                            "additionalProperties": false
-                        }
-                    },
-                    "ensure_newline": {"type": "boolean", "description": t("tool.spec.edit2.args.ensure_newline")},
+                    "old_text": {"type": "string", "description": t("tool.spec.edit2.args.old_text")},
+                    "new_text": {"type": "string", "description": t("tool.spec.edit2.args.new_text")},
+                    "expected_count": {"type": "integer", "minimum": 1, "description": t("tool.spec.edit2.args.expected_count")},
                     "dry_run": {"type": "boolean", "description": "Preview whether the requested text edits match and would change the file, without writing to disk."}
                 },
-                "required": ["path", "edits"],
+                "required": ["path", "old_text", "new_text"],
                 "additionalProperties": false
             }),
         },
@@ -2797,9 +2774,12 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("edit_file2"))
             .expect("edit_file2 spec");
-        assert!(edit_file2_spec.description.contains("weaker models"));
+        assert!(edit_file2_spec.description.contains("只做一次精确替换"));
+        assert!(edit_file2_spec.description.contains("programmatic_tool_call"));
         assert!(edit_file2_spec.input_schema["properties"]["path"].is_object());
-        assert!(edit_file2_spec.input_schema["properties"]["edits"].is_object());
+        assert!(edit_file2_spec.input_schema["properties"]["old_text"].is_object());
+        assert!(edit_file2_spec.input_schema["properties"]["new_text"].is_object());
+        assert!(edit_file2_spec.input_schema["properties"]["edits"].is_null());
         assert_eq!(
             edit_file2_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -2810,8 +2790,8 @@ mod tests {
             .find(|spec| spec.name == resolve_tool_name("apply_patch"))
             .expect("apply patch spec");
         assert!(apply_patch_spec.description.contains("apply_patch grammar"));
-        assert!(apply_patch_spec.description.contains(">>> path"));
-        assert!(apply_patch_spec.description.contains("123: code"));
+        assert!(apply_patch_spec.description.contains(">>> 路径"));
+        assert!(apply_patch_spec.description.contains("123: 代码"));
         assert!(
             apply_patch_spec.input_schema["properties"]["input"]["description"]
                 .as_str()

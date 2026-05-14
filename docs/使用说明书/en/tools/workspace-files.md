@@ -27,7 +27,7 @@ All four now use the unified success and failure envelope.
 - To locate a keyword first: `search_content`
 - To read a known path and a specific range: `read_file`
 - To create or overwrite a whole file: `write_file`
-- To do simple text replacement, insertion, or append operations: `edit_file2`
+- To do one exact text replacement: `edit_file2`
 
 ## `list_files`
 
@@ -216,23 +216,17 @@ Important fields:
 ```json
 {
   "path": "docs/demo.md",
-  "edits": [
-    {
-      "action": "replace",
-      "old_text": "old",
-      "new_text": "new",
-      "expected_count": 1
-    }
-  ]
+  "old_text": "old",
+  "new_text": "new"
 }
 ```
 
 ### Good fit
 
-- `replace`: replace exact old text
-- `replace_between`: replace the block between two markers
-- `insert_before` / `insert_after`: insert around an anchor
-- `append` / `prepend`: add text at the end or beginning
+- One exact text replacement only
+- `old_text` must match the current file content exactly
+- To delete text, set `new_text` to an empty string
+- To replace multiple identical matches, set `expected_count`; the tool will fail unless the count matches exactly
 
 ### Success result
 
@@ -264,9 +258,15 @@ Important fields:
 
 ### When to prefer it
 
-- `apply_patch` is too strict for the current model and keeps failing on patch syntax
-- A full `write_file` replacement would be too broad
-- You can provide exact old text, markers, or anchors
+- You already read the exact current text with `read_file`
+- The edit can be expressed as one `old_text` -> `new_text` replacement
+- You do not need regex, conditions, marker-bounded replacement, or multiple edit steps
+
+### When not to use it
+
+- For complex replacements, regex, scattered edits, or conditional logic, use `programmatic_tool_call` with a small Python script.
+- For full-file creation or replacement, use `write_file`.
+- For small code patches that need surrounding context, prefer [Apply Patch](/docs/en/tools/apply-patch/).
 
 ## `write_file`
 
@@ -308,7 +308,7 @@ Important fields:
 ### When not to use it
 
 - For small code edits with clear context, prefer [Apply Patch](/docs/en/tools/apply-patch/).
-- For simpler text replacement or insertion workflows that weaker models can follow more reliably, use `edit_file2`.
+- For one exact text replacement, use `edit_file2`.
 - Do not use it to run scripts or builds. Use [Execute Command](/docs/en/tools/exec/) instead.
 
 ## How to read failures

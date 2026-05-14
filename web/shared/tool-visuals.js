@@ -27,6 +27,7 @@ const TOOL_ICON_RULES = [
   { keywords: ["列出文件", "list files", "list_file", "list_files"], icon: "fa-folder-open" },
   { keywords: ["读取文件", "read file", "read_file"], icon: "fa-file-lines" },
   { keywords: ["写入文件", "write file", "write_file"], icon: "fa-file-circle-plus" },
+  { keywords: ["文本编辑", "text edit", "text_editor", "text editor", "edit_file2"], icon: "fa-file-pen" },
   { keywords: ["应用补丁", "apply patch", "apply_patch"], icon: "fa-pen-to-square" },
   { keywords: ["LSP查询", "lsp query", "lsp"], icon: "fa-code" },
   { keywords: ["执行命令", "运行命令", "run command", "execute command", "execute_command", "shell"], icon: "fa-terminal" },

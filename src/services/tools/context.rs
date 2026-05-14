@@ -307,23 +307,22 @@ pub(crate) fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option
         }
         return None;
     }
+    let relative = sanitize_relative_path(trimmed)?;
+    for root in roots {
+        let candidate = normalize_target_path(&root.join(&relative));
+        if is_within_root(root, &candidate) {
+            return Some(candidate);
+        }
+    }
     if allow_any_path {
-        // When local desktop mode exposes filesystem roots, keep relative traversal available
-        // so agent tools can follow user-provided local paths instead of failing on `..`.
+        // In unrestricted mode, keep a final cwd fallback for user-provided relative paths
+        // that are intentionally outside the logical workspace roots.
         let cwd = std::env::current_dir().ok()?;
         let candidate = normalize_target_path(&cwd.join(path));
         for root in roots {
             if is_within_root(root, &candidate) {
                 return Some(candidate.clone());
             }
-        }
-        return None;
-    }
-    let relative = sanitize_relative_path(trimmed)?;
-    for root in roots {
-        let candidate = normalize_target_path(&root.join(&relative));
-        if is_within_root(root, &candidate) {
-            return Some(candidate);
         }
     }
     None

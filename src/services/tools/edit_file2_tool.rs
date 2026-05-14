@@ -108,7 +108,7 @@ pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Resul
                 ToolErrorMeta::new(
                     "TOOL_EDIT2_FAILED",
                     Some(
-                        "请先 read_file 读取最新文本，并确认替换锚点、旧文本和标记文本与文件内容完全一致。"
+                        "请先 read_file 读取最新文本，并确认 old_text 与文件内容完全一致；多处、条件或跨段替换请改用 programmatic_tool_call 写 Python 脚本。"
                             .to_string(),
                     ),
                     true,
@@ -178,22 +178,26 @@ fn parse_edit_file2_plan(
             ),
         ));
     }
-    let instructions_value = args
-        .get("edits")
-        .or_else(|| args.get("operations"))
-        .or_else(|| args.get("steps"));
-    let Some(instructions_value) = instructions_value else {
-        return Err((
-            "缺少 edits".to_string(),
-            ToolErrorMeta::new(
-                "TOOL_EDIT2_EDITS_REQUIRED",
-                Some("请提供 edits 数组，每一步使用 replace/replace_between/insert_before/insert_after/append/prepend 之一。".to_string()),
-                false,
-                None,
-            ),
-        ));
+    let instructions = if let Some(instruction) = parse_flat_replace_instruction(&args)? {
+        vec![instruction]
+    } else {
+        let instructions_value = args
+            .get("edits")
+            .or_else(|| args.get("operations"))
+            .or_else(|| args.get("steps"));
+        let Some(instructions_value) = instructions_value else {
+            return Err((
+                "缺少 old_text/new_text".to_string(),
+                ToolErrorMeta::new(
+                    "TOOL_EDIT2_REPLACE_REQUIRED",
+                    Some("请只提供 path、old_text、new_text。复杂多处或条件替换请改用 programmatic_tool_call 写 Python 脚本。".to_string()),
+                    false,
+                    None,
+                ),
+            ));
+        };
+        parse_edit_instructions(instructions_value)?
     };
-    let instructions = parse_edit_instructions(instructions_value)?;
     let dry_run = parse_dry_run(args);
     let ensure_newline = args
         .get("ensure_newline")
@@ -206,6 +210,77 @@ fn parse_edit_file2_plan(
         dry_run,
         ensure_newline,
     })
+}
+
+fn parse_flat_replace_instruction(
+    args: &Value,
+) -> std::result::Result<Option<EditInstruction>, (String, ToolErrorMeta)> {
+    let has_flat_fields = args.get("old_text").is_some()
+        || args.get("oldText").is_some()
+        || args.get("find").is_some()
+        || args.get("target").is_some()
+        || args.get("new_text").is_some()
+        || args.get("newText").is_some()
+        || args.get("replacement").is_some();
+    if !has_flat_fields {
+        return Ok(None);
+    }
+    let old_text = args
+        .get("old_text")
+        .or_else(|| args.get("oldText"))
+        .or_else(|| args.get("find"))
+        .or_else(|| args.get("target"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if old_text.is_empty() {
+        return Err((
+            "缺少 old_text".to_string(),
+            ToolErrorMeta::new(
+                "TOOL_EDIT2_OLD_TEXT_REQUIRED",
+                Some("请提供要被替换的精确原文 old_text。".to_string()),
+                false,
+                None,
+            ),
+        ));
+    }
+    let new_text_value = args
+        .get("new_text")
+        .or_else(|| args.get("newText"))
+        .or_else(|| args.get("replacement"));
+    let Some(new_text) = new_text_value.and_then(Value::as_str) else {
+        return Err((
+            "缺少 new_text".to_string(),
+            ToolErrorMeta::new(
+                "TOOL_EDIT2_NEW_TEXT_REQUIRED",
+                Some("请显式提供替换后的文本 new_text；删除文本时传空字符串。".to_string()),
+                false,
+                None,
+            ),
+        ));
+    };
+    let new_text = new_text.to_string();
+    let expected_count = args
+        .get("expected_count")
+        .or_else(|| args.get("expectedCount"))
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    let replace_all = args
+        .get("replace_all")
+        .or_else(|| args.get("replaceAll"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok(Some(EditInstruction {
+        action: EditAction::Replace,
+        old_text: Some(old_text),
+        new_text,
+        start_marker: None,
+        end_marker: None,
+        anchor: None,
+        replace_all: replace_all || expected_count.is_some_and(|count| count > 1),
+        expected_count,
+        unique: expected_count.is_none() && !replace_all,
+    }))
 }
 
 fn parse_edit_instructions(
@@ -674,6 +749,45 @@ mod tests {
         .expect("instructions");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].action, EditAction::Replace);
+    }
+
+    #[test]
+    fn parse_flat_replace_prefers_single_exact_replacement() {
+        let plan = parse_edit_file2_plan(&json!({
+            "path": "demo.txt",
+            "old_text": "old",
+            "new_text": "new"
+        }))
+        .expect("plan");
+        assert_eq!(plan.instructions.len(), 1);
+        assert_eq!(plan.instructions[0].action, EditAction::Replace);
+        assert_eq!(plan.instructions[0].old_text.as_deref(), Some("old"));
+        assert_eq!(plan.instructions[0].new_text, "new");
+        assert!(plan.instructions[0].unique);
+    }
+
+    #[test]
+    fn parse_flat_replace_requires_explicit_new_text() {
+        let err = parse_edit_file2_plan(&json!({
+            "path": "demo.txt",
+            "old_text": "old"
+        }))
+        .expect_err("missing new_text");
+        assert_eq!(err.1.code, "TOOL_EDIT2_NEW_TEXT_REQUIRED");
+    }
+
+    #[test]
+    fn parse_flat_replace_expected_count_replaces_all_expected_matches() {
+        let plan = parse_edit_file2_plan(&json!({
+            "path": "demo.txt",
+            "old_text": "old",
+            "new_text": "new",
+            "expected_count": 2
+        }))
+        .expect("plan");
+        assert!(plan.instructions[0].replace_all);
+        assert_eq!(plan.instructions[0].expected_count, Some(2));
+        assert!(!plan.instructions[0].unique);
     }
 
     #[test]

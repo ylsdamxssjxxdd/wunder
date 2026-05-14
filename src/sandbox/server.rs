@@ -63,6 +63,10 @@ struct SandboxToolRequest {
     #[serde(default)]
     args: Value,
     #[serde(default)]
+    workspace_root: String,
+    #[serde(default)]
+    container_root: String,
+    #[serde(default)]
     allow_commands: Vec<String>,
     #[serde(default)]
     network: String,
@@ -250,7 +254,10 @@ pub fn warn_if_rootfs_is_readonly(readonly_rootfs: bool) {
         return;
     }
 
-    let probe_path = PathBuf::from(format!("/.wunder-rootfs-write-probe-{}", std::process::id()));
+    let probe_path = PathBuf::from(format!(
+        "/.wunder-rootfs-write-probe-{}",
+        std::process::id()
+    ));
     match OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -326,8 +333,16 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
         request.resources.memory_mb,
         request.resources.pids,
     );
-    let container_root = PathBuf::from("/");
-    let workspace_root = PathBuf::from("/");
+    let container_root = if request.container_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.container_root.trim())
+    };
+    let workspace_root = if request.workspace_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.workspace_root.trim())
+    };
 
     let rules = resolve_cached_rules(
         &workspace_root,
@@ -702,6 +717,7 @@ async fn execute_builtin_file_tool(
         .unwrap_or(request.user_id.as_str())
         .to_string();
     let mut container_roots = HashMap::new();
+    container_roots.insert(0, context.workspace_root.to_string_lossy().to_string());
     container_roots.insert(1, context.workspace_root.to_string_lossy().to_string());
     config.workspace.container_roots = container_roots.clone();
 

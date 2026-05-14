@@ -1639,9 +1639,21 @@
     "en-US": "Text file path to edit.",
     "zh-CN": "要编辑的文本文件路径。"
   },
+  "tool.spec.edit2.args.old_text": {
+    "en-US": "Exact current text to replace. Copy it from read_file output, but remove display headers and line numbers.",
+    "zh-CN": "要替换掉的当前精确原文。可从 read_file 输出复制，但不要带文件头和行号。"
+  },
+  "tool.spec.edit2.args.new_text": {
+    "en-US": "Replacement text. It may be empty when deleting old_text.",
+    "zh-CN": "替换后的文本。删除 old_text 时可以传空字符串。"
+  },
+  "tool.spec.edit2.args.expected_count": {
+    "en-US": "Optional safety check. The tool fails unless old_text appears exactly this many times; when greater than 1, all matches are replaced.",
+    "zh-CN": "可选安全校验。old_text 出现次数必须等于该值；大于 1 时会替换全部匹配。"
+  },
   "tool.spec.edit2.description": {
-    "en-US": "Edit a text file with very basic operations that weaker models can use reliably: replace exact text, replace text between two markers, insert before or after an anchor, append, or prepend. Prefer this tool when apply_patch is too strict but full write_file replacement would be too broad. Recommended workflow: read_file first, then submit one or a few simple edit steps with exact old_text or markers; set expected_count or unique whenever possible; use dry_run first if you are unsure.",
-    "zh-CN": "用能力较弱的模型也能稳定使用的基础操作来编辑文本文件：精确替换文本、替换两个标记之间的文本、在锚点前后插入、追加或前置内容。当 apply_patch 过于严格，而整文件 write_file 替换又太宽泛时，优先使用这个工具。推荐流程：先 read_file，再提交一个或少量简单编辑步骤，并尽量提供精确的 old_text 或 marker；能设置 expected_count 或 unique 时尽量设置；不确定时先用 dry_run。"
+    "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide path, old_text, and new_text. The old_text must match the file exactly. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use programmatic_tool_call with a small Python script instead.",
+    "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text，old_text 必须与文件内容完全一致。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 programmatic_tool_call 写一个小 Python 脚本。"
   },
   "tool.spec.lsp.args.operation": {
     "en-US": "LSP operation: definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy.",
@@ -1860,8 +1872,8 @@
     "zh-CN": "返回给用户的最终回复。若有图片/文件/报告等产出，必须在回复的最后附上 Markdown 语法将图片或链接展示出来，例如：![雷达图](/workspaces/{user_id}/radar_chart.png) 或 ![xx作文](/workspaces/{user_id}/美好的一天.docx)，这样用户就能在前端或其他渠道看到图片或下载文件。"
   },
   "tool.spec.list.args.path": {
-    "en-US": "Optional. Directory to list, relative to the workspace root. Empty uses the current directory.",
-    "zh-CN": "可选，要列出的目录（相对工程师工作目录）。留空则使用当前工作目录。"
+    "en-US": "Optional. Directory to list. Relative paths use the current working directory; absolute paths and /workspaces/... public paths are also accepted. Empty uses the current directory.",
+    "zh-CN": "可选，要列出的目录。相对路径按当前工作目录解释；也支持绝对路径和 /workspaces/... 公共路径。留空则使用当前工作目录。"
   },
   "tool.spec.list.args.cursor": {
     "en-US": "Opaque pagination cursor from previous list_files result; omit for first page.",
@@ -2212,8 +2224,8 @@
     "zh-CN": "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read a local plain-text file, .txt/.md/.py, like cat; docx/xlsx is not supported. Only for text files (code, config, logs, markdown). For images use read_image. Output is formatted for display and may contain a \">>> path\" header plus \"N: \" line numbers; do not copy those display markers into apply_patch. If the file location is uncertain, use list_files or search_content first.",
-    "zh-CN": "读取本地纯文本文件 .txt/.md/.py，类似 cat，不支持读取 docx/xlsx 等文档文件。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。输出是便于阅读的展示格式，可能包含 \">>> 路径\" 文件头和 \"N: \" 行号；生成 apply_patch 时不要复制这些展示标记。文件位置不确定时先用 list_files 或 search_content。"
+    "en-US": "Read a local plain-text file, .txt/.md/.py, like cat; docx/xlsx is not supported. Only for text files (code, config, logs, markdown). For images use read_image. Relative paths use the current working directory; absolute paths and /workspaces/... public paths are also accepted. Output is formatted for display and may contain a \">>> path\" header plus \"N: \" line numbers; do not copy those display markers into apply_patch. If the file location is uncertain, use list_files or search_content first.",
+    "zh-CN": "读取本地纯文本文件 .txt/.md/.py，类似 cat，不支持读取 docx/xlsx 等文档文件。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。相对路径按当前工作目录解释；也支持绝对路径和 /workspaces/... 公共路径。输出是便于阅读的展示格式，可能包含 \">>> 路径\" 文件头和 \"N: \" 行号；生成 apply_patch 时不要复制这些展示标记。文件位置不确定时先用 list_files 或 search_content。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local visual media path, relative to workspace or an allowed absolute path.",
@@ -2484,16 +2496,16 @@
     "zh-CN": "可选，最大扫描文件数（0 表示不限制）。"
   },
   "tool.spec.search.args.path": {
-    "en-US": "Optional. Directory to limit the search, relative to the local workspace. This tool searches workspace files only, never the web.",
-    "zh-CN": "可选，限制搜索范围的目录，相对当前本地工作区。这个工具只搜索工作区文件，不会搜索网页。"
+    "en-US": "Optional. Directory to limit the search. Relative paths use the current working directory; absolute paths and /workspaces/... public paths are also accepted. This tool searches local filesystem text files only, never the web.",
+    "zh-CN": "可选，限制搜索范围的目录。相对路径按当前工作目录解释；也支持绝对路径和 /workspaces/... 公共路径。这个工具只搜索本地文件系统中的纯文本文件，不会搜索网页。"
   },
   "tool.spec.search.args.pattern": {
     "en-US": "Preferred rg-style input. When pattern is provided without query_mode or -F, it defaults to regex like ripgrep; use -F/query_mode=literal for fixed-string matching.",
     "zh-CN": "推荐的 rg 风格输入。仅传 `pattern` 且未显式设置 `query_mode` 或 `-F` 时，会像 ripgrep 一样默认按 regex 处理；若要固定字符串匹配，请使用 `-F` 或 `query_mode=literal`。"
   },
   "tool.spec.search.args.query": {
-    "en-US": "Primary text query input for local workspace files. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Use pattern when you want rg-style regex wording.",
-    "zh-CN": "面向本地工作区文件的主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。需要 rg 风格正则表达时优先使用 `pattern`。"
+    "en-US": "Primary text query input for local filesystem text files. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Use pattern when you want rg-style regex wording.",
+    "zh-CN": "面向本地文件系统纯文本文件的主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。需要 rg 风格正则表达时优先使用 `pattern`。"
   },
   "tool.spec.search.args.glob": {
     "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
@@ -2552,8 +2564,8 @@
     "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search local workspace text files only, never the web. Prefer query with path/glob to narrow the scope; switch to query_mode=regex only when needed; prefer context_before/context_after for surrounding lines.",
-    "zh-CN": "搜索本地工作区纯文本文件，不联网。优先使用 query + path/glob 缩小范围；只有需要正则时才改用 query_mode=regex；上下文请优先使用 context_before/context_after。"
+    "en-US": "Search local filesystem text files only, never the web. Prefer query with path/glob to narrow the scope; switch to query_mode=regex only when needed; prefer context_before/context_after for surrounding lines.",
+    "zh-CN": "搜索本地文件系统纯文本文件，不联网。优先使用 query + path/glob 缩小范围；只有需要正则时才改用 query_mode=regex；上下文请优先使用 context_before/context_after。"
   },
   "tool.spec.write.args.content": {
     "en-US": "File content.",

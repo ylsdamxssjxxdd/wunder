@@ -53,8 +53,7 @@ pub use catalog::{
 };
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};
 pub(crate) use context::{
-    collect_allow_roots, collect_read_roots, resolve_path_in_roots, resolve_tool_path,
-    roots_allow_any_path,
+    collect_allow_roots, collect_read_roots, resolve_tool_path, roots_allow_any_path,
 };
 pub use dispatch::{execute_builtin_tool, execute_tool};
 pub(crate) use freeform::{
@@ -123,7 +122,7 @@ use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Map, Value};
-use skill_call::render_skill_markdown_for_model;
+use skill_call::{parse_skill_name_candidates, render_skill_markdown_for_model};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -8489,22 +8488,18 @@ fn read_files_inner(
             "complete": false,
             "dry_run": dry_run
         });
-        let target = match workspace.resolve_path(user_id, raw_path) {
+        let target = match resolve_tool_path(workspace, user_id, raw_path, extra_roots) {
             Ok(path) => Some(path),
             Err(err) => {
-                if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
-                    Some(resolved)
-                } else {
-                    let message = err.to_string();
-                    outputs.push(format!(">>> {}\n{}", raw_path, message));
-                    failures.push(ReadFailure {
-                        kind: ReadFailureKind::PathInvalid,
-                    });
-                    if let Value::Object(ref mut map) = summary {
-                        map.insert("error".to_string(), Value::String(message));
-                    }
-                    None
+                let message = err.to_string();
+                outputs.push(format!(">>> {}\n{}", raw_path, message));
+                failures.push(ReadFailure {
+                    kind: ReadFailureKind::PathInvalid,
+                });
+                if let Value::Object(ref mut map) = summary {
+                    map.insert("error".to_string(), Value::String(message));
                 }
+                None
             }
         };
         let Some(target) = target else {
@@ -8858,7 +8853,7 @@ fn summarize_read_failure_for_model(failure: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
     {
-        "path_invalid" => format!("{path} 路径无效或超出工作区。"),
+        "path_invalid" => format!("{path} 路径无效或无法解析。"),
         "not_found" => format!("{path} 不存在。"),
         "binary" => {
             if failure
@@ -8889,7 +8884,7 @@ fn classify_read_failure(failures: &[ReadFailure]) -> (&'static str, String) {
     if all_are(ReadFailureKind::PathInvalid) {
         return (
             "TOOL_READ_PATH_INVALID",
-            "请使用相对路径，或直接传入当前工作区的 /workspaces/{user_id}/... 公共路径；不要越界到其他工作区。".to_string(),
+            "请使用当前工作目录相对路径、绝对路径，或直接传入 /workspaces/... 公共路径；若仍失败，请先 list_files 确认真实位置。".to_string(),
         );
     }
     if all_are(ReadFailureKind::Binary) {
@@ -8985,6 +8980,9 @@ async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<V
     if selected.is_none() {
         selected = context.skills.get(&raw_name);
     }
+    if selected.is_none() {
+        selected = resolve_skill_call_spec_from_roots(context, &raw_name);
+    }
 
     let Some(spec) = selected else {
         return Err(anyhow!(i18n::t_with_params(
@@ -9016,6 +9014,86 @@ async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<V
             "tree": tree
         }),
     ))
+}
+
+fn resolve_skill_call_spec_from_roots(
+    context: &ToolContext<'_>,
+    raw_name: &str,
+) -> Option<SkillSpec> {
+    let requested_owner = raw_name
+        .split_once('@')
+        .map(|(owner_id, _)| owner_id.trim().to_string())
+        .filter(|owner_id| !owner_id.is_empty());
+    let mut roots = Vec::new();
+    let mut seen_roots: HashSet<PathBuf> = HashSet::new();
+    let add_root = |root: PathBuf, roots: &mut Vec<PathBuf>, seen_roots: &mut HashSet<PathBuf>| {
+        if !root.exists() || !root.is_dir() {
+            return;
+        }
+        let key = normalize_path_for_compare(&normalize_existing_path(&root));
+        if seen_roots.insert(key) {
+            roots.push(root);
+        }
+    };
+
+    if let Some(store) = context.user_tool_store {
+        if let Some(owner_id) = requested_owner.as_deref() {
+            add_root(store.get_skill_root(owner_id), &mut roots, &mut seen_roots);
+        } else {
+            add_root(
+                store.get_skill_root(context.user_id),
+                &mut roots,
+                &mut seen_roots,
+            );
+            if let Some(bindings) = context.user_tool_bindings {
+                for owner_id in bindings.skill_sources.keys() {
+                    add_root(store.get_skill_root(owner_id), &mut roots, &mut seen_roots);
+                }
+            }
+        }
+    }
+    if let Some(bindings) = context.user_tool_bindings {
+        if let Some(owner_id) = requested_owner.as_deref() {
+            if let Some(source) = bindings.skill_sources.get(owner_id) {
+                add_root(source.root.clone(), &mut roots, &mut seen_roots);
+            }
+        } else {
+            for source in bindings.skill_sources.values() {
+                add_root(source.root.clone(), &mut roots, &mut seen_roots);
+            }
+        }
+    }
+
+    for root in roots {
+        if let Some(spec) = find_skill_spec_in_root_by_name(&root, raw_name) {
+            return Some(spec);
+        }
+    }
+    None
+}
+
+fn find_skill_spec_in_root_by_name(root: &Path, raw_name: &str) -> Option<SkillSpec> {
+    let candidates = parse_skill_name_candidates(raw_name);
+    if candidates.is_empty() || !root.exists() || !root.is_dir() {
+        return None;
+    }
+
+    let mut scan_config = Config::default();
+    scan_config.skills.paths = vec![root.to_string_lossy().to_string()];
+    let registry = crate::skills::load_skills(&scan_config, false, false, false);
+
+    let mut matches = Vec::new();
+    for candidate in candidates {
+        matches.extend(
+            registry
+                .list_specs()
+                .into_iter()
+                .filter(|spec| spec.name == candidate),
+        );
+    }
+    matches.sort_by(|left, right| left.name.cmp(&right.name));
+    matches.dedup_by(|left, right| left.path == right.path);
+    matches.into_iter().next()
 }
 
 fn build_skill_tree(root: &Path) -> Vec<String> {
@@ -10665,6 +10743,49 @@ mod tests {
     }
 
     #[test]
+    fn list_files_inner_reads_public_workspace_directory_outside_current_workspace_root() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("list-files-public.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let target_dir = workspace_root
+            .join("admin")
+            .join("skills")
+            .join("my-test-skill");
+        std::fs::create_dir_all(target_dir.join("assets")).expect("mkdir");
+        std::fs::write(target_dir.join("SKILL.md"), "# demo").expect("write skill");
+        std::fs::write(target_dir.join("assets").join("example.txt"), "hello")
+            .expect("write asset");
+
+        let value = list_files_inner(
+            &workspace,
+            "admin__c__1",
+            "/workspaces/admin/skills/my-test-skill",
+            &[PathBuf::from("/")],
+            2,
+            0,
+            20,
+        )
+        .expect("list files result");
+
+        assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
+        let items = value
+            .pointer("/data/items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(items.iter().any(|item| item.as_str() == Some("SKILL.md")));
+        assert!(items.iter().any(|item| item.as_str() == Some("assets/")));
+    }
+
+    #[test]
     fn parse_read_file_specs_accepts_shorthand_path_payload() {
         let specs = parse_read_file_specs(&json!({
             "path": "Cargo.toml",
@@ -10868,6 +10989,106 @@ mod tests {
         assert_eq!(budget.time_budget_ms, Some(9000));
         assert_eq!(budget.output_budget_bytes, Some(4096));
         assert_eq!(budget.max_files, Some(3));
+    }
+
+    #[tokio::test]
+    async fn skill_call_reads_skill_from_user_root_even_when_not_enabled() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("skill-call.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let config = Config::default();
+        let store = Arc::new(
+            crate::user_tools::UserToolStore::new(&config, workspace.clone()).expect("user store"),
+        );
+        let skill_root = store.get_skill_root("alice").join("draft-skill");
+        std::fs::create_dir_all(&skill_root).expect("create skill dir");
+        std::fs::write(
+            skill_root.join("SKILL.md"),
+            "---\nname: draft_skill\ndescription: draft description\n---\n# Draft Skill\nuse {{SKILL_ROOT}}\n",
+        )
+        .expect("write skill");
+
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let lsp_manager = LspManager::new(workspace.clone());
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_skill",
+            workspace_id: "alice",
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage: Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string())),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: Some(store.as_ref()),
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let result = execute_skill_call(&context, &json!({ "name": "draft_skill" }))
+            .await
+            .expect("skill call should succeed");
+
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["data"]["name"], "draft_skill");
+        assert_eq!(result["data"]["description"], "draft description");
+        assert_eq!(result["data"]["tree"], json!(["SKILL.md"]));
+        assert!(result["data"]["content"]
+            .as_str()
+            .expect("content string")
+            .contains("/draft-skill"));
+    }
+
+    #[test]
+    fn fallback_skill_lookup_honors_explicit_owner_alias() {
+        let dir = tempdir().expect("tempdir");
+        let alice_root = dir.path().join("alice-skills");
+        let bob_root = dir.path().join("bob-skills");
+        let alice_skill = alice_root.join("planner");
+        let bob_skill = bob_root.join("planner");
+        std::fs::create_dir_all(&alice_skill).expect("create alice skill dir");
+        std::fs::create_dir_all(&bob_skill).expect("create bob skill dir");
+        std::fs::write(
+            alice_skill.join("SKILL.md"),
+            "---\nname: planner\ndescription: alice planner\n---\n# Alice\n",
+        )
+        .expect("write alice skill");
+        std::fs::write(
+            bob_skill.join("SKILL.md"),
+            "---\nname: planner\ndescription: bob planner\n---\n# Bob\n",
+        )
+        .expect("write bob skill");
+
+        let selected = find_skill_spec_in_root_by_name(&bob_root, "bob@planner")
+            .expect("owner-qualified skill should resolve");
+        assert_eq!(selected.name, "planner");
+        assert_eq!(selected.description, "bob planner");
+        assert!(selected.path.replace('\\', "/").contains("/bob-skills/"));
     }
 
     #[test]

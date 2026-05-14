@@ -1626,9 +1626,11 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
 
 const reloadAgent = async () => {
   const requestId = nextAgentLoadRequestId();
-  void loadToolSummary();
-  void loadModelOptions();
-  await loadAgent(requestId);
+  await loadToolSummary({ force: true });
+  await Promise.all([
+    loadModelOptions(),
+    loadAgent(requestId)
+  ]);
 };
 
 const refreshAgentFromExternalChange = () => {

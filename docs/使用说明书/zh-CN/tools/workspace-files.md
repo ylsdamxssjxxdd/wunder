@@ -27,6 +27,7 @@ updated_at: 2026-04-10
 - 先定位关键词：`search_content`
 - 已经知道路径，读具体片段：`read_file`
 - 整文件创建或覆盖：`write_file`
+- 一次精确文本替换：`edit_file2`
 
 ## `list_files`
 
@@ -215,23 +216,17 @@ updated_at: 2026-04-10
 ```json
 {
   "path": "docs/demo.md",
-  "edits": [
-    {
-      "action": "replace",
-      "old_text": "old",
-      "new_text": "new",
-      "expected_count": 1
-    }
-  ]
+  "old_text": "old",
+  "new_text": "new"
 }
 ```
 
 ### 适用场景
 
-- `replace`：替换精确匹配的旧文本
-- `replace_between`：替换两个标记之间的整段文本
-- `insert_before` / `insert_after`：围绕锚点插入内容
-- `append` / `prepend`：在文件结尾或开头追加内容
+- 只做一次精确文本替换
+- `old_text` 必须和文件当前内容完全一致
+- 删除文本时把 `new_text` 设为空字符串
+- 如果要一次替换多处，可加 `expected_count`；工具会要求匹配次数完全一致
 
 ### 成功返回
 
@@ -263,9 +258,15 @@ updated_at: 2026-04-10
 
 ### 什么时候更适合用它
 
-- `apply_patch` 对当前模型太严格，常因 patch 语法失败
-- 直接整文件 `write_file` 替换又太宽泛
-- 你已经能给出精确的 old_text、marker 或 anchor
+- 你已经通过 `read_file` 拿到精确原文
+- 目标修改能写成一次 `old_text` -> `new_text`
+- 不需要正则、条件判断、标记间替换或多步骤编辑
+
+### 什么时候不要用它
+
+- 要做复杂替换、正则替换、跨多段编辑或带条件逻辑时，改用 `programmatic_tool_call` 写 Python 脚本。
+- 要整文件生成或覆盖时，改用 `write_file`。
+- 要小范围代码补丁且需要上下文审查时，改用 [应用补丁](/docs/zh-CN/tools/apply-patch/)。
 
 ## `write_file`
 

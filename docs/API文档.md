@@ -1924,10 +1924,10 @@
 - 返回（JSON）：
   - `enabled`：固定为 true
   - `api_url`：OnlyOffice `api.js` 地址
-  - `config`：传给 `DocsAPI.DocEditor` 的编辑器配置，包含短期签名的文件拉取地址、`token`，以及可编辑格式的保存回调地址
+  - `config`：传给 `DocsAPI.DocEditor` 的编辑器配置，包含短期签名的文件拉取地址、`token`、可编辑格式的保存回调地址，以及 OnlyOffice AI 后台插件的 `editorConfig.plugins` 自动启动配置
   - `path`：规范化后的文件路径
   - `updated_time`：文件更新时间
-- 约束：支持 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式（如 `doc/docx/xls/xlsx/ppt/pptx/wps/wpt/et/ett/dps/dpt/pdf/txt/md/py/js/json/odt/ods/odp/csv/rtf/vsdx` 等）；必须配置 `onlyoffice.enabled=true`、`onlyoffice.document_server_url` 或 `onlyoffice.api_url`、`onlyoffice.public_base_url` 以及 `onlyoffice.jwt_secret`。纯文本/代码类扩展以 `txt` 类型交给 OnlyOffice 打开并回写原路径；XPS/DjVu/Visio 图等查看类格式以只读模式打开。`public_base_url` 必须能被 OnlyOffice Document Server 访问。
+- 约束：支持 Office、WPS 系列、PDF、纯文本/代码、XPS、DjVu、Visio 图等 OnlyOffice 支持格式（如 `doc/docx/xls/xlsx/ppt/pptx/wps/wpt/et/ett/dps/dpt/pdf/txt/md/py/js/json/odt/ods/odp/csv/rtf/vsdx` 等）；必须配置 `onlyoffice.enabled=true`、`onlyoffice.document_server_url` 或 `onlyoffice.api_url`、`onlyoffice.public_base_url` 以及 `onlyoffice.jwt_secret`。纯文本/代码类扩展以 `txt` 类型交给 OnlyOffice 打开并回写原路径；XPS/DjVu/Visio 图等查看类格式以只读模式打开。`public_base_url` 必须能被 OnlyOffice Document Server 访问。仓库 compose 的 `wunder-onlyoffice` 启动脚本会把内置 AI 插件加入 Document Server 插件 autostart，编辑器配置也会显式加载该插件；AI 菜单可见不代表模型已可调用，模型/provider 仍需在 OnlyOffice AI 设置中完成配置。
 
 ### 4.1.23.2 `/wunder/workspace/onlyoffice/file`
 

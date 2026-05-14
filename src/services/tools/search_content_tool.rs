@@ -1992,7 +1992,7 @@ fn rank_search_hits(
 
 fn build_search_scope(resolved_path: &str) -> Value {
     json!({
-        "kind": "workspace_local",
+        "kind": "local_filesystem",
         "local_only": true,
         "supports_web": false,
         "resolved_path": resolved_path,
@@ -2001,25 +2001,25 @@ fn build_search_scope(resolved_path: &str) -> Value {
 
 fn build_search_scope_note(resolved_path: &str) -> String {
     format!(
-        "Searches local workspace text files only under `{resolved_path}`. This tool does not search the web; use list_files first if the path is uncertain."
+        "Searches local filesystem text files only under `{resolved_path}`. This tool does not search the web; use list_files first if the path is uncertain."
     )
 }
 
 fn build_zero_hit_search_hint(params: &SearchParams, scanned_files: usize) -> String {
     if scanned_files == 0 {
-        return "No readable local text files were scanned. This tool only searches local workspace files, not the web. Use list_files first or widen path/glob.".to_string();
+        return "No readable local text files were scanned. This tool only searches the local filesystem, not the web. Use list_files first or widen path/glob.".to_string();
     }
     let fallback_terms = literal_query_fallback_terms(&params.query);
     if !fallback_terms.is_empty() {
         return format!(
-            "No exact hit in local workspace files. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
+            "No exact hit in local filesystem text files. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
             fallback_terms.join(" | ")
         );
     }
     if params.query_source == QuerySource::Pattern && params.query_mode_inferred {
-        return "No hit in local workspace files. pattern defaults to regex; use -F or query_mode=literal for fixed-string matching.".to_string();
+        return "No hit in local filesystem text files. pattern defaults to regex; use -F or query_mode=literal for fixed-string matching.".to_string();
     }
-    "No hits in local workspace files. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape.".to_string()
+    "No hits in local filesystem text files. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape.".to_string()
 }
 
 fn build_search_summary(

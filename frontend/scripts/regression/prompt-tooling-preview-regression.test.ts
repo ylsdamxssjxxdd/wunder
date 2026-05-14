@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolveAbilityVisual } from '../../src/utils/abilityVisuals';
+import { resolveAbilityVisual, resolveToolIconClass } from '../../src/utils/abilityVisuals';
 import { resolveAgentOverviewAbilityCounts } from '../../src/views/messenger/agentOverviewAbilities';
 import {
   extractPromptToolingPreview,
@@ -20,6 +20,12 @@ test('prompt tooling preview infers skill meta for skill-like tools', () => {
       source: 'skills'
     }
   );
+});
+
+test('text edit tool uses a dedicated file edit icon', () => {
+  assert.equal(resolveToolIconClass('edit_file2'), 'fa-file-pen');
+  assert.equal(resolveToolIconClass('文本编辑'), 'fa-file-pen');
+  assert.equal(resolveAbilityVisual({ name: '文本编辑' }).icon, 'fa-file-pen');
 });
 
 test('prompt tooling preview keeps MCP and knowledge tones aligned with shared ability visuals', () => {

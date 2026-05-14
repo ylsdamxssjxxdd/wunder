@@ -91,6 +91,7 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['读取文件'], icon: 'fa-file-lines', tone: 'file' },
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
   { keywords: ['写入文件'], icon: 'fa-file-circle-plus', tone: 'file' },
+  { keywords: ['edit_file2', 'text edit', 'text_editor', 'text editor', '文本编辑'], icon: 'fa-file-pen', tone: 'file' },
   { keywords: ['apply_patch', 'apply patch'], icon: 'fa-pen-to-square', tone: 'file' },
   { keywords: ['应用补丁'], icon: 'fa-pen-to-square', tone: 'file' },
   { keywords: ['programmatic_tool_call', 'ptc'], icon: 'fa-code', tone: 'file' },
