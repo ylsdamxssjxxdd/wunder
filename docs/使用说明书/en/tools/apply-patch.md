@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools/apply_patch_tool.rs
   - src/services/tools/tool_apply_patch.lark
-updated_at: 2026-05-08
+updated_at: 2026-05-14
 ---
 
 # Apply Patch
@@ -37,7 +37,7 @@ From the model side, the only common inputs are:
 - `input`
 - `dry_run`
 
-## Minimal workflow for weaker models
+## Minimal Stable Workflow
 
 Follow this order for the highest success rate:
 
@@ -45,7 +45,7 @@ Follow this order for the highest success rate:
 2. Build only one very small patch at a time
 3. If you are unsure whether the context is stable, add `dry_run` first
 4. Only apply for real after the preview succeeds
-5. If the edit spans many distant regions or is close to a whole-file rewrite, switch to `write_file`
+5. If the edit spans many distant regions or is close to a whole-file rewrite, switch to `write_file` or a Python script
 
 ## Hard rules for Update File hunks
 
@@ -55,6 +55,18 @@ Follow this order for the highest success rate:
 - Do not leave both the old and new versions as ordinary context lines
 - Never copy `read_file` display artifacts such as `>>> path`, `N: ` line numbers, or separators
 - Prefer 2-3 lines of raw current-file context around each change
+
+The tool tolerates a few common input mistakes to improve first-call success: omitting `*** Begin Patch` when the payload starts with a file operation header, using unified diff headers such as `@@ -1,3 +1,3 @@`, writing `@@` inside `Add File`, or forgetting `+` prefixes in `Add File`. These are compatibility repairs; models should still prefer the smallest standard form.
+
+## Minimum Add File Format
+
+```text
+*** Begin Patch
+*** Add File: notes.txt
++first line
++second line
+*** End Patch
+```
 
 ## Success result
 

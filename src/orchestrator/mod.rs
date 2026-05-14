@@ -167,4 +167,152 @@ impl Orchestrator {
             http: reqwest::Client::new(),
         }
     }
+
+    pub async fn resolve_session_effective_tool_names(
+        &self,
+        user: &crate::storage::UserAccountRecord,
+        session: &crate::storage::ChatSessionRecord,
+    ) -> Vec<String> {
+        const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
+        let config = self.config_store.get().await;
+        let skills = self.skills.read().await.clone();
+        let bindings = self
+            .user_tool_manager
+            .build_bindings(&config, &skills, &user.user_id);
+        let user_context = crate::user_access::UserToolContext {
+            config: config.clone(),
+            skills,
+            bindings,
+            tool_access: self.storage.get_user_tool_access(&user.user_id).ok().flatten(),
+        };
+        let mut allowed = crate::user_access::compute_allowed_tool_names(user, &user_context);
+        let agent_record = if let Some(agent_id) = session
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if agent_id.eq_ignore_ascii_case("__default__") || agent_id.eq_ignore_ascii_case("default")
+            {
+                None
+            } else {
+                self.storage.get_user_agent_by_id(agent_id).ok().flatten()
+            }
+        } else {
+            None
+        };
+        let frozen_tool_overrides = self
+            .workspace
+            .load_session_frozen_tool_overrides(&user.user_id, &session.session_id);
+        let overrides = if !session.tool_overrides.is_empty() {
+            normalize_tool_overrides_for_session(session.tool_overrides.clone(), TOOL_OVERRIDE_NONE)
+        } else if let Some(snapshot) = frozen_tool_overrides {
+            normalize_tool_overrides_for_session(snapshot, TOOL_OVERRIDE_NONE)
+        } else {
+            crate::services::agent_abilities::resolve_agent_runtime_tool_names(
+                &agent_record
+                    .as_ref()
+                    .map(|record| record.tool_names.clone())
+                    .unwrap_or_default(),
+                &agent_record
+                    .as_ref()
+                    .map(|record| record.declared_tool_names.clone())
+                    .unwrap_or_default(),
+                &agent_record
+                    .as_ref()
+                    .map(|record| record.declared_skill_names.clone())
+                    .unwrap_or_default(),
+            )
+        };
+        let agent_defaults = crate::services::agent_abilities::resolve_agent_runtime_tool_names(
+            &agent_record
+                .as_ref()
+                .map(|record| record.tool_names.clone())
+                .unwrap_or_default(),
+            &agent_record
+                .as_ref()
+                .map(|record| record.declared_tool_names.clone())
+                .unwrap_or_default(),
+            &agent_record
+                .as_ref()
+                .map(|record| record.declared_skill_names.clone())
+                .unwrap_or_default(),
+        );
+        allowed =
+            apply_session_tool_overrides_for_allowed(allowed, &overrides, &agent_defaults, TOOL_OVERRIDE_NONE);
+        let mut output = allowed.into_iter().collect::<Vec<_>>();
+        output.sort();
+        output
+    }
+}
+
+fn normalize_tool_overrides_for_session(values: Vec<String>, none_token: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    let mut has_none = false;
+    for raw in values {
+        let name = raw.trim().to_string();
+        if name.is_empty() || seen.contains(&name) {
+            continue;
+        }
+        if name == none_token {
+            has_none = true;
+        }
+        seen.insert(name.clone());
+        output.push(name);
+    }
+    if has_none {
+        vec![none_token.to_string()]
+    } else {
+        output
+    }
+}
+
+fn resolve_override_name_with_allowed_for_session(
+    raw: &str,
+    allowed: &HashSet<String>,
+) -> Option<String> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if allowed.contains(cleaned) {
+        return Some(cleaned.to_string());
+    }
+    for (index, _) in cleaned.match_indices('@') {
+        let suffix = cleaned[index + 1..].trim();
+        if !suffix.is_empty() && allowed.contains(suffix) {
+            return Some(suffix.to_string());
+        }
+    }
+    None
+}
+
+fn apply_session_tool_overrides_for_allowed(
+    allowed: HashSet<String>,
+    overrides: &[String],
+    agent_defaults: &[String],
+    none_token: &str,
+) -> HashSet<String> {
+    if overrides.is_empty() {
+        return allowed;
+    }
+    if overrides.iter().any(|name| name == none_token) {
+        return HashSet::new();
+    }
+    let scoped_defaults: HashSet<String> = agent_defaults
+        .iter()
+        .map(String::as_str)
+        .filter_map(|name| resolve_override_name_with_allowed_for_session(name, &allowed))
+        .collect();
+    let mut filtered = HashSet::new();
+    for raw in overrides {
+        if let Some(mapped) = resolve_override_name_with_allowed_for_session(raw, &allowed) {
+            if !scoped_defaults.is_empty() && !scoped_defaults.contains(&mapped) {
+                continue;
+            }
+            filtered.insert(mapped);
+        }
+    }
+    filtered
 }

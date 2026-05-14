@@ -37,6 +37,7 @@ struct EditInstruction {
 struct EditInstructionOutcome {
     action: &'static str,
     changed: bool,
+    already_applied: bool,
     matches: usize,
     inserted_bytes: usize,
 }
@@ -56,7 +57,14 @@ struct EditFile2Outcome {
     previous_bytes: u64,
     new_bytes: usize,
     change_count: usize,
+    already_applied_count: usize,
     instruction_results: Vec<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplaceCandidate {
+    old_text: String,
+    new_text: String,
 }
 
 pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -99,18 +107,16 @@ pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Resul
     let outcome = match outcome {
         Ok(Ok(outcome)) => outcome,
         Ok(Err(err)) | Err(err) => {
+            let error = err.to_string();
             return Ok(build_failed_tool_result(
-                format!("文本编辑失败：{err}"),
+                format!("文本编辑失败：{error}"),
                 json!({
                     "path": plan.path,
                     "dry_run": plan.dry_run,
                 }),
                 ToolErrorMeta::new(
                     "TOOL_EDIT2_FAILED",
-                    Some(
-                        "请先 read_file 读取最新文本，并确认 old_text 与文件内容完全一致；多处、条件或跨段替换请改用 programmatic_tool_call 写 Python 脚本。"
-                            .to_string(),
-                    ),
+                    Some(build_edit_file2_failure_hint(&error)),
                     true,
                     Some(200),
                 ),
@@ -132,6 +138,11 @@ pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Resul
                 "Validated {} edit steps for {} without writing.",
                 outcome.change_count, plan.path
             )
+        } else if outcome.change_count == 0 && outcome.already_applied_count > 0 {
+            format!(
+                "No changes needed for {}; requested edit was already applied.",
+                plan.path
+            )
         } else if outcome.existed {
             format!(
                 "Updated file {} with {} edit steps.",
@@ -151,10 +162,24 @@ pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Resul
             "previous_bytes": outcome.previous_bytes,
             "bytes": outcome.new_bytes,
             "edit_count": outcome.change_count,
+            "already_applied_count": outcome.already_applied_count,
             "edits": outcome.instruction_results,
             "lsp": lsp_info
         }),
     ))
+}
+
+fn build_edit_file2_failure_hint(error: &str) -> String {
+    if error.contains("target not found") {
+        return "old_text 未在当前文件中找到。请 read_file 读取最新片段后重试；如果刚刚已经替换成功，检查结果里是否显示 already_applied；复杂或条件替换请改用 programmatic_tool_call 写 Python 脚本。".to_string();
+    }
+    if error.contains("expected exactly 1 match") {
+        return "old_text 匹配到多处。请把 old_text 扩大到包含足够上下文，使它只出现一次；如果确实要替换全部匹配，请设置 expected_count 为实际匹配数。".to_string();
+    }
+    if error.contains("expected") && error.contains("matches") && error.contains("got") {
+        return "old_text 的匹配次数与 expected_count 不一致。请 read_file 确认当前文件内容和实际出现次数，再修正 old_text 或 expected_count。".to_string();
+    }
+    "请先 read_file 读取最新文本，并确认 old_text 与文件内容完全一致；多处、条件或跨段替换请改用 programmatic_tool_call 写 Python 脚本。".to_string()
 }
 
 fn parse_edit_file2_plan(
@@ -499,6 +524,7 @@ fn execute_edit_file2_plan(
     };
     let mut current = previous_text.clone();
     let mut change_count = 0usize;
+    let mut already_applied_count = 0usize;
     let mut instruction_results = Vec::with_capacity(instructions.len());
 
     for instruction in instructions {
@@ -506,24 +532,29 @@ fn execute_edit_file2_plan(
         if outcome.changed {
             change_count += 1;
         }
+        if outcome.already_applied {
+            already_applied_count += 1;
+        }
         instruction_results.push(json!({
             "action": outcome.action,
             "changed": outcome.changed,
+            "already_applied": outcome.already_applied,
             "matches": outcome.matches,
             "bytes": outcome.inserted_bytes,
         }));
     }
-    if change_count == 0 {
+    let all_already_applied = change_count == 0 && already_applied_count == instructions.len();
+    if change_count == 0 && !all_already_applied {
         return Err(anyhow!("没有产生任何实际修改"));
     }
     if ensure_newline && !current.ends_with('\n') {
         current.push('\n');
     }
-    if current == previous_text {
+    if current == previous_text && !all_already_applied {
         return Err(anyhow!("编辑后的文本与原文件完全相同"));
     }
 
-    if !dry_run {
+    if !dry_run && !all_already_applied {
         let workspace_root = workspace.workspace_root(user_id);
         let default_workspace_target = workspace.resolve_path(user_id, path_for_write)?;
         if is_within_root(&workspace_root, &target)
@@ -545,6 +576,7 @@ fn execute_edit_file2_plan(
         previous_bytes,
         new_bytes: current.len(),
         change_count,
+        already_applied_count,
         instruction_results,
     })
 }
@@ -568,21 +600,35 @@ fn apply_replace(
     instruction: &EditInstruction,
 ) -> Result<EditInstructionOutcome> {
     let old_text = instruction.old_text.as_deref().unwrap_or("");
-    let matches = text.matches(old_text).count();
-    validate_match_count("replace", matches, instruction)?;
-    let replaced = if instruction.replace_all {
-        text.replace(old_text, &instruction.new_text)
-    } else {
-        text.replacen(old_text, &instruction.new_text, 1)
-    };
-    let changed = replaced != *text;
-    *text = replaced;
-    Ok(EditInstructionOutcome {
-        action: "replace",
-        changed,
-        matches,
-        inserted_bytes: instruction.new_text.len(),
-    })
+    let mut best_matches = 0usize;
+    for candidate in build_replace_candidates(text, old_text, &instruction.new_text) {
+        let matches = text.matches(candidate.old_text.as_str()).count();
+        best_matches = best_matches.max(matches);
+        if validate_match_count("replace", matches, instruction).is_err() {
+            continue;
+        }
+        let replaced = if instruction.replace_all {
+            text.replace(candidate.old_text.as_str(), candidate.new_text.as_str())
+        } else {
+            text.replacen(candidate.old_text.as_str(), candidate.new_text.as_str(), 1)
+        };
+        let changed = replaced != *text;
+        *text = replaced;
+        return Ok(EditInstructionOutcome {
+            action: "replace",
+            changed,
+            already_applied: false,
+            matches,
+            inserted_bytes: candidate.new_text.len(),
+        });
+    }
+    if best_matches == 0 {
+        if let Some(outcome) = detect_already_applied_replace(text, instruction) {
+            return Ok(outcome);
+        }
+    }
+    validate_match_count("replace", best_matches, instruction)?;
+    unreachable!("match count validation should have returned or errored")
 }
 
 fn apply_replace_between(
@@ -614,6 +660,7 @@ fn apply_replace_between(
     Ok(EditInstructionOutcome {
         action: "replace_between",
         changed,
+        already_applied: false,
         matches: 1,
         inserted_bytes: instruction.new_text.len(),
     })
@@ -638,6 +685,7 @@ fn apply_insert_before(
     Ok(EditInstructionOutcome {
         action: "insert_before",
         changed,
+        already_applied: false,
         matches: 1,
         inserted_bytes: instruction.new_text.len(),
     })
@@ -663,6 +711,7 @@ fn apply_insert_after(
     Ok(EditInstructionOutcome {
         action: "insert_after",
         changed,
+        already_applied: false,
         matches: 1,
         inserted_bytes: instruction.new_text.len(),
     })
@@ -677,6 +726,7 @@ fn apply_append(
     Ok(EditInstructionOutcome {
         action: "append",
         changed,
+        already_applied: false,
         matches: 1,
         inserted_bytes: instruction.new_text.len(),
     })
@@ -694,6 +744,7 @@ fn apply_prepend(
     Ok(EditInstructionOutcome {
         action: "prepend",
         changed,
+        already_applied: false,
         matches: 1,
         inserted_bytes: instruction.new_text.len(),
     })
@@ -729,6 +780,116 @@ fn find_all_positions(text: &str, needle: &str) -> Vec<usize> {
         return Vec::new();
     }
     text.match_indices(needle).map(|(index, _)| index).collect()
+}
+
+fn build_replace_candidates(source: &str, old_text: &str, new_text: &str) -> Vec<ReplaceCandidate> {
+    let target_line_ending = dominant_line_ending(source);
+    let mut candidates = Vec::new();
+    push_replace_candidate(&mut candidates, old_text.to_string(), new_text.to_string());
+    push_replace_candidate(
+        &mut candidates,
+        convert_line_endings(old_text, target_line_ending),
+        convert_line_endings(new_text, target_line_ending),
+    );
+    if let Some(stripped_old_text) = strip_read_file_display_markers(old_text) {
+        push_replace_candidate(
+            &mut candidates,
+            stripped_old_text.clone(),
+            new_text.to_string(),
+        );
+        push_replace_candidate(
+            &mut candidates,
+            convert_line_endings(stripped_old_text.as_str(), target_line_ending),
+            convert_line_endings(new_text, target_line_ending),
+        );
+    }
+    candidates
+}
+
+fn push_replace_candidate(
+    candidates: &mut Vec<ReplaceCandidate>,
+    old_text: String,
+    new_text: String,
+) {
+    if old_text.is_empty()
+        || candidates
+            .iter()
+            .any(|candidate| candidate.old_text == old_text && candidate.new_text == new_text)
+    {
+        return;
+    }
+    candidates.push(ReplaceCandidate { old_text, new_text });
+}
+
+fn dominant_line_ending(text: &str) -> &'static str {
+    let crlf = text.matches("\r\n").count();
+    let lf = text.matches('\n').count().saturating_sub(crlf);
+    if crlf > lf {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn convert_line_endings(text: &str, line_ending: &str) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    if line_ending == "\r\n" {
+        normalized.replace('\n', "\r\n")
+    } else {
+        normalized
+    }
+}
+
+fn strip_read_file_display_markers(raw: &str) -> Option<String> {
+    let normalized = convert_line_endings(raw, "\n");
+    let mut changed = false;
+    let mut output = Vec::new();
+    for line in normalized.split('\n') {
+        if line.starts_with(">>> ") {
+            changed = true;
+            continue;
+        }
+        if let Some(stripped) = strip_read_file_line_number(line) {
+            changed = true;
+            output.push(stripped);
+        } else {
+            output.push(line.to_string());
+        }
+    }
+    changed.then(|| output.join("\n"))
+}
+
+fn strip_read_file_line_number(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let digit_count = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return None;
+    }
+    let rest = trimmed.get(digit_count..)?.strip_prefix(':')?;
+    let content = rest.strip_prefix(' ')?;
+    Some(content.to_string())
+}
+
+fn detect_already_applied_replace(
+    text: &str,
+    instruction: &EditInstruction,
+) -> Option<EditInstructionOutcome> {
+    if !instruction.unique
+        || instruction.replace_all
+        || instruction.expected_count.is_some()
+        || instruction.new_text.is_empty()
+    {
+        return None;
+    }
+    let target_line_ending = dominant_line_ending(text);
+    let new_text = convert_line_endings(&instruction.new_text, target_line_ending);
+    (text.matches(new_text.as_str()).count() == 1).then_some(EditInstructionOutcome {
+        action: "replace",
+        changed: false,
+        already_applied: true,
+        matches: 0,
+        inserted_bytes: new_text.len(),
+    })
 }
 
 #[cfg(test)]
@@ -809,6 +970,74 @@ mod tests {
         )
         .expect_err("should reject");
         assert!(err.to_string().contains("expected exactly 1 match"));
+    }
+
+    #[test]
+    fn apply_replace_strips_read_file_display_markers_on_retry() {
+        let mut text = "alpha\nbeta\ngamma\n".to_string();
+        let result = apply_replace(
+            &mut text,
+            &EditInstruction {
+                action: EditAction::Replace,
+                old_text: Some(">>> demo.txt\n1: alpha\n2: beta".to_string()),
+                new_text: "ALPHA\nBETA".to_string(),
+                start_marker: None,
+                end_marker: None,
+                anchor: None,
+                replace_all: false,
+                expected_count: None,
+                unique: true,
+            },
+        )
+        .expect("display-formatted old_text should be repaired");
+        assert!(result.changed);
+        assert_eq!(result.matches, 1);
+        assert_eq!(text, "ALPHA\nBETA\ngamma\n");
+    }
+
+    #[test]
+    fn apply_replace_converts_line_endings_to_target_file_style() {
+        let mut text = "alpha\r\nbeta\r\ngamma\r\n".to_string();
+        let result = apply_replace(
+            &mut text,
+            &EditInstruction {
+                action: EditAction::Replace,
+                old_text: Some("alpha\nbeta".to_string()),
+                new_text: "ALPHA\nBETA".to_string(),
+                start_marker: None,
+                end_marker: None,
+                anchor: None,
+                replace_all: false,
+                expected_count: None,
+                unique: true,
+            },
+        )
+        .expect("line endings should be normalized for matching");
+        assert!(result.changed);
+        assert_eq!(text, "ALPHA\r\nBETA\r\ngamma\r\n");
+    }
+
+    #[test]
+    fn apply_replace_reports_already_applied_for_unique_replacement() {
+        let mut text = "alpha\nBETA\ngamma\n".to_string();
+        let result = apply_replace(
+            &mut text,
+            &EditInstruction {
+                action: EditAction::Replace,
+                old_text: Some("beta".to_string()),
+                new_text: "BETA".to_string(),
+                start_marker: None,
+                end_marker: None,
+                anchor: None,
+                replace_all: false,
+                expected_count: None,
+                unique: true,
+            },
+        )
+        .expect("already-applied replacement should be idempotent");
+        assert!(!result.changed);
+        assert!(result.already_applied);
+        assert_eq!(text, "alpha\nBETA\ngamma\n");
     }
 
     #[test]

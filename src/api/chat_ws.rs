@@ -946,6 +946,7 @@ async fn handle_ws(
                             &session_id,
                             command,
                             session_record.agent_id.as_deref(),
+                            None,
                         )
                         .await;
                         match result {

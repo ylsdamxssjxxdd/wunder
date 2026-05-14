@@ -63,12 +63,6 @@ const normalizeNameList = (list: unknown): string[] => {
   return output;
 };
 
-const AUTO_INJECTED_GOAL_TOOL_NAMES = new Set([
-  'get_goal',
-  'create_goal',
-  'update_goal'
-]);
-
 const shouldKeepToolName = (
   name: string,
   options?: AgentToolCatalogOptions
@@ -76,7 +70,7 @@ const shouldKeepToolName = (
   if (!options?.hideAutoInjectedGoalTools) {
     return true;
   }
-  return !AUTO_INJECTED_GOAL_TOOL_NAMES.has(String(name || '').trim());
+  return true;
 };
 
 const normalizeToolList = <T extends ToolOptionLike>(

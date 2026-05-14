@@ -227,6 +227,9 @@ Important fields:
 - `old_text` must match the current file content exactly
 - To delete text, set `new_text` to an empty string
 - To replace multiple identical matches, set `expected_count`; the tool will fail unless the count matches exactly
+- If `old_text` accidentally includes `read_file` headers or line numbers, the tool tries to strip them after the first match fails
+- If the file uses CRLF line endings, the tool retries with the target file's line-ending style
+- If the replacement has already been applied uniquely, the tool returns `already_applied` instead of failing
 
 ### Success result
 
@@ -244,10 +247,12 @@ Important fields:
     "previous_bytes": 12,
     "bytes": 12,
     "edit_count": 1,
+    "already_applied_count": 0,
     "edits": [
       {
         "action": "replace",
         "changed": true,
+        "already_applied": false,
         "matches": 1,
         "bytes": 3
       }
@@ -261,6 +266,7 @@ Important fields:
 - You already read the exact current text with `read_file`
 - The edit can be expressed as one `old_text` -> `new_text` replacement
 - You do not need regex, conditions, marker-bounded replacement, or multiple edit steps
+- If `old_text` matches multiple places, make it longer with surrounding context; only set `expected_count` when you intentionally want all matches replaced
 
 ### When not to use it
 

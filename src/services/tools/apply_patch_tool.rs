@@ -707,7 +707,7 @@ fn unwrap_nested_patch_input(raw: &str) -> Option<String> {
         if trimmed.is_empty() {
             return None;
         }
-        if trimmed.starts_with(BEGIN_PATCH_MARKER) {
+        if starts_with_patch_payload(trimmed) {
             return Some(trimmed.to_string());
         }
         let parsed = serde_json::from_str::<Value>(trimmed).ok()?;
@@ -718,7 +718,7 @@ fn unwrap_nested_patch_input(raw: &str) -> Option<String> {
         return None;
     }
     let trimmed = current.trim();
-    if trimmed.starts_with(BEGIN_PATCH_MARKER) {
+    if starts_with_patch_payload(trimmed) {
         return Some(trimmed.to_string());
     }
     None
@@ -755,7 +755,62 @@ fn value_to_patch_candidate(value: &Value) -> Option<String> {
 
 fn normalize_patch_text(input: &str) -> String {
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = repair_patch_envelope(&normalized);
     repair_common_patch_format_issues(&normalized)
+}
+
+fn repair_patch_envelope(input: &str) -> String {
+    let trimmed = strip_surrounding_markdown_fence(input.trim());
+    if trimmed.starts_with(BEGIN_PATCH_MARKER) {
+        return trimmed.to_string();
+    }
+    if starts_with_patch_file_op(trimmed)
+        && trimmed
+            .lines()
+            .last()
+            .is_some_and(|line| line.trim() == END_PATCH_MARKER)
+    {
+        return format!("{BEGIN_PATCH_MARKER}\n{trimmed}");
+    }
+    trimmed.to_string()
+}
+
+fn strip_surrounding_markdown_fence(input: &str) -> &str {
+    let mut lines = input.lines();
+    let Some(first) = lines.next() else {
+        return input;
+    };
+    if !first.trim_start().starts_with("```") {
+        return input;
+    }
+    let Some(last) = input.lines().last() else {
+        return input;
+    };
+    if last.trim() != "```" {
+        return input;
+    }
+    let body_start = first.len()
+        + input[first.len()..]
+            .chars()
+            .next()
+            .map_or(0, char::len_utf8);
+    let body_end = input.len().saturating_sub(last.len());
+    input
+        .get(body_start..body_end)
+        .map(str::trim)
+        .unwrap_or(input)
+}
+
+fn starts_with_patch_payload(input: &str) -> bool {
+    input.starts_with(BEGIN_PATCH_MARKER) || starts_with_patch_file_op(input)
+}
+
+fn starts_with_patch_file_op(input: &str) -> bool {
+    input
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .and_then(|line| normalized_file_op_header(line))
+        .is_some()
 }
 
 fn repair_common_patch_format_issues(input: &str) -> String {
@@ -769,7 +824,9 @@ fn repair_common_patch_format_issues(input: &str) -> String {
         let line = lines[index].clone();
         repaired.push(line.clone());
         index += 1;
-        if !line.starts_with(UPDATE_FILE_MARKER) {
+        let is_update_header = normalized_file_op_header(&line)
+            .is_some_and(|header| header.starts_with(UPDATE_FILE_MARKER));
+        if !is_update_header {
             continue;
         }
         if index < lines.len() && lines[index].starts_with(MOVE_TO_MARKER) {
@@ -783,8 +840,8 @@ fn repair_common_patch_format_issues(input: &str) -> String {
                 index += 1;
                 continue;
             }
-            if raw == "@@" || raw.starts_with("@@ ") {
-                repaired.push(lines[index].clone());
+            if let Some(header) = normalized_update_hunk_header(raw) {
+                repaired.push(header);
                 index += 1;
                 continue;
             }
@@ -792,8 +849,7 @@ fn repair_common_patch_format_issues(input: &str) -> String {
             while index < lines.len()
                 && !is_file_op_header(lines[index].as_str())
                 && lines[index].trim() != END_OF_FILE_MARKER
-                && lines[index].as_str() != "@@"
-                && !lines[index].starts_with("@@ ")
+                && normalized_update_hunk_header(lines[index].as_str()).is_none()
             {
                 index += 1;
             }
@@ -801,6 +857,61 @@ fn repair_common_patch_format_issues(input: &str) -> String {
         }
     }
     repaired.join("\n")
+}
+
+fn normalized_update_hunk_header(raw: &str) -> Option<String> {
+    if raw == "@@" {
+        return Some("@@".to_string());
+    }
+    if let Some(anchor) = unified_diff_header_anchor(raw) {
+        return if anchor.is_empty() {
+            Some("@@".to_string())
+        } else {
+            Some(format!("@@ {anchor}"))
+        };
+    }
+    raw.strip_prefix("@@ ")
+        .filter(|anchor| !anchor.trim().is_empty())
+        .map(|_| raw.to_string())
+}
+
+fn unified_diff_header_anchor(raw: &str) -> Option<String> {
+    let rest = raw.strip_prefix("@@ ")?;
+    let (old_range, rest) = next_token(rest)?;
+    let (new_range, rest) = next_token(rest)?;
+    let rest = rest.trim_start();
+    let anchor = rest.strip_prefix("@@")?.trim();
+    old_range
+        .strip_prefix('-')
+        .filter(|range| is_unified_diff_range(range))?;
+    new_range
+        .strip_prefix('+')
+        .filter(|range| is_unified_diff_range(range))?;
+    Some(anchor.to_string())
+}
+
+fn next_token(raw: &str) -> Option<(&str, &str)> {
+    let trimmed = raw.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+    Some((&trimmed[..end], &trimmed[end..]))
+}
+
+fn is_unified_diff_range(raw: &str) -> bool {
+    let mut parts = raw.split(',');
+    let Some(start) = parts.next() else {
+        return false;
+    };
+    if start.is_empty() || !start.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    match (parts.next(), parts.next()) {
+        (None, None) => true,
+        (Some(count), None) => !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit()),
+        _ => false,
+    }
 }
 
 fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
@@ -813,11 +924,24 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
         .filter(|line| line.trim() != "***")
         .all(|line| matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
     if prefixed_ignoring_separator {
-        return lines
+        let repaired = lines
             .iter()
             .filter(|line| line.trim() != "***")
             .map(|line| strip_line_number_from_prefixed_line(line))
-            .collect();
+            .collect::<Vec<_>>();
+        let repaired_numbered_context = lines
+            .iter()
+            .filter(|line| line.trim() != "***")
+            .map(|line| {
+                line.starts_with(' ')
+                    && strip_display_line_number(line.chars().skip(1).collect::<String>().as_str())
+                        .is_some()
+            })
+            .collect::<Vec<_>>();
+        return dedup_repaired_numbered_context_before_delete(
+            &repaired,
+            &repaired_numbered_context,
+        );
     }
     if !has_separator {
         if let Some(repaired) = repair_non_separator_update_chunk_lines(lines) {
@@ -986,15 +1110,11 @@ fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
             let mut add_lines = Vec::new();
             while index < end && !is_file_op_header(lines[index].as_str()) {
                 let item = lines[index].as_str();
-                let Some(content) = item.strip_prefix('+') else {
-                    return Err(patch_format_error(
-                        format!("补丁格式错误（第 {} 行）：Add File 仅允许以 '+' 开头", index + 1),
-                        format!(
-                            "Invalid patch format (line {}): Add File only allows lines prefixed with '+'",
-                            index + 1
-                        ),
-                    ));
-                };
+                if normalized_update_hunk_header(item).is_some() {
+                    index += 1;
+                    continue;
+                }
+                let content = item.strip_prefix('+').unwrap_or(item);
                 add_lines.push(content.to_string());
                 index += 1;
             }
@@ -2715,6 +2835,74 @@ mod tests {
             extracted,
             "*** Begin Patch\n*** Add File: demo.txt\n+ok\n*** End Patch"
         );
+    }
+
+    #[test]
+    fn parse_patch_accepts_file_op_first_payload() {
+        let patch = r#"*** Update File: demo.txt
+@@
+-old
++new
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("file-op-first payload should be wrapped");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[0].text, "old");
+        assert!(matches!(chunks[0].lines[1].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[1].text, "new");
+    }
+
+    #[test]
+    fn parse_patch_treats_unified_diff_hunk_header_as_plain_hunk() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@ -1,3 +1,3 @@
+ context
+-old
++new
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("unified diff hunk header should be tolerated");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks[0].change_context, None);
+        assert_eq!(chunks[0].lines.len(), 3);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[0].lines[0].text, "context");
+    }
+
+    #[test]
+    fn parse_patch_preserves_function_anchor_from_unified_diff_hunk_header() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@ -10,3 +10,3 @@ fn main()
+ context
+-old
++new
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("unified diff function anchor should be tolerated");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks[0].change_context.as_deref(), Some("fn main()"));
+    }
+
+    #[test]
+    fn parse_patch_accepts_add_file_with_update_style_header_and_plain_lines() {
+        let patch = r#"*** Begin Patch
+*** Add File: demo.txt
+@@
++first
+second
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("add file should tolerate common update-style shape");
+        let ParsedPatchOp::Add { lines, .. } = &ops[0] else {
+            panic!("expected add op");
+        };
+        assert_eq!(lines, &vec!["first".to_string(), "second".to_string()]);
     }
 
     #[test]

@@ -1292,12 +1292,12 @@
 }
 
 .workspace-dialog--onlyoffice .el-dialog__header {
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 
 .workspace-dialog--onlyoffice .el-dialog__body {
-  padding: 0 10px 10px;
-  gap: 6px;
+  padding: 0 8px 8px;
+  gap: 4px;
   color-scheme: light;
 }
 
@@ -1637,7 +1637,7 @@
 .workspace-onlyoffice-frame {
   flex: 1 1 auto;
   min-height: 0;
-  height: calc(var(--app-viewport-height, 100vh) - 68px);
+  height: calc(var(--app-viewport-height, 100vh) - 52px);
   overflow: hidden;
   position: relative;
   border: 1px solid rgba(77, 216, 255, 0.2);

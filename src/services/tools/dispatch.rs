@@ -58,7 +58,7 @@ pub async fn execute_builtin_tool(
 ) -> Result<Value> {
     let canonical = resolve_tool_name(name);
     match canonical.as_str() {
-        goal::TOOL_GET_GOAL | goal::TOOL_CREATE_GOAL | goal::TOOL_UPDATE_GOAL => {
+        canonical if goal::is_goal_tool_name(canonical) => {
             goal::execute_goal_tool(context, &canonical, args).await
         }
         self_status_tool::TOOL_SELF_STATUS => {

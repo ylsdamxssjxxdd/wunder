@@ -230,10 +230,22 @@ impl ThreadRuntime {
             .user_store
             .get_chat_session(user_id, session_id)?
             .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        let user = self
+            .user_store
+            .get_user_by_id(user_id)?
+            .ok_or_else(|| anyhow!(i18n::t("error.permission_denied")))?;
+        let tool_names = self
+            .orchestrator
+            .resolve_session_effective_tool_names(&user, &session)
+            .await;
+        if !goal::tool_names_contain_goal_tool(&tool_names) {
+            return Ok(GoalContinuationSubmission::Skipped);
+        }
         let Some(mut continuation) = goal::build_continuation_request_from_session(
             self.user_store.storage_backend(),
             user_id,
             &session,
+            tool_names,
         )
         .await?
         else {

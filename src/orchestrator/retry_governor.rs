@@ -88,7 +88,10 @@ impl RetryGovernor {
             });
         }
 
-        if fingerprint.retryable && self.same_fingerprint_failures > MAX_SAME_RETRYABLE_FAILURES {
+        if tool_name != apply_patch
+            && fingerprint.retryable
+            && self.same_fingerprint_failures > MAX_SAME_RETRYABLE_FAILURES
+        {
             return Some(RetryStopDecision {
                 reason: "same_retryable_failure_exhausted",
                 fingerprint: fingerprint.key,

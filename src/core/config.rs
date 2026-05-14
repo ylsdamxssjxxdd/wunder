@@ -2200,6 +2200,7 @@ tools:
   builtin:
     enabled:
       - 最终回复
+      - goal
 workspace:
   root: ./config/data/workspaces
   max_history_items: 0
@@ -2261,7 +2262,10 @@ storage:
         );
         assert_eq!(config.storage.backend, "auto");
         assert_eq!(config.storage.db_path, "./config/data/wunder.db");
-        assert_eq!(config.tools.builtin.enabled, vec!["最终回复".to_string()]);
+        assert_eq!(
+            config.tools.builtin.enabled,
+            vec!["最终回复".to_string(), "goal".to_string()]
+        );
         assert_eq!(config.workspace.root, "./config/data/workspaces");
         assert_eq!(config.security.allow_commands, vec!["*".to_string()]);
 

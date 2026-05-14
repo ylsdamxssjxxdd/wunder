@@ -664,9 +664,7 @@ const showApprovalModeSetting = computed(
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
-const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
-  hideAutoInjectedGoalTools: true
-});
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({});
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 const approvalModeOptions = computed(() => [

@@ -457,9 +457,7 @@ const desktopLocalMode = computed(() => isDesktopModeEnabled());
 const showApprovalModeSetting = computed(() => desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
-const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
-  hideAutoInjectedGoalTools: true
-});
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({});
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const PORTAL_PREFETCH_HOVER_DELAY_MS = 120;

@@ -217,9 +217,7 @@ const showApprovalModeSetting = computed(
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
-const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({
-  hideAutoInjectedGoalTools: true
-});
+const USER_AGENT_TOOL_CATALOG_OPTIONS = Object.freeze({});
 
 const visible = computed({
   get: () => props.modelValue,

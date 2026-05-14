@@ -1,8 +1,8 @@
 <template>
   <el-dialog
     v-model="dialogVisible"
-    width="calc(100vw - 16px)"
-    top="8px"
+    width="calc(100vw - 8px)"
+    top="4px"
     class="workspace-dialog workspace-dialog--onlyoffice"
     append-to-body
     destroy-on-close

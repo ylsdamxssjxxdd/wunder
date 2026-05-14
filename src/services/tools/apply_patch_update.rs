@@ -192,6 +192,47 @@ fn compute_chunk_replacements(
         }
 
         if old_lines.is_empty() {
+            let old_lines = chunk
+                .lines
+                .iter()
+                .filter(|line| matches!(line.kind, ChunkLineKind::Context))
+                .map(|line| line.text.clone())
+                .collect::<Vec<_>>();
+            if !old_lines.is_empty() {
+                let matches = collect_sequence_starts(
+                    source_lines,
+                    &old_lines,
+                    line_index,
+                    source_lines.len().saturating_sub(old_lines.len()),
+                    chunk.end_of_file,
+                );
+                if matches.len() != 1 {
+                    let failure = ChunkContextFailureDetail {
+                        kind: ChunkContextFailureKind::Generic,
+                    };
+                    let (hint_zh, hint_en) = build_context_not_found_hint(
+                        source_lines,
+                        &old_lines,
+                        line_index,
+                        chunk,
+                        Some(&failure),
+                    );
+                    return Err(patch_error_with_hint(
+                        "PATCH_CONTEXT_NOT_FOUND",
+                        format!(
+                            "补丁应用失败：{path} 第 {} 个变更块找不到唯一插入位置",
+                            index + 1
+                        ),
+                        format!(
+                            "Patch apply failed: chunk {} in {} has no unique insertion point",
+                            index + 1,
+                            path
+                        ),
+                        hint_zh,
+                        hint_en,
+                    ));
+                }
+            }
             previous_context_only_chunk = None;
             replacements.push(LineReplacement {
                 start: source_lines.len(),
@@ -203,6 +244,49 @@ fn compute_chunk_replacements(
         }
 
         let mut pattern = old_lines;
+        let insertion_only = chunk
+            .lines
+            .iter()
+            .any(|line| line.kind == ChunkLineKind::Add)
+            && chunk
+                .lines
+                .iter()
+                .all(|line| line.kind != ChunkLineKind::Delete);
+        if insertion_only {
+            let exact_matches = collect_sequence_starts(
+                source_lines,
+                &pattern,
+                line_index,
+                source_lines.len().saturating_sub(pattern.len()),
+                chunk.end_of_file,
+            );
+            if exact_matches.len() > 1 {
+                let failure = ChunkContextFailureDetail {
+                    kind: ChunkContextFailureKind::Generic,
+                };
+                let (hint_zh, hint_en) = build_context_not_found_hint(
+                    source_lines,
+                    &pattern,
+                    line_index,
+                    chunk,
+                    Some(&failure),
+                );
+                return Err(patch_error_with_hint(
+                    "PATCH_CONTEXT_NOT_FOUND",
+                    format!(
+                        "补丁应用失败：{path} 第 {} 个变更块找不到唯一插入位置",
+                        index + 1
+                    ),
+                    format!(
+                        "Patch apply failed: chunk {} in {} has no unique insertion point",
+                        index + 1,
+                        path
+                    ),
+                    hint_zh,
+                    hint_en,
+                ));
+            }
+        }
         let mut found = seek_sequence(source_lines, &pattern, line_index, chunk.end_of_file);
         if found.is_none() && pattern.last().is_some_and(|line: &String| line.is_empty()) {
             pattern.pop();
@@ -222,7 +306,9 @@ fn compute_chunk_replacements(
                     if *prev_index + 1 != index || *prev_cursor != line_index {
                         return None;
                     }
-                    if prev_pattern == &pattern {
+                    if prev_pattern == &pattern
+                        || prev_pattern == &collapse_adjacent_empty_lines(&pattern)
+                    {
                         return Some(ChunkContextFailureKind::DuplicateAnchorAfterContextOnlyChunk);
                     }
                     None
@@ -342,6 +428,43 @@ fn seek_sequence(lines: &[String], pattern: &[String], start: usize, eof: bool) 
         }
     }
     None
+}
+
+fn collapse_adjacent_empty_lines(lines: &[String]) -> Vec<String> {
+    let mut collapsed = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.is_empty() && collapsed.last().is_some_and(String::is_empty) {
+            continue;
+        }
+        collapsed.push(line.clone());
+    }
+    collapsed
+}
+
+fn collect_sequence_starts(
+    lines: &[String],
+    pattern: &[String],
+    start: usize,
+    end: usize,
+    eof: bool,
+) -> Vec<usize> {
+    if pattern.is_empty() || pattern.len() > lines.len() {
+        return Vec::new();
+    }
+    let max_start = lines.len() - pattern.len();
+    let search_start = if eof { max_start } else { start.min(max_start) };
+    let search_end = if eof { max_start } else { end.min(max_start) };
+    if search_start > search_end {
+        return Vec::new();
+    }
+    (search_start..=search_end)
+        .filter(|index| {
+            pattern
+                .iter()
+                .enumerate()
+                .all(|(offset, expected)| lines[index + offset] == *expected)
+        })
+        .collect()
 }
 
 pub(super) fn apply_update_chunks_with_diff(

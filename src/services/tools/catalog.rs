@@ -1194,9 +1194,19 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     );
     map.insert("memory_manager".to_string(), "记忆管理".to_string());
     map.insert("memory_manage".to_string(), "记忆管理".to_string());
-    for name in goal::goal_tool_names() {
-        map.insert(name.to_string(), name.to_string());
-    }
+    map.insert("goal".to_string(), goal::goal_tool_name().to_string());
+    map.insert(
+        goal::TOOL_GOAL_GET_LEGACY.to_string(),
+        goal::goal_tool_name().to_string(),
+    );
+    map.insert(
+        goal::TOOL_GOAL_CREATE_LEGACY.to_string(),
+        goal::goal_tool_name().to_string(),
+    );
+    map.insert(
+        goal::TOOL_GOAL_UPDATE_LEGACY.to_string(),
+        goal::goal_tool_name().to_string(),
+    );
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -1511,6 +1521,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
             Some(multimodal_generation_tool::TOOL_GENERATE_VIDEO_ALIAS)
         }
         sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
+        canonical if canonical == goal::goal_tool_name() => Some("goal"),
         _ => None,
     }
 }
@@ -1565,10 +1576,6 @@ pub fn collect_available_tool_names(
         // a duplicated entry in tools.builtin.enabled.
         enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
         names.insert(browser_tool::TOOL_BROWSER.to_string());
-    }
-    for name in goal::goal_tool_names() {
-        enabled_builtin.insert(name.to_string());
-        names.insert(name.to_string());
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -1657,10 +1664,6 @@ pub fn collect_enabled_tool_names_for_catalog(
     if browser_tool::browser_tools_enabled(config) {
         enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
         names.insert(browser_tool::TOOL_BROWSER.to_string());
-    }
-    for name in goal::goal_tool_names() {
-        enabled_builtin.insert(name.to_string());
-        names.insert(name.to_string());
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -2775,7 +2778,9 @@ mod tests {
             .find(|spec| spec.name == resolve_tool_name("edit_file2"))
             .expect("edit_file2 spec");
         assert!(edit_file2_spec.description.contains("只做一次精确替换"));
-        assert!(edit_file2_spec.description.contains("programmatic_tool_call"));
+        assert!(edit_file2_spec
+            .description
+            .contains("programmatic_tool_call"));
         assert!(edit_file2_spec.input_schema["properties"]["path"].is_object());
         assert!(edit_file2_spec.input_schema["properties"]["old_text"].is_object());
         assert!(edit_file2_spec.input_schema["properties"]["new_text"].is_object());
@@ -2789,15 +2794,15 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("apply_patch"))
             .expect("apply patch spec");
-        assert!(apply_patch_spec.description.contains("apply_patch grammar"));
-        assert!(apply_patch_spec.description.contains(">>> 路径"));
-        assert!(apply_patch_spec.description.contains("123: 代码"));
-        assert!(
-            apply_patch_spec.input_schema["properties"]["input"]["description"]
-                .as_str()
-                .unwrap_or("")
-                .contains("*** Begin Patch")
-        );
+        assert!(apply_patch_spec.description.contains("dry_run"));
+        assert!(apply_patch_spec.description.contains("Python"));
+        let apply_patch_input_description = apply_patch_spec.input_schema["properties"]["input"]
+            ["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(apply_patch_input_description.contains("*** Begin Patch"));
+        assert!(apply_patch_input_description.contains("*** Add File"));
+        assert!(apply_patch_input_description.contains("dry_run"));
         assert_eq!(
             apply_patch_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)

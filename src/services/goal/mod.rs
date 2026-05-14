@@ -7,7 +7,6 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -22,9 +21,10 @@ pub const SOURCE_CLI: &str = "cli";
 pub const SOURCE_MODEL: &str = "model";
 pub const SOURCE_SYSTEM: &str = "system";
 
-pub const TOOL_GET_GOAL: &str = "get_goal";
-pub const TOOL_CREATE_GOAL: &str = "create_goal";
-pub const TOOL_UPDATE_GOAL: &str = "update_goal";
+pub const TOOL_GOAL: &str = "goal";
+pub const TOOL_GOAL_GET_LEGACY: &str = "get_goal";
+pub const TOOL_GOAL_CREATE_LEGACY: &str = "create_goal";
+pub const TOOL_GOAL_UPDATE_LEGACY: &str = "update_goal";
 
 pub const EVENT_GOAL_UPDATED: &str = "goal_updated";
 pub const EVENT_GOAL_CLEARED: &str = "goal_cleared";
@@ -96,6 +96,13 @@ pub struct GoalContinuationRequest {
     pub goal: SessionGoalRecord,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalToolAction {
+    Get,
+    Create,
+    Update,
+}
+
 pub fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
@@ -110,64 +117,53 @@ pub fn normalize_status(raw: &str) -> Result<GoalStatus> {
     }
 }
 
-pub fn goal_tool_names() -> [&'static str; 3] {
-    [TOOL_GET_GOAL, TOOL_CREATE_GOAL, TOOL_UPDATE_GOAL]
+pub fn goal_tool_name() -> &'static str {
+    TOOL_GOAL
+}
+
+pub fn is_goal_tool_name(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        TOOL_GOAL | TOOL_GOAL_GET_LEGACY | TOOL_GOAL_CREATE_LEGACY | TOOL_GOAL_UPDATE_LEGACY
+    )
 }
 
 pub fn goal_tool_specs() -> Vec<crate::schemas::ToolSpec> {
     vec![
         crate::schemas::ToolSpec {
-            name: TOOL_GET_GOAL.to_string(),
-            title: Some("Get goal".to_string()),
-            description: "Read the active session goal. This tool never changes goal state."
+            name: TOOL_GOAL.to_string(),
+            title: Some("Goal".to_string()),
+            description: "Manage the active session goal. Supported actions: get the current goal, create a new goal when none exists, and mark the current goal complete."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {},
-                "additionalProperties": false
-            }),
-        },
-        crate::schemas::ToolSpec {
-            name: TOOL_CREATE_GOAL.to_string(),
-            title: Some("Create goal".to_string()),
-            description: "Create a session goal only when no active, paused, or budget-limited goal already exists."
-                .to_string(),
-            input_schema: json!({
-                "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["get", "create", "update"],
+                        "description": "Goal action to perform."
+                    },
                     "objective": {
                         "type": "string",
-                        "description": "Concrete objective to keep working toward."
+                        "description": "Concrete objective to keep working toward. Required for action=create."
                     },
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "Optional token budget for the goal."
-                    }
-                },
-                "required": ["objective"],
-                "additionalProperties": false
-            }),
-        },
-        crate::schemas::ToolSpec {
-            name: TOOL_UPDATE_GOAL.to_string(),
-            title: Some("Update goal".to_string()),
-            description: "Mark the current session goal complete. The model may not pause, resume, or clear goals."
-                .to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
+                        "description": "Optional token budget for the goal. Allowed only for action=create."
+                    },
                     "status": {
                         "type": "string",
                         "enum": [STATUS_COMPLETE],
-                        "description": "Only complete is allowed."
+                        "description": "Required for action=update. Only complete is allowed."
                     },
                     "summary": {
                         "type": "string",
-                        "description": "Optional concise completion summary."
+                        "description": "Optional concise completion summary for action=update."
                     }
                 },
-                "required": ["status"],
+                "required": ["action"],
                 "additionalProperties": false
             }),
         },
@@ -512,6 +508,7 @@ pub async fn build_continuation_request_from_session(
     storage: Arc<dyn StorageBackend>,
     user_id: &str,
     session: &ChatSessionRecord,
+    tool_names: Vec<String>,
 ) -> Result<Option<GoalContinuationRequest>> {
     let Some(goal) = get_goal(storage.clone(), user_id, &session.session_id).await? else {
         return Ok(None);
@@ -523,7 +520,7 @@ pub async fn build_continuation_request_from_session(
     let request = WunderRequest {
         user_id: user_id.trim().to_string(),
         question,
-        tool_names: Vec::new(),
+        tool_names,
         skip_tool_calls: false,
         stream: true,
         debug_payload: false,
@@ -545,7 +542,7 @@ pub async fn build_continuation_request_from_session(
 
 pub fn build_continuation_prompt(goal: &SessionGoalRecord) -> String {
     format!(
-        "[GOAL_CONTINUATION]\nContinue working toward the active goal until it is complete.\nCurrent goal: {}\nWhen the goal is fully complete, call update_goal with status=complete. If you are blocked by missing user input, ask one concise question and stop.",
+        "[GOAL_CONTINUATION]\nContinue working toward the active goal until it is complete.\nCurrent goal: {}\nWhen the goal is fully complete, call goal with action=update and status=complete. If you are blocked by missing user input, ask one concise question and stop.",
         goal.objective.trim()
     )
 }
@@ -555,8 +552,9 @@ pub async fn execute_goal_tool(
     name: &str,
     args: &Value,
 ) -> Result<Value> {
-    match name.trim() {
-        TOOL_GET_GOAL => {
+    let action = resolve_goal_tool_action(name, args)?;
+    match action {
+        GoalToolAction::Get => {
             let goal =
                 get_goal(context.storage.clone(), context.user_id, context.session_id).await?;
             Ok(json!({
@@ -564,7 +562,7 @@ pub async fn execute_goal_tool(
                 "data": { "goal": goal.as_ref().map(goal_payload) }
             }))
         }
-        TOOL_CREATE_GOAL => {
+        GoalToolAction::Create => {
             let objective = args
                 .get("objective")
                 .and_then(Value::as_str)
@@ -595,7 +593,7 @@ pub async fn execute_goal_tool(
             .await?;
             Ok(json!({ "ok": true, "data": { "goal": goal_payload(&record) } }))
         }
-        TOOL_UPDATE_GOAL => {
+        GoalToolAction::Update => {
             let status = args
                 .get("status")
                 .and_then(Value::as_str)
@@ -616,15 +614,33 @@ pub async fn execute_goal_tool(
             .await?;
             Ok(json!({ "ok": true, "data": { "goal": goal_payload(&record) } }))
         }
-        _ => Err(anyhow!("unknown goal tool: {name}")),
     }
 }
 
-pub fn inject_goal_tools(mut names: HashSet<String>) -> HashSet<String> {
-    for name in goal_tool_names() {
-        names.insert(name.to_string());
+fn resolve_goal_tool_action(name: &str, args: &Value) -> Result<GoalToolAction> {
+    match name.trim() {
+        TOOL_GOAL_GET_LEGACY => return Ok(GoalToolAction::Get),
+        TOOL_GOAL_CREATE_LEGACY => return Ok(GoalToolAction::Create),
+        TOOL_GOAL_UPDATE_LEGACY => return Ok(GoalToolAction::Update),
+        TOOL_GOAL => {}
+        _ => return Err(anyhow!("unknown goal tool: {name}")),
     }
-    names
+    match args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some("get") => Ok(GoalToolAction::Get),
+        Some("create") => Ok(GoalToolAction::Create),
+        Some("update") => Ok(GoalToolAction::Update),
+        Some(_) => Err(anyhow!("invalid goal action")),
+        None => Ok(GoalToolAction::Get),
+    }
+}
+
+pub fn tool_names_contain_goal_tool(names: &[String]) -> bool {
+    names.iter().any(|name| is_goal_tool_name(name))
 }
 
 pub async fn emit_goal_event(
@@ -712,6 +728,7 @@ fn clean_required(value: &str, label: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parse_goal_show_when_empty() {
@@ -740,5 +757,25 @@ mod tests {
     fn status_normalization_rejects_unknown() {
         assert_eq!(normalize_status("active").unwrap(), GoalStatus::Active);
         assert!(normalize_status("waiting").is_err());
+    }
+
+    #[test]
+    fn goal_tool_spec_uses_single_goal_tool() {
+        let specs = goal_tool_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, TOOL_GOAL);
+        assert_eq!(
+            specs[0].input_schema["properties"]["action"]["enum"],
+            json!(["get", "create", "update"])
+        );
+    }
+
+    #[test]
+    fn goal_tool_name_detection_supports_legacy_aliases() {
+        assert!(is_goal_tool_name(TOOL_GOAL));
+        assert!(is_goal_tool_name(TOOL_GOAL_GET_LEGACY));
+        assert!(is_goal_tool_name(TOOL_GOAL_CREATE_LEGACY));
+        assert!(is_goal_tool_name(TOOL_GOAL_UPDATE_LEGACY));
+        assert!(!is_goal_tool_name("read_file"));
     }
 }

@@ -6,6 +6,7 @@ const TOOL_ICON_RULES = [
   { keywords: ["桌面监视器", "桌面监控", "desktop_monitor", "desktop monitor"], icon: "fa-display" },
   { keywords: ["计划面板", "计划看板", "update_plan", "plan board"], icon: "fa-table-columns" },
   { keywords: ["问询面板", "question_panel", "ask_panel", "question panel"], icon: "fa-circle-question" },
+  { keywords: ["目标态", "目标工具", "goal", "goal mode"], icon: "fa-bullseye" },
   { keywords: ["浏览器", "browser", "browser_navigate", "browser_click", "browser_type", "browser_screenshot", "browser_read_page"], icon: "fa-window-maximize" },
   { keywords: ["节点调用", "node.invoke", "node_invoke", "node invoke", "gateway_invoke"], icon: "fa-diagram-project" },
   { keywords: ["技能调用", "skill_call", "skill_get"], icon: "fa-book-open" },

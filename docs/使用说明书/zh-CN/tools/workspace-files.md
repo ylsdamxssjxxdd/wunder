@@ -227,6 +227,9 @@ updated_at: 2026-04-10
 - `old_text` 必须和文件当前内容完全一致
 - 删除文本时把 `new_text` 设为空字符串
 - 如果要一次替换多处，可加 `expected_count`；工具会要求匹配次数完全一致
+- 如果误把 `read_file` 的文件头或行号复制进 `old_text`，工具会在匹配失败时尝试自动剥离
+- 如果文件换行符是 CRLF，工具会按目标文件换行风格重试匹配
+- 如果替换已经唯一完成，工具会返回 `already_applied`，避免重复调用报错
 
 ### 成功返回
 
@@ -244,10 +247,12 @@ updated_at: 2026-04-10
     "previous_bytes": 12,
     "bytes": 12,
     "edit_count": 1,
+    "already_applied_count": 0,
     "edits": [
       {
         "action": "replace",
         "changed": true,
+        "already_applied": false,
         "matches": 1,
         "bytes": 3
       }
@@ -261,6 +266,7 @@ updated_at: 2026-04-10
 - 你已经通过 `read_file` 拿到精确原文
 - 目标修改能写成一次 `old_text` -> `new_text`
 - 不需要正则、条件判断、标记间替换或多步骤编辑
+- `old_text` 匹配多处时，优先扩大上下文；确实要替换全部匹配时再设置 `expected_count`
 
 ### 什么时候不要用它
 

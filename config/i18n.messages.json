@@ -287,6 +287,10 @@
     "en-US": "This tool is not allowed.",
     "zh-CN": "该工具未被允许调用。"
   },
+  "error.goal_tool_required": {
+    "en-US": "Goal mode requires the current agent to mount the goal tool.",
+    "zh-CN": "进入目标态要求当前智能体已挂载 goal 工具。"
+  },
   "error.param_required": {
     "en-US": "Parameters are required",
     "zh-CN": "参数不能为空"
@@ -1552,12 +1556,12 @@
     "zh-CN": "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。"
   },
   "tool.spec.apply_patch.args.input": {
-    "en-US": "Raw apply_patch payload only. Do not wrap it in JSON or Markdown. The text MUST start with *** Begin Patch and end with *** End Patch. CRITICAL: after @@, do not paste plain target lines. Every line in Update File must explicitly start with one of: space = unchanged context, - = old line to remove/replace, + = new line to add/replace. Blank context lines must be written as a single leading space line, not as an empty line. Prefer one small patch at a time and keep each patch to a small number of files and local regions. HARD RULES: (1) When the patch is based on read_file output, never copy the display header like \">>> path\". (2) Never copy display line numbers like \"3: code\"; write only the original code text. (3) Include at least 2-3 context lines (space-prefixed) around each change so the tool can locate it. (4) Do not use *** as an old/new separator inside a hunk. (5) A line to be deleted or replaced must appear only as a '-' line, not also as a context (' ') line. (6) Do not repeat old/new target lines as plain context lines; real changes must be written as -old followed by +new. Recommended workflow for weaker models: read the exact excerpt first, build one tiny patch, use dry_run when unsure, then apply for real. If the edit touches many distant regions or most of the file, switch to write_file. Minimal pattern: context line starts with space, changed line pair uses - then +. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch",
-    "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。关键规则：@@ 之后不能直接粘贴目标文件内容，Update File 里的每一行都必须显式带前缀，且只允许三种前缀：空格=未修改的上下文行，- = 要删除/替换的旧行，+ = 要新增/替换的新行。空白上下文行也必须写成“单个空格开头的一行”，不能留空行。优先一次只做一个小 patch，并把每次补丁控制在少量文件、少量局部区域内。硬规则：(1) 如果补丁基于 read_file 输出，绝对不要复制 \">>> 路径\" 这类展示文件头；(2) 绝对不要复制 \"3: 代码\" 这类展示行号，只写文件原始代码文本；(3) 每处变更前后至少保留 2-3 行上下文行（空格开头），帮助工具定位位置；(4) 不要在 hunk 内用 *** 分隔旧内容和新内容；(5) 要删除或替换的行只能用 '-' 前缀，不能同时再用空格前缀作为上下文行重复出现；(6) 不要把旧行和新行都写成普通上下文行，真正改动必须明确写成 -旧行 再 +新行。对能力较弱的模型，推荐流程是：先 read_file 读取精确片段，再构造一个很小的 patch；如果不确定，先加 dry_run 预演，确认后再正式提交；如果修改跨很多分散区域，或者接近整文件改写，请直接改用 write_file。最小正确模式：上下文行用空格开头，真正改动必须成对写成 -旧行 / +新行。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch"
+    "en-US": "Raw apply_patch text. Best first attempt: set dry_run=true, use one small patch, then apply again without dry_run after it validates. Update example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n context_above\\n-old_line\\n+new_line\\n context_below\\n*** End Patch. Add example: *** Begin Patch\\n*** Add File: notes.txt\\n+first line\\n+second line\\n*** End Patch. Rules: keep current-file context lines with a leading space, use - for old lines and + for new lines, never copy read_file display headers like \">>> path\" or line numbers like \"3: code\". For many distant edits or generated rewrites, use a Python script instead of patching by hand.",
+    "zh-CN": "原始 apply_patch 文本。首次调用最稳的方式：加 dry_run=true，先提交一个小 patch 预演，通过后再去掉 dry_run 正式应用。修改示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n 上方上下文\\n-旧行\\n+新行\\n 下方上下文\\n*** End Patch。新增文件示例：*** Begin Patch\\n*** Add File: notes.txt\\n+第一行\\n+第二行\\n*** End Patch。规则：当前文件里的上下文行用空格开头，旧行用 -，新行用 +；不要复制 read_file 输出里的 \">>> 路径\" 或 \"3: 代码\" 行号。很多分散修改或生成式重写，直接用 Python 脚本，不要手写复杂 patch。"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply precise edits with apply_patch grammar. This tool is for small-batch edits only: a few files, a few hunks, clear local context. It is not a free-form diff tool and not for broad rewrites; use write_file for full-file replacement. Recommended workflow: (1) read the exact file or excerpt first; (2) build one small patch; (3) when unsure, prefer dry_run first; (4) after @@, write every line explicitly as space-context / -old / +new instead of pasting raw target lines; (5) keep 2-3 context lines around each change; (6) after a failure, rebuild from the closest matching excerpt rather than blindly re-reading the whole file. Never paste read_file display artifacts such as \">>> path\" or \"123: code\" into the patch. Do not use unified diff headers like \"@@ -1,3 +1,3 @@\" as the only locator; prefer raw context lines from the current file. If the change spans many distant regions, many files, or most of one file, stop using apply_patch and switch to write_file.",
-    "zh-CN": "按 apply_patch grammar 做精确编辑。这个工具只适合小批量修改：少量文件、少量 hunk、明确的局部上下文。它不是自由 diff 工具，也不适合大范围重写；整文件替换请改用写入文件。推荐用法：1. 修改前先 read_file 读取目标文件或局部片段；2. 一次只提交一个小 patch；3. 如果不确定，优先先用 dry_run 预演；4. @@ 之后不要直接粘贴目标文件内容，而是把每一行明确写成“空格上下文 / -旧行 / +新行”；5. 每处修改前后保留 2-3 行上下文行（空格开头）；6. 如果失败，优先基于最接近的相关片段重建补丁，不要盲目整文件重读。不要把 read_file 输出里的 \">>> 路径\" 或 \"123: 代码\" 这类展示内容粘进补丁。不要只写 unified diff 风格的 \"@@ -1,3 +1,3 @@\" 头当定位信息，应优先使用当前文件里的原始上下文行来定位。如果修改跨很多分散区域、很多文件，或已经接近整文件重写，就不要继续用 apply_patch，直接改用 write_file。"
+    "en-US": "Apply small, precise file patches. Use it for a few local edits, adding a file, deleting a file, or moving a file. First read the target excerpt, then call with dry_run=true when unsure. Keep patches simple: one small patch, raw context lines, -old/+new. For broad rewrites, many scattered edits, or complicated generated changes, use a Python script or write_file instead.",
+    "zh-CN": "应用小范围、精确的文件补丁。适合少量局部修改、新增文件、删除文件或移动文件。先读取目标片段；不确定时第一次调用加 dry_run=true。保持补丁简单：一个小 patch，使用原始上下文行，旧行写 -，新行写 +。大范围重写、很多分散修改或复杂生成式修改，改用 Python 脚本或写入文件。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
@@ -1640,8 +1644,8 @@
     "zh-CN": "要编辑的文本文件路径。"
   },
   "tool.spec.edit2.args.old_text": {
-    "en-US": "Exact current text to replace. Copy it from read_file output, but remove display headers and line numbers.",
-    "zh-CN": "要替换掉的当前精确原文。可从 read_file 输出复制，但不要带文件头和行号。"
+    "en-US": "Exact current text to replace. Prefer copying the raw content from read_file and removing display headers or line numbers; the tool will also try to strip accidental read_file markers when matching fails.",
+    "zh-CN": "要替换掉的当前精确原文。优先从 read_file 复制原始内容并去掉文件头或行号；如果误带了 read_file 展示标记，工具会在匹配失败时尝试自动剥离。"
   },
   "tool.spec.edit2.args.new_text": {
     "en-US": "Replacement text. It may be empty when deleting old_text.",
@@ -1652,8 +1656,8 @@
     "zh-CN": "可选安全校验。old_text 出现次数必须等于该值；大于 1 时会替换全部匹配。"
   },
   "tool.spec.edit2.description": {
-    "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide path, old_text, and new_text. The old_text must match the file exactly. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use programmatic_tool_call with a small Python script instead.",
-    "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text，old_text 必须与文件内容完全一致。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 programmatic_tool_call 写一个小 Python 脚本。"
+    "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide only path, old_text, and new_text. The tool tolerates accidental read_file line numbers and line-ending differences, and treats a unique already-applied replacement as success. If old_text matches multiple places, make old_text longer or set expected_count intentionally. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use programmatic_tool_call with a small Python script instead.",
+    "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text。工具会容忍误带 read_file 行号、换行符差异，并把唯一的已完成替换视为成功。old_text 匹配多处时，请扩大 old_text 上下文，或明确设置 expected_count。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 programmatic_tool_call 写一个小 Python 脚本。"
   },
   "tool.spec.lsp.args.operation": {
     "en-US": "LSP operation: definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy.",

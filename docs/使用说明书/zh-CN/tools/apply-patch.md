@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools/apply_patch_tool.rs
   - src/services/tools/tool_apply_patch.lark
-updated_at: 2026-05-08
+updated_at: 2026-05-14
 ---
 
 # 应用补丁
@@ -37,7 +37,7 @@ updated_at: 2026-05-08
 - `input`
 - `dry_run`
 
-## 推荐给弱模型的最小流程
+## 最小稳定流程
 
 按下面顺序做，成功率最高：
 
@@ -45,7 +45,7 @@ updated_at: 2026-05-08
 2. 一次只构造一个很小的 patch
 3. 如果不确定上下文是否稳定，先加 `dry_run`
 4. 预演通过后，再去掉 `dry_run` 正式提交
-5. 如果修改跨很多分散区域，或已经接近整文件改写，直接换 `write_file`
+5. 如果修改跨很多分散区域，或已经接近整文件改写，直接换 `write_file` 或 Python 脚本
 
 ## Update File 的硬规则
 
@@ -55,6 +55,18 @@ updated_at: 2026-05-08
 - 不要把旧行和新行都写成普通上下文行
 - 不要复制 `read_file` 输出里的 `>>> 路径`、`N: ` 行号或分隔符
 - 每处修改前后优先保留 2-3 行当前文件中的原始上下文
+
+工具会容忍几类常见输入偏差：漏写 `*** Begin Patch` 但已从文件操作头开始、把 `@@ -1,3 +1,3 @@` 写成 unified diff 头、`Add File` 中误写 `@@` 或漏写 `+`。这些兼容只用于提高首次成功率；模型仍应优先输出最小标准格式。
+
+## 新增文件的最小格式
+
+```text
+*** Begin Patch
+*** Add File: notes.txt
++第一行
++第二行
+*** End Patch
+```
 
 ## 成功返回
 

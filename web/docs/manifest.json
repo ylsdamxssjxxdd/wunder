@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-14T00:59:31.333357+00:00",
+  "generated_at": "2026-05-14T03:12:57.431746+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -3847,7 +3847,7 @@
       "language": "zh-CN",
       "title": "应用补丁",
       "summary": "`apply_patch` 的精确编辑语义、成功返回和 patch 失败码。",
-      "updated_at": "2026-05-08",
+      "updated_at": "2026-05-14",
       "read_when": [
         "你要做小范围、可审查、可回放的精确修改"
       ],
@@ -3875,7 +3875,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "推荐给弱模型的最小流程"
+          "text": "最小稳定流程"
         },
         {
           "id": "section-4",
@@ -3885,35 +3885,40 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "成功返回"
+          "text": "新增文件的最小格式"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "dryrun"
+          "text": "成功返回"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "失败返回"
+          "text": "dryrun"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "常见失败原因"
+          "text": "失败返回"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "典型修正建议"
+          "text": "常见失败原因"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "什么时候用它，什么时候别用它"
+          "text": "典型修正建议"
         },
         {
           "id": "section-11",
+          "level": 2,
+          "text": "什么时候用它，什么时候别用它"
+        },
+        {
+          "id": "section-12",
           "level": 2,
           "text": "与 writefile 的区别"
         }
@@ -11997,7 +12002,7 @@
       "language": "en",
       "title": "Apply Patch",
       "summary": "The precise editing semantics, success result, and patch-specific failure codes of `apply_patch`.",
-      "updated_at": "2026-05-08",
+      "updated_at": "2026-05-14",
       "read_when": [
         "You need a small, reviewable, replayable, and precise edit"
       ],
@@ -12025,7 +12030,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Minimal workflow for weaker models"
+          "text": "Minimal Stable Workflow"
         },
         {
           "id": "section-4",
@@ -12035,35 +12040,40 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "Success result"
+          "text": "Minimum Add File Format"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "dryrun"
+          "text": "Success result"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Failure results"
+          "text": "dryrun"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Common failure causes"
+          "text": "Failure results"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Typical corrective hints"
+          "text": "Common failure causes"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "When to use it and when not to"
+          "text": "Typical corrective hints"
         },
         {
           "id": "section-11",
+          "level": 2,
+          "text": "When to use it and when not to"
+        },
+        {
+          "id": "section-12",
           "level": 2,
           "text": "Difference from writefile"
         }
