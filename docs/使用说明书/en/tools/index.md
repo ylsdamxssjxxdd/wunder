@@ -153,6 +153,32 @@ This tool currently uses a compact scheduling result rather than the unified `ok
 
 The browser tool mainly forwards browser-runtime results. Successful calls often include `ok: true`, but they do not always come wrapped in a unified `summary/data` shell. The returned fields vary significantly by action.
 
+### `web_search`
+
+`web_search` searches the public web with keywords. It is disabled by default and requires a configured search provider. When enabled, successful calls use the unified envelope and return result items in `data.results`:
+
+```json
+{
+  "ok": true,
+  "action": "web_search",
+  "state": "completed",
+  "summary": "Found 5 web results.",
+  "data": {
+    "query": "example",
+    "provider": "configured-provider",
+    "results": [
+      {
+        "title": "Example",
+        "url": "https://example.com",
+        "description": "..."
+      }
+    ]
+  }
+}
+```
+
+Use it to discover candidate URLs. When a source needs verification or full reading, pass the concrete URL to `web_fetch`.
+
 ### `web_fetch`
 
 `web_fetch` also returns the fetched result object directly on success rather than the unified success envelope:
@@ -221,6 +247,10 @@ The browser tool mainly forwards browser-runtime results. Successful calls often
 - [Sleep and Yield](/docs/en/tools/sleep/)
 
 ## Selection guidance
+
+### Only have keywords and need web sources
+
+Use `web_search` from [Web Fetch](/docs/en/tools/web-fetch/) to find candidate URLs, then fetch concrete pages.
 
 ### Read the main content of a public webpage
 

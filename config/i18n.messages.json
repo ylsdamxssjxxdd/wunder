@@ -1247,6 +1247,30 @@
     "en-US": "Web fetch provider failed: {detail}",
     "zh-CN": "网页抓取 provider 执行失败：{detail}"
   },
+  "tool.web_search.empty_query": {
+    "en-US": "Search query is required.",
+    "zh-CN": "搜索关键词不能为空。"
+  },
+  "tool.web_search.timeout": {
+    "en-US": "Web search timed out.",
+    "zh-CN": "网页搜索超时。"
+  },
+  "tool.web_search.invalid_json": {
+    "en-US": "The search provider returned invalid JSON.",
+    "zh-CN": "搜索 provider 返回的 JSON 无效。"
+  },
+  "tool.web_search.provider_failed": {
+    "en-US": "Web search provider failed",
+    "zh-CN": "网页搜索 provider 执行失败"
+  },
+  "tool.web_search.provider_unsupported": {
+    "en-US": "Unsupported web search provider.",
+    "zh-CN": "不支持的网页搜索 provider。"
+  },
+  "tool.web_search.firecrawl_api_key_required": {
+    "en-US": "Firecrawl Cloud search requires FIRECRAWL_API_KEY. Self-hosted Firecrawl can use FIRECRAWL_BASE_URL without an API key.",
+    "zh-CN": "Firecrawl Cloud 搜索需要 FIRECRAWL_API_KEY；自托管 Firecrawl 可配置 FIRECRAWL_BASE_URL 且通常不需要 API Key。"
+  },
   "tool.desktop_controller.disabled": {
     "en-US": "Desktop controller is disabled.",
     "zh-CN": "桌面控制器未启用。"
@@ -1811,6 +1835,42 @@
     "en-US": "Fetch one confirmed public webpage and extract its main content. This is not a search engine and does not validate guessed URLs; it is suited for static pages, not complex interactive pages, search result pages, bot-protected pages, or client-rendered shell pages.",
     "zh-CN": "抓取单个已确认的公开网页并提取正文。它不是搜索引擎，也不负责验证猜测 URL；适合静态抓取，不适合复杂交互页、搜索结果页、防爬页或客户端渲染壳页。"
   },
+  "tool.spec.web_search.description": {
+    "en-US": "Search the public web with a natural-language query and return structured result URLs, titles, and snippets. Use this before web_fetch when you only have keywords; do not pass search engine result-page URLs to web_fetch.",
+    "zh-CN": "用自然语言关键词搜索公开网页，返回结构化的结果 URL、标题和摘要。只有关键词时先用它，再把具体结果 URL 交给 web_fetch；不要把搜索引擎结果页 URL 传给 web_fetch。"
+  },
+  "tool.spec.web_search.args.query": {
+    "en-US": "Natural-language search query. Pass keywords or a question, not a URL.",
+    "zh-CN": "自然语言搜索关键词或问题，不要传 URL。"
+  },
+  "tool.spec.web_search.args.count": {
+    "en-US": "Number of search results to return, 1-10. Defaults to system config.",
+    "zh-CN": "返回结果数量，1-10，默认使用系统配置。"
+  },
+  "tool.spec.web_search.args.site": {
+    "en-US": "Optional site or domain to restrict the search, such as example.com or https://example.com/docs. The tool converts it to a site: query; this is not a page URL to fetch.",
+    "zh-CN": "可选。把搜索限定到某个站点或域名，例如 example.com 或 https://example.com/docs。工具会转换为 site: 查询；这不是要抓取的网页 URL。"
+  },
+  "tool.spec.web_search.args.sites": {
+    "en-US": "Optional list of sites or domains to restrict the search. Use this when you have a source domain plus keywords.",
+    "zh-CN": "可选。把搜索限定到多个站点或域名。适合已有来源域名/地址，同时还要给一串搜索词的场景。"
+  },
+  "tool.spec.web_search.args.scrape_results": {
+    "en-US": "Optional. Ask the provider to include scraped content from result pages when supported. Keep false for quick source discovery.",
+    "zh-CN": "可选。让 provider 在支持时附带结果页抓取正文；快速找来源时保持 false。"
+  },
+  "tool.spec.web_search.args.max_result_chars": {
+    "en-US": "Optional maximum characters per returned title, snippet, or scraped content field.",
+    "zh-CN": "每个标题、摘要或附带正文片段的最大字符数，可选。"
+  },
+  "tool.spec.web_search.args.sources": {
+    "en-US": "Optional provider-specific source list, for example web, news, or images when supported.",
+    "zh-CN": "可选的 provider 特定来源列表，例如支持时使用 web、news 或 images。"
+  },
+  "tool.spec.web_search.args.categories": {
+    "en-US": "Optional provider-specific category filters, for example github or research when supported.",
+    "zh-CN": "可选的 provider 特定分类过滤，例如支持时使用 github 或 research。"
+  },
   "tool.spec.web_fetch.args.url": {
     "en-US": "The exact public URL to fetch (http/https only). Pass a complete, confirmed URL; do not pass keywords, local paths, search intents, or model-guessed site addresses.",
     "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。必须传完整、已确认的 URL；不要传关键词、本地路径、搜索意图或模型猜测出来的站点地址。"
@@ -1884,8 +1944,8 @@
     "zh-CN": "返回给用户的最终回复。若有图片/文件/报告等产出，必须在回复的最后附上 Markdown 语法将图片或链接展示出来，例如：![雷达图](/workspaces/{user_id}/radar_chart.png) 或 ![xx作文](/workspaces/{user_id}/美好的一天.docx)，这样用户就能在前端或其他渠道看到图片或下载文件。"
   },
   "tool.spec.list.args.path": {
-    "en-US": "Optional. Directory to list. Relative paths use the current working directory; absolute paths and /workspaces/... public paths are also accepted. Empty uses the current directory.",
-    "zh-CN": "可选，要列出的目录。相对路径按当前工作目录解释；也支持绝对路径和 /workspaces/... 公共路径。留空则使用当前工作目录。"
+    "en-US": "Optional. Directory to list. Defaults to the agent's working directory if omitted; relative paths are resolved against that root. Absolute paths and /workspaces/... public paths are also accepted.",
+    "zh-CN": "可选，要列出的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。也支持绝对路径和 /workspaces/... 公共路径。"
   },
   "tool.spec.list.args.cursor": {
     "en-US": "Opaque pagination cursor from previous list_files result; omit for first page.",
@@ -2508,8 +2568,8 @@
     "zh-CN": "可选，最大扫描文件数（0 表示不限制）。"
   },
   "tool.spec.search.args.path": {
-    "en-US": "Optional. Directory to limit the search. Relative paths use the current working directory; absolute paths and /workspaces/... public paths are also accepted. This tool searches local filesystem text files only, never the web.",
-    "zh-CN": "可选，限制搜索范围的目录。相对路径按当前工作目录解释；也支持绝对路径和 /workspaces/... 公共路径。这个工具只搜索本地文件系统中的纯文本文件，不会搜索网页。"
+    "en-US": "Optional. Directory to limit the search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root. Absolute paths and /workspaces/... public paths are also accepted. This tool searches local filesystem text files only, never the web.",
+    "zh-CN": "可选，限制搜索范围的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。也支持绝对路径和 /workspaces/... 公共路径。这个工具只搜索本地文件系统中的纯文本文件，不会搜索网页。"
   },
   "tool.spec.search.args.pattern": {
     "en-US": "Preferred rg-style input. When pattern is provided without query_mode or -F, it defaults to regex like ripgrep; use -F/query_mode=literal for fixed-string matching.",

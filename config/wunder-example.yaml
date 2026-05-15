@@ -181,12 +181,19 @@ tools: # 内置工具配置
       - 列出文件       # 列出目录下文件
       - 搜索内容       # 搜索文件内容
       - 读取文件       # 读取文件内容
+      - 网页搜索       # 用关键词搜索公开网页，返回候选 URL
       - 网页抓取       # 抓取网页正文并输出低噪声内容
       - 技能调用       # 按技能名返回 SKILL.md 与目录结构
       - 写入文件       # 写入文件内容
       - 应用补丁       # 多文件补丁编辑
 
   web:
+    search:
+      enabled: false
+      provider: ${WUNDER_WEB_SEARCH_PROVIDER:-} # Leave empty to keep web_search disabled by default.
+      count: 5
+      max_result_chars: 1200
+      cache_ttl_secs: 600
     fetch:
       enabled: true
       provider: ${WUNDER_WEB_FETCH_PROVIDER:-direct} # direct | auto | firecrawl. auto uses firecrawl when api_key/env/base_url is configured, otherwise direct.

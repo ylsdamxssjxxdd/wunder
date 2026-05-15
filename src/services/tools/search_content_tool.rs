@@ -490,6 +490,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         &params,
         selected_attempt,
         summary,
+        &resolved_path,
+        &scope,
+        &scope_note,
         hits,
         matched_file_count,
         returned_match_count,
@@ -513,8 +516,8 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or(".")
-        .trim()
         .to_string();
     let file_pattern_items = collect_file_pattern_items(args);
     let (query_mode, query_mode_inferred) = parse_query_mode(args, query_source);
@@ -2156,6 +2159,9 @@ fn build_model_search_success(
     params: &SearchParams,
     attempt: &SearchAttempt,
     summary: SearchSummary,
+    resolved_path: &str,
+    scope: &Value,
+    scope_note: &str,
     hits: Vec<SearchHit>,
     matched_file_count: usize,
     returned_match_count: usize,
@@ -2177,6 +2183,9 @@ fn build_model_search_success(
             "query": params.query,
             "query_used": attempt.query,
             "path": params.path,
+            "resolved_path": resolved_path,
+            "scope": scope,
+            "scope_note": scope_note,
             "query_mode": attempt.query_mode.as_str(),
             "matched_file_count": matched_file_count,
             "returned_match_count": returned_match_count,
@@ -2817,6 +2826,14 @@ mod tests {
                 focus_points: vec!["src/lib.rs:12 [alpha]".to_string()],
                 next_hint: Some("Narrow the path if you need fewer hits.".to_string()),
             },
+            "/workspaces/demo__c__1",
+            &json!({
+                "kind": "local_filesystem",
+                "local_only": true,
+                "supports_web": false,
+                "resolved_path": "/workspaces/demo__c__1",
+            }),
+            "Searches local filesystem text files only under `/workspaces/demo__c__1`. This tool does not search the web; use list_files first if the path is uncertain.",
             vec![SearchHit {
                 path: "src/lib.rs".to_string(),
                 line: 12,

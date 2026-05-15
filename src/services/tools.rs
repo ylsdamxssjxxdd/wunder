@@ -37,6 +37,7 @@ mod thread_control_tool;
 pub(crate) mod tool_error;
 mod web_fetch_provider;
 mod web_fetch_tool;
+mod web_search_tool;
 
 #[cfg(test)]
 pub(crate) use catalog::builtin_tool_specs_with_language;
@@ -7656,11 +7657,11 @@ async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if let Some(result) = execute_in_sandbox(context, "列出文件", args).await {
         return Ok(result);
     }
-    let path = args
+    let raw_path = args
         .get("path")
         .and_then(Value::as_str)
-        .unwrap_or(".")
-        .to_string();
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(".");
     let max_depth = args
         .get("max_depth")
         .and_then(Value::as_u64)
@@ -7687,6 +7688,7 @@ async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
+    let path = raw_path.to_string();
     tokio::task::spawn_blocking(move || {
         list_files_inner(
             workspace.as_ref(),
@@ -7834,12 +7836,14 @@ fn list_files_inner(
     let returned = items.len();
     let next_offset = page_start.saturating_add(returned);
     let next_cursor = has_more.then(|| next_offset.to_string());
+    let resolved_path = root.to_string_lossy().to_string();
     Ok(build_model_tool_success_with_hint(
         "list_files",
         "completed",
         format!("Listed {returned} entries from {path}."),
         json!({
             "path": path,
+            "resolved_path": resolved_path,
             "items": items,
             "offset": page_start,
             "limit": page_limit,

@@ -25,6 +25,7 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
             "list_files",
             "search_content",
             "read_image",
+            "web_search",
             "web_fetch",
             "browser",
             "self_status",

@@ -14,6 +14,7 @@ use super::{
 };
 use super::{
     apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool, web_fetch_tool,
+    web_search_tool,
 };
 use crate::cron::{handle_cron_action, CronActionRequest};
 use crate::i18n;
@@ -94,6 +95,7 @@ pub async fn execute_builtin_tool(
         "会话线程控制" => execute_thread_control_tool(context, args).await,
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
         "节点调用" => execute_node_invoke(context, args).await,
+        web_search_tool::TOOL_WEB_SEARCH => web_search_tool::tool_web_search(context, args).await,
         web_fetch_tool::TOOL_WEB_FETCH => web_fetch_tool::tool_web_fetch(context, args).await,
         browser_tool::TOOL_BROWSER => {
             browser_tool::tool_browser(context, browser_tool::TOOL_BROWSER, args).await

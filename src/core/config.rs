@@ -593,7 +593,47 @@ pub struct SearchToolConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebToolsConfig {
     #[serde(default)]
+    pub search: WebSearchToolConfig,
+    #[serde(default)]
     pub fetch: WebFetchToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchToolConfig {
+    #[serde(default = "default_web_search_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_web_search_provider")]
+    pub provider: String,
+    #[serde(
+        default = "default_web_search_count",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub count: usize,
+    #[serde(
+        default = "default_web_search_max_result_chars",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_result_chars: usize,
+    #[serde(
+        default = "default_web_search_cache_ttl_secs",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub cache_ttl_secs: u64,
+    #[serde(default)]
+    pub firecrawl: WebSearchFirecrawlConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSearchFirecrawlConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_web_fetch_firecrawl_base_url")]
+    pub base_url: String,
+    #[serde(
+        default = "default_web_search_firecrawl_timeout_secs",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -810,6 +850,29 @@ impl Default for WebFetchToolConfig {
     }
 }
 
+impl Default for WebSearchToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_web_search_enabled(),
+            provider: default_web_search_provider(),
+            count: default_web_search_count(),
+            max_result_chars: default_web_search_max_result_chars(),
+            cache_ttl_secs: default_web_search_cache_ttl_secs(),
+            firecrawl: WebSearchFirecrawlConfig::default(),
+        }
+    }
+}
+
+impl Default for WebSearchFirecrawlConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            base_url: default_web_fetch_firecrawl_base_url(),
+            timeout_secs: default_web_search_firecrawl_timeout_secs(),
+        }
+    }
+}
+
 impl Default for WebFetchFirecrawlConfig {
     fn default() -> Self {
         Self {
@@ -830,6 +893,28 @@ impl WebFetchToolConfig {
             .map(|value| value.to_ascii_lowercase())
             .filter(|value| matches!(value.as_str(), "direct" | "auto" | "firecrawl"))
             .unwrap_or_else(default_web_fetch_provider)
+    }
+}
+
+impl WebSearchToolConfig {
+    pub fn provider(&self) -> String {
+        clean_inline_or_env(Some(&self.provider), "WUNDER_WEB_SEARCH_PROVIDER")
+            .map(|value| value.to_ascii_lowercase())
+            .filter(|value| matches!(value.as_str(), "firecrawl"))
+            .unwrap_or_else(default_web_search_provider)
+    }
+}
+
+impl WebSearchFirecrawlConfig {
+    pub fn api_key(&self) -> Option<String> {
+        clean_inline_or_env(self.api_key.as_deref(), "FIRECRAWL_API_KEY")
+    }
+
+    pub fn base_url(&self) -> String {
+        clean_inline_or_env(Some(&self.base_url), "FIRECRAWL_BASE_URL")
+            .unwrap_or_else(default_web_fetch_firecrawl_base_url)
+            .trim_end_matches('/')
+            .to_string()
     }
 }
 
@@ -947,6 +1032,30 @@ fn default_browser_control_port() -> u16 {
 
 fn default_web_fetch_enabled() -> bool {
     true
+}
+
+fn default_web_search_enabled() -> bool {
+    false
+}
+
+fn default_web_search_provider() -> String {
+    String::new()
+}
+
+fn default_web_search_count() -> usize {
+    5
+}
+
+fn default_web_search_max_result_chars() -> usize {
+    1200
+}
+
+fn default_web_search_cache_ttl_secs() -> u64 {
+    600
+}
+
+fn default_web_search_firecrawl_timeout_secs() -> u64 {
+    45
 }
 
 fn default_web_fetch_provider() -> String {

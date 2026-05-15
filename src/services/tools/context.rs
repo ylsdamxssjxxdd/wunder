@@ -334,6 +334,9 @@ pub(crate) fn resolve_tool_path(
     raw_path: &str,
     extra_roots: &[PathBuf],
 ) -> Result<PathBuf> {
+    if should_resolve_workspace_first(raw_path) {
+        return workspace.resolve_path(user_id, raw_path);
+    }
     if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
         return Ok(resolved);
     }
@@ -354,6 +357,11 @@ pub(crate) fn resolve_tool_path(
             }
         }
     }
+}
+
+fn should_resolve_workspace_first(raw_path: &str) -> bool {
+    let normalized = raw_path.trim().replace('\\', "/");
+    normalized.is_empty() || normalized == "." || normalized == "./"
 }
 
 fn should_resolve_missing_path_from_extra_roots(raw_path: &str) -> bool {
@@ -484,6 +492,71 @@ mod tests {
         assert_eq!(
             normalize_existing_path(&resolved),
             normalize_existing_path(&target)
+        );
+    }
+
+    #[test]
+    fn resolve_tool_path_keeps_dot_in_current_workspace_with_unrestricted_root() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let current_root = workspace_root.join("alice__c__1");
+        let outside_root = temp.path().join("outside");
+        fs::create_dir_all(&current_root).expect("mkdir workspace");
+        fs::create_dir_all(&outside_root).expect("mkdir outside");
+        let storage = Arc::new(crate::storage::SqliteStorage::new(
+            temp.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let mut container_roots = std::collections::HashMap::new();
+        container_roots.insert(1, current_root.to_string_lossy().to_string());
+        let workspace = crate::workspace::WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &container_roots,
+        );
+
+        let resolved = super::resolve_tool_path(
+            &workspace,
+            "alice__c__1",
+            ".",
+            &[outside_root, filesystem_root_for(&current_root)],
+        )
+        .expect("resolved");
+
+        assert_eq!(
+            normalize_existing_path(&resolved),
+            normalize_existing_path(&current_root)
+        );
+    }
+
+    #[test]
+    fn resolve_tool_path_treats_empty_path_as_current_workspace_root() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let current_root = workspace_root.join("alice__c__1");
+        fs::create_dir_all(&current_root).expect("mkdir workspace");
+        let storage = Arc::new(crate::storage::SqliteStorage::new(
+            temp.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = crate::workspace::WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &std::collections::HashMap::new(),
+        );
+
+        let resolved = super::resolve_tool_path(&workspace, "alice__c__1", "", &[])
+            .expect("resolved");
+
+        assert_eq!(
+            normalize_existing_path(&resolved),
+            normalize_existing_path(&current_root)
         );
     }
 

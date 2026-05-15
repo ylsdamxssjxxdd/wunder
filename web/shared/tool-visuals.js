@@ -13,6 +13,7 @@ const TOOL_ICON_RULES = [
   { keywords: ["智能体蜂群", "agent_swarm", "swarm_control"], icon: "fa-bee" },
   { keywords: ["子智能体控制", "subagent_control"], icon: "fa-diagram-project" },
   { keywords: ["会话线程控制", "thread_control", "session_thread"], icon: "fa-code-branch" },
+  { keywords: ["网页搜索", "web_search", "web search", "websearch"], icon: "fa-magnifying-glass" },
   { keywords: ["网页抓取", "web_fetch", "web fetch", "webfetch"], icon: "fa-globe" },
   { keywords: ["a2a观察", "a2a_observe"], icon: "fa-glasses" },
   { keywords: ["a2a等待", "a2a_wait"], icon: "fa-clock" },

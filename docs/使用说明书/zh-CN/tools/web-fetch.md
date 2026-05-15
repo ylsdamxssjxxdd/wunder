@@ -1,14 +1,41 @@
 ---
 title: 网页抓取
-summary: `web_fetch` 的直接抓取、浏览器回退与成功/失败返回。
+summary: `web_search` 与 `web_fetch` 的分工，以及 `web_fetch` 的直接抓取、浏览器回退与成功/失败返回。
 read_when:
   - 你要读取公开网页正文，而不是操控浏览器
 source_docs:
+  - src/services/tools/web_search_tool.rs
   - src/services/tools/web_fetch_tool.rs
-updated_at: 2026-05-14
+updated_at: 2026-05-15
 ---
 
 # 网页抓取
+
+## 先分清搜索和抓取
+
+- `web_search`：输入关键词，返回候选网页的标题、URL 和摘要。
+- `web_fetch`：输入一个已确认的具体 URL，读取该网页正文。
+
+只有关键词时，先用 `web_search`：
+
+```json
+{
+  "query": "示例项目 官方 文档 GitHub",
+  "count": 5
+}
+```
+
+如果你已有一个站点或域名，只想在该来源内搜索，传 `site` 或 `sites`，不要把搜索页 URL 拼好后交给 `web_fetch`：
+
+```json
+{
+  "site": "example.com",
+  "query": "安装 配置",
+  "count": 5
+}
+```
+
+拿到具体 URL 后，再用 `web_fetch` 抓正文。不要把 Bing、百度、Google 等搜索结果页 URL 传给 `web_fetch`。
 
 `web_fetch` 当前仍然是成功返回的例外项。  
 它成功时直接返回抓取结果对象，不包统一的 `ok/action/state/summary/data`。
@@ -50,11 +77,13 @@ updated_at: 2026-05-14
 - `truncated`：正文是否被截断
 - `warning`：抓取过程中的额外提示
 
-## Firecrawl Provider
+## Provider
 
-`tools.web.fetch.provider` 支持 `direct`、`auto`、`firecrawl`。`auto` 会在配置了 `FIRECRAWL_API_KEY` 或 `FIRECRAWL_BASE_URL` 时优先使用 Firecrawl，否则回退到内置抓取器。
+Docker compose 默认只启用 Wunder 内置网页抓取，不再启动 Firecrawl 自托管服务组。`tools.web.search.enabled` 默认关闭；需要关键词搜索时，应先配置可用搜索 provider，再显式启用 `web_search`。
 
-Docker 自托管 Firecrawl 可使用 `http://wunder-firecrawl:3002`。Firecrawl Cloud 使用 `https://api.firecrawl.dev`，并且需要 API Key。compose 会同时启动 `wunder-firecrawl-nuq-postgres`，由官方 NUQ Postgres 镜像初始化 `nuq` 队列表与维护任务；管理员系统设置页只保存 Wunder 连接 Firecrawl 的参数，不启动或停止 Docker 服务。
+`tools.web.fetch.provider` 支持 `direct`、`auto`、`firecrawl`。默认值是 `direct`，使用 Wunder 内置 HTTP 抓取器。`auto` 会在配置了 `FIRECRAWL_API_KEY` 或 `FIRECRAWL_BASE_URL` 时优先使用外部 Firecrawl，否则回退到内置抓取器。
+
+Firecrawl Cloud 使用 `https://api.firecrawl.dev`，并且需要 API Key。管理员系统设置页只保存 Wunder 连接外部 Firecrawl 的参数，不启动或停止 Docker 服务。
 
 ## 浏览器回退
 
@@ -81,5 +110,6 @@ Docker 自托管 Firecrawl 可使用 `http://wunder-firecrawl:3002`。Firecrawl 
 
 ## 什么时候别用它
 
+- 有搜索关键词但没有具体 URL：先用 `web_search`
 - 要点击、输入、滚动：用 [浏览器](/docs/zh-CN/tools/browser/)
 - 要看本地 HTML 文件：这不是它的场景

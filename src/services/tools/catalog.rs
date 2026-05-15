@@ -2,6 +2,7 @@ use super::mcp_pack;
 use super::{
     browser_tool, channel_tool, desktop_control, multimodal_generation_tool, read_image_tool,
     self_status_tool, sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
+    web_search_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -973,6 +974,54 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
+            name: web_search_tool::TOOL_WEB_SEARCH.to_string(),
+            title: None,
+            description: t("tool.spec.web_search.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": t("tool.spec.web_search.args.query") },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10,
+                        "description": t("tool.spec.web_search.args.count")
+                    },
+                    "site": {
+                        "type": "string",
+                        "description": t("tool.spec.web_search.args.site")
+                    },
+                    "sites": {
+                        "type": "array",
+                        "description": t("tool.spec.web_search.args.sites"),
+                        "items": { "type": "string" }
+                    },
+                    "scrape_results": {
+                        "type": "boolean",
+                        "description": t("tool.spec.web_search.args.scrape_results")
+                    },
+                    "max_result_chars": {
+                        "type": "integer",
+                        "minimum": 120,
+                        "maximum": 4000,
+                        "description": t("tool.spec.web_search.args.max_result_chars")
+                    },
+                    "sources": {
+                        "type": "array",
+                        "description": t("tool.spec.web_search.args.sources"),
+                        "items": { "type": "string" }
+                    },
+                    "categories": {
+                        "type": "array",
+                        "description": t("tool.spec.web_search.args.categories"),
+                        "items": { "type": "string" }
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
             name: web_fetch_tool::TOOL_WEB_FETCH.to_string(),
             title: None,
             description: t("tool.spec.web_fetch.description"),
@@ -1268,6 +1317,10 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("node.invoke".to_string(), "节点调用".to_string());
     map.insert("node_invoke".to_string(), "节点调用".to_string());
     map.insert(
+        web_search_tool::TOOL_WEB_SEARCH_ALIAS.to_string(),
+        web_search_tool::TOOL_WEB_SEARCH.to_string(),
+    );
+    map.insert(
         web_fetch_tool::TOOL_WEB_FETCH_ALIAS.to_string(),
         web_fetch_tool::TOOL_WEB_FETCH.to_string(),
     );
@@ -1368,6 +1421,11 @@ fn is_desktop_mode(config: &Config) -> bool {
 fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     if web_fetch_tool::is_web_fetch_tool_name(canonical)
         && !web_fetch_tool::web_fetch_enabled(config)
+    {
+        return false;
+    }
+    if web_search_tool::is_web_search_tool_name(canonical)
+        && !web_search_tool::web_search_enabled(config)
     {
         return false;
     }
@@ -1502,6 +1560,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "用户世界工具" => Some("user_world"),
         channel_tool::TOOL_CHANNEL => Some("channel_tool"),
         "记忆管理" => Some("memory_manager"),
+        web_search_tool::TOOL_WEB_SEARCH => Some(web_search_tool::TOOL_WEB_SEARCH_ALIAS),
         web_fetch_tool::TOOL_WEB_FETCH => Some(web_fetch_tool::TOOL_WEB_FETCH_ALIAS),
         browser_tool::TOOL_BROWSER => Some("browser"),
         desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
@@ -2271,6 +2330,34 @@ mod tests {
     }
 
     #[test]
+    fn web_search_schema_exposes_query_not_url() {
+        let canonical_name = resolve_tool_name("web_search");
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == canonical_name)
+            .expect("web_search spec");
+        assert!(spec.description.contains("自然语言关键词"));
+        assert!(spec.description.contains("web_fetch"));
+        assert!(spec.input_schema["properties"]["query"].is_object());
+        assert!(spec.input_schema["properties"]["count"].is_object());
+        assert!(spec.input_schema["properties"]["site"].is_object());
+        assert!(spec.input_schema["properties"]["sites"].is_object());
+        assert!(spec.input_schema["properties"]["scrape_results"].is_object());
+        assert!(spec.input_schema["properties"]["url"].is_null());
+        assert_eq!(
+            spec.input_schema["required"]
+                .as_array()
+                .and_then(|items| items.first())
+                .and_then(Value::as_str),
+            Some("query")
+        );
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn agent_swarm_schema_exposes_canonical_fields() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
@@ -2536,6 +2623,8 @@ mod tests {
         config.tools.builtin.enabled = vec!["最终回复".to_string()];
         config.tools.browser.enabled = true;
         config.tools.desktop_controller.enabled = true;
+        config.tools.web.search.enabled = true;
+        config.tools.web.search.provider = "firecrawl".to_string();
 
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
         for spec in builtin_tool_specs_with_language("zh-CN") {
@@ -2547,6 +2636,14 @@ mod tests {
         }
         assert!(available.contains("read_file"));
         assert!(available.contains("update_plan"));
+    }
+
+    #[test]
+    fn web_search_is_hidden_by_default_when_disabled() {
+        let config = Config::default();
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        assert!(!available.contains("web_search"));
+        assert!(!available.contains("网页搜索"));
     }
 
     #[test]

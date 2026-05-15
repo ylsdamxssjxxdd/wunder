@@ -1,4 +1,4 @@
-﻿x-rust-build: &rust-build
+x-rust-build: &rust-build
   context: .
   dockerfile: Dockerfile
   args:
@@ -57,8 +57,6 @@ services:
       - WUNDER_DRAWIO_ENABLED=${WUNDER_DRAWIO_ENABLED:-true}
       - WUNDER_DRAWIO_EDITOR_URL=${WUNDER_DRAWIO_EDITOR_URL:-http://127.0.0.1:${DRAWIO_PORT:-18081}}
       - WUNDER_WEB_FETCH_PROVIDER=${WUNDER_WEB_FETCH_PROVIDER:-direct}
-      - FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY:-}
-      - FIRECRAWL_BASE_URL=${FIRECRAWL_BASE_URL:-}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_LOG_COLOR=${WUNDER_LOG_COLOR:-always}
       - WUNDER_ATOMIC_WRITE_MODE=${WUNDER_ATOMIC_WRITE_MODE:-relaxed}
@@ -126,125 +124,6 @@ services:
       - "0.0.0.0:${DRAWIO_PORT:-18081}:8080"
     environment:
       - TZ=Asia/Shanghai
-    restart: always
-
-  wunder-firecrawl:
-    container_name: wunder-firecrawl
-    image: ghcr.io/firecrawl/firecrawl:latest
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
-    ports:
-      - "${FIRECRAWL_BIND_HOST:-127.0.0.1}:${FIRECRAWL_PORT:-13002}:3002"
-    environment:
-      - HOST=0.0.0.0
-      - PORT=3002
-      - EXTRACT_WORKER_PORT=3004
-      - WORKER_PORT=3005
-      - ENV=local
-      - REDIS_URL=redis://wunder-firecrawl-redis:6379
-      - REDIS_RATE_LIMIT_URL=redis://wunder-firecrawl-redis:6379
-      - PLAYWRIGHT_MICROSERVICE_URL=http://wunder-firecrawl-playwright:3000/scrape
-      - POSTGRES_USER=${FIRECRAWL_POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${FIRECRAWL_POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=postgres
-      - POSTGRES_HOST=wunder-firecrawl-nuq-postgres
-      - POSTGRES_PORT=5432
-      - USE_DB_AUTHENTICATION=${FIRECRAWL_USE_DB_AUTHENTICATION:-false}
-      - NUM_WORKERS_PER_QUEUE=${FIRECRAWL_NUM_WORKERS_PER_QUEUE:-4}
-      - CRAWL_CONCURRENT_REQUESTS=${FIRECRAWL_CRAWL_CONCURRENT_REQUESTS:-6}
-      - MAX_CONCURRENT_JOBS=${FIRECRAWL_MAX_CONCURRENT_JOBS:-3}
-      - BROWSER_POOL_SIZE=${FIRECRAWL_BROWSER_POOL_SIZE:-3}
-      - NUQ_RABBITMQ_URL=amqp://wunder-firecrawl-rabbitmq:5672
-      - HARNESS_STARTUP_TIMEOUT_MS=${FIRECRAWL_HARNESS_STARTUP_TIMEOUT_MS:-60000}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - MODEL_NAME=${MODEL_NAME:-}
-      - MODEL_EMBEDDING_NAME=${MODEL_EMBEDDING_NAME:-}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-      - AUTUMN_SECRET_KEY=${AUTUMN_SECRET_KEY:-}
-      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
-      - BULL_AUTH_KEY=${BULL_AUTH_KEY:-}
-      - TEST_API_KEY=${TEST_API_KEY:-}
-      - SUPABASE_ANON_TOKEN=${SUPABASE_ANON_TOKEN:-}
-      - SUPABASE_URL=${SUPABASE_URL:-}
-      - SUPABASE_SERVICE_TOKEN=${SUPABASE_SERVICE_TOKEN:-}
-      - SELF_HOSTED_WEBHOOK_URL=${SELF_HOSTED_WEBHOOK_URL:-}
-      - LOGGING_LEVEL=${FIRECRAWL_LOGGING_LEVEL:-info}
-      - PROXY_SERVER=${FIRECRAWL_PROXY_SERVER:-}
-      - PROXY_USERNAME=${FIRECRAWL_PROXY_USERNAME:-}
-      - PROXY_PASSWORD=${FIRECRAWL_PROXY_PASSWORD:-}
-      - SEARXNG_ENDPOINT=${FIRECRAWL_SEARXNG_ENDPOINT:-}
-      - SEARXNG_ENGINES=${FIRECRAWL_SEARXNG_ENGINES:-}
-      - SEARXNG_CATEGORIES=${FIRECRAWL_SEARXNG_CATEGORIES:-}
-    command: node dist/src/harness.js --start-docker
-    depends_on:
-      wunder-firecrawl-redis:
-        condition: service_started
-      wunder-firecrawl-playwright:
-        condition: service_started
-      wunder-firecrawl-rabbitmq:
-        condition: service_healthy
-      wunder-firecrawl-nuq-postgres:
-        condition: service_healthy
-    restart: always
-
-  wunder-firecrawl-nuq-postgres:
-    container_name: wunder-firecrawl-nuq-postgres
-    image: ghcr.io/firecrawl/nuq-postgres:latest
-    environment:
-      - POSTGRES_USER=${FIRECRAWL_POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${FIRECRAWL_POSTGRES_PASSWORD:-postgres}
-      - POSTGRES_DB=postgres
-    volumes:
-      - wunder_win_firecrawl_nuq_postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${FIRECRAWL_POSTGRES_USER:-postgres} -d postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 20s
-    restart: always
-
-  wunder-firecrawl-playwright:
-    container_name: wunder-firecrawl-playwright
-    image: ghcr.io/firecrawl/playwright-service:latest
-    shm_size: "2gb"
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
-    environment:
-      - PORT=3000
-      - PROXY_SERVER=${FIRECRAWL_PROXY_SERVER:-}
-      - PROXY_USERNAME=${FIRECRAWL_PROXY_USERNAME:-}
-      - PROXY_PASSWORD=${FIRECRAWL_PROXY_PASSWORD:-}
-      - ALLOW_LOCAL_WEBHOOKS=${FIRECRAWL_ALLOW_LOCAL_WEBHOOKS:-true}
-      - BLOCK_MEDIA=${FIRECRAWL_BLOCK_MEDIA:-false}
-      - MAX_CONCURRENT_PAGES=${FIRECRAWL_CRAWL_CONCURRENT_REQUESTS:-6}
-    restart: always
-
-  wunder-firecrawl-redis:
-    container_name: wunder-firecrawl-redis
-    image: redis:alpine
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
-    command: redis-server --bind 0.0.0.0
-    restart: always
-
-  wunder-firecrawl-rabbitmq:
-    container_name: wunder-firecrawl-rabbitmq
-    image: rabbitmq:3-management
-    privileged: true
-    security_opt:
-      - seccomp:unconfined
-    command: rabbitmq-server
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
-      interval: 5s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
     restart: always
 
   wunder-sandbox:
@@ -444,7 +323,6 @@ volumes:
   wunder_win_cargo_home:
   wunder_win_cargo_target:
   wunder_win_postgres:
-  wunder_win_firecrawl_nuq_postgres:
   wunder_win_weaviate:
   wunder_win_onlyoffice_logs:
   wunder_win_onlyoffice_lib:
