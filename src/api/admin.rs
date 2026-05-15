@@ -3160,6 +3160,16 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "enabled": config.drawio.enabled(),
             "editor_url": config.drawio.editor_url.clone().unwrap_or_default(),
             "max_file_bytes": config.drawio.max_file_bytes,
+        },
+        "firecrawl": {
+            "provider": config.tools.web.fetch.provider(),
+            "api_key": config.tools.web.fetch.firecrawl.api_key().unwrap_or_default(),
+            "base_url": config.tools.web.fetch.firecrawl.base_url(),
+            "timeout_secs": config.tools.web.fetch.firecrawl.timeout_secs,
+            "only_main_content": config.tools.web.fetch.firecrawl.only_main_content,
+            "max_age_ms": config.tools.web.fetch.firecrawl.max_age_ms,
+            "proxy": config.tools.web.fetch.firecrawl.proxy.clone(),
+            "store_in_cache": config.tools.web.fetch.firecrawl.store_in_cache,
         }
     })
 }
@@ -3178,7 +3188,8 @@ async fn admin_system_update(
         || payload.observability.is_some()
         || payload.cors.is_some()
         || payload.onlyoffice.is_some()
-        || payload.drawio.is_some();
+        || payload.drawio.is_some()
+        || payload.firecrawl.is_some();
     if !has_updates {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -3356,6 +3367,47 @@ async fn admin_system_update(
                 }
                 if let Some(max_file_bytes) = drawio.max_file_bytes {
                     config.drawio.max_file_bytes = max_file_bytes.clamp(1024, 200 * 1024 * 1024);
+                }
+            }
+            if let Some(firecrawl) = payload.firecrawl {
+                if let Some(provider) = firecrawl.provider {
+                    config.tools.web.fetch.provider = match provider.trim().to_ascii_lowercase().as_str() {
+                        "firecrawl" => "firecrawl".to_string(),
+                        "auto" => "auto".to_string(),
+                        _ => "direct".to_string(),
+                    };
+                }
+                if let Some(api_key) = firecrawl.api_key {
+                    config.tools.web.fetch.firecrawl.api_key =
+                        normalize_optional_config_string(api_key);
+                }
+                if let Some(base_url) = firecrawl.base_url {
+                    let cleaned = base_url.trim();
+                    config.tools.web.fetch.firecrawl.base_url = if cleaned.is_empty() {
+                        "https://api.firecrawl.dev".to_string()
+                    } else {
+                        cleaned.trim_end_matches('/').to_string()
+                    };
+                }
+                if let Some(timeout_secs) = firecrawl.timeout_secs {
+                    config.tools.web.fetch.firecrawl.timeout_secs = timeout_secs.clamp(1, 180);
+                }
+                if let Some(only_main_content) = firecrawl.only_main_content {
+                    config.tools.web.fetch.firecrawl.only_main_content = only_main_content;
+                }
+                if let Some(max_age_ms) = firecrawl.max_age_ms {
+                    config.tools.web.fetch.firecrawl.max_age_ms = max_age_ms.min(86_400_000);
+                }
+                if let Some(proxy) = firecrawl.proxy {
+                    config.tools.web.fetch.firecrawl.proxy =
+                        match proxy.trim().to_ascii_lowercase().as_str() {
+                            "basic" => "basic".to_string(),
+                            "stealth" => "stealth".to_string(),
+                            _ => "auto".to_string(),
+                        };
+                }
+                if let Some(store_in_cache) = firecrawl.store_in_cache {
+                    config.tools.web.fetch.firecrawl.store_in_cache = store_in_cache;
                 }
             }
         })
@@ -7789,6 +7841,8 @@ struct SystemUpdateRequest {
     onlyoffice: Option<SystemOnlyOfficeUpdateRequest>,
     #[serde(default)]
     drawio: Option<SystemDrawioUpdateRequest>,
+    #[serde(default)]
+    firecrawl: Option<SystemFirecrawlUpdateRequest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7877,6 +7931,26 @@ struct SystemDrawioUpdateRequest {
     editor_url: Option<String>,
     #[serde(default)]
     max_file_bytes: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemFirecrawlUpdateRequest {
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+    #[serde(default)]
+    only_main_content: Option<bool>,
+    #[serde(default)]
+    max_age_ms: Option<u64>,
+    #[serde(default)]
+    proxy: Option<String>,
+    #[serde(default)]
+    store_in_cache: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

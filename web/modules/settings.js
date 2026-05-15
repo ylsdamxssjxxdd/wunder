@@ -66,6 +66,16 @@ const drawioSettings = {
   editorUrl: "",
   maxFileBytes: 52428800,
 };
+const firecrawlSettings = {
+  provider: "direct",
+  apiKey: "",
+  baseUrl: "https://api.firecrawl.dev",
+  timeoutSecs: 45,
+  onlyMainContent: true,
+  maxAgeMs: 600000,
+  proxy: "auto",
+  storeInCache: true,
+};
 let adminDefaultsLoaded = false;
 let adminDefaultsLoading = null;
 
@@ -341,6 +351,45 @@ const applyDrawioSettings = (options = {}) => {
   }
 };
 
+const applyFirecrawlSettings = (options = {}) => {
+  if (elements.settingsFirecrawlProvider) {
+    const provider = String(options.provider || "direct").toLowerCase();
+    elements.settingsFirecrawlProvider.value = resolveSelectValue(
+      elements.settingsFirecrawlProvider,
+      provider
+    );
+  }
+  if (elements.settingsFirecrawlBaseUrl) {
+    elements.settingsFirecrawlBaseUrl.value = options.baseUrl || "";
+  }
+  if (elements.settingsFirecrawlApiKey) {
+    elements.settingsFirecrawlApiKey.value = options.apiKey || "";
+  }
+  if (elements.settingsFirecrawlTimeout) {
+    elements.settingsFirecrawlTimeout.value = Number.isFinite(options.timeoutSecs)
+      ? String(options.timeoutSecs)
+      : "";
+  }
+  if (elements.settingsFirecrawlMaxAge) {
+    elements.settingsFirecrawlMaxAge.value = Number.isFinite(options.maxAgeMs)
+      ? String(options.maxAgeMs)
+      : "";
+  }
+  if (elements.settingsFirecrawlProxy) {
+    const proxy = String(options.proxy || "auto").toLowerCase();
+    elements.settingsFirecrawlProxy.value = resolveSelectValue(
+      elements.settingsFirecrawlProxy,
+      proxy
+    );
+  }
+  if (elements.settingsFirecrawlOnlyMainContent) {
+    elements.settingsFirecrawlOnlyMainContent.checked = options.onlyMainContent !== false;
+  }
+  if (elements.settingsFirecrawlStoreInCache) {
+    elements.settingsFirecrawlStoreInCache.checked = options.storeInCache !== false;
+  }
+};
+
 const resolveMaxActiveSessions = () => {
   const raw = String(elements.settingsMaxActiveSessions?.value || "").trim();
   if (!raw && !Number.isFinite(serverSettings.maxActiveSessions)) {
@@ -506,6 +555,31 @@ const applySystemSettings = (payload = {}) => {
     ? drawio.max_file_bytes
     : 52428800;
   applyDrawioSettings(drawioSettings);
+
+  const firecrawl = payload.firecrawl || {};
+  firecrawlSettings.provider =
+    typeof firecrawl.provider === "string" && firecrawl.provider.trim()
+      ? firecrawl.provider.trim().toLowerCase()
+      : "direct";
+  firecrawlSettings.apiKey =
+    typeof firecrawl.api_key === "string" ? firecrawl.api_key.trim() : "";
+  firecrawlSettings.baseUrl =
+    typeof firecrawl.base_url === "string" && firecrawl.base_url.trim()
+      ? firecrawl.base_url.trim()
+      : "https://api.firecrawl.dev";
+  firecrawlSettings.timeoutSecs = Number.isFinite(firecrawl.timeout_secs)
+    ? Math.max(1, Math.round(firecrawl.timeout_secs))
+    : 45;
+  firecrawlSettings.onlyMainContent = firecrawl.only_main_content !== false;
+  firecrawlSettings.maxAgeMs = Number.isFinite(firecrawl.max_age_ms)
+    ? Math.max(0, Math.round(firecrawl.max_age_ms))
+    : 600000;
+  firecrawlSettings.proxy =
+    typeof firecrawl.proxy === "string" && firecrawl.proxy.trim()
+      ? firecrawl.proxy.trim().toLowerCase()
+      : "auto";
+  firecrawlSettings.storeInCache = firecrawl.store_in_cache !== false;
+  applyFirecrawlSettings(firecrawlSettings);
 };
 
 const loadSystemSettings = async (options = {}) => {
@@ -819,6 +893,66 @@ const buildSystemUpdatePayload = () => {
     }
     if (Object.keys(drawio).length) {
       payload.drawio = drawio;
+    }
+  }
+
+  if (
+    elements.settingsFirecrawlProvider ||
+    elements.settingsFirecrawlBaseUrl ||
+    elements.settingsFirecrawlApiKey ||
+    elements.settingsFirecrawlTimeout ||
+    elements.settingsFirecrawlMaxAge ||
+    elements.settingsFirecrawlProxy ||
+    elements.settingsFirecrawlOnlyMainContent ||
+    elements.settingsFirecrawlStoreInCache
+  ) {
+    const firecrawl = {};
+    if (elements.settingsFirecrawlProvider) {
+      firecrawl.provider = resolveSelectValue(
+        elements.settingsFirecrawlProvider,
+        String(elements.settingsFirecrawlProvider.value || "").trim().toLowerCase()
+      );
+    }
+    if (elements.settingsFirecrawlBaseUrl) {
+      firecrawl.base_url = String(elements.settingsFirecrawlBaseUrl.value || "").trim();
+    }
+    if (elements.settingsFirecrawlApiKey) {
+      firecrawl.api_key = String(elements.settingsFirecrawlApiKey.value || "").trim();
+    }
+    if (elements.settingsFirecrawlTimeout) {
+      const value = resolveOptionalNumber(
+        elements.settingsFirecrawlTimeout.value,
+        firecrawlSettings.timeoutSecs,
+        1
+      );
+      if (value !== null) {
+        firecrawl.timeout_secs = value;
+      }
+    }
+    if (elements.settingsFirecrawlMaxAge) {
+      const value = resolveOptionalNumber(
+        elements.settingsFirecrawlMaxAge.value,
+        firecrawlSettings.maxAgeMs,
+        0
+      );
+      if (value !== null) {
+        firecrawl.max_age_ms = value;
+      }
+    }
+    if (elements.settingsFirecrawlProxy) {
+      firecrawl.proxy = resolveSelectValue(
+        elements.settingsFirecrawlProxy,
+        String(elements.settingsFirecrawlProxy.value || "").trim().toLowerCase()
+      );
+    }
+    if (elements.settingsFirecrawlOnlyMainContent) {
+      firecrawl.only_main_content = Boolean(elements.settingsFirecrawlOnlyMainContent.checked);
+    }
+    if (elements.settingsFirecrawlStoreInCache) {
+      firecrawl.store_in_cache = Boolean(elements.settingsFirecrawlStoreInCache.checked);
+    }
+    if (Object.keys(firecrawl).length) {
+      payload.firecrawl = firecrawl;
     }
   }
 

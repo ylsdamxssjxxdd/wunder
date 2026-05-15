@@ -2251,6 +2251,101 @@
                 </div>
               </div>
             </div>
+            <div class="settings-card settings-card-firecrawl">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-fire"></i>
+                <span data-i18n="settings.card.firecrawl">Firecrawl</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--runtime" data-i18n="settings.badge.runtime">Live</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row">
+                    <label for="settingsFirecrawlProvider" data-i18n="settings.label.firecrawlProvider">
+                      Web fetch provider
+                    </label>
+                    <select id="settingsFirecrawlProvider">
+                      <option value="direct">direct</option>
+                      <option value="auto">auto</option>
+                      <option value="firecrawl">firecrawl</option>
+                    </select>
+                    <div class="settings-field-hint" data-i18n="settings.hint.firecrawlProvider">
+                      direct uses Wunder built-in fetch; auto prefers Firecrawl when configured.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsFirecrawlBaseUrl" data-i18n="settings.label.firecrawlBaseUrl">
+                      API base URL
+                    </label>
+                    <input
+                      id="settingsFirecrawlBaseUrl"
+                      type="url"
+                      placeholder="http://wunder-firecrawl:3002"
+                      data-i18n-placeholder="settings.placeholder.firecrawlBaseUrl"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.firecrawlBaseUrl">
+                      Firecrawl API address. Use the same-network container URL for self-hosted Docker.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsFirecrawlApiKey" data-i18n="settings.label.firecrawlApiKey">
+                      API key
+                    </label>
+                    <input
+                      id="settingsFirecrawlApiKey"
+                      type="password"
+                      autocomplete="off"
+                      placeholder="Optional for self-hosted"
+                      data-i18n-placeholder="settings.placeholder.firecrawlApiKey"
+                    />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsFirecrawlTimeout" data-i18n="settings.label.firecrawlTimeout">
+                      Timeout (s)
+                    </label>
+                    <input id="settingsFirecrawlTimeout" type="number" min="1" max="180" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsFirecrawlMaxAge" data-i18n="settings.label.firecrawlMaxAge">
+                      Cache max age (ms)
+                    </label>
+                    <input id="settingsFirecrawlMaxAge" type="number" min="0" step="1000" />
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsFirecrawlProxy" data-i18n="settings.label.firecrawlProxy">
+                      Proxy mode
+                    </label>
+                    <select id="settingsFirecrawlProxy">
+                      <option value="auto">auto</option>
+                      <option value="basic">basic</option>
+                      <option value="stealth">stealth</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsFirecrawlOnlyMainContent" data-i18n="settings.label.firecrawlOnlyMainContent">
+                      Main content
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settingsFirecrawlOnlyMainContent" type="checkbox" />
+                      <span data-i18n="settings.option.firecrawlOnlyMainContent">Extract only main content</span>
+                    </label>
+                  </div>
+                  <div class="form-row">
+                    <label for="settingsFirecrawlStoreInCache" data-i18n="settings.label.firecrawlStoreInCache">
+                      Firecrawl cache
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settingsFirecrawlStoreInCache" type="checkbox" />
+                      <span data-i18n="settings.option.firecrawlStoreInCache">Allow Firecrawl cache</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.firecrawl">
+                  These settings only control Wunder's Firecrawl connection; they do not start or stop the Docker service.
+                </div>
+              </div>
+            </div>
           </div>
         </section><section id="mcpPanel" class="panel">
             <div class="list-header">

@@ -698,11 +698,12 @@
       "最小参数",
       "成功返回",
       "重点字段",
+      "Firecrawl Provider",
       "浏览器回退",
       "失败返回",
       "什么时候别用它"
     ],
-    "text": "网页抓取 webfetch 的直接抓取、浏览器回退与成功/失败返回。 # 网页抓取 webfetch 当前仍然是成功返回的例外项。 它成功时直接返回抓取结果对象，不包统一的 ok/action/state/summary/data。 最小参数 成功返回 重点字段 fetchstrategy：例如 directhttp、browserfallback format：通常是 markdown 或 text extractor：实际抽取器 truncated：正文是否被截断 warning：抓取过程中的额外提示 浏览器回退 如果直接 HTTP 抓到的只是前端壳、反爬校验页或无意义 HTML，webfetch 可能会自动尝试浏览器回退。 成功时你会看到： 失败返回 失败时会走统一失败骨架，并补充抓取诊断字段，例如： phase failuresummary errordetailhead nextstephint normalizedurl host errormeta.code 什么时候别用它 要点击、输入、滚动：用 浏览器 要看本地 HTML 文件：这不是它的场景 网页抓取 最小参数 成功返回 重点字段 浏览器回退 失败返回 什么时候别用它"
+    "text": "网页抓取 webfetch 的直接抓取、浏览器回退与成功/失败返回。 # 网页抓取 webfetch 当前仍然是成功返回的例外项。 它成功时直接返回抓取结果对象，不包统一的 ok/action/state/summary/data。 最小参数 成功返回 重点字段 fetchstrategy：例如 directhttp、browserfallback format：通常是 markdown 或 text extractor：实际抽取器 truncated：正文是否被截断 warning：抓取过程中的额外提示 Firecrawl Provider tools.web.fetch.provider 支持 direct、auto、firecrawl。auto 会在配置了 FIRECRAWLAPIKEY 或 FIRECRAWLBASEURL 时优先使用 Firecrawl，否则回退到内置抓取器。 Docker 自托管 Firecrawl 可使用 http://wunder-firecrawl:3002。Firecrawl Cloud 使用 https://api.firecrawl.dev，并且需要 API Key。compose 会同时启动 wunder-firecrawl-nuq-postgres，由官方 NUQ Postgres 镜像初始化 nuq 队列表与维护任务；管理员系统设置页只保存 Wunder 连接 Firecrawl 的参数，不启动或停止 Docker 服务。 浏览器回退 如果直接 HTTP 抓到的只是前端壳、反爬校验页或无意义 HTML，webfetch 可能会自动尝试浏览器回退。 成功时你会看到： 失败返回 失败时会走统一失败骨架，并补充抓取诊断字段，例如： phase failuresummary errordetailhead nextstephint normalizedurl host errormeta.code 什么时候别用它 要点击、输入、滚动：用 浏览器 要看本地 HTML 文件：这不是它的场景 网页抓取 最小参数 成功返回 重点字段 Firecrawl Provider 浏览器回退 失败返回 什么时候别用它"
   },
   {
     "slug": "zh-CN/tools/browser",
@@ -2964,11 +2965,12 @@
       "Minimum arguments",
       "Success result",
       "Important fields",
+      "Providers",
       "Browser fallback",
       "Failure results",
       "When not to use it"
     ],
-    "text": "Web Fetch Direct fetch, browser fallback, and success or failure results for webfetch. # Web Fetch webfetch is still one of the deliberate exceptions in the tool system. On success, it returns the fetched result object directly rather than the unified ok/action/state/summary/data envelope. Minimum arguments Success result Important fields fetchstrategy: for example directhttp or browserfallback format: usually markdown or text extractor: the extractor that actually produced the content truncated: whether the main content was cut warning: extra fetch-time hints or warnings Browser fallback If direct HTTP only returns a frontend shell, an anti-bot page, or meaningless HTML, webfetch may automatically attempt browser fallback. When that happens successfully, you will see: Failure results On failure, the tool falls back to the unified failure envelope and adds fetch diagnostics such as: phase failuresummary errordetailhead nextstephint normalizedurl host errormeta.code When not to use it If you need to click, type, or scroll, use Browser If you need to inspect a local HTML file, this is not the right tool Web Fetch Minimum arguments Success result Important fields Browser fallback Failure results When not to use it"
+    "text": "Web Fetch Direct fetch, browser fallback, and success or failure results for webfetch. # Web Fetch webfetch is still one of the deliberate exceptions in the tool system. On success, it returns the fetched result object directly rather than the unified ok/action/state/summary/data envelope. Minimum arguments Success result Important fields fetchstrategy: for example directhttp or browserfallback provider: present when an external provider such as firecrawl handled the fetch format: usually markdown or text extractor: the extractor that actually produced the content truncated: whether the main content was cut warning: extra fetch-time hints or warnings Providers webfetch keeps the model-facing arguments small. Provider selection is configured by the system: direct: built-in Wunder HTTP fetcher. firecrawl: use Firecrawl /v2/scrape. auto: use Firecrawl when an API key or custom base URL is configured, otherwise fall back to direct. Firecrawl Cloud uses https://api.firecrawl.dev and requires an API key. A self-hosted service can use a URL such as http://wunder-firecrawl:3002 and usually does not require an API key. The Docker compose files include a self-hosted Firecrawl service group and start wunder-firecrawl-nuq-postgres, which initializes the nuq queue tables and maintenance jobs through Firecrawl's NUQ Postgres image; the admin settings page only stores Wunder's connection parameters and does not control Docker service lifecycle. Browser fallback If direct HTTP only returns a frontend shell, an anti-bot page, or meaningless HTML, webfetch may automatically attempt browser fallback. When that happens successfully, you will see: Failure results On failure, the tool falls back to the unified failure envelope and adds fetch diagnostics such as: phase failuresummary errordetailhead nextstephint normalizedurl host errormeta.code When not to use it If you have search keywords, use a search tool first. webfetch rejects search-result URLs such as bing.com/search?.... If you need to click, type, or scroll, use Browser If you need to inspect a local HTML file, this is not the right tool Web Fetch Minimum arguments Success result Important fields Providers Browser fallback Failure results When not to use it"
   },
   {
     "slug": "en/tools/browser",

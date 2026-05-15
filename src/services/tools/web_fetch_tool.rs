@@ -1,4 +1,5 @@
 use super::{tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext};
+use super::web_fetch_provider;
 use crate::config::{Config, WebFetchToolConfig};
 use crate::i18n;
 use crate::services::browser::{browser_service, browser_tools_enabled, BrowserSessionScope};
@@ -356,11 +357,32 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
     let config = &context.config.tools.web.fetch;
     let extract_mode = ExtractMode::from_raw(request.extract_mode.as_deref());
     let max_chars = resolve_max_chars(request.max_chars, config);
-    let cache_key = format!("{request_url}|{}", extract_mode.as_str());
+    if web_fetch_provider::should_use_firecrawl(config) {
+        match fetch_with_firecrawl_provider(&raw_url, extract_mode, max_chars, config).await {
+            Ok(value) => return Ok(value),
+            Err(failure) if !web_fetch_provider::should_fallback_to_direct(config) => {
+                return Ok(failure.into_value());
+            }
+            Err(_) => {
+                // In auto mode, keep the model moving by falling back to the built-in fetcher.
+            }
+        }
+    }
+    direct_web_fetch(context, &raw_url, &request_url, extract_mode, max_chars, config).await
+}
 
+async fn direct_web_fetch(
+    context: &ToolContext<'_>,
+    raw_url: &str,
+    request_url: &Url,
+    extract_mode: ExtractMode,
+    max_chars: usize,
+    config: &WebFetchToolConfig,
+) -> Result<Value> {
+    let cache_key = format!("direct|{request_url}|{}", extract_mode.as_str());
     if let Some(entry) = read_cache_entry(&cache_key) {
         return Ok(build_tool_result(
-            &raw_url,
+            raw_url,
             &entry,
             extract_mode,
             max_chars,
@@ -368,7 +390,7 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
         ));
     }
 
-    let fetched = match fetch_url(&raw_url, &request_url, config).await {
+    let fetched = match fetch_url(raw_url, request_url, config).await {
         Ok(value) => value,
         Err(failure) => return Ok(failure.into_value()),
     };
@@ -399,8 +421,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             i18n::t_with_params("tool.web_fetch.http_error_with_detail", &params)
         };
         return Ok(web_fetch_failure(
-            &raw_url,
-            Some(&request_url),
+            raw_url,
+            Some(request_url),
             "response_status",
             "TOOL_WEB_FETCH_HTTP_ERROR",
             message,
@@ -420,8 +442,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             Err(err) => {
                 return Ok(
                     web_fetch_failure(
-                        &raw_url,
-                        Some(&request_url),
+                        raw_url,
+                        Some(request_url),
                         "extract",
                         "TOOL_WEB_FETCH_NO_CONTENT",
                         err.to_string(),
@@ -451,8 +473,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
                 match fetch_with_browser_fallback(
                     context,
                     BrowserFallbackRequest {
-                        raw_url: &raw_url,
-                        request_url: &request_url,
+                        raw_url,
+                        request_url,
                         status: fetched.status,
                         content_type: &content_type,
                         max_chars,
@@ -481,8 +503,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
                     ),
                 };
                 return Ok(web_fetch_failure(
-                    &raw_url,
-                    Some(&request_url),
+                    raw_url,
+                    Some(request_url),
                     "extract",
                     match diagnosis.kind {
                         HtmlPageKind::DynamicPage => "TOOL_WEB_FETCH_DYNAMIC_PAGE",
@@ -523,8 +545,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             Err(err) => {
                 return Ok(
                     web_fetch_failure(
-                        &raw_url,
-                        Some(&request_url),
+                        raw_url,
+                        Some(request_url),
                         "parse",
                         "TOOL_WEB_FETCH_PARSE_FAILED",
                         err.to_string(),
@@ -574,8 +596,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
         params.insert("content_type".to_string(), content_type.clone());
         return Ok(
             web_fetch_failure(
-                &raw_url,
-                Some(&request_url),
+                raw_url,
+                Some(request_url),
                 "content_type",
                 "TOOL_WEB_FETCH_UNSUPPORTED_CONTENT_TYPE",
                 i18n::t_with_params("tool.web_fetch.unsupported_content_type", &params),
@@ -598,8 +620,8 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
     if payload.content.trim().is_empty() {
         return Ok(
             web_fetch_failure(
-                &raw_url,
-                Some(&request_url),
+                raw_url,
+                Some(request_url),
                 "extract",
                 "TOOL_WEB_FETCH_NO_CONTENT",
                 i18n::t("tool.web_fetch.no_content"),
@@ -621,11 +643,55 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
 
     write_cache_entry(&cache_key, payload.clone(), config.cache_ttl_secs);
     Ok(build_tool_result(
-        &raw_url,
+        raw_url,
         &payload,
         extract_mode,
         max_chars,
         false,
+    ))
+}
+
+async fn fetch_with_firecrawl_provider(
+    raw_url: &str,
+    extract_mode: ExtractMode,
+    max_chars: usize,
+    config: &WebFetchToolConfig,
+) -> std::result::Result<Value, WebFetchFailure> {
+    let payload = web_fetch_provider::fetch_with_firecrawl(
+        raw_url,
+        max_chars,
+        extract_mode.as_str(),
+        config,
+    )
+    .await
+    .map_err(|err| {
+        web_fetch_failure(
+            raw_url,
+            None,
+            "provider",
+            "TOOL_WEB_FETCH_PROVIDER_FAILED",
+            {
+                let mut params = HashMap::new();
+                params.insert("detail".to_string(), err.to_string());
+                i18n::t_with_params("tool.web_fetch.provider_failed", &params)
+            },
+            Some(
+                "Check tools.web.fetch.provider/firecrawl settings or switch provider to direct."
+                    .to_string(),
+            ),
+            true,
+            Some(config.firecrawl.timeout_secs.saturating_mul(1000)),
+            json!({
+                "provider": "firecrawl",
+                "configured_provider": web_fetch_provider::configured_provider(config).as_str(),
+            }),
+        )
+    })?;
+    Ok(build_firecrawl_tool_result(
+        raw_url,
+        &payload,
+        extract_mode,
+        max_chars,
     ))
 }
 
@@ -683,7 +749,43 @@ fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure>
             json!({}),
         ));
     }
+    if is_search_result_url(&url) {
+        let decoded_query = decode_search_query(&url);
+        return Err(web_fetch_failure(
+            raw,
+            Some(&url),
+            "validation",
+            "TOOL_WEB_FETCH_SEARCH_RESULT_URL",
+            i18n::t("tool.web_fetch.search_result_url"),
+            Some("Use a web_search tool with natural-language query, then pass a concrete result URL to web_fetch.".to_string()),
+            false,
+            None,
+            json!({
+                "decoded_query": decoded_query,
+                "search_host": url.host_str().unwrap_or_default(),
+            }),
+        ));
+    }
     Ok(url)
+}
+
+fn is_search_result_url(url: &Url) -> bool {
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let path = url.path().to_ascii_lowercase();
+    matches!(
+        host.trim_start_matches("www."),
+        "bing.com" | "google.com" | "duckduckgo.com" | "baidu.com" | "sogou.com" | "so.com"
+    ) && matches!(
+        path.as_str(),
+        "/search" | "/s" | "/web" | "/html" | "/html/"
+    )
+}
+
+fn decode_search_query(url: &Url) -> Option<String> {
+    url.query_pairs()
+        .find(|(key, _)| matches!(key.as_ref(), "q" | "wd" | "query" | "keyword"))
+        .map(|(_, value)| value.into_owned())
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn resolve_max_chars(requested: Option<usize>, config: &WebFetchToolConfig) -> usize {
@@ -1650,6 +1752,34 @@ fn build_tool_result(
     })
 }
 
+fn build_firecrawl_tool_result(
+    raw_url: &str,
+    payload: &web_fetch_provider::FirecrawlFetchPayload,
+    extract_mode: ExtractMode,
+    _max_chars: usize,
+) -> Value {
+    json!({
+        "url": raw_url,
+        "final_url": payload.final_url,
+        "status": payload.status.unwrap_or(200),
+        "title": payload.title,
+        "content_type": "text/markdown",
+        "content_kind": "html",
+        "fetch_strategy": "provider",
+        "provider": "firecrawl",
+        "format": extract_mode.as_str(),
+        "extractor": "firecrawl",
+        "truncated": payload
+            .warning
+            .as_deref()
+            .is_some_and(|value| value.contains("truncated")),
+        "warning": payload.warning,
+        "cached": payload.cached,
+        "fetched_at": payload.fetched_at,
+        "content": payload.content,
+    })
+}
+
 fn merge_warnings(primary: Option<&str>, secondary: Option<String>) -> Option<String> {
     match (
         primary.map(str::trim).filter(|value| !value.is_empty()),
@@ -2257,6 +2387,7 @@ mod tests {
         ip_is_private_or_internal, is_noise_block, normalize_host_for_allowlist,
         normalize_text_block, strip_invisible_unicode, truncate_chars,
         web_fetch_allows_private_target, web_fetch_failure, ExtractMode, HtmlPageKind,
+        is_search_result_url, decode_search_query, normalize_request_url,
     };
     use crate::config::WebFetchToolConfig;
     use serde_json::json;
@@ -2462,5 +2593,19 @@ mod tests {
         assert_eq!(payload["data"]["phase"], json!("request"));
         assert_eq!(payload["data"]["host"], json!("example.com"));
         assert_eq!(payload["data"]["error_meta"]["code"], json!("TOOL_TIMEOUT"));
+    }
+
+    #[test]
+    fn search_result_urls_are_rejected_before_fetching() {
+        let url = Url::parse("https://www.bing.com/search?q=%E6%98%87%E8%85%BE").expect("url");
+        assert!(is_search_result_url(&url));
+        assert_eq!(decode_search_query(&url).as_deref(), Some("昇腾"));
+        let failure = normalize_request_url(url.as_str()).expect_err("search url should fail");
+        let payload = failure.into_value();
+        assert_eq!(
+            payload["data"]["error_meta"]["code"],
+            json!("TOOL_WEB_FETCH_SEARCH_RESULT_URL")
+        );
+        assert_eq!(payload["data"]["decoded_query"], json!("昇腾"));
     }
 }

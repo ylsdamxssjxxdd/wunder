@@ -5,7 +5,7 @@ read_when:
   - You need to read public webpage content rather than drive a browser
 source_docs:
   - src/services/tools/web_fetch_tool.rs
-updated_at: 2026-04-10
+updated_at: 2026-05-14
 ---
 
 # Web Fetch
@@ -45,10 +45,31 @@ On success, it returns the fetched result object directly rather than the unifie
 ## Important fields
 
 - `fetch_strategy`: for example `direct_http` or `browser_fallback`
+- `provider`: present when an external provider such as `firecrawl` handled the fetch
 - `format`: usually `markdown` or `text`
 - `extractor`: the extractor that actually produced the content
 - `truncated`: whether the main content was cut
 - `warning`: extra fetch-time hints or warnings
+
+## Providers
+
+`web_fetch` keeps the model-facing arguments small. Provider selection is configured by the system:
+
+```yaml
+tools:
+  web:
+    fetch:
+      provider: direct # direct | auto | firecrawl
+      firecrawl:
+        api_key: ${FIRECRAWL_API_KEY:-}
+        base_url: ${FIRECRAWL_BASE_URL:-https://api.firecrawl.dev}
+```
+
+- `direct`: built-in Wunder HTTP fetcher.
+- `firecrawl`: use Firecrawl `/v2/scrape`.
+- `auto`: use Firecrawl when an API key or custom base URL is configured, otherwise fall back to `direct`.
+
+Firecrawl Cloud uses `https://api.firecrawl.dev` and requires an API key. A self-hosted service can use a URL such as `http://wunder-firecrawl:3002` and usually does not require an API key. The Docker compose files include a self-hosted Firecrawl service group and start `wunder-firecrawl-nuq-postgres`, which initializes the `nuq` queue tables and maintenance jobs through Firecrawl's NUQ Postgres image; the admin settings page only stores Wunder's connection parameters and does not control Docker service lifecycle.
 
 ## Browser fallback
 
@@ -75,5 +96,6 @@ On failure, the tool falls back to the unified failure envelope and adds fetch d
 
 ## When not to use it
 
+- If you have search keywords, use a search tool first. `web_fetch` rejects search-result URLs such as `bing.com/search?...`.
 - If you need to click, type, or scroll, use [Browser](/docs/en/tools/browser/)
 - If you need to inspect a local HTML file, this is not the right tool

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-14T03:12:57.431746+00:00",
+  "generated_at": "2026-05-14T23:51:40.767351+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -4083,7 +4083,7 @@
       "language": "zh-CN",
       "title": "网页抓取",
       "summary": "`web_fetch` 的直接抓取、浏览器回退与成功/失败返回。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-05-14",
       "read_when": [
         "你要读取公开网页正文，而不是操控浏览器"
       ],
@@ -4120,15 +4120,20 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "浏览器回退"
+          "text": "Firecrawl Provider"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "失败返回"
+          "text": "浏览器回退"
         },
         {
           "id": "section-7",
+          "level": 2,
+          "text": "失败返回"
+        },
+        {
+          "id": "section-8",
           "level": 2,
           "text": "什么时候别用它"
         }
@@ -12238,7 +12243,7 @@
       "language": "en",
       "title": "Web Fetch",
       "summary": "Direct fetch, browser fallback, and success or failure results for `web_fetch`.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-05-14",
       "read_when": [
         "You need to read public webpage content rather than drive a browser"
       ],
@@ -12275,15 +12280,20 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "Browser fallback"
+          "text": "Providers"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Failure results"
+          "text": "Browser fallback"
         },
         {
           "id": "section-7",
+          "level": 2,
+          "text": "Failure results"
+        },
+        {
+          "id": "section-8",
           "level": 2,
           "text": "When not to use it"
         }

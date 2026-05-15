@@ -5,7 +5,7 @@ read_when:
   - 你要读取公开网页正文，而不是操控浏览器
 source_docs:
   - src/services/tools/web_fetch_tool.rs
-updated_at: 2026-04-10
+updated_at: 2026-05-14
 ---
 
 # 网页抓取
@@ -49,6 +49,12 @@ updated_at: 2026-04-10
 - `extractor`：实际抽取器
 - `truncated`：正文是否被截断
 - `warning`：抓取过程中的额外提示
+
+## Firecrawl Provider
+
+`tools.web.fetch.provider` 支持 `direct`、`auto`、`firecrawl`。`auto` 会在配置了 `FIRECRAWL_API_KEY` 或 `FIRECRAWL_BASE_URL` 时优先使用 Firecrawl，否则回退到内置抓取器。
+
+Docker 自托管 Firecrawl 可使用 `http://wunder-firecrawl:3002`。Firecrawl Cloud 使用 `https://api.firecrawl.dev`，并且需要 API Key。compose 会同时启动 `wunder-firecrawl-nuq-postgres`，由官方 NUQ Postgres 镜像初始化 `nuq` 队列表与维护任务；管理员系统设置页只保存 Wunder 连接 Firecrawl 的参数，不启动或停止 Docker 服务。
 
 ## 浏览器回退
 

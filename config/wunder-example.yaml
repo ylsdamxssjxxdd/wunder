@@ -189,6 +189,7 @@ tools: # 内置工具配置
   web:
     fetch:
       enabled: true
+      provider: ${WUNDER_WEB_FETCH_PROVIDER:-direct} # direct | auto | firecrawl. auto uses firecrawl when api_key/env/base_url is configured, otherwise direct.
       timeout_secs: 30
       max_redirects: 3
       max_response_bytes: 2097152
@@ -198,6 +199,14 @@ tools: # 内置工具配置
       allow_private_network: true
       hostname_allowlist: []
       user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36
+      firecrawl:
+        api_key: ${FIRECRAWL_API_KEY:-}
+        base_url: ${FIRECRAWL_BASE_URL:-https://api.firecrawl.dev}
+        timeout_secs: 45
+        only_main_content: true
+        max_age_ms: 600000
+        proxy: auto # auto | basic | stealth
+        store_in_cache: true
 
   browser:
     enabled: ${WUNDER_BROWSER_TOOL_ENABLED:-false}

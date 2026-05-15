@@ -1239,6 +1239,14 @@
     "en-US": "Direct HTTP fetch returned a dynamic page and browser fallback failed: {detail}",
     "zh-CN": "直接 HTTP 抓取遇到动态页面，且浏览器兜底失败：{detail}"
   },
+  "tool.web_fetch.search_result_url": {
+    "en-US": "web_fetch does not fetch search result pages.",
+    "zh-CN": "网页抓取不抓取搜索结果页。"
+  },
+  "tool.web_fetch.provider_failed": {
+    "en-US": "Web fetch provider failed: {detail}",
+    "zh-CN": "网页抓取 provider 执行失败：{detail}"
+  },
   "tool.desktop_controller.disabled": {
     "en-US": "Desktop controller is disabled.",
     "zh-CN": "桌面控制器未启用。"
@@ -1801,7 +1809,7 @@
   },
   "tool.spec.web_fetch.description": {
     "en-US": "Fetch one confirmed public webpage and extract its main content. This is not a search engine and does not validate guessed URLs; it is suited for static pages, not complex interactive pages, search result pages, bot-protected pages, or client-rendered shell pages.",
-    "zh-CN": "抓取单个已确认的公开网页并提取正文。它不是搜索引擎，也不负责验证猜测 URL；适合静态页面，不适合复杂交互页、搜索结果页、防爬页或客户端渲染壳页。"
+    "zh-CN": "抓取单个已确认的公开网页并提取正文。它不是搜索引擎，也不负责验证猜测 URL；适合静态抓取，不适合复杂交互页、搜索结果页、防爬页或客户端渲染壳页。"
   },
   "tool.spec.web_fetch.args.url": {
     "en-US": "The exact public URL to fetch (http/https only). Pass a complete, confirmed URL; do not pass keywords, local paths, search intents, or model-guessed site addresses.",

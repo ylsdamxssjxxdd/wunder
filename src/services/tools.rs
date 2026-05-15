@@ -35,6 +35,7 @@ mod swarm_tool_error;
 mod swarm_tool_hint;
 mod thread_control_tool;
 pub(crate) mod tool_error;
+mod web_fetch_provider;
 mod web_fetch_tool;
 
 #[cfg(test)]

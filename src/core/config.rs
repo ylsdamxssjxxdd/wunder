@@ -600,6 +600,8 @@ pub struct WebToolsConfig {
 pub struct WebFetchToolConfig {
     #[serde(default = "default_web_fetch_enabled")]
     pub enabled: bool,
+    #[serde(default = "default_web_fetch_provider")]
+    pub provider: String,
     #[serde(
         default = "default_web_fetch_timeout_secs",
         deserialize_with = "deserialize_u64_from_any"
@@ -636,6 +638,32 @@ pub struct WebFetchToolConfig {
     pub hostname_allowlist: Vec<String>,
     #[serde(default = "default_web_fetch_user_agent")]
     pub user_agent: String,
+    #[serde(default)]
+    pub firecrawl: WebFetchFirecrawlConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebFetchFirecrawlConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_web_fetch_firecrawl_base_url")]
+    pub base_url: String,
+    #[serde(
+        default = "default_web_fetch_firecrawl_timeout_secs",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub timeout_secs: u64,
+    #[serde(default = "default_web_fetch_firecrawl_only_main_content")]
+    pub only_main_content: bool,
+    #[serde(
+        default = "default_web_fetch_firecrawl_max_age_ms",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub max_age_ms: u64,
+    #[serde(default = "default_web_fetch_firecrawl_proxy")]
+    pub proxy: String,
+    #[serde(default = "default_web_fetch_firecrawl_store_in_cache")]
+    pub store_in_cache: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -767,6 +795,7 @@ impl Default for WebFetchToolConfig {
     fn default() -> Self {
         Self {
             enabled: default_web_fetch_enabled(),
+            provider: default_web_fetch_provider(),
             timeout_secs: default_web_fetch_timeout_secs(),
             max_redirects: default_web_fetch_max_redirects(),
             max_response_bytes: default_web_fetch_max_response_bytes(),
@@ -776,8 +805,59 @@ impl Default for WebFetchToolConfig {
             allow_private_network: false,
             hostname_allowlist: Vec::new(),
             user_agent: default_web_fetch_user_agent(),
+            firecrawl: WebFetchFirecrawlConfig::default(),
         }
     }
+}
+
+impl Default for WebFetchFirecrawlConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            base_url: default_web_fetch_firecrawl_base_url(),
+            timeout_secs: default_web_fetch_firecrawl_timeout_secs(),
+            only_main_content: default_web_fetch_firecrawl_only_main_content(),
+            max_age_ms: default_web_fetch_firecrawl_max_age_ms(),
+            proxy: default_web_fetch_firecrawl_proxy(),
+            store_in_cache: default_web_fetch_firecrawl_store_in_cache(),
+        }
+    }
+}
+
+impl WebFetchToolConfig {
+    pub fn provider(&self) -> String {
+        clean_inline_or_env(Some(&self.provider), "WUNDER_WEB_FETCH_PROVIDER")
+            .map(|value| value.to_ascii_lowercase())
+            .filter(|value| matches!(value.as_str(), "direct" | "auto" | "firecrawl"))
+            .unwrap_or_else(default_web_fetch_provider)
+    }
+}
+
+impl WebFetchFirecrawlConfig {
+    pub fn api_key(&self) -> Option<String> {
+        clean_inline_or_env(self.api_key.as_deref(), "FIRECRAWL_API_KEY")
+    }
+
+    pub fn base_url(&self) -> String {
+        clean_inline_or_env(Some(&self.base_url), "FIRECRAWL_BASE_URL")
+            .unwrap_or_else(default_web_fetch_firecrawl_base_url)
+            .trim_end_matches('/')
+            .to_string()
+    }
+}
+
+fn clean_inline_or_env(inline: Option<&str>, env_name: &str) -> Option<String> {
+    inline
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| !(value.starts_with("${") && value.ends_with('}')))
+        .map(str::to_string)
+        .or_else(|| {
+            env::var(env_name)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
 }
 
 impl Default for DesktopControllerConfig {
@@ -869,6 +949,10 @@ fn default_web_fetch_enabled() -> bool {
     true
 }
 
+fn default_web_fetch_provider() -> String {
+    "direct".to_string()
+}
+
 fn default_web_fetch_timeout_secs() -> u64 {
     20
 }
@@ -895,6 +979,30 @@ fn default_web_fetch_cache_ttl_secs() -> u64 {
 
 fn default_web_fetch_user_agent() -> String {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36".to_string()
+}
+
+fn default_web_fetch_firecrawl_base_url() -> String {
+    "https://api.firecrawl.dev".to_string()
+}
+
+fn default_web_fetch_firecrawl_timeout_secs() -> u64 {
+    45
+}
+
+fn default_web_fetch_firecrawl_only_main_content() -> bool {
+    true
+}
+
+fn default_web_fetch_firecrawl_max_age_ms() -> u64 {
+    600_000
+}
+
+fn default_web_fetch_firecrawl_proxy() -> String {
+    "auto".to_string()
+}
+
+fn default_web_fetch_firecrawl_store_in_cache() -> bool {
+    true
 }
 
 fn default_browser_viewport_width() -> u32 {
