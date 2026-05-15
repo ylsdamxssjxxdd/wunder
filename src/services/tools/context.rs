@@ -337,8 +337,11 @@ pub(crate) fn resolve_tool_path(
     if should_resolve_workspace_first(raw_path) {
         return workspace.resolve_path(user_id, raw_path);
     }
-    if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
-        return Ok(resolved);
+    let is_absolute = PathBuf::from(raw_path.trim()).is_absolute();
+    if is_absolute {
+        if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
+            return Ok(resolved);
+        }
     }
     match workspace.resolve_path(user_id, raw_path) {
         Ok(path) => {
@@ -398,7 +401,7 @@ mod tests {
         ToolEventEmitter,
     };
     use crate::config::Config;
-    use crate::path_utils::normalize_existing_path;
+    use crate::path_utils::{normalize_existing_path, normalize_path_for_compare};
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -584,8 +587,8 @@ mod tests {
                 .expect("resolved");
 
         assert_eq!(
-            resolved,
-            workspace_root.join("alice").join("notes").join("new.txt")
+            normalize_path_for_compare(&resolved),
+            normalize_path_for_compare(&workspace_root.join("alice").join("notes").join("new.txt"))
         );
     }
 

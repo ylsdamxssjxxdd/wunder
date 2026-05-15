@@ -1154,7 +1154,7 @@ fn resolve_path(context: &SandboxContext, raw_path: &str) -> Result<PathBuf, Str
 }
 
 fn resolve_path_with_base(
-    _context: &SandboxContext,
+    context: &SandboxContext,
     raw_path: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     let trimmed = normalize_slashes(raw_path.trim());
@@ -1165,9 +1165,8 @@ fn resolve_path_with_base(
         return Ok((target, base));
     }
 
-    let cwd = std::env::current_dir().map_err(|err| err.to_string())?;
-    let target = normalize_posix_path(&cwd.join(rel));
-    let base = PathBuf::from("/");
+    let base = normalize_posix_path(&context.workspace_root);
+    let target = normalize_posix_path(&base.join(rel));
     Ok((target, base))
 }
 
@@ -1290,6 +1289,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::fs;
+    use std::collections::HashSet;
     use tempfile::tempdir;
 
     #[test]
@@ -1329,5 +1329,29 @@ mod tests {
 
         let _ = path;
         validate_runtime_readonly(false).expect("readonly probe should be skipped");
+    }
+
+    #[test]
+    fn resolve_path_uses_workspace_root_for_empty_dot_and_relative_paths() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace").join("admin__c__1");
+        let context = SandboxContext {
+            workspace_root: workspace_root.clone(),
+            container_root: temp.path().join("container"),
+            allow_commands: Arc::new(HashSet::new()),
+        };
+
+        assert_eq!(
+            resolve_path(&context, "").expect("empty path"),
+            normalize_posix_path(&workspace_root)
+        );
+        assert_eq!(
+            resolve_path(&context, ".").expect("dot path"),
+            normalize_posix_path(&workspace_root)
+        );
+        assert_eq!(
+            resolve_path(&context, "README.md").expect("relative path"),
+            normalize_posix_path(&workspace_root.join("README.md"))
+        );
     }
 }

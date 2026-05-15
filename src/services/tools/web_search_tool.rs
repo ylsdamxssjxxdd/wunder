@@ -86,7 +86,7 @@ pub fn is_web_search_tool_name(name: &str) -> bool {
 }
 
 pub fn web_search_enabled(config: &Config) -> bool {
-    config.tools.web.search.enabled
+    config.tools.web.search.enabled && config.tools.web.search.provider() == "firecrawl"
 }
 
 pub async fn tool_web_search(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

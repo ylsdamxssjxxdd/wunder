@@ -35,7 +35,7 @@ updated_at: 2026-05-15
 }
 ```
 
-拿到具体 URL 后，再用 `web_fetch` 抓正文。不要把 Bing、百度、Google 等搜索结果页 URL 传给 `web_fetch`。
+拿到具体 URL 后，再用 `web_fetch` 抓正文。搜索结果页也可以作为线索页抓取，但最终证据应继续回到具体来源页面。
 
 `web_fetch` 当前仍然是成功返回的例外项。  
 它成功时直接返回抓取结果对象，不包统一的 `ok/action/state/summary/data`。
@@ -79,7 +79,7 @@ updated_at: 2026-05-15
 
 ## Provider
 
-Docker compose 默认只启用 Wunder 内置网页抓取，不再启动 Firecrawl 自托管服务组。`tools.web.search.enabled` 默认关闭；需要关键词搜索时，应先配置可用搜索 provider，再显式启用 `web_search`。
+Docker compose 默认只启用 Wunder 内置网页抓取，不再启动 Firecrawl 自托管服务组。`tools.web.search.enabled` 默认关闭；需要关键词搜索时，可先配置可用搜索 provider，再显式启用 `web_search`。未配置搜索 provider 时，也可以直接用 `web_fetch` 抓取搜索结果页作为线索页。
 
 `tools.web.fetch.provider` 支持 `direct`、`auto`、`firecrawl`。默认值是 `direct`，使用 Wunder 内置 HTTP 抓取器。`auto` 会在配置了 `FIRECRAWL_API_KEY` 或 `FIRECRAWL_BASE_URL` 时优先使用外部 Firecrawl，否则回退到内置抓取器。
 

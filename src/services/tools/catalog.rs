@@ -2175,13 +2175,13 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "网页抓取")
             .expect("web_fetch spec");
-        assert!(en.description.contains("not a search engine"));
+        assert!(en.description.contains("not a search provider"));
         assert!(en.description.contains("guessed URLs"));
+        assert!(en.description.contains("search result pages may also be fetched"));
         let en_url = en.input_schema["properties"]["url"]["description"]
             .as_str()
             .expect("url description");
-        assert!(en_url.contains("confirmed URL"));
-        assert!(en_url.contains("search intents"));
+        assert!(en_url.contains("exact public URL"));
         assert!(en_url.contains("model-guessed site addresses"));
 
         let messages: Value = serde_json::from_str(
@@ -2190,7 +2190,7 @@ mod tests {
         .expect("valid i18n json");
         assert!(messages["tool.spec.web_fetch.description"]["en-US"]
             .as_str()
-            .is_some_and(|value| value.contains("not a search engine")));
+            .is_some_and(|value| value.contains("not a search provider")));
         assert!(messages["tool.spec.web_fetch.args.url"]["en-US"]
             .as_str()
             .is_some_and(|value| value.contains("model-guessed site addresses")));

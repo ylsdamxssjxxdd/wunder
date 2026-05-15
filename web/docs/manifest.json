@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-05-15T02:48:37.359726+00:00",
+  "generated_at": "2026-05-15T08:02:07.239068+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -4136,7 +4136,7 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "Firecrawl Provider"
+          "text": "Provider"
         },
         {
           "id": "section-7",

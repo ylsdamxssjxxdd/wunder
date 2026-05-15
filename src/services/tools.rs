@@ -11270,6 +11270,55 @@ mod tests {
     }
 
     #[test]
+    fn read_files_inner_prefers_workspace_file_for_relative_path_with_extra_root() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-files-relative.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let user_root = workspace_root.join("admin");
+        std::fs::create_dir_all(&user_root).expect("create user root");
+        let workspace_file = user_root.join("note.txt");
+        std::fs::write(&workspace_file, "workspace only\n").expect("write workspace file");
+        let extra_root = dir.path().join("extra");
+        std::fs::create_dir_all(&extra_root).expect("create extra root");
+        std::fs::write(extra_root.join("note.txt"), "extra root\n").expect("write extra file");
+
+        let value = read_files_inner(
+            &workspace,
+            "admin",
+            &[extra_root.clone()],
+            vec![ReadFileSpec {
+                path: "note.txt".to_string(),
+                requested_ranges: vec![(1, 20)],
+                ranges: vec![(1, 20)],
+                used_default_range: false,
+                mode: ReadFileMode::Slice,
+                indentation: read_indentation::IndentationReadOptions::default(),
+            }],
+            ReadBudget::default(),
+            false,
+            1,
+            false,
+        )
+        .expect("read files result");
+
+        assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
+        let body = value
+            .pointer("/data/content")
+            .and_then(Value::as_str)
+            .expect("content should exist");
+        assert!(body.contains("workspace only"));
+        assert!(!body.contains("extra root"));
+    }
+
+    #[test]
     fn read_files_inner_marks_default_full_window_as_continuable() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("read-files-default-window.db");

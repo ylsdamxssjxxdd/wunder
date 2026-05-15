@@ -749,43 +749,7 @@ fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure>
             json!({}),
         ));
     }
-    if is_search_result_url(&url) {
-        let decoded_query = decode_search_query(&url);
-        return Err(web_fetch_failure(
-            raw,
-            Some(&url),
-            "validation",
-            "TOOL_WEB_FETCH_SEARCH_RESULT_URL",
-            i18n::t("tool.web_fetch.search_result_url"),
-            Some("Use a web_search tool with natural-language query, then pass a concrete result URL to web_fetch.".to_string()),
-            false,
-            None,
-            json!({
-                "decoded_query": decoded_query,
-                "search_host": url.host_str().unwrap_or_default(),
-            }),
-        ));
-    }
     Ok(url)
-}
-
-fn is_search_result_url(url: &Url) -> bool {
-    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    let path = url.path().to_ascii_lowercase();
-    matches!(
-        host.trim_start_matches("www."),
-        "bing.com" | "google.com" | "duckduckgo.com" | "baidu.com" | "sogou.com" | "so.com"
-    ) && matches!(
-        path.as_str(),
-        "/search" | "/s" | "/web" | "/html" | "/html/"
-    )
-}
-
-fn decode_search_query(url: &Url) -> Option<String> {
-    url.query_pairs()
-        .find(|(key, _)| matches!(key.as_ref(), "q" | "wd" | "query" | "keyword"))
-        .map(|(_, value)| value.into_owned())
-        .filter(|value| !value.trim().is_empty())
 }
 
 fn resolve_max_chars(requested: Option<usize>, config: &WebFetchToolConfig) -> usize {
@@ -2387,7 +2351,7 @@ mod tests {
         ip_is_private_or_internal, is_noise_block, normalize_host_for_allowlist,
         normalize_text_block, strip_invisible_unicode, truncate_chars,
         web_fetch_allows_private_target, web_fetch_failure, ExtractMode, HtmlPageKind,
-        is_search_result_url, decode_search_query, normalize_request_url,
+        normalize_request_url,
     };
     use crate::config::WebFetchToolConfig;
     use serde_json::json;
@@ -2596,16 +2560,16 @@ mod tests {
     }
 
     #[test]
-    fn search_result_urls_are_rejected_before_fetching() {
-        let url = Url::parse("https://www.bing.com/search?q=%E6%98%87%E8%85%BE").expect("url");
-        assert!(is_search_result_url(&url));
-        assert_eq!(decode_search_query(&url).as_deref(), Some("昇腾"));
-        let failure = normalize_request_url(url.as_str()).expect_err("search url should fail");
-        let payload = failure.into_value();
+    fn search_result_urls_remain_fetchable() {
+        let url = normalize_request_url("https://www.bing.com/search?q=昇腾")
+            .expect("search result pages should remain valid fetch targets");
+        assert_eq!(url.host_str(), Some("www.bing.com"));
+        assert_eq!(url.path(), "/search");
         assert_eq!(
-            payload["data"]["error_meta"]["code"],
-            json!("TOOL_WEB_FETCH_SEARCH_RESULT_URL")
+            url.query_pairs()
+                .find(|(key, _)| key.as_ref() == "q")
+                .map(|(_, value)| value.into_owned()),
+            Some("昇腾".to_string())
         );
-        assert_eq!(payload["data"]["decoded_query"], json!("昇腾"));
     }
 }

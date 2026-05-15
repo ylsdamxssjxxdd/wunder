@@ -35,7 +35,7 @@ If you already have a site or domain and only want to search inside it, pass `si
 }
 ```
 
-Then pass concrete result URLs to `web_fetch`. Do not pass Bing, Baidu, Google, or other search-result page URLs to `web_fetch`.
+Then pass concrete source URLs to `web_fetch`. Search-result pages may also be fetched as lead pages, but final evidence should come from concrete source pages.
 
 `web_fetch` is still one of the deliberate exceptions in the tool system.  
 On success, it returns the fetched result object directly rather than the unified `ok/action/state/summary/data` envelope.
@@ -80,7 +80,7 @@ On success, it returns the fetched result object directly rather than the unifie
 
 ## Providers
 
-Docker compose now defaults to Wunder's built-in web fetcher and does not start a self-hosted Firecrawl group. `tools.web.search.enabled` is disabled by default; if you want keyword search, configure a search provider and enable `web_search` explicitly.
+Docker compose now defaults to Wunder's built-in web fetcher and does not start a self-hosted Firecrawl group. `tools.web.search.enabled` is disabled by default; if you want keyword search, configure a search provider and enable `web_search` explicitly. Without a search provider, `web_fetch` can still fetch search-result pages as lead pages.
 
 `web_fetch` keeps the model-facing arguments small. Provider selection is configured by the system:
 

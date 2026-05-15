@@ -1240,8 +1240,8 @@
     "zh-CN": "直接 HTTP 抓取遇到动态页面，且浏览器兜底失败：{detail}"
   },
   "tool.web_fetch.search_result_url": {
-    "en-US": "web_fetch does not fetch search result pages.",
-    "zh-CN": "网页抓取不抓取搜索结果页。"
+    "en-US": "Search result page fetched. Treat it as a lead page only, then fetch concrete source pages for evidence.",
+    "zh-CN": "已抓取搜索结果页。它只能作为线索页，最终证据应继续抓取具体来源页面。"
   },
   "tool.web_fetch.provider_failed": {
     "en-US": "Web fetch provider failed: {detail}",
@@ -1832,12 +1832,12 @@
     "zh-CN": "关闭当前浏览器会话"
   },
   "tool.spec.web_fetch.description": {
-    "en-US": "Fetch one confirmed public webpage and extract its main content. This is not a search engine and does not validate guessed URLs; it is suited for static pages, not complex interactive pages, search result pages, bot-protected pages, or client-rendered shell pages.",
-    "zh-CN": "抓取单个已确认的公开网页并提取正文。它不是搜索引擎，也不负责验证猜测 URL；适合静态抓取，不适合复杂交互页、搜索结果页、防爬页或客户端渲染壳页。"
+    "en-US": "Fetch one public webpage URL and extract its main content. This is not a search provider and does not validate guessed URLs; search result pages may also be fetched as lead pages, but final evidence should come from concrete source pages.",
+    "zh-CN": "抓取单个公开网页 URL 并提取正文。它不是搜索 provider，也不负责验证猜测 URL；搜索结果页也可以作为线索页抓取，但最终证据应来自具体来源页面。"
   },
   "tool.spec.web_search.description": {
-    "en-US": "Search the public web with a natural-language query and return structured result URLs, titles, and snippets. Use this before web_fetch when you only have keywords; do not pass search engine result-page URLs to web_fetch.",
-    "zh-CN": "用自然语言关键词搜索公开网页，返回结构化的结果 URL、标题和摘要。只有关键词时先用它，再把具体结果 URL 交给 web_fetch；不要把搜索引擎结果页 URL 传给 web_fetch。"
+    "en-US": "Search the public web with a natural-language query and return structured result URLs, titles, and snippets. Use this before web_fetch when a search provider is configured; otherwise web_fetch may fetch a search result page as a lead page.",
+    "zh-CN": "用自然语言关键词搜索公开网页，返回结构化的结果 URL、标题和摘要。配置了搜索 provider 时优先用它；未配置时，web_fetch 也可以直接抓取搜索结果页作为线索页。"
   },
   "tool.spec.web_search.args.query": {
     "en-US": "Natural-language search query. Pass keywords or a question, not a URL.",
@@ -1872,8 +1872,8 @@
     "zh-CN": "可选的 provider 特定分类过滤，例如支持时使用 github 或 research。"
   },
   "tool.spec.web_fetch.args.url": {
-    "en-US": "The exact public URL to fetch (http/https only). Pass a complete, confirmed URL; do not pass keywords, local paths, search intents, or model-guessed site addresses.",
-    "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。必须传完整、已确认的 URL；不要传关键词、本地路径、搜索意图或模型猜测出来的站点地址。"
+    "en-US": "The exact public URL to fetch (http/https only). Pass a complete, confirmed URL; do not pass keywords, local paths, or model-guessed site addresses.",
+    "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。必须传完整、已确认的 URL；不要传关键词、本地路径或模型猜测出来的站点地址。"
   },
   "tool.spec.web_fetch.args.extract_mode": {
     "en-US": "Output format: markdown or text. Defaults to markdown.",
