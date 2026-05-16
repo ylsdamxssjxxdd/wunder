@@ -534,6 +534,11 @@ const forceLogoutUser = async (user) => {
       return;
     }
     notify(t("userAccounts.toast.logoutSuccess"), "success");
+    const target = state.userAccounts.list.find((item) => item.id === userId);
+    if (target) {
+      target.online = false;
+      renderUserAccountRows();
+    }
     await loadUserAccounts();
   } catch (error) {
     notify(

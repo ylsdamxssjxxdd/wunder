@@ -119,6 +119,22 @@ impl ConnectionPresenceService {
         remove_connection_from_user(&mut guard.entries, &owner, &cleaned_connection_id, now);
     }
 
+    pub fn force_offline(&self, user_id: &str, now: f64) {
+        let cleaned_user_id = normalize_key(user_id);
+        if cleaned_user_id.is_empty() {
+            return;
+        }
+        let now = normalized_now(now);
+        let Some(mut guard) = self.state.write().ok() else {
+            return;
+        };
+        self.gc_if_needed(&mut guard, now);
+        guard.entries.remove(&cleaned_user_id);
+        guard
+            .connection_owners
+            .retain(|_, owner| owner != &cleaned_user_id);
+    }
+
     pub fn snapshot(&self, user_id: &str, now: f64) -> Option<UserPresenceView> {
         let cleaned = normalize_key(user_id);
         if cleaned.is_empty() {

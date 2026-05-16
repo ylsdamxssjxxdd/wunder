@@ -15,8 +15,40 @@ import { initDesktopRuntime } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
 import { clearAsyncComponentReloadMarker } from '@/utils/asyncComponentRecovery';
 import { installAuthSessionSync } from '@/utils/authSessionSync';
+import { clearAllAccessTokens } from '@/utils/authTokenStorage';
 
 const LEGACY_PERFORMANCE_STORAGE_KEYS = ['beeroom-performance-mode', 'wille-performance-mode'] as const;
+const APP_VERSION_STORAGE_KEY = 'wunder_app_version';
+
+function applyAppVersionStorageMigration() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const currentVersion = String(__WUNDER_APP_VERSION__ || '').trim();
+  if (!currentVersion) {
+    return;
+  }
+  let previousVersion = '';
+  let canPersistVersion = true;
+  try {
+    previousVersion = String(window.localStorage.getItem(APP_VERSION_STORAGE_KEY) || '').trim();
+  } catch {
+    previousVersion = '';
+    canPersistVersion = false;
+  }
+  if (!canPersistVersion) {
+    return;
+  }
+  if (previousVersion === currentVersion) {
+    return;
+  }
+  clearAllAccessTokens();
+  try {
+    window.localStorage.setItem(APP_VERSION_STORAGE_KEY, currentVersion);
+  } catch {
+    // ignore storage failures
+  }
+}
 
 function clearLegacyPerformanceMode() {
   if (typeof window === 'undefined') {
@@ -31,6 +63,7 @@ function clearLegacyPerformanceMode() {
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
+applyAppVersionStorageMigration();
 clearLegacyPerformanceMode();
 useThemeStore(pinia);
 installElementPlus(app);

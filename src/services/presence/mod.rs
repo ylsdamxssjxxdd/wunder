@@ -28,6 +28,10 @@ impl PresenceService {
         self.connections.disconnect(user_id, connection_id, now);
     }
 
+    pub fn force_user_offline(&self, user_id: &str, now: f64) {
+        self.connections.force_offline(user_id, now);
+    }
+
     pub fn user_snapshot(&self, user_id: &str, now: f64) -> Option<UserPresenceView> {
         self.connections.snapshot(user_id, now)
     }
@@ -78,5 +82,18 @@ mod tests {
             .expect("presence should remain during ttl");
         assert_eq!(snapshot.connection_count, 0);
         assert!(snapshot.online);
+    }
+
+    #[test]
+    fn force_user_offline_removes_connection_presence_immediately() {
+        let service = PresenceService::new();
+        service.connect_client("alice", "conn-1", 10.0);
+        assert!(service.user_snapshot("alice", 11.0).is_some());
+
+        service.force_user_offline("alice", 12.0);
+
+        assert!(service.user_snapshot("alice", 13.0).is_none());
+        service.disconnect_client("alice", "conn-1", 14.0);
+        assert!(service.user_snapshot("alice", 15.0).is_none());
     }
 }

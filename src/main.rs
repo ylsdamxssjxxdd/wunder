@@ -116,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
                 .on_response(DefaultOnResponse::new().level(Level::DEBUG))
                 .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
         )
+        .layer(from_fn(static_cache_guard))
         .layer(from_fn(panic_guard));
 
     let addr = bind_address(&config);
@@ -561,6 +562,38 @@ async fn panic_guard(request: Request<Body>, next: Next) -> Result<Response, Sta
             Ok((StatusCode::INTERNAL_SERVER_ERROR, message).into_response())
         }
     }
+}
+
+async fn static_cache_guard(request: Request<Body>, next: Next) -> Result<Response, StatusCode> {
+    let path = request.uri().path().to_string();
+    let mut response = next.run(request).await;
+    if should_disable_static_cache(&path, response.headers()) {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("no-store, max-age=0"),
+        );
+    }
+    Ok(response)
+}
+
+fn should_disable_static_cache(path: &str, headers: &axum::http::HeaderMap) -> bool {
+    let cleaned = path.trim();
+    if cleaned.is_empty() || cleaned == "/" || cleaned == "/index.html" {
+        return true;
+    }
+    if cleaned.ends_with(".html") || cleaned.ends_with(".js") || cleaned.ends_with(".css") {
+        return true;
+    }
+    headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized.starts_with("text/html")
+                || normalized.starts_with("text/css")
+                || normalized.contains("javascript")
+        })
+        .unwrap_or(false)
 }
 
 fn panic_message(panic: &(dyn StdAny + Send)) -> String {

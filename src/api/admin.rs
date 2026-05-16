@@ -5076,7 +5076,7 @@ async fn admin_user_accounts_list(
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
             let (presence_online, presence_last_seen) = presence_map
                 .get(profile.id.as_str())
-                .map(|snapshot| (snapshot.online, Some(snapshot.last_seen_at)))
+                .map(|snapshot| (snapshot.connection_count > 0, Some(snapshot.last_seen_at)))
                 .unwrap_or((false, None));
             let activity_series = activity_series_map
                 .get(profile.id.as_str())
@@ -5085,10 +5085,7 @@ async fn admin_user_accounts_list(
             let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({}));
             if let Value::Object(ref mut map) = value {
                 map.insert("active_sessions".to_string(), json!(active_count));
-                map.insert(
-                    "online".to_string(),
-                    json!(presence_online || active_count > 0),
-                );
+                map.insert("online".to_string(), json!(presence_online));
                 map.insert("last_seen_at".to_string(), json!(presence_last_seen));
                 map.insert("token_balance".to_string(), json!(token_status.balance));
                 map.insert(
@@ -5680,6 +5677,10 @@ async fn admin_user_accounts_force_logout(
         invalidated_at = invalidated_at.max(scope_invalidated_at);
         state.control.auth_sessions.force_logout_user(cleaned, &scope).await;
     }
+    state
+        .control
+        .presence
+        .force_user_offline(cleaned, now_ts());
 
     Ok(Json(json!({
         "data": {
