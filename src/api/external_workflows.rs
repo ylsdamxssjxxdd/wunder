@@ -86,14 +86,6 @@ struct ExternalWorkflowRequest {
     message: Option<String>,
     #[serde(
         default,
-        alias = "preemptActiveWorkflow",
-        alias = "preempt_active_workflow"
-    )]
-    preempt_active_workflow: bool,
-    #[serde(default)]
-    preempt: Option<bool>,
-    #[serde(
-        default,
         alias = "workspaceContainerId",
         alias = "workspace_container_id",
         alias = "containerId",
@@ -371,15 +363,9 @@ async fn prepare_workflow_inner(
     validate_workflow_request(request, files)?;
     let user = resolve_target_user(state.as_ref(), headers, request).await?;
     let agent = resolve_target_agent(state.as_ref(), &user, request).await?;
-    if !preempt_enabled(request) {
-        ensure_agent_not_busy(state.as_ref(), &user.user_id, &agent.agent_id)?;
-    }
-
-    if request.preempt_active_workflow {
-        cancel_active_external_workflow(state.as_ref(), &user.user_id)?;
-    } else {
-        ensure_no_active_external_workflow(state.as_ref(), &user.user_id)?;
-    }
+    // Always cancel any active external workflow for this user before starting a new one.
+    // This simplifies the API: new requests automatically preempt old ones.
+    cancel_active_external_workflow(state.as_ref(), &user.user_id)?;
     let _preempted = preempt_agent_current_work(state.as_ref(), &user.user_id, &agent.agent_id)?;
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
@@ -716,13 +702,6 @@ fn validate_workflow_request(
             "external workflow requires clear_workspace=true".to_string(),
         ));
     }
-    if !preempt_enabled(request) {
-        return Err(error_with_code(
-            StatusCode::BAD_REQUEST,
-            "INVALID_REQUEST",
-            "external workflow requires preempt=true".to_string(),
-        ));
-    }
     let has_message = request
         .message
         .as_deref()
@@ -939,35 +918,6 @@ fn ensure_agent_allowed(
     }
 }
 
-fn ensure_agent_not_busy(state: &AppState, user_id: &str, agent_id: &str) -> Result<(), Response> {
-    let Some(thread) = state
-        .user_store
-        .get_agent_thread(user_id, agent_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    else {
-        return Ok(());
-    };
-    let busy = state
-        .monitor
-        .get_record(&thread.session_id)
-        .and_then(|record| {
-            record
-                .get("status")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .map(|status| matches!(status.as_str(), "running" | "waiting" | "cancelling"))
-        .unwrap_or(false);
-    if busy {
-        return Err(error_with_code(
-            StatusCode::CONFLICT,
-            "AGENT_BUSY",
-            "target agent is busy".to_string(),
-        ));
-    }
-    Ok(())
-}
-
 fn preempt_agent_current_work(
     state: &AppState,
     user_id: &str,
@@ -1038,17 +988,6 @@ fn cancel_session_and_tasks(state: &AppState, user_id: &str, record: &SessionRun
         .storage
         .delete_session_goal(user_id, &record.session_id);
     cancelled
-}
-
-fn ensure_no_active_external_workflow(state: &AppState, user_id: &str) -> Result<(), Response> {
-    if load_active_workflow(state, user_id)?.is_some() {
-        return Err(error_with_code(
-            StatusCode::CONFLICT,
-            "EXTERNAL_WORKFLOW_BUSY",
-            "user already has an active external workflow in workspace container 10".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn cancel_active_external_workflow(state: &AppState, user_id: &str) -> Result<(), Response> {
@@ -1756,10 +1695,6 @@ fn timeout_s(request: &ExternalWorkflowRequest) -> f64 {
         .timeout_s
         .unwrap_or(DEFAULT_TIMEOUT_S)
         .clamp(1.0, MAX_TIMEOUT_S)
-}
-
-fn preempt_enabled(request: &ExternalWorkflowRequest) -> bool {
-    request.preempt.unwrap_or(true)
 }
 
 fn is_terminal_status(status: &str) -> bool {
