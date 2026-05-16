@@ -1,6 +1,8 @@
 use crate::config::{Config, UserAgentPresetConfig};
 use crate::core::atomic_write::atomic_write_text;
-use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME};
+use crate::services::default_agent_protocol::{
+    is_builtin_default_agent_name, DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME,
+};
 use crate::services::inner_visible::{
     build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardPreset,
     WorkerCardRecordUpdate,
@@ -269,7 +271,7 @@ pub fn export_file_name_for_preset(config: &UserAgentPresetConfig) -> String {
 pub fn export_file_name_for_default_agent(record: &UserAgentRecord) -> String {
     let display_name = record.name.trim();
     let canonical_name = if record.agent_id.trim() == DEFAULT_AGENT_ID_ALIAS
-        && (display_name.is_empty() || display_name == DEFAULT_AGENT_ID_ALIAS)
+        && is_builtin_default_agent_name(display_name)
     {
         DEFAULT_AGENT_NAME
     } else if display_name.is_empty() {

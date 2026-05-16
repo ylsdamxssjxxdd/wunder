@@ -550,14 +550,16 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
 
   ctx.agentMap = computed(() => {
       const map = new Map<string, Record<string, unknown>>();
+      const defaultProfile = ctx.defaultAgentProfile.value as Record<string, unknown> | null;
       map.set(DEFAULT_AGENT_KEY, {
           id: DEFAULT_AGENT_KEY,
-          name: ctx.t('messenger.defaultAgent'),
-          description: ctx.t('messenger.defaultAgentDesc'),
-          sandbox_container_id: 1,
-          approval_mode: ctx.defaultAgentApprovalMode.value,
-          silent: false,
-          prefer_mother: false
+          name: String(defaultProfile?.name || ctx.t('messenger.defaultAgent')),
+          description: String(defaultProfile?.description || ctx.t('messenger.defaultAgentDesc')),
+          icon: defaultProfile?.icon,
+          sandbox_container_id: defaultProfile?.sandbox_container_id ?? 1,
+          approval_mode: defaultProfile?.approval_mode ?? ctx.defaultAgentApprovalMode.value,
+          silent: Boolean(defaultProfile?.silent),
+          prefer_mother: Boolean(defaultProfile?.prefer_mother)
       });
       ctx.ownedAgents.value.forEach((item) => {
           const id = ctx.normalizeAgentId(item?.id);

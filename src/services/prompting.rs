@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::i18n;
 use crate::llm::ToolCallMode;
 use crate::schemas::ToolSpec;
-use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
+use crate::services::default_agent_protocol::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::tools::skill_call::render_skill_markdown_for_model;
 use crate::services::user_prompt_templates;
 use crate::services::worker_card_files::{

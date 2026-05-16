@@ -8,7 +8,8 @@ use crate::services::agent_abilities::{
     resolve_record_declared_names,
 };
 use crate::services::default_agent_protocol::{
-    default_agent_config_from_record, default_agent_meta_key, DefaultAgentConfig,
+    default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
+    DefaultAgentConfig, DEFAULT_AGENT_NAME,
 };
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
@@ -43,7 +44,6 @@ use uuid::Uuid;
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
-const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_DESCRIPTION: &str =
     "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
@@ -2090,7 +2090,7 @@ fn is_default_agent_alias_value(raw: &str) -> bool {
 }
 
 fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
-    if config.name.trim().is_empty() {
+    if is_builtin_default_agent_name(&config.name) {
         config.name = DEFAULT_AGENT_NAME.to_string();
     }
     if config.description.trim().is_empty() {

@@ -152,13 +152,13 @@
   "preempt_active_workflow": false,
   "workspace_container_id": 10,
   "clear_workspace": true,
-  "timeout_s": 600,
+  "timeout_s": 1800,
   "client_run_id": "<optional_external_id>",
   "metadata": {}
 }
 ```
 
-- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 3600 秒，默认 600 秒。
+- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 3600 秒，默认 1800 秒。
 - SSE 事件：
   - `workflow.start`：返回 `run_id/session_id/user_id/agent_id/status/workspace_container_id/events_url/cancel_url`。
   - `workflow.event`：转发内部编排事件，`data.type` 为内部事件类型，如 `tool_call/tool_result/tool_output_delta/approval_request/final/error/turn_terminal` 等。
@@ -1261,6 +1261,7 @@
 - `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
   - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
+  - 说明：若流式响应在没有任何可用内容、推理或 `tool_calls` 的情况下结束，服务端会先自动补拉一次非流式请求；若补拉仍为空，则同样按 `LLM_UNAVAILABLE` 处理并进入重试。
   - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。

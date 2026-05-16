@@ -258,6 +258,26 @@ pub struct LlmResponse {
     pub tool_calls: Option<Value>,
 }
 
+const EMPTY_LLM_RESPONSE_ERROR: &str =
+    "LLM returned empty response without content, reasoning, or tool calls";
+
+fn llm_response_has_payload(content: &str, reasoning: &str, tool_calls: Option<&Value>) -> bool {
+    if !content.trim().is_empty() || !reasoning.trim().is_empty() {
+        return true;
+    }
+    tool_calls.is_some_and(tool_call_payload_has_items)
+}
+
+fn tool_call_payload_has_items(payload: &Value) -> bool {
+    match payload {
+        Value::Null => false,
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        Value::String(text) => !text.trim().is_empty(),
+        _ => true,
+    }
+}
+
 #[derive(Clone)]
 pub struct LlmClient {
     http: Client,
@@ -330,6 +350,9 @@ impl LlmClient {
             body.get("response")
                 .and_then(|value| normalize_usage(value.get("usage")))
         });
+        if !llm_response_has_payload(&content, &reasoning, tool_calls.as_ref()) {
+            return Err(anyhow!(EMPTY_LLM_RESPONSE_ERROR));
+        }
         Ok(LlmResponse {
             content,
             reasoning,
@@ -470,11 +493,15 @@ impl LlmClient {
             }
 
             let tool_calls = finalize_stream_tool_calls(&tool_calls_accumulator);
-            let stream_payload_empty = combined.trim().is_empty()
-                && reasoning_combined.trim().is_empty()
-                && tool_calls.is_none();
-            if !saw_done && stream_payload_empty {
-                warn!("LLM stream ended without [DONE] and without payload, fallback to non-stream request");
+            let stream_payload_empty =
+                !llm_response_has_payload(&combined, &reasoning_combined, tool_calls.as_ref());
+            if stream_payload_empty {
+                let empty_reason = if saw_done {
+                    "LLM stream finished with [DONE] but without payload"
+                } else {
+                    "LLM stream ended without [DONE] and without payload"
+                };
+                warn!("{empty_reason}, fallback to non-stream request");
                 match self.complete_with_tools(messages, tools).await {
                     Ok(fallback) => {
                         if !fallback.content.is_empty() || !fallback.reasoning.is_empty() {
@@ -484,7 +511,7 @@ impl LlmClient {
                     }
                     Err(err) => {
                         return Err(anyhow!(
-                            "LLM stream ended without [DONE] and without payload; fallback request failed: {err}"
+                            "{empty_reason}; fallback request failed: {err}"
                         ));
                     }
                 }
@@ -5047,6 +5074,170 @@ mod tests {
             1,
             "non-stream fallback should be attempted once"
         );
+    }
+
+    #[tokio::test]
+    async fn complete_with_tools_rejects_empty_success_body() {
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use tokio::net::TcpListener;
+
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": ""
+                                }
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 12,
+                            "completion_tokens": 0,
+                            "total_tokens": 12
+                        }
+                    })),
+                )
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let err = client
+            .complete_with_tools(&messages, None)
+            .await
+            .expect_err("empty success body should be rejected");
+
+        assert!(err.to_string().contains(EMPTY_LLM_RESPONSE_ERROR));
+    }
+
+    #[tokio::test]
+    async fn stream_complete_falls_back_and_rejects_when_fallback_is_empty() {
+        use axum::extract::State;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use axum::{Json, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::net::TcpListener;
+
+        #[derive(Clone)]
+        struct AppState {
+            stream_calls: Arc<AtomicUsize>,
+            non_stream_calls: Arc<AtomicUsize>,
+        }
+
+        let state = AppState {
+            stream_calls: Arc::new(AtomicUsize::new(0)),
+            non_stream_calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let app = Router::new()
+            .route(
+                "/v1/chat/completions",
+                post(
+                    |State(state): State<AppState>, Json(payload): Json<Value>| async move {
+                        if payload.get("stream").and_then(Value::as_bool) == Some(true) {
+                            state.stream_calls.fetch_add(1, Ordering::SeqCst);
+                            return (
+                                StatusCode::OK,
+                                "data: [DONE]\n\n".to_string(),
+                            );
+                        }
+                        state.non_stream_calls.fetch_add(1, Ordering::SeqCst);
+                        (
+                            StatusCode::OK,
+                            serde_json::to_string(&json!({
+                                "choices": [
+                                    {
+                                        "message": {
+                                            "content": ""
+                                        }
+                                    }
+                                ],
+                                "usage": {
+                                    "prompt_tokens": 12,
+                                    "completion_tokens": 0,
+                                    "total_tokens": 12
+                                }
+                            }))
+                            .expect("serialize response"),
+                        )
+                    },
+                ),
+            )
+            .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let err = client
+            .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
+            .await
+            .expect_err("empty stream and empty fallback should be rejected");
+
+        let message = err.to_string();
+        assert!(message.contains("without payload"));
+        assert!(message.contains(EMPTY_LLM_RESPONSE_ERROR));
+        assert_eq!(state.stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.non_stream_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

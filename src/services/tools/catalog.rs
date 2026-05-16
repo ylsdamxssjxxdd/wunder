@@ -2893,13 +2893,17 @@ mod tests {
             .expect("apply patch spec");
         assert!(apply_patch_spec.description.contains("dry_run"));
         assert!(apply_patch_spec.description.contains("Python"));
+        assert!(apply_patch_spec.description.contains("*** End Patch"));
+        assert!(apply_patch_spec.description.contains("@@"));
         let apply_patch_input_description = apply_patch_spec.input_schema["properties"]["input"]
             ["description"]
             .as_str()
             .unwrap_or("");
         assert!(apply_patch_input_description.contains("*** Begin Patch"));
+        assert!(apply_patch_input_description.contains("*** End Patch"));
         assert!(apply_patch_input_description.contains("*** Add File"));
         assert!(apply_patch_input_description.contains("dry_run"));
+        assert!(apply_patch_input_description.contains("@@"));
         assert_eq!(
             apply_patch_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)

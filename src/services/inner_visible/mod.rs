@@ -11,10 +11,9 @@ use crate::core::atomic_write::atomic_write_text;
 use crate::schemas::AbilityKind;
 use crate::services::agent_abilities::normalize_ability_items;
 use crate::services::default_agent_protocol::{
-    default_agent_meta_key, record_from_default_agent_config,
-    DefaultAgentConfig as DefaultAgentConfigMirror,
+    default_agent_meta_key, is_builtin_default_agent_name, record_from_default_agent_config,
+    DefaultAgentConfig as DefaultAgentConfigMirror, DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME,
 };
-use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME};
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::inner_visible::layout::{
     agent_id_from_worker_card_file_name, defaults_worker_card_path, normalize_agent_file_stem,
@@ -677,7 +676,7 @@ fn normalize_default_agent_config(
     config: &mut DefaultAgentConfigMirror,
     allowed_tool_names: &HashSet<String>,
 ) {
-    if config.name.trim().is_empty() {
+    if is_builtin_default_agent_name(&config.name) {
         config.name = DEFAULT_AGENT_NAME.to_string();
     } else {
         config.name = config.name.trim().to_string();

@@ -3260,6 +3260,11 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
         return "建议下一步：缩小查询范围或改用可分页/导出路径，避免单次超时。".to_string();
     }
     if tool_name == apply_patch {
+        if code == "PATCH_FORMAT_INVALID"
+            && (lower_detail.contains("end patch") || detail.contains("缺少 *** End Patch"))
+        {
+            return "建议下一步：这次补丁没有闭合。重新生成完整 apply_patch 输入，第一行必须是 `*** Begin Patch`，最后一行必须是 `*** End Patch`；删除末尾多余的悬空 `@@`，不要在 `*** End Patch` 后追加任何内容。".to_string();
+        }
         if matches!(
             code.as_str(),
             "PATCH_FORMAT_INVALID"

@@ -3,6 +3,16 @@ use crate::storage::{UserAgentRecord, DEFAULT_HIVE_ID};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
+pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
+pub const DEFAULT_AGENT_LEGACY_ENGLISH_NAME: &str = "Default Agent";
+pub const DEFAULT_AGENT_NAME: &str = "默认智能体";
+
+pub fn is_builtin_default_agent_name(name: &str) -> bool {
+    let cleaned = name.trim();
+    cleaned.is_empty()
+        || cleaned == DEFAULT_AGENT_ID_ALIAS
+        || cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_LEGACY_ENGLISH_NAME)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DefaultAgentConfig {

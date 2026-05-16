@@ -32,6 +32,7 @@ Native freeform strategy:
 apply_patch rules (Codex-aligned):
 - NEVER wrap patch text in JSON strings or markdown fences.
 - Input must start with *** Begin Patch and end with *** End Patch.
+- Before calling, self-check the complete skeleton: first line is *** Begin Patch, last line is *** End Patch; do not leave a dangling @@ or unclosed hunk at the end.
 - Use the right section header: *** Add File:, *** Update File:, *** Delete File:, *** Move to:.
 - After @@ in Update File hunks, every line must start with one of: space / + / -. Blank context lines must be encoded as a single leading space line (" ").
 - When a line changes, write it explicitly as -old followed by +new; do not leave both versions as ordinary context lines.

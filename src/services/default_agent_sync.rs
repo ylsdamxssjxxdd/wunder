@@ -1,7 +1,7 @@
 use crate::services::agent_abilities::resolve_selected_declared_names;
 use crate::services::default_agent_protocol::{
-    default_agent_config_from_record, default_agent_meta_key, record_from_default_agent_config,
-    DefaultAgentConfig,
+    default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
+    record_from_default_agent_config, DefaultAgentConfig, DEFAULT_AGENT_NAME,
 };
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::user_agent_presets::{
@@ -21,10 +21,10 @@ use anyhow::Result;
 use chrono::Utc;
 use std::collections::HashSet;
 
+pub use crate::services::default_agent_protocol::DEFAULT_AGENT_ID_ALIAS;
+
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
-pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
-pub const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_SYNC_BINDING_PREFIX: &str = "default_agent_sync_binding_v1:";
 pub const PRESET_TEMPLATE_USER_ID: &str = "preset_template";
@@ -76,7 +76,7 @@ fn normalize_default_agent_config(
     config: &mut DefaultAgentConfig,
     skill_name_keys: &HashSet<String>,
 ) {
-    if config.name.trim().is_empty() {
+    if is_builtin_default_agent_name(&config.name) {
         config.name = DEFAULT_AGENT_NAME.to_string();
     } else {
         config.name = config.name.trim().to_string();

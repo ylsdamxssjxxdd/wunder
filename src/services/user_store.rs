@@ -1,7 +1,7 @@
 use crate::org_units;
 use crate::services::default_agent_protocol::{
-    default_agent_meta_key, record_from_default_agent_config,
-    DefaultAgentConfig as DefaultAgentConfigSnapshot,
+    default_agent_meta_key, is_builtin_default_agent_name, record_from_default_agent_config,
+    DefaultAgentConfig as DefaultAgentConfigSnapshot, DEFAULT_AGENT_NAME,
 };
 use crate::services::user_leveling::{build_user_level_snapshot, normalize_total_experience};
 use crate::storage::{
@@ -37,7 +37,6 @@ pub const DEFAULT_LEVEL_UP_TOKEN_REWARD: i64 = 1_000_000;
 const DEFAULT_HIVE_NAME: &str = "默认蜂群";
 const DEFAULT_HIVE_DESCRIPTION: &str = "系统默认蜂群，用于承载初始智能体应用。";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
-const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
@@ -1183,6 +1182,15 @@ pub(crate) fn list_user_agents_by_hive_with_default(
     hive_id: &str,
 ) -> Result<Vec<UserAgentRecord>> {
     let mut items = storage.list_user_agents_by_hive(user_id, hive_id)?;
+    for item in &mut items {
+        if item
+            .agent_id
+            .trim()
+            .eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+        {
+            normalize_default_agent_record(item);
+        }
+    }
     if normalize_hive_id(hive_id) != DEFAULT_HIVE_ID {
         return Ok(items);
     }
@@ -1208,24 +1216,7 @@ pub(crate) fn build_default_agent_record_from_storage(
     user_id: &str,
 ) -> Result<UserAgentRecord> {
     if let Some(mut existing) = storage.get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)? {
-        existing.hive_id = DEFAULT_HIVE_ID.to_string();
-        existing.access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
-        if existing.approval_mode.trim().is_empty() {
-            existing.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
-        }
-        if existing.status.trim().is_empty() {
-            existing.status = DEFAULT_AGENT_STATUS.to_string();
-        }
-        if existing.description.trim().is_empty() {
-            existing.description = DEFAULT_AGENT_DESCRIPTION.to_string();
-        }
-        if existing.system_prompt.trim().is_empty() {
-            existing.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
-        }
-        if existing.preset_questions.is_empty() {
-            existing.preset_questions = default_agent_preset_questions();
-        }
-        existing.is_shared = false;
+        normalize_default_agent_record(&mut existing);
         return Ok(existing);
     }
 
@@ -1244,8 +1235,32 @@ pub(crate) fn build_default_agent_record_from_storage(
     ))
 }
 
+fn normalize_default_agent_record(existing: &mut UserAgentRecord) {
+    existing.hive_id = DEFAULT_HIVE_ID.to_string();
+    existing.access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
+    if is_builtin_default_agent_name(&existing.name) {
+        existing.name = DEFAULT_AGENT_NAME.to_string();
+    }
+    if existing.approval_mode.trim().is_empty() {
+        existing.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
+    }
+    if existing.status.trim().is_empty() {
+        existing.status = DEFAULT_AGENT_STATUS.to_string();
+    }
+    if existing.description.trim().is_empty() {
+        existing.description = DEFAULT_AGENT_DESCRIPTION.to_string();
+    }
+    if existing.system_prompt.trim().is_empty() {
+        existing.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
+    }
+    if existing.preset_questions.is_empty() {
+        existing.preset_questions = default_agent_preset_questions();
+    }
+    existing.is_shared = false;
+}
+
 fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
-    if config.name.trim().is_empty() {
+    if is_builtin_default_agent_name(&config.name) {
         config.name = DEFAULT_AGENT_NAME.to_string();
     }
     if config.description.trim().is_empty() {

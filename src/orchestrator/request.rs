@@ -115,6 +115,16 @@ impl Orchestrator {
         }
         let agent_id = agent_id.map(str::trim).filter(|value| !value.is_empty());
         if agent_id.is_none() || is_default_agent_alias(agent_id) {
+            if let Ok(record) =
+                crate::user_store::build_default_agent_record_from_storage(
+                    self.storage.as_ref(),
+                    user_id,
+                )
+            {
+                return self
+                    .workspace
+                    .scoped_user_id_by_container(user_id, record.sandbox_container_id);
+            }
             return self.workspace.scoped_user_id_by_container(
                 user_id,
                 crate::storage::DEFAULT_SANDBOX_CONTAINER_ID,

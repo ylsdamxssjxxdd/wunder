@@ -872,6 +872,12 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
         "502 bad gateway",
         "503",
         "504 gateway timeout",
+        "empty response",
+        "without payload",
+        "without content",
+        "without content, reasoning, or tool calls",
+        "did not return a displayable final answer",
+        "no choices",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -1131,6 +1137,12 @@ mod tests {
         assert!(is_llm_unavailable_error_text(
             "LLM stream request failed: 500 Internal Server Error"
         ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM returned empty response without content, reasoning, or tool calls"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream finished with [DONE] but without payload; fallback request failed"
+        ));
         assert!(matches!(
             classify_llm_failure("connection refused"),
             LlmFailureKind::Unavailable
@@ -1141,6 +1153,10 @@ mod tests {
         ));
         assert!(matches!(
             classify_llm_failure("LLM request failed: 500 Internal Server Error"),
+            LlmFailureKind::Unavailable
+        ));
+        assert!(matches!(
+            classify_llm_failure("LLM returned empty response without content"),
             LlmFailureKind::Unavailable
         ));
     }

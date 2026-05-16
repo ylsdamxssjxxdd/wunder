@@ -197,8 +197,8 @@ fn patch_format_error(zh: impl Into<String>, en: impl Into<String>) -> anyhow::E
         "PATCH_FORMAT_INVALID",
         zh,
         en,
-        "请检查 Begin/End 标记、操作头（Add/Delete/Update）和行前缀（空格/+/-）。",
-        "Check Begin/End markers, operation headers (Add/Delete/Update), and line prefixes (space/+/-).",
+        "请重新输出完整补丁：第一行必须是 *** Begin Patch，最后一行必须是 *** End Patch；不要在末尾留下悬空 @@；检查操作头（Add/Delete/Update）和行前缀（空格/+/-）。",
+        "Rebuild the complete patch: first line must be *** Begin Patch and last line must be *** End Patch; do not leave a dangling @@ at the end; check operation headers (Add/Delete/Update) and line prefixes (space/+/-).",
     )
 }
 

@@ -3,7 +3,7 @@ use crate::auth as guard_auth;
 use crate::i18n;
 use crate::schemas::{StreamEvent, TokenUsage, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
-use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
+use crate::services::default_agent_protocol::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::external::provision_external_launch_session;
 use crate::services::stream_events::StreamEventService;
 use crate::services::user_agent_presets::ensure_user_preset_agents;
@@ -40,7 +40,7 @@ use walkdir::WalkDir;
 const EXTERNAL_WORKFLOW_CONTAINER_ID: i32 = MAX_SANDBOX_CONTAINER_ID;
 const RUN_KIND: &str = "external_workflow";
 const REQUESTED_BY: &str = "external_workflow_api";
-const DEFAULT_TIMEOUT_S: f64 = 600.0;
+const DEFAULT_TIMEOUT_S: f64 = 1800.0;
 const MAX_TIMEOUT_S: f64 = 3600.0;
 const MAX_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT: i64 = 200;
@@ -1878,6 +1878,32 @@ mod tests {
         let paths = referenced_workflow_paths("Files: heart.png and `heart.py`.", "admin__c__10");
 
         assert_eq!(paths, vec!["heart.png".to_string(), "heart.py".to_string()]);
+    }
+
+    #[test]
+    fn external_workflow_timeout_defaults_to_long_running_budget() {
+        let mut request = ExternalWorkflowRequest {
+            user_id: None,
+            user_name: None,
+            agent_id: None,
+            agent_name: None,
+            message: None,
+            preempt_active_workflow: false,
+            preempt: None,
+            workspace_container_id: None,
+            clear_workspace: None,
+            timeout_s: None,
+            client_run_id: None,
+            metadata: None,
+        };
+
+        assert_eq!(timeout_s(&request), 1800.0);
+
+        request.timeout_s = Some(0.0);
+        assert_eq!(timeout_s(&request), 1.0);
+
+        request.timeout_s = Some(7200.0);
+        assert_eq!(timeout_s(&request), MAX_TIMEOUT_S);
     }
 
     #[test]

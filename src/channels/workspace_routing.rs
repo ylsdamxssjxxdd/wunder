@@ -10,6 +10,12 @@ pub fn resolve_channel_workspace_id(
 ) -> String {
     let cleaned_agent = agent_id.map(str::trim).filter(|value| !value.is_empty());
     if cleaned_agent.is_none() || is_default_agent_alias(cleaned_agent) {
+        if let Ok(record) = crate::user_store::build_default_agent_record_from_storage(
+            user_store.storage_backend().as_ref(),
+            user_id,
+        ) {
+            return workspace.scoped_user_id_by_container(user_id, record.sandbox_container_id);
+        }
         return workspace.scoped_user_id_by_container(user_id, DEFAULT_SANDBOX_CONTAINER_ID);
     }
     if let Some(container_id) = user_store.resolve_agent_sandbox_container_id(cleaned_agent) {

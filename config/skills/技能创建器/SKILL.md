@@ -57,11 +57,13 @@ skill-name/
     └── assets/           - 输出中使用的文件(模板、图标、字体等)
 ```
 
+这里的 `skill-name` 指唯一运行标识对应的目录名。目录名、frontmatter `name`、打包产物名和安装注册名要保持一致;不要把目录当作展示名来随意改写。
+
 #### SKILL.md (必需)
 
 每个SKILL.md由以下组成:
 
-- **frontmatter**(YAML): 包含`name`和`description`字段。这些是Wunder用于确定何时使用技能的唯一字段,因此在描述技能是什么以及何时应该使用时必须清晰全面。
+- **frontmatter**(YAML): 包含`name`和`description`字段。`name` 是技能的**唯一运行标识**; `description` 只负责说明何时触发。不要把展示名、目录名和运行标识混着用,也不要在创建、打包、安装、调用之间临时改名。
 - **主体**(Markdown): 使用技能的指令和指导。仅在技能触发后加载(如果会触发的话)。
 
 #### 打包资源 (可选)
@@ -263,6 +265,8 @@ Wunder仅在用户需要这些功能时读取REDLINING.md或OOXML.md。
 scripts/init_skill.py <skill-name> --path <output-directory>
 ```
 
+`<skill-name>` 就是后续运行时使用的唯一标识。需要打包或分发时,优先使用小写英文、数字和连字符组成的 hyphen-case,例如`data-cleaner`。中文展示名放到标题、描述和正文里,不要先用中文目录创建,再为了打包改成英文标识。
+
 脚本会:
 
 - 在指定路径创建技能目录
@@ -301,7 +305,7 @@ scripts/init_skill.py <skill-name> --path <output-directory>
 
 编写带有`name`和`description`的YAML frontmatter:
 
-- `name`: 技能名称
+- `name`: 技能唯一运行标识。它必须与技能目录名、打包验证目标名、工蜂卡 `abilities.skills` 中注册的名字、`skill_call` 参数一致。新建可打包技能默认使用 hyphen-case。
 - `description`: 这是技能的主要触发机制,帮助Wunder理解何时使用技能。
   - 包括技能做什么以及何时使用的特定触发器/上下文。
   - 在此处包含所有"何时使用"信息 - 不在主体中。主体仅在触发后加载,因此主体中的"何时使用此技能"部分对Wunder没有帮助。
@@ -340,6 +344,8 @@ scripts/package_skill.py <path/to/skill-folder> ./dist
 
 如果验证失败,脚本会报告错误并退出而不创建包。修复任何验证错误并再次运行打包命令。
 
+打包前先核对三处名字是否完全一致:技能目录名、`SKILL.md` frontmatter 的 `name`、准备写入工蜂卡 `abilities.skills` 的名字。它们必须是同一个运行标识,不要一个中文、一个英文、一个临时别名。
+
 ### 步骤6: 迭代
 
 测试技能后,用户可能请求改进。这通常在使用技能后立即发生,此时对技能表现有新鲜的上下文。
@@ -356,3 +362,5 @@ scripts/package_skill.py <path/to/skill-folder> ./dist
 
 - 默认将创建的技能放到当前工作目录中
 - 询问用户是否需要将技能安装到智能体中
+- 安装时只写入唯一运行标识,不要写展示名
+- 验证时用同一个 `name` 调用 `skill_call`,如果找不到技能先检查目录名和 frontmatter `name` 是否一致

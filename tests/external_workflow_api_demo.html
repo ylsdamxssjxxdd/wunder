@@ -412,7 +412,7 @@
           </label>
           <label>
             超时秒数
-            <input id="timeoutS" type="number" min="1" max="3600" value="600" />
+            <input id="timeoutS" type="number" min="1" max="3600" value="1800" />
           </label>
         </div>
 
@@ -631,7 +631,7 @@
         preempt_active_workflow: fields.preemptActiveWorkflow.checked,
         workspace_container_id: 10,
         clear_workspace: true,
-        timeout_s: Number(fields.timeoutS.value || 600),
+        timeout_s: Number(fields.timeoutS.value || 1800),
       };
       assignIfPresent(request, "user_name", fields.userName.value);
       assignIfPresent(request, "user_id", fields.userId.value);

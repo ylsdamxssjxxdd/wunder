@@ -2330,3 +2330,103 @@ async fn admin_default_preset_payload_exposes_canonical_declared_names() {
         "default preset card in admin UI should expose canonical declared tool names instead of an empty placeholder"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn default_agent_workspace_uses_user_custom_container_without_explicit_container_param() {
+    let user_id = "default_workspace_container_user";
+    let context = build_test_context_with_config(user_id, |_| {}).await;
+
+    update_default_agent(
+        &context.app,
+        Some(&context.token),
+        user_id,
+        json!({
+            "name": "Default Agent",
+            "description": "custom workspace container",
+            "system_prompt": "custom workspace prompt",
+            "tool_names": [],
+            "preset_questions": [],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 4
+        }),
+    )
+    .await;
+
+    let container_one_workspace = context
+        .state
+        .workspace
+        .scoped_user_id_by_container(user_id, 1);
+    let container_four_workspace = context
+        .state
+        .workspace
+        .scoped_user_id_by_container(user_id, 4);
+    let _ = context
+        .state
+        .workspace
+        .ensure_user_root(&container_one_workspace)
+        .expect("ensure container 1");
+    let _ = context
+        .state
+        .workspace
+        .ensure_user_root(&container_four_workspace)
+        .expect("ensure container 4");
+    let container_four_file = context
+        .state
+        .workspace
+        .resolve_path(&container_four_workspace, "marker.txt")
+        .expect("resolve marker");
+    std::fs::write(&container_four_file, "from custom container").expect("write marker");
+
+    let (content_status, content_payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::GET,
+        "/wunder/workspace/content?agent_id=__default__&path=marker.txt&include_content=true",
+        None,
+    )
+    .await;
+    assert_eq!(content_status, StatusCode::OK, "{content_payload}");
+    assert_eq!(
+        content_payload["content"],
+        json!("from custom container"),
+        "workspace API should resolve default-agent container from the saved user setting"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn default_agent_name_falls_back_to_chinese_label() {
+    let user_id = "default_agent_chinese_name_user";
+    let context = build_test_context_with_config(user_id, |_| {}).await;
+
+    let default_agent = get_default_agent(&context.app, Some(&context.token), user_id).await;
+
+    assert_eq!(default_agent["name"], json!("默认智能体"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_english_default_agent_name_is_normalized_to_chinese_label() {
+    let user_id = "default_agent_legacy_english_name_user";
+    let context = build_test_context_with_config(user_id, |_| {}).await;
+    update_default_agent(
+        &context.app,
+        Some(&context.token),
+        user_id,
+        json!({
+            "name": "Default Agent",
+            "description": "legacy default name",
+            "system_prompt": "legacy default prompt",
+            "tool_names": [],
+            "preset_questions": [],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 3
+        }),
+    )
+    .await;
+
+    let default_agent = get_default_agent(&context.app, Some(&context.token), user_id).await;
+
+    assert_eq!(default_agent["name"], json!("默认智能体"));
+    assert_eq!(default_agent["sandbox_container_id"], json!(3));
+}

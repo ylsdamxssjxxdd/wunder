@@ -1,4 +1,4 @@
-use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
+use crate::services::default_agent_protocol::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::worker_card_files::{
     stable_id_from_worker_card_file_name, worker_card_file_name as canonical_worker_card_file_name,
 };

@@ -824,7 +824,9 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
   });
 
   ctx.currentContainerId = computed(() => {
-      const source = ctx.activeAgent.value as Record<string, unknown> | null;
+      const source = ctx.activeAgentId.value === DEFAULT_AGENT_KEY
+          ? (ctx.defaultAgentProfile.value as Record<string, unknown> | null) || (ctx.activeAgent.value as Record<string, unknown> | null)
+          : ctx.activeAgent.value as Record<string, unknown> | null;
       const parsed = Number.parseInt(String(source?.sandbox_container_id ?? 1), 10);
       if (!Number.isFinite(parsed))
           return 1;
@@ -855,10 +857,11 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
           target.agentNames.push(String(agent?.name || normalizedId));
           buckets.set(containerId, target);
       };
+      const defaultProfile = ctx.defaultAgentProfile.value as Record<string, unknown> | null;
       collect({
           id: DEFAULT_AGENT_KEY,
-          name: ctx.t('messenger.defaultAgent'),
-          sandbox_container_id: 1
+          name: String(defaultProfile?.name || ctx.t('messenger.defaultAgent')),
+          sandbox_container_id: defaultProfile?.sandbox_container_id ?? 1
       });
       ctx.ownedAgents.value.forEach((item) => collect(item as Record<string, unknown>));
       ctx.sharedAgents.value.forEach((item) => collect(item as Record<string, unknown>));
@@ -1053,11 +1056,13 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
   ctx.fullPrimaryAgentList = computed(() => {
       const items: Array<Record<string, unknown>> = [];
       if (ctx.showDefaultAgentEntry.value) {
+          const defaultProfile = ctx.defaultAgentProfile.value as Record<string, unknown> | null;
           items.push({
               id: DEFAULT_AGENT_KEY,
-              name: ctx.t('messenger.defaultAgent'),
-              description: ctx.t('messenger.defaultAgentDesc'),
-              icon: (ctx.defaultAgentProfile.value as Record<string, unknown> | null)?.icon
+              name: String(defaultProfile?.name || ctx.t('messenger.defaultAgent')),
+              description: String(defaultProfile?.description || ctx.t('messenger.defaultAgentDesc')),
+              icon: defaultProfile?.icon,
+              sandbox_container_id: defaultProfile?.sandbox_container_id ?? 1
           });
       }
       return [...items, ...ctx.ownedAgents.value];

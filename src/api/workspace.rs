@@ -1,7 +1,9 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::state::AppState;
-use crate::storage::normalize_workspace_container_id;
+use crate::storage::{
+    normalize_workspace_container_id, DEFAULT_SANDBOX_CONTAINER_ID,
+};
 use crate::workspace::WorkspaceEntry;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
@@ -1185,6 +1187,21 @@ fn resolve_workspace_id(
             .workspace
             .scoped_user_id_by_container(user_id, explicit_container_id);
     }
+    if agent_id.is_none() || is_default_agent_alias(agent_id) {
+        if let Ok(record) =
+            crate::user_store::build_default_agent_record_from_storage(
+                state.storage.as_ref(),
+                user_id,
+            )
+        {
+            return state
+                .workspace
+                .scoped_user_id_by_container(user_id, record.sandbox_container_id);
+        }
+        return state
+            .workspace
+            .scoped_user_id_by_container(user_id, DEFAULT_SANDBOX_CONTAINER_ID);
+    }
     if let Some(container_id) = state
         .user_store
         .resolve_agent_sandbox_container_id(agent_id)
@@ -1194,6 +1211,13 @@ fn resolve_workspace_id(
             .scoped_user_id_by_container(user_id, container_id);
     }
     state.workspace.scoped_user_id(user_id, agent_id)
+}
+
+fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
+    let Some(cleaned) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }
 
 fn format_modified_time(metadata: &std::fs::Metadata) -> String {

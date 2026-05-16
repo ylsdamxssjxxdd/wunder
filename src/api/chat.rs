@@ -3324,18 +3324,25 @@ fn resolve_agent_workspace_id(
     agent_id: Option<&str>,
     agent_record: Option<&crate::storage::UserAgentRecord>,
 ) -> String {
-    let default_container_workspace = || {
-        state
-            .workspace
-            .scoped_user_id_by_container(user_id, state.user_store.default_sandbox_container_id())
-    };
     if let Some(record) = agent_record {
         return state
             .workspace
             .scoped_user_id_by_container(user_id, record.sandbox_container_id);
     }
     if is_default_agent_alias(agent_id) || agent_id.is_none() {
-        return default_container_workspace();
+        if let Ok(record) =
+            crate::user_store::build_default_agent_record_from_storage(
+                state.storage.as_ref(),
+                user_id,
+            )
+        {
+            return state
+                .workspace
+                .scoped_user_id_by_container(user_id, record.sandbox_container_id);
+        }
+        return state
+            .workspace
+            .scoped_user_id_by_container(user_id, state.user_store.default_sandbox_container_id());
     }
     if let Some(container_id) = state
         .user_store
