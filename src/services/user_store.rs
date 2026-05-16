@@ -627,6 +627,26 @@ impl UserStore {
         Ok(UserSession { user, token })
     }
 
+    pub fn force_logout_user_scope(&self, user_id: &str, session_scope: &str) -> Result<f64> {
+        let cleaned_user_id = user_id.trim();
+        if cleaned_user_id.is_empty() {
+            return Err(anyhow!("invalid user id"));
+        }
+        let normalized_scope = Self::normalize_session_scope(Some(session_scope));
+        let latest_login_at = self
+            .storage
+            .get_user_session_scope(cleaned_user_id, &normalized_scope)?
+            .map(|record| record.last_login_at);
+        let invalidated_at = next_session_issued_at(latest_login_at);
+        self.storage
+            .upsert_user_session_scope(&UserSessionScopeRecord {
+                user_id: cleaned_user_id.to_string(),
+                session_scope: normalized_scope,
+                last_login_at: invalidated_at,
+            })?;
+        Ok(invalidated_at)
+    }
+
     pub fn authenticate_token(&self, token: &str) -> Result<Option<UserAccountRecord>> {
         Ok(self
             .authenticate_token_details(token)?
@@ -1762,6 +1782,53 @@ mod tests {
                 .expect("user token should stay valid")
                 .session_scope,
             "user_web"
+        );
+        assert_eq!(
+            store
+                .authenticate_token_details(&admin_web.token.token)
+                .expect("authenticate admin token")
+                .expect("admin token should stay valid")
+                .session_scope,
+            "admin_web"
+        );
+    }
+
+    #[test]
+    fn force_logout_user_scope_invalidates_current_scope_tokens() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-force-logout.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage);
+
+        store
+            .create_user(
+                "alice",
+                None,
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+
+        let user_web = store
+            .login_with_scope("alice", "secret", "user_web")
+            .expect("user login");
+        let admin_web = store
+            .login_with_scope("alice", "secret", "admin_web")
+            .expect("admin login");
+
+        let invalidated_at = store
+            .force_logout_user_scope("alice", "user_web")
+            .expect("force logout user scope");
+        assert!(invalidated_at > 0.0);
+        assert!(
+            store
+                .authenticate_token_details(&user_web.token.token)
+                .expect("authenticate user token")
+                .is_none()
         );
         assert_eq!(
             store

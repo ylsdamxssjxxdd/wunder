@@ -9,6 +9,12 @@ import {
   saveDemoProfile,
   setDemoToken
 } from '@/utils/demo';
+import {
+  clearAccessToken,
+  clearSessionAccessToken,
+  readAccessToken,
+  writePersistentAccessToken
+} from '@/utils/authTokenStorage';
 
 let profileInFlight: Promise<any> | null = null;
 
@@ -32,7 +38,7 @@ const shouldUpdateUser = (currentUser: any, nextUser: any): boolean => {
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
-    token: localStorage.getItem('access_token') || '',
+    token: readAccessToken(),
     user: null,
     loading: false
   }),
@@ -40,10 +46,13 @@ export const useAuthStore = defineStore('auth', {
     async login(payload) {
       this.loading = true;
       try {
+        clearSessionAccessToken();
+        this.token = '';
+        this.user = null;
         const { data } = await login(payload);
         const token = data.data.access_token;
         this.token = token;
-        localStorage.setItem('access_token', token);
+        writePersistentAccessToken(token);
         this.user = data.data.user;
         return data.data;
       } finally {
@@ -53,10 +62,13 @@ export const useAuthStore = defineStore('auth', {
     async register(payload) {
       this.loading = true;
       try {
+        clearSessionAccessToken();
+        this.token = '';
+        this.user = null;
         const { data } = await register(payload);
         const token = data.data.access_token;
         this.token = token;
-        localStorage.setItem('access_token', token);
+        writePersistentAccessToken(token);
         this.user = data.data.user;
         return data.data;
       } finally {
@@ -120,7 +132,7 @@ export const useAuthStore = defineStore('auth', {
     logout() {
       this.token = '';
       this.user = null;
-      localStorage.removeItem('access_token');
+      clearAccessToken();
     }
   }
 });

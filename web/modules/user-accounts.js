@@ -4,7 +4,7 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20260516-01";
 import { ensureOrgUnitsLoaded, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 
 const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
@@ -393,6 +393,16 @@ const renderUserAccountRows = () => {
     });
     actionCell.appendChild(loginBtn);
 
+    const logoutBtn = document.createElement("button");
+    logoutBtn.type = "button";
+    logoutBtn.className = "secondary";
+    logoutBtn.textContent = t("userAccounts.action.logout");
+    logoutBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      forceLogoutUser(user);
+    });
+    actionCell.appendChild(logoutBtn);
+
     const settingsBtn = document.createElement("button");
     settingsBtn.type = "button";
     settingsBtn.className = "secondary";
@@ -445,17 +455,10 @@ const buildUserFrontendUrl = (userId) => {
 
 const issueUserFrontendAccessToken = async (userId) => {
   const wunderBase = getWunderBase();
-  const response = await fetch(`${wunderBase}/auth/external/token_login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Wunder-Session-Scope": "user_web",
-    },
-    body: JSON.stringify({
-      token: "",
-      user_id: userId,
-    }),
-  });
+  const response = await fetch(
+    `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}/login_token`,
+    { method: "POST" }
+  );
   if (!response.ok) {
     const message = await extractResponseMessage(
       response,
@@ -486,13 +489,55 @@ const openUserFrontend = async (user) => {
     const accessToken = await issueUserFrontendAccessToken(userId);
     const url = new URL(targetUrl);
     url.searchParams.set("access_token", accessToken);
-    const opened = window.open(url.toString(), "_blank", "noopener,noreferrer");
+    const opened = window.open(url.toString(), "_blank");
     if (!opened) {
       notify(t("userAccounts.toast.loginOpenFailed"), "error");
+      return;
+    }
+    try {
+      opened.opener = null;
+    } catch (error) {
+      // Some browsers block opener mutation; the new tab has already been opened.
     }
   } catch (error) {
     notify(
       t("userAccounts.toast.loginOpenFailedWithMessage", {
+        message: error?.message || t("common.unknownError"),
+      }),
+      "error"
+    );
+  }
+};
+
+const forceLogoutUser = async (user) => {
+  const userId = String(user?.id || "").trim();
+  if (!userId) {
+    notify(t("userAccounts.toast.logoutFailed", { message: t("common.unknownError") }), "error");
+    return;
+  }
+  const confirmed = window.confirm(
+    t("userAccounts.logoutConfirm", { user: user.username || userId })
+  );
+  if (!confirmed) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(userId)}/logout`;
+  try {
+    const response = await fetch(endpoint, { method: "POST" });
+    if (!response.ok) {
+      const message = await extractResponseMessage(
+        response,
+        t("common.requestFailed", { status: response.status })
+      );
+      notify(t("userAccounts.toast.logoutFailed", { message }), "error");
+      return;
+    }
+    notify(t("userAccounts.toast.logoutSuccess"), "success");
+    await loadUserAccounts();
+  } catch (error) {
+    notify(
+      t("userAccounts.toast.logoutFailed", {
         message: error?.message || t("common.unknownError"),
       }),
       "error"

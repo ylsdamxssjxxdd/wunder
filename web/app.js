@@ -42,7 +42,7 @@ import {
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260215-01";
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260507-02";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
-import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260215-01";
+import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260516-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260215-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
@@ -80,7 +80,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20260508-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260512-02";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260516-01";
 
 
 

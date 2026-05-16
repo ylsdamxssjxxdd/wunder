@@ -375,6 +375,14 @@ pub fn router() -> Router<Arc<AppState>> {
             post(admin_user_accounts_token_adjustment),
         )
         .route(
+            "/wunder/admin/user_accounts/{user_id}/logout",
+            post(admin_user_accounts_force_logout),
+        )
+        .route(
+            "/wunder/admin/user_accounts/{user_id}/login_token",
+            post(admin_user_accounts_login_token),
+        )
+        .route(
             "/wunder/admin/user_accounts/{user_id}/tool_access",
             get(admin_user_accounts_tool_access_get).put(admin_user_accounts_tool_access_update),
         )
@@ -5632,6 +5640,108 @@ async fn admin_user_accounts_token_adjustment(
         "adjustment": {
             "action": action,
             "amount": amount,
+        }
+    })))
+}
+
+async fn admin_user_accounts_force_logout(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    AxumPath(user_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
+
+    let mut invalidated_at: f64 = 0.0;
+    for scope in [
+        UserStore::normalize_session_scope(Some("user_web")),
+        UserStore::default_session_scope().to_string(),
+    ] {
+        let scope_invalidated_at = state
+            .user_store
+            .force_logout_user_scope(cleaned, &scope)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        invalidated_at = invalidated_at.max(scope_invalidated_at);
+        state.control.auth_sessions.force_logout_user(cleaned, &scope).await;
+    }
+
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "user_id": cleaned,
+            "session_scopes": ["user_web", "default"],
+            "invalidated_at": invalidated_at,
+        }
+    })))
+}
+
+async fn admin_user_accounts_login_token(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    AxumPath(user_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    if record.status.trim().to_lowercase() != "active" {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "user disabled".to_string(),
+        ));
+    }
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
+
+    let session_scope = UserStore::normalize_session_scope(Some("user_web"));
+    let session = state
+        .user_store
+        .issue_session_for_user_with_scope(record, &session_scope)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
+        .await;
+    let unit = session
+        .user
+        .unit_id
+        .as_ref()
+        .and_then(|unit_id| units.iter().find(|item| item.unit_id == *unit_id));
+
+    Ok(Json(json!({
+        "data": {
+            "access_token": session.token.token,
+            "session_scope": session.token.session_scope,
+            "user": UserStore::to_profile_with_unit(&session.user, unit),
         }
     })))
 }

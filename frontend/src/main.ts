@@ -14,6 +14,7 @@ import { loadRuntimeConfig } from '@/config/runtime';
 import { initDesktopRuntime } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
 import { clearAsyncComponentReloadMarker } from '@/utils/asyncComponentRecovery';
+import { installAuthSessionSync } from '@/utils/authSessionSync';
 
 const LEGACY_PERFORMANCE_STORAGE_KEYS = ['beeroom-performance-mode', 'wille-performance-mode'] as const;
 
@@ -34,6 +35,7 @@ clearLegacyPerformanceMode();
 useThemeStore(pinia);
 installElementPlus(app);
 app.use(router);
+installAuthSessionSync(router);
 
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   // Recover from stale Vite optimized-deps/chunk URLs after hot updates or server cache invalidation.

@@ -5,13 +5,15 @@ import { resolveAccessToken } from '@/api/requestAuth';
 import { getCurrentLanguage } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
 import { localizeApiErrorText, resolveApiError } from '@/utils/apiError';
-import { FORCE_LOGOUT_LOGIN_PATH } from '@/utils/authNavigation';
+import { FORCE_LOGOUT_LOGIN_PATH, resolveLogoutRedirectPath } from '@/utils/authNavigation';
+import { clearAccessTokenIfCurrent } from '@/utils/authTokenStorage';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
 type HttpError = AxiosError & {
   code?: string;
   config?: {
     url?: string;
+    __wunderAuthToken?: string;
   };
   response?: {
     status?: number;
@@ -37,12 +39,38 @@ const api = axios.create({
   timeout: 30000
 });
 
+const AUTH_FREE_ENDPOINTS = new Set([
+  '/auth/demo',
+  '/auth/login',
+  '/auth/register',
+  '/auth/reset_password'
+]);
+
+const shouldSkipStoredAuthorization = (url: unknown): boolean => {
+  const normalized = String(url || '').trim();
+  if (!normalized) {
+    return false;
+  }
+  try {
+    const parsed = new URL(normalized, 'http://wunder.local');
+    return AUTH_FREE_ENDPOINTS.has(parsed.pathname.replace(/^\/wunder/, ''));
+  } catch {
+    return AUTH_FREE_ENDPOINTS.has(normalized.split('?')[0].replace(/^\/wunder/, ''));
+  }
+};
+
 api.interceptors.request.use((config) => {
   const apiBase = resolveApiBase();
   if (apiBase) {
     config.baseURL = apiBase;
   }
-  const token = resolveAccessToken();
+  const skipStoredAuthorization = shouldSkipStoredAuthorization(config.url);
+  if (skipStoredAuthorization) {
+    delete config.headers.Authorization;
+    delete config.headers.authorization;
+  }
+  const token = skipStoredAuthorization ? '' : resolveAccessToken();
+  (config as typeof config & { __wunderAuthToken?: string }).__wunderAuthToken = token;
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -62,11 +90,7 @@ const resolveUnauthorizedRedirectPath = (): string => {
   if (typeof window === 'undefined') {
     return FORCE_LOGOUT_LOGIN_PATH;
   }
-  const currentPath = String(window.location.pathname || '').trim();
-  if (currentPath.startsWith('/admin')) {
-    return '/admin/login';
-  }
-  return FORCE_LOGOUT_LOGIN_PATH;
+  return resolveLogoutRedirectPath(window.location.pathname);
 };
 
 const resolveHttpErrorCode = (error: HttpError): string => {
@@ -112,15 +136,13 @@ const shouldForceAuthRedirect = (error: HttpError): boolean => {
   return isProfileRequest(error);
 };
 
-const forceLogoutAndRedirect = (): void => {
+const forceLogoutAndRedirect = (token: string): void => {
   if (typeof window === 'undefined' || authRedirecting) {
     return;
   }
   authRedirecting = true;
-  try {
-    localStorage.removeItem('access_token');
-  } catch {
-    // ignore localStorage failures
+  if (token) {
+    clearAccessTokenIfCurrent(token);
   }
   const targetPath = resolveUnauthorizedRedirectPath();
   const currentFullPath = `${window.location.pathname}${window.location.search}`;
@@ -204,7 +226,7 @@ api.interceptors.response.use(
     localizeResponseErrorPayload(source);
     if (shouldForceAuthRedirect(source)) {
       clearMaintenance();
-      forceLogoutAndRedirect();
+      forceLogoutAndRedirect(String(source.config?.__wunderAuthToken || '').trim());
     }
     if (shouldEnterMaintenance(source)) {
       markMaintenance({

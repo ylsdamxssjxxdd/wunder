@@ -71,7 +71,7 @@ Accept: text/event-stream
   "preempt": true,
   "workspace_container_id": 10,
   "clear_workspace": true,
-  "timeout_s": 600,
+  "timeout_s": 6000,
   "client_run_id": "<optional_idempotency_key>",
   "metadata": {
     "source": "external_widget"

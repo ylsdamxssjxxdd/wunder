@@ -22,6 +22,14 @@ const asQueryText = (value: unknown): string => {
 export const isForcedLogoutQuery = (query: LocationQuery | Record<string, unknown>): boolean =>
   asQueryText((query as Record<string, unknown>)[FORCE_LOGOUT_QUERY_KEY]) === FORCE_LOGOUT_QUERY_VALUE;
 
+export const resolveLogoutRedirectPath = (currentPath = ''): string => {
+  const normalizedPath = String(currentPath || '').trim().toLowerCase();
+  if (normalizedPath.startsWith('/admin')) {
+    return '/admin/login';
+  }
+  return FORCE_LOGOUT_LOGIN_PATH;
+};
+
 export const buildDefaultAgentChatRoute = (
   options: { desktop?: boolean } = {}
 ): RouteLocationRaw => ({
@@ -30,9 +38,10 @@ export const buildDefaultAgentChatRoute = (
 });
 
 export const redirectToLoginAfterLogout = (
-  replace?: (to: string) => Promise<unknown> | unknown
+  replace?: (to: string) => Promise<unknown> | unknown,
+  targetPath = FORCE_LOGOUT_LOGIN_PATH
 ): void => {
-  const target = FORCE_LOGOUT_LOGIN_PATH;
+  const target = targetPath || FORCE_LOGOUT_LOGIN_PATH;
   if (replace) {
     Promise.resolve(replace(target))
       .then((result) => {

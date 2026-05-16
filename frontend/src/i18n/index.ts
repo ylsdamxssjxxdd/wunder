@@ -2,6 +2,7 @@ import { ref } from 'vue';
 
 import zhCN from './messages/zh-CN';
 import { resolveApiBase } from '@/config/runtime';
+import { readAccessToken } from '@/utils/authTokenStorage';
 
 type LocaleMessages = Record<string, string>;
 
@@ -224,11 +225,11 @@ const resolveI18nEndpoint = (): string => {
 };
 
 const buildI18nRequestHeaders = (): HeadersInit | undefined => {
+  const token = readAccessToken();
+  if (!token) {
+    return undefined;
+  }
   try {
-    const token = String(localStorage.getItem('access_token') || '').trim();
-    if (!token) {
-      return undefined;
-    }
     return {
       Authorization: `Bearer ${token}`
     };

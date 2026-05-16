@@ -1,5 +1,6 @@
 import { t } from '@/i18n';
-import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
+import { redirectToLoginAfterLogout, resolveLogoutRedirectPath } from '@/utils/authNavigation';
+import { clearAccessTokenIfCurrent } from '@/utils/authTokenStorage';
 import { parseStructuredErrorPayload } from '@/utils/streamError';
 
 type WsError = Error & {
@@ -158,17 +159,38 @@ const isAuthWsError = (error: Partial<WsError> | null | undefined): boolean => {
   return AUTH_ERROR_CODES.has(normalizeErrorCode(error.code));
 };
 
-const forceLogoutFromWs = (): void => {
+const extractAuthTokenFromSocket = (socket: WebSocket | null): string => {
+  if (!socket) {
+    return '';
+  }
+  try {
+    const protocols = String(socket.protocol || '').split(',');
+    for (const protocol of protocols) {
+      const cleaned = protocol.trim();
+      if (cleaned.startsWith('wunder-auth.')) {
+        return cleaned.slice('wunder-auth.'.length).trim();
+      }
+    }
+    const rawUrl = String(socket.url || '').trim();
+    if (rawUrl) {
+      const parsed = new URL(rawUrl);
+      return String(parsed.searchParams.get('access_token') || '').trim();
+    }
+  } catch {
+    // ignore socket metadata parsing failures
+  }
+  return '';
+};
+
+const forceLogoutFromWs = (tokenAtFailure = ''): void => {
   if (typeof window === 'undefined' || wsAuthRedirecting) {
     return;
   }
   wsAuthRedirecting = true;
-  try {
-    localStorage.removeItem('access_token');
-  } catch {
-    // ignore localStorage failures
+  if (tokenAtFailure) {
+    clearAccessTokenIfCurrent(tokenAtFailure);
   }
-  redirectToLoginAfterLogout();
+  redirectToLoginAfterLogout(undefined, resolveLogoutRedirectPath(window.location.pathname));
 };
 
 export const consumeWsStream = (
@@ -177,6 +199,7 @@ export const consumeWsStream = (
   options: ConsumeWsStreamOptions = {}
 ): Promise<void> =>
   new Promise<void>((resolve, reject) => {
+    const authToken = extractAuthTokenFromSocket(socket);
     let opened = false;
     let settled = false;
     const timeoutMs = Number.isFinite(options.timeoutMs) ? Number(options.timeoutMs) : 10000;
@@ -274,7 +297,7 @@ export const consumeWsStream = (
         const errorPayload = asPayloadRecord(payload?.payload);
         const err = buildWsPayloadError(errorPayload, opened ? 'stream' : 'connect');
         if (isAuthWsError(err)) {
-          forceLogoutFromWs();
+          forceLogoutFromWs(authToken);
         }
         try {
           socket.close(1000, 'error');
@@ -318,6 +341,7 @@ export const createWsMultiplexer = (
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let pingTimer: ReturnType<typeof setInterval> | null = null;
+  let socketAuthToken = '';
 
   const clearConnectTimer = (): void => {
     if (connectTimer) {
@@ -379,6 +403,7 @@ export const createWsMultiplexer = (
     clearIdleTimer();
     clearPingTimer();
     socket = null;
+    socketAuthToken = '';
     opened = false;
     connectPromise = null;
     connectResolve = null;
@@ -521,7 +546,7 @@ export const createWsMultiplexer = (
       const errorPayload = asPayloadRecord(payload?.payload);
       const err = buildWsPayloadError(errorPayload, opened ? 'stream' : 'connect');
       if (isAuthWsError(err)) {
-        forceLogoutFromWs();
+        forceLogoutFromWs(socketAuthToken);
       }
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
       if (requestId && pending.has(requestId)) {
@@ -581,6 +606,7 @@ export const createWsMultiplexer = (
       return connectPromise;
     }
     socket = createSocket();
+    socketAuthToken = extractAuthTokenFromSocket(socket);
     opened = false;
     connectPromise = new Promise<void>((resolve, reject) => {
       connectResolve = resolve;

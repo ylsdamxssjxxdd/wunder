@@ -1,3 +1,5 @@
+import { writePersistentAccessToken } from '@/utils/authTokenStorage';
+
 const DESKTOP_MODE = 'desktop';
 const DESKTOP_BOOTSTRAP_PATH = '/wunder/desktop/bootstrap';
 const DESKTOP_TOOL_CALL_MODE_KEY = 'wunder_desktop_tool_call_mode';
@@ -148,7 +150,7 @@ const syncDesktopIdentity = (runtime: DesktopRuntime | null): void => {
       // Ignore stale compatibility key cleanup failures.
     }
     if (runtime.token) {
-      localStorage.setItem('access_token', runtime.token);
+      writePersistentAccessToken(runtime.token);
     }
   } catch {
     // Ignore localStorage write failures (private mode or quota issues).

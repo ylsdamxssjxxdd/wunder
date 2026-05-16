@@ -40,8 +40,8 @@ use walkdir::WalkDir;
 const EXTERNAL_WORKFLOW_CONTAINER_ID: i32 = MAX_SANDBOX_CONTAINER_ID;
 const RUN_KIND: &str = "external_workflow";
 const REQUESTED_BY: &str = "external_workflow_api";
-const DEFAULT_TIMEOUT_S: f64 = 1800.0;
-const MAX_TIMEOUT_S: f64 = 3600.0;
+const DEFAULT_TIMEOUT_S: f64 = 6000.0;
+const MAX_TIMEOUT_S: f64 = 6000.0;
 const MAX_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
 const DEFAULT_EVENT_LIMIT: i64 = 200;
 const MAX_EVENT_LIMIT: i64 = 1000;
@@ -1897,7 +1897,7 @@ mod tests {
             metadata: None,
         };
 
-        assert_eq!(timeout_s(&request), 1800.0);
+        assert_eq!(timeout_s(&request), 6000.0);
 
         request.timeout_s = Some(0.0);
         assert_eq!(timeout_s(&request), 1.0);

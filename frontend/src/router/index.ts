@@ -10,6 +10,11 @@ import {
   FORCE_LOGOUT_QUERY_KEY,
   isForcedLogoutQuery
 } from '@/utils/authNavigation';
+import {
+  clearAccessTokenIfCurrent,
+  readAccessToken,
+  writeSessionAccessToken
+} from '@/utils/authTokenStorage';
 
 const UserLayout = () => import('@/layouts/UserLayout.vue');
 const AdminLayout = () => import('@/layouts/AdminLayout.vue');
@@ -45,7 +50,7 @@ const EMBED_AUTH_QUERY_KEYS = new Set([
 ]);
 EMBED_AUTH_QUERY_KEYS.add(FORCE_LOGOUT_QUERY_KEY);
 
-const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
+const hasAccessToken = () => Boolean(readAccessToken());
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -349,6 +354,14 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const authStore = useAuthStore();
   const forcedLogout = isForcedLogoutQuery(to.query);
+  if (forcedLogout && to.path === USER_LOGIN_PATH) {
+    const tokenAtFailure = String(authStore.token || '').trim();
+    authStore.token = '';
+    authStore.user = null;
+    if (tokenAtFailure) {
+      clearAccessTokenIfCurrent(tokenAtFailure);
+    }
+  }
 
   const query = to.query;
   const externalToken = resolveExternalQueryToken(query);
@@ -359,7 +372,7 @@ router.beforeEach(async (to) => {
       const result = await loginWithExternalToken(externalToken, externalUserId, externalAgentName);
       authStore.token = result.accessToken;
       authStore.user = result.user;
-      localStorage.setItem('access_token', result.accessToken);
+      writeSessionAccessToken(result.accessToken);
       const targetSection = resolveExternalEmbedSection(query);
       const targetPath = isDesktopModeEnabled() ? '/desktop/embed/chat' : '/app/embed/chat';
       const nextQuery: LocationQueryRaw = { section: targetSection };
@@ -396,7 +409,7 @@ router.beforeEach(async (to) => {
   if (tokenFromQuery) {
     authStore.token = tokenFromQuery;
     authStore.user = null;
-    localStorage.setItem('access_token', tokenFromQuery);
+    writeSessionAccessToken(tokenFromQuery);
     if (hasEmbedAuthQuery(query)) {
       return {
         path: to.path,

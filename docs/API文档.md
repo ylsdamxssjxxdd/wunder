@@ -152,13 +152,13 @@
   "preempt_active_workflow": false,
   "workspace_container_id": 10,
   "clear_workspace": true,
-  "timeout_s": 1800,
+  "timeout_s": 6000,
   "client_run_id": "<optional_external_id>",
   "metadata": {}
 }
 ```
 
-- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 3600 秒，默认 1800 秒。
+- `user_id/user_name` 二选一；`agent_id/agent_name` 二选一。`timeout_s` 范围为 1 到 6000 秒，默认 6000 秒。
 - SSE 事件：
   - `workflow.start`：返回 `run_id/session_id/user_id/agent_id/status/workspace_container_id/events_url/cancel_url`。
   - `workflow.event`：转发内部编排事件，`data.type` 为内部事件类型，如 `tool_call/tool_result/tool_output_delta/approval_request/final/error/turn_terminal` 等。
@@ -1993,7 +1993,7 @@
 
 - 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
-- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/token_adjustment`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
+- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/token_adjustment`、`/wunder/admin/user_accounts/{user_id}/logout`、`/wunder/admin/user_accounts/{user_id}/login_token`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
@@ -2008,6 +2008,10 @@
 - `POST /wunder/admin/user_accounts/{user_id}/token_adjustment`：管理员对指定用户执行 Token 发放或扣除。
   - 入参（JSON）：`action=grant|deduct`、`amount`
   - 行为：`grant` 会增加余额与累计获得；`deduct` 会减少余额并增加累计消耗；两者都会先结转当天应发放但尚未入账的每日 Token。
+- `POST /wunder/admin/user_accounts/{user_id}/logout`：管理员强制下线指定用户当前用户侧会话。
+  - 行为：同时失效 `user_web` 与 `default` 会话作用域，保留 `admin_web` 会话作用域不受影响。
+- `POST /wunder/admin/user_accounts/{user_id}/login_token`：管理员为指定用户签发用户侧 `user_web` 会话 token，用于管理端用户管理页免登打开用户侧前端。
+  - 行为：要求管理员或负责人权限并校验单位范围；签发新 token 后只挤掉同用户的 `user_web` 会话，不影响 `admin_web` 管理端会话；该接口可用于默认管理员账号，公开外链登录接口仍保留管理员账号保护。
 
 ### 4.1.24.4 `/wunder/admin/sim_lab/*`
 
