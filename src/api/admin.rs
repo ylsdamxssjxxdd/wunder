@@ -5076,7 +5076,7 @@ async fn admin_user_accounts_list(
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
             let (presence_online, presence_last_seen) = presence_map
                 .get(profile.id.as_str())
-                .map(|snapshot| (snapshot.connection_count > 0, Some(snapshot.last_seen_at)))
+                .map(|snapshot| (snapshot.online, Some(snapshot.last_seen_at)))
                 .unwrap_or((false, None));
             let activity_series = activity_series_map
                 .get(profile.id.as_str())

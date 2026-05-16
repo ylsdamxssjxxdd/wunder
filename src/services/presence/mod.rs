@@ -96,4 +96,18 @@ mod tests {
         service.disconnect_client("alice", "conn-1", 14.0);
         assert!(service.user_snapshot("alice", 15.0).is_none());
     }
+
+    #[test]
+    fn disconnected_user_stays_online_during_ttl_window() {
+        let service = PresenceService::new();
+        service.connect_client("alice", "conn-1", 10.0);
+        service.disconnect_client("alice", "conn-1", 20.0);
+
+        let snapshot = service
+            .user_snapshot("alice", 21.0)
+            .expect("presence should remain during ttl");
+        assert!(snapshot.online);
+        assert_eq!(snapshot.connection_count, 0);
+        assert_eq!(snapshot.last_seen_at, 20.0);
+    }
 }
