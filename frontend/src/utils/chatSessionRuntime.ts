@@ -8,6 +8,9 @@ type ChatMessage = Record<string, unknown>;
 export type ThreadRuntimeStatus =
   | 'not_loaded'
   | 'idle'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
   | 'running'
   | 'waiting_approval'
   | 'waiting_user_input'
@@ -34,6 +37,9 @@ const resolveLatestUserIndex = (messages: ChatMessage[]): number => {
 export const normalizeThreadRuntimeStatus = (value: unknown): ThreadRuntimeStatus => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'idle') return 'idle';
+  if (normalized === 'completed' || normalized === 'complete' || normalized === 'done') return 'completed';
+  if (normalized === 'failed' || normalized === 'error') return 'failed';
+  if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled';
   if (normalized === 'running') return 'running';
   if (normalized === 'waiting_approval') return 'waiting_approval';
   if (normalized === 'waiting_user_input') return 'waiting_user_input';

@@ -6087,11 +6087,14 @@ button.messenger-chat-header-model {
   resize: none;
   overflow-y: auto;
   color: var(--hula-text);
-  font-size: calc(14px * var(--messenger-font-scale, 1));
-  line-height: 1.45;
+  font-size: calc(15px * var(--messenger-font-scale, 1));
+  line-height: 1.68;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   outline: none;
   padding: 0;
   margin: 0;
+  caret-color: var(--ui-accent-deep);
 }
 
 .messenger-composer-scope.chat-shell .chat-composer-input--world:focus,
@@ -6100,6 +6103,13 @@ button.messenger-chat-header-model {
   outline: none !important;
   box-shadow: none !important;
   background: transparent;
+}
+
+.messenger-composer-scope.chat-shell .input-box:focus-within {
+  border-color: rgba(var(--ui-accent-rgb), 0.56);
+  box-shadow:
+    0 0 0 4px rgba(var(--ui-accent-rgb), 0.12),
+    0 12px 24px rgba(15, 23, 42, 0.08);
 }
 
 .messenger-composer-scope.chat-shell .chat-composer-world-footer {

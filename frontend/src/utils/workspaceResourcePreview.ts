@@ -12,25 +12,61 @@ const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio', 'drawio.xml']);
 const TEXT_EXTENSIONS = new Set([
   'txt',
   'md',
+  'markdown',
   'log',
   'json',
   'yaml',
   'yml',
   'toml',
   'ini',
+  'cfg',
+  'conf',
+  'properties',
+  'env',
   'xml',
   'csv',
   'tsv',
   'py',
+  'pyi',
+  'pyw',
   'js',
+  'jsx',
   'ts',
+  'tsx',
   'css',
+  'scss',
+  'sass',
+  'less',
   'html',
   'htm',
+  'xhtml',
   'sh',
+  'bash',
+  'zsh',
+  'fish',
   'bat',
+  'cmd',
   'ps1',
-  'sql'
+  'sql',
+  'c',
+  'cc',
+  'cpp',
+  'cxx',
+  'h',
+  'hh',
+  'hpp',
+  'hxx',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'go',
+  'php',
+  'vue',
+  'astro',
+  'svelte',
+  'dockerfile',
+  'gitignore'
 ]);
 const ONLYOFFICE_WORD_EXTENSIONS = new Set([
   'doc',
@@ -43,11 +79,8 @@ const ONLYOFFICE_WORD_EXTENSIONS = new Set([
   'fb2',
   'fodt',
   'hml',
-  'htm',
-  'html',
   'hwp',
   'hwpx',
-  'md',
   'mht',
   'mhtml',
   'odt',
@@ -56,10 +89,8 @@ const ONLYOFFICE_WORD_EXTENSIONS = new Set([
   'rtf',
   'stw',
   'sxw',
-  'txt',
   'wps',
-  'wpt',
-  'xml'
+  'wpt'
 ]);
 const ONLYOFFICE_EXCEL_EXTENSIONS = new Set([
   'csv',
@@ -283,13 +314,13 @@ export const resolveWorkspaceResourcePreviewKind = (
   const safeSize = Number(sizeBytes);
   const isTooLarge = Number.isFinite(safeSize) && safeSize > WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES;
   if (DRAWIO_EXTENSIONS.has(extension)) return 'drawio';
+  if (TEXT_EXTENSIONS.has(extension) && !isTooLarge) return 'text';
   if (ONLYOFFICE_EXTENSIONS.has(extension)) return 'onlyoffice';
   if (extension === 'svg') return 'svg';
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   if (PDF_EXTENSIONS.has(extension)) return 'pdf';
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
-  if (TEXT_EXTENSIONS.has(extension) && !isTooLarge) return 'text';
   return 'unsupported';
 };
 

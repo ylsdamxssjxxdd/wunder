@@ -814,7 +814,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       if (oldValue) {
           ctx.rememberMessageScrollForKey?.(String(oldValue));
       }
-      ctx.markdownCache.clear();
       ctx.clearWorkspaceResourceCache();
       ctx.pendingAssistantCenter = false;
       ctx.pendingAssistantCenterCount = 0;
@@ -822,7 +821,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.dismissedPlanMessages.value = new WeakSet<Record<string, unknown>>();
       ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
-      ctx.messageStatsEntryCache?.clear();
       ctx.scheduleWorkspaceResourceHydration('conversation-key-change');
       if (isChatDebugEnabled()) {
           chatDebugLog('messenger.virtual', 'conversation-key-change', ctx.buildMessageVirtualDebugSnapshot?.());

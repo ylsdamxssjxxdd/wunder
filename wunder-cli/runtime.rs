@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use wunder_server::config::Config;
 use wunder_server::config_store::ConfigStore;
 use wunder_server::repo_assets;
+use wunder_server::admin_skills;
 use wunder_server::state::{AppState, AppStateInitOptions};
 
 pub const CLI_DEFAULT_USER_ID: &str = "cli_user";
@@ -91,7 +92,7 @@ impl CliRuntime {
         let temp_root_for_update = temp_root.clone();
         let repo_root_for_update = repo_root.clone();
         let wunder_home_for_update = wunder_home.clone();
-        let config = config_store
+        let _config = config_store
             .update(move |config| {
                 apply_cli_defaults(
                     config,
@@ -103,6 +104,7 @@ impl CliRuntime {
             })
             .await
             .context("apply cli runtime config failed")?;
+        let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
 
         let state = Arc::new(
             AppState::new_with_options(

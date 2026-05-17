@@ -21,8 +21,8 @@ pub use core::{
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
-    a2a_store, attachment, cron, doc2md, drawio, history, knowledge, llm, mcp, memory,
-    multimodal_models, onlyoffice, org_units, prompting, sim_lab, skills, swarm, tools,
+    a2a_store, admin_skills, attachment, cron, doc2md, drawio, history, knowledge, llm, mcp,
+    memory, multimodal_models, onlyoffice, org_units, prompting, sim_lab, skills, swarm, tools,
     user_access, user_store, user_tools, user_world, vector_knowledge, workspace,
 };
 
@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     // 初始化配置存储，用于鉴权与路由行为保持一致。
     let config_path = ConfigStore::config_path_default();
     let config_store = ConfigStore::new(config_path.clone());
-    let config = config_store.get().await;
+    let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
     let server_mode = resolve_server_mode(&config);
     let log_dir = logging::init_server_tracing(&config, &server_mode, &config_path)?;
     info!(

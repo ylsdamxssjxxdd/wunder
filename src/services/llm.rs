@@ -1361,6 +1361,13 @@ pub fn is_openai_compatible_provider(provider: &str) -> bool {
     provider_default_base_url(&normalized).is_some()
 }
 
+pub fn should_disable_streaming_for_native_tools(
+    _config: &LlmModelConfig,
+    has_native_tools: bool,
+) -> bool {
+    has_native_tools
+}
+
 fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
     let inline = config
         .base_url
@@ -5576,6 +5583,40 @@ mod tests {
         assert_eq!(payload["chat_template_kwargs"]["enable_thinking"], false);
         assert!(payload.get("thinking_token_budget").is_none());
         assert!(payload.get("thinking_budget_tokens").is_none());
+    }
+
+    #[test]
+    fn disables_native_tool_streaming_for_private_openai_compatible_backends() {
+        let config = LlmModelConfig {
+            provider: Some("openai_compatible".to_string()),
+            base_url: Some("http://192.168.1.88:8000/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(should_disable_streaming_for_native_tools(&config, true));
+        assert!(!should_disable_streaming_for_native_tools(&config, false));
+    }
+
+    #[test]
+    fn disables_native_tool_streaming_for_public_openai_compatible_backends() {
+        let config = LlmModelConfig {
+            provider: Some("openai_compatible".to_string()),
+            base_url: Some("https://api.openrouter.ai/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(should_disable_streaming_for_native_tools(&config, true));
+    }
+
+    #[test]
+    fn disables_native_tool_streaming_for_vllm_ascend_provider() {
+        let config = LlmModelConfig {
+            provider: Some("vllm_ascend".to_string()),
+            base_url: Some("http://10.0.0.8:8000/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(should_disable_streaming_for_native_tools(&config, true));
     }
 
     #[test]

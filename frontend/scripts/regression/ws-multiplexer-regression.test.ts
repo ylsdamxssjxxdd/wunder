@@ -285,3 +285,81 @@ test('ws multiplexer sends client_abort cancel source on default local abort', a
     restore();
   }
 });
+
+test('ws multiplexer resolves request on terminal thread_status runtime event', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const events: string[] = [];
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const requestPromise = client.request({
+      requestId: 'request-terminal-thread-status',
+      closeOnFinal: true,
+      message: { type: 'run', request_id: 'request-terminal-thread-status' },
+      onEvent: (eventType, data) => {
+        events.push(`${eventType}:${data}`);
+      }
+    });
+
+    socket.open();
+    socket.emit({
+      type: 'event',
+      request_id: 'request-terminal-thread-status',
+      payload: {
+        event: 'thread_status',
+        data: { thread_status: 'idle' }
+      }
+    });
+
+    await requestPromise;
+    await sleep(0);
+
+    assert.deepEqual(events, ['thread_status:{"thread_status":"idle"}']);
+  } finally {
+    restore();
+  }
+});
+
+test('ws multiplexer resolves request on thread_closed event', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const events: string[] = [];
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const requestPromise = client.request({
+      requestId: 'request-thread-closed',
+      closeOnFinal: true,
+      message: { type: 'run', request_id: 'request-thread-closed' },
+      onEvent: (eventType, data) => {
+        events.push(`${eventType}:${data}`);
+      }
+    });
+
+    socket.open();
+    socket.emit({
+      type: 'event',
+      request_id: 'request-thread-closed',
+      payload: {
+        event: 'thread_closed',
+        data: { status: 'runtime_unloaded' }
+      }
+    });
+
+    await requestPromise;
+    await sleep(0);
+
+    assert.deepEqual(events, ['thread_closed:{"status":"runtime_unloaded"}']);
+  } finally {
+    restore();
+  }
+});

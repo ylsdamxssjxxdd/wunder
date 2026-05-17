@@ -113,6 +113,7 @@ import {
   buildPatchResultNote,
   buildPatchResultView
 } from './toolWorkflowActionViews';
+import { buildApplyPatchEmptyPreviewText } from './toolWorkflowPatchPreview';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import {
   buildWorkflowToolRuns,
@@ -1396,8 +1397,8 @@ const buildApplyPatchDiffBlocks = (callItem: WorkflowItem | null, toolName: stri
     if (lines.length === 0) {
       lines.push({
         key: `line-${index}-empty`,
-        kind: 'meta',
-        text: '~ (no inline diff preview)'
+        kind: 'omit',
+        text: buildApplyPatchEmptyPreviewText(preview.action)
       });
     }
 

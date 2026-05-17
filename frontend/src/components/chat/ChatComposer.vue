@@ -496,6 +496,7 @@ import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
+import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import {
   formatContextTokenCount,
   resolveStableComposerContextPair,
@@ -1614,19 +1615,53 @@ const focusComposerInputAtEnd = () => {
   });
 };
 
-const appendTextToComposer = (text: unknown) => {
+const focusComposerInputAt = (cursor: number) => {
+  void nextTick(() => {
+    const el = inputRef.value;
+    const current = String(inputText.value || '');
+    const safeCursor = Math.max(0, Math.min(cursor, current.length));
+    if (!el) return;
+    if (typeof el.focus === 'function') {
+      el.focus();
+    }
+    if (typeof el.setSelectionRange === 'function') {
+      el.setSelectionRange(safeCursor, safeCursor);
+    }
+    caretPosition.value = safeCursor;
+  });
+};
+
+const insertTextIntoComposer = (text: unknown, mode: 'append' | 'cursor' = 'append') => {
   const normalized = String(text || '').trim();
   if (!normalized) return;
   const current = String(inputText.value || '');
-  inputText.value = current.trim()
-    ? `${current.replace(/\s*$/, '')}\n${normalized}`
-    : normalized;
+  let nextCursor = 0;
+  if (mode === 'cursor' && current) {
+    const el = inputRef.value;
+    const start = Number.isFinite(el?.selectionStart) ? Math.max(0, Number(el.selectionStart)) : current.length;
+    const end = Number.isFinite(el?.selectionEnd) ? Math.max(0, Number(el.selectionEnd)) : start;
+    const beforeRaw = current.slice(0, start);
+    const afterRaw = current.slice(end);
+    const before = beforeRaw && !/\s$/.test(beforeRaw) ? `${beforeRaw} ` : beforeRaw;
+    const after = afterRaw && !/^\s/.test(afterRaw) ? ` ${afterRaw}` : afterRaw;
+    inputText.value = `${before}${normalized}${after}`;
+    nextCursor = before.length + normalized.length;
+  } else {
+    inputText.value = current.trim()
+      ? `${current.replace(/\s*$/, '')}\n${normalized}`
+      : normalized;
+    nextCursor = String(inputText.value || '').length;
+  }
   commandMenuDismissed.value = false;
   persistDraftState();
   void nextTick(() => {
     resizeInput();
-    focusComposerInputAtEnd();
+    focusComposerInputAt(nextCursor);
   });
+};
+
+const appendTextToComposer = (text: unknown) => {
+  insertTextIntoComposer(text, 'append');
 };
 
 const setCommandMenuIndex = (index) => {
@@ -1961,6 +1996,7 @@ const resetInputHeight = () => {
 const hasFileDrag = (event): boolean => {
   const transfer = event?.dataTransfer;
   if (!transfer) return false;
+  if (hasWorkspaceDragPaths(transfer)) return true;
   if (transfer.files && transfer.files.length > 0) return true;
   if (transfer.items && transfer.items.length > 0) {
     const items = Array.from(transfer.items) as DataTransferItem[];
@@ -2129,26 +2165,34 @@ const uploadDroppedFilesToWorkspace = async (items: WorkspaceDroppedFile[]): Pro
 
 const handleDragEnter = (event) => {
   if (stopButtonActive.value || goalEditorVisible.value) return;
-  if (!hasFileDrag(event)) return;
+  if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
   dragCounter.value += 1;
   dragActive.value = true;
   if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = composerBusy.value > 0 ? 'none' : 'copy';
+    event.dataTransfer.dropEffect = composerBusy.value > 0
+      ? 'none'
+      : hasWorkspaceDragPaths(event.dataTransfer)
+        ? 'move'
+        : 'copy';
   }
 };
 
 const handleDragOver = (event) => {
   if (stopButtonActive.value || goalEditorVisible.value) return;
-  if (!hasFileDrag(event)) return;
+  if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
   if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = composerBusy.value > 0 ? 'none' : 'copy';
+    event.dataTransfer.dropEffect = composerBusy.value > 0
+      ? 'none'
+      : hasWorkspaceDragPaths(event.dataTransfer)
+        ? 'move'
+        : 'copy';
   }
 };
 
 const handleDragLeave = (event) => {
-  if (!hasFileDrag(event)) return;
+  if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   dragCounter.value = Math.max(0, dragCounter.value - 1);
   if (dragCounter.value === 0) {
     dragActive.value = false;
@@ -2157,10 +2201,22 @@ const handleDragLeave = (event) => {
 
 const handleDrop = async (event) => {
   if (stopButtonActive.value || goalEditorVisible.value) return;
-  if (!hasFileDrag(event)) return;
+  if (!hasFileDrag(event) && !hasWorkspaceDragPaths(event?.dataTransfer)) return;
   event.preventDefault();
   dragCounter.value = 0;
   dragActive.value = false;
+  const workspacePaths = readWorkspaceDragPaths(event.dataTransfer);
+  if (workspacePaths.length) {
+    if (composerBusy.value > 0) {
+      ElMessage.warning(chatBusyMessage.value);
+      return;
+    }
+    closeScreenshotMenu();
+    insertTextIntoComposer(workspacePaths.join('\n'), 'cursor');
+    clearWorkspaceDragPaths();
+    ElMessage.success(t('chat.workspaceDrop.pathsInserted', { count: workspacePaths.length }));
+    return;
+  }
   if (composerBusy.value > 0) {
     ElMessage.warning(chatBusyMessage.value);
     return;

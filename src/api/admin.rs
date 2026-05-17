@@ -26,6 +26,11 @@ use crate::services::companions::{
     list_global_companions, load_global_companion, load_global_companion_spritesheet,
     update_global_companion,
 };
+use crate::services::admin_skills::{
+    build_admin_skill_scan_paths, collect_admin_reserved_skill_top_dirs,
+    normalize_admin_skill_paths, resolve_admin_custom_skills_root, resolve_builtin_skills_root,
+    resolve_admin_uploaded_skills_root,
+};
 use crate::services::default_agent_sync::{
     self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
 };
@@ -60,6 +65,7 @@ use crate::{
 use anyhow::anyhow;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, HeaderValue as AxumHeaderValue, StatusCode};
+use axum::body::Body;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
@@ -85,8 +91,7 @@ use walkdir::WalkDir;
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_COMPANION_UPLOAD_BYTES: usize = 24 * 1024 * 1024;
-const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
-const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
+const MAX_SKILL_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
 const ADMIN_MONITOR_TIMING_INFO_MS: u128 = 200;
 const ADMIN_MONITOR_TIMING_WARN_MS: u128 = 1000;
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -140,7 +145,11 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/skills/file",
             get(admin_skills_file).put(admin_skills_file_update),
         )
-        .route("/wunder/admin/skills/upload", post(admin_skills_upload))
+        .route(
+            "/wunder/admin/skills/upload",
+            post(admin_skills_upload).layer(DefaultBodyLimit::max(MAX_SKILL_UPLOAD_BYTES)),
+        )
+        .route("/wunder/admin/skills/export", get(admin_skills_export))
         .route(
             "/wunder/admin/tools",
             get(admin_tools_list).post(admin_tools_update),
@@ -1061,75 +1070,6 @@ async fn admin_a2a_card(
     ))
 }
 
-fn resolve_builtin_skills_root() -> Option<PathBuf> {
-    if let Some(path) = std::env::var(BUILTIN_SKILLS_ROOT_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    {
-        let normalized = normalize_existing_path(&path);
-        if normalized.exists() && normalized.is_dir() {
-            return Some(normalized);
-        }
-    }
-    let repo_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let fallback = repo_assets::builtin_skills_root(&repo_root);
-    if fallback.exists() && fallback.is_dir() {
-        return Some(normalize_existing_path(&fallback));
-    }
-    None
-}
-
-fn resolve_admin_custom_skills_root() -> PathBuf {
-    std::env::var(ADMIN_CUSTOM_SKILLS_ROOT_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("config").join("data").join("admin_skills"))
-}
-
-fn append_skill_scan_path(paths: &mut Vec<String>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
-    let normalized = normalize_path_for_compare(&normalize_existing_path(&path));
-    if !seen.insert(normalized) {
-        return;
-    }
-    paths.push(path.to_string_lossy().to_string());
-}
-
-fn build_admin_skill_scan_paths(config: &Config) -> Vec<String> {
-    let builtin_root = resolve_builtin_skills_root();
-    let custom_root = resolve_admin_custom_skills_root();
-    let mut scan_paths = Vec::new();
-    let mut seen = HashSet::new();
-    if let Some(root) = builtin_root {
-        append_skill_scan_path(&mut scan_paths, &mut seen, root);
-    }
-    append_skill_scan_path(&mut scan_paths, &mut seen, custom_root);
-    for raw_path in &config.skills.paths {
-        let cleaned = raw_path.trim();
-        if cleaned.is_empty() {
-            continue;
-        }
-        append_skill_scan_path(&mut scan_paths, &mut seen, PathBuf::from(cleaned));
-    }
-    scan_paths
-}
-
-fn normalize_admin_skill_paths(paths: Vec<String>) -> Vec<String> {
-    let mut output = Vec::new();
-    let mut seen = HashSet::new();
-    for raw in paths {
-        let cleaned = raw.trim();
-        if cleaned.is_empty() {
-            continue;
-        }
-        append_skill_scan_path(&mut output, &mut seen, PathBuf::from(cleaned));
-    }
-    output
-}
-
 fn resolve_admin_skill_source(
     spec: &SkillSpec,
     builtin_root: Option<&Path>,
@@ -1168,7 +1108,8 @@ fn normalize_admin_public_path(path: &Path) -> String {
 
 fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value {
     let builtin_root = resolve_builtin_skills_root();
-    let custom_root = resolve_admin_custom_skills_root();
+    let custom_root =
+        resolve_admin_custom_skills_root().unwrap_or_else(|| resolve_admin_uploaded_skills_root(true));
     let source = resolve_admin_skill_source(&spec, builtin_root.as_deref(), &custom_root);
     let name = spec.name;
     let description = spec.description;
@@ -1201,7 +1142,7 @@ fn ensure_admin_skill_editable(spec: &SkillSpec) -> Result<PathBuf, Response> {
 
 async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
-    let scan_paths = build_admin_skill_scan_paths(&config);
+    let scan_paths = build_admin_skill_scan_paths(&config, true);
     let public_paths = scan_paths
         .iter()
         .map(|path| normalize_admin_public_path_text(path))
@@ -1225,7 +1166,7 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
 
 fn resolve_admin_skill_spec(config: &Config, name: &str) -> Result<SkillSpec, Response> {
     let mut scan_config = config.clone();
-    scan_config.skills.paths = build_admin_skill_scan_paths(config);
+    scan_config.skills.paths = build_admin_skill_scan_paths(config, true);
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     registry
@@ -1445,20 +1386,13 @@ async fn admin_skills_update(
     Json(payload): Json<SkillsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
     let previous = state.config_store.get().await;
-    let custom_root = resolve_admin_custom_skills_root()
-        .to_string_lossy()
-        .to_string();
     let updated = state
         .config_store
         .update(|config| {
             if let Some(paths) = &payload.paths {
-                let mut next_paths = paths.clone();
-                next_paths.push(custom_root.clone());
-                config.skills.paths = normalize_admin_skill_paths(next_paths);
+                config.skills.paths = normalize_admin_skill_paths(paths.clone(), true);
             } else {
-                let mut next_paths = config.skills.paths.clone();
-                next_paths.push(custom_root.clone());
-                config.skills.paths = normalize_admin_skill_paths(next_paths);
+                config.skills.paths = normalize_admin_skill_paths(config.skills.paths.clone(), true);
             }
             config.skills.enabled = payload.enabled.clone();
         })
@@ -1479,7 +1413,7 @@ async fn admin_skills_update(
     let paths_changed = payload
         .paths
         .as_ref()
-        .is_some_and(|paths| normalize_admin_skill_paths(paths.clone()) != previous.skills.paths);
+        .is_some_and(|paths| normalize_admin_skill_paths(paths.clone(), true) != previous.skills.paths);
     if !enabled_added.is_empty() || !enabled_removed.is_empty() || paths_changed {
         info!(
             "技能配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}, paths_changed={paths_changed}",
@@ -1497,7 +1431,7 @@ async fn admin_skills_update(
         }
     }
     state.reload_skills(&updated).await;
-    let scan_paths = build_admin_skill_scan_paths(&updated);
+    let scan_paths = build_admin_skill_scan_paths(&updated, true);
     let public_paths = scan_paths
         .iter()
         .map(|path| normalize_admin_public_path_text(path))
@@ -1598,26 +1532,25 @@ async fn admin_skills_upload(
             i18n::t("error.skill_upload_zip_only"),
         ));
     }
-    let skill_root = resolve_admin_custom_skills_root();
+    let skill_root = resolve_admin_uploaded_skills_root(true);
     tokio::fs::create_dir_all(&skill_root)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let config = state.config_store.get().await;
+    let reserved_top_dirs = collect_admin_reserved_skill_top_dirs(&config, true);
     let import_result = tokio::task::spawn_blocking({
         let filename = filename.clone();
         let data = data.clone();
         let skill_root = skill_root.clone();
-        move || import_skill_archive(&filename, &data, &skill_root, &HashSet::new())
+        move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
     })
     .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let skill_root_text = skill_root.to_string_lossy().to_string();
     let updated = state
         .config_store
         .update(|config| {
-            let mut paths = config.skills.paths.clone();
-            paths.push(skill_root_text.clone());
-            config.skills.paths = normalize_admin_skill_paths(paths);
+            config.skills.paths = normalize_admin_skill_paths(config.skills.paths.clone(), true);
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -1627,6 +1560,49 @@ async fn admin_skills_upload(
     ))
 }
 
+async fn admin_skills_export(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SkillDeleteQuery>,
+) -> Result<Response, Response> {
+    let name = query.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let spec = resolve_admin_skill_spec(&config, name)?;
+    let root = ensure_admin_skill_editable(&spec)?;
+    let top_dir = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, i18n::t("error.skill_file_not_found")))?;
+    let archive_path = create_temp_admin_skill_archive_file()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let archive_path_clone = archive_path.clone();
+    let root_clone = root.clone();
+    let top_dir_clone = top_dir.to_string();
+    tokio::task::spawn_blocking(move || {
+        crate::services::skill_archive::create_skill_archive(
+            &root_clone,
+            &top_dir_clone,
+            &archive_path_clone,
+        )
+        .map_err(|err| std::io::Error::other(err.to_string()))
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let filename = format!("{}.zip", sanitize_filename_stem(&spec.name));
+    let bytes = tokio::fs::read(&archive_path)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let _ = tokio::fs::remove_file(&archive_path).await;
+    Ok(zip_bytes_response(filename, bytes))
+}
+
 async fn admin_tools_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let (enabled, tools) = build_builtin_tools_payload(&config);
@@ -1634,6 +1610,51 @@ async fn admin_tools_list(State(state): State<Arc<AppState>>) -> Result<Json<Val
         "enabled": enabled,
         "tools": tools
     })))
+}
+
+fn create_temp_admin_skill_archive_file() -> Result<PathBuf, std::io::Error> {
+    let mut root = std::env::temp_dir();
+    root.push("wunder_admin_skills");
+    std::fs::create_dir_all(&root)?;
+    let filename = format!("wunder_admin_skill_{}.zip", Uuid::new_v4().simple());
+    Ok(root.join(filename))
+}
+
+fn zip_bytes_response(filename: String, bytes: Vec<u8>) -> Response {
+    let mut response = Response::new(Body::from(bytes.clone()));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        AxumHeaderValue::from_static("application/zip"),
+    );
+    if let Ok(value) = AxumHeaderValue::from_str(&bytes.len().to_string()) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_LENGTH, value);
+    }
+    if let Ok(value) = AxumHeaderValue::from_str(&admin_content_disposition(&filename)) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_DISPOSITION, value);
+    }
+    response
+}
+
+fn admin_content_disposition(filename: &str) -> String {
+    let ascii_name = filename
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!(
+        "attachment; filename=\"{}\"",
+        ascii_name.trim().trim_matches('"')
+    )
 }
 
 async fn admin_tools_update(

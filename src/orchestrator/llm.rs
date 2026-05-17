@@ -13,6 +13,13 @@ struct ChatMessageRepairReport {
     repair: Option<Value>,
 }
 
+#[derive(Clone, Debug)]
+struct InvalidToolCallReport {
+    count: usize,
+    reason: &'static str,
+    sample_names: Vec<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LlmFailureKind {
     Other,
@@ -211,6 +218,51 @@ fn json_content_len(value: &Value) -> usize {
         Value::Null => 0,
         other => serde_json::to_string(other).map_or(0, |text| text.chars().count()),
     }
+}
+
+fn detect_invalid_tool_calls(tool_calls: Option<&Value>) -> Option<InvalidToolCallReport> {
+    let Value::Array(items) = tool_calls? else {
+        return None;
+    };
+    let mut sample_names = Vec::new();
+    let mut count = 0usize;
+    for item in items {
+        let Some(function) = item.get("function").and_then(Value::as_object) else {
+            continue;
+        };
+        let Some(arguments) = function.get("arguments").and_then(Value::as_str) else {
+            continue;
+        };
+        let trimmed = arguments.trim();
+        let invalid = if trimmed.is_empty() {
+            true
+        } else if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            value
+                .get("raw")
+                .and_then(Value::as_str)
+                .is_some_and(|raw| raw.trim() == "{")
+        } else {
+            true
+        };
+        if invalid {
+            count = count.saturating_add(1);
+            if let Some(name) = function
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if sample_names.len() < 3 {
+                    sample_names.push(name.to_string());
+                }
+            }
+        }
+    }
+    (count > 0).then_some(InvalidToolCallReport {
+        count,
+        reason: "invalid_tool_call_arguments",
+        sample_names,
+    })
 }
 
 impl Orchestrator {
@@ -564,7 +616,13 @@ impl Orchestrator {
 
         let client = build_llm_client(&effective_config, self.http.clone());
         let chat_messages = sanitize_chat_messages_for_request(&self.build_chat_messages(messages));
-        let will_stream = stream;
+        let native_tools_attached = tools.is_some_and(|items| !items.is_empty());
+        let stream_disabled_reason = crate::llm::should_disable_streaming_for_native_tools(
+            &effective_config,
+            native_tools_attached,
+        )
+        .then_some("native_tools_non_stream_policy");
+        let will_stream = stream && stream_disabled_reason.is_none();
         let request_payload = log_payload.then(|| {
             client.build_request_payload_with_tools(&chat_messages.messages, will_stream, tools)
         });
@@ -578,6 +636,7 @@ impl Orchestrator {
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
                     "stream": will_stream,
+                    "stream_requested": stream,
                     "payload": request_payload.clone().unwrap_or(Value::Null),
                     "context_cache_probe": context_cache_probe,
                 })
@@ -587,6 +646,7 @@ impl Orchestrator {
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
                     "stream": will_stream,
+                    "stream_requested": stream,
                     "payload_omitted": true,
                     "context_cache_probe": context_cache_probe,
                 })
@@ -594,6 +654,12 @@ impl Orchestrator {
             if let Value::Object(ref mut map) = request_payload {
                 if let Some(repair) = chat_messages.repair.clone() {
                     map.insert("repair".to_string(), repair);
+                }
+                if let Some(reason) = stream_disabled_reason {
+                    map.insert(
+                        "stream_disabled_reason".to_string(),
+                        Value::String(reason.to_string()),
+                    );
                 }
                 round_info.insert_into(map);
             }
@@ -665,6 +731,44 @@ impl Orchestrator {
                     let content = response.content;
                     let reasoning = response.reasoning;
                     let tool_calls = response.tool_calls;
+                    if native_tools_attached {
+                        if let Some(invalid_tool_calls) =
+                            detect_invalid_tool_calls(tool_calls.as_ref())
+                        {
+                            if emit_events {
+                                let mut retry_payload = json!({
+                                    "attempt": attempt,
+                                    "max_attempts": resolve_llm_max_attempts(LlmFailureKind::Unavailable),
+                                    "retry_reason": invalid_tool_calls.reason,
+                                    "stream": will_stream,
+                                    "will_retry": attempt
+                                        < resolve_llm_max_attempts(LlmFailureKind::Unavailable),
+                                    "invalid_tool_call_count": invalid_tool_calls.count,
+                                    "sample_tool_names": invalid_tool_calls.sample_names,
+                                });
+                                if let Value::Object(ref mut map) = retry_payload {
+                                    round_info.insert_into(map);
+                                }
+                                emitter.emit("bad_tool_call_retry", retry_payload).await;
+                            }
+                            last_err = anyhow!(
+                                "LLM returned invalid tool call arguments: reason={} count={}",
+                                invalid_tool_calls.reason,
+                                invalid_tool_calls.count
+                            );
+                            let failure_kind = LlmFailureKind::Unavailable;
+                            let max_attempts = resolve_llm_max_attempts(failure_kind);
+                            let should_retry = attempt < max_attempts;
+                            if !should_retry {
+                                break;
+                            }
+                            let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
+                            if !retry_delay.is_zero() {
+                                self.sleep_or_cancel(session_id, retry_delay).await?;
+                            }
+                            continue;
+                        }
+                    }
                     let mut usage = response.usage;
                     if let Some(item) = usage.as_mut() {
                         if item.total == 0 {
@@ -1026,11 +1130,13 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_context_cache_probe, classify_llm_failure, extract_context_window_limit_hint,
+        build_context_cache_probe, classify_llm_failure, detect_invalid_tool_calls,
+        extract_context_window_limit_hint,
         is_context_window_error_text, is_llm_unavailable_error_text, llm_retry_reason,
         resolve_llm_max_attempts, resolve_llm_retry_delay, LlmFailureKind,
         DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES,
     };
+    use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;
     use serde_json::json;
 
@@ -1235,5 +1341,50 @@ mod tests {
                 "native tools may be injected by the model server chat template outside the message prefix"
             ))
         );
+    }
+
+    #[test]
+    fn native_tools_disable_streaming_for_vllm_compatible_backends() {
+        let config = LlmModelConfig {
+            provider: Some("vllm_ascend".to_string()),
+            base_url: Some("http://10.10.10.10:8000/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(crate::llm::should_disable_streaming_for_native_tools(
+            &config, true
+        ));
+        assert!(!crate::llm::should_disable_streaming_for_native_tools(
+            &config, false
+        ));
+    }
+
+    #[test]
+    fn detects_invalid_tool_call_arguments_wrapped_as_raw_prefix() {
+        let payload = json!([{
+            "type": "function",
+            "function": {
+                "name": "ptc",
+                "arguments": "{\"raw\":\"{\"}"
+            }
+        }]);
+
+        let report = detect_invalid_tool_calls(Some(&payload)).expect("invalid tool call");
+        assert_eq!(report.count, 1);
+        assert_eq!(report.reason, "invalid_tool_call_arguments");
+        assert_eq!(report.sample_names, vec!["ptc".to_string()]);
+    }
+
+    #[test]
+    fn ignores_valid_tool_call_arguments() {
+        let payload = json!([{
+            "type": "function",
+            "function": {
+                "name": "ptc",
+                "arguments": "{\"content\":\"print('ok')\",\"filename\":\"demo.py\"}"
+            }
+        }]);
+
+        assert!(detect_invalid_tool_calls(Some(&payload)).is_none());
     }
 }

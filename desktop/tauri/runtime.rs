@@ -9,6 +9,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 use wunder_server::config::{merge_config_value, Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
+use wunder_server::admin_skills;
 use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
 use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
@@ -255,7 +256,7 @@ impl DesktopRuntime {
         let container_roots_for_update = settings.container_roots.clone();
         let language_for_update = settings.language.clone();
         let llm_for_update = settings.llm.clone();
-        let config = config_store
+        let _config = config_store
             .update(move |config| {
                 apply_desktop_defaults(
                     config,
@@ -272,6 +273,7 @@ impl DesktopRuntime {
             })
             .await
             .context("apply desktop runtime config failed")?;
+        let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",

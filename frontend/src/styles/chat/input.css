@@ -688,12 +688,23 @@
   border: none;
   color: var(--chat-text);
   resize: none;
-  min-height: 40px;
-  max-height: 180px;
+  min-height: 48px;
+  max-height: 220px;
   overflow-y: auto;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 500;
   outline: none;
-  line-height: 1.5;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-variant-ligatures: contextual;
+  caret-color: var(--chat-primary);
+}
+
+.chat-shell textarea::placeholder {
+  color: rgba(var(--chat-muted-rgb), 0.88);
+  font-weight: 400;
 }
 
 .chat-shell .input-icon-btn {

@@ -117,6 +117,7 @@
     :hint="resourcePreviewHint"
     :src="resourcePreviewUrl"
     :content="resourcePreviewContent"
+    :source-path="resourcePreviewWorkspacePath"
     :preview-kind="resourcePreviewKind"
     @download="handleResourcePreviewDownload"
     @close="closeResourcePreview"
@@ -220,6 +221,7 @@ const {
   resourcePreviewMeta,
   resourcePreviewHint,
   resourcePreviewContent,
+  resourcePreviewWorkspacePath,
   resourcePreviewKind,
   handleResourcePreviewDownload,
   closeResourcePreview,
@@ -277,6 +279,7 @@ const {
   resourcePreviewMeta: string;
   resourcePreviewHint: string;
   resourcePreviewContent: string;
+  resourcePreviewWorkspacePath: string;
   resourcePreviewKind: WorkspaceResourcePreviewKind;
   handleResourcePreviewDownload: () => void | Promise<void>;
   closeResourcePreview: () => void;

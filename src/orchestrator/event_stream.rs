@@ -132,6 +132,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
         "progress"
             | "llm_request"
             | "llm_response"
+            | "bad_tool_call_retry"
             | "knowledge_request"
             | "compaction"
             | "tool_call"

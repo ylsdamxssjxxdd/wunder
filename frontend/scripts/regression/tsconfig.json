@@ -104,6 +104,7 @@
     "./tool-workflow-regression.test.ts",
     "./tool-workflow-visibility-regression.test.ts",
     "./tool-workflow-command-regression.test.ts",
+    "./tool-workflow-patch-preview-regression.test.ts",
     "./prompt-tooling-preview-regression.test.ts",
     "./runtime-heatmap-regression.test.ts",
     "./workspace-panel-refresh-regression.test.ts"

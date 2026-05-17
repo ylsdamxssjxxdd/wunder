@@ -10,6 +10,7 @@ import { resolveApiErrorMessage } from "./api-error.js";
 const skillsList = document.getElementById("skillsList");
 const refreshSkillsBtn = document.getElementById("refreshSkillsBtn");
 const addSkillBtn = document.getElementById("addSkillBtn");
+const exportSkillBtn = document.getElementById("exportSkillBtn");
 const skillUploadInput = document.getElementById("skillUploadInput");
 const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
   ".zip",
@@ -237,6 +238,41 @@ const buildSkillSourceLabel = (skill) => {
 };
 
 const extractErrorMessage = async (response) => resolveApiErrorMessage(response, "");
+
+const downloadBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noreferrer";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
+
+const downloadCurrentSkill = async () => {
+  const skill = getActiveSkill();
+  if (!skill) {
+    notify(t("skills.file.selectSkillRequired"), "warn");
+    return;
+  }
+  const skillName = String(skill.name || "").trim();
+  if (!skillName) {
+    notify(t("skills.file.selectRequired"), "warn");
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/skills/export?name=${encodeURIComponent(skillName)}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    const detail = await extractErrorMessage(response);
+    throw new Error(detail || t("common.requestFailed", { status: response.status }));
+  }
+  const blob = await response.blob();
+  const filename = `${skillName}.zip`;
+  downloadBlob(blob, filename);
+};
 
 const renderSkillDetailHeader = (skill) => {
   if (!skillDetailTitle || !skillDetailMeta) {
@@ -707,6 +743,14 @@ export const initSkillsPanel = () => {
     }
     skillUploadInput.value = "";
     skillUploadInput.click();
+  });
+  exportSkillBtn?.addEventListener("click", async () => {
+    try {
+      await downloadCurrentSkill();
+      notify(t("skills.export.success"), "success");
+    } catch (error) {
+      notify(t("skills.export.failed", { message: error.message }), "error");
+    }
   });
   skillUploadInput?.addEventListener("change", async () => {
     const file = skillUploadInput.files?.[0];

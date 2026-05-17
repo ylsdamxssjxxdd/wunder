@@ -43,6 +43,7 @@ pub mod presence;
 pub mod preset_worker_cards;
 pub mod prompting;
 pub mod runtime;
+pub mod admin_skills;
 pub mod sim_lab;
 pub mod skill_archive;
 pub mod skills;

@@ -1539,6 +1539,7 @@ export default {
   'chat.workspaceDrop.failed': '文件写入工作目录失败',
   'chat.workspaceDrop.noticeFooter': '这些只是新文件信息，请根据任务需要自行决定是否读取或处理。',
   'chat.workspaceDrop.noticeHeader': '有 {count} 个新文件已放入当前工作目录：',
+  'chat.workspaceDrop.pathsInserted': '已插入 {count} 个工作目录路径',
   'chat.workspaceDrop.uploaded': '已放入工作目录 {count} 个文件',
   'chat.workspaceDrop.uploading': '文件正在写入工作目录，请稍候',
   'chat.code.copy': '复制代码',

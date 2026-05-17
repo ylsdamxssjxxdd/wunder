@@ -421,6 +421,8 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerControllerContext): void {
+  let workspaceHydrationTimeout: number | null = null;
+
   ctx.resolveDesktopWorkspaceRoot = (): string => String(getRuntimeConfig().workspace_root || '').trim();
 
   ctx.resolveDesktopContainerRoot = (containerId?: number | null): string => {
@@ -753,24 +755,37 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.scheduleWorkspaceResourceHydration = (reason = '') => {
+      if (ctx.sessionHub.activeSection !== 'messages') {
+          return;
+      }
       if (ctx.workspaceResourceHydrationFrame !== null || ctx.workspaceResourceHydrationPending)
           return;
+      if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
+          window.clearTimeout(workspaceHydrationTimeout);
+          workspaceHydrationTimeout = null;
+      }
       ctx.workspaceResourceHydrationPending = true;
       void nextTick(() => {
           ctx.workspaceResourceHydrationPending = false;
           if (ctx.workspaceResourceHydrationFrame !== null || typeof window === 'undefined')
               return;
-          ctx.workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
-              ctx.workspaceResourceHydrationFrame = null;
-              if (isChatDebugEnabled()) {
-                  chatDebugLog('messenger.hydration', 'workspace-run', {
-                      reason,
-                      activeSection: ctx.sessionHub.activeSection,
-                      activeConversationKey: ctx.sessionHub.activeConversationKey
-                  });
+          workspaceHydrationTimeout = window.setTimeout(() => {
+              workspaceHydrationTimeout = null;
+              if (ctx.sessionHub.activeSection !== 'messages') {
+                  return;
               }
-              ctx.hydrateWorkspaceResources();
-          });
+              ctx.workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
+                  ctx.workspaceResourceHydrationFrame = null;
+                  if (isChatDebugEnabled()) {
+                      chatDebugLog('messenger.hydration', 'workspace-run', {
+                          reason,
+                          activeSection: ctx.sessionHub.activeSection,
+                          activeConversationKey: ctx.sessionHub.activeConversationKey
+                      });
+                  }
+                  ctx.hydrateWorkspaceResources();
+              });
+          }, 90);
       });
   };
 
@@ -793,6 +808,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.clearWorkspaceResourceCache = () => {
+      if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
+          window.clearTimeout(workspaceHydrationTimeout);
+          workspaceHydrationTimeout = null;
+      }
       if (ctx.workspaceResourceHydrationFrame !== null && typeof window !== 'undefined') {
           window.cancelAnimationFrame(ctx.workspaceResourceHydrationFrame);
           ctx.workspaceResourceHydrationFrame = null;
@@ -811,6 +830,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (!changedPaths.length) {
           ctx.clearWorkspaceResourceCache();
           return;
+      }
+      if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
+          window.clearTimeout(workspaceHydrationTimeout);
+          workspaceHydrationTimeout = null;
       }
       if (ctx.workspaceResourceHydrationFrame !== null && typeof window !== 'undefined') {
           window.cancelAnimationFrame(ctx.workspaceResourceHydrationFrame);
@@ -1149,7 +1172,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           userId: ctx.resourcePreviewUserId.value,
           meta: path,
           hint: String(payload.message || '').trim(),
-          kind: path
+          kind: resolveWorkspaceResourcePreviewKind(path)
       });
   };
 

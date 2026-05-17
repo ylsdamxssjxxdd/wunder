@@ -47,6 +47,12 @@
           controls
           preload="metadata"
         ></video>
+        <WorkspaceTextPreview
+          v-else-if="previewKind === 'text'"
+          :content="content"
+          :source-path="sourcePath"
+          wrapper-class="messenger-markdown"
+        />
         <pre v-else class="workspace-preview-text">{{ content || t('workspace.preview.emptyContent') }}</pre>
       </template>
     </div>
@@ -65,6 +71,7 @@
 import { computed } from 'vue';
 
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
+import WorkspaceTextPreview from '@/components/common/WorkspaceTextPreview.vue';
 import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import type { WorkspaceResourcePreviewKind } from '@/utils/workspaceResourcePreview';
@@ -77,6 +84,7 @@ const props = defineProps<{
   hint: string;
   src: string;
   content: string;
+  sourcePath: string;
   previewKind: WorkspaceResourcePreviewKind;
 }>();
 

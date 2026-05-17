@@ -1573,6 +1573,7 @@ export default {
   'chat.workspaceDrop.failed': 'Failed to write files to the workspace',
   'chat.workspaceDrop.noticeFooter': 'This is only new file information. Decide whether to read or process them based on the task.',
   'chat.workspaceDrop.noticeHeader': '{count} new file(s) have been placed in the current workspace:',
+  'chat.workspaceDrop.pathsInserted': 'Inserted {count} workspace path(s)',
   'chat.workspaceDrop.uploaded': 'Placed {count} file(s) in the workspace',
   'chat.workspaceDrop.uploading': 'Writing files to the workspace. Please wait.',
   'chat.code.copy': 'Copy code',

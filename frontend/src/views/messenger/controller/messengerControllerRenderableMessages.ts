@@ -753,10 +753,10 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           return false;
       }
       if (ctx.isAgentConversationActive.value) {
-          return ctx.agentRenderableMessages.value.length > 24;
+          return ctx.agentRenderableMessages.value.length > 12;
       }
       if (ctx.isWorldConversationActive.value) {
-          return ctx.worldRenderableMessages.value.length > 24;
+          return ctx.worldRenderableMessages.value.length > 12;
       }
       return false;
   });
@@ -1010,6 +1010,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       }
       const sourceIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
       const messageKey = ctx.resolveAgentMessageKey(message, sourceIndex);
+      const scopedMessageKey = `${String(ctx.sessionHub.activeConversationKey || '')}:${messageKey}`;
       const activeSessionBusy = Boolean(ctx.isAgentConversationActive.value && ctx.activeMessengerSessionBusy.value);
       const latestVisibleAssistant = ctx.latestVisibleAgentAssistantMessage.value === message;
       const latestActiveAssistantBusy = Boolean(
@@ -1040,7 +1041,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           String(message.retry_max_attempts ?? message.retryMaxAttempts ?? ''),
           JSON.stringify(message.stats || null)
       ].join('::');
-      const cached = ctx.messageStatsEntryCache.get(messageKey);
+      const cached = ctx.messageStatsEntryCache.get(scopedMessageKey);
       if (cached?.signature === signature) {
           return cached.entries;
       }
@@ -1054,7 +1055,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
               latestVisibleAssistant
           }
       );
-      ctx.messageStatsEntryCache.set(messageKey, { signature, entries });
+      ctx.messageStatsEntryCache.set(scopedMessageKey, { signature, entries });
       if (ctx.messageStatsEntryCache.size > 80) {
           const firstKey = ctx.messageStatsEntryCache.keys().next().value;
           if (firstKey) {

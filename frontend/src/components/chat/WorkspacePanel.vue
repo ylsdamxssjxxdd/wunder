@@ -241,6 +241,12 @@
             controls
             preload="metadata"
           ></video>
+          <WorkspaceTextPreview
+            v-else-if="preview.type === 'text'"
+            :content="preview.content"
+            :source-path="preview.entry?.path || preview.entry?.name || ''"
+            wrapper-class="messenger-markdown"
+          />
           <pre v-else class="workspace-preview-text">{{ preview.content }}</pre>
         </template>
       </div>
@@ -270,12 +276,14 @@
           {{ editor.entry?.path || '' }}
         </div>
       </div>
-      <textarea
-        v-model="editor.content"
-        class="workspace-editor-text"
-        :disabled="editor.loading"
-        :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
-      />
+      <div class="workspace-editor-code">
+        <CodeMirrorEditor
+          v-model="editor.content"
+          :source-path="editor.entry?.path || editor.entry?.name || ''"
+          :readonly="editor.loading"
+          :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
+        />
+      </div>
       <template #footer>
         <button class="workspace-btn secondary" @click="closeEditor">{{ t('common.close') }}</button>
         <button class="workspace-btn workspace-btn--primary" :disabled="editor.loading" @click="saveEditor">
@@ -332,6 +340,8 @@ import {
 } from '@/api/workspace';
 import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
 import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
+import CodeMirrorEditor from '@/components/common/CodeMirrorEditor.vue';
+import WorkspaceTextPreview from '@/components/common/WorkspaceTextPreview.vue';
 import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
@@ -343,6 +353,7 @@ import {
   shouldAcceptWorkspaceTreeVersion,
   shouldWorkspacePreviewReload
 } from './workspacePanelRefreshPlanner';
+import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths, setWorkspaceDragPaths } from './workspaceDrag';
 import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
@@ -408,25 +419,61 @@ const resourceActionLabel = computed(() =>
 const TEXT_EXTENSIONS = new Set([
   'txt',
   'md',
+  'markdown',
   'log',
   'json',
   'yaml',
   'yml',
   'toml',
   'ini',
+  'cfg',
+  'conf',
+  'properties',
+  'env',
   'xml',
   'csv',
   'tsv',
   'py',
+  'pyi',
+  'pyw',
   'js',
+  'jsx',
   'ts',
+  'tsx',
   'css',
+  'scss',
+  'sass',
+  'less',
   'html',
   'htm',
+  'xhtml',
   'sh',
+  'bash',
+  'zsh',
+  'fish',
   'bat',
+  'cmd',
   'ps1',
-  'sql'
+  'sql',
+  'c',
+  'cc',
+  'cpp',
+  'cxx',
+  'h',
+  'hh',
+  'hpp',
+  'hxx',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'go',
+  'php',
+  'vue',
+  'astro',
+  'svelte',
+  'dockerfile',
+  'gitignore'
 ]);
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 const IMAGE_MIME_TYPES = {
@@ -465,11 +512,8 @@ const ONLYOFFICE_WORD_EXTENSIONS = new Set([
   'fb2',
   'fodt',
   'hml',
-  'htm',
-  'html',
   'hwp',
   'hwpx',
-  'md',
   'mht',
   'mhtml',
   'odt',
@@ -478,10 +522,8 @@ const ONLYOFFICE_WORD_EXTENSIONS = new Set([
   'rtf',
   'stw',
   'sxw',
-  'txt',
   'wps',
-  'wpt',
-  'xml'
+  'wpt'
 ]);
 const ONLYOFFICE_EXCEL_EXTENSIONS = new Set([
   'csv',
@@ -581,8 +623,55 @@ const ONLYOFFICE_EXTENSIONS = new Set([
   ...ONLYOFFICE_DIAGRAM_EXTENSIONS,
   ...ONLYOFFICE_TEXT_ALIAS_EXTENSIONS
 ]);
+const ONLYOFFICE_DOCUMENT_EXTENSIONS = new Set([
+  ...ONLYOFFICE_WORD_EXTENSIONS,
+  ...ONLYOFFICE_EXCEL_EXTENSIONS,
+  ...ONLYOFFICE_PPT_EXTENSIONS,
+  ...ONLYOFFICE_PDF_EXTENSIONS,
+  ...ONLYOFFICE_DIAGRAM_EXTENSIONS
+]);
 const DRAWIO_EXTENSIONS = new Set(['dio', 'drawio']);
-const CODE_EXTENSIONS = new Set(['py', 'js', 'ts', 'css', 'html', 'htm', 'sh', 'bat', 'ps1', 'sql']);
+const CODE_EXTENSIONS = new Set([
+  'py',
+  'pyi',
+  'pyw',
+  'js',
+  'jsx',
+  'ts',
+  'tsx',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'html',
+  'htm',
+  'xhtml',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'bat',
+  'cmd',
+  'ps1',
+  'sql',
+  'c',
+  'cc',
+  'cpp',
+  'cxx',
+  'h',
+  'hh',
+  'hpp',
+  'hxx',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'go',
+  'php',
+  'vue',
+  'astro',
+  'svelte'
+]);
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
@@ -601,7 +690,6 @@ const WORKSPACE_ICON_IDLE_TIMEOUT = 1200;
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 // 沙盒容器上传总大小上限（对齐 Wunder 配置）
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
-const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
 const WORKSPACE_SETTLE_REFRESH_DELAY_MS = 1400;
@@ -1216,7 +1304,7 @@ const isWorkspaceTextEditable = (entry) => {
 
 const isWorkspaceOfficeEditable = (entry) => {
   if (!entry || entry.type !== 'file') return false;
-  return ONLYOFFICE_EXTENSIONS.has(getWorkspaceExtension(entry));
+  return ONLYOFFICE_DOCUMENT_EXTENSIONS.has(getWorkspaceExtension(entry));
 };
 
 const isWorkspaceDrawioEditable = (entry) => {
@@ -2210,9 +2298,12 @@ const openContextMenu = async (event, entry) => {
     ? state.selectedPaths.has(entry.path)
       ? getWorkspaceSelectionPaths()
       : [entry.path]
-    : getWorkspaceSelectionPaths();
+    : [];
   if (entry?.path && !state.selectedPaths.has(entry.path)) {
     setWorkspaceSelection([entry.path], entry.path);
+  }
+  if (!entry?.path) {
+    resetWorkspaceSelection();
   }
   if (entry?.path) {
     state.selected = entry;
@@ -2663,27 +2754,10 @@ const uploadWorkspaceGroups = async (items, basePath) => {
   await refreshWorkspacePathWithFallback(basePath);
 };
 
-const hasWorkspaceDrag = (dataTransfer) =>
-  Array.from(dataTransfer?.types || []).includes(WORKSPACE_DRAG_KEY);
-
 const hasExternalFileDrag = (dataTransfer) => {
-  if (!dataTransfer || hasWorkspaceDrag(dataTransfer)) return false;
+  if (!dataTransfer || hasWorkspaceDragPaths(dataTransfer)) return false;
   const types = Array.from(dataTransfer.types || []);
   return types.includes('Files') || Boolean(dataTransfer.items?.length) || Boolean(dataTransfer.files?.length);
-};
-
-const getWorkspaceDragPaths = (dataTransfer) => {
-  const raw = dataTransfer?.getData(WORKSPACE_DRAG_KEY) || '';
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.filter(Boolean);
-    }
-  } catch (error) {
-    return [raw].filter(Boolean);
-  }
-  return [raw].filter(Boolean);
 };
 
 const resolveExternalDropBasePath = (entry) => {
@@ -2706,7 +2780,7 @@ const handleListDragOver = (event) => {
   event.preventDefault();
   state.draggingOver = true;
   if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = hasWorkspaceDrag(event.dataTransfer) ? 'move' : 'copy';
+    event.dataTransfer.dropEffect = hasWorkspaceDragPaths(event.dataTransfer) ? 'move' : 'copy';
   }
 };
 
@@ -2719,7 +2793,27 @@ const handleListDragLeave = (event) => {
 const handleListDrop = async (event) => {
   event.preventDefault();
   state.draggingOver = false;
-  if (hasWorkspaceDrag(event.dataTransfer)) return;
+  const internalPaths = readWorkspaceDragPaths(event.dataTransfer);
+  if (internalPaths.length) {
+    const targetDir = normalizeWorkspacePath(state.path);
+    const filtered = filterMoveTargets(internalPaths, targetDir);
+    if (!filtered.length) return;
+    try {
+      const response = await batchWunderWorkspaceAction(
+        withAgentParams({
+          action: 'move',
+          paths: filtered,
+          destination: targetDir
+        })
+      );
+      notifyBatchResult(response.data, t('workspace.action.move'));
+      await reloadWorkspaceView();
+    } catch (error) {
+      showApiError(error, t('workspace.move.failed'));
+    }
+    clearWorkspaceDragPaths();
+    return;
+  }
   const dropped = await collectDroppedFiles(event.dataTransfer);
   if (!dropped.length) return;
   try {
@@ -2744,18 +2838,18 @@ const handleItemDragStart = (event, entry) => {
   const selectedPaths = state.selectedPaths.has(entry.path)
     ? getWorkspaceSelectionPaths()
     : [entry.path];
-  event.dataTransfer.setData(WORKSPACE_DRAG_KEY, JSON.stringify(selectedPaths));
-  event.dataTransfer.setData('text/plain', selectedPaths[0] || entry.path);
+  setWorkspaceDragPaths(event.dataTransfer, selectedPaths);
   event.dataTransfer.effectAllowed = 'move';
   event.currentTarget?.classList?.add('dragging');
 };
 
 const handleItemDragEnd = (event) => {
   event.currentTarget?.classList?.remove('dragging');
+  clearWorkspaceDragPaths();
 };
 
 const handleItemDragEnter = (event, entry) => {
-  const internalDrag = hasWorkspaceDrag(event.dataTransfer);
+  const internalDrag = hasWorkspaceDragPaths(event.dataTransfer);
   const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
   if (!internalDrag && !externalFileDrag) return;
   if (internalDrag && (!entry || entry.type !== 'dir')) return;
@@ -2767,7 +2861,7 @@ const handleItemDragEnter = (event, entry) => {
 };
 
 const handleItemDragOver = (event, entry) => {
-  const internalDrag = hasWorkspaceDrag(event.dataTransfer);
+  const internalDrag = hasWorkspaceDragPaths(event.dataTransfer);
   const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
   if (!internalDrag && !externalFileDrag) return;
   if (internalDrag && (!entry || entry.type !== 'dir')) return;
@@ -2811,7 +2905,7 @@ const handleItemDrop = async (event, entry) => {
   event.stopPropagation();
   event.currentTarget?.classList?.remove('drop-target');
   state.draggingOver = false;
-  const internalPaths = getWorkspaceDragPaths(event.dataTransfer);
+  const internalPaths = readWorkspaceDragPaths(event.dataTransfer);
   if (internalPaths.length) {
     if (!entry || entry.type !== 'dir') return;
     const targetDir = normalizeWorkspacePath(entry.path);
@@ -2830,6 +2924,7 @@ const handleItemDrop = async (event, entry) => {
     } catch (error) {
       showApiError(error, t('workspace.move.failed'));
     }
+    clearWorkspaceDragPaths();
     return;
   }
   const dropped = await collectDroppedFiles(event.dataTransfer);
@@ -2847,7 +2942,7 @@ const handleItemDrop = async (event, entry) => {
 };
 
 const handleUpDragOver = (event) => {
-  if (!hasWorkspaceDrag(event.dataTransfer)) return;
+  if (!hasWorkspaceDragPaths(event.dataTransfer)) return;
   if (!state.path) return;
   event.preventDefault();
   event.currentTarget?.classList?.add('dragover');
@@ -2866,7 +2961,7 @@ const handleUpDrop = async (event) => {
   if (!state.path) return;
   event.preventDefault();
   event.currentTarget?.classList?.remove('dragover');
-  const sourcePaths = getWorkspaceDragPaths(event.dataTransfer);
+  const sourcePaths = readWorkspaceDragPaths(event.dataTransfer);
   if (!sourcePaths.length) return;
   const parentPath = getWorkspaceParentPath(state.path);
   try {
@@ -2882,6 +2977,7 @@ const handleUpDrop = async (event) => {
   } catch (error) {
     showApiError(error, t('workspace.move.failed'));
   }
+  clearWorkspaceDragPaths();
 };
 
 const clearPreviewUrl = () => {
@@ -2924,14 +3020,46 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
   const extension = getWorkspaceExtension(entry);
   const sizeValue = Number.isFinite(entry.size) ? entry.size : 0;
   const canPreviewText = sizeValue <= MAX_TEXT_PREVIEW_SIZE;
+  const isTextPreview = TEXT_EXTENSIONS.has(extension);
 
-  if (ONLYOFFICE_EXTENSIONS.has(extension)) {
+  if (DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml') {
     state.preview.hint = resolvePreviewUnsupportedHint();
     state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
     return;
   }
-  if (DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml') {
+  if (isTextPreview) {
+    if (!canPreviewText) {
+      state.preview.hint = resolvePreviewTooLargeHint();
+      state.preview.content = t('workspace.preview.empty');
+      state.preview.loading = false;
+      return;
+    }
+    try {
+      const response = await fetchWunderWorkspaceContent(
+        withAgentParams({
+          path: entry.path,
+          include_content: true,
+          max_bytes: MAX_TEXT_PREVIEW_SIZE
+        })
+      );
+      const payload = response.data || {};
+      if (payload.truncated) {
+        state.preview.hint = t('workspace.preview.truncatedHint');
+      }
+      state.preview.embed = false;
+      state.preview.type = 'text';
+      state.preview.content = typeof payload.content === 'string' ? payload.content : '';
+      state.preview.loading = false;
+      return;
+    } catch {
+      state.preview.hint = t('workspace.preview.loadFailedHint');
+      state.preview.content = t('workspace.preview.empty');
+      state.preview.loading = false;
+      return;
+    }
+  }
+  if (ONLYOFFICE_DOCUMENT_EXTENSIONS.has(extension)) {
     state.preview.hint = resolvePreviewUnsupportedHint();
     state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
@@ -3036,8 +3164,9 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
     if (payload.truncated) {
       state.preview.hint = t('workspace.preview.truncatedHint');
     }
-    const text = typeof payload.content === 'string' ? payload.content : '';
-    state.preview.content = text || t('workspace.preview.emptyContent');
+    state.preview.embed = false;
+    state.preview.type = 'text';
+    state.preview.content = typeof payload.content === 'string' ? payload.content : '';
   } catch (error) {
     state.preview.hint = t('workspace.preview.loadFailedHint');
     state.preview.content = t('workspace.preview.empty');

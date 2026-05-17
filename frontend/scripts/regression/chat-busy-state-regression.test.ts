@@ -149,6 +149,120 @@ test('merged busy state suppresses stale busy projection after confirmed idle ru
   );
 });
 
+test('merged busy state suppresses stale assistant streaming after completed runtime', () => {
+  const projection = createChatRuntimeProjection();
+  const messages = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: 'done',
+      stream_incomplete: true,
+      workflowStreaming: true
+    }
+  ];
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'sess_completed_terminal',
+    messages,
+    loading: true,
+    running: true
+  });
+
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection,
+      sessionId: 'sess_completed_terminal',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    false
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection,
+      sessionId: 'sess_completed_terminal',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    'completed'
+  );
+});
+
+test('merged busy state stays cleared across idle to not_loaded terminal chain', () => {
+  const projection = createChatRuntimeProjection();
+  const messages = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: 'done',
+      stream_incomplete: true,
+      workflowStreaming: true
+    }
+  ];
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'sess_terminal_chain',
+    messages,
+    loading: true,
+    running: true
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_runtime',
+    source: 'legacy',
+    strict: false,
+    session_id: 'sess_terminal_chain',
+    runtime_status: 'idle'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_idle',
+    source: 'legacy',
+    strict: false,
+    session_id: 'sess_terminal_chain'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_runtime',
+    source: 'legacy',
+    strict: false,
+    session_id: 'sess_terminal_chain',
+    runtime_status: 'not_loaded'
+  });
+
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection,
+      sessionId: 'sess_terminal_chain',
+      loading: false,
+      messages,
+      runtimeStatus: 'not_loaded',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    false
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection,
+      sessionId: 'sess_terminal_chain',
+      loading: false,
+      messages,
+      runtimeStatus: 'not_loaded',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    'not_loaded'
+  );
+});
+
 test('terminal settle clears stale assistant waiting artifacts, workflow items, and subagents', () => {
   const waitingUpdatedAtMs = Date.now() - 1000;
   const messages = [

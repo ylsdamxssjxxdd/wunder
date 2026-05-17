@@ -107,13 +107,55 @@ const resolveWsEventType = (eventPayload: Record<string, unknown>): string => {
   return directType || 'message';
 };
 
-const isTerminalEventType = (eventType: unknown): boolean => {
+const isTerminalEventType = (
+  eventType: unknown,
+  eventPayload: Record<string, unknown> | null = null
+): boolean => {
   const normalized = normalizeEventType(eventType);
-  return (
+  if (
     normalized === 'final' ||
     normalized === 'error' ||
     normalized === 'queue_fail' ||
-    normalized === 'turn_terminal'
+    normalized === 'turn_terminal' ||
+    normalized === 'thread_closed'
+  ) {
+    return true;
+  }
+  if (normalized !== 'thread_status') {
+    return false;
+  }
+  return isTerminalRuntimePayload(eventPayload || {});
+};
+
+const isTerminalRuntimeStatus = (value: unknown): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return (
+    normalized === 'idle' ||
+    normalized === 'completed' ||
+    normalized === 'complete' ||
+    normalized === 'done' ||
+    normalized === 'failed' ||
+    normalized === 'error' ||
+    normalized === 'system_error' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'not_loaded'
+  );
+};
+
+const isTerminalRuntimePayload = (eventPayload: Record<string, unknown>): boolean => {
+  const data = asPayloadRecord(eventPayload.data);
+  return isTerminalRuntimeStatus(
+    data.thread_status ??
+      data.threadStatus ??
+      data.runtime_status ??
+      data.runtimeStatus ??
+      data.status ??
+      eventPayload.thread_status ??
+      eventPayload.threadStatus ??
+      eventPayload.runtime_status ??
+      eventPayload.runtimeStatus ??
+      eventPayload.status
   );
 };
 
@@ -284,7 +326,7 @@ export const consumeWsStream = (
         const eventId = String(eventPayload.id || '');
         const dataText = buildEventText(eventPayload.data);
         onEvent(eventType, dataText, eventId);
-        if (options.closeOnFinal && isTerminalEventType(normalizedEventType)) {
+        if (options.closeOnFinal && isTerminalEventType(normalizedEventType, eventPayload)) {
           try {
             socket.close(1000, normalizedEventType === 'error' ? 'error_event' : 'terminal_event');
           } catch {
@@ -537,7 +579,7 @@ export const createWsMultiplexer = (
         rejectRequest(requestId, buildSlowClientError(eventPayload));
         return;
       }
-      if (entry.closeOnFinal && isTerminalEventType(normalizedEventType)) {
+      if (entry.closeOnFinal && isTerminalEventType(normalizedEventType, eventPayload)) {
         resolveRequest(requestId);
       }
       return;

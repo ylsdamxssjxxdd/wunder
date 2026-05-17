@@ -453,7 +453,7 @@ export function installMessengerControllerMessageMarkdownVoice(ctx: MessengerCon
   };
 
   ctx.renderAgentMarkdown = (message: Record<string, unknown>, index: number): string => {
-      const cacheKey = `agent:${ctx.resolveAgentMessageKey(message, index)}:c${ctx.currentContainerId.value}`;
+      const cacheKey = `agent:${String(ctx.sessionHub.activeConversationKey || '')}:${ctx.resolveAgentMessageKey(message, index)}:c${ctx.currentContainerId.value}`;
       const streaming = Boolean(message?.stream_incomplete) ||
           Boolean(message?.workflowStreaming) ||
           Boolean(message?.reasoningStreaming);
@@ -465,7 +465,7 @@ export function installMessengerControllerMessageMarkdownVoice(ctx: MessengerCon
   };
 
   ctx.renderWorldMarkdown = (message: Record<string, unknown>): string => {
-      const cacheKey = `world:${ctx.resolveWorldMessageKey(message)}`;
+      const cacheKey = `world:${String(ctx.sessionHub.activeConversationKey || '')}:${ctx.resolveWorldMessageKey(message)}`;
       const content = String(message?.content || '');
       const senderUserId = String(message?.sender_user_id || '').trim();
       const patched = ctx.replaceWorldAtPathTokens(content, senderUserId);
