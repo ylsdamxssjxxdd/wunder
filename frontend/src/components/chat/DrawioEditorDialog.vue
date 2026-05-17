@@ -1,5 +1,80 @@
 <template>
+  <Teleport v-if="preserveSidebar && dialogVisible" to=".messenger-view">
+    <div
+      :class="[
+        'workspace-editor-shell',
+        'workspace-editor-shell--drawio',
+        'workspace-editor-shell--with-sidebar',
+        sidebarVisible ? 'is-sidebar-visible' : 'is-sidebar-hidden'
+      ]"
+    >
+      <div
+        class="workspace-editor-panel workspace-dialog workspace-dialog--drawio workspace-editor-panel--with-sidebar"
+        role="dialog"
+        aria-modal="false"
+      >
+        <div class="workspace-onlyoffice-head workspace-editor-head">
+          <div class="workspace-preview-meta workspace-onlyoffice-path" :title="path">{{ path }}</div>
+          <div class="workspace-onlyoffice-actions">
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.save')"
+              :aria-label="t('common.save')"
+              :disabled="loading || saving || !editorReady"
+              @click="requestSave"
+            >
+              <i class="fa-solid fa-floppy-disk" :class="{ 'fa-spin': saving }" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.download')"
+              :aria-label="t('common.download')"
+              :disabled="loading || saving"
+              @click="handleDownload"
+            >
+              <i class="fa-solid fa-download" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              :disabled="loading || saving"
+              @click="handleRefresh"
+            >
+              <i class="fa-solid fa-rotate" :class="{ 'fa-spin': loading }" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="close()"
+            >
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+        <div v-if="errorText" class="workspace-preview-hint">{{ errorText }}</div>
+        <div class="workspace-onlyoffice-frame workspace-drawio-frame workspace-editor-frame">
+          <div v-if="loading || saving" class="workspace-empty">
+            {{ saving ? t('workspace.drawio.saving') : t('workspace.drawio.loading') }}
+          </div>
+          <iframe
+            v-if="iframeUrl"
+            ref="iframeRef"
+            class="workspace-drawio-editor"
+            :src="iframeUrl"
+            allow="clipboard-read; clipboard-write"
+          ></iframe>
+        </div>
+      </div>
+    </div>
+  </Teleport>
   <el-dialog
+    v-else
     v-model="dialogVisible"
     width="calc(100vw - 8px)"
     top="4px"
@@ -90,6 +165,8 @@ const props = defineProps<{
   userId?: string;
   agentId?: string;
   containerId?: number | string | null;
+  preserveSidebar?: boolean;
+  sidebarVisible?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -137,6 +214,8 @@ const dialogVisible = computed({
   get: () => props.visible,
   set: (value: boolean) => emit('update:visible', value)
 });
+const preserveSidebar = computed(() => props.preserveSidebar === true);
+const sidebarVisible = computed(() => props.sidebarVisible !== false);
 
 const normalizedContainerId = computed<number | null>(() => {
   if (props.containerId === null || props.containerId === undefined || String(props.containerId).trim() === '') {
@@ -469,13 +548,26 @@ const handleClosed = () => {
 };
 
 watch(
-  () => [props.visible, props.path, props.agentId, props.containerId],
+  () => props.visible,
+  (visible, previousVisible) => {
+    if (visible) {
+      void loadEditor();
+      return;
+    }
+    if (previousVisible && preserveSidebar.value) {
+      handleClosed();
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [props.path, props.agentId, props.containerId],
   () => {
     if (props.visible) {
       void loadEditor();
     }
-  },
-  { immediate: true }
+  }
 );
 
 window.addEventListener('message', handleEditorMessage);

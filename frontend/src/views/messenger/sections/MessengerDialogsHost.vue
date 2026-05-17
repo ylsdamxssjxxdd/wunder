@@ -128,6 +128,8 @@
     :agent-id="onlyOfficeAgentId"
     :container-id="onlyOfficeContainerId"
     :user-id="onlyOfficeUserId"
+    preserve-sidebar
+    :sidebar-visible="onlyOfficeSidebarVisible"
     @update:visible="handleOnlyOfficeVisibleChange"
     @saved="handleWorkspaceEditorSaved"
     @fallback="handleWorkspaceEditorFallback"
@@ -139,6 +141,8 @@
     :agent-id="drawioAgentId"
     :container-id="drawioContainerId"
     :user-id="drawioUserId"
+    preserve-sidebar
+    :sidebar-visible="drawioSidebarVisible"
     @update:visible="handleDrawioVisibleChange"
     @saved="handleWorkspaceEditorSaved"
     @fallback="handleWorkspaceEditorFallback"
@@ -222,9 +226,11 @@ const {
   onlyOfficeVisible,
   onlyOfficePath,
   onlyOfficeUserId,
+  onlyOfficeSidebarVisible,
   drawioVisible,
   drawioPath,
   drawioUserId,
+  drawioSidebarVisible,
   activeAgentId,
   currentContainerId,
   handleWorkspaceEditorSaved,
@@ -277,11 +283,13 @@ const {
   onlyOfficeVisible: boolean;
   onlyOfficePath: string;
   onlyOfficeUserId: string;
+  onlyOfficeSidebarVisible: boolean;
   onlyOfficeAgentId: string;
   onlyOfficeContainerId: number | null;
   drawioVisible: boolean;
   drawioPath: string;
   drawioUserId: string;
+  drawioSidebarVisible: boolean;
   drawioAgentId: string;
   drawioContainerId: number | null;
   activeAgentId: string;

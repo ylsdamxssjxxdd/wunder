@@ -16,10 +16,16 @@
     >
       <i class="fa-solid" :class="collapsed ? 'fa-chevron-left' : 'fa-chevron-right'" aria-hidden="true"></i>
     </button>
-    <div v-if="!collapsed" class="messenger-right-content messenger-right-content--stack">
+    <div class="messenger-right-content messenger-right-content--stack">
       <div class="messenger-right-panel messenger-right-panel--sandbox">
         <div v-if="showAgentPanels" class="messenger-workspace-scope chat-shell">
-          <WorkspacePanel ref="workspacePanelRef" :agent-id="agentIdForApi" :container-id="containerId" />
+          <WorkspacePanel
+            ref="workspacePanelRef"
+            :agent-id="agentIdForApi"
+            :container-id="containerId"
+            preserve-dock-layout
+            :sidebar-visible="!collapsed"
+          />
         </div>
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
       </div>

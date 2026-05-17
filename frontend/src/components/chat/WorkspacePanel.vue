@@ -289,6 +289,8 @@
       :path="onlyOffice.entry?.path || ''"
       :agent-id="normalizedAgentId"
       :container-id="normalizedContainerId"
+      :preserve-sidebar="preserveDockLayout"
+      :sidebar-visible="sidebarVisible"
       @fallback="handleOnlyOfficeFallback"
       @saved="handleOnlyOfficeSaved"
     />
@@ -298,6 +300,8 @@
       :path="drawio.entry?.path || ''"
       :agent-id="normalizedAgentId"
       :container-id="normalizedContainerId"
+      :preserve-sidebar="preserveDockLayout"
+      :sidebar-visible="sidebarVisible"
       @fallback="handleDrawioFallback"
       @saved="handleDrawioSaved"
     />
@@ -373,6 +377,14 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
+  preserveDockLayout: {
+    type: Boolean,
+    default: false
+  },
+  sidebarVisible: {
+    type: Boolean,
+    default: true
+  },
   emptyText: {
     type: String,
     default: ''
@@ -386,6 +398,8 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
+const preserveDockLayout = computed(() => props.preserveDockLayout);
+const sidebarVisible = computed(() => props.sidebarVisible);
 const desktopLocalMode = computed(() => isDesktopLocalModeEnabled());
 const resourceActionLabel = computed(() =>
   desktopLocalMode.value ? t('workspace.action.exportCopy') : t('common.download')

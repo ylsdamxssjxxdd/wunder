@@ -1,5 +1,62 @@
 <template>
+  <Teleport v-if="preserveSidebar && dialogVisible" to=".messenger-view">
+    <div
+      :class="[
+        'workspace-editor-shell',
+        'workspace-editor-shell--onlyoffice',
+        'workspace-editor-shell--with-sidebar',
+        sidebarVisible ? 'is-sidebar-visible' : 'is-sidebar-hidden'
+      ]"
+    >
+      <div
+        class="workspace-editor-panel workspace-dialog workspace-dialog--onlyoffice workspace-editor-panel--with-sidebar"
+        role="dialog"
+        aria-modal="false"
+      >
+        <div class="workspace-onlyoffice-head workspace-editor-head">
+          <div class="workspace-preview-meta workspace-onlyoffice-path" :title="path">{{ path }}</div>
+          <div class="workspace-onlyoffice-actions">
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.download')"
+              :aria-label="t('common.download')"
+              :disabled="loading"
+              @click="handleDownload"
+            >
+              <i class="fa-solid fa-download" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              :disabled="loading"
+              @click="handleRefresh"
+            >
+              <i class="fa-solid fa-rotate" :class="{ 'fa-spin': loading }" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-onlyoffice-icon-btn"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="close"
+            >
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+        <div v-if="errorText" class="workspace-preview-hint">{{ errorText }}</div>
+        <div class="workspace-onlyoffice-frame workspace-editor-frame">
+          <div v-if="loading" class="workspace-empty">{{ t('workspace.onlyoffice.loading') }}</div>
+          <div ref="hostRef" class="workspace-onlyoffice-host"></div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
   <el-dialog
+    v-else
     v-model="dialogVisible"
     width="calc(100vw - 8px)"
     top="4px"
@@ -67,6 +124,8 @@ const props = defineProps<{
   userId?: string;
   agentId?: string;
   containerId?: number | string | null;
+  preserveSidebar?: boolean;
+  sidebarVisible?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -95,6 +154,8 @@ const dialogVisible = computed({
   get: () => props.visible,
   set: (value: boolean) => emit('update:visible', value)
 });
+const preserveSidebar = computed(() => props.preserveSidebar === true);
+const sidebarVisible = computed(() => props.sidebarVisible !== false);
 
 const normalizedContainerId = computed<number | null>(() => {
   if (props.containerId === null || props.containerId === undefined || String(props.containerId).trim() === '') {
@@ -260,13 +321,26 @@ const handleClosed = () => {
 };
 
 watch(
-  () => [props.visible, props.path, props.userId, props.agentId, props.containerId],
+  () => props.visible,
+  (visible, previousVisible) => {
+    if (visible) {
+      void openEditor();
+      return;
+    }
+    if (previousVisible && preserveSidebar.value) {
+      handleClosed();
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [props.path, props.userId, props.agentId, props.containerId],
   () => {
     if (props.visible) {
       void openEditor();
     }
-  },
-  { immediate: true }
+  }
 );
 
 onBeforeUnmount(() => {
