@@ -816,10 +816,11 @@ async fn generate_image_with_model(
     let status = response.status();
     let body = response.text().await.context("read image response body")?;
     if !status.is_success() {
-        return Err(anyhow!(
-            "image request failed: {status} {}",
-            truncate_for_error(&body, 1024)
-        ));
+        return Err(anyhow!(format_image_http_error(
+            "image request failed",
+            status,
+            &body
+        )));
     }
     parse_image_generation_response(
         &body,
@@ -867,10 +868,11 @@ async fn edit_image_with_model(
         .await
         .context("read image edit response body")?;
     if !status.is_success() {
-        return Err(anyhow!(
-            "image edit request failed: {status} {}",
-            truncate_for_error(&body, 1024)
-        ));
+        return Err(anyhow!(format_image_http_error(
+            "image edit request failed",
+            status,
+            &body
+        )));
     }
     parse_image_generation_response(
         &body,
@@ -886,6 +888,12 @@ fn parse_image_generation_response(
     requested_output_format: Option<&str>,
 ) -> Result<ImageGenerationResponse> {
     let value: Value = serde_json::from_str(body).context("parse image response json")?;
+    if let Some(detail) = extract_image_provider_error_message(&value) {
+        return Err(anyhow!(
+            "image generation failed: {}",
+            truncate_for_error(&detail, 1024)
+        ));
+    }
     let b64 = value
         .get("data")
         .and_then(Value::as_array)
@@ -908,6 +916,78 @@ fn parse_image_generation_response(
         bytes,
         content_type: image_mime_type(&output_format).to_string(),
     })
+}
+
+fn format_image_http_error(prefix: &str, status: reqwest::StatusCode, body: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        if let Some(detail) = extract_image_provider_error_message(&value) {
+            return format!("{prefix}: {status} {}", truncate_for_error(&detail, 1024));
+        }
+    }
+    let fallback = summarize_raw_provider_error(body);
+    format!("{prefix}: {status} {}", truncate_for_error(&fallback, 1024))
+}
+
+fn extract_image_provider_error_message(value: &Value) -> Option<String> {
+    if let Some(text) = value.get("error").and_then(Value::as_str) {
+        let cleaned = text.trim();
+        if !cleaned.is_empty() {
+            return Some(cleaned.to_string());
+        }
+    }
+    if let Some(error) = value.get("error").and_then(Value::as_object) {
+        for key in ["message", "detail", "error", "summary"] {
+            if let Some(text) = error.get(key).and_then(Value::as_str) {
+                let cleaned = text.trim();
+                if !cleaned.is_empty() {
+                    return Some(cleaned.to_string());
+                }
+            }
+        }
+    }
+    for key in ["message", "detail"] {
+        if let Some(text) = value.get(key).and_then(Value::as_str) {
+            let cleaned = text.trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn summarize_raw_provider_error(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "empty provider error body".to_string();
+    }
+    let lines = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return trimmed.to_string();
+    }
+    for needle in [
+        "RuntimeError:",
+        "Diffusion generation failed:",
+        "Height must be divisible by 16",
+        "Width must be divisible by 16",
+    ] {
+        if let Some(line) = lines
+            .iter()
+            .rev()
+            .find(|line| line.contains(needle))
+            .copied()
+        {
+            return line.to_string();
+        }
+    }
+    lines
+        .last()
+        .map(|line| (*line).to_string())
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 fn build_image_payload(
@@ -1572,5 +1652,25 @@ mod tests {
         assert_eq!(file.filename, "source.webp");
         assert_eq!(file.content_type, "image/webp");
         assert_eq!(file.bytes, Bytes::from_static(b"abc"));
+    }
+
+    #[test]
+    fn parse_image_generation_response_surfaces_provider_error() {
+        let err = super::parse_image_generation_response(
+            r#"{"error":{"message":"Diffusion generation failed: Height must be divisible by 16 (got 1080)."}} "#,
+            Some("png"),
+        )
+        .expect_err("expected provider error");
+        assert!(err.to_string().contains("Height must be divisible by 16"));
+    }
+
+    #[test]
+    fn format_image_http_error_prefers_actionable_tail() {
+        let message = super::format_image_http_error(
+            "image request failed",
+            reqwest::StatusCode::BAD_REQUEST,
+            "Traceback...\nRuntimeError: Diffusion generation failed: Height must be divisible by 16 (got 1080).",
+        );
+        assert!(message.contains("Height must be divisible by 16"));
     }
 }

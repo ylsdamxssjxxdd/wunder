@@ -1823,8 +1823,6 @@ mod tests {
             agent_id: None,
             agent_name: None,
             message: None,
-            preempt_active_workflow: false,
-            preempt: None,
             workspace_container_id: None,
             clear_workspace: None,
             timeout_s: None,

@@ -1,4 +1,7 @@
+use super::tool_error::{build_failed_tool_result, ToolErrorMeta};
 use super::{build_model_tool_success, ToolContext};
+use crate::config::LlmModelConfig;
+use crate::llm::normalize_provider;
 use crate::services::multimodal_models::{
     self, AudioTranscriptionRequest, ImageGenerationRequest, SpeechSynthesisRequest,
     VideoGenerationRequest,
@@ -23,6 +26,8 @@ pub const TOOL_GENERATE_IMAGE_ALIAS: &str = "generate_image";
 pub const TOOL_GENERATE_VIDEO_ALIAS: &str = "generate_video";
 
 const GENERATED_MEDIA_DIR: &str = "generated_media";
+const VLLM_OMNI_PROVIDER: &str = "vllm_omni";
+const VLLM_OMNI_IMAGE_ALIGNMENT: u32 = 16;
 
 #[derive(Debug, Deserialize)]
 pub struct GenerateSpeechArgs {
@@ -290,17 +295,54 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
     if prompt.is_empty() {
         return Err(anyhow!("prompt is required"));
     }
+    let (resolved_model_name, model_config) =
+        match multimodal_models::resolve_image_model(context.config, payload.model_name.as_deref())
+        {
+            Some(model) => model,
+            None => {
+                return Ok(build_image_generation_failure_result(
+                    None,
+                    None,
+                    "text_to_image",
+                    payload.size.as_deref(),
+                    None,
+                    payload.mask_path.as_deref(),
+                    payload.reference_path.as_deref(),
+                    "image model is not configured",
+                ));
+            }
+        };
+    let effective_size = resolve_effective_image_size(&payload, &model_config);
     let input_paths = collect_image_input_paths(&payload);
+    let mode = if input_paths.is_empty() {
+        "text_to_image"
+    } else {
+        "image_edit"
+    };
+    if let Some(result) =
+        validate_image_generation_request(&model_config, effective_size.as_deref(), mode)
+    {
+        return Ok(build_image_generation_failure_result(
+            Some(&model_config),
+            Some(resolved_model_name.as_str()),
+            mode,
+            effective_size.as_deref(),
+            Some(&input_paths),
+            payload.mask_path.as_deref(),
+            payload.reference_path.as_deref(),
+            &result,
+        ));
+    }
     let input_images = load_image_input_files(context, &input_paths).await?;
     let mask_image = load_optional_image_input_file(context, payload.mask_path.as_deref()).await?;
     let reference_image =
         load_optional_image_input_file(context, payload.reference_path.as_deref()).await?;
-    let result = multimodal_models::generate_image(
+    let result = match multimodal_models::generate_image(
         context.config,
         ImageGenerationRequest {
             prompt: prompt.to_string(),
-            model_name: normalize_optional_string(payload.model_name.as_deref()),
-            size: normalize_optional_string(payload.size.as_deref()),
+            model_name: Some(resolved_model_name.clone()),
+            size: effective_size.clone(),
             output_format: normalize_optional_string(payload.output_format.as_deref()),
             negative_prompt: normalize_optional_string(payload.negative_prompt.as_deref()),
             num_inference_steps: payload.num_inference_steps,
@@ -316,7 +358,22 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             resolution: payload.resolution,
         },
     )
-    .await?;
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            return Ok(build_image_generation_failure_result(
+                Some(&model_config),
+                Some(resolved_model_name.as_str()),
+                mode,
+                effective_size.as_deref(),
+                Some(&input_paths),
+                payload.mask_path.as_deref(),
+                payload.reference_path.as_deref(),
+                &err.to_string(),
+            ));
+        }
+    };
     let extension = extension_from_content_type(&result.content_type, "png");
     let saved = persist_generated_media(
         context,
@@ -336,12 +393,239 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             "path": saved.public_path,
             "workspace_relative_path": saved.workspace_relative_path,
             "bytes": saved.size_bytes,
-            "mode": if input_paths.is_empty() { "text_to_image" } else { "image_edit" },
+            "mode": mode,
+            "model_name": resolved_model_name,
+            "provider": normalize_provider(model_config.provider.as_deref()),
+            "size": effective_size,
             "input_paths": input_paths,
             "mask_path": normalize_optional_string(payload.mask_path.as_deref()),
             "reference_path": normalize_optional_string(payload.reference_path.as_deref()),
         }),
     ))
+}
+
+fn resolve_effective_image_size(
+    payload: &GenerateImageArgs,
+    model_config: &LlmModelConfig,
+) -> Option<String> {
+    normalize_optional_string(payload.size.as_deref())
+        .or_else(|| normalize_optional_string(model_config.image_size.as_deref()))
+}
+
+fn validate_image_generation_request(
+    model_config: &LlmModelConfig,
+    requested_size: Option<&str>,
+    mode: &str,
+) -> Option<String> {
+    let provider = normalize_provider(model_config.provider.as_deref());
+    if provider != VLLM_OMNI_PROVIDER {
+        return None;
+    }
+    let size = requested_size?.trim();
+    if size.is_empty() {
+        return None;
+    }
+    let (width, height) = parse_image_size(size).ok()?;
+    if width % VLLM_OMNI_IMAGE_ALIGNMENT == 0 && height % VLLM_OMNI_IMAGE_ALIGNMENT == 0 {
+        return None;
+    }
+    let mode_hint = if mode == "image_edit" {
+        "图生图/编辑"
+    } else {
+        "文生图"
+    };
+    Some(format!(
+        "vllm-omni {mode_hint} size `{size}` is invalid: width and height must both be divisible by {VLLM_OMNI_IMAGE_ALIGNMENT}."
+    ))
+}
+
+fn parse_image_size(size: &str) -> std::result::Result<(u32, u32), ()> {
+    let cleaned = size.trim().to_ascii_lowercase().replace(' ', "");
+    let (width, height) = cleaned.split_once('x').ok_or(())?;
+    let width = width.parse::<u32>().map_err(|_| ())?;
+    let height = height.parse::<u32>().map_err(|_| ())?;
+    if width == 0 || height == 0 {
+        return Err(());
+    }
+    Ok((width, height))
+}
+
+fn build_image_generation_failure_result(
+    model_config: Option<&LlmModelConfig>,
+    model_name: Option<&str>,
+    mode: &str,
+    size: Option<&str>,
+    input_paths: Option<&[String]>,
+    mask_path: Option<&str>,
+    reference_path: Option<&str>,
+    error_text: &str,
+) -> Value {
+    let provider = model_config
+        .map(|config| normalize_provider(config.provider.as_deref()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let detail = summarize_image_error_detail(error_text);
+    let (code, retryable, next_step_hint, alignment_suggestion) =
+        classify_image_generation_failure(provider.as_str(), size, detail.as_str());
+    let summary = if detail.is_empty() {
+        "图像生成失败。".to_string()
+    } else {
+        format!("图像生成失败：{detail}")
+    };
+    build_failed_tool_result(
+        summary,
+        json!({
+            "tool": "generate_image",
+            "phase": "execution",
+            "provider": provider,
+            "model_name": model_name,
+            "mode": mode,
+            "size": size,
+            "input_paths": input_paths,
+            "mask_path": normalize_optional_string(mask_path),
+            "reference_path": normalize_optional_string(reference_path),
+            "failure_summary": detail,
+            "error_detail_head": detail,
+            "next_step_hint": next_step_hint,
+            "suggested_size": alignment_suggestion,
+        }),
+        ToolErrorMeta::new(code, Some(next_step_hint), retryable, None),
+        false,
+    )
+}
+
+fn classify_image_generation_failure(
+    provider: &str,
+    size: Option<&str>,
+    detail: &str,
+) -> (&'static str, bool, String, Option<String>) {
+    let lower = detail.to_ascii_lowercase();
+    if contains_timeout_hint(detail) {
+        return (
+            "TOOL_TIMEOUT",
+            true,
+            "缩小生成范围、降低推理步数，或改成可拆分的生成流程后重试。".to_string(),
+            None,
+        );
+    }
+    if lower.contains("429")
+        || lower.contains("too many requests")
+        || lower.contains("temporarily unavailable")
+        || lower.contains("service unavailable")
+    {
+        return (
+            "IMAGE_PROVIDER_BUSY",
+            true,
+            "上游图像服务当前繁忙，稍后重试，或降低并发与推理步数。".to_string(),
+            None,
+        );
+    }
+    if provider == VLLM_OMNI_PROVIDER && lower.contains("divisible by 16") {
+        let suggested_size = size
+            .and_then(|value| parse_image_size(value).ok())
+            .map(|(width, height)| suggest_aligned_image_size(width, height));
+        let hint = match suggested_size.as_deref() {
+            Some(candidate) => format!(
+                "改用宽高都能被 16 整除的尺寸后重试，例如 `{candidate}`、`1024x1024` 或 `1344x768`。"
+            ),
+            None => {
+                "改用宽高都能被 16 整除的尺寸后重试，例如 `1024x1024`、`1344x768` 或 `1920x1088`。"
+                    .to_string()
+            }
+        };
+        return ("IMAGE_SIZE_ALIGNMENT_INVALID", false, hint, suggested_size);
+    }
+    if lower.contains("image model is not configured") {
+        return (
+            "IMAGE_MODEL_NOT_CONFIGURED",
+            false,
+            "先在系统设置中配置默认图像模型，或为本次调用显式指定可用的 `model_name`。".to_string(),
+            None,
+        );
+    }
+    if lower.contains("missing b64_json")
+        || lower.contains("parse image response json")
+        || lower.contains("provider response")
+    {
+        return (
+            "IMAGE_PROVIDER_RESPONSE_INVALID",
+            false,
+            "上游图像服务返回了非预期响应格式；请检查 vllm-omni 日志，并确认接口兼容 `/v1/images/generations` 或 `/v1/images/edits`。"
+                .to_string(),
+            None,
+        );
+    }
+    if lower.contains("invalid")
+        || lower.contains("unsupported")
+        || lower.contains("must be")
+        || lower.contains("is required")
+    {
+        return (
+            "IMAGE_REQUEST_INVALID",
+            false,
+            "调整图像生成参数后重试，尤其检查 `size`、输入图、蒙版图和参考图。".to_string(),
+            None,
+        );
+    }
+    (
+        "IMAGE_GENERATION_FAILED",
+        false,
+        "根据失败原因调整图像生成参数，必要时检查上游图像服务日志。".to_string(),
+        None,
+    )
+}
+
+fn summarize_image_error_detail(error_text: &str) -> String {
+    let trimmed = error_text.trim();
+    if trimmed.is_empty() {
+        return "unknown image generation error".to_string();
+    }
+    let lines = trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return "unknown image generation error".to_string();
+    }
+    for needle in [
+        "RuntimeError:",
+        "Diffusion generation failed:",
+        "Height must be divisible by 16",
+        "Width must be divisible by 16",
+        "image generation failed:",
+    ] {
+        if let Some(line) = lines
+            .iter()
+            .rev()
+            .find(|line| line.contains(needle))
+            .copied()
+        {
+            return line.to_string();
+        }
+    }
+    if let Some(last) = lines.last() {
+        return (*last).to_string();
+    }
+    trimmed.to_string()
+}
+
+fn contains_timeout_hint(message: &str) -> bool {
+    let lower = message.trim().to_ascii_lowercase();
+    lower.contains("timeout") || lower.contains("timed out") || lower.contains("time out")
+}
+
+fn suggest_aligned_image_size(width: u32, height: u32) -> String {
+    let suggested_width = align_up_to_unit(width, VLLM_OMNI_IMAGE_ALIGNMENT);
+    let suggested_height = align_up_to_unit(height, VLLM_OMNI_IMAGE_ALIGNMENT);
+    format!("{suggested_width}x{suggested_height}")
+}
+
+fn align_up_to_unit(value: u32, unit: u32) -> u32 {
+    if value % unit == 0 {
+        value
+    } else {
+        value + (unit - value % unit)
+    }
 }
 
 fn collect_image_input_paths(payload: &GenerateImageArgs) -> Vec<String> {
@@ -594,4 +878,124 @@ fn extension_from_content_type(content_type: &str, fallback: &str) -> String {
         _ => fallback,
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_image_generation_failure_result, parse_image_size, suggest_aligned_image_size,
+        validate_image_generation_request, GenerateImageArgs, VLLM_OMNI_PROVIDER,
+    };
+    use crate::config::LlmModelConfig;
+    use serde_json::Value;
+
+    fn image_model(provider: &str) -> LlmModelConfig {
+        LlmModelConfig {
+            enable: Some(true),
+            provider: Some(provider.to_string()),
+            model: Some("demo-image".to_string()),
+            model_type: Some("image".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn parse_image_size_accepts_common_format() {
+        assert_eq!(parse_image_size("1920x1080"), Ok((1920, 1080)));
+        assert_eq!(parse_image_size(" 1024 x 1024 "), Ok((1024, 1024)));
+    }
+
+    #[test]
+    fn vllm_omni_validation_rejects_unaligned_size() {
+        let config = image_model(VLLM_OMNI_PROVIDER);
+        let failure =
+            validate_image_generation_request(&config, Some("1920x1080"), "text_to_image")
+                .expect("expected validation failure");
+        assert!(failure.contains("divisible by 16"));
+    }
+
+    #[test]
+    fn aligned_size_suggestion_rounds_up() {
+        assert_eq!(suggest_aligned_image_size(1920, 1080), "1920x1088");
+    }
+
+    #[test]
+    fn structured_failure_marks_alignment_error_non_retryable() {
+        let config = image_model(VLLM_OMNI_PROVIDER);
+        let payload = build_image_generation_failure_result(
+            Some(&config),
+            Some("demo-image"),
+            "text_to_image",
+            Some("1920x1080"),
+            None,
+            None,
+            None,
+            "Diffusion generation failed: Height must be divisible by 16 (got 1080).",
+        );
+        assert_eq!(payload.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            payload.pointer("/error_meta/code").and_then(Value::as_str),
+            Some("IMAGE_SIZE_ALIGNMENT_INVALID")
+        );
+        assert_eq!(
+            payload
+                .pointer("/error_meta/retryable")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            payload
+                .pointer("/data/suggested_size")
+                .and_then(Value::as_str),
+            Some("1920x1088")
+        );
+    }
+
+    #[test]
+    fn non_vllm_provider_skips_alignment_validation() {
+        let config = image_model("openai_compatible");
+        assert!(
+            validate_image_generation_request(&config, Some("1920x1080"), "text_to_image")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn payload_size_resolution_prefers_request_then_model_default() {
+        let payload = GenerateImageArgs {
+            prompt: "demo".to_string(),
+            path: None,
+            model_name: None,
+            size: Some("1536x864".to_string()),
+            output_format: None,
+            negative_prompt: None,
+            num_inference_steps: None,
+            guidance_scale: None,
+            seed: None,
+            input_path: None,
+            input_paths: None,
+            mask_path: None,
+            reference_path: None,
+            strength: None,
+            true_cfg_scale: None,
+            output_compression: None,
+            layers: None,
+            resolution: None,
+        };
+        let mut config = image_model(VLLM_OMNI_PROVIDER);
+        config.image_size = Some("1024x1024".to_string());
+        assert_eq!(
+            super::resolve_effective_image_size(&payload, &config).as_deref(),
+            Some("1536x864")
+        );
+
+        let payload_without_size = GenerateImageArgs {
+            size: None,
+            ..payload
+        };
+        assert_eq!(
+            super::resolve_effective_image_size(&payload_without_size, &config).as_deref(),
+            Some("1024x1024")
+        );
+    }
 }

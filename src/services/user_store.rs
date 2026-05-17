@@ -1824,12 +1824,10 @@ mod tests {
             .force_logout_user_scope("alice", "user_web")
             .expect("force logout user scope");
         assert!(invalidated_at > 0.0);
-        assert!(
-            store
-                .authenticate_token_details(&user_web.token.token)
-                .expect("authenticate user token")
-                .is_none()
-        );
+        assert!(store
+            .authenticate_token_details(&user_web.token.token)
+            .expect("authenticate user token")
+            .is_none());
         assert_eq!(
             store
                 .authenticate_token_details(&admin_web.token.token)

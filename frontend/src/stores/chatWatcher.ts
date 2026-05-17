@@ -133,7 +133,7 @@ import { buildWorkflowItem, dismissStaleInquiryPanels, hydrateSessionCommandSess
 import { findAssistantMessageByRound, findAssistantMessageByUserRound } from './chatMessageLookup';
 import { applyGoalStreamEvent } from './chatPersist';
 import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, insertWatchUserMessage, recoverRuntimeInteractiveControllers, resolveHiddenInternalUserEvent, resolveLastAssistantStreamEventId, resolveLastAssistantTimestampMs, resolveLastStreamEventId, resolveMaxStreamEventId, resolveMaxStreamRound, resolveStreamFlushMsForMessages, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, settleTerminalSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, settleTerminalSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
@@ -694,6 +694,18 @@ export const startSessionWatcher = (store, sessionId) => {
       if (normalizedEventId !== null) {
         updateRuntimeRemoteLastEventId(runtime, normalizedEventId);
       }
+      chatDebugLog('chat.store.terminal-debug', 'watch-runtime-event', {
+        sessionId: key,
+        eventType: normalizedEventType,
+        eventId: normalizedEventId,
+        payloadStatus: String(data?.thread_status ?? data?.status ?? payload?.thread_status ?? payload?.status ?? '')
+          .trim()
+          .toLowerCase(),
+        loadingBySession: Boolean(store?.loadingBySession?.[key]),
+        runtimeBefore: buildRuntimeDebugSnapshot(runtime),
+        streamingAssistantCount: countAssistantStreamingMessages(sessionMessagesRef),
+        latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(sessionMessagesRef)
+      });
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
       return;
     }

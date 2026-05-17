@@ -1252,10 +1252,27 @@ export function settleTerminalSessionRuntime(
   const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
     ? store?.messages
     : getSessionMessages(targetId);
+  chatDebugLog('chat.store.terminal-debug', 'before-settle-terminal', {
+    sessionId: targetId,
+    eventType: options.eventType || 'terminal_runtime',
+    loadingBySession: Boolean(store?.loadingBySession?.[targetId]),
+    runtime: beforeRuntime,
+    streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages)
+  });
   const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
     failed: options.failed === true || runtime.threadStatus === 'system_error'
   });
   setSessionLoading(store, targetId, false);
+  chatDebugLog('chat.store.terminal-debug', 'after-settle-terminal', {
+    sessionId: targetId,
+    eventType: options.eventType || 'terminal_runtime',
+    loadingBySession: Boolean(store?.loadingBySession?.[targetId]),
+    runtime: buildRuntimeDebugSnapshot(runtime),
+    streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
+    settledTerminalArtifacts
+  });
   if (settledTerminalArtifacts) {
     notifySessionSnapshot(store, targetId, targetMessages, true);
   }
@@ -1598,6 +1615,28 @@ export const countAssistantStreamingMessages = (messages) => {
     }
     return count + (isPendingAssistantMessage(message) ? 1 : 0);
   }, 0);
+};
+
+export const buildLatestAssistantRuntimeDebugSnapshot = (messages) => {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== 'assistant') continue;
+    return {
+      index,
+      contentLength: String(message.content || '').length,
+      reasoningLength: String(message.reasoning || '').length,
+      workflowStreaming: normalizeFlag(message.workflowStreaming),
+      reasoningStreaming: normalizeFlag(message.reasoningStreaming),
+      streamIncomplete: normalizeFlag(message.stream_incomplete),
+      resumeAvailable: normalizeFlag(message.resume_available),
+      slowClient: normalizeFlag(message.slow_client),
+      workflowItemCount: Array.isArray(message.workflowItems) ? message.workflowItems.length : 0,
+      subagentCount: Array.isArray(message.subagents) ? message.subagents.length : 0,
+      questionPanelStatus: String(message?.questionPanel?.status || '').trim().toLowerCase()
+    };
+  }
+  return null;
 };
 
 export function buildRuntimeDebugSnapshot(runtime) {

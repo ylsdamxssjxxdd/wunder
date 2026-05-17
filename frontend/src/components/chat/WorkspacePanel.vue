@@ -13,6 +13,16 @@
           <button
             class="workspace-icon-btn"
             type="button"
+            :title="t('common.upload')"
+            :aria-label="t('common.upload')"
+            :disabled="loading"
+            @click="triggerUpload"
+          >
+            <i class="fa-solid fa-upload workspace-icon" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-icon-btn"
+            type="button"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
             :disabled="loading"
@@ -168,11 +178,8 @@
         <button class="workspace-menu-btn" @click="handleNewFile">
           {{ t('workspace.menu.newFile') }}
         </button>
-        <button class="workspace-menu-btn" @click="handleContextMenuUpload">
-          {{ t('common.upload') }}
-        </button>
-        <button class="workspace-menu-btn" @click="handleContextMenuRefresh">
-          {{ t('common.refresh') }}
+        <button class="workspace-menu-btn" :disabled="!contextMenuHasSelection" @click="handleQuotePath">
+          {{ t('workspace.menu.quotePath') }}
         </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuCanEdit" @click="handleEdit">
           {{ contextMenuEditLabel }}
@@ -560,6 +567,7 @@ const props = defineProps({
 
 const emit = defineEmits<{
   (event: 'stats', payload: { latestUpdatedAt: number; entryCount: number }): void;
+  (event: 'quote-path', payload: { paths: string[] }): void;
 }>();
 
 const { t } = useI18n();
@@ -2542,14 +2550,11 @@ const handleNewFolder = async () => {
   await createWorkspaceFolder();
 };
 
-const handleContextMenuUpload = () => {
+const handleQuotePath = () => {
+  const selectedPaths = getActionSelectionPaths().map((path) => normalizeWorkspacePath(path)).filter(Boolean);
   closeContextMenu();
-  triggerUpload();
-};
-
-const handleContextMenuRefresh = async () => {
-  closeContextMenu();
-  await refreshWorkspace();
+  if (!selectedPaths.length) return;
+  emit('quote-path', { paths: selectedPaths });
 };
 
 const handleDownload = async () => {

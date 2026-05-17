@@ -357,6 +357,23 @@ export const chatSendActions = {
             sessionId
           );
           if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+            chatDebugLog('chat.store.terminal-debug', 'send-runtime-event', {
+              sessionId,
+              eventType: normalizedEventType,
+              eventId: normalizeStreamEventId(eventId),
+              payloadStatus: String(
+                approvalPayload?.thread_status ?? approvalPayload?.status ?? ''
+              ).trim().toLowerCase(),
+              loadingBySession: Boolean(this.loadingBySession?.[sessionId]),
+              runtimeBefore: buildRuntimeDebugSnapshot(runtime),
+              latestAssistantFlags: {
+                workflowStreaming: Boolean(assistantMessage.workflowStreaming),
+                reasoningStreaming: Boolean(assistantMessage.reasoningStreaming),
+                streamIncomplete: Boolean(assistantMessage.stream_incomplete),
+                resumeAvailable: Boolean(assistantMessage.resume_available),
+                slowClient: Boolean(assistantMessage.slow_client)
+              }
+            });
             if (shouldTreatRuntimeEventAsTerminal(normalizedEventType, approvalPayload)) {
               const runtimeStatus = normalizeThreadRuntimeStatus(
                 approvalPayload?.thread_status ?? approvalPayload?.status

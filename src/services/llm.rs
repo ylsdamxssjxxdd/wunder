@@ -510,9 +510,7 @@ impl LlmClient {
                         return Ok(fallback);
                     }
                     Err(err) => {
-                        return Err(anyhow!(
-                            "{empty_reason}; fallback request failed: {err}"
-                        ));
+                        return Err(anyhow!("{empty_reason}; fallback request failed: {err}"));
                     }
                 }
             }
@@ -5177,10 +5175,7 @@ mod tests {
                     |State(state): State<AppState>, Json(payload): Json<Value>| async move {
                         if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                             state.stream_calls.fetch_add(1, Ordering::SeqCst);
-                            return (
-                                StatusCode::OK,
-                                "data: [DONE]\n\n".to_string(),
-                            );
+                            return (StatusCode::OK, "data: [DONE]\n\n".to_string());
                         }
                         state.non_stream_calls.fetch_add(1, Ordering::SeqCst);
                         (

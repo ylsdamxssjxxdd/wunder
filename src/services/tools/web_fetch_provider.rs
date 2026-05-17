@@ -108,16 +108,18 @@ pub async fn fetch_with_firecrawl(
     }
 
     let response = timeout(Duration::from_secs(timeout_secs), request.send())
-    .await
-    .map_err(|_| anyhow!("Firecrawl request timed out after {timeout_secs}s."))?
-    .map_err(|err| anyhow!("Firecrawl request failed: {err}"))?;
+        .await
+        .map_err(|_| anyhow!("Firecrawl request timed out after {timeout_secs}s."))?
+        .map_err(|err| anyhow!("Firecrawl request failed: {err}"))?;
 
     let status = response.status().as_u16();
     let payload: Value = response
         .json()
         .await
         .map_err(|err| anyhow!("Firecrawl returned invalid JSON: {err}"))?;
-    if !(200..300).contains(&status) || payload.get("success").and_then(Value::as_bool) == Some(false) {
+    if !(200..300).contains(&status)
+        || payload.get("success").and_then(Value::as_bool) == Some(false)
+    {
         let detail = payload
             .get("error")
             .or_else(|| payload.get("message"))
@@ -359,7 +361,7 @@ fn firecrawl_client() -> Result<&'static reqwest::Client> {
 #[cfg(test)]
 mod tests {
     use super::{
-        configured_provider, firecrawl_configured, firecrawl_base_url_is_custom,
+        configured_provider, firecrawl_base_url_is_custom, firecrawl_configured,
         firecrawl_endpoint, firecrawl_requires_api_key, normalize_firecrawl_proxy,
         parse_firecrawl_payload, should_fallback_to_direct, should_use_firecrawl,
         WebFetchProviderKind,
@@ -369,12 +371,18 @@ mod tests {
 
     #[test]
     fn provider_resolution_defaults_to_direct() {
-        assert_eq!(WebFetchProviderKind::resolve(""), WebFetchProviderKind::Direct);
+        assert_eq!(
+            WebFetchProviderKind::resolve(""),
+            WebFetchProviderKind::Direct
+        );
         assert_eq!(
             WebFetchProviderKind::resolve("firecrawl"),
             WebFetchProviderKind::Firecrawl
         );
-        assert_eq!(WebFetchProviderKind::resolve("auto"), WebFetchProviderKind::Auto);
+        assert_eq!(
+            WebFetchProviderKind::resolve("auto"),
+            WebFetchProviderKind::Auto
+        );
     }
 
     #[test]

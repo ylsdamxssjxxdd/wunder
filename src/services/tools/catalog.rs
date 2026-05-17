@@ -2177,7 +2177,9 @@ mod tests {
             .expect("web_fetch spec");
         assert!(en.description.contains("not a search provider"));
         assert!(en.description.contains("guessed URLs"));
-        assert!(en.description.contains("search result pages may also be fetched"));
+        assert!(en
+            .description
+            .contains("search result pages may also be fetched"));
         let en_url = en.input_schema["properties"]["url"]["description"]
             .as_str()
             .expect("url description");

@@ -2424,8 +2424,8 @@
     "zh-CN": "可选，图像生成模型配置名；留空使用默认图像生成模型。"
   },
   "tool.spec.generate_image.args.size": {
-    "en-US": "Optional output size, such as 1024x1024.",
-    "zh-CN": "可选，输出尺寸，如 1024x1024。"
+    "en-US": "Optional output size, such as 1024x1024. For some providers such as vllm-omni / Z-Image, use sizes whose width and height are both divisible by 16, for example 1344x768 or 1920x1088.",
+    "zh-CN": "可选，输出尺寸，如 1024x1024。对于 vllm-omni / Z-Image 这类提供方，请使用宽高都能被 16 整除的尺寸，例如 1344x768 或 1920x1088。"
   },
   "tool.spec.generate_image.args.output_format": {
     "en-US": "Optional output image format preference.",

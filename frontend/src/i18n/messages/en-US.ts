@@ -2356,6 +2356,7 @@ export default {
   'workspace.menu.move': 'Move',
   'workspace.menu.newFile': 'New file',
   'workspace.menu.newFolder': 'New folder',
+  'workspace.menu.quotePath': 'Quote path',
   'workspace.menu.rename': 'Rename',
   'workspace.meta.folder': 'Folder',
   'workspace.move.blocked': 'Cannot move into subfolder',

@@ -1288,8 +1288,8 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::fs;
     use std::collections::HashSet;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]

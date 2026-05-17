@@ -1,5 +1,5 @@
-use super::{tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext};
 use super::web_fetch_provider;
+use super::{tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext};
 use crate::config::{Config, WebFetchToolConfig};
 use crate::i18n;
 use crate::services::browser::{browser_service, browser_tools_enabled, BrowserSessionScope};
@@ -368,7 +368,15 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             }
         }
     }
-    direct_web_fetch(context, &raw_url, &request_url, extract_mode, max_chars, config).await
+    direct_web_fetch(
+        context,
+        &raw_url,
+        &request_url,
+        extract_mode,
+        max_chars,
+        config,
+    )
+    .await
 }
 
 async fn direct_web_fetch(
@@ -657,15 +665,11 @@ async fn fetch_with_firecrawl_provider(
     max_chars: usize,
     config: &WebFetchToolConfig,
 ) -> std::result::Result<Value, WebFetchFailure> {
-    let payload = web_fetch_provider::fetch_with_firecrawl(
-        raw_url,
-        max_chars,
-        extract_mode.as_str(),
-        config,
-    )
-    .await
-    .map_err(|err| {
-        web_fetch_failure(
+    let payload =
+        web_fetch_provider::fetch_with_firecrawl(raw_url, max_chars, extract_mode.as_str(), config)
+            .await
+            .map_err(|err| {
+                web_fetch_failure(
             raw_url,
             None,
             "provider",
@@ -686,7 +690,7 @@ async fn fetch_with_firecrawl_provider(
                 "configured_provider": web_fetch_provider::configured_provider(config).as_str(),
             }),
         )
-    })?;
+            })?;
     Ok(build_firecrawl_tool_result(
         raw_url,
         &payload,
@@ -2349,9 +2353,8 @@ mod tests {
     use super::{
         canonicalize_block_for_dedupe, diagnose_html_page, extract_html_content,
         ip_is_private_or_internal, is_noise_block, normalize_host_for_allowlist,
-        normalize_text_block, strip_invisible_unicode, truncate_chars,
+        normalize_request_url, normalize_text_block, strip_invisible_unicode, truncate_chars,
         web_fetch_allows_private_target, web_fetch_failure, ExtractMode, HtmlPageKind,
-        normalize_request_url,
     };
     use crate::config::WebFetchToolConfig;
     use serde_json::json;

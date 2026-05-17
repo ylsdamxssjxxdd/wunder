@@ -3753,10 +3753,7 @@ mod tests {
             .join("references")
             .join("report_templates.md")
             .is_file());
-        assert_eq!(
-            imported.final_names,
-            vec!["hello-world-skill".to_string()]
-        );
+        assert_eq!(imported.final_names, vec!["hello-world-skill".to_string()]);
     }
 
     #[test]

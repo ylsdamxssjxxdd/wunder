@@ -307,6 +307,7 @@
 - `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。当本次只返回了默认大窗口前缀、文件安全截断前缀，或读取结果在外层继续可细化续取时，数据体会显式补 `continuation_required/continuation_hint`，提示模型应先 `search_content` 定位标题或改读更窄的行范围，而不是反复整篇重读。
 - 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，并保证同时落入 `data.error_meta`，便于前端、结果归一化和重试治理统一按错误码做自动恢复。
 - 外层工具超时不再只返回笼统字符串；`tool_result` 会补充 `data.failure_summary/error_detail_head/next_step_hint/timeout_s/timeout_ms` 与 `error_meta.code=TOOL_TIMEOUT`，前端工作流可直接显示失败原因与下一步建议。
+- 图像生成工具现在会尽量把上游显式失败转换为结构化工具失败：例如 `vllm-omni / Z-Image` 的尺寸不合法会返回 `error_meta.code=IMAGE_SIZE_ALIGNMENT_INVALID`、`retryable=false`、`data.suggested_size` 与 `data.next_step_hint`，而不是等到外层统一超时。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
@@ -1354,7 +1355,7 @@
   - `user_id` / `container_id` / `path`：同 `/wunder/admin/multimodal/speech`
   - `prompt`：图像生成提示词
   - `model_name`：图像生成模型配置名称（可选）
-  - `size`：尺寸（可选）
+  - `size`：尺寸（可选）；对 `vllm-omni / Z-Image` 这类上游，建议宽高都能被 `16` 整除，例如 `1344x768`、`1024x1024`、`1920x1088`
   - `output_format`：输出格式（可选，支持 `png/jpeg/webp`）
   - `negative_prompt`：负向提示词（可选）
   - `num_inference_steps`：采样步数（可选）
@@ -1372,6 +1373,7 @@
 - 返回（JSON）：
   - `data.kind`：固定为 `image`
   - 其余结构同 `/wunder/admin/multimodal/speech`
+  - 若上游显式拒绝请求，错误会优先转成可展示的结构化失败：例如尺寸非法时返回 `error_meta.code=IMAGE_SIZE_ALIGNMENT_INVALID`、`error_meta.retryable=false`，并在 `data.failure_summary/data.next_step_hint/data.suggested_size` 中给出修正建议
 
 ### 4.1.6.1.3 `/wunder/admin/multimodal/video`
 

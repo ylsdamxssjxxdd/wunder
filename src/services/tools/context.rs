@@ -554,8 +554,8 @@ mod tests {
             &std::collections::HashMap::new(),
         );
 
-        let resolved = super::resolve_tool_path(&workspace, "alice__c__1", "", &[])
-            .expect("resolved");
+        let resolved =
+            super::resolve_tool_path(&workspace, "alice__c__1", "", &[]).expect("resolved");
 
         assert_eq!(
             normalize_existing_path(&resolved),

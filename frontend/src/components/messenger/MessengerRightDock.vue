@@ -25,6 +25,7 @@
             :container-id="containerId"
             preserve-dock-layout
             :sidebar-visible="!collapsed"
+            @quote-path="handleQuotePath"
           />
         </div>
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
@@ -184,6 +185,7 @@ const emit = defineEmits<{
   (event: 'open-skill-detail', skillName: string): void;
   (event: 'open-container', containerId: number): void;
   (event: 'open-container-settings', containerId: number): void;
+  (event: 'request-quote-path', payload: { paths: string[] }): void;
 }>();
 
 const { t } = useI18n();
@@ -257,6 +259,14 @@ const handleSkillDrop = (event: DragEvent) => {
   if (props.skillsUploading) return;
   const file = event.dataTransfer?.files?.[0];
   emitSkillArchive(file);
+};
+
+const handleQuotePath = (payload: { paths?: string[] } = {}) => {
+  const paths = Array.isArray(payload.paths)
+    ? payload.paths.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (!paths.length) return;
+  emit('request-quote-path', { paths });
 };
 
 const handleSkillGroupsWheel = (event: WheelEvent) => {

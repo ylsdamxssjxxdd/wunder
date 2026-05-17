@@ -3330,12 +3330,10 @@ fn resolve_agent_workspace_id(
             .scoped_user_id_by_container(user_id, record.sandbox_container_id);
     }
     if is_default_agent_alias(agent_id) || agent_id.is_none() {
-        if let Ok(record) =
-            crate::user_store::build_default_agent_record_from_storage(
-                state.storage.as_ref(),
-                user_id,
-            )
-        {
+        if let Ok(record) = crate::user_store::build_default_agent_record_from_storage(
+            state.storage.as_ref(),
+            user_id,
+        ) {
             return state
                 .workspace
                 .scoped_user_id_by_container(user_id, record.sandbox_container_id);

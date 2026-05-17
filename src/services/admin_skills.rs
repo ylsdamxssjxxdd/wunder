@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::core::repo_assets;
-use crate::path_utils::{normalize_existing_path, normalize_path_for_compare, normalize_target_path};
+use crate::path_utils::{
+    normalize_existing_path, normalize_path_for_compare, normalize_target_path,
+};
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs;
@@ -328,7 +330,10 @@ mod tests {
             true,
         );
 
-        assert_eq!(paths[0], resolve_builtin_skills_root_path().to_string_lossy());
+        assert_eq!(
+            paths[0],
+            resolve_builtin_skills_root_path().to_string_lossy()
+        );
         assert!(!paths.iter().any(|value| value == &legacy.to_string_lossy()));
         assert!(paths
             .iter()
@@ -355,7 +360,9 @@ mod tests {
         let updated = config_store
             .update(|config| {
                 config.skills.paths = vec![
-                    resolve_builtin_skills_root_path().to_string_lossy().to_string(),
+                    resolve_builtin_skills_root_path()
+                        .to_string_lossy()
+                        .to_string(),
                     resolve_admin_custom_skills_root_path()
                         .to_string_lossy()
                         .to_string(),

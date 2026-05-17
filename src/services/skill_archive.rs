@@ -299,8 +299,8 @@ fn rewrite_skill_md_name(skill_dir: &Path, new_name: &str) -> Result<()> {
     if !skill_md.is_file() {
         return Ok(());
     }
-    let content = fs::read_to_string(&skill_md)
-        .with_context(|| format!("read {}", skill_md.display()))?;
+    let content =
+        fs::read_to_string(&skill_md).with_context(|| format!("read {}", skill_md.display()))?;
     let rewritten = rewrite_frontmatter_name(&content, new_name);
     fs::write(&skill_md, rewritten).with_context(|| format!("write {}", skill_md.display()))?;
     Ok(())

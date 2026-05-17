@@ -410,8 +410,8 @@ impl IfEmptyThen for String {
 mod tests {
     use super::{
         build_ability_items_from_legacy, normalize_ability_items, normalize_names,
-        resolve_agent_ability_selection, resolve_agent_runtime_tool_names, resolve_record_declared_names,
-        resolve_selected_declared_names, split_ability_item_names,
+        resolve_agent_ability_selection, resolve_agent_runtime_tool_names,
+        resolve_record_declared_names, resolve_selected_declared_names, split_ability_item_names,
     };
     use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
     use serde_json::json;
@@ -563,12 +563,7 @@ mod tests {
 
     #[test]
     fn normalize_names_collapses_legacy_goal_tool_names() {
-        let normalized = normalize_names([
-            "get_goal",
-            "create_goal",
-            "update_goal",
-            "goal",
-        ]);
+        let normalized = normalize_names(["get_goal", "create_goal", "update_goal", "goal"]);
         assert_eq!(normalized, vec!["goal".to_string()]);
     }
 }

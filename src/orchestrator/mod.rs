@@ -183,7 +183,11 @@ impl Orchestrator {
             config: config.clone(),
             skills,
             bindings,
-            tool_access: self.storage.get_user_tool_access(&user.user_id).ok().flatten(),
+            tool_access: self
+                .storage
+                .get_user_tool_access(&user.user_id)
+                .ok()
+                .flatten(),
         };
         let mut allowed = crate::user_access::compute_allowed_tool_names(user, &user_context);
         let agent_record = if let Some(agent_id) = session
@@ -192,7 +196,8 @@ impl Orchestrator {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            if agent_id.eq_ignore_ascii_case("__default__") || agent_id.eq_ignore_ascii_case("default")
+            if agent_id.eq_ignore_ascii_case("__default__")
+                || agent_id.eq_ignore_ascii_case("default")
             {
                 None
             } else {
@@ -238,8 +243,12 @@ impl Orchestrator {
                 .map(|record| record.declared_skill_names.clone())
                 .unwrap_or_default(),
         );
-        allowed =
-            apply_session_tool_overrides_for_allowed(allowed, &overrides, &agent_defaults, TOOL_OVERRIDE_NONE);
+        allowed = apply_session_tool_overrides_for_allowed(
+            allowed,
+            &overrides,
+            &agent_defaults,
+            TOOL_OVERRIDE_NONE,
+        );
         let mut output = allowed.into_iter().collect::<Vec<_>>();
         output.sort();
         output

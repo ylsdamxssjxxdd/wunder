@@ -1613,6 +1613,7 @@
       @open-skill-detail="openRightDockSkillDetail"
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
+      @request-quote-path="handleWorkspaceQuotePath"
     />
     <MessengerGroupDock
       ref="rightDockRef"
@@ -1791,6 +1792,16 @@ defineOptions({
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 
 const controller = useMessengerViewController();
+const handleWorkspaceQuotePath = async (payload: { paths?: string[] } = {}) => {
+  const paths = Array.isArray(payload.paths)
+    ? payload.paths.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (!paths.length) return;
+  const normalized = paths.join('\n');
+  if (typeof controller.appendTextToAgentComposerDraft === 'function') {
+    await controller.appendTextToAgentComposerDraft(normalized);
+  }
+};
 const AbilityTooltipListItem = controller.AbilityTooltipListItem;
 const activateSettingsPanel = controller.activateSettingsPanel;
 const activeAgent = controller.activeAgent;

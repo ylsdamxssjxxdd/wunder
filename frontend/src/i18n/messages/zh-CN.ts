@@ -2318,6 +2318,7 @@ export default {
   'workspace.menu.move': '移动',
   'workspace.menu.newFile': '新建文件',
   'workspace.menu.newFolder': '新建文件夹',
+  'workspace.menu.quotePath': '引用路径',
   'workspace.menu.rename': '重命名',
   'workspace.meta.folder': '文件夹',
   'workspace.move.blocked': '无法移动到子目录',

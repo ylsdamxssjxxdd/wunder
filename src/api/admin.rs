@@ -21,15 +21,15 @@ use crate::path_utils::{
 use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
 };
+use crate::services::admin_skills::{
+    build_admin_skill_scan_paths, collect_admin_reserved_skill_top_dirs,
+    normalize_admin_skill_paths, resolve_admin_custom_skills_root,
+    resolve_admin_uploaded_skills_root, resolve_builtin_skills_root,
+};
 use crate::services::companions::{
     content_hash, delete_global_companion, export_global_companion, import_global_companion,
     list_global_companions, load_global_companion, load_global_companion_spritesheet,
     update_global_companion,
-};
-use crate::services::admin_skills::{
-    build_admin_skill_scan_paths, collect_admin_reserved_skill_top_dirs,
-    normalize_admin_skill_paths, resolve_admin_custom_skills_root, resolve_builtin_skills_root,
-    resolve_admin_uploaded_skills_root,
 };
 use crate::services::default_agent_sync::{
     self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
@@ -63,9 +63,9 @@ use crate::{
     },
 };
 use anyhow::anyhow;
+use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, HeaderValue as AxumHeaderValue, StatusCode};
-use axum::body::Body;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
@@ -1108,8 +1108,8 @@ fn normalize_admin_public_path(path: &Path) -> String {
 
 fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value {
     let builtin_root = resolve_builtin_skills_root();
-    let custom_root =
-        resolve_admin_custom_skills_root().unwrap_or_else(|| resolve_admin_uploaded_skills_root(true));
+    let custom_root = resolve_admin_custom_skills_root()
+        .unwrap_or_else(|| resolve_admin_uploaded_skills_root(true));
     let source = resolve_admin_skill_source(&spec, builtin_root.as_deref(), &custom_root);
     let name = spec.name;
     let description = spec.description;
@@ -1392,7 +1392,8 @@ async fn admin_skills_update(
             if let Some(paths) = &payload.paths {
                 config.skills.paths = normalize_admin_skill_paths(paths.clone(), true);
             } else {
-                config.skills.paths = normalize_admin_skill_paths(config.skills.paths.clone(), true);
+                config.skills.paths =
+                    normalize_admin_skill_paths(config.skills.paths.clone(), true);
             }
             config.skills.enabled = payload.enabled.clone();
         })
@@ -1410,10 +1411,9 @@ async fn admin_skills_update(
         .collect();
     enabled_added.sort();
     enabled_removed.sort();
-    let paths_changed = payload
-        .paths
-        .as_ref()
-        .is_some_and(|paths| normalize_admin_skill_paths(paths.clone(), true) != previous.skills.paths);
+    let paths_changed = payload.paths.as_ref().is_some_and(|paths| {
+        normalize_admin_skill_paths(paths.clone(), true) != previous.skills.paths
+    });
     if !enabled_added.is_empty() || !enabled_removed.is_empty() || paths_changed {
         info!(
             "技能配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}, paths_changed={paths_changed}",
@@ -1555,15 +1555,13 @@ async fn admin_skills_upload(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     state.reload_skills(&updated).await;
-    Ok(Json(
-        json!({
-            "ok": true,
-            "extracted": import_result.extracted,
-            "top_level_dirs": import_result.top_level_dirs,
-            "final_names": import_result.final_names,
-            "message": i18n::t("message.upload_success")
-        }),
-    ))
+    Ok(Json(json!({
+        "ok": true,
+        "extracted": import_result.extracted,
+        "top_level_dirs": import_result.top_level_dirs,
+        "final_names": import_result.final_names,
+        "message": i18n::t("message.upload_success")
+    })))
 }
 
 async fn admin_skills_export(
@@ -1584,7 +1582,12 @@ async fn admin_skills_export(
         .file_name()
         .and_then(|value| value.to_str())
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, i18n::t("error.skill_file_not_found")))?;
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.skill_file_not_found"),
+            )
+        })?;
     let archive_path = create_temp_admin_skill_archive_file()
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let archive_path_clone = archive_path.clone();
@@ -3406,11 +3409,12 @@ async fn admin_system_update(
             }
             if let Some(firecrawl) = payload.firecrawl {
                 if let Some(provider) = firecrawl.provider {
-                    config.tools.web.fetch.provider = match provider.trim().to_ascii_lowercase().as_str() {
-                        "firecrawl" => "firecrawl".to_string(),
-                        "auto" => "auto".to_string(),
-                        _ => "direct".to_string(),
-                    };
+                    config.tools.web.fetch.provider =
+                        match provider.trim().to_ascii_lowercase().as_str() {
+                            "firecrawl" => "firecrawl".to_string(),
+                            "auto" => "auto".to_string(),
+                            _ => "direct".to_string(),
+                        };
                 }
                 if let Some(api_key) = firecrawl.api_key {
                     config.tools.web.fetch.firecrawl.api_key =
@@ -5702,12 +5706,13 @@ async fn admin_user_accounts_force_logout(
             .force_logout_user_scope(cleaned, &scope)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         invalidated_at = invalidated_at.max(scope_invalidated_at);
-        state.control.auth_sessions.force_logout_user(cleaned, &scope).await;
+        state
+            .control
+            .auth_sessions
+            .force_logout_user(cleaned, &scope)
+            .await;
     }
-    state
-        .control
-        .presence
-        .force_user_offline(cleaned, now_ts());
+    state.control.presence.force_user_offline(cleaned, now_ts());
 
     Ok(Json(json!({
         "data": {
