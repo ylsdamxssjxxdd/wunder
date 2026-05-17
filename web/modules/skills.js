@@ -239,6 +239,20 @@ const buildSkillSourceLabel = (skill) => {
 
 const extractErrorMessage = async (response) => resolveApiErrorMessage(response, "");
 
+const buildUploadedSkillSuccessMessage = (originalName, result, fallbackKey) => {
+  const normalizedOriginal = String(originalName || "").trim();
+  const finalNames = Array.isArray(result?.final_names)
+    ? result.final_names.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (
+    finalNames.length > 0 &&
+    (finalNames.length !== 1 || finalNames[0] !== normalizedOriginal)
+  ) {
+    return t("skills.upload.renamed", { names: finalNames.join(", ") });
+  }
+  return t(fallbackKey);
+};
+
 const downloadBlob = (blob, filename) => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -682,8 +696,10 @@ const uploadSkillZip = async (file) => {
   if (!response.ok) {
     throw new Error(t("skills.upload.failed", { message: response.status }));
   }
+  const result = await response.json();
   await loadSkills();
   syncPromptTools();
+  return result;
 };
 
 const saveSkillFile = async () => {
@@ -758,9 +774,10 @@ export const initSkillsPanel = () => {
       return;
     }
     try {
-      await uploadSkillZip(file);
-      appendLog(t("skills.upload.success"));
-      notify(t("skills.upload.success"), "success");
+      const result = await uploadSkillZip(file);
+      const message = buildUploadedSkillSuccessMessage(file.name, result, "skills.upload.success");
+      appendLog(message);
+      notify(message, "success");
     } catch (error) {
       appendLog(t("skills.upload.failed", { message: error.message }));
       notify(t("skills.upload.failed", { message: error.message }), "error");

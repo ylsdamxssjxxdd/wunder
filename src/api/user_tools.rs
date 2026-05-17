@@ -1334,6 +1334,8 @@ async fn user_skills_upload(
         "data": {
             "ok": true,
             "extracted": import_result.extracted,
+            "top_level_dirs": import_result.top_level_dirs,
+            "final_names": import_result.final_names,
             "message": i18n::t("message.upload_success")
         }
     })))
@@ -3751,6 +3753,10 @@ mod tests {
             .join("references")
             .join("report_templates.md")
             .is_file());
+        assert_eq!(
+            imported.final_names,
+            vec!["hello-world-skill".to_string()]
+        );
     }
 
     #[test]
@@ -3770,6 +3776,35 @@ mod tests {
             .expect_err("mixed archive should be rejected");
 
         assert!(err.to_string().contains("top-level skill directory"));
+    }
+
+    #[test]
+    fn import_skill_archive_auto_renames_conflicting_skill_dir_and_frontmatter_name() {
+        let dir = tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("demo-skill")).expect("create existing skill dir");
+        fs::write(
+            dir.path().join("demo-skill").join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: existing\n---\n",
+        )
+        .expect("write existing skill");
+        let archive = build_skill_archive(&[
+            (
+                "demo-skill/SKILL.md",
+                "---\nname: demo-skill\ndescription: imported\n---\n",
+            ),
+            ("demo-skill/run.py", "print('ok')\n"),
+        ]);
+
+        let imported =
+            import_skill_archive("demo-skill.zip", &archive, dir.path(), &HashSet::new())
+                .expect("import renamed skill");
+
+        assert_eq!(imported.top_level_dirs, vec!["demo-skill-2".to_string()]);
+        assert_eq!(imported.final_names, vec!["demo-skill-2".to_string()]);
+        let skill_md = fs::read_to_string(dir.path().join("demo-skill-2").join("SKILL.md"))
+            .expect("read renamed skill");
+        assert!(skill_md.contains("name: demo-skill-2"));
+        assert!(dir.path().join("demo-skill-2").join("run.py").is_file());
     }
 
     #[test]

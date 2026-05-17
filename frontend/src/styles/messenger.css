@@ -6810,7 +6810,6 @@ button.messenger-chat-header-model {
 .workspace-dialog--drawio .el-dialog__body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   overflow: hidden;
 }
 
@@ -7003,11 +7002,56 @@ button.messenger-chat-header-model {
   height: 100%;
 }
 
+.workspace-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.workspace-editor-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.workspace-editor-header-title {
+  color: #1f2937;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-editor-header-meta {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  --workspace-editor-content-height: min(64vh, calc(var(--app-viewport-height, 100vh) - 220px));
+}
+
 .workspace-dialog--file-editor .workspace-editor-text,
 .workspace-dialog--file-editor .workspace-editor-code {
   flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  height: var(--workspace-editor-content-height);
+  max-height: var(--workspace-editor-content-height);
 }
 
 .workspace-dialog--file-editor .workspace-editor-code {
@@ -7020,10 +7064,11 @@ button.messenger-chat-header-model {
 }
 
 .workspace-dialog--file-editor .workspace-editor-code .code-mirror-editor-host {
-  min-height: 45vh;
-  height: 100%;
-  flex: 1 1 auto;
   min-height: 0;
+  height: var(--workspace-editor-content-height);
+  max-height: var(--workspace-editor-content-height);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .workspace-editor-head-actions {
@@ -7031,11 +7076,17 @@ button.messenger-chat-header-model {
   align-items: center;
   gap: 8px;
   margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .workspace-dialog--file-editor .workspace-editor-preview {
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  height: var(--workspace-editor-content-height);
+  max-height: var(--workspace-editor-content-height);
   overflow: hidden;
   border: 1px solid #cfd8e3;
   border-radius: 10px;
@@ -7043,13 +7094,46 @@ button.messenger-chat-header-model {
 }
 
 .workspace-dialog--file-editor .workspace-editor-preview-markdown {
+  flex: 1 1 auto;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 12px 14px 18px;
+  color: #1f2937 !important;
+}
+
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body p,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body li,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body h1,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body h2,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body h3,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body h4,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body h5,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body h6,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body blockquote,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body td,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body th {
+  color: #1f2937 !important;
+}
+
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown.messenger-markdown .markdown-body {
+  min-height: 100%;
+  color: #1f2937 !important;
+}
+
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown .markdown-body,
+.workspace-dialog.workspace-dialog--file-editor .workspace-editor-preview-markdown .markdown-body * {
+  color: #1f2937 !important;
 }
 
 .workspace-dialog--file-editor .workspace-editor-preview-frame {
+  flex: 1 1 auto;
   height: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -7058,6 +7142,20 @@ button.messenger-chat-header-model {
   height: 100%;
   border: none;
   background: #ffffff;
+  display: block;
+}
+
+.workspace-dialog--file-editor .workspace-editor-code .cm-editor {
+  height: var(--workspace-editor-content-height) !important;
+  max-height: var(--workspace-editor-content-height) !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+}
+
+.workspace-dialog--file-editor .workspace-editor-code .cm-scroller {
+  min-height: 0 !important;
+  min-width: 0 !important;
+  overflow: auto !important;
 }
 
 .workspace-dialog--file-preview .workspace-text-preview-shell,
@@ -7227,6 +7325,20 @@ button.messenger-chat-header-model {
   color: var(--ui-accent-deep);
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.45);
+  box-shadow: none;
+}
+
+.workspace-editor-head-actions .workspace-btn.secondary {
+  box-shadow: none !important;
+}
+
+.workspace-editor-close-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
 }
 
 :root[data-user-theme='dark'] .workspace-dialog .workspace-btn.workspace-btn--primary,

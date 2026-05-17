@@ -1556,7 +1556,13 @@ async fn admin_skills_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     state.reload_skills(&updated).await;
     Ok(Json(
-        json!({ "ok": true, "extracted": import_result.extracted, "message": i18n::t("message.upload_success") }),
+        json!({
+            "ok": true,
+            "extracted": import_result.extracted,
+            "top_level_dirs": import_result.top_level_dirs,
+            "final_names": import_result.final_names,
+            "message": i18n::t("message.upload_success")
+        }),
     ))
 }
 

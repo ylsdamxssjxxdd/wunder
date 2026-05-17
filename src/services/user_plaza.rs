@@ -693,6 +693,7 @@ async fn import_skill_pack_item(
         skill_import: Some(json!({
             "extracted": summary.extracted,
             "top_level_dirs": summary.top_level_dirs,
+            "final_names": summary.final_names,
         })),
         message: format!("imported skill plaza item: {}", record.title),
     })
@@ -744,6 +745,7 @@ fn resolve_custom_user_skill_spec(
 struct SkillArchiveImportSummary {
     extracted: usize,
     top_level_dirs: Vec<String>,
+    final_names: Vec<String>,
 }
 
 fn import_skill_archive_for_user(
@@ -774,6 +776,7 @@ fn import_skill_archive_for_user(
     Ok(SkillArchiveImportSummary {
         extracted: imported.extracted,
         top_level_dirs: imported.top_level_dirs,
+        final_names: imported.final_names,
     })
 }
 

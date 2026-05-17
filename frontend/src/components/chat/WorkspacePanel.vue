@@ -267,36 +267,51 @@
       top="clamp(10px, 4vh, 36px)"
       class="workspace-dialog workspace-dialog--file-editor"
       append-to-body
+      :show-close="false"
     >
-      <div class="workspace-preview-head">
-        <div class="workspace-preview-title">
-          {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+      <template #header>
+        <div class="workspace-editor-header">
+          <div class="workspace-editor-header-left">
+            <div class="workspace-editor-header-title">
+              {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+            </div>
+            <div class="workspace-editor-header-meta" :title="editor.entry?.path || ''">
+              {{ editor.entry?.path || '' }}
+            </div>
+          </div>
+          <div class="workspace-editor-head-actions">
+            <button
+              v-if="editorPreviewToggleVisible"
+              class="workspace-btn secondary"
+              type="button"
+              @click="toggleEditorPreview"
+            >
+              {{ editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered') }}
+            </button>
+            <button class="workspace-btn secondary workspace-editor-close-btn" type="button" @click="closeEditor">
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
-        <div class="workspace-preview-meta" :title="editor.entry?.path || ''">
-          {{ editor.entry?.path || '' }}
+      </template>
+      <div class="workspace-editor-body">
+        <div v-if="editor.previewMode" class="workspace-editor-preview">
+          <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
+            <iframe class="workspace-editor-preview-iframe" :srcdoc="editorHtmlPreviewSrcdoc"></iframe>
+          </div>
+          <div v-else class="workspace-editor-preview-markdown messenger-markdown">
+            <div class="markdown-body" v-html="editorPreviewHtml"></div>
+          </div>
         </div>
-        <div v-if="editorPreviewToggleVisible" class="workspace-editor-head-actions">
-          <button class="workspace-btn secondary" type="button" @click="toggleEditorPreview">
-            {{ editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered') }}
-          </button>
+        <div v-else class="workspace-editor-code">
+          <CodeMirrorEditor
+            v-model="editor.content"
+            :source-path="editor.entry?.path || editor.entry?.name || ''"
+            :readonly="editor.loading"
+            :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
+            light-surface
+          />
         </div>
-      </div>
-      <div v-if="editor.previewMode" class="workspace-editor-preview">
-        <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
-          <iframe class="workspace-editor-preview-iframe" :srcdoc="editorHtmlPreviewSrcdoc"></iframe>
-        </div>
-        <div v-else class="workspace-editor-preview-markdown messenger-markdown">
-          <div class="markdown-body" v-html="editorPreviewHtml"></div>
-        </div>
-      </div>
-      <div v-else class="workspace-editor-code">
-        <CodeMirrorEditor
-          v-model="editor.content"
-          :source-path="editor.entry?.path || editor.entry?.name || ''"
-          :readonly="editor.loading"
-          :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
-          light-surface
-        />
       </div>
       <template #footer>
         <button class="workspace-btn secondary" @click="closeEditor">{{ t('common.close') }}</button>
@@ -373,7 +388,7 @@ import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvent
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 import { renderMarkdown } from '@/utils/markdown';
-import { buildWorkspacePublicPath, buildWorkspacePublicPathFromScope, buildWorkspaceScopeId } from '@/utils/messageWorkspacePath';
+import { buildWorkspacePublicPath } from '@/utils/messageWorkspacePath';
 import {
   buildWorkspaceTreeCacheKey,
   cloneWorkspaceEntries,
@@ -382,6 +397,7 @@ import {
   writeWorkspaceTreeCache
 } from '@/utils/workspaceTreeCache';
 import { chatPerf } from '@/utils/chatPerf';
+import { useAuthStore } from '@/stores/auth';
 
 const props = defineProps({
   agentId: {
@@ -423,6 +439,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const authStore = useAuthStore();
 const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
 const preserveDockLayout = computed(() => props.preserveDockLayout);
@@ -3363,8 +3380,9 @@ const toggleEditorPreview = () => {
 
 const buildWorkspaceEditorPreviewBasePath = (relativeDirectoryPath: string): string => {
   const normalized = normalizeWorkspacePath(relativeDirectoryPath);
-  if (!state.path) return '';
-  const base = buildWorkspacePublicPath(normalizeWorkspacePath(state.path) || '', normalized || '.', normalizedContainerId.value);
+  const ownerId = String(authStore.user?.id || authStore.user?.user_id || authStore.user?.username || '').trim();
+  if (!ownerId) return '';
+  const base = buildWorkspacePublicPath(ownerId, normalized || '.', normalizedContainerId.value);
   return ensureTrailingSlash(base);
 };
 

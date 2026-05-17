@@ -1188,8 +1188,24 @@ const uploadUserSkillZip = async (file) => {
   if (!response.ok) {
     throw new Error(t("userTools.skills.uploadFailed", { message: response.status }));
   }
+  const result = await response.json();
   await loadUserSkills();
   syncPromptTools();
+  return result;
+};
+
+const buildUserUploadedSkillSuccessMessage = (originalName, result) => {
+  const normalizedOriginal = String(originalName || "").trim();
+  const finalNames = Array.isArray(result?.data?.final_names)
+    ? result.data.final_names.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (
+    finalNames.length > 0 &&
+    (finalNames.length !== 1 || finalNames[0] !== normalizedOriginal)
+  ) {
+    return t("userTools.skills.upload.renamed", { names: finalNames.join(", ") });
+  }
+  return t("userTools.skills.upload.success");
 };
 
 // 知识库自建工具：配置、共享与文档管理
@@ -1918,8 +1934,8 @@ export const initUserTools = () => {
       return;
     }
     try {
-      await uploadUserSkillZip(file);
-      notify(t("userTools.skills.upload.success"), "success");
+      const result = await uploadUserSkillZip(file);
+      notify(buildUserUploadedSkillSuccessMessage(file.name, result), "success");
     } catch (error) {
       notify(t("userTools.skills.upload.failed", { message: error.message }), "error");
     }

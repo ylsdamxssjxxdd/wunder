@@ -1,6 +1,6 @@
 use crate::services::archive_extract::extract_archive_bytes;
 use anyhow::{anyhow, Context, Result};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -66,6 +66,7 @@ pub fn is_supported_skill_archive_filename(filename: &str) -> bool {
 pub struct ImportedSkillArchive {
     pub extracted: usize,
     pub top_level_dirs: Vec<String>,
+    pub final_names: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +74,7 @@ struct ImportedArchiveEntry {
     source_relative: PathBuf,
     destination_relative: PathBuf,
     top_level_dir: String,
+    preferred_name: String,
 }
 
 pub fn import_skill_archive(
@@ -97,11 +99,36 @@ pub fn import_skill_archive(
             }
             discovered_files.push(relative);
         }
-        let entries = normalize_imported_skill_entries(&discovered_files, reserved_top_dirs)?;
+        let entries = normalize_imported_skill_entries(&discovered_files)?;
         let mut top_level_dirs = BTreeSet::new();
+        let mut final_names = BTreeSet::new();
+        let mut renamed_targets = HashSet::new();
+        let mut top_dir_renames: HashMap<String, String> = HashMap::new();
         for entry in entries {
+            let final_name = if let Some(existing) = top_dir_renames.get(&entry.top_level_dir) {
+                existing.clone()
+            } else {
+                let resolved = resolve_import_skill_name(
+                    target_root,
+                    &entry.preferred_name,
+                    reserved_top_dirs,
+                    &renamed_targets,
+                );
+                renamed_targets.insert(resolved.clone());
+                top_dir_renames.insert(entry.top_level_dir.clone(), resolved.clone());
+                resolved
+            };
             let source = temp_root.join(&entry.source_relative);
-            let destination = target_root.join(&entry.destination_relative);
+            let relative_under_skill = entry
+                .destination_relative
+                .strip_prefix(&entry.top_level_dir)
+                .unwrap_or(&entry.destination_relative);
+            let destination_relative = if relative_under_skill.as_os_str().is_empty() {
+                PathBuf::from(&final_name)
+            } else {
+                PathBuf::from(&final_name).join(relative_under_skill)
+            };
+            let destination = target_root.join(&destination_relative);
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -112,21 +139,23 @@ pub fn import_skill_archive(
                     destination.display()
                 )
             })?;
-            top_level_dirs.insert(entry.top_level_dir);
+            top_level_dirs.insert(final_name.clone());
+            final_names.insert(final_name.clone());
+        }
+        for final_name in &final_names {
+            rewrite_skill_md_name(&target_root.join(final_name), final_name)?;
         }
         Ok(ImportedSkillArchive {
             extracted: discovered_files.len(),
             top_level_dirs: top_level_dirs.into_iter().collect(),
+            final_names: final_names.into_iter().collect(),
         })
     })();
     let _ = fs::remove_dir_all(&temp_root);
     result
 }
 
-fn normalize_imported_skill_entries(
-    files: &[PathBuf],
-    reserved_top_dirs: &HashSet<String>,
-) -> Result<Vec<ImportedArchiveEntry>> {
+fn normalize_imported_skill_entries(files: &[PathBuf]) -> Result<Vec<ImportedArchiveEntry>> {
     let mut parsed_files = Vec::with_capacity(files.len());
     let mut has_direct_root_file = false;
 
@@ -148,7 +177,6 @@ fn normalize_imported_skill_entries(
         let mut output = Vec::with_capacity(parsed_files.len());
         for (relative, components) in parsed_files {
             let top_dir = components[0].clone();
-            ensure_skill_top_dir_allowed(&top_dir, reserved_top_dirs)?;
             match &direct_top_dir {
                 Some(existing) if existing != &top_dir => {
                     return Err(anyhow!(
@@ -162,6 +190,7 @@ fn normalize_imported_skill_entries(
                 source_relative: relative.clone(),
                 destination_relative: relative,
                 top_level_dir: top_dir,
+                preferred_name: components[0].clone(),
             });
         }
         return Ok(output);
@@ -179,7 +208,6 @@ fn normalize_imported_skill_entries(
         }
         let wrapper = components[0].clone();
         let nested_top_dir = components[1].clone();
-        ensure_skill_top_dir_allowed(&nested_top_dir, reserved_top_dirs)?;
         match &wrapper_dir {
             Some(existing) if existing != &wrapper => {
                 return Err(anyhow!(
@@ -203,19 +231,117 @@ fn normalize_imported_skill_entries(
             source_relative: relative,
             destination_relative,
             top_level_dir: nested_top_dir,
+            preferred_name: components[1].clone(),
         });
     }
 
     Ok(output)
 }
 
-fn ensure_skill_top_dir_allowed(top_dir: &str, reserved_top_dirs: &HashSet<String>) -> Result<()> {
-    if reserved_top_dirs.contains(top_dir) {
-        return Err(anyhow!(
-            "skill archive conflicts with builtin skill directory"
-        ));
+fn resolve_import_skill_name(
+    skill_root: &Path,
+    preferred: &str,
+    reserved_top_dirs: &HashSet<String>,
+    renamed_targets: &HashSet<String>,
+) -> String {
+    let base = normalize_import_skill_name_base(preferred, "skill");
+    if !reserved_top_dirs.contains(&base)
+        && !renamed_targets.contains(&base)
+        && !skill_root.join(&base).exists()
+    {
+        return base;
     }
+    let mut index = 2usize;
+    loop {
+        let next = format!("{base}-{index}");
+        if !reserved_top_dirs.contains(&next)
+            && !renamed_targets.contains(&next)
+            && !skill_root.join(&next).exists()
+        {
+            return next;
+        }
+        index += 1;
+    }
+}
+
+fn normalize_import_skill_name_base(raw: &str, fallback: &str) -> String {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return fallback.to_string();
+    }
+    let mut output = String::with_capacity(cleaned.len());
+    for ch in cleaned.chars() {
+        if ch.is_alphanumeric() {
+            if ch.is_ascii() {
+                output.push(ch.to_ascii_lowercase());
+            } else {
+                output.push(ch);
+            }
+        } else if ch == '_' || ch == '-' {
+            output.push(ch);
+        } else if ch.is_whitespace() {
+            output.push('-');
+        }
+    }
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let output = output.trim_matches('-').to_string();
+    if output.is_empty() {
+        fallback.to_string()
+    } else {
+        output
+    }
+}
+
+fn rewrite_skill_md_name(skill_dir: &Path, new_name: &str) -> Result<()> {
+    let skill_md = skill_dir.join("SKILL.md");
+    if !skill_md.is_file() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&skill_md)
+        .with_context(|| format!("read {}", skill_md.display()))?;
+    let rewritten = rewrite_frontmatter_name(&content, new_name);
+    fs::write(&skill_md, rewritten).with_context(|| format!("write {}", skill_md.display()))?;
     Ok(())
+}
+
+fn rewrite_frontmatter_name(content: &str, new_name: &str) -> String {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut in_frontmatter = false;
+    let mut frontmatter_ended = false;
+    let mut result = String::with_capacity(content.len());
+    for line in normalized.lines() {
+        if !frontmatter_ended {
+            if !in_frontmatter && line.trim() == "---" {
+                in_frontmatter = true;
+                result.push_str(line);
+                result.push('\n');
+                continue;
+            }
+            if in_frontmatter {
+                if line.trim() == "---" {
+                    frontmatter_ended = true;
+                    result.push_str(line);
+                    result.push('\n');
+                    continue;
+                }
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("name:") {
+                    if let Some(colon_pos) = line.find(':') {
+                        result.push_str(&line[..colon_pos + 1]);
+                        result.push(' ');
+                        result.push_str(new_name);
+                        result.push('\n');
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
 }
 
 fn normalized_path_components(path: &Path) -> Result<Vec<String>> {
