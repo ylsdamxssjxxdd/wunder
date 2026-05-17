@@ -3808,6 +3808,25 @@ mod tests {
     }
 
     #[test]
+    fn import_skill_archive_inserts_frontmatter_name_when_missing() {
+        let dir = tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("demo-skill")).expect("create existing skill dir");
+        let archive = build_skill_archive(&[
+            ("demo-skill/SKILL.md", "# Demo Skill\n\ncontent\n"),
+            ("demo-skill/run.py", "print('ok')\n"),
+        ]);
+
+        let imported =
+            import_skill_archive("demo-skill.zip", &archive, dir.path(), &HashSet::new())
+                .expect("import skill without frontmatter");
+
+        assert_eq!(imported.top_level_dirs, vec!["demo-skill".to_string()]);
+        let skill_md = fs::read_to_string(dir.path().join("demo-skill").join("SKILL.md"))
+            .expect("read imported skill");
+        assert!(skill_md.starts_with("---\nname: demo-skill\n---\n"));
+    }
+
+    #[test]
     fn load_skills_accepts_skill_markdown_without_frontmatter() {
         let dir = tempdir().expect("tempdir");
         let skill_dir = dir.path().join("plain-skill");

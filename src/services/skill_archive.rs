@@ -308,37 +308,51 @@ fn rewrite_skill_md_name(skill_dir: &Path, new_name: &str) -> Result<()> {
 
 fn rewrite_frontmatter_name(content: &str, new_name: &str) -> String {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
-    let mut in_frontmatter = false;
-    let mut frontmatter_ended = false;
-    let mut result = String::with_capacity(content.len());
-    for line in normalized.lines() {
-        if !frontmatter_ended {
-            if !in_frontmatter && line.trim() == "---" {
-                in_frontmatter = true;
-                result.push_str(line);
+    let trimmed = normalized.trim_start_matches('\u{feff}');
+    let lines = trimmed.lines().collect::<Vec<_>>();
+    let has_frontmatter = lines.first().is_some_and(|line| line.trim() == "---");
+    if !has_frontmatter {
+        return format!("---\nname: {new_name}\n---\n{trimmed}\n");
+    }
+
+    let mut result = String::with_capacity(normalized.len() + new_name.len() + 16);
+    result.push_str("---\n");
+    let mut i = 1usize;
+    let mut name_rewritten = false;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.trim() == "---" {
+            if !name_rewritten {
+                result.push_str("name: ");
+                result.push_str(new_name);
                 result.push('\n');
-                continue;
             }
-            if in_frontmatter {
-                if line.trim() == "---" {
-                    frontmatter_ended = true;
-                    result.push_str(line);
-                    result.push('\n');
-                    continue;
-                }
-                let trimmed = line.trim_start();
-                if trimmed.starts_with("name:") {
-                    if let Some(colon_pos) = line.find(':') {
-                        result.push_str(&line[..colon_pos + 1]);
-                        result.push(' ');
-                        result.push_str(new_name);
-                        result.push('\n');
-                        continue;
-                    }
-                }
+            result.push_str("---\n");
+            for body_line in &lines[i + 1..] {
+                result.push_str(body_line);
+                result.push('\n');
+            }
+            return result;
+        }
+        let trimmed_line = line.trim_start();
+        if trimmed_line.starts_with("name:") && !name_rewritten {
+            if let Some(colon_pos) = line.find(':') {
+                result.push_str(&line[..colon_pos + 1]);
+                result.push(' ');
+                result.push_str(new_name);
+                result.push('\n');
+                name_rewritten = true;
+                i += 1;
+                continue;
             }
         }
         result.push_str(line);
+        result.push('\n');
+        i += 1;
+    }
+    if !name_rewritten {
+        result.push_str("name: ");
+        result.push_str(new_name);
         result.push('\n');
     }
     result

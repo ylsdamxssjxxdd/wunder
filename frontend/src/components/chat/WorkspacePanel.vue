@@ -260,7 +260,101 @@
       </template>
     </el-dialog>
 
+    <Teleport v-if="editor.visible && editor.fullscreen" to=".messenger-view">
+      <div
+        :class="[
+          'workspace-editor-shell',
+          'workspace-editor-shell--modal',
+          'workspace-editor-shell--with-sidebar',
+          sidebarVisible ? 'is-sidebar-visible' : 'is-sidebar-hidden'
+        ]"
+      >
+        <div class="workspace-editor-panel workspace-dialog workspace-dialog--file-editor workspace-editor-panel--with-sidebar">
+          <div class="workspace-editor-head">
+            <div class="workspace-editor-header">
+              <div class="workspace-editor-header-left">
+                <div class="workspace-editor-header-title">
+                  {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+                </div>
+              </div>
+              <div class="workspace-editor-head-actions">
+                <button
+                  class="workspace-btn secondary workspace-editor-icon-btn"
+                  type="button"
+                  :disabled="editor.loading"
+                  :title="t('common.save')"
+                  :aria-label="t('common.save')"
+                  @click="saveEditor"
+                >
+                  <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+                </button>
+                <button
+                  v-if="editorPreviewToggleVisible"
+                  class="workspace-btn secondary workspace-editor-icon-btn"
+                  type="button"
+                  :title="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+                  :aria-label="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+                  @click="toggleEditorPreview"
+                >
+                  <i
+                    :class="[
+                      'fa-solid',
+                      editor.previewMode ? 'fa-code' : 'fa-eye'
+                    ]"
+                    aria-hidden="true"
+                  ></i>
+                </button>
+                <button
+                  class="workspace-btn secondary workspace-editor-icon-btn"
+                  type="button"
+                  :title="editor.fullscreen ? t('beeroom.canvas.exitFullscreen') : t('beeroom.canvas.enterFullscreen')"
+                  :aria-label="editor.fullscreen ? t('beeroom.canvas.exitFullscreen') : t('beeroom.canvas.enterFullscreen')"
+                  @click="toggleEditorFullscreen"
+                >
+                  <i
+                    :class="[
+                      'fa-solid',
+                      editor.fullscreen ? 'fa-compress' : 'fa-expand'
+                    ]"
+                    aria-hidden="true"
+                  ></i>
+                </button>
+                <button
+                  class="workspace-btn secondary workspace-editor-icon-btn workspace-editor-close-btn"
+                  type="button"
+                  :title="t('common.close')"
+                  :aria-label="t('common.close')"
+                  @click="closeEditor"
+                >
+                  <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="workspace-editor-body">
+            <div v-if="editor.previewMode" class="workspace-editor-preview">
+              <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
+                <iframe class="workspace-editor-preview-iframe" :srcdoc="editorHtmlPreviewSrcdoc"></iframe>
+              </div>
+              <div v-else class="workspace-editor-preview-markdown messenger-markdown">
+                <div class="markdown-body" v-html="editorPreviewHtml"></div>
+              </div>
+            </div>
+            <div v-else class="workspace-editor-code">
+              <CodeMirrorEditor
+                v-model="editor.content"
+                :source-path="editor.entry?.path || editor.entry?.name || ''"
+                :readonly="editor.loading"
+                :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
+                light-surface
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
     <el-dialog
+      v-else
       v-model="editor.visible"
       :title="t('workspace.editor.dialogTitle')"
       width="720px"
@@ -275,20 +369,56 @@
             <div class="workspace-editor-header-title">
               {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
             </div>
-            <div class="workspace-editor-header-meta" :title="editor.entry?.path || ''">
-              {{ editor.entry?.path || '' }}
-            </div>
           </div>
           <div class="workspace-editor-head-actions">
             <button
-              v-if="editorPreviewToggleVisible"
-              class="workspace-btn secondary"
+              class="workspace-btn secondary workspace-editor-icon-btn"
               type="button"
+              :disabled="editor.loading"
+              :title="t('common.save')"
+              :aria-label="t('common.save')"
+              @click="saveEditor"
+            >
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="editorPreviewToggleVisible"
+              class="workspace-btn secondary workspace-editor-icon-btn"
+              type="button"
+              :title="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
+              :aria-label="editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered')"
               @click="toggleEditorPreview"
             >
-              {{ editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered') }}
+              <i
+                :class="[
+                  'fa-solid',
+                  editor.previewMode ? 'fa-code' : 'fa-eye'
+                ]"
+                aria-hidden="true"
+              ></i>
             </button>
-            <button class="workspace-btn secondary workspace-editor-close-btn" type="button" @click="closeEditor">
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn"
+              type="button"
+              :title="editor.fullscreen ? t('beeroom.canvas.exitFullscreen') : t('beeroom.canvas.enterFullscreen')"
+              :aria-label="editor.fullscreen ? t('beeroom.canvas.exitFullscreen') : t('beeroom.canvas.enterFullscreen')"
+              @click="toggleEditorFullscreen"
+            >
+              <i
+                :class="[
+                  'fa-solid',
+                  editor.fullscreen ? 'fa-compress' : 'fa-expand'
+                ]"
+                aria-hidden="true"
+              ></i>
+            </button>
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn workspace-editor-close-btn"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="closeEditor"
+            >
               <i class="fa-solid fa-xmark" aria-hidden="true"></i>
             </button>
           </div>
@@ -313,12 +443,6 @@
           />
         </div>
       </div>
-      <template #footer>
-        <button class="workspace-btn secondary" @click="closeEditor">{{ t('common.close') }}</button>
-        <button class="workspace-btn workspace-btn--primary" :disabled="editor.loading" @click="saveEditor">
-          {{ t('common.save') }}
-        </button>
-      </template>
     </el-dialog>
 
     <OnlyOfficeEditorDialog
@@ -840,7 +964,8 @@ const state = reactive({
     entry: null,
     content: '',
     loading: false,
-    previewMode: false
+    previewMode: false,
+    fullscreen: false
   },
   onlyOffice: {
     visible: false,
@@ -3371,11 +3496,16 @@ const closeEditor = () => {
   state.editor.content = '';
   state.editor.loading = false;
   state.editor.previewMode = false;
+  state.editor.fullscreen = false;
 };
 
 const toggleEditorPreview = () => {
   if (!editorPreviewToggleVisible.value) return;
   state.editor.previewMode = !state.editor.previewMode;
+};
+
+const toggleEditorFullscreen = () => {
+  state.editor.fullscreen = !state.editor.fullscreen;
 };
 
 const buildWorkspaceEditorPreviewBasePath = (relativeDirectoryPath: string): string => {
@@ -3410,7 +3540,6 @@ const saveEditor = async () => {
       })
     );
     ElMessage.success(t('common.saved'));
-    closeEditor();
     await refreshWorkspacePathWithFallback(parentPath);
   } catch (error) {
     showApiError(error, t('workspace.editor.saveFailed'));
