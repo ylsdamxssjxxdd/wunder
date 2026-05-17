@@ -5,6 +5,7 @@
       :source-path="sourcePathValue"
       readonly
       :placeholder="emptyTextValue"
+      :light-surface="props.lightSurface !== false"
     />
   </div>
 </template>
@@ -19,6 +20,7 @@ const props = defineProps<{
   sourcePath?: string;
   wrapperClass?: string;
   emptyText?: string;
+  lightSurface?: boolean;
 }>();
 
 const wrapperClass = computed(() => props.wrapperClass || '');

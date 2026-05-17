@@ -687,12 +687,13 @@
   background: transparent;
   border: none;
   color: var(--chat-text);
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
   resize: none;
   min-height: 48px;
   max-height: 220px;
   overflow-y: auto;
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 17px;
+  font-weight: 400;
   outline: none;
   line-height: 1.65;
   letter-spacing: 0.01em;

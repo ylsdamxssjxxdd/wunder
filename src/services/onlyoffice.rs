@@ -33,9 +33,6 @@ const PLAIN_TEXT_ALIAS_EXTENSIONS: &[&str] = &[
     "svelte", "swift", "toml", "ts", "tsx", "vue", "yaml", "yml", "zsh",
 ];
 const DOCUMENT_KEY_VERSION: &str = "v3";
-const AI_PLUGIN_GUID: &str = "asc.{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}";
-const AI_PLUGIN_CONFIG_PATH: &str =
-    "/sdkjs-plugins/{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}/config.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlyOfficeAccessToken {
@@ -350,7 +347,6 @@ pub fn build_editor_config(
     let document_type =
         document_type(extension).ok_or_else(|| anyhow::anyhow!("unsupported file type"))?;
     let editable = is_editable_extension(extension);
-    let ai_plugin_config_url = ai_plugin_config_url(resolved);
     let mut editor_config = json!({
         "document": {
             "fileType": file_type,
@@ -376,10 +372,6 @@ pub fn build_editor_config(
             },
             "lang": normalize_language(language),
             "mode": if editable { "edit" } else { "view" },
-            "plugins": {
-                "autostart": [AI_PLUGIN_GUID],
-                "pluginsData": [ai_plugin_config_url]
-            },
             "user": {
                 "id": user_id,
                 "name": user_id
@@ -394,35 +386,6 @@ pub fn build_editor_config(
         map.insert("token".to_string(), Value::String(token));
     }
     Ok(editor_config)
-}
-
-fn ai_plugin_config_url(resolved: &OnlyOfficeResolvedConfig) -> String {
-    if let Some(base_url) = resolved
-        .document_server_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return format!(
-            "{}{}",
-            base_url.trim_end_matches('/'),
-            AI_PLUGIN_CONFIG_PATH
-        );
-    }
-    if let Some((base_url, _)) = resolved
-        .api_url
-        .trim()
-        .split_once("/web-apps/apps/api/documents/api.js")
-    {
-        if !base_url.is_empty() {
-            return format!(
-                "{}{}",
-                base_url.trim_end_matches('/'),
-                AI_PLUGIN_CONFIG_PATH
-            );
-        }
-    }
-    AI_PLUGIN_CONFIG_PATH.to_string()
 }
 
 fn sign_json(secret: &str, payload: &Value) -> anyhow::Result<String> {
@@ -506,7 +469,7 @@ mod tests {
     use super::{
         build_document_key, build_editor_config, content_type, document_type, file_type,
         is_editable_extension, is_supported_extension, sign_access_token, verify_access_token,
-        OnlyOfficeResolvedConfig, AI_PLUGIN_CONFIG_PATH, AI_PLUGIN_GUID, TOKEN_KIND_FILE,
+        OnlyOfficeResolvedConfig, TOKEN_KIND_FILE,
     };
 
     #[test]
@@ -550,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_config_autostarts_onlyoffice_ai_plugin() {
+    fn editor_config_includes_token_without_plugins() {
         let resolved = OnlyOfficeResolvedConfig {
             api_url: "http://127.0.0.1/web-apps/apps/api/documents/api.js".to_string(),
             document_server_url: Some("http://127.0.0.1".to_string()),
@@ -574,13 +537,7 @@ mod tests {
             "zh-CN",
         )
         .expect("editor config");
-        let plugins = &config["editorConfig"]["plugins"];
-
-        assert_eq!(plugins["autostart"], serde_json::json!([AI_PLUGIN_GUID]));
-        assert_eq!(
-            plugins["pluginsData"],
-            serde_json::json!([format!("http://127.0.0.1{AI_PLUGIN_CONFIG_PATH}")])
-        );
+        assert!(config["editorConfig"].get("plugins").is_none());
         assert!(config["token"].as_str().is_some());
     }
 }

@@ -52,6 +52,7 @@
           :content="content"
           :source-path="sourcePath"
           wrapper-class="messenger-markdown"
+          light-surface
         />
         <pre v-else class="workspace-preview-text">{{ content || t('workspace.preview.emptyContent') }}</pre>
       </template>

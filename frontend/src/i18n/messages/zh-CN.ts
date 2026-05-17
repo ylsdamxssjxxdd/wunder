@@ -2276,6 +2276,8 @@ export default {
   'workspace.dragUpload.success': '拖拽上传成功',
   'workspace.editor.dialogTitle': '编辑文件',
   'workspace.editor.loadFailed': '加载失败',
+  'workspace.editor.previewRendered': '预览',
+  'workspace.editor.previewSource': '源码',
   'workspace.editor.previewOnly': '仅预览',
   'workspace.editor.saveFailed': '保存失败',
   'workspace.editor.tooLarge': '文件过大，无法编辑',

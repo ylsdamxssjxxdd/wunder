@@ -275,13 +275,27 @@
         <div class="workspace-preview-meta" :title="editor.entry?.path || ''">
           {{ editor.entry?.path || '' }}
         </div>
+        <div v-if="editorPreviewToggleVisible" class="workspace-editor-head-actions">
+          <button class="workspace-btn secondary" type="button" @click="toggleEditorPreview">
+            {{ editor.previewMode ? t('workspace.editor.previewSource') : t('workspace.editor.previewRendered') }}
+          </button>
+        </div>
       </div>
-      <div class="workspace-editor-code">
+      <div v-if="editor.previewMode" class="workspace-editor-preview">
+        <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
+          <iframe class="workspace-editor-preview-iframe" :srcdoc="editorHtmlPreviewSrcdoc"></iframe>
+        </div>
+        <div v-else class="workspace-editor-preview-markdown messenger-markdown">
+          <div class="markdown-body" v-html="editorPreviewHtml"></div>
+        </div>
+      </div>
+      <div v-else class="workspace-editor-code">
         <CodeMirrorEditor
           v-model="editor.content"
           :source-path="editor.entry?.path || editor.entry?.name || ''"
           :readonly="editor.loading"
           :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
+          light-surface
         />
       </div>
       <template #footer>
@@ -358,6 +372,8 @@ import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { renderMarkdown } from '@/utils/markdown';
+import { buildWorkspacePublicPath, buildWorkspacePublicPathFromScope, buildWorkspaceScopeId } from '@/utils/messageWorkspacePath';
 import {
   buildWorkspaceTreeCacheKey,
   cloneWorkspaceEntries,
@@ -806,7 +822,8 @@ const state = reactive({
     visible: false,
     entry: null,
     content: '',
-    loading: false
+    loading: false,
+    previewMode: false
   },
   onlyOffice: {
     visible: false,
@@ -839,6 +856,35 @@ const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
 const onlyOffice = computed(() => state.onlyOffice);
 const drawio = computed(() => state.drawio);
+const editorPreviewType = computed(() => {
+  const extension = getWorkspaceExtension(state.editor.entry);
+  if (extension === 'html' || extension === 'htm' || extension === 'xhtml') return 'html';
+  if (extension === 'md' || extension === 'markdown') return 'markdown';
+  return '';
+});
+const editorPreviewToggleVisible = computed(() => Boolean(editorPreviewType.value));
+const editorPreviewHtml = computed(() =>
+  editorPreviewType.value === 'markdown' ? renderMarkdown(String(state.editor.content || '')) : ''
+);
+const editorHtmlPreviewSrcdoc = computed(() => {
+  if (editorPreviewType.value !== 'html') return '';
+  const entryPath = normalizeWorkspacePath(state.editor.entry?.path || '');
+  if (!entryPath) {
+    return String(state.editor.content || '');
+  }
+  const parentPath = getWorkspaceParentPath(entryPath);
+  const basePath = buildWorkspaceEditorPreviewBasePath(parentPath);
+  const rawHtml = String(state.editor.content || '');
+  if (!basePath) return rawHtml;
+  const baseTag = `<base href="${escapeHtmlAttribute(basePath)}">`;
+  if (/<head[\s>]/i.test(rawHtml)) {
+    return rawHtml.replace(/<head(\s[^>]*)?>/i, (matched) => `${matched}${baseTag}`);
+  }
+  if (/<html[\s>]/i.test(rawHtml)) {
+    return rawHtml.replace(/<html(\s[^>]*)?>/i, (matched) => `${matched}<head>${baseTag}</head>`);
+  }
+  return `<!DOCTYPE html><html><head>${baseTag}</head><body>${rawHtml}</body></html>`;
+});
 const workspaceNewFileTemplates = computed<WorkspaceNewFileTemplate[]>(() => [
   {
     id: 'text',
@@ -3307,7 +3353,33 @@ const closeEditor = () => {
   state.editor.entry = null;
   state.editor.content = '';
   state.editor.loading = false;
+  state.editor.previewMode = false;
 };
+
+const toggleEditorPreview = () => {
+  if (!editorPreviewToggleVisible.value) return;
+  state.editor.previewMode = !state.editor.previewMode;
+};
+
+const buildWorkspaceEditorPreviewBasePath = (relativeDirectoryPath: string): string => {
+  const normalized = normalizeWorkspacePath(relativeDirectoryPath);
+  if (!state.path) return '';
+  const base = buildWorkspacePublicPath(normalizeWorkspacePath(state.path) || '', normalized || '.', normalizedContainerId.value);
+  return ensureTrailingSlash(base);
+};
+
+const ensureTrailingSlash = (value: string): string => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.endsWith('/') ? text : `${text}/`;
+};
+
+const escapeHtmlAttribute = (value: string): string =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 
 const saveEditor = async () => {
   if (!state.editor.entry) return;

@@ -2314,6 +2314,8 @@ export default {
   'workspace.dragUpload.success': 'Drag upload succeeded',
   'workspace.editor.dialogTitle': 'Edit file',
   'workspace.editor.loadFailed': 'Load failed',
+  'workspace.editor.previewRendered': 'Preview',
+  'workspace.editor.previewSource': 'Source',
   'workspace.editor.previewOnly': 'Preview only',
   'workspace.editor.saveFailed': 'Save failed',
   'workspace.editor.tooLarge': 'File too large to edit',
