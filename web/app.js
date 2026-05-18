@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20260512-02";
+import { elements } from "./modules/elements.js?v=20260518-01";
 
 import { state } from "./modules/state.js";
 
@@ -42,9 +42,9 @@ import {
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260215-01";
 import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260507-02";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
-import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260516-02";
+import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
-import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260215-01";
+import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260518-01";
 import { initCompanionsPanel, loadCompanions } from "./modules/companions.js?v=20260506-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
@@ -58,9 +58,13 @@ import {
   onLspPanelDeactivate,
 } from "./modules/lsp.js?v=20260215-01";
 
-import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260215-01";
+import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260518-01";
 
-import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260215-01";
+import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260518-01";
+import {
+  initToolVisibilityPanel,
+  loadToolVisibilityPanel,
+} from "./modules/tool-visibility.js?v=20260518-01";
 import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260215-01";
 
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260215-01";
@@ -181,6 +185,7 @@ const panelMap = {
   a2aServices: { panel: elements.a2aServicesPanel, nav: elements.navBuiltin },
 
   skills: { panel: elements.skillsPanel, nav: elements.navBuiltin },
+  toolVisibility: { panel: elements.toolVisibilityPanel, nav: elements.navBuiltin },
 
   knowledge: { panel: elements.knowledgePanel, nav: elements.navBuiltin },
 
@@ -204,7 +209,7 @@ const panelMap = {
 
 };
 
-const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "a2aServices", "skills"]);
+const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "a2aServices", "skills", "toolVisibility"]);
 
 const syncToolManagerShortcutState = (activePanel) => {
   const currentPanel = TOOL_MANAGER_PANELS.has(activePanel) ? activePanel : "";
@@ -696,6 +701,20 @@ const bindNavigation = () => {
 
   };
 
+  const openToolVisibilityPanel = async () => {
+    switchPanel("toolVisibility");
+    if (!state.panelLoaded.toolVisibility) {
+      try {
+        await loadToolVisibilityPanel();
+        state.panelLoaded.toolVisibility = true;
+      } catch (error) {
+        elements.toolVisibilityList.textContent = t("common.loadFailedWithMessage", {
+          message: error.message,
+        });
+      }
+    }
+  };
+
   const openKnowledgePanel = async () => {
 
     switchPanel("knowledge");
@@ -728,6 +747,7 @@ const bindNavigation = () => {
     knowledge: openKnowledgePanel,
     a2aServices: openA2aServicesPanel,
     skills: openSkillsPanel,
+    toolVisibility: openToolVisibilityPanel,
   };
 
   const toolShortcutIdMap = {
@@ -736,6 +756,7 @@ const bindNavigation = () => {
     toolManagerOpenKnowledge: "knowledge",
     toolManagerOpenA2aServices: "a2aServices",
     toolManagerOpenSkills: "skills",
+    toolManagerOpenSkillVisibility: "toolVisibility",
   };
 
   const ensureToolManagerShortcutMirrors = () => {
@@ -765,6 +786,7 @@ const bindNavigation = () => {
       elements.knowledgePanel,
       elements.a2aServicesPanel,
       elements.skillsPanel,
+      elements.toolVisibilityPanel,
     ];
     const resolveMirrorInsertAfterHeader = (panel) => {
       if (!panel) {
@@ -1243,6 +1265,8 @@ const bootstrap = async () => {
   initBuiltinPanel();
 
   initSkillsPanel();
+
+  initToolVisibilityPanel();
 
   initKnowledgePanel();
 

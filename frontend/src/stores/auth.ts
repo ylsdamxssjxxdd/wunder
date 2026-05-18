@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 
-import { fetchMe, login, loginDemo, register } from '@/api/auth';
+import { fetchMe, login, loginDemo, logout as logoutRequest, register } from '@/api/auth';
 import {
   ensureDemoIdentity,
   ensureDemoProfile,
@@ -129,10 +129,18 @@ export const useAuthStore = defineStore('auth', {
         profileInFlight = null;
       }
     },
-    logout() {
-      this.token = '';
-      this.user = null;
-      clearAccessToken();
+    async logout() {
+      try {
+        if (this.token) {
+          await logoutRequest();
+        }
+      } catch (_error) {
+        // Best effort: local sign-out must still complete even if the server call fails.
+      } finally {
+        this.token = '';
+        this.user = null;
+        clearAccessToken();
+      }
     }
   }
 });

@@ -157,6 +157,8 @@ pub struct WorkerCardPreset {
     pub revision: u64,
     #[serde(default = "default_worker_card_preset_status")]
     pub status: String,
+    #[serde(default)]
+    pub visible_unit_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -170,6 +172,7 @@ pub struct WorkerCardRecordUpdate {
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,
+    pub visible_unit_ids: Vec<String>,
     pub preset_questions: Vec<String>,
     pub approval_mode: String,
     pub is_shared: bool,
@@ -307,6 +310,11 @@ pub fn parse_worker_card(
         sandbox_container_id: normalize_container_id(document.runtime.sandbox_container_id),
         silent: document.runtime.silent,
         prefer_mother: document.runtime.prefer_mother,
+        visible_unit_ids: document
+            .preset
+            .as_ref()
+            .map(|item| item.visible_unit_ids.clone())
+            .unwrap_or_default(),
     }
 }
 

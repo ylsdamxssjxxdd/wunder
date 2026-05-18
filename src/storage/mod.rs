@@ -152,6 +152,8 @@ pub struct UserAgentPresetSnapshot {
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,
+    #[serde(default)]
+    pub visible_unit_ids: Vec<String>,
     pub preset_questions: Vec<String>,
     pub approval_mode: String,
     pub status: String,

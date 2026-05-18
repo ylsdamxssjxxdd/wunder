@@ -3068,6 +3068,25 @@
   background: #ffedd5;
 }
 
+.user-account-table .col-user-account-user {
+  width: 140px;
+}
+
+.user-account-table .col-user-account-unit {
+  width: 180px;
+}
+
+.user-account-table .col-user-action {
+  width: 220px;
+}
+
+.user-account-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 .skill-source-tag.is-custom {
   color: #1d4ed8;
   border: 1px solid #bfdbfe;
@@ -3246,6 +3265,11 @@
   overflow: hidden;
 }
 
+.tool-visibility-detail {
+  display: flex;
+  flex-direction: column;
+}
+
 .skills-detail-pane {
   display: flex;
   flex-direction: column;
@@ -3280,6 +3304,21 @@
   padding: 8px;
   overflow: auto;
   color: #1f2937;
+}
+
+.tool-visibility-tree {
+  min-height: 360px;
+  max-height: 56vh;
+  border: 1px dashed #c7d2fe;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px;
+  overflow: auto;
+  color: #1f2937;
+}
+
+.tool-visibility-tree .tool-item {
+  align-items: flex-start;
 }
 
 .skill-tree-item {

@@ -582,6 +582,10 @@
                     <i class="fa-solid fa-trash"></i>
                     <span data-i18n="common.delete">删除</span>
                   </button>
+                  <button id="presetAgentVisibilityBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-eye"></i>
+                    <span data-i18n="visibility.title">可见性</span>
+                  </button>
                 </div>
               </div>
 
@@ -923,30 +927,32 @@
             <div class="list-header">
               <h1 data-i18n="userAccounts.title">用户管理</h1>
               <div class="header-actions">
-                <div class="header-input">
-                  <label for="userAccountSearchInput" data-i18n="userAccounts.search.label">搜索用户</label>
-                  <input
-                    id="userAccountSearchInput"
-                    type="text"
-                    placeholder="用户ID或邮箱"
-                    data-i18n-placeholder="userAccounts.search.placeholder"
-                  />
-                </div>
-                <button id="userAccountRefreshBtn" class="secondary btn-with-icon">
-                  <i class="fa-solid fa-arrows-rotate"></i>
-                  <span data-i18n="common.refresh">刷新</span>
-                </button>
-                <button id="userAccountSeedBtn" class="secondary btn-with-icon">
+              <div class="header-input">
+                <label for="userAccountSearchInput" data-i18n="userAccounts.search.label">搜索用户</label>
+                <input
+                  id="userAccountSearchInput"
+                  type="text"
+                  placeholder="用户ID或邮箱"
+                  data-i18n-placeholder="userAccounts.search.placeholder"
+                />
+              </div>
+              <div class="header-input">
+                <label for="userAccountUnitFilter" data-i18n="userAccounts.filter.unit">所属单位</label>
+                <select id="userAccountUnitFilter">
+                  <option value="" data-i18n="userAccounts.filter.unit.all">全部单位</option>
+                </select>
+              </div>
+              <button id="userAccountRefreshBtn" class="secondary btn-with-icon btn-compact icon-only" type="button" data-i18n-title="common.refresh" data-i18n-aria-label="common.refresh">
+                <i class="fa-solid fa-arrows-rotate"></i>
+              </button>
+                <button id="userAccountSeedBtn" class="secondary btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.seed" data-i18n-aria-label="userAccounts.action.seed">
                   <i class="fa-solid fa-flask"></i>
-                  <span data-i18n="userAccounts.action.seed">新增测试用户</span>
                 </button>
-                <button id="userAccountCleanupBtn" class="secondary btn-with-icon">
+                <button id="userAccountCleanupBtn" class="secondary btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.cleanupTest" data-i18n-aria-label="userAccounts.action.cleanupTest">
                   <i class="fa-solid fa-trash"></i>
-                  <span data-i18n="userAccounts.action.cleanupTest">删除测试用户</span>
                 </button>
-                <button id="userAccountCreateBtn" class="btn-with-icon">
+                <button id="userAccountCreateBtn" class="btn-with-icon btn-compact icon-only" type="button" data-i18n-title="userAccounts.action.create" data-i18n-aria-label="userAccounts.action.create">
                   <i class="fa-solid fa-user-plus"></i>
-                  <span data-i18n="userAccounts.action.create">新增用户</span>
                 </button>
               </div>
             </div>
@@ -957,7 +963,8 @@
               <div class="monitor-table-scroll">
                 <table class="monitor-table user-account-table">
                   <colgroup>
-                    <col class="col-user-id" />
+                    <col class="col-user-id col-user-account-user" />
+                    <col class="col-user-account-unit" />
                     <col class="col-user-online" />
                     <col class="col-user-quota" />
                     <col class="col-user-login" />
@@ -967,6 +974,7 @@
                   <thead>
                     <tr>
                       <th data-i18n="userAccounts.table.user">用户</th>
+                      <th data-i18n="userAccounts.table.unit">所属单位</th>
                       <th data-i18n="userAccounts.table.online">在线状态</th>
                       <th data-i18n="userAccounts.table.quota">额度</th>
                       <th data-i18n="userAccounts.table.lastLogin">最近登录</th>
@@ -3003,6 +3011,10 @@
               <i class="fa-solid fa-book"></i>
               <span data-i18n="panel.skills">技能管理</span>
             </button>
+            <button id="toolManagerOpenSkillVisibility" class="secondary btn-with-icon tool-manager-shortcut" type="button" data-tool-panel="toolVisibility" aria-pressed="false">
+              <i class="fa-solid fa-eye"></i>
+              <span data-i18n="visibility.title">可见性</span>
+            </button>
           </div>
           <div class="skills-panel">
             <div id="builtinToolsList" class="tool-list"></div>
@@ -3076,6 +3088,40 @@
                     autocapitalize="off"
                   ></textarea>
                 </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="toolVisibilityPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="visibility.title">可见性</h1>
+            <div class="header-actions">
+              <button id="toolVisibilityRefreshBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+              <button id="toolVisibilitySaveBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i>
+                <span data-i18n="common.save">保存</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips">展示所有已开放的工具，并按单位控制可见性。</div>
+          <div class="skills-layout">
+            <div class="skills-sidebar">
+              <div class="skills-section-title">已开放工具</div>
+              <div id="toolVisibilityList" class="skills-list"></div>
+            </div>
+            <div class="skills-detail tool-visibility-detail">
+              <div class="skills-detail-pane">
+                <div class="detail-header">
+                  <div>
+                    <div id="toolVisibilityDetailTitle" class="detail-title">未选择工具</div>
+                    <div id="toolVisibilityDetailMeta" class="muted skill-detail-meta-line"></div>
+                  </div>
+                </div>
+                <div class="skills-section-title">可见单位</div>
+                <div id="toolVisibilityUnitsTree" class="tool-visibility-tree"></div>
               </div>
             </div>
           </div>
@@ -5451,6 +5497,28 @@
         </div>
       </div>
     </div>
+    <div id="presetAgentVisibilityModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="detail-title" data-i18n="visibility.title">可见性</div>
+          <button id="presetAgentVisibilityModalClose" class="icon-btn" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="tips">勾选单位即可控制可见范围；勾选上级单位会自动选中全部下级单位。</div>
+          <div id="presetAgentVisibilityTree" class="tool-visibility-tree"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="presetAgentVisibilityModalCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i>
+            <span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="presetAgentVisibilityModalSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-floppy-disk"></i>
+            <span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
 <div id="toolDetailModal" class="modal tool-detail-modal">
       <div class="modal-card tool-detail-card">
         <div class="modal-header">
@@ -5905,7 +5973,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260516-02"></script>
+    <script type="module" src="./app.js?v=20260518-01"></script>
 </body>
 </html>
 

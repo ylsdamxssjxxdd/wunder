@@ -95,6 +95,7 @@ pub async fn ensure_external_embed_agent_with_runtime(
         skills,
         bindings,
         tool_access,
+        org_units: user_store.list_org_units().unwrap_or_default(),
     };
     let mut tool_names = compute_allowed_tool_names(user, &context)
         .into_iter()

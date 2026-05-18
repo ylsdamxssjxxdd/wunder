@@ -5,7 +5,7 @@ import { appendLog } from "./log.js?v=20260108-02";
 import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260516-01";
-import { ensureOrgUnitsLoaded, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
+import { ensureOrgUnitsLoaded, getOrgUnitMap, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
 
 const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
 const DEFAULT_TEST_USER_PASSWORD = "Test@123456";
@@ -27,6 +27,7 @@ const ensureUserAccountsState = () => {
       selectedId: "",
       loaded: false,
       search: "",
+      unitId: "",
       loading: false,
       pendingReload: false,
       pagination: {
@@ -65,6 +66,7 @@ const ensureUserAccountElements = () => {
   const requiredKeys = [
     "userAccountSearchInput",
     "userAccountRefreshBtn",
+    "userAccountUnitFilter",
     "userAccountSeedBtn",
     "userAccountCleanupBtn",
     "userAccountCreateBtn",
@@ -198,6 +200,15 @@ const resolveUnitLabel = (user) => {
   return user.unit_id || "-";
 };
 
+const resolveUnitFilterLabel = (unitId) => {
+  const cleaned = String(unitId || "").trim();
+  if (!cleaned) {
+    return t("userAccounts.filter.unit.all");
+  }
+  const unit = getOrgUnitMap().get(cleaned);
+  return unit?.path_name || unit?.name || cleaned;
+};
+
 const formatUnitLevel = (user) => {
   if (!user) {
     return "-";
@@ -301,6 +312,27 @@ const resolveUnitOptions = () =>
     rootLabel: t("userAccounts.unit.default"),
   });
 
+const syncUserAccountUnitFilter = () => {
+  const select = elements.userAccountUnitFilter;
+  if (!select) {
+    return;
+  }
+  const currentValue = String(state.userAccounts.unitId || "").trim();
+  const options = getOrgUnitOptions({
+    includeRoot: true,
+    rootLabel: t("userAccounts.filter.unit.all"),
+  });
+  select.textContent = "";
+  options.forEach((option) => {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    select.appendChild(node);
+  });
+  select.value = currentValue;
+  select.title = resolveUnitFilterLabel(currentValue);
+};
+
 const syncUnitSelect = (select, selected) => {
   if (!select) {
     return;
@@ -364,6 +396,9 @@ const renderUserAccountRows = () => {
     const userCell = document.createElement("td");
     userCell.textContent = user.username || user.id || "-";
 
+    const unitCell = document.createElement("td");
+    unitCell.textContent = resolveUnitLabel(user);
+
     const onlineCell = document.createElement("td");
     onlineCell.textContent = formatOnlineStatus(user);
     onlineCell.className = user.online ? "status-online" : "status-offline";
@@ -414,6 +449,7 @@ const renderUserAccountRows = () => {
     actionCell.appendChild(settingsBtn);
 
     row.appendChild(userCell);
+    row.appendChild(unitCell);
     row.appendChild(onlineCell);
     row.appendChild(quotaCell);
     row.appendChild(loginCell);
@@ -607,8 +643,11 @@ export const loadUserAccounts = async () => {
   } catch (error) {
     appendLog(t("userAccounts.toast.unitLoadFailed", { message: error.message }));
   }
+  syncUserAccountUnitFilter();
   state.userAccounts.search = String(elements.userAccountSearchInput.value || "").trim();
+  state.userAccounts.unitId = String(elements.userAccountUnitFilter?.value || "").trim();
   const keyword = getUserAccountSearchKeyword();
+  const unitId = String(state.userAccounts.unitId || "").trim();
   const pageSize = resolveUserAccountPageSize();
   const currentPage = Math.max(1, Number(state.userAccounts.pagination.page) || 1);
   const offset = (currentPage - 1) * pageSize;
@@ -618,6 +657,9 @@ export const loadUserAccounts = async () => {
   params.set("limit", String(pageSize));
   if (keyword) {
     params.set("keyword", keyword);
+  }
+  if (unitId) {
+    params.set("unit_id", unitId);
   }
   const endpoint = `${wunderBase}/admin/user_accounts?${params.toString()}`;
   const shouldShowLoading = !state.userAccounts.loaded || !state.userAccounts.list.length;
@@ -1071,6 +1113,8 @@ const saveUnit = async () => {
   const ok = await updateUserAccount(settingsTarget.id, { unit_id: unitId });
   if (ok) {
     refreshSettingsTarget();
+    openSettingsModal(settingsTarget);
+    syncPromptTools();
   }
 };
 
@@ -1267,6 +1311,9 @@ export const initUserAccountsPanel = () => {
     return;
   }
   elements.userAccountSearchInput.value = state.userAccounts.search || "";
+  if (elements.userAccountUnitFilter) {
+    elements.userAccountUnitFilter.value = state.userAccounts.unitId || "";
+  }
   elements.userAccountSearchInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       state.userAccounts.pagination.page = 1;
@@ -1275,6 +1322,14 @@ export const initUserAccountsPanel = () => {
         notify(t("userAccounts.toast.loadFailed", { message: error.message }), "error");
       });
     }
+  });
+  elements.userAccountUnitFilter?.addEventListener("change", () => {
+    state.userAccounts.unitId = String(elements.userAccountUnitFilter.value || "").trim();
+    state.userAccounts.pagination.page = 1;
+    loadUserAccounts().catch((error) => {
+      appendLog(t("userAccounts.toast.loadFailed", { message: error.message }));
+      notify(t("userAccounts.toast.loadFailed", { message: error.message }), "error");
+    });
   });
   elements.userAccountRefreshBtn.addEventListener("click", async () => {
     try {
@@ -1333,6 +1388,7 @@ export const initUserAccountsPanel = () => {
     loadUserAccounts().catch(() => {});
   }, USER_ACCOUNT_ONLINE_REFRESH_MS);
   setCleanupBusy(false);
+  syncUserAccountUnitFilter();
 };
 
 

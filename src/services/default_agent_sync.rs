@@ -160,6 +160,7 @@ async fn build_default_agent_config(
         tool_names,
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
+        visible_unit_ids: Vec::new(),
         preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
         status: DEFAULT_AGENT_STATUS.to_string(),
@@ -240,6 +241,7 @@ async fn build_target_snapshot(
                 tool_names,
                 declared_tool_names,
                 declared_skill_names,
+                visible_unit_ids: template.visible_unit_ids.clone(),
                 ..template.clone()
             },
             &skill_name_keys,

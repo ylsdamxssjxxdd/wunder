@@ -82,6 +82,7 @@ fn build_preset_config(preset_id: &str, model_name: Option<&str>) -> UserAgentPr
         tool_names: Vec::new(),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
+        visible_unit_ids: Vec::new(),
         preset_questions: Vec::new(),
         approval_mode: "full_auto".to_string(),
         status: "active".to_string(),

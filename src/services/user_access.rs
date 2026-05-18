@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::skills::SkillRegistry;
 use crate::state::AppState;
+use crate::storage::OrgUnitRecord;
 use crate::storage::{
     UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord,
 };
@@ -8,6 +9,7 @@ use crate::tools::{
     collect_available_tool_names, collect_enabled_tool_names_for_catalog, resolve_tool_name,
 };
 use crate::user_tools::UserToolBindings;
+use crate::services::visibility::filter_tool_visibility;
 use std::collections::HashSet;
 
 pub struct UserToolContext {
@@ -15,6 +17,7 @@ pub struct UserToolContext {
     pub skills: SkillRegistry,
     pub bindings: UserToolBindings,
     pub tool_access: Option<UserToolAccessRecord>,
+    pub org_units: Vec<OrgUnitRecord>,
 }
 
 pub async fn build_user_tool_context(state: &AppState, user_id: &str) -> UserToolContext {
@@ -27,11 +30,13 @@ pub async fn build_user_tool_context(state: &AppState, user_id: &str) -> UserToo
         .user_store
         .get_user_tool_access(user_id)
         .unwrap_or(None);
+    let org_units = state.user_store.list_org_units().unwrap_or_default();
     UserToolContext {
         config,
         skills,
         bindings,
         tool_access,
+        org_units,
     }
 }
 
@@ -48,16 +53,18 @@ pub async fn build_user_tool_context_for_catalog(
         .user_store
         .get_user_tool_access(user_id)
         .unwrap_or(None);
+    let org_units = state.user_store.list_org_units().unwrap_or_default();
     UserToolContext {
         config,
         skills,
         bindings,
         tool_access,
+        org_units,
     }
 }
 
 pub fn compute_allowed_tool_names(
-    _user: &UserAccountRecord,
+    user: &UserAccountRecord,
     context: &UserToolContext,
 ) -> HashSet<String> {
     let mut allowed =
@@ -80,6 +87,13 @@ pub fn compute_allowed_tool_names(
                 .collect::<HashSet<_>>();
         }
     }
+
+    allowed = filter_tool_visibility(
+        allowed,
+        &context.config.tools.visibility.rules,
+        &context.org_units,
+        user,
+    );
 
     if context
         .config
@@ -226,6 +240,7 @@ mod tests {
                 allowed_tools: Some(Vec::new()),
                 updated_at: 0.0,
             }),
+            org_units: Vec::new(),
         };
 
         let allowed = compute_allowed_tool_names(&sample_user(), &context);

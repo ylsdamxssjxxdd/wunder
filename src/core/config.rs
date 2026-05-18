@@ -283,6 +283,8 @@ pub struct UserAgentPresetConfig {
     #[serde(default)]
     pub declared_skill_names: Vec<String>,
     #[serde(default)]
+    pub visible_unit_ids: Vec<String>,
+    #[serde(default)]
     pub preset_questions: Vec<String>,
     #[serde(default = "default_user_agent_preset_approval_mode")]
     pub approval_mode: String,
@@ -419,6 +421,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub builtin: BuiltinToolsConfig,
     #[serde(default)]
+    pub visibility: ToolVisibilityConfig,
+    #[serde(default)]
     pub swarm: AgentSwarmConfig,
     #[serde(default)]
     pub search: SearchToolConfig,
@@ -428,6 +432,19 @@ pub struct ToolsConfig {
     pub browser: BrowserToolConfig,
     #[serde(default)]
     pub desktop_controller: DesktopControllerConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ToolVisibilityConfig {
+    #[serde(default)]
+    pub rules: Vec<ToolVisibilityRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolVisibilityRule {
+    pub name: String,
+    #[serde(default)]
+    pub visible_unit_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

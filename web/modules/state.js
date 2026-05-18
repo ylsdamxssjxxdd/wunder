@@ -56,6 +56,7 @@ export const state = {
     a2aServices: false,
     builtin: false,
     skills: false,
+    toolVisibility: false,
     knowledge: false,
     llm: false,
   },
@@ -124,6 +125,7 @@ export const state = {
     skills: [],
     paths: [],
     detailVersion: 0,
+    visibilityRules: [],
   },
   knowledge: {
     bases: [],
@@ -142,6 +144,12 @@ export const state = {
   },
   builtin: {
     tools: [],
+    visibilityRules: [],
+  },
+  toolVisibility: {
+    tools: [],
+    selectedName: "",
+    visibilityRules: [],
   },
   toolSelection: {
     builtin: [],

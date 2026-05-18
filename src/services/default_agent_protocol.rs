@@ -33,6 +33,8 @@ pub struct DefaultAgentConfig {
     #[serde(default)]
     pub declared_skill_names: Vec<String>,
     #[serde(default)]
+    pub visible_unit_ids: Vec<String>,
+    #[serde(default)]
     pub preset_questions: Vec<String>,
     #[serde(default)]
     pub approval_mode: String,
@@ -66,6 +68,7 @@ pub fn default_agent_config_from_record(record: &UserAgentRecord) -> DefaultAgen
         tool_names: record.tool_names.clone(),
         declared_tool_names: record.declared_tool_names.clone(),
         declared_skill_names: record.declared_skill_names.clone(),
+        visible_unit_ids: Vec::new(),
         preset_questions: record.preset_questions.clone(),
         approval_mode: record.approval_mode.clone(),
         status: record.status.clone(),

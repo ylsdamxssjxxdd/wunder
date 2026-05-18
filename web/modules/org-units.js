@@ -401,6 +401,13 @@ export const getOrgUnitOptions = (options = {}) => {
   return buildUnitOptions(flattened, options);
 };
 
+export const getAllOrgUnitItems = () =>
+  (state.orgUnits.list || []).map((unit) => ({
+    unit_id: unit.unit_id,
+    name: unit.name,
+    path_name: unit.path_name,
+  }));
+
 const submitOrgUnitUpdate = async () => {
   const unit = resolveSelectedUnit();
   if (!unit) {

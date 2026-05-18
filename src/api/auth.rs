@@ -1,4 +1,5 @@
 use crate::api::user_context::resolve_user;
+use crate::auth;
 use crate::i18n;
 use crate::org_units;
 use crate::services::external as external_service;
@@ -54,6 +55,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/auth/me/reset_work_state",
             post(reset_my_work_state),
         )
+        .route("/wunder/auth/logout", post(logout))
         .route("/wunder/auth/me", get(me).patch(update_me))
 }
 
@@ -842,6 +844,32 @@ async fn me(
     Ok(Json(json!({ "data": profile })))
 }
 
+async fn logout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, Response> {
+    let token = auth::extract_bearer_token(&headers)
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, i18n::t("error.auth_required")))?;
+    let session = state
+        .user_store
+        .authenticate_token_details(&token)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, i18n::t("error.auth_required")))?;
+    let _ = state
+        .user_store
+        .force_logout_user_scope(&session.user.user_id, &session.session_scope);
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id, &session.session_scope)
+        .await;
+    state
+        .control
+        .presence
+        .force_user_offline(&session.user.user_id, now_ts());
+    Ok(Json(json!({ "data": { "ok": true } })))
+}
+
 #[allow(dead_code)]
 async fn update_me_legacy(
     State(state): State<Arc<AppState>>,
@@ -999,6 +1027,9 @@ async fn update_me_legacy(
                 localize_update_profile_error_message(&err.to_string()),
             )
         })?;
+        if let Err(err) = state.inner_visible.sync_user_state(&record.user_id).await {
+            tracing::warn!("failed to sync user state after profile update: {err}");
+        }
     }
     let profile = build_user_profile_value(&state, &record)?;
     Ok(Json(json!({ "data": profile })))
@@ -2263,6 +2294,7 @@ mod tests {
             tool_names: Vec::new(),
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "A".to_string(),
             approval_mode: "full_auto".to_string(),

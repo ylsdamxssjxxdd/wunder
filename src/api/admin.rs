@@ -7,7 +7,7 @@ use crate::channels::weixin;
 use crate::channels::xmpp;
 use crate::config::{
     normalize_knowledge_base_type, A2aServiceConfig, Config, KnowledgeBaseConfig,
-    KnowledgeBaseType, LspConfig, McpServerConfig, UserAgentPresetConfig,
+    KnowledgeBaseType, LspConfig, McpServerConfig, ToolVisibilityRule, UserAgentPresetConfig,
 };
 use crate::core::repo_assets;
 use crate::gateway::GatewayNodeInvokeRequest;
@@ -1164,7 +1164,10 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
     Ok(Json(json!({
         "paths": public_paths,
         "enabled": config.skills.enabled,
-        "skills": skills
+        "skills": skills,
+        "visibility": {
+            "rules": config.tools.visibility.rules,
+        }
     })))
 }
 
@@ -1453,7 +1456,10 @@ async fn admin_skills_update(
     Ok(Json(json!({
         "paths": public_paths,
         "enabled": updated.skills.enabled,
-        "skills": skills
+        "skills": skills,
+        "visibility": {
+            "rules": updated.tools.visibility.rules,
+        }
     })))
 }
 
@@ -1621,7 +1627,10 @@ async fn admin_tools_list(State(state): State<Arc<AppState>>) -> Result<Json<Val
     let (enabled, tools) = build_builtin_tools_payload(&config);
     Ok(Json(json!({
         "enabled": enabled,
-        "tools": tools
+        "tools": tools,
+        "visibility": {
+            "rules": config.tools.visibility.rules,
+        }
     })))
 }
 
@@ -1680,6 +1689,15 @@ async fn admin_tools_update(
         .config_store
         .update(|config| {
             apply_builtin_tools_update(config, &payload.enabled);
+            if let Some(rules) = payload.visibility_rules.clone() {
+                config.tools.visibility.rules = rules
+                    .into_iter()
+                    .map(|rule| ToolVisibilityRule {
+                        name: rule.name,
+                        visible_unit_ids: rule.visible_unit_ids,
+                    })
+                    .collect();
+            }
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -1710,7 +1728,10 @@ async fn admin_tools_update(
     let (enabled, tools) = build_builtin_tools_payload(&updated);
     Ok(Json(json!({
         "enabled": enabled,
-        "tools": tools
+        "tools": tools,
+        "visibility": {
+            "rules": updated.tools.visibility.rules,
+        }
     })))
 }
 
@@ -5157,6 +5178,7 @@ async fn admin_user_accounts_list(
         .as_deref()
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
+    let requested_unit_id = normalize_optional_id(query.unit_id.as_deref());
     let offset = query.offset.unwrap_or(0).max(0);
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let activity_days = query
@@ -5173,9 +5195,25 @@ async fn admin_user_accounts_list(
         items.sort();
         items
     });
+    let requested_unit_scope = requested_unit_id.as_ref().map(|unit_id| vec![unit_id.clone()]);
+    let query_unit_scope = match (scoped_unit_ids.as_deref(), requested_unit_scope.as_deref()) {
+        (Some(scope), Some(requested)) => {
+            let requested_set = requested.iter().collect::<HashSet<_>>();
+            let mut merged = scope
+                .iter()
+                .filter(|unit_id| requested_set.contains(unit_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            merged.sort();
+            Some(merged)
+        }
+        (Some(scope), None) => Some(scope.to_vec()),
+        (None, Some(requested)) => Some(requested.to_vec()),
+        (None, None) => None,
+    };
     let (users, total) = state
         .user_store
-        .list_users(keyword, scoped_unit_ids.as_deref(), offset, limit)
+        .list_users(keyword, query_unit_scope.as_deref(), offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let today = UserStore::today_string();
     let presence_now = now_ts();
@@ -5645,6 +5683,9 @@ async fn admin_user_accounts_update(
         .user_store
         .update_user(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Err(err) = state.inner_visible.sync_user_state(&record.user_id).await {
+        tracing::warn!("failed to sync user state after admin update: {err}");
+    }
     let unit = record
         .unit_id
         .as_ref()
@@ -6581,6 +6622,7 @@ fn preset_agent_payload(
         tool_names,
         declared_tool_names,
         declared_skill_names,
+        visible_unit_ids,
         preset_questions,
         approval_mode,
         status,
@@ -6601,6 +6643,7 @@ fn preset_agent_payload(
         "tool_names": normalize_tool_list(tool_names),
         "declared_tool_names": normalize_tool_list(declared_tool_names),
         "declared_skill_names": normalize_tool_list(declared_skill_names),
+        "visible_unit_ids": normalize_tool_list(visible_unit_ids),
         "preset_questions": normalize_preset_questions(preset_questions),
         "approval_mode": normalize_agent_approval_mode(Some(&approval_mode)),
         "status": normalize_agent_status(Some(&status)),
@@ -6684,6 +6727,7 @@ fn normalize_preset_agents(
                 declared_skill_names: normalize_tool_list(
                     item.declared_skill_names.unwrap_or_default(),
                 ),
+                visible_unit_ids: normalize_tool_list(item.visible_unit_ids.unwrap_or_default()),
                 preset_questions: normalize_preset_questions(
                     item.preset_questions.unwrap_or_default(),
                 ),
@@ -7823,6 +7867,15 @@ struct SkillFileUpdate {
 #[derive(Debug, Deserialize)]
 struct ToolsUpdateRequest {
     enabled: Vec<String>,
+    #[serde(default)]
+    visibility_rules: Option<Vec<ToolVisibilityRulePayload>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ToolVisibilityRulePayload {
+    name: String,
+    #[serde(default)]
+    visible_unit_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -8037,6 +8090,8 @@ struct PresetAgentUpsertItem {
     #[serde(default)]
     declared_skill_names: Option<Vec<String>>,
     #[serde(default)]
+    visible_unit_ids: Option<Vec<String>>,
+    #[serde(default)]
     preset_questions: Option<Vec<String>>,
     #[serde(default)]
     approval_mode: Option<String>,
@@ -8069,6 +8124,8 @@ struct PresetAgentsSyncRequest {
 struct UserAccountListQuery {
     #[serde(default)]
     keyword: Option<String>,
+    #[serde(default)]
+    unit_id: Option<String>,
     #[serde(default)]
     offset: Option<i64>,
     #[serde(default)]

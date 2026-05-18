@@ -1,10 +1,11 @@
-﻿import { elements } from "./elements.js?v=20260414-01";
+﻿import { elements } from "./elements.js?v=20260518-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { appendLog } from "./log.js?v=20260414-01";
+import { appendLog } from "./log.js?v=20260518-01";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260414-01";
+import { t } from "./i18n.js?v=20260518-01";
 import { listGlobalCompanions } from "./companions.js?v=20260506-01";
+import { ensureOrgUnitsLoaded } from "./org-units.js?v=20260518-01";
 
 const TAB_KEYS = ["preset", "cron", "channels"];
 const DEFAULT_AGENT_ID_ALIAS = "__default__";
@@ -125,6 +126,116 @@ const avatarModalState = {
   page: 1,
 };
 
+const buildVisibilityOrgTree = () => {
+  const units = Array.isArray(state.orgUnits?.list) ? state.orgUnits.list : [];
+  const byParent = new Map();
+  units.forEach((unit) => {
+    const key = String(unit.parent_id || "");
+    if (!byParent.has(key)) {
+      byParent.set(key, []);
+    }
+    byParent.get(key).push(unit);
+  });
+  byParent.forEach((list) => {
+    list.sort((left, right) => String(left.path_name || left.name).localeCompare(String(right.path_name || right.name)));
+  });
+  const build = (parentId = "") =>
+    (byParent.get(parentId) || []).map((unit) => ({
+      ...unit,
+      children: build(unit.unit_id),
+    }));
+  return build("");
+};
+
+const collectVisibilityDescendantIds = (node) => {
+  const output = [node.unit_id];
+  (Array.isArray(node.children) ? node.children : []).forEach((child) => {
+    output.push(...collectVisibilityDescendantIds(child));
+  });
+  return output;
+};
+
+const renderPresetVisibilityTree = () => {
+  const container = elements.presetAgentVisibilityTree;
+  if (!container) {
+    return;
+  }
+  container.textContent = "";
+  const tree = buildVisibilityOrgTree();
+  const allIds = [];
+  const collectAll = (node) => {
+    allIds.push(node.unit_id);
+    (Array.isArray(node.children) ? node.children : []).forEach(collectAll);
+  };
+  tree.forEach(collectAll);
+  const selected = new Set(
+    (state.presetAgents.visibilityDraftIds || []).length
+      ? state.presetAgents.visibilityDraftIds
+      : allIds
+  );
+  const toggleNode = (node, checked) => {
+    const ids = collectVisibilityDescendantIds(node);
+    if (checked) {
+      ids.forEach((id) => selected.add(id));
+    } else {
+      ids.forEach((id) => selected.delete(id));
+    }
+    state.presetAgents.visibilityDraftIds = Array.from(selected);
+    renderPresetVisibilityTree();
+  };
+  const renderNode = (node, depth) => {
+    const row = document.createElement("div");
+    row.className = "tool-item";
+    row.style.paddingLeft = `${8 + depth * 14}px`;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = selected.has(node.unit_id);
+    checkbox.addEventListener("change", () => toggleNode(node, checkbox.checked));
+    const label = document.createElement("label");
+    label.innerHTML = `<strong>${node.name || node.unit_id}</strong><span class="muted">${node.path_name || node.unit_id}</span>`;
+    row.appendChild(checkbox);
+    row.appendChild(label);
+    container.appendChild(row);
+    (Array.isArray(node.children) ? node.children : []).forEach((child) => renderNode(child, depth + 1));
+  };
+  tree.forEach((node) => renderNode(node, 0));
+};
+
+const openPresetVisibilityModal = () => {
+  const preset = selectedPreset();
+  if (!preset || !elements.presetAgentVisibilityModal) {
+    return;
+  }
+  state.presetAgents.visibilityDraftIds = Array.isArray(preset.visible_unit_ids)
+    ? [...preset.visible_unit_ids]
+    : [];
+  renderPresetVisibilityTree();
+  elements.presetAgentVisibilityModal.classList.add("active");
+};
+
+const closePresetVisibilityModal = () => {
+  elements.presetAgentVisibilityModal?.classList.remove("active");
+};
+
+const savePresetVisibilityModal = () => {
+  const preset = selectedPreset();
+  if (!preset) {
+    return;
+  }
+  const tree = buildVisibilityOrgTree();
+  const allIds = [];
+  const collectAll = (node) => {
+    allIds.push(node.unit_id);
+    (Array.isArray(node.children) ? node.children : []).forEach(collectAll);
+  };
+  tree.forEach(collectAll);
+  const selected = normalizeNameList(state.presetAgents.visibilityDraftIds || []);
+  preset.visible_unit_ids = selected.length === allIds.length ? [] : selected;
+  renderPresetDetail();
+  markPresetDraftDirty();
+  closePresetVisibilityModal();
+};
+
 const ensureState = () => {
   if (!state.presetAgents) {
     state.presetAgents = {
@@ -150,6 +261,7 @@ const ensureState = () => {
       saving: false,
       savePromise: null,
       toolListScrollTopByPresetKey: {},
+      visibilityDraftIds: [],
     };
   }
   if (typeof state.presetAgents.selectedPresetId !== "string") {
@@ -176,6 +288,7 @@ const REQUIRED_KEYS = [
   "presetAgentSyncForceBtn",
   "presetAgentSyncSummary",
   "presetAgentDeleteBtn",
+  "presetAgentVisibilityBtn",
   "presetAgentsStatusText",
   "presetAgentTabPreset",
   "presetAgentTabCron",
@@ -198,6 +311,11 @@ const REQUIRED_KEYS = [
   "presetAgentAvatarModalPreview",
   "presetAgentAvatarStaticTab",
   "presetAgentAvatarGlobalTab",
+  "presetAgentVisibilityModal",
+  "presetAgentVisibilityModalClose",
+  "presetAgentVisibilityModalCancel",
+  "presetAgentVisibilityModalSave",
+  "presetAgentVisibilityTree",
   "presetAgentAvatarPicker",
   "presetAgentAvatarPager",
   "presetAgentAvatarPagePrev",
@@ -1028,6 +1146,22 @@ const renderPresetActionState = () => {
   if (elements.presetAgentAvatarTrigger) {
     elements.presetAgentAvatarTrigger.disabled = !hasPreset || saving;
   }
+  if (elements.presetAgentVisibilityBtn) {
+    elements.presetAgentVisibilityBtn.disabled = !hasPreset || saving;
+  }
+};
+
+const presetVisibilitySummary = (preset) => {
+  const ids = Array.isArray(preset?.visible_unit_ids) ? preset.visible_unit_ids.filter(Boolean) : [];
+  if (!ids.length) {
+    return t("visibility.all");
+  }
+  return t("visibility.scoped");
+};
+
+const editPresetVisibility = async () => {
+  await ensureOrgUnitsLoaded({ silent: true });
+  openPresetVisibilityModal();
 };
 
 const renderToolSelector = (selected) => {
@@ -1790,6 +1924,7 @@ const renderPresetDetail = () => {
     `v${Math.max(1, Number(rawPreset.revision) || 1)}`,
     `${workspaceLabel}: ${preset.sandbox_container_id}`,
     `hive: ${DEFAULT_HIVE_ID}`,
+    presetVisibilitySummary(rawPreset),
   ].join(" | ");
   fillPresetForm(preset);
   fillAgentForm(preset);
@@ -2039,6 +2174,14 @@ const loadToolCatalog = async () => {
   renderToolSelector(selectedAbilityNamesFromPreset(effectiveSelectedPreset()));
 };
 
+const describeVisibility = (item) => {
+  const ids = Array.isArray(item?.visible_unit_ids) ? item.visible_unit_ids.filter(Boolean) : [];
+  if (!ids.length) {
+    return t("visibility.all");
+  }
+  return t("visibility.scoped");
+};
+
 const loadGlobalCompanionsForPresetAgents = async ({ silent = false } = {}) => {
   try {
     state.presetAgents.companions = (await listGlobalCompanions()).map(normalizeCompanionRecord);
@@ -2149,6 +2292,9 @@ const collectPresetForm = () => {
     preview_skill: elements.presetAgentPreviewSkill?.checked === true,
     model_name: normalizeOptionalModelName(elements.presetAgentFormModelName?.value),
     sandbox_container_id: Number.isFinite(sandbox) && sandbox > 0 ? sandbox : 1,
+    visible_unit_ids: Array.isArray(selectedPreset()?.visible_unit_ids)
+      ? [...selectedPreset().visible_unit_ids]
+      : [],
   };
 };
 
@@ -2218,6 +2364,7 @@ const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {})
         tool_names: item.tool_names,
         declared_tool_names: item.declared_tool_names,
         declared_skill_names: item.declared_skill_names,
+        visible_unit_ids: Array.isArray(item.visible_unit_ids) ? item.visible_unit_ids : [],
         preset_questions: item.preset_questions,
         approval_mode: item.approval_mode,
         status: item.status,
@@ -2261,6 +2408,7 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
       next.tool_names = agentPayload.tool_names;
       next.declared_tool_names = agentPayload.declared_tool_names;
       next.declared_skill_names = agentPayload.declared_skill_names;
+      next.visible_unit_ids = agentPayload.visible_unit_ids;
       next.preset_questions = agentPayload.preset_questions;
       next.approval_mode = agentPayload.approval_mode;
       next.status = agentPayload.status || effective.status || current.status || "active";
@@ -2379,6 +2527,7 @@ const createPreset = () => {
     tool_names: [],
     declared_tool_names: [],
     declared_skill_names: [],
+    visible_unit_ids: [],
     preset_questions: [],
     approval_mode: "full_auto",
     status: "active",
@@ -2450,6 +2599,7 @@ const collectAgentForm = () => {
     tool_names,
     declared_tool_names,
     declared_skill_names,
+    visible_unit_ids: Array.isArray(preset?.visible_unit_ids) ? [...preset.visible_unit_ids] : [],
     preset_questions: collectPresetQuestionValues(),
     approval_mode:
       String(elements.presetUserAgentApproval.value || effectiveSelectedPreset()?.approval_mode || "full_auto").trim() ||
@@ -2893,6 +3043,22 @@ const bindActions = () => {
     elements.presetAgentDeleteBtn.dataset.bound = "1";
     elements.presetAgentDeleteBtn.addEventListener("click", deletePreset);
   }
+  if (elements.presetAgentVisibilityBtn?.dataset.bound !== "1") {
+    elements.presetAgentVisibilityBtn.dataset.bound = "1";
+    elements.presetAgentVisibilityBtn.addEventListener("click", editPresetVisibility);
+  }
+  if (elements.presetAgentVisibilityModalClose?.dataset.bound !== "1") {
+    elements.presetAgentVisibilityModalClose.dataset.bound = "1";
+    elements.presetAgentVisibilityModalClose.addEventListener("click", closePresetVisibilityModal);
+  }
+  if (elements.presetAgentVisibilityModalCancel?.dataset.bound !== "1") {
+    elements.presetAgentVisibilityModalCancel.dataset.bound = "1";
+    elements.presetAgentVisibilityModalCancel.addEventListener("click", closePresetVisibilityModal);
+  }
+  if (elements.presetAgentVisibilityModalSave?.dataset.bound !== "1") {
+    elements.presetAgentVisibilityModalSave.dataset.bound = "1";
+    elements.presetAgentVisibilityModalSave.addEventListener("click", savePresetVisibilityModal);
+  }
   if (elements.presetCronSaveBtn.dataset.bound !== "1") {
     elements.presetCronSaveBtn.dataset.bound = "1";
     elements.presetCronSaveBtn.addEventListener("click", saveCronJob);
@@ -2923,3 +3089,4 @@ export const initPresetAgentsPanel = async () => {
   state.presetAgents.initialized = true;
   appendLog(t("presetAgents.init"));
 };
+

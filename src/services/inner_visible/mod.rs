@@ -172,6 +172,7 @@ impl InnerVisibleService {
             skills: skills.clone(),
             bindings: bindings.clone(),
             tool_access: self.user_store.get_user_tool_access(user_id)?,
+            org_units: self.user_store.list_org_units().unwrap_or_default(),
         };
         Ok(compute_allowed_tool_names(&user, &context))
     }
@@ -487,6 +488,7 @@ impl InnerVisibleService {
                 tool_names: record.tool_names,
                 declared_tool_names: record.declared_tool_names,
                 declared_skill_names: record.declared_skill_names,
+                visible_unit_ids: Vec::new(),
                 preset_questions: record.preset_questions,
                 approval_mode: record.approval_mode,
                 status: record.status,
@@ -510,6 +512,7 @@ impl InnerVisibleService {
             tool_names: curated_default_tool_names(allowed_tool_names),
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
             preset_questions: Vec::new(),
             approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
             status: DEFAULT_AGENT_STATUS.to_string(),

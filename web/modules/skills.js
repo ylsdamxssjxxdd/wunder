@@ -4,13 +4,15 @@ import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { notify } from "./notify.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20260518-01";
 import { resolveApiErrorMessage } from "./api-error.js";
+import { getAllOrgUnitItems } from "./org-units.js?v=20260518-01";
 
 const skillsList = document.getElementById("skillsList");
 const refreshSkillsBtn = document.getElementById("refreshSkillsBtn");
 const addSkillBtn = document.getElementById("addSkillBtn");
 const exportSkillBtn = document.getElementById("exportSkillBtn");
+const skillVisibilityBtn = document.getElementById("skillVisibilityBtn");
 const skillUploadInput = document.getElementById("skillUploadInput");
 const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
   ".zip",
@@ -251,6 +253,39 @@ const buildUploadedSkillSuccessMessage = (originalName, result, fallbackKey) => 
     return t("skills.upload.renamed", { names: finalNames.join(", ") });
   }
   return t(fallbackKey);
+};
+
+const buildVisibilitySummary = () => {
+  const rules = Array.isArray(state.skills.visibilityRules) ? state.skills.visibilityRules : [];
+  if (!rules.length) {
+    return t("visibility.all");
+  }
+  const unitMap = new Map(getAllOrgUnitItems().map((item) => [item.unit_id, item.path_name || item.name || item.unit_id]));
+  return rules
+    .map((rule) => `${String(rule.name || "").trim()}: ${(rule.visible_unit_ids || []).map((unitId) => unitMap.get(unitId) || unitId).join(", ") || t("visibility.all")}`)
+    .join(" | ");
+};
+
+const saveSkillVisibilityRules = async () => {
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/tools`;
+  const enabled = Array.isArray(state.builtin?.tools)
+    ? state.builtin.tools.filter((tool) => tool.enabled).map((tool) => tool.name)
+    : [];
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      enabled,
+      visibility_rules: state.skills.visibilityRules,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  return response.json();
 };
 
 const downloadBlob = (blob, filename) => {
@@ -738,6 +773,7 @@ export const loadSkills = async () => {
   const previousName = getActiveSkill()?.name || "";
   state.skills.paths = Array.isArray(result.paths) ? result.paths : [];
   state.skills.skills = Array.isArray(result.skills) ? result.skills : [];
+  state.skills.visibilityRules = Array.isArray(result?.visibility?.rules) ? result.visibility.rules : [];
   viewState.selectedIndex = previousName
     ? state.skills.skills.findIndex((item) => item.name === previousName)
     : -1;
@@ -794,6 +830,26 @@ export const initSkillsPanel = () => {
         });
       }
       notify(t("skills.refresh.failed", { message: error.message }), "error");
+    }
+  });
+  skillVisibilityBtn?.addEventListener("click", () => {
+    const current = JSON.stringify(state.skills.visibilityRules || [], null, 2);
+    const raw = window.prompt('Rules JSON: [{"name":"tool_name","visible_unit_ids":["unit_1"]}]', current);
+    if (raw === null) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      state.skills.visibilityRules = Array.isArray(parsed) ? parsed : [];
+      saveSkillVisibilityRules()
+        .then(() => {
+          notify(buildVisibilitySummary(), "success");
+        })
+        .catch((error) => {
+          notify(t("skills.saveFailed", { message: error.message }), "error");
+        });
+    } catch (error) {
+      notify(t("skills.saveFailed", { message: error.message }), "error");
     }
   });
   skillFileSaveBtn?.addEventListener("click", saveSkillFile);

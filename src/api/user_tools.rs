@@ -3894,6 +3894,7 @@ mod tests {
             skills: SkillRegistry::default(),
             bindings,
             tool_access: None,
+            org_units: Vec::new(),
         };
         let allowed = HashSet::new();
 
@@ -3964,6 +3965,7 @@ mod tests {
             skills,
             bindings: UserToolBindings::default(),
             tool_access: None,
+            org_units: Vec::new(),
         };
         let allowed = HashSet::from(["builtin_skill_a".to_string()]);
 

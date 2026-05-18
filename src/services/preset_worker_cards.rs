@@ -191,6 +191,7 @@ pub fn worker_card_document_from_preset_config(
     document.preset = Some(WorkerCardPreset {
         revision: normalized.revision.max(1),
         status: normalize_agent_status(Some(&normalized.status)),
+        visible_unit_ids: normalized.visible_unit_ids.clone(),
     });
     Some(document)
 }
@@ -309,6 +310,7 @@ mod tests {
             tool_names: vec!["read_file".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
             preset_questions: vec!["Q1".to_string()],
             approval_mode: "suggest".to_string(),
             status: "active".to_string(),

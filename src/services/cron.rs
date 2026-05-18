@@ -1759,6 +1759,7 @@ impl CronRuntime {
             skills,
             bindings,
             tool_access,
+            org_units: self.user_store.list_org_units().unwrap_or_default(),
         }
     }
 

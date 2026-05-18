@@ -188,6 +188,7 @@ impl Orchestrator {
                 .get_user_tool_access(&user.user_id)
                 .ok()
                 .flatten(),
+            org_units: self.storage.list_org_units().unwrap_or_default(),
         };
         let mut allowed = crate::user_access::compute_allowed_tool_names(user, &user_context);
         let agent_record = if let Some(agent_id) = session
