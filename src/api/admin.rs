@@ -315,6 +315,10 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_org_units_list).post(admin_org_units_create),
         )
         .route(
+            "/wunder/admin/org_units/import",
+            post(admin_org_units_import),
+        )
+        .route(
             "/wunder/admin/org_units/{unit_id}",
             patch(admin_org_units_update).delete(admin_org_units_delete),
         )
@@ -4470,6 +4474,117 @@ async fn admin_org_units_delete(
     Ok(Json(json!({ "data": { "unit_id": cleaned } })))
 }
 
+async fn admin_org_units_import(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    Json(payload): Json<OrgUnitImportRequest>,
+) -> Result<Json<Value>, Response> {
+    let existing_units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, false, &existing_units)?;
+    if actor.scope_unit_ids.is_some() {
+        return Err(permission_denied());
+    }
+    let cleaned_units = payload.units;
+    if cleaned_units.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "import units is empty".to_string(),
+        ));
+    }
+    let now = now_ts();
+    let imported_units = build_import_org_unit_records(&cleaned_units, now)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let imported_unit_ids = imported_units
+        .iter()
+        .map(|item| item.unit_id.clone())
+        .collect::<HashSet<_>>();
+    let root_units = imported_units
+        .iter()
+        .filter(|item| item.parent_id.is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    let fallback_root = root_units
+        .iter()
+        .min_by(|left, right| {
+            left.sort_order
+                .cmp(&right.sort_order)
+                .then_with(|| left.name.cmp(&right.name))
+        })
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "imported org units missing root".to_string(),
+            )
+        })?;
+    let preferred_root_name = payload
+        .migrate_user_root_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let preferred_root_unit_id = normalize_optional_id(payload.migrate_user_unit_id.as_deref());
+    let migrate_target = root_units
+        .iter()
+        .find(|item| preferred_root_name == Some(item.name.as_str()))
+        .cloned()
+        .or_else(|| {
+            preferred_root_unit_id.as_ref().and_then(|unit_id| {
+                root_units
+                    .iter()
+                    .find(|item| item.unit_id == *unit_id)
+                    .cloned()
+            })
+        })
+        .unwrap_or_else(|| fallback_root.clone());
+
+    let (all_users, _) = state
+        .user_store
+        .list_users(None, None, 0, i64::MAX / 4)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut migrated_user_count = 0_i64;
+    for user in &all_users {
+        let current_unit_id = user.unit_id.as_deref().map(str::trim).unwrap_or("");
+        if current_unit_id.is_empty() {
+            continue;
+        }
+        if imported_unit_ids.contains(current_unit_id) {
+            continue;
+        }
+        let mut next_user = user.clone();
+        next_user.unit_id = Some(migrate_target.unit_id.clone());
+        next_user.updated_at = now;
+        state
+            .user_store
+            .update_user(&next_user)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        migrated_user_count += 1;
+    }
+
+    for unit in &existing_units {
+        let _ = state.user_store.delete_org_unit(&unit.unit_id);
+    }
+    for unit in &imported_units {
+        state
+            .user_store
+            .upsert_org_unit(unit)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    let tree = org_units::build_unit_tree(&imported_units);
+    let items = imported_units.iter().map(org_unit_payload).collect::<Vec<_>>();
+    Ok(Json(json!({
+        "data": {
+            "items": items,
+            "tree": tree,
+            "imported_count": imported_units.len(),
+            "migrated_user_count": migrated_user_count,
+            "migrate_user_unit_id": migrate_target.unit_id,
+            "migrate_user_root_name": migrate_target.name
+        }
+    })))
+}
+
 async fn admin_external_links_list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, Response> {
@@ -6707,6 +6822,70 @@ fn next_unit_sort_order(units: &[OrgUnitRecord], parent_id: Option<&str>) -> i64
         + 1
 }
 
+fn build_import_org_unit_records(
+    roots: &[OrgUnitImportNode],
+    now: f64,
+) -> anyhow::Result<Vec<OrgUnitRecord>> {
+    let mut output = Vec::new();
+    for (index, root) in roots.iter().enumerate() {
+        append_import_org_unit_records(root, None, &[], &[], index as i64, 1, now, &mut output)?;
+    }
+    Ok(output)
+}
+
+fn append_import_org_unit_records(
+    node: &OrgUnitImportNode,
+    parent_id: Option<String>,
+    parent_path_ids: &[String],
+    parent_path_names: &[String],
+    sort_order: i64,
+    level: i32,
+    now: f64,
+    output: &mut Vec<OrgUnitRecord>,
+) -> anyhow::Result<()> {
+    let name = node.name.trim();
+    if name.is_empty() {
+        return Err(anyhow::anyhow!("org unit name is empty"));
+    }
+    if level > MAX_ORG_UNIT_LEVEL {
+        return Err(anyhow::anyhow!("org unit level exceeds {MAX_ORG_UNIT_LEVEL}"));
+    }
+    let mut path_names = parent_path_names.to_vec();
+    path_names.push(name.to_string());
+    let unit_id = format!(
+        "unit_{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, path_names.join("/").as_bytes()).simple()
+    );
+    let mut path_ids = parent_path_ids.to_vec();
+    path_ids.push(unit_id.clone());
+    let record = OrgUnitRecord {
+        unit_id: unit_id.clone(),
+        parent_id: parent_id.clone(),
+        name: name.to_string(),
+        level,
+        path: path_ids.join("/"),
+        path_name: path_names.join(ORG_UNIT_NAME_SEPARATOR),
+        sort_order,
+        leader_ids: Vec::new(),
+        created_at: now,
+        updated_at: now,
+    };
+    output.push(record);
+    for (index, child) in node.children.iter().enumerate() {
+        append_import_org_unit_records(
+            child,
+            Some(unit_id.clone()),
+            &path_ids,
+            &path_names,
+            index as i64,
+            level + 1,
+            now,
+            output,
+        )?;
+    }
+    Ok(())
+}
+
 fn permission_denied() -> Response {
     error_response(StatusCode::FORBIDDEN, i18n::t("error.permission_denied"))
 }
@@ -7788,6 +7967,22 @@ struct OrgUnitUpdateRequest {
     sort_order: Option<i64>,
     #[serde(default)]
     leader_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrgUnitImportRequest {
+    units: Vec<OrgUnitImportNode>,
+    #[serde(default)]
+    migrate_user_unit_id: Option<String>,
+    #[serde(default)]
+    migrate_user_root_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct OrgUnitImportNode {
+    name: String,
+    #[serde(default)]
+    children: Vec<OrgUnitImportNode>,
 }
 
 #[derive(Debug, Deserialize)]

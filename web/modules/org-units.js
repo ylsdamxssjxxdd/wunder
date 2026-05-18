@@ -48,6 +48,14 @@ const ensureOrgUnitElements = () => {
     "orgUnitModalParent",
     "orgUnitModalSortOrder",
     "orgUnitModalLeaders",
+    "orgUnitImportBtn",
+    "orgUnitImportModal",
+    "orgUnitImportModalTitle",
+    "orgUnitImportModalClose",
+    "orgUnitImportModalCancel",
+    "orgUnitImportModalSave",
+    "orgUnitImportTargetRoot",
+    "orgUnitImportJson",
   ];
   const missing = requiredKeys.filter((key) => !elements[key]);
   if (missing.length) {
@@ -469,6 +477,94 @@ const openCreateModal = (parentId = "") => {
   openModal(elements.orgUnitModal);
 };
 
+const normalizeImportNode = (node) => ({
+  name: String(node?.name || "").trim(),
+  children: Array.isArray(node?.children) ? node.children.map(normalizeImportNode) : [],
+});
+
+const parseImportUnits = (raw) => {
+  const text = String(raw || "").trim();
+  if (!text) {
+    throw new Error(t("orgUnits.import.toast.jsonRequired"));
+  }
+  const parsed = JSON.parse(text);
+  if (!Array.isArray(parsed) || !parsed.length) {
+    throw new Error(t("orgUnits.import.toast.jsonInvalid"));
+  }
+  const units = parsed.map(normalizeImportNode);
+  units.forEach((unit) => {
+    if (!unit.name) {
+      throw new Error(t("orgUnits.import.toast.nameRequired"));
+    }
+  });
+  return units;
+};
+
+const syncImportRootOptions = (units) => {
+  const previousSelected = String(elements.orgUnitImportTargetRoot?.value || "").trim();
+  const options = (Array.isArray(units) ? units : [])
+    .map((unit, index) => ({
+      value: unit.name,
+      label: unit.name || `${t("orgUnits.import.rootFallback")} ${index + 1}`,
+    }))
+    .filter((item) => item.value);
+  const nextSelected =
+    options.find((item) => item.value === previousSelected)?.value || options[0]?.value || "";
+  syncSelectOptions(elements.orgUnitImportTargetRoot, options, nextSelected);
+};
+
+const openImportModal = () => {
+  elements.orgUnitImportJson.value = "";
+  syncSelectOptions(elements.orgUnitImportTargetRoot, [], "");
+  openModal(elements.orgUnitImportModal);
+};
+
+const submitOrgUnitImport = async () => {
+  let units;
+  try {
+    units = parseImportUnits(elements.orgUnitImportJson.value);
+  } catch (error) {
+    notify(error.message, "error");
+    return;
+  }
+  const selectedRootName = String(elements.orgUnitImportTargetRoot.value || "").trim() || String(units[0]?.name || "").trim();
+  const migrateRoot = units.find((unit) => unit.name === selectedRootName) || units[0];
+  if (!migrateRoot?.name) {
+    notify(t("orgUnits.import.toast.rootRequired"), "error");
+    return;
+  }
+  const payload = {
+    units,
+    migrate_user_root_name: migrateRoot.name,
+  };
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/org_units/import`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const data = result?.data || {};
+    closeModal(elements.orgUnitImportModal);
+    await loadOrgUnits({ silent: true });
+    notify(
+      t("orgUnits.import.toast.success", {
+        count: Number(data.imported_count || 0),
+        users: Number(data.migrated_user_count || 0),
+      }),
+      "success"
+    );
+  } catch (error) {
+    notify(t("orgUnits.import.toast.failed", { message: error.message }), "error");
+  }
+};
+
 const submitOrgUnitCreate = async () => {
   const name = String(elements.orgUnitModalName.value || "").trim();
   if (!name) {
@@ -521,6 +617,7 @@ export const initOrgUnitsPanel = () => {
   });
   elements.orgUnitExpandAllBtn.addEventListener("click", expandAllOrgUnits);
   elements.orgUnitCollapseAllBtn.addEventListener("click", collapseAllOrgUnits);
+  elements.orgUnitImportBtn.addEventListener("click", openImportModal);
   elements.orgUnitCreateBtn.addEventListener("click", () => openCreateModal(""));
   elements.orgUnitAddChildBtn.addEventListener("click", () => {
     const selected = resolveSelectedUnit();
@@ -532,4 +629,15 @@ export const initOrgUnitsPanel = () => {
   elements.orgUnitModalClose?.addEventListener("click", () => closeModal(elements.orgUnitModal));
   elements.orgUnitModalCancel?.addEventListener("click", () => closeModal(elements.orgUnitModal));
   elements.orgUnitModalSave?.addEventListener("click", submitOrgUnitCreate);
+  elements.orgUnitImportModalClose?.addEventListener("click", () => closeModal(elements.orgUnitImportModal));
+  elements.orgUnitImportModalCancel?.addEventListener("click", () => closeModal(elements.orgUnitImportModal));
+  elements.orgUnitImportModalSave?.addEventListener("click", submitOrgUnitImport);
+  elements.orgUnitImportJson?.addEventListener("input", () => {
+    try {
+      const units = parseImportUnits(elements.orgUnitImportJson.value);
+      syncImportRootOptions(units);
+    } catch {
+      syncSelectOptions(elements.orgUnitImportTargetRoot, [], "");
+    }
+  });
 };

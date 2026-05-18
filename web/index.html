@@ -1148,6 +1148,10 @@
                 <i class="fa-solid fa-arrows-rotate"></i>
                 <span data-i18n="common.refresh">刷新</span>
               </button>
+              <button id="orgUnitImportBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-file-import"></i>
+                <span data-i18n="orgUnits.action.import">导入组织架构</span>
+              </button>
               <button id="orgUnitCreateBtn" class="btn-with-icon">
                 <i class="fa-solid fa-plus"></i>
                 <span data-i18n="orgUnits.action.create">新增单位</span>
@@ -5412,6 +5416,37 @@
           </button>
           <button id="orgUnitModalSave" class="btn-with-icon" type="button">
             <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="orgUnitImportModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div id="orgUnitImportModalTitle" class="detail-title" data-i18n="orgUnits.import.title">
+            导入组织架构
+          </div>
+          <button id="orgUnitImportModalClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="tips" data-i18n="orgUnits.import.tip">
+            将替换当前组织架构；原有绑定到旧单位的用户会迁移到你指定的一级单位。
+          </div>
+          <div class="form-row">
+            <label for="orgUnitImportTargetRoot" data-i18n="orgUnits.import.targetRoot">用户迁移到一级单位</label>
+            <select id="orgUnitImportTargetRoot"></select>
+          </div>
+          <div class="form-row">
+            <label for="orgUnitImportJson" data-i18n="orgUnits.import.json">组织架构 JSON</label>
+            <textarea id="orgUnitImportJson" rows="18" spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="orgUnitImportModalCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="orgUnitImportModalSave" class="btn-with-icon" type="button">
+            <i class="fa-solid fa-upload"></i><span data-i18n="orgUnits.import.confirm">替换导入</span>
           </button>
         </div>
       </div>
