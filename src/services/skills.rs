@@ -1,6 +1,6 @@
 // Skills 加载与执行：解析 SKILL.md 元信息，并提供统一执行入口。
 use crate::config::Config;
-use crate::core::python_runtime;
+use crate::core::{command_utils, python_runtime};
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -167,6 +167,7 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut command, runtime);
     }
+    command_utils::apply_platform_spawn_options(&mut command);
     let mut child = command.spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         let payload = serde_json::to_vec(args).unwrap_or_default();

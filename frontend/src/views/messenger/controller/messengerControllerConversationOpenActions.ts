@@ -959,13 +959,21 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               declared_tool_names: dependencyPayload.declared_tool_names,
               declared_skill_names: dependencyPayload.declared_skill_names
           })) as Record<string, unknown> | null;
+          const refreshedProfile = updated || (await ctx.agentStore.getAgent(targetAgentId, { force: true }).catch(() => null));
           if (targetAgentId === DEFAULT_AGENT_KEY) {
-              ctx.defaultAgentProfile.value = updated;
+              ctx.defaultAgentProfile.value = (refreshedProfile as Record<string, unknown> | null) || updated;
           }
           else if (targetAgentId === ctx.activeAgentId.value) {
-              ctx.activeAgentDetailProfile.value = updated;
+              ctx.activeAgentDetailProfile.value = (refreshedProfile as Record<string, unknown> | null) || updated;
+              ctx.activeAgent.value = (refreshedProfile as Record<string, unknown> | null) || updated;
           }
+          ctx.agentStore.agentMap = {
+              ...ctx.agentStore.agentMap,
+              [targetAgentId]: (refreshedProfile as Record<string, unknown> | null) || updated || null
+          };
           await ctx.loadAgentToolSummary({ force: true });
+          void ctx.loadRightDockSkills({ force: true, silent: true });
+          void ctx.refreshAgentMutationState?.();
       }
       catch (error) {
           showApiError(error, ctx.t('portal.agent.saveFailed'));
@@ -1004,6 +1012,10 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
 
   ctx.handleChatPageRefresh = () => {
       if (ctx.isMessengerInteractionBlocked.value) {
+          return;
+      }
+      if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
+          window.location.reload();
           return;
       }
       void ctx.refreshActiveAgentConversation();

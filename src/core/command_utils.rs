@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::process::Command as StdCommand;
 #[cfg(windows)]
 use std::{env, path::PathBuf, sync::OnceLock};
 use tokio::process::Command;
@@ -23,6 +24,16 @@ pub fn apply_platform_spawn_options(cmd: &mut Command) {
     {
         use std::os::windows::process::CommandExt;
         cmd.as_std_mut().creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = cmd;
+}
+
+pub fn apply_platform_spawn_options_std(cmd: &mut StdCommand) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(WINDOWS_CREATE_NO_WINDOW);
     }
     #[cfg(not(windows))]
     let _ = cmd;

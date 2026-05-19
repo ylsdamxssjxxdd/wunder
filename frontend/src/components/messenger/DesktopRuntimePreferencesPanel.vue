@@ -92,19 +92,19 @@
     </div>
 
     <HoneycombWaitingOverlay
-      :visible="loading"
+      :visible="loading || importingSupplement"
       :title="t('messenger.waiting.title')"
-      :target-name="t('desktop.system.runtimeTitle')"
-      :phase-label="t('messenger.waiting.phase.preparing')"
-      :summary-label="t('messenger.waiting.summary.desktopSettings')"
-      :progress="32"
+      :target-name="importingSupplement ? t('desktop.system.pythonSupplementImport') : t('desktop.system.runtimeTitle')"
+      :phase-label="importingSupplement ? t('messenger.waiting.phase.creating') : t('messenger.waiting.phase.preparing')"
+      :summary-label="importingSupplement ? t('desktop.system.pythonSupplementImportHint') : t('messenger.waiting.summary.desktopSettings')"
+      :progress="importingSupplement ? 76 : 32"
       :teleport-to-body="false"
     />
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import {
@@ -483,6 +483,7 @@ async function handleImportSupplementPackage() {
   }
   importingSupplement.value = true;
   try {
+    await nextTick();
     const result = (await bridge.importSupplementPackage()) as DesktopSupplementImportResult | null;
     if (disposed || !result || result.canceled) {
       return;

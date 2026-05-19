@@ -2,7 +2,7 @@
   <Teleport to="body">
     <div class="companion-floating-host">
       <div
-        v-for="entry in visibleEntries"
+        v-for="entry in renderedEntries"
         :key="entry.key"
         class="companion-floating-layer"
         :class="{ 'is-dragging': draggingKey === entry.key }"
@@ -107,6 +107,14 @@ type DesktopCompanionBridge = {
   showCompanion?: (payload: Record<string, unknown>) => Promise<boolean> | boolean;
   updateCompanion?: (payload: Record<string, unknown>) => Promise<boolean> | boolean;
   hideCompanion?: (payload?: Record<string, unknown>) => Promise<boolean> | boolean;
+  onCompanionCommand?: (listener: (payload: unknown) => void) => (() => void) | void;
+};
+
+type DesktopCompanionCommand = {
+  action: 'open-chat' | 'hide' | 'set-scale';
+  key?: string;
+  agentId?: string;
+  scale?: number;
 };
 
 const BASE_WIDTH = 192;
@@ -145,6 +153,7 @@ const menuPosition = ref({ x: 8, y: 8 });
 let nowTimer: number | null = null;
 let clickSuppressUntil = 0;
 let desktopOverlayActive = false;
+let desktopCommandUnsubscribe: (() => void) | null = null;
 const menuState = ref<{ x: number; y: number; entry: FloatingEntry } | null>(null);
 let pointerState:
   | {
@@ -332,6 +341,15 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
 });
 
 const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
+const renderedEntries = computed(() => (effectiveDesktopMode.value ? [] : visibleEntries.value));
+const desktopEntry = computed<FloatingEntry | null>(() => {
+  const activeAgentId = String(activeSessionAgentId.value || '').trim();
+  if (activeAgentId) {
+    const matched = visibleEntries.value.find((entry) => entry.agentId === activeAgentId);
+    return matched || null;
+  }
+  return visibleEntries.value[0] || null;
+});
 
 const menuStyle = computed(() => {
   if (!menuState.value) {
@@ -475,7 +493,10 @@ function setPosition(key: string, position: CompanionPosition): void {
 }
 
 async function syncDesktopOverlay(): Promise<void> {
-  const entry = visibleEntries.value[0] || null;
+  if (effectiveDesktopMode.value && !companionStore.hydrated) {
+    return;
+  }
+  const entry = desktopEntry.value;
   const bridge = getDesktopBridge();
   if (!effectiveDesktopMode.value || !entry || !bridge) {
     if (desktopOverlayActive && typeof bridge?.hideCompanion === 'function') {
@@ -491,10 +512,14 @@ async function syncDesktopOverlay(): Promise<void> {
     desktopOverlayActive = false;
     return;
   }
-  const position = positions.value[entry.key] || defaultPosition(0);
+  const position = effectiveDesktopMode.value
+    ? companionStore.settings.position
+    : (positions.value[entry.key] || defaultPosition(0));
   desktopOverlayActive = (await Promise.resolve(handler.call(bridge, {
-    id: entry.key,
-    selectedId: entry.key,
+    key: entry.key,
+    id: entry.companion.id,
+    selectedId: entry.companion.id,
+    agentId: entry.agentId,
     displayName: entry.name,
     description: entry.companion.description,
     spritesheetDataUrl: entry.companion.spritesheetDataUrl,
@@ -506,6 +531,50 @@ async function syncDesktopOverlay(): Promise<void> {
     messageKind: entry.messageKind,
     messageVisible: entry.messageVisible
   }))) === true;
+}
+
+function resolveEntryForDesktopCommand(command: DesktopCompanionCommand): FloatingEntry | null {
+  const commandKey = String(command.key || '').trim();
+  if (commandKey) {
+    const matchedByKey = visibleEntries.value.find((entry) => entry.key === commandKey);
+    if (matchedByKey) {
+      return matchedByKey;
+    }
+  }
+  const commandAgentId = String(command.agentId || '').trim();
+  if (commandAgentId) {
+    const matchedByAgentId = visibleEntries.value.find((entry) => entry.agentId === commandAgentId);
+    if (matchedByAgentId) {
+      return matchedByAgentId;
+    }
+  }
+  return desktopEntry.value;
+}
+
+async function handleDesktopCommand(payload: unknown): Promise<void> {
+  const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  const action = String(source.action || '').trim().toLowerCase();
+  if (action !== 'open-chat' && action !== 'hide' && action !== 'set-scale') {
+    return;
+  }
+  const entry = resolveEntryForDesktopCommand({
+    action,
+    key: String(source.key || '').trim(),
+    agentId: String(source.agentId || source.agent_id || '').trim(),
+    scale: Number(source.scale)
+  });
+  if (!entry) {
+    return;
+  }
+  if (action === 'open-chat') {
+    await openCompanionChat(entry);
+    return;
+  }
+  if (action === 'hide') {
+    await hideCompanion(entry);
+    return;
+  }
+  await applyCompanionScale(entry, resolveScaleValue(source.scale));
 }
 
 function handleClick(entry: FloatingEntry): void {
@@ -684,6 +753,13 @@ onMounted(async () => {
   if (!agentStore.agents.length) {
     await agentStore.loadAgents().catch(() => undefined);
   }
+  const bridge = getDesktopBridge();
+  if (typeof bridge?.onCompanionCommand === 'function') {
+    const unsubscribe = bridge.onCompanionCommand((payload: unknown) => {
+      void handleDesktopCommand(payload);
+    });
+    desktopCommandUnsubscribe = typeof unsubscribe === 'function' ? unsubscribe : null;
+  }
   window.addEventListener('resize', clampAfterResize);
   document.addEventListener('mousedown', closeEntryMenu);
   window.addEventListener('blur', closeEntryMenu);
@@ -726,6 +802,8 @@ watch(
 onBeforeUnmount(() => {
   if (nowTimer !== null) window.clearInterval(nowTimer);
   Array.from(spriteStateTimeoutByKey.keys()).forEach((key) => clearSpriteStateOverride(key));
+  desktopCommandUnsubscribe?.();
+  desktopCommandUnsubscribe = null;
   window.removeEventListener('resize', clampAfterResize);
   window.removeEventListener('pointermove', handlePointerMove);
   document.removeEventListener('mousedown', closeEntryMenu);
@@ -789,6 +867,8 @@ watch(
 
 watch(
   () => visibleEntries.value.map((entry) => [
+    companionStore.hydrated ? 1 : 0,
+    desktopEntry.value?.key || '',
     entry.key,
     entry.scale,
     entry.message,

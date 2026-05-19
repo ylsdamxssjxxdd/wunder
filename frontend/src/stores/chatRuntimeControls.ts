@@ -555,11 +555,7 @@ export const resolveStreamFlushMs = (messageCount, override) => {
   if (Number.isFinite(override)) {
     return Math.max(0, Number(override));
   }
-  const count = Number.isFinite(messageCount) ? Number(messageCount) : 0;
-  if (count > 1000) return STREAM_FLUSH_MAX_MS;
-  if (count > 500) return 120;
-  if (count > 200) return 80;
-  return STREAM_FLUSH_BASE_MS;
+  return 0;
 };
 
 export const resolveStreamFlushMsForMessages = (messages) =>

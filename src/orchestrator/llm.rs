@@ -1351,7 +1351,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(crate::llm::should_disable_streaming_for_native_tools(
+        assert!(!crate::llm::should_disable_streaming_for_native_tools(
             &config, true
         ));
         assert!(!crate::llm::should_disable_streaming_for_native_tools(

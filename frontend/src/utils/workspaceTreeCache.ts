@@ -44,7 +44,28 @@ export const cloneWorkspaceEntries = (entries: unknown[]) => {
 
 export const normalizeWorkspacePath = (path: unknown) => {
   if (!path) return '';
-  return String(path).replace(/\\/g, '/').replace(/^\/+/, '');
+  let normalized = String(path).trim();
+  if (!normalized) return '';
+  normalized = normalized.replace(/^\\\\\?\\/, '');
+  normalized = normalized.replace(/^\/\/\?\//, '');
+  normalized = normalized.replace(/\\/g, '/');
+  normalized = normalized.replace(/^\/([a-zA-Z]:\/)/, '$1');
+  normalized = normalized.replace(/^\/+/, '');
+  return normalized;
+};
+
+export const normalizeWorkspaceEntries = (entries: unknown[]): unknown[] => {
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry) => {
+    if (!entry || typeof entry !== 'object') return entry;
+    const source = entry as Record<string, unknown>;
+    const children = Array.isArray(source.children) ? normalizeWorkspaceEntries(source.children) : source.children;
+    return {
+      ...source,
+      path: normalizeWorkspacePath(source.path),
+      children
+    };
+  });
 };
 
 const normalizeWorkspaceAgentKey = (agentId: unknown) => {
@@ -109,7 +130,7 @@ const hydrateWorkspaceTreeCache = () => {
         cachedAt,
         path: normalizeWorkspacePath(entry.path),
         parent: entry.parent ? normalizeWorkspacePath(entry.parent) : null,
-        entries: cloneWorkspaceEntries(entry.entries || [])
+        entries: normalizeWorkspaceEntries(cloneWorkspaceEntries(entry.entries || []))
       });
     });
     pruneWorkspaceTreeCache(now);
@@ -144,7 +165,7 @@ export const readWorkspaceTreeCache = (cacheKey: string): WorkspaceTreeCacheEntr
     cachedAt: cached.cachedAt,
     path: normalizeWorkspacePath(cached.path),
     parent: cached.parent ? normalizeWorkspacePath(cached.parent) : null,
-    entries: cloneWorkspaceEntries(cached.entries || [])
+    entries: normalizeWorkspaceEntries(cloneWorkspaceEntries(cached.entries || []))
   };
 };
 
@@ -157,7 +178,7 @@ export const writeWorkspaceTreeCache = (
     cachedAt: Date.now(),
     path: normalizeWorkspacePath(payload.path),
     parent: payload.parent ? normalizeWorkspacePath(payload.parent) : null,
-    entries: cloneWorkspaceEntries(payload.entries || [])
+    entries: normalizeWorkspaceEntries(cloneWorkspaceEntries(payload.entries || []))
   });
   persistWorkspaceTreeCache();
 };
@@ -194,7 +215,7 @@ export const prefetchWorkspaceTree = async (
       const normalizedParent = normalizedPath
         ? normalizeWorkspacePath(normalizedPath.split('/').slice(0, -1).join('/'))
         : '';
-      const normalizedEntries = Array.isArray(payload.entries) ? payload.entries : [];
+      const normalizedEntries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
       writeWorkspaceTreeCache(cacheKey, {
         path: normalizedPath,
         parent: normalizedParent || null,

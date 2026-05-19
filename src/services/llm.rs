@@ -1361,9 +1361,9 @@ pub fn is_openai_compatible_provider(provider: &str) -> bool {
 
 pub fn should_disable_streaming_for_native_tools(
     _config: &LlmModelConfig,
-    has_native_tools: bool,
+    _has_native_tools: bool,
 ) -> bool {
-    has_native_tools
+    false
 }
 
 fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
@@ -5588,7 +5588,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(should_disable_streaming_for_native_tools(&config, true));
+        assert!(!should_disable_streaming_for_native_tools(&config, true));
         assert!(!should_disable_streaming_for_native_tools(&config, false));
     }
 
@@ -5600,7 +5600,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(should_disable_streaming_for_native_tools(&config, true));
+        assert!(!should_disable_streaming_for_native_tools(&config, true));
     }
 
     #[test]
@@ -5611,7 +5611,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(should_disable_streaming_for_native_tools(&config, true));
+        assert!(!should_disable_streaming_for_native_tools(&config, true));
     }
 
     #[test]

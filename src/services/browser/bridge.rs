@@ -1,4 +1,5 @@
 use super::config::EffectiveBrowserConfig;
+use crate::core::command_utils;
 use dashmap::DashMap;
 use serde::Deserialize;
 use serde_json::Value;
@@ -245,6 +246,7 @@ impl BrowserBridge {
         command.stdout(Stdio::piped());
         command.stderr(Stdio::null());
         apply_browser_env(&mut command, &self.config);
+        command_utils::apply_platform_spawn_options_std(&mut command);
         command
     }
 

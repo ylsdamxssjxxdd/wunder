@@ -1716,7 +1716,7 @@ fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
         "suggest" => "suggest".to_string(),
         "auto_edit" | "auto-edit" => "auto_edit".to_string(),
         "full_auto" | "full-auto" => "full_auto".to_string(),
-        _ => "auto_edit".to_string(),
+        _ => "full_auto".to_string(),
     }
 }
 

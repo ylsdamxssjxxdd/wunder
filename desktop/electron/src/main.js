@@ -11,7 +11,8 @@ const {
   screen,
   Notification,
   session,
-  systemPreferences
+  systemPreferences,
+  shell
 } = require('electron')
 const { spawn, spawnSync } = require('child_process')
 const fs = require('fs')
@@ -245,6 +246,8 @@ let overlayHideTimer = null
 let companionWindow = null
 let companionState = {
   enabled: false,
+  key: '',
+  agentId: '',
   selectedId: '',
   displayName: '',
   description: '',
@@ -257,6 +260,7 @@ let companionState = {
   messageKind: 'info',
   messageVisible: false
 }
+const COMPANION_COMMAND_CHANNEL = 'wunder:companion-command'
 
 const createOverlayHtml = () => `<!doctype html>
 <html>
@@ -653,6 +657,7 @@ const createCompanionHtml = () => `<!doctype html>
     cursor: default;
   }
   #root.dragging { cursor: grabbing; }
+  #sprite.dragging { cursor: grabbing; }
   #bubble {
     position: absolute;
     left: 50%;
@@ -703,12 +708,75 @@ const createCompanionHtml = () => `<!doctype html>
     transform-origin: left top;
   }
   .hidden { display: none; }
+  .menu {
+    position: fixed;
+    z-index: 20;
+    min-width: 180px;
+    padding: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .menu.open { display: flex; }
+  .menu button,
+  .menu .scale {
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: #0f172a;
+    text-align: left;
+    cursor: pointer;
+  }
+  .menu button {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+  .menu button:hover,
+  .menu .scale:hover {
+    background: rgba(59, 130, 246, 0.08);
+  }
+  .menu__group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 2px 2px;
+  }
+  .menu__label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #64748b;
+  }
+  .menu__scales {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .menu .scale {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .menu .scale.active {
+    background: rgba(59, 130, 246, 0.12);
+    color: #1d4ed8;
+  }
 </style>
 </head>
 <body>
   <div id="root">
     <div id="bubble" class="hidden"></div>
     <div id="sprite"><div id="sheet"></div></div>
+    <div id="menu" class="menu" aria-hidden="true">
+      <button id="open-chat" type="button">Open conversation</button>
+      <button id="toggle-visible" type="button">Hide</button>
+      <div class="menu__group">
+        <span class="menu__label">Scale</span>
+        <div id="scale-row" class="menu__scales"></div>
+      </div>
+    </div>
   </div>
   <script>
     const { ipcRenderer } = require('electron');
@@ -716,8 +784,13 @@ const createCompanionHtml = () => `<!doctype html>
     const bubble = document.getElementById('bubble');
     const sprite = document.getElementById('sprite');
     const sheet = document.getElementById('sheet');
+    const menu = document.getElementById('menu');
+    const openChatButton = document.getElementById('open-chat');
+    const toggleVisibleButton = document.getElementById('toggle-visible');
+    const scaleRow = document.getElementById('scale-row');
     const frameWidth = 192;
     const frameHeight = 208;
+    const scalePresets = [0.5, 0.8, 1.0, 1.2, 1.4, 1.6];
     const states = {
       idle: { row: 0, frames: 6, duration: 1100 },
       'running-right': { row: 1, frames: 8, duration: 1060 },
@@ -734,12 +807,62 @@ const createCompanionHtml = () => `<!doctype html>
     let timer = null;
     let drag = null;
     let animationSignature = '';
+    let menuState = false;
+    let currentScale = 1;
+    let lastPosition = { x: 0, y: 0 };
+    let currentPayload = {};
 
     const normalizeState = (value) => states[value] ? value : 'idle';
+    const sendCommand = (action, extra) => {
+      ipcRenderer.invoke('${COMPANION_COMMAND_CHANNEL}', Object.assign({ action }, extra || {})).catch(() => {});
+    };
+    const clampScale = (value) => Math.min(1.6, Math.max(0.5, Number(value) || 1));
     const applyFrame = () => {
       const stateKey = normalizeState(payload.state);
       const state = states[stateKey];
       sheet.style.backgroundPosition = '-' + (frame * frameWidth) + 'px -' + (state.row * frameHeight) + 'px';
+    };
+    const syncMenu = () => {
+      const hidden = !menuState;
+      menu.classList.toggle('open', !hidden);
+      menu.setAttribute('aria-hidden', hidden ? 'true' : 'false');
+      if (hidden) return;
+      const rect = menu.getBoundingClientRect();
+      const left = Math.max(8, Math.min(lastPosition.x, window.innerWidth - rect.width - 8));
+      const top = Math.max(8, Math.min(lastPosition.y, window.innerHeight - rect.height - 8));
+      menu.style.left = left + 'px';
+      menu.style.top = top + 'px';
+    };
+    const closeMenu = () => {
+      menuState = false;
+      syncMenu();
+    };
+    const openMenu = (clientX, clientY) => {
+      lastPosition = { x: Math.max(8, clientX), y: Math.max(8, clientY) };
+      menuState = true;
+      syncMenu();
+    };
+    const buildScaleButtons = () => {
+      scaleRow.innerHTML = '';
+      scalePresets.forEach((value) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'scale' + (Math.abs(currentScale - value) < 0.001 ? ' active' : '');
+        button.textContent = value.toFixed(1) + 'x';
+        button.addEventListener('click', () => {
+          sendCommand('set-scale', {
+            scale: value,
+            key: currentPayload.key || currentPayload.selectedId,
+            agentId: currentPayload.agentId
+          });
+        });
+        scaleRow.appendChild(button);
+      });
+    };
+    const renderControls = () => {
+      currentScale = clampScale(payload.scale);
+      buildScaleButtons();
+      toggleVisibleButton.textContent = 'Hide';
     };
     const startAnimation = () => {
       if (timer) clearInterval(timer);
@@ -765,6 +888,7 @@ const createCompanionHtml = () => `<!doctype html>
     };
     const render = (next) => {
       payload = Object.assign({}, payload, next || {});
+      currentPayload = payload;
       const scale = Math.min(1.6, Math.max(0.7, Number(payload.scale || 1)));
       sprite.style.width = Math.round(frameWidth * scale) + 'px';
       sprite.style.height = Math.round(frameHeight * scale) + 'px';
@@ -778,13 +902,39 @@ const createCompanionHtml = () => `<!doctype html>
         bubble.textContent = '';
         bubble.className = 'hidden';
       }
+      renderControls();
       refreshAnimationIfNeeded();
     };
     ipcRenderer.on('wunder:companion-render', (event, next) => render(next));
+    openChatButton.addEventListener('click', () => {
+      closeMenu();
+      sendCommand('open-chat', {
+        key: currentPayload.key || currentPayload.selectedId,
+        agentId: currentPayload.agentId
+      });
+    });
+    toggleVisibleButton.addEventListener('click', () => {
+      closeMenu();
+      sendCommand('hide', {
+        key: currentPayload.key || currentPayload.selectedId,
+        agentId: currentPayload.agentId
+      });
+    });
+    root.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      openMenu(event.clientX, event.clientY);
+    });
+    window.addEventListener('mousedown', (event) => {
+      if (!menuState) return;
+      if (event.target && menu.contains(event.target)) return;
+      closeMenu();
+    });
+    window.addEventListener('resize', syncMenu);
     root.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       drag = { x: event.screenX, y: event.screenY };
       root.classList.add('dragging');
+      sprite.classList.add('dragging');
       root.setPointerCapture(event.pointerId);
     });
     root.addEventListener('pointermove', (event) => {
@@ -794,10 +944,29 @@ const createCompanionHtml = () => `<!doctype html>
       drag = { x: event.screenX, y: event.screenY };
       ipcRenderer.invoke('wunder:companion-drag', { dx, dy }).catch(() => {});
     });
+    root.addEventListener('click', (event) => {
+      if (menuState) return;
+      if (event.detail !== 2) return;
+      sendCommand('open-chat', {
+        key: currentPayload.key || currentPayload.selectedId,
+        agentId: currentPayload.agentId
+      });
+    });
+    root.addEventListener('wheel', (event) => {
+      if (!event.altKey) return;
+      event.preventDefault();
+      const nextScale = clampScale(currentScale + (event.deltaY > 0 ? -0.1 : 0.1));
+      sendCommand('set-scale', {
+        scale: nextScale,
+        key: currentPayload.key || currentPayload.selectedId,
+        agentId: currentPayload.agentId
+      });
+    }, { passive: false });
     const stopDrag = (event) => {
       if (!drag) return;
       drag = null;
       root.classList.remove('dragging');
+      sprite.classList.remove('dragging');
       try { root.releasePointerCapture(event.pointerId); } catch {}
     };
     root.addEventListener('pointerup', stopDrag);
@@ -902,7 +1071,9 @@ const renderCompanionWindow = () => {
 const showCompanion = (payload) => {
   const next = normalizeCompanionState({
     ...companionState,
-    selectedId: payload?.id || payload?.selectedId || companionState.selectedId,
+    key: payload?.key || payload?.id || companionState.key,
+    agentId: payload?.agentId || payload?.agent_id || companionState.agentId,
+    selectedId: payload?.selectedId || payload?.id || companionState.selectedId,
     displayName: payload?.displayName || companionState.displayName,
     description: payload?.description || companionState.description,
     spritesheetDataUrl: payload?.spritesheetDataUrl || companionState.spritesheetDataUrl,
@@ -934,6 +1105,23 @@ const hideCompanion = (payload = {}) => {
   return true
 }
 
+const emitCompanionStateChanged = () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('wunder:companion-state-changed', companionState)
+  }
+}
+
+const emitCompanionCommand = (payload) => {
+  const action = String(payload?.action || '').trim().toLowerCase()
+  if (action === 'open-chat') {
+    showMainWindow({ explicit: true })
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
+  }
+  return true
+}
+
 const moveCompanionBy = (payload) => {
   if (!companionWindow || companionWindow.isDestroyed()) {
     return false
@@ -944,9 +1132,7 @@ const moveCompanionBy = (payload) => {
   const point = clampCompanionBounds(bounds.x + dx, bounds.y + dy, bounds)
   companionWindow.setBounds({ ...bounds, ...point }, false)
   saveCompanionState({ x: point.x, y: point.y })
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('wunder:companion-state-changed', companionState)
-  }
+  emitCompanionStateChanged()
   return true
 }
 
@@ -1410,6 +1596,18 @@ const choosePythonInterpreter = async (defaultPath = '') => {
   return String(result.filePaths[0] || '').trim()
 }
 
+const openPathWithDefaultApp = async (targetPath = '') => {
+  const normalized = String(targetPath || '').trim()
+  if (!normalized) {
+    throw new Error('Path is required')
+  }
+  const result = await shell.openPath(normalized)
+  if (result) {
+    throw new Error(result)
+  }
+  return true
+}
+
 const importSupplementPackage = async () => {
   if (process.platform !== 'win32') {
     return {
@@ -1455,7 +1653,9 @@ const importSupplementPackage = async () => {
   const installRoot = resolveDesktopAppDir()
   const stagingRoot = buildSupplementTempPath('wunder-supplement-stage')
   try {
+    await new Promise((resolve) => setImmediate(resolve))
     extractZipArchiveWithPowershell(packagePath, stagingRoot)
+    await new Promise((resolve) => setImmediate(resolve))
     const extractRoot = resolveSupplementExtractRoot(stagingRoot)
     if (!extractRoot) {
       throw new Error('Supplement package is missing opt/python, opt/git, and opt/rg')
@@ -1472,6 +1672,7 @@ const importSupplementPackage = async () => {
       copyDirectoryRecursive(sourcePath, targetPath)
       importedPaths.push(targetPath)
     }
+    await new Promise((resolve) => setImmediate(resolve))
     if (!importedPaths.length) {
       throw new Error('Supplement package does not contain importable runtime content')
     }
@@ -1484,6 +1685,7 @@ const importSupplementPackage = async () => {
       fs.copyFileSync(sourcePath, path.join(installRoot, fileName))
     }
 
+    await new Promise((resolve) => setImmediate(resolve))
     registerBundledToolPaths()
     return {
       supported: true,
@@ -2794,6 +2996,8 @@ const requestMediaAccess = async (kind) => {
 const normalizeCompanionState = (value) => {
   const source = value && typeof value === 'object' ? value : {}
   const enabled = source.enabled === true
+  const key = String(source.key || source.id || '').trim()
+  const agentId = String(source.agentId || source.agent_id || '').trim()
   const selectedId = String(source.selectedId || source.selected_id || '').trim()
   const displayName = String(source.displayName || source.display_name || '').trim()
   const description = String(source.description || '').trim()
@@ -2807,6 +3011,8 @@ const normalizeCompanionState = (value) => {
   const messageVisible = source.messageVisible === true || source.message_visible === true
   return {
     enabled,
+    key,
+    agentId,
     selectedId,
     displayName,
     description,
@@ -2825,6 +3031,8 @@ const serializeCompanionState = (value) => {
   const normalized = normalizeCompanionState(value)
   return {
     enabled: normalized.enabled,
+    key: normalized.key,
+    agentId: normalized.agentId,
     selectedId: normalized.selectedId,
     displayName: normalized.displayName,
     description: normalized.description,
@@ -2907,7 +3115,8 @@ const startBridge = async () => {
   const bridgeSpawnNs = process.hrtime.bigint()
   bridgeProcess = spawn(bridgePath, args, {
     env: bridgeEnv,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
   })
   logStartupSegment('electron', 'bridge_spawn_process', bridgeSpawnNs, {
     pid: bridgeProcess?.pid || 0,
@@ -3409,6 +3618,10 @@ if (!gotLock) {
       })
       ipcMain.handle('wunder:python-runtime-info', () => resolveDesktopPythonRuntimeInfo())
       ipcMain.handle('wunder:supplement-import', () => importSupplementPackage())
+      ipcMain.handle('wunder:open-path-default-app', (_event, payload) => {
+        const source = payload && typeof payload === 'object' ? payload.path : payload
+        return openPathWithDefaultApp(source)
+      })
       ipcMain.handle('wunder:window-start-drag', () => false)
       ipcMain.handle('wunder:clipboard-write-text', (_event, payload) => {
         const text =
@@ -3487,6 +3700,7 @@ if (!gotLock) {
       ipcMain.handle('wunder:companion-hide', (_event, payload) => hideCompanion(payload))
       ipcMain.handle('wunder:companion-state', () => loadCompanionState())
       ipcMain.handle('wunder:companion-drag', (_event, payload) => moveCompanionBy(payload))
+      ipcMain.handle(COMPANION_COMMAND_CHANNEL, (_event, payload) => emitCompanionCommand(payload))
       logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)
       createTray()

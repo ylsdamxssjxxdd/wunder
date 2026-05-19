@@ -515,6 +515,7 @@ import {
 } from './workspacePanelRefreshPlanner';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths, setWorkspaceDragPaths } from './workspaceDrag';
 import { isDesktopLocalModeEnabled } from '@/config/desktop';
+import { getRuntimeConfig } from '@/config/runtime';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
@@ -524,6 +525,7 @@ import {
   buildWorkspaceTreeCacheKey,
   cloneWorkspaceEntries,
   normalizeWorkspacePath,
+  normalizeWorkspaceEntries,
   readWorkspaceTreeCache,
   writeWorkspaceTreeCache
 } from '@/utils/workspaceTreeCache';
@@ -577,6 +579,22 @@ const showContainerId = computed(() => props.showContainerId);
 const preserveDockLayout = computed(() => props.preserveDockLayout);
 const sidebarVisible = computed(() => props.sidebarVisible);
 const desktopLocalMode = computed(() => isDesktopLocalModeEnabled());
+const getDesktopBridge = (): {
+  openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
+} | null => {
+  if (typeof window === 'undefined') return null;
+  const runtimeWindow = window as Window & { wunderDesktop?: Record<string, unknown> };
+  const bridge = runtimeWindow.wunderDesktop;
+  return bridge && typeof bridge === 'object' ? (bridge as { openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean }) : null;
+};
+const resolveDesktopAbsoluteWorkspacePath = (relativePath: string): string => {
+  const normalized = normalizeWorkspacePath(relativePath);
+  if (!normalized) return '';
+  const workspaceRoot = String(getRuntimeConfig().workspace_root || '').trim();
+  if (!workspaceRoot) return normalized;
+  const root = workspaceRoot.replace(/[\\/]+$/, '');
+  return `${root}/${normalized}`.replace(/\\/g, '/');
+};
 const resourceActionLabel = computed(() =>
   desktopLocalMode.value ? t('workspace.action.exportCopy') : t('common.download')
 );
@@ -1390,9 +1408,18 @@ let workspaceThemeIconWarmupUsesIdleCallback = false;
 const joinWorkspacePath = (basePath, name) =>
   normalizeWorkspacePath([basePath, name].filter(Boolean).join('/'));
 
+const normalizeWorkspaceEntryText = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text
+    .replace(/^\\\\\?\\/, '')
+    .replace(/^\/\/\?\//, '')
+    .replace(/\\/g, '/');
+};
+
 const getWorkspaceExtension = (entry) => {
-  const rawName = String(entry?.name || entry?.path || '');
-  const baseName = rawName.split('/').pop().split('\\').pop();
+  const rawName = normalizeWorkspaceEntryText(entry?.name || entry?.path || '');
+  const baseName = rawName.split('/').pop() || '';
   if (baseName.toLowerCase().endsWith('.drawio.xml')) {
     return 'drawio.xml';
   }
@@ -1734,7 +1761,7 @@ const resolveWorkspaceEntryName = (path) => {
 const attachWorkspaceChildren = (entries, targetPath, children) => {
   const target = findWorkspaceEntryByPath(entries, targetPath);
   if (!target || target.type !== 'dir') return false;
-  target.children = Array.isArray(children) ? children : [];
+  target.children = normalizeWorkspaceEntries(Array.isArray(children) ? children : []);
   target.childrenLoaded = true;
   return true;
 };
@@ -1910,7 +1937,7 @@ const loadWorkspace = async ({
     state.path = normalizedPath;
     const parentPath = getWorkspaceParentPath(normalizedPath);
     state.parent = parentPath ? parentPath : null;
-    state.entries = Array.isArray(payload.entries) ? payload.entries : [];
+    state.entries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
     emitWorkspaceStats(state.entries);
     writeWorkspaceTreeCache(cacheKey, {
       path: normalizedPath,
@@ -1971,7 +1998,7 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
     );
     const payload = data || {};
     commitWorkspaceTreeVersion(normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion));
-    state.entries = Array.isArray(payload.entries) ? payload.entries : [];
+    state.entries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
     state.searchMode = true;
     emitWorkspaceStats(state.entries);
     reconcileWorkspaceSelection();
@@ -2020,7 +2047,7 @@ const fetchWorkspaceDirectorySnapshot = async (path) => {
   }
   return {
     path: resolvedPath,
-    entries: Array.isArray(payload.entries) ? payload.entries : [],
+    entries: normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []),
     treeVersion: normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion)
   };
 };
@@ -3405,6 +3432,22 @@ const handleDrawioFallback = async (payload: { path?: string; message?: string }
   state.drawio.entry = null;
   state.drawio.fallbackEntry = null;
   if (!fallbackEntry) return;
+  if (desktopLocalMode.value) {
+    const bridge = getDesktopBridge();
+    let opened = false;
+    if (bridge?.openPathWithDefaultApp) {
+      try {
+        opened = Boolean(
+          await bridge.openPathWithDefaultApp(resolveDesktopAbsoluteWorkspacePath(fallbackEntry.path))
+        );
+      } catch {
+        opened = false;
+      }
+    }
+    if (opened) {
+      return;
+    }
+  }
   await openPreviewWithoutOnlyOffice(fallbackEntry);
 };
 
@@ -3430,6 +3473,22 @@ const handleOnlyOfficeFallback = async (payload: { path?: string; message?: stri
   state.onlyOffice.entry = null;
   state.onlyOffice.fallbackEntry = null;
   if (!fallbackEntry) return;
+  if (desktopLocalMode.value) {
+    const bridge = getDesktopBridge();
+    let opened = false;
+    if (bridge?.openPathWithDefaultApp) {
+      try {
+        opened = Boolean(
+          await bridge.openPathWithDefaultApp(resolveDesktopAbsoluteWorkspacePath(fallbackEntry.path))
+        );
+      } catch {
+        opened = false;
+      }
+    }
+    if (opened) {
+      return;
+    }
+  }
   await openPreviewWithoutOnlyOffice(fallbackEntry);
 };
 

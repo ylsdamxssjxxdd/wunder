@@ -4,7 +4,7 @@ use super::{
     tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES,
     MAX_SEARCH_MATCHES,
 };
-use crate::core::command_utils::is_not_found_error;
+use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -1224,6 +1224,7 @@ fn build_rg_search_command(
     }
     command.arg("--");
     command.arg(target);
+    apply_platform_spawn_options(&mut command);
     command
 }
 

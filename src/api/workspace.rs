@@ -1,5 +1,6 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::path_utils::strip_windows_verbatim_prefix;
 use crate::state::AppState;
 use crate::storage::{normalize_workspace_container_id, DEFAULT_SANDBOX_CONTAINER_ID};
 use crate::workspace::WorkspaceEntry;
@@ -1160,12 +1161,25 @@ fn attach_children<'a>(
 }
 
 fn normalize_relative_path(value: &str) -> String {
-    let trimmed = value.replace('\\', "/");
+    let trimmed = strip_windows_verbatim_prefix(value).replace('\\', "/");
     let trimmed = trimmed.trim();
     if trimmed.is_empty() || trimmed == "." || trimmed == "/" {
         return String::new();
     }
-    trimmed.trim_start_matches('/').to_string()
+    let trimmed = if let Some(stripped) = trimmed.strip_prefix('/') {
+        if stripped.len() >= 3
+            && stripped.as_bytes()[1] == b':'
+            && stripped.as_bytes()[2] == b'/'
+            && stripped.as_bytes()[0].is_ascii_alphabetic()
+        {
+            stripped
+        } else {
+            trimmed.trim_start_matches('/')
+        }
+    } else {
+        trimmed
+    };
+    trimmed.to_string()
 }
 
 fn normalize_agent_id(value: Option<&str>) -> Option<&str> {
@@ -1724,4 +1738,21 @@ fn default_depth() -> i64 {
 
 fn default_search_limit() -> i64 {
     100
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_relative_path;
+
+    #[test]
+    fn normalize_relative_path_strips_windows_verbatim_prefix() {
+        assert_eq!(
+            normalize_relative_path(r"\\?\C:\Users\demo\workspace\src\pages"),
+            "C:/Users/demo/workspace/src/pages"
+        );
+        assert_eq!(
+            normalize_relative_path("//?/C:/Users/demo/workspace/src/pages"),
+            "C:/Users/demo/workspace/src/pages"
+        );
+    }
 }

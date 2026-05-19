@@ -35,11 +35,11 @@ security: # 安全与权限配置
   allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）
     - '*'
   allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）；填 "*" 表示放开整个文件系统
-    - ./config/skills
+    - '*'
   deny_globs: # 拒绝访问的路径通配规则（用于阻断敏感目录）
-    - '**/.git/**'
-    - '**/node_modules/**'
-    - '**/__pycache__/**'
+    []
+  exec_policy_mode: # 执行策略；留空表示不额外拦截执行
+  approval_mode: full_auto # 审批模式；full_auto 表示自动放行
 
 cors: # CORS 跨域配置（供前端调试面板调用）
   allow_origins: # 允许的来源列表，'*' 表示全部放行（生产环境建议收敛）

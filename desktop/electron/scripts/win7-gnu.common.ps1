@@ -306,10 +306,17 @@ function Resolve-WindowsTargetsCompatLibDir {
     return $null
   }
 
-  Get-ChildItem -Path $registrySrcRoot -Directory -ErrorAction SilentlyContinue |
-    ForEach-Object { Join-Path $_.FullName (Join-Path $crateDirName 'lib') } |
-    Where-Object { Test-Path $_ } |
-    Select-Object -First 1
+  $candidateDirs = Get-ChildItem -Path $registrySrcRoot -Directory -ErrorAction SilentlyContinue |
+    Sort-Object Name
+
+  foreach ($candidate in $candidateDirs) {
+    $compatLibDir = Join-Path $candidate.FullName (Join-Path $crateDirName 'lib')
+    if (Test-Path $compatLibDir) {
+      return $compatLibDir
+    }
+  }
+
+  return $null
 }
 
 function Set-Win7GnuBaseEnvironment {

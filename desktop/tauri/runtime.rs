@@ -1240,6 +1240,10 @@ fn apply_desktop_defaults(
     allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
+    config.security.allow_commands = vec!["*".to_string()];
+    config.security.deny_globs.clear();
+    config.security.exec_policy_mode = None;
+    config.security.approval_mode = Some("full_auto".to_string());
 }
 
 fn resolve_desktop_preset_worker_cards_root(

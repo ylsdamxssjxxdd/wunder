@@ -1,7 +1,9 @@
 // 工作区管理：路径校验、文件读写、目录操作与压缩打包。
 use crate::core::atomic_write::atomic_write_text;
 use crate::i18n;
-use crate::path_utils::normalize_target_path;
+use crate::path_utils::{
+    normalize_path_for_compare, normalize_target_path, strip_windows_verbatim_prefix,
+};
 use crate::services::orchestration_context::filter_orchestration_suppressed_messages;
 use crate::storage::{
     normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
@@ -512,7 +514,9 @@ impl WorkspaceManager {
 
     pub fn display_path(&self, user_id: &str, target: &Path) -> String {
         let user_root = self.user_root(user_id);
-        if let Ok(rel) = target.strip_prefix(&user_root) {
+        let normalized_user_root = normalize_target_path(&user_root);
+        let normalized_target = normalize_target_path(target);
+        if let Ok(rel) = normalized_target.strip_prefix(&normalized_user_root) {
             let public_root = self.public_root(user_id);
             let display = if rel.as_os_str().is_empty() {
                 public_root
@@ -525,7 +529,7 @@ impl WorkspaceManager {
             }
             return text;
         }
-        target.to_string_lossy().to_string()
+        normalized_target.to_string_lossy().to_string()
     }
 
     pub fn map_public_path(&self, user_id: &str, target: &Path) -> Option<PathBuf> {
@@ -799,7 +803,7 @@ impl WorkspaceManager {
             return Err(anyhow!(i18n::t("workspace.error.path_not_dir")));
         }
 
-        let root = self.user_root(user_id);
+        let root = normalize_target_path(&self.user_root(user_id));
         let keyword = keyword.unwrap_or("").trim().to_lowercase();
         let mut entries: Vec<(WorkspaceEntry, f64)> = Vec::new();
         for entry in fs::read_dir(&target)? {
@@ -820,12 +824,17 @@ impl WorkspaceManager {
                 dt.to_rfc3339()
             });
             let entry_type = if meta.is_dir() { "dir" } else { "file" };
-            let rel_path = entry
-                .path()
+            let entry_path = normalize_target_path(entry.path().as_path());
+            let rel_path = entry_path
                 .strip_prefix(&root)
-                .unwrap_or(entry.path().as_path())
-                .to_string_lossy()
-                .replace('\\', "/");
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| {
+                    if normalize_path_for_compare(&entry_path) == normalize_path_for_compare(&root) {
+                        String::new()
+                    } else {
+                        entry_path.to_string_lossy().replace('\\', "/")
+                    }
+                });
             let entry = WorkspaceEntry {
                 name,
                 path: rel_path,
@@ -1939,12 +1948,11 @@ impl WorkspaceManager {
                     let dt: DateTime<Local> = time.into();
                     dt.to_rfc3339()
                 });
-            let rel = entry
-                .path()
+            let entry_path = normalize_target_path(entry.path());
+            let rel = entry_path
                 .strip_prefix(root)
-                .unwrap_or(entry.path())
-                .to_string_lossy()
-                .to_string();
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| entry_path.to_string_lossy().to_string());
             let is_dir = file_type.is_dir();
             let entry = WorkspaceEntry {
                 name: name.clone(),
@@ -1971,10 +1979,19 @@ impl WorkspaceManager {
 }
 
 fn normalize_relative_path(value: &str) -> String {
-    let trimmed = value.replace('\\', "/");
+    let trimmed = strip_windows_verbatim_prefix(value).replace('\\', "/");
     let trimmed = trimmed.trim();
     if trimmed.is_empty() || trimmed == "." || trimmed == "/" {
         return String::new();
+    }
+    if let Some(stripped) = trimmed.strip_prefix('/') {
+        if stripped.len() >= 3
+            && stripped.as_bytes()[1] == b':'
+            && stripped.as_bytes()[2] == b'/'
+            && stripped.as_bytes()[0].is_ascii_alphabetic()
+        {
+            return stripped.to_string();
+        }
     }
     trimmed.trim_start_matches('/').to_string()
 }

@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   notify: (payload) => ipcRenderer.invoke('wunder:notify', payload || {}),
   captureScreenshot: (options) => ipcRenderer.invoke('wunder:capture-screenshot', options || {}),
   chooseDirectory: (defaultPath) => ipcRenderer.invoke('wunder:choose-directory', { defaultPath }),
+  openPathWithDefaultApp: (targetPath) =>
+    ipcRenderer.invoke('wunder:open-path-default-app', { path: targetPath }),
   showControllerHint: (payload) =>
     ipcRenderer.invoke('wunder:overlay-controller-hint', payload || {}),
   showControllerDone: (payload) =>
@@ -39,6 +41,14 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   updateCompanion: (payload) => ipcRenderer.invoke('wunder:companion-update', payload || {}),
   hideCompanion: (payload) => ipcRenderer.invoke('wunder:companion-hide', payload || {}),
   getCompanionState: () => ipcRenderer.invoke('wunder:companion-state'),
+  onCompanionCommand: (listener) => {
+    if (typeof listener !== 'function') {
+      return () => {};
+    }
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('wunder:companion-command', wrapped);
+    return () => ipcRenderer.removeListener('wunder:companion-command', wrapped);
+  },
   onCompanionStateChanged: (listener) => {
     if (typeof listener !== 'function') {
       return () => {};

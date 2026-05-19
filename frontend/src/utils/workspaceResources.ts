@@ -70,8 +70,15 @@ const stripTrailingSlash = (value) => {
   return output;
 };
 
+const normalizeVerbatimPath = (value) => {
+  return String(value || '')
+    .trim()
+    .replace(/^\\\\\?\\/, '')
+    .replace(/^\/\/\?\//, '');
+};
+
 const normalizeLocalAbsolutePath = (raw) => {
-  const text = String(raw || '').trim();
+  const text = normalizeVerbatimPath(raw);
   if (!text) return '';
   if (text.startsWith('//') && !FILE_URI_SCHEME_RE.test(text)) {
     return '';

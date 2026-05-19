@@ -923,6 +923,28 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
   };
 
+  ctx.openWorkspaceResourceWithDefaultApp = async (resourcePath: string) => {
+      const normalized = String(resourcePath || '').trim();
+      if (!normalized || !ctx.desktopMode.value) {
+          return false;
+      }
+      const bridge = ctx.getDesktopBridge();
+      if (!bridge || typeof bridge.openPathWithDefaultApp !== 'function') {
+          return false;
+      }
+      const resolved = ctx.resolveWorkspaceResource(normalized);
+      const localPath = String(resolved?.relativePath || normalized).trim();
+      if (!localPath) {
+          return false;
+      }
+      try {
+          return Boolean(await bridge.openPathWithDefaultApp(localPath));
+      }
+      catch {
+          return false;
+      }
+  };
+
   ctx.downloadExternalImage = async (src: string) => {
       const url = String(src || '').trim();
       if (!url)
@@ -1166,6 +1188,18 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       ctx.drawioContainerId.value = null;
       if (!path)
           return;
+      if (ctx.desktopMode.value) {
+          const bridge = ctx.getDesktopBridge();
+          if (bridge && typeof bridge.openPathWithDefaultApp === 'function') {
+              try {
+                  await bridge.openPathWithDefaultApp(path);
+                  return;
+              }
+              catch {
+                  // Fall back to in-app preview if the local app cannot open the file.
+              }
+          }
+      }
       await ctx.openResourcePreview({
           title: ctx.resourcePreviewTitle.value || path.split('/').pop() || '',
           workspacePath: path,

@@ -131,7 +131,6 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { applyPlanUpdate, buildToolIdentityMeta, buildWorkflowItem, hasPlanSteps, isQuestionPanelToolName, normalizeInquiryPanelPayload, normalizeInquiryPanelState, normalizePlanPayload, safeJsonParse, shouldAutoShowPlan, tailText } from './chatDemoPanels';
 import { applyDesktopOverlayEvent } from './chatPersist';
-import { STREAM_FLUSH_BASE_MS, resolveStreamFlushMs } from './chatRuntimeControls';
 import { resolveSessionKey, sessionSubagentsCache } from './chatRuntimeState';
 import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveContextPreviewTokens, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
 import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments } from './chatStreamIds';
@@ -141,7 +140,6 @@ import { handleWorkflowProcessorEvent } from './chatWorkflowProcessorEvents';
 
 export const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: WorkflowProcessorOptions = {}) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
-  const streamFlushMs = resolveStreamFlushMs(null, options.streamFlushMs);
   const perfEnabled = chatPerf.enabled();
   const commandSessionStore =
     typeof options.commandSessionStore === 'object' && options.commandSessionStore
@@ -1748,14 +1746,9 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   let pendingReasoningFallback = '';
   const thinkStreamParser = createThinkTagStreamParser();
   let streamTimer = null;
-  const flushInterval = Math.max(0, Number(streamFlushMs) || 0);
-  const scheduleFrame = (callback) =>
-    setTimeout(callback, flushInterval || STREAM_FLUSH_BASE_MS);
-  const cancelFrame = (timer) => clearTimeout(timer);
-
   const flushStream = (force = false) => {
     if (streamTimer !== null) {
-      cancelFrame(streamTimer);
+      clearTimeout(streamTimer);
       streamTimer = null;
     }
     if (force) {
@@ -1822,16 +1815,12 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   };
 
   const scheduleStreamFlush = () => {
-    if (streamTimer !== null) return;
-    streamTimer = scheduleFrame(() => {
-      streamTimer = null;
-      flushStream();
-    });
+    flushStream();
   };
 
   const resetStreamPending = () => {
     if (streamTimer !== null) {
-      cancelFrame(streamTimer);
+      clearTimeout(streamTimer);
       streamTimer = null;
     }
     pendingContent = '';

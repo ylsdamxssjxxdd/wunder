@@ -1292,7 +1292,7 @@
 }
 
 .workspace-dialog--onlyoffice .el-dialog__header {
-  padding: 6px 8px;
+  padding: 14px 8px 6px;
 }
 
 .workspace-dialog--onlyoffice .el-dialog__body {
@@ -1303,21 +1303,21 @@
 
 .workspace-editor-shell {
   position: fixed;
-  inset: 4px;
+  inset: 8px;
   z-index: 2600;
   pointer-events: none;
 }
 
 .workspace-editor-shell--modal {
-  inset: 4px;
+  inset: 8px;
 }
 
 .workspace-editor-shell--with-sidebar {
-  right: calc(var(--messenger-right-dock-width) + 10px);
+  right: calc(var(--messenger-right-dock-width) + 14px);
 }
 
 .workspace-editor-shell--with-sidebar.is-sidebar-hidden {
-  right: 4px;
+  right: 8px;
 }
 
 .workspace-editor-panel {
@@ -1338,6 +1338,10 @@
 
 .workspace-editor-panel--with-sidebar {
   border-radius: 14px;
+}
+
+.workspace-editor-panel--with-sidebar .workspace-editor-head {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
 }
 
 .workspace-editor-head {

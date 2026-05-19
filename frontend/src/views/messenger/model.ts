@@ -37,6 +37,7 @@ export type DesktopBridge = {
     options?: { hideWindow?: boolean; region?: boolean }
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
   chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
+  openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
   showControllerHint?: (payload: {
     x: number;
     y: number;
@@ -80,6 +81,30 @@ export type DesktopBridge = {
     messageVisible?: boolean;
   }) => Promise<boolean> | boolean;
   hideCompanion?: (payload?: { persistEnabled?: boolean }) => Promise<boolean> | boolean;
+  onCompanionStateChanged?: (
+    listener: (payload: {
+      enabled?: boolean;
+      selectedId?: string;
+      displayName?: string;
+      description?: string;
+      spritesheetDataUrl?: string;
+      state?: string;
+      scale?: number;
+      x?: number;
+      y?: number;
+      message?: string;
+      messageKind?: 'info' | 'success' | 'warning';
+      messageVisible?: boolean;
+    }) => void
+  ) => (() => void) | void;
+  onCompanionCommand?: (
+    listener: (payload: {
+      action?: 'open-chat' | 'hide' | 'set-scale';
+      key?: string;
+      agentId?: string;
+      scale?: number;
+    }) => void
+  ) => (() => void) | void;
   getCompanionState?: () => Promise<{
     enabled?: boolean;
     selectedId?: string;
@@ -94,19 +119,19 @@ export type DesktopBridge = {
     messageKind?: 'info' | 'success' | 'warning';
     messageVisible?: boolean;
   }> | {
-    enabled?: boolean;
-    selectedId?: string;
-    displayName?: string;
-    description?: string;
-    spritesheetDataUrl?: string;
-    state?: string;
-    scale?: number;
-    x?: number;
-    y?: number;
-    message?: string;
-    messageKind?: 'info' | 'success' | 'warning';
-    messageVisible?: boolean;
-  };
+      enabled?: boolean;
+      selectedId?: string;
+      displayName?: string;
+      description?: string;
+      spritesheetDataUrl?: string;
+      state?: string;
+      scale?: number;
+      x?: number;
+      y?: number;
+      message?: string;
+      messageKind?: 'info' | 'success' | 'warning';
+      messageVisible?: boolean;
+    };
 };
 
 export const DEFAULT_AGENT_KEY = '__default__';

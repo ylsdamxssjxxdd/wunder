@@ -153,9 +153,6 @@
                   :value="provider.id"
                 />
               </el-select>
-              <span class="desktop-system-settings-field-note">
-                {{ providerFieldNote }}
-              </span>
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelName') }}</span>
@@ -926,13 +923,6 @@ const modelBaseUrlPlaceholder = computed(() => {
   return resolveProviderBaseUrl(provider) || t('desktop.system.baseUrlPlaceholder');
 });
 
-const providerFieldNote = computed(() => {
-  const modelType = selectedModel.value?.model_type || 'llm';
-  if (modelType === 'asr' || modelType === 'tts' || modelType === 'image' || modelType === 'video') {
-    return t('desktop.system.providerHintMultimodal');
-  }
-  return t('desktop.system.providerHint');
-});
 const setCurrentDefaultLabel = computed(() => {
   const current = selectedModel.value;
   if (!current) return t('desktop.system.setDefaultChatModel');
@@ -2255,12 +2245,6 @@ onMounted(() => {
 .desktop-system-settings-field-label {
   color: var(--portal-text);
   font-size: 12px;
-}
-
-.desktop-system-settings-field-note {
-  color: var(--portal-muted);
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .desktop-system-settings-form-grid {
