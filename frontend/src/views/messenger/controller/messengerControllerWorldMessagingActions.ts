@@ -819,6 +819,27 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       return meta.hearingSupported;
   };
 
+  ctx.hasDesktopAsrModelConfigured = async (): Promise<boolean> => {
+      if (!ctx.desktopMode.value) {
+          return true;
+      }
+      try {
+          const response = await fetchDesktopSettings();
+          const settings = (response?.data?.data || {}) as Record<string, unknown>;
+          const llm = ctx.asObjectRecord(settings.llm);
+          const defaultAsrKey = String(llm.default_asr || '').trim();
+          if (!defaultAsrKey) {
+              return false;
+          }
+          const models = ctx.asObjectRecord(llm.models);
+          const model = ctx.asObjectRecord(models[defaultAsrKey]);
+          return ctx.normalizeModelType(model.model_type) === 'asr';
+      }
+      catch {
+          return false;
+      }
+  };
+
   ctx.WORLD_VOICE_RECORDING_TICK_MS = 120;
 
   ctx.clearAgentVoiceRecordingTimer = (runtime: AgentVoiceRecordingRuntime | null) => {
@@ -842,6 +863,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       ctx.agentVoiceRecordingRuntime = null;
       ctx.clearAgentVoiceRecordingTimer(runtime);
       ctx.resetAgentVoiceRecordingState();
+      ctx.agentVoiceTranscribing.value = false;
       await runtime.session.cancel().catch(() => undefined);
   };
 
@@ -906,48 +928,20 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       if (runtime.draftIdentity !== ctx.resolveAgentDraftIdentity()) {
           return;
       }
+      const hasAsrModel = await ctx.hasDesktopAsrModelConfigured();
+      if (!hasAsrModel) {
+          ElMessage.warning(ctx.t('messenger.world.voice.asrNotConfigured'));
+          return;
+      }
       const voiceFile = new File([recording.blob], ctx.buildAgentVoiceFileName(), { type: 'audio/wav' });
       ctx.agentVoiceTranscribing.value = true;
       try {
           const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
           await ctx.appendTextToAgentComposerDraft(transcript);
           ElMessage.success(ctx.t('messenger.world.voice.transcribedToComposer'));
-          return;
       }
       catch (error) {
-          const message = String((error as { message?: unknown } | null)?.message || '').trim().toLowerCase();
-          const shouldFallback = !message ||
-              message.includes('disabled') ||
-              message.includes('not configured') ||
-              message.includes('not supported') ||
-              message.includes('transcription') ||
-              message.includes('asr');
-          if (!shouldFallback) {
-              showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
-              return;
-          }
-      }
-      try {
-          const uploadedPaths = await ctx.uploadWorldFilesToUserContainer([voiceFile], { appendTokens: false });
-          const uploadedPath = String(uploadedPaths[0] || '').trim();
-          if (!uploadedPath) {
-              throw new Error(ctx.t('workspace.upload.failed'));
-          }
-          const attachmentToken = ctx.buildWorldAttachmentToken(uploadedPath);
-          await ctx.sendAgentMessage({
-              content: attachmentToken || uploadedPath,
-              attachments: [
-                  {
-                      type: 'file',
-                      name: voiceFile.name,
-                      content: uploadedPath,
-                      mime_type: 'audio/wav'
-                  }
-              ]
-          });
-      }
-      catch (error) {
-          showApiError(error, ctx.t('chat.error.requestFailed'));
+          showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
       }
       finally {
           ctx.agentVoiceTranscribing.value = false;
@@ -983,6 +977,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       ctx.worldVoiceRecordingRuntime = null;
       ctx.clearWorldVoiceRecordingTimer(runtime);
       ctx.resetWorldVoiceRecordingState();
+      ctx.worldVoiceTranscribing.value = false;
       await runtime.session.cancel().catch(() => undefined);
   };
 
@@ -1031,12 +1026,22 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       formData.append('file', file);
       const response = await processChatMediaAttachment(formData);
       const payload = (response?.data?.data || {}) as Record<string, unknown>;
-      const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
-      const text = attachments
-          .map((item) => String((item as Record<string, unknown>)?.content || '').trim())
-          .find((value) => value) || String(payload.text || '').trim();
+      const text = String(
+          payload.transcript ||
+          payload.text ||
+          payload.transcribed_text ||
+          payload.transcribedText ||
+          ''
+      ).trim();
       if (text) {
         return text;
+      }
+      const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+      const attachmentContent = attachments
+          .map((item) => String((item as Record<string, unknown>)?.content || '').trim())
+          .find((value) => value) || '';
+      if (attachmentContent) {
+          throw new Error(ctx.t('messenger.world.voice.transcribeFailed'));
       }
       throw new Error(String(payload.message || ctx.t('messenger.world.voice.transcribeFailed')));
   };
@@ -1101,6 +1106,12 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       if (runtime.conversationId !== String(ctx.activeConversation.value?.id || '').trim()) {
           return;
       }
+      const hasAsrModel = await ctx.hasDesktopAsrModelConfigured();
+      if (!hasAsrModel) {
+          ElMessage.warning(ctx.t('messenger.world.voice.asrNotConfigured'));
+          ctx.worldVoiceTranscribing.value = false;
+          return;
+      }
       const voiceFile = new File([recording.blob], ctx.buildWorldVoiceFileName(), { type: 'audio/wav' });
       ctx.worldUploading.value = true;
       ctx.worldVoiceTranscribing.value = true;
@@ -1108,42 +1119,9 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
           await ctx.appendTextToWorldDraft(transcript);
           ElMessage.success(ctx.t('messenger.world.voice.transcribedToComposer'));
-          return;
       }
       catch (error) {
-          const message = String((error as { message?: unknown } | null)?.message || '').trim().toLowerCase();
-          const shouldFallback = !message ||
-              message.includes('disabled') ||
-              message.includes('not configured') ||
-              message.includes('not supported') ||
-              message.includes('transcription') ||
-              message.includes('asr');
-          if (!shouldFallback) {
-              showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
-              return;
-          }
-      }
-      try {
-          const uploadedPaths = await ctx.uploadWorldFilesToUserContainer([voiceFile], { appendTokens: false });
-          const uploadedPath = String(uploadedPaths[0] || '').trim();
-          if (!uploadedPath) {
-              throw new Error(ctx.t('workspace.upload.failed'));
-          }
-          const senderUserId = String((ctx.authStore.user as Record<string, unknown> | null)?.id || '').trim();
-          const payloadText = buildWorldVoicePayloadContent({
-              path: uploadedPath,
-              durationMs: recording.durationMs,
-              mimeType: 'audio/wav',
-              name: voiceFile.name,
-              size: voiceFile.size,
-              containerId: USER_CONTAINER_ID,
-              ownerUserId: senderUserId
-          });
-          await ctx.userWorldStore.sendToActiveConversation(payloadText, { contentType: 'voice' });
-          await ctx.scrollMessagesToBottom();
-      }
-      catch (error) {
-          showApiError(error, ctx.t('userWorld.input.sendFailed'));
+          showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
       }
       finally {
           ctx.worldUploading.value = false;

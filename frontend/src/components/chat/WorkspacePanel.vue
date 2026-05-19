@@ -31,6 +31,16 @@
             <i class="fa-solid fa-rotate-right workspace-icon" aria-hidden="true"></i>
           </button>
           <button
+            class="workspace-icon-btn"
+            type="button"
+            :title="t('workspace.binding.title')"
+            :aria-label="t('workspace.binding.title')"
+            :disabled="loading"
+            @click="openWorkspaceBindingDialog"
+          >
+            <i class="fa-solid fa-folder-tree workspace-icon" aria-hidden="true"></i>
+          </button>
+          <button
             class="workspace-icon-btn danger"
             type="button"
             :title="t('workspace.panel.clear')"
@@ -570,6 +580,7 @@ const props = defineProps({
 const emit = defineEmits<{
   (event: 'stats', payload: { latestUpdatedAt: number; entryCount: number }): void;
   (event: 'quote-path', payload: { paths: string[] }): void;
+  (event: 'open-workspace-binding', payload: { containerId: number; currentPath: string }): void;
 }>();
 
 const { t } = useI18n();
@@ -590,10 +601,39 @@ const getDesktopBridge = (): {
 const resolveDesktopAbsoluteWorkspacePath = (relativePath: string): string => {
   const normalized = normalizeWorkspacePath(relativePath);
   if (!normalized) return '';
-  const workspaceRoot = String(getRuntimeConfig().workspace_root || '').trim();
-  if (!workspaceRoot) return normalized;
-  const root = workspaceRoot.replace(/[\\/]+$/, '');
-  return `${root}/${normalized}`.replace(/\\/g, '/');
+  const runtime = getRuntimeConfig() as {
+    workspace_root?: string;
+    container_roots?: Array<{ container_id?: number; root?: string }> | Record<string, string>;
+  };
+  let workspaceRoot = '';
+  const rawContainerRoots = runtime?.container_roots;
+  if (Array.isArray(rawContainerRoots)) {
+    const matched = rawContainerRoots.find((item) => Number(item?.container_id) === normalizedContainerId.value);
+    workspaceRoot = String(matched?.root || '').trim();
+  } else if (rawContainerRoots && typeof rawContainerRoots === 'object') {
+    workspaceRoot = String((rawContainerRoots as Record<string, string>)[String(normalizedContainerId.value)] || '').trim();
+  }
+  if (!workspaceRoot) {
+    workspaceRoot = String(runtime?.workspace_root || '').trim();
+  }
+  if (!workspaceRoot) return normalized.replace(/\//g, '\\');
+  let root = workspaceRoot.replace(/[\\/]+$/, '');
+  const looksLikeContainerScoped = /(?:^|[\\/])desktop_user(?:__c__\d+)?$/i.test(root);
+  if (!looksLikeContainerScoped) {
+    const scope =
+      normalizedContainerId.value > 0
+        ? `desktop_user__c__${normalizedContainerId.value}`
+        : 'desktop_user';
+    root = `${root}\\${scope}`;
+  }
+  return pathJoinWindows(root, normalized);
+};
+
+const pathJoinWindows = (basePath: string, relativePath: string): string => {
+  const base = String(basePath || '').trim();
+  const relative = String(relativePath || '').trim().replace(/\//g, '\\');
+  if (!base) return relative;
+  return `${base.replace(/[\\/]+$/, '')}\\${relative.replace(/^\\+/, '')}`;
 };
 const resourceActionLabel = computed(() =>
   desktopLocalMode.value ? t('workspace.action.exportCopy') : t('common.download')
@@ -1404,7 +1444,6 @@ const workspaceThemeIconResolver = shallowRef<WorkspaceThemeIconResolver | null>
 let workspaceThemeIconResolverPromise: Promise<WorkspaceThemeIconResolver | null> | null = null;
 let workspaceThemeIconWarmupHandle: number | null = null;
 let workspaceThemeIconWarmupUsesIdleCallback = false;
-
 const joinWorkspacePath = (basePath, name) =>
   normalizeWorkspacePath([basePath, name].filter(Boolean).join('/'));
 
@@ -1630,6 +1669,15 @@ const getEntryIcon = (entry) => {
   const icon =
     workspaceThemeIconResolver.value?.resolveFileIconPath(String(entry?.name || entry?.path || ''), ext) ||
     resolveWorkspaceFallbackFileIcon(ext);
+  if (ext === 'md' || ext === 'markdown') {
+    console.info('[desktop-debug][workspace-panel-icon]', {
+      path: entry?.path || '',
+      name: entry?.name || '',
+      ext,
+      icon,
+      hasThemeResolver: Boolean(workspaceThemeIconResolver.value)
+    });
+  }
   if (IMAGE_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.image') };
   }
@@ -3410,6 +3458,37 @@ const openPreview = async (entry) => {
 
 const openOnlyOfficeEditor = (entry) => {
   if (!entry || entry.type !== 'file') return;
+  console.info('[desktop-debug][workspace-panel] open-onlyoffice', {
+    path: entry.path,
+    containerId: normalizedContainerId.value,
+    desktopLocalMode: desktopLocalMode.value,
+    absolutePath: desktopLocalMode.value ? resolveDesktopAbsoluteWorkspacePath(entry.path) : ''
+  });
+  if (desktopLocalMode.value) {
+    const bridge = getDesktopBridge();
+    if (bridge?.openPathWithDefaultApp) {
+      void (async () => {
+        try {
+          const opened = Boolean(
+            await bridge.openPathWithDefaultApp(resolveDesktopAbsoluteWorkspacePath(entry.path))
+          );
+          if (opened) {
+            return;
+          }
+        } catch (error) {
+          console.warn('[desktop-debug][workspace-panel] open-onlyoffice default app failed, fallback to onlyoffice', {
+            path: entry.path,
+            error: error instanceof Error ? error.message : String(error || '')
+          });
+        }
+        state.preview.visible = false;
+        state.onlyOffice.fallbackEntry = entry;
+        state.onlyOffice.entry = entry;
+        state.onlyOffice.visible = true;
+      })();
+      return;
+    }
+  }
   state.preview.visible = false;
   state.onlyOffice.fallbackEntry = entry;
   state.onlyOffice.entry = entry;
@@ -3418,10 +3497,23 @@ const openOnlyOfficeEditor = (entry) => {
 
 const openDrawioEditor = (entry) => {
   if (!entry || entry.type !== 'file') return;
+  console.info('[desktop-debug][workspace-panel] open-drawio', {
+    path: entry.path,
+    containerId: normalizedContainerId.value,
+    desktopLocalMode: desktopLocalMode.value,
+    absolutePath: desktopLocalMode.value ? resolveDesktopAbsoluteWorkspacePath(entry.path) : ''
+  });
   state.preview.visible = false;
   state.drawio.fallbackEntry = entry;
   state.drawio.entry = entry;
   state.drawio.visible = true;
+};
+
+const openWorkspaceBindingDialog = () => {
+  emit('open-workspace-binding', {
+    containerId: normalizedContainerId.value,
+    currentPath: state.path || '/'
+  });
 };
 
 const handleDrawioFallback = async (payload: { path?: string; message?: string } = {}) => {

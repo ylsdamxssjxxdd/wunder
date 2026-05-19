@@ -1201,6 +1201,13 @@ export default {
   'workspace.panel.download': 'Download',
   'workspace.panel.downloadAll': 'Download All',
   'workspace.panel.newFolder': 'New Folder',
+  'workspace.binding.title': 'Workspace Settings',
+  'workspace.binding.currentTarget': 'Current Target',
+  'workspace.binding.containerId': 'Workspace ID',
+  'workspace.binding.localRoot': 'Local Directory',
+  'workspace.binding.localRootPlaceholder': 'Select a local directory',
+  'workspace.binding.pickDirectory': 'Choose Local Directory',
+  'workspace.binding.invalidContainer': 'Invalid workspace ID',
   'workspace.panel.folderCreated': 'Folder created',
   'workspace.panel.createFailed': 'Create failed',
   'workspace.panel.uploadSuccess': 'Upload succeeded',
@@ -2617,6 +2624,8 @@ export default {
   'messenger.world.voice.empty': 'Voice message is empty. Please try again.',
   'messenger.world.voice.transcribedToComposer': 'Recognized text was inserted into the composer',
   'messenger.world.voice.transcribeFailed': 'Speech recognition failed',
+  'messenger.world.voice.asrNotConfigured':
+    'No speech-to-text model is configured. Add one in system settings and set it as the default ASR model first.',
   'messenger.agent.voice.modelUnsupported':
     'The current model does not support hearing. Please enable hearing support in model settings.',
   'messenger.world.historyEmpty': 'No recent messages',

@@ -224,12 +224,37 @@ const buildWorkspaceThemeIconResolver = async (): Promise<WorkspaceThemeIconReso
     return '';
   };
 
-  const resolveFileIconId = (entryName: string, extension: string): string => {
-    const nameKey = normalizeIconKey(entryName);
-    if (nameKey && fileNameIconMap.has(nameKey)) {
-      return fileNameIconMap.get(nameKey) || defaultFileIconId;
-    }
+  const resolveGuaranteedFallbackIconPath = (extension: string): string => {
     const extensionKey = normalizeIconKey(extension);
+    if (extensionKey === 'md' || extensionKey === 'markdown' || extensionKey === 'mkd' || extensionKey === 'rst') {
+      return `${WORKSPACE_ICON_BASE}/icons/file_type_markdown.svg`;
+    }
+    if (extensionKey === 'py' || extensionKey === 'pyi' || extensionKey === 'pyw') {
+      return `${WORKSPACE_ICON_BASE}/icons/file_type_python.svg`;
+    }
+    if (extensionKey === 'xlsx' || extensionKey === 'xls') {
+      return `${WORKSPACE_ICON_BASE}/icons/file_type_excel.svg`;
+    }
+    if (extensionKey === 'docx' || extensionKey === 'doc') {
+      return `${WORKSPACE_ICON_BASE}/icons/file_type_word.svg`;
+    }
+    if (extensionKey === 'pptx' || extensionKey === 'ppt') {
+      return `${WORKSPACE_ICON_BASE}/icons/file_type_powerpoint.svg`;
+    }
+    if (extensionKey === 'pdf') {
+      return `${WORKSPACE_ICON_BASE}/icons/file_type_pdf.svg`;
+    }
+    return resolveThemeIconPath(defaultFileIconId, '');
+  };
+
+  const resolveFileIconId = (entryName: string, extension: string): string => {
+    const extensionKey = normalizeIconKey(extension);
+    const preferExtensionFirst =
+      extensionKey === 'md' ||
+      extensionKey === 'markdown' ||
+      extensionKey === 'mkd' ||
+      extensionKey === 'mdx' ||
+      extensionKey === 'rst';
     if (extensionKey) {
       if (fileExtensionIconMap.has(extensionKey)) {
         return fileExtensionIconMap.get(extensionKey) || defaultFileIconId;
@@ -238,16 +263,34 @@ const buildWorkspaceThemeIconResolver = async (): Promise<WorkspaceThemeIconReso
         return fallbackExtensionIconMap.get(extensionKey) || defaultFileIconId;
       }
     }
+    const nameKey = normalizeIconKey(entryName);
+    if (!preferExtensionFirst && nameKey && fileNameIconMap.has(nameKey)) {
+      return fileNameIconMap.get(nameKey) || defaultFileIconId;
+    }
+    if (preferExtensionFirst && nameKey && fileNameIconMap.has(nameKey)) {
+      const candidate = fileNameIconMap.get(nameKey) || defaultFileIconId;
+      if (candidate !== defaultFileIconId) {
+        return candidate;
+      }
+    }
     return defaultFileIconId;
   };
 
   return {
     resolveFileIconPath(entryName: string, extension: string): string {
       const iconId = resolveFileIconId(entryName, extension);
-      return (
+      const resolved =
         resolveThemeIconPath(iconId, defaultFileIconId) ||
-        resolveThemeIconPath(defaultFileIconId, '')
-      );
+        resolveGuaranteedFallbackIconPath(extension);
+      if (extension === 'md' || extension === 'markdown' || entryName.toLowerCase().endsWith('.md')) {
+        console.info('[desktop-debug][workspace-icon] markdown', {
+          entryName,
+          extension,
+          iconId,
+          resolved
+        });
+      }
+      return resolved;
     }
   };
 };

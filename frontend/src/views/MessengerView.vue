@@ -883,6 +883,7 @@
                     :title="fileScope === 'user' ? t('messenger.files.userContainer') : t('messenger.files.title')"
                     :empty-text="resolveFileWorkspaceEmptyText({ fileScope, t })"
                     @stats="handleFileWorkspaceStats"
+                    @open-workspace-binding="openChatWorkspaceBindingDialog"
                   />
                 </div>
                 <DesktopContainerManagerPanel
@@ -1583,6 +1584,15 @@
       </footer>
     </section>
 
+    <WorkspaceBindingDialog
+      v-model:visible="chatWorkspaceBindingDialogVisible"
+      :current-container-id="currentContainerId"
+      :current-path="chatWorkspaceBindingCurrentPath"
+      :desktop-mode="desktopMode"
+      :desktop-container-roots="desktopContainerRootMap"
+      @confirm="handleChatWorkspaceBindingConfirm"
+    />
+
     <div
       v-if="showRightDock && rightDockResizable"
       class="messenger-right-dock-resizer"
@@ -1614,6 +1624,7 @@
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
       @request-quote-path="handleWorkspaceQuotePath"
+      @open-workspace-binding="openChatWorkspaceBindingDialog"
     />
     <MessengerGroupDock
       ref="rightDockRef"
@@ -1790,6 +1801,7 @@ defineOptions({
 });
 
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
+import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
 
 const controller = useMessengerViewController();
 const handleWorkspaceQuotePath = async (payload: { paths?: string[] } = {}) => {
@@ -3045,6 +3057,10 @@ const workerCardImportOverlayVisible = controller.workerCardImportOverlayVisible
 const WorkerCardImportWaitingOverlay = controller.WorkerCardImportWaitingOverlay;
 const workerCardToAgentPayload = controller.workerCardToAgentPayload;
 const WorkspacePanel = controller.WorkspacePanel;
+const chatWorkspaceBindingDialogVisible = controller.chatWorkspaceBindingDialogVisible;
+const chatWorkspaceBindingCurrentPath = controller.chatWorkspaceBindingCurrentPath;
+const handleChatWorkspaceBindingConfirm = controller.handleChatWorkspaceBindingConfirm;
+const openChatWorkspaceBindingDialog = controller.openChatWorkspaceBindingDialog;
 const workspacePanelKey = controller.workspacePanelKey;
 const workspaceResourceCache = controller.workspaceResourceCache;
 const workspaceResourceHydrationFrame = controller.workspaceResourceHydrationFrame;

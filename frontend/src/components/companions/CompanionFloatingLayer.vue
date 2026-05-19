@@ -153,6 +153,7 @@ const menuPosition = ref({ x: 8, y: 8 });
 let nowTimer: number | null = null;
 let clickSuppressUntil = 0;
 let desktopOverlayActive = false;
+let desktopOverlayKey = '';
 let desktopCommandUnsubscribe: (() => void) | null = null;
 const menuState = ref<{ x: number; y: number; entry: FloatingEntry } | null>(null);
 let pointerState:
@@ -503,6 +504,7 @@ async function syncDesktopOverlay(): Promise<void> {
       await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     }
     desktopOverlayActive = false;
+    desktopOverlayKey = '';
     return;
   }
   const handler = desktopOverlayActive && typeof bridge.updateCompanion === 'function'
@@ -510,12 +512,14 @@ async function syncDesktopOverlay(): Promise<void> {
     : bridge.showCompanion;
   if (typeof handler !== 'function') {
     desktopOverlayActive = false;
+    desktopOverlayKey = '';
     return;
   }
   const position = effectiveDesktopMode.value
     ? companionStore.settings.position
     : (positions.value[entry.key] || defaultPosition(0));
-  desktopOverlayActive = (await Promise.resolve(handler.call(bridge, {
+  const includePosition = !desktopOverlayActive || desktopOverlayKey !== entry.key;
+  const nextPayload: Record<string, unknown> = {
     key: entry.key,
     id: entry.companion.id,
     selectedId: entry.companion.id,
@@ -525,12 +529,18 @@ async function syncDesktopOverlay(): Promise<void> {
     spritesheetDataUrl: entry.companion.spritesheetDataUrl,
     state: resolveEntrySpriteState(entry),
     scale: entry.scale,
-    x: position.x,
-    y: position.y,
     message: entry.message,
     messageKind: entry.messageKind,
     messageVisible: entry.messageVisible
-  }))) === true;
+  };
+  if (includePosition) {
+    nextPayload.x = position.x;
+    nextPayload.y = position.y;
+  }
+  desktopOverlayActive = (await Promise.resolve(handler.call(bridge, nextPayload))) === true;
+  if (desktopOverlayActive) {
+    desktopOverlayKey = entry.key;
+  }
 }
 
 function resolveEntryForDesktopCommand(command: DesktopCompanionCommand): FloatingEntry | null {

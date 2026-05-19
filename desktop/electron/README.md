@@ -114,10 +114,10 @@ WUNDER_BRIDGE_BIN=/path/to/wunder-desktop-bridge
 # 首次初始化工具链与缓存
 npm run setup:desktop:win7:gnu
 
-# Win7 默认正式出包入口
+# Win7 默认正式出包入口（会强制重建 frontend/dist）
 npm run build:desktop:win7:gnu
 
-# 已初始化后的快速重建入口
+# 已初始化后的快速重建入口（仍会强制重建 frontend/dist，只跳过工具链 bootstrap）
 npm run build:desktop:win7:gnu:fast
 ```
 

@@ -26,6 +26,7 @@
             preserve-dock-layout
             :sidebar-visible="!collapsed"
             @quote-path="handleQuotePath"
+            @open-workspace-binding="handleOpenWorkspaceBinding"
           />
         </div>
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
@@ -186,6 +187,7 @@ const emit = defineEmits<{
   (event: 'open-container', containerId: number): void;
   (event: 'open-container-settings', containerId: number): void;
   (event: 'request-quote-path', payload: { paths: string[] }): void;
+  (event: 'open-workspace-binding', payload: { containerId: number; currentPath: string }): void;
 }>();
 
 const { t } = useI18n();
@@ -267,6 +269,10 @@ const handleQuotePath = (payload: { paths?: string[] } = {}) => {
     : [];
   if (!paths.length) return;
   emit('request-quote-path', { paths });
+};
+
+const handleOpenWorkspaceBinding = (payload: { containerId: number; currentPath: string }) => {
+  emit('open-workspace-binding', payload);
 };
 
 const handleSkillGroupsWheel = (event: WheelEvent) => {

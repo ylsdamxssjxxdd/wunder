@@ -91,6 +91,13 @@ export type DesktopDirectoryListData = {
   items: DesktopDirectoryEntry[];
 };
 
+export type DesktopResolvedWorkspacePathData = {
+  path: string;
+  container_id: number;
+  absolute_path: string;
+  exists: boolean;
+};
+
 export type DesktopSeedJobProgress = {
   percent: number;
   processed_files: number;
@@ -222,4 +229,13 @@ export const controlDesktopSeedJob = (payload: DesktopSeedControlPayload) =>
 export const listDesktopLanPeers = () =>
   desktopApi.get('/wunder/desktop/lan/peers', {
     headers: buildDesktopHeaders()
+  });
+
+export const resolveDesktopWorkspacePath = (path: string, containerId?: number | null) =>
+  desktopApi.get('/wunder/desktop/workspace/resolve_path', {
+    headers: buildDesktopHeaders(),
+    params: {
+      path,
+      ...(containerId !== null && containerId !== undefined ? { container_id: containerId } : {})
+    }
   });

@@ -10,15 +10,6 @@
       </div>
     </div>
 
-    <div class="desktop-runtime-preferences-banner">
-      <div class="desktop-runtime-preferences-banner-title">
-        {{ t('desktop.system.pythonRuntimeBundledOnly') }}
-      </div>
-      <div class="desktop-runtime-preferences-banner-text">
-        {{ t('desktop.system.pythonRuntimeBundledOnlyHint') }}
-      </div>
-    </div>
-
     <div class="desktop-runtime-preferences-block">
       <label class="desktop-runtime-preferences-field">
         <span class="desktop-runtime-preferences-field-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
@@ -91,15 +82,6 @@
       </div>
     </div>
 
-    <HoneycombWaitingOverlay
-      :visible="loading || importingSupplement"
-      :title="t('messenger.waiting.title')"
-      :target-name="importingSupplement ? t('desktop.system.pythonSupplementImport') : t('desktop.system.runtimeTitle')"
-      :phase-label="importingSupplement ? t('messenger.waiting.phase.creating') : t('messenger.waiting.phase.preparing')"
-      :summary-label="importingSupplement ? t('desktop.system.pythonSupplementImportHint') : t('messenger.waiting.summary.desktopSettings')"
-      :progress="importingSupplement ? 76 : 32"
-      :teleport-to-body="false"
-    />
   </section>
 </template>
 
@@ -112,7 +94,6 @@ import {
   updateDesktopSettings,
   type DesktopSettingsData
 } from '@/api/desktop';
-import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 
 type WindowCloseBehavior = 'tray' | 'quit';
@@ -481,8 +462,8 @@ async function handleImportSupplementPackage() {
   if (!bridge || typeof bridge.importSupplementPackage !== 'function' || importingSupplement.value) {
     return;
   }
-  importingSupplement.value = true;
   try {
+    importingSupplement.value = true;
     await nextTick();
     const result = (await bridge.importSupplementPackage()) as DesktopSupplementImportResult | null;
     if (disposed || !result || result.canceled) {
@@ -571,29 +552,6 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-}
-
-.desktop-runtime-preferences-banner {
-  display: grid;
-  gap: 6px;
-  padding: 12px 14px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.18);
-  border-radius: 14px;
-  background:
-    linear-gradient(135deg, rgba(var(--ui-accent-rgb), 0.1), rgba(var(--ui-accent-rgb), 0.02)),
-    var(--portal-surface, #f8fafc);
-}
-
-.desktop-runtime-preferences-banner-title {
-  color: var(--portal-text, #1f2937);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.desktop-runtime-preferences-banner-text {
-  color: var(--portal-muted, #6b7280);
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 .desktop-runtime-preferences-block {

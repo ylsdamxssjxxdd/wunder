@@ -34,6 +34,7 @@ export type DesktopRuntime = {
   user_id: string;
   app_dir: string;
   workspace_root: string;
+  container_roots?: Array<{ container_id: number; root: string }>;
   temp_root: string;
   settings_path: string;
   repo_root: string;
@@ -102,6 +103,20 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
     settings_path: asString(source.settings_path),
     repo_root: asString(source.repo_root)
   };
+  const containerRoots = Array.isArray(source.container_roots)
+    ? source.container_roots
+        .map((item) => {
+          const record = asRecord(item);
+          const containerId = Number.parseInt(asString(record.container_id ?? record.containerId), 10);
+          const root = asString(record.root);
+          if (!Number.isFinite(containerId) || !root) return null;
+          return { container_id: containerId, root };
+        })
+        .filter((item): item is { container_id: number; root: string } => Boolean(item))
+    : [];
+  if (containerRoots.length) {
+    runtime.container_roots = containerRoots;
+  }
   const runtimeProfile = asString(source.runtime_profile);
   if (runtimeProfile) {
     runtime.runtime_profile = runtimeProfile;
@@ -114,6 +129,14 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
   if (frontendRoot) {
     runtime.frontend_root = frontendRoot;
   }
+  console.info('[desktop-debug][bootstrap]', {
+    mode: runtime.mode,
+    workspace_root: runtime.workspace_root,
+    app_dir: runtime.app_dir,
+    repo_root: runtime.repo_root,
+    frontend_root: runtime.frontend_root,
+    container_roots: runtime.container_roots || []
+  });
   return runtime;
 };
 

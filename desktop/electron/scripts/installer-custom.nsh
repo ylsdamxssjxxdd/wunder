@@ -58,11 +58,6 @@ skip_data_cleanup:
   RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-updater"
   nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"'
   nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-updater"'
-
-  RMDir /r "$INSTDIR"
-  RMDir /r "$LOCALAPPDATA\Programs\Wunder Desktop"
-  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$INSTDIR"'
-  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\Programs\Wunder Desktop"'
 !macroend
 
 !macro customUnInstallSection

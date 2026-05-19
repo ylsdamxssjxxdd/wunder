@@ -1057,6 +1057,10 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   const ensureCommandSessionCallItem = (commandSessionId, source, command = '') => {
     const normalizedSessionId = normalizeCommandSessionRef(commandSessionId);
     if (!normalizedSessionId) return null;
+    const normalizedToolCallId = normalizeToolCallRef(
+      source?.tool_call_id ?? source?.toolCallId ?? source?.call_id ?? source?.callId
+    );
+    const workflowRef = normalizedToolCallId || normalizedSessionId;
     const toolCategory = resolveToolCategory(executeCommandToolName, source);
     const commandIndex = toOptionalInt(source?.command_index, source?.commandIndex);
     const title = buildCommandSessionTitle(command || source?.command, commandIndex);
@@ -1079,7 +1083,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       toolCategory,
       eventType: 'tool_call',
       toolName: executeCommandToolName,
-      toolCallId: normalizedSessionId,
+      toolCallId: workflowRef,
       commandSessionId: normalizedSessionId,
       ...buildToolIdentityMeta(source, {
         tool_display_name: executeCommandToolName
@@ -1088,9 +1092,13 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       ...usageMeta,
       ...buildWorkflowTimingMeta(source)
     };
-    const existing = toolCallItemMap.get(normalizedSessionId);
+    const existing = toolCallItemMap.get(workflowRef) || toolCallItemMap.get(normalizedSessionId);
     if (existing) {
       updateWorkflowItem(assistantMessage.workflowItems, existing, patch);
+      toolCallItemMap.set(normalizedSessionId, existing);
+      if (normalizedToolCallId) {
+        toolCallItemMap.set(normalizedToolCallId, existing);
+      }
       return existing;
     }
     const item = buildWorkflowItem(title, detail, patch.status, {
@@ -1098,7 +1106,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       toolCategory,
       eventType: 'tool_call',
       toolName: executeCommandToolName,
-      toolCallId: normalizedSessionId,
+      toolCallId: workflowRef,
       commandSessionId: normalizedSessionId,
       ...buildToolIdentityMeta(source, {
         tool_display_name: executeCommandToolName
@@ -1108,7 +1116,8 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       ...buildWorkflowTimingMeta(source)
     });
     assistantMessage.workflowItems.push(item);
-    registerToolItem(executeCommandToolName, item.id, normalizedSessionId);
+    registerToolItem(executeCommandToolName, item.id, workflowRef);
+    toolCallItemMap.set(normalizedSessionId, item.id);
     return item.id;
   };
 
@@ -1152,6 +1161,10 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   const upsertCommandSessionResultItem = (commandSessionId, source, failed) => {
     const normalizedSessionId = normalizeCommandSessionRef(commandSessionId);
     if (!normalizedSessionId) return null;
+    const normalizedToolCallId = normalizeToolCallRef(
+      source?.tool_call_id ?? source?.toolCallId ?? source?.call_id ?? source?.callId
+    );
+    const workflowRef = normalizedToolCallId || normalizedSessionId;
     const toolCategory = resolveToolCategory(executeCommandToolName, source);
     const commandIndex = toOptionalInt(source?.command_index, source?.commandIndex);
     const title = buildCommandSessionTitle(source?.command, commandIndex);
@@ -1185,7 +1198,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       toolCategory,
       eventType: 'tool_result',
       toolName: executeCommandToolName,
-      toolCallId: normalizedSessionId,
+      toolCallId: workflowRef,
       commandSessionId: normalizedSessionId,
       ...buildToolIdentityMeta(source, {
         tool_display_name: executeCommandToolName
@@ -1193,9 +1206,15 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       ...buildWorkflowUsageMeta(source),
       ...buildWorkflowTimingMeta(source)
     };
-    const existing = commandSessionResultItemMap.get(normalizedSessionId);
+    const existing =
+      commandSessionResultItemMap.get(workflowRef)
+      || commandSessionResultItemMap.get(normalizedSessionId);
     if (existing) {
       updateWorkflowItem(assistantMessage.workflowItems, existing, patch);
+      commandSessionResultItemMap.set(normalizedSessionId, existing);
+      if (normalizedToolCallId) {
+        commandSessionResultItemMap.set(normalizedToolCallId, existing);
+      }
       return existing;
     }
     const item = buildWorkflowItem(title, detail, status, {
@@ -1203,7 +1222,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
       toolCategory,
       eventType: 'tool_result',
       toolName: executeCommandToolName,
-      toolCallId: normalizedSessionId,
+      toolCallId: workflowRef,
       commandSessionId: normalizedSessionId,
       ...buildToolIdentityMeta(source, {
         tool_display_name: executeCommandToolName
@@ -1213,6 +1232,9 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     });
     assistantMessage.workflowItems.push(item);
     commandSessionResultItemMap.set(normalizedSessionId, item.id);
+    if (normalizedToolCallId) {
+      commandSessionResultItemMap.set(normalizedToolCallId, item.id);
+    }
     return item.id;
   };
 

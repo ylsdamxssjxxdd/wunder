@@ -13,7 +13,7 @@ import {
   fetchRealtimeSystemPrompt
 } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
-import { fetchDesktopSettings } from '@/api/desktop';
+import { fetchDesktopSettings, resolveDesktopWorkspacePath } from '@/api/desktop';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import {
@@ -432,6 +432,51 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               return mapped;
       }
       return ctx.resolveDesktopWorkspaceRoot();
+  };
+
+  ctx.resolveDesktopAbsoluteWorkspacePath = (
+      relativePath: string,
+      containerId?: number | null
+  ): string => {
+      const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
+      if (!normalized) {
+          return '';
+      }
+      const root = String(ctx.resolveDesktopContainerRoot(containerId) || '').trim().replace(/[\\/]+$/, '');
+      if (!root) {
+          return normalized.replace(/\//g, '\\');
+      }
+      const looksLikeContainerScoped = /(?:^|[\\/])desktop_user(?:__c__\d+)?$/i.test(root);
+      if (looksLikeContainerScoped) {
+          return `${root.replace(/[\\/]+$/, '')}\\${normalized.replace(/\//g, '\\').replace(/^\\+/, '')}`;
+      }
+      const effectiveContainerId =
+          containerId !== null && Number.isFinite(Number(containerId))
+              ? Number(containerId)
+              : ctx.currentContainerId.value;
+      const scope = effectiveContainerId > 0 ? `desktop_user__c__${effectiveContainerId}` : 'desktop_user';
+      return `${root}\\${scope}\\${normalized.replace(/\//g, '\\').replace(/^\\+/, '')}`;
+  };
+
+  ctx.resolveDesktopAbsoluteWorkspacePathAsync = async (
+      relativePath: string,
+      containerId?: number | null
+  ): Promise<string> => {
+      const normalized = String(relativePath || '').trim();
+      if (!normalized) {
+          return '';
+      }
+      try {
+          const response = await resolveDesktopWorkspacePath(normalized, containerId ?? null);
+          const payload = response?.data?.data || {};
+          const absolutePath = String(payload.absolute_path || '').trim();
+          if (absolutePath) {
+              return absolutePath;
+          }
+      } catch {
+          // Fall back to client-side path composition below.
+      }
+      return ctx.resolveDesktopAbsoluteWorkspacePath(normalized, containerId);
   };
 
   ctx.resolveAgentMarkdownWorkspacePath = (rawPath: string): string => {
@@ -933,7 +978,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           return false;
       }
       const resolved = ctx.resolveWorkspaceResource(normalized);
-      const localPath = String(resolved?.relativePath || normalized).trim();
+      const localPath = await ctx.resolveDesktopAbsoluteWorkspacePathAsync(
+          String(resolved?.relativePath || normalized).trim(),
+          resolved?.requestContainerId ?? null
+      );
       if (!localPath) {
           return false;
       }
@@ -1029,6 +1077,12 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (previewKind === 'onlyoffice') {
           const resource = ctx.resolveWorkspaceResource(workspacePath);
           const relativePath = String(resource?.relativePath || workspacePath).trim();
+          if (ctx.desktopMode.value) {
+              const opened = await ctx.openWorkspaceResourceWithDefaultApp(workspacePath);
+              if (opened) {
+                  return;
+              }
+          }
           ctx.resourcePreviewVisible.value = false;
           ctx.onlyOfficeVisible.value = true;
           ctx.onlyOfficePath.value = relativePath;
@@ -1176,6 +1230,12 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
 
   ctx.handleWorkspaceEditorFallback = async (payload: { path?: string; message?: string } = {}) => {
       const path = String(payload.path || '').trim() || ctx.onlyOfficePath.value || ctx.drawioPath.value;
+      const fallbackContainerId =
+          ctx.onlyOfficeVisible.value
+              ? ctx.onlyOfficeContainerId.value
+              : ctx.drawioVisible.value
+                  ? ctx.drawioContainerId.value
+                  : null;
       ctx.onlyOfficeVisible.value = false;
       ctx.drawioVisible.value = false;
       ctx.onlyOfficePath.value = '';
@@ -1192,7 +1252,11 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           const bridge = ctx.getDesktopBridge();
           if (bridge && typeof bridge.openPathWithDefaultApp === 'function') {
               try {
-                  await bridge.openPathWithDefaultApp(path);
+                  const localPath = await ctx.resolveDesktopAbsoluteWorkspacePathAsync(
+                      path,
+                      fallbackContainerId
+                  );
+                  await bridge.openPathWithDefaultApp(localPath || ctx.resolveDesktopAbsoluteWorkspacePath(path, fallbackContainerId) || path);
                   return;
               }
               catch {

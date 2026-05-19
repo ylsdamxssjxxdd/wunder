@@ -796,6 +796,10 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.fileLifecycleNowTick = ref(Date.now());
 
+  ctx.chatWorkspaceBindingDialogVisible = ref(false);
+
+  ctx.chatWorkspaceBindingCurrentPath = ref('/');
+
   ctx.fileContainerMenuViewRef = ref<{
       getMenuElement: () => HTMLElement | null;
   } | null>(null);

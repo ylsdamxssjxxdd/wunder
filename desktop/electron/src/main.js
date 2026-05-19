@@ -127,6 +127,7 @@ let mainWindow = null
 let bridgeProcess = null
 let bridgePort = null
 let bridgeWebBase = null
+let bridgeRestarting = false
 let updateTask = null
 let updaterReady = false
 let tray = null
@@ -261,6 +262,11 @@ let companionState = {
   messageVisible: false
 }
 const COMPANION_COMMAND_CHANNEL = 'wunder:companion-command'
+const COMPANION_FRAME_WIDTH = 192
+const COMPANION_FRAME_HEIGHT = 208
+const COMPANION_SCREEN_MARGIN = 8
+const COMPANION_MIN_SCALE = 0.5
+const COMPANION_MAX_SCALE = 1.6
 
 const createOverlayHtml = () => `<!doctype html>
 <html>
@@ -649,12 +655,14 @@ const createCompanionHtml = () => `<!doctype html>
     overflow: hidden;
     font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     user-select: none;
+    pointer-events: none;
   }
   #root {
     position: relative;
     width: 100%;
     height: 100%;
     cursor: default;
+    pointer-events: none;
   }
   #root.dragging { cursor: grabbing; }
   #sprite.dragging { cursor: grabbing; }
@@ -696,6 +704,7 @@ const createCompanionHtml = () => `<!doctype html>
     transform: translateX(-50%);
     overflow: hidden;
     cursor: pointer;
+    pointer-events: auto;
   }
   #root.dragging #sprite { cursor: grabbing; }
   #sheet {
@@ -706,6 +715,7 @@ const createCompanionHtml = () => `<!doctype html>
     height: 208px;
     background-repeat: no-repeat;
     transform-origin: left top;
+    pointer-events: none;
   }
   .hidden { display: none; }
   .menu {
@@ -720,6 +730,8 @@ const createCompanionHtml = () => `<!doctype html>
     display: none;
     flex-direction: column;
     gap: 6px;
+    pointer-events: auto;
+    -webkit-app-region: no-drag;
   }
   .menu.open { display: flex; }
   .menu button,
@@ -770,10 +782,10 @@ const createCompanionHtml = () => `<!doctype html>
     <div id="bubble" class="hidden"></div>
     <div id="sprite"><div id="sheet"></div></div>
     <div id="menu" class="menu" aria-hidden="true">
-      <button id="open-chat" type="button">Open conversation</button>
-      <button id="toggle-visible" type="button">Hide</button>
+      <button id="open-chat" type="button"></button>
+      <button id="toggle-visible" type="button"></button>
       <div class="menu__group">
-        <span class="menu__label">Scale</span>
+        <span id="scale-label" class="menu__label"></span>
         <div id="scale-row" class="menu__scales"></div>
       </div>
     </div>
@@ -787,10 +799,16 @@ const createCompanionHtml = () => `<!doctype html>
     const menu = document.getElementById('menu');
     const openChatButton = document.getElementById('open-chat');
     const toggleVisibleButton = document.getElementById('toggle-visible');
+    const scaleLabel = document.getElementById('scale-label');
     const scaleRow = document.getElementById('scale-row');
     const frameWidth = 192;
     const frameHeight = 208;
     const scalePresets = [0.5, 0.8, 1.0, 1.2, 1.4, 1.6];
+    const menuTexts = {
+      openChat: '进入聊天',
+      hide: '隐藏',
+      scale: '大小'
+    };
     const states = {
       idle: { row: 0, frames: 6, duration: 1100 },
       'running-right': { row: 1, frames: 8, duration: 1060 },
@@ -806,11 +824,16 @@ const createCompanionHtml = () => `<!doctype html>
     let frame = 0;
     let timer = null;
     let drag = null;
+    let dragResumeState = 'idle';
+    let suppressClick = false;
     let animationSignature = '';
     let menuState = false;
     let currentScale = 1;
     let lastPosition = { x: 0, y: 0 };
     let currentPayload = {};
+    let dragFrameId = null;
+    let pendingDragDelta = { dx: 0, dy: 0 };
+    let pendingDragOrigin = { x: 0, y: 0 };
 
     const normalizeState = (value) => states[value] ? value : 'idle';
     const sendCommand = (action, extra) => {
@@ -821,6 +844,12 @@ const createCompanionHtml = () => `<!doctype html>
       const stateKey = normalizeState(payload.state);
       const state = states[stateKey];
       sheet.style.backgroundPosition = '-' + (frame * frameWidth) + 'px -' + (state.row * frameHeight) + 'px';
+    };
+    const stopAnimation = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
     };
     const syncMenu = () => {
       const hidden = !menuState;
@@ -861,11 +890,55 @@ const createCompanionHtml = () => `<!doctype html>
     };
     const renderControls = () => {
       currentScale = clampScale(payload.scale);
+      openChatButton.textContent = menuTexts.openChat;
+      toggleVisibleButton.textContent = menuTexts.hide;
+      scaleLabel.textContent = menuTexts.scale;
       buildScaleButtons();
-      toggleVisibleButton.textContent = 'Hide';
+    };
+    const setDragging = (active) => {
+      root.classList.toggle('dragging', active);
+      sprite.classList.toggle('dragging', active);
+    };
+    const applyDragState = (dx) => {
+      if (Math.abs(dx) < 1) {
+        return;
+      }
+      payload.state = dx < 0 ? 'running-left' : 'running-right';
+      refreshAnimationIfNeeded();
+    };
+    const resetDragState = () => {
+      payload.state = 'waiting';
+      refreshAnimationIfNeeded();
+    };
+    const flushDragFrame = () => {
+      dragFrameId = null;
+      if (!drag) {
+        return;
+      }
+      const dx = pendingDragDelta.dx;
+      const dy = pendingDragDelta.dy;
+      pendingDragDelta = { dx: 0, dy: 0 };
+      if (dx === 0 && dy === 0) {
+        return;
+      }
+      drag = {
+        x: pendingDragOrigin.x,
+        y: pendingDragOrigin.y
+      };
+      applyDragState(dx);
+      ipcRenderer.invoke('wunder:companion-drag', { dx, dy }).catch(() => {});
+    };
+    const queueDragFrame = (dx, dy) => {
+      pendingDragDelta.dx += dx;
+      pendingDragDelta.dy += dy;
+      pendingDragOrigin = { x: drag.x + pendingDragDelta.dx, y: drag.y + pendingDragDelta.dy };
+      if (dragFrameId !== null || typeof window === 'undefined') {
+        return;
+      }
+      dragFrameId = window.requestAnimationFrame(flushDragFrame);
     };
     const startAnimation = () => {
-      if (timer) clearInterval(timer);
+      stopAnimation();
       frame = 0;
       applyFrame();
       const state = states[normalizeState(payload.state)];
@@ -920,8 +993,9 @@ const createCompanionHtml = () => `<!doctype html>
         agentId: currentPayload.agentId
       });
     });
-    root.addEventListener('contextmenu', (event) => {
+    sprite.addEventListener('contextmenu', (event) => {
       event.preventDefault();
+      event.stopPropagation();
       openMenu(event.clientX, event.clientY);
     });
     window.addEventListener('mousedown', (event) => {
@@ -930,29 +1004,54 @@ const createCompanionHtml = () => `<!doctype html>
       closeMenu();
     });
     window.addEventListener('resize', syncMenu);
-    root.addEventListener('pointerdown', (event) => {
+    window.addEventListener('blur', closeMenu);
+    sprite.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
+      if (menuState) {
+        closeMenu();
+      }
+      dragResumeState = normalizeState(currentPayload.state || payload.state);
       drag = { x: event.screenX, y: event.screenY };
-      root.classList.add('dragging');
-      sprite.classList.add('dragging');
-      root.setPointerCapture(event.pointerId);
+      pendingDragDelta = { dx: 0, dy: 0 };
+      pendingDragOrigin = { x: drag.x, y: drag.y };
+      suppressClick = false;
+      setDragging(true);
+      sprite.setPointerCapture(event.pointerId);
     });
-    root.addEventListener('pointermove', (event) => {
+    sprite.addEventListener('pointermove', (event) => {
       if (!drag) return;
       const dx = event.screenX - drag.x;
       const dy = event.screenY - drag.y;
-      drag = { x: event.screenX, y: event.screenY };
-      ipcRenderer.invoke('wunder:companion-drag', { dx, dy }).catch(() => {});
+      if (!suppressClick && Math.hypot(dx, dy) > 3) {
+        suppressClick = true;
+      }
+      queueDragFrame(dx, dy);
     });
-    root.addEventListener('click', (event) => {
+    sprite.addEventListener('click', (event) => {
       if (menuState) return;
-      if (event.detail !== 2) return;
-      sendCommand('open-chat', {
-        key: currentPayload.key || currentPayload.selectedId,
-        agentId: currentPayload.agentId
-      });
+      if (suppressClick) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (event.detail >= 2) {
+        sendCommand('open-chat', {
+          key: currentPayload.key || currentPayload.selectedId,
+          agentId: currentPayload.agentId
+        });
+        return;
+      }
+      payload.state = 'waving';
+      refreshAnimationIfNeeded();
+      window.setTimeout(() => {
+        if (drag) {
+          return;
+        }
+        payload.state = 'waiting';
+        refreshAnimationIfNeeded();
+      }, 700);
     });
-    root.addEventListener('wheel', (event) => {
+    sprite.addEventListener('wheel', (event) => {
       if (!event.altKey) return;
       event.preventDefault();
       const nextScale = clampScale(currentScale + (event.deltaY > 0 ? -0.1 : 0.1));
@@ -964,37 +1063,73 @@ const createCompanionHtml = () => `<!doctype html>
     }, { passive: false });
     const stopDrag = (event) => {
       if (!drag) return;
+      if (dragFrameId !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(dragFrameId);
+        dragFrameId = null;
+      }
       drag = null;
-      root.classList.remove('dragging');
-      sprite.classList.remove('dragging');
-      try { root.releasePointerCapture(event.pointerId); } catch {}
+      setDragging(false);
+      try { sprite.releasePointerCapture(event.pointerId); } catch {}
+      resetDragState();
+      ipcRenderer.invoke('wunder:companion-drag-end').catch(() => {});
+      window.setTimeout(() => {
+        suppressClick = false;
+      }, 180);
     };
-    root.addEventListener('pointerup', stopDrag);
-    root.addEventListener('pointercancel', stopDrag);
+    sprite.addEventListener('pointerup', stopDrag);
+    sprite.addEventListener('pointercancel', stopDrag);
+    window.addEventListener('beforeunload', () => {
+      if (dragFrameId !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(dragFrameId);
+        dragFrameId = null;
+      }
+      stopAnimation();
+    });
+    menu.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+    });
+    menu.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
   </script>
 </body>
 </html>`
 
 const resolveCompanionWindowSize = (state) => {
   const scale = Number(state?.scale || 1)
-  const safeScale = Number.isFinite(scale) ? Math.min(1.6, Math.max(0.7, scale)) : 1
-  const bubbleHeight = state?.messageVisible && String(state?.message || '').trim() ? 70 : 0
-  const bubbleWidth = state?.messageVisible && String(state?.message || '').trim() ? 320 : 0
+  const safeScale = Number.isFinite(scale) ? Math.min(COMPANION_MAX_SCALE, Math.max(COMPANION_MIN_SCALE, scale)) : 1
   return {
-    width: Math.max(220, Math.round(192 * safeScale) + 36, bubbleWidth),
-    height: Math.max(220, Math.round(208 * safeScale) + bubbleHeight + 16)
+    width: Math.max(1, Math.round(COMPANION_FRAME_WIDTH * safeScale)),
+    height: Math.max(1, Math.round(COMPANION_FRAME_HEIGHT * safeScale))
   }
 }
 
 const clampCompanionBounds = (x, y, size) => {
   const bounds = getVirtualDisplayBounds()
-  const minX = bounds.x + 8
-  const minY = bounds.y + 8
-  const maxX = Math.max(minX, bounds.x + bounds.width - size.width - 8)
-  const maxY = Math.max(minY, bounds.y + bounds.height - size.height - 8)
+  const minX = bounds.x + COMPANION_SCREEN_MARGIN
+  const minY = bounds.y + COMPANION_SCREEN_MARGIN
+  const maxX = Math.max(
+    minX,
+    bounds.x + bounds.width - Number(size?.width || 0) - COMPANION_SCREEN_MARGIN
+  )
+  const maxY = Math.max(
+    minY,
+    bounds.y + bounds.height - Number(size?.height || 0) - COMPANION_SCREEN_MARGIN
+  )
   return {
     x: Math.min(Math.max(minX, Math.round(x)), maxX),
     y: Math.min(Math.max(minY, Math.round(y)), maxY)
+  }
+}
+
+const resolveCompanionWindowBounds = (state) => {
+  const size = resolveCompanionWindowSize(state)
+  const point = clampCompanionBounds(state?.x, state?.y, size)
+  return {
+    point,
+    size,
+    bounds: { x: point.x, y: point.y, width: size.width, height: size.height }
   }
 }
 
@@ -1002,13 +1137,12 @@ const ensureCompanionWindow = () => {
   if (companionWindow && !companionWindow.isDestroyed()) {
     return companionWindow
   }
-  const size = resolveCompanionWindowSize(companionState)
-  const point = clampCompanionBounds(companionState.x, companionState.y, size)
+  const windowLayout = resolveCompanionWindowBounds(companionState)
   companionWindow = new BrowserWindow({
-    x: point.x,
-    y: point.y,
-    width: size.width,
-    height: size.height,
+    x: windowLayout.bounds.x,
+    y: windowLayout.bounds.y,
+    width: windowLayout.bounds.width,
+    height: windowLayout.bounds.height,
     frame: false,
     show: false,
     transparent: true,
@@ -1054,10 +1188,9 @@ const renderCompanionWindow = () => {
   if (!window || window.isDestroyed()) {
     return false
   }
-  const size = resolveCompanionWindowSize(companionState)
-  const point = clampCompanionBounds(companionState.x, companionState.y, size)
-  window.setBounds({ ...point, ...size }, false)
-  saveCompanionState({ x: point.x, y: point.y })
+  const windowLayout = resolveCompanionWindowBounds(companionState)
+  window.setBounds(windowLayout.bounds, false)
+  saveCompanionState({ x: windowLayout.point.x, y: windowLayout.point.y })
   if (window.webContents.isLoading()) {
     return true
   }
@@ -1126,12 +1259,38 @@ const moveCompanionBy = (payload) => {
   if (!companionWindow || companionWindow.isDestroyed()) {
     return false
   }
-  const bounds = companionWindow.getBounds()
   const dx = Number(payload?.dx || 0)
   const dy = Number(payload?.dy || 0)
-  const point = clampCompanionBounds(bounds.x + dx, bounds.y + dy, bounds)
-  companionWindow.setBounds({ ...bounds, ...point }, false)
-  saveCompanionState({ x: point.x, y: point.y })
+  const windowLayout = resolveCompanionWindowBounds({
+    ...companionState,
+    x: companionState.x + dx,
+    y: companionState.y + dy
+  })
+  companionState = normalizeCompanionState({
+    ...companionState,
+    x: windowLayout.point.x,
+    y: windowLayout.point.y
+  })
+  companionWindow.setBounds(windowLayout.bounds, false)
+  return true
+}
+
+const endCompanionDrag = () => {
+  if (!companionWindow || companionWindow.isDestroyed()) {
+    return false
+  }
+  const windowLayout = resolveCompanionWindowBounds(companionState)
+  companionState = normalizeCompanionState({
+    ...companionState,
+    x: windowLayout.point.x,
+    y: windowLayout.point.y,
+    state: 'waiting'
+  })
+  saveCompanionState({ x: windowLayout.point.x, y: windowLayout.point.y, state: 'waiting' })
+  companionWindow.webContents.send('wunder:companion-render', {
+    ...companionState,
+    state: 'waiting'
+  })
   emitCompanionStateChanged()
   return true
 }
@@ -1168,6 +1327,8 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..')
 const localResourcesRoot = path.resolve(__dirname, '..', 'resources')
 const desktopAppId = 'com.wunder.desktop'
 const closePreferenceFileName = 'window-close-preference.json'
+const companionLibraryStateFileName = 'desktop-companion-library-state.json'
+const companionPackageStateFileName = 'desktop-companion-package-state.json'
 const companionStateFileName = 'desktop-companion-state.json'
 const closeBehaviorValues = new Set(['ask', 'tray', 'quit'])
 
@@ -1234,7 +1395,13 @@ const resolveDesktopSettingsPath = () => {
   return path.join(app.getPath('userData'), 'WUNDER_TEMPD', 'config', 'desktop.settings.json')
 }
 
+const resolveDesktopRuntimeRoot = () => path.join(app.getPath('userData'), 'WUNDER_RUNTIME')
+
 const resolveCompanionStatePath = () => path.join(app.getPath('userData'), companionStateFileName)
+const resolveCompanionPackageStatePath = () =>
+  path.join(app.getPath('userData'), companionPackageStateFileName)
+const resolveCompanionLibraryStatePath = () =>
+  path.join(app.getPath('userData'), companionLibraryStateFileName)
 
 const readJsonFile = (filePath, fallback = {}) => {
   try {
@@ -1292,14 +1459,21 @@ const readDesktopSettings = () => {
 }
 
 const resolveBundledPythonBin = (appDir) => {
+  const runtimeRoot = resolveDesktopRuntimeRoot()
   const candidates = process.platform === 'win32'
     ? [
+        path.join(runtimeRoot, 'opt', 'python', 'python.exe'),
+        path.join(runtimeRoot, 'opt', 'python', 'python3.exe'),
+        path.join(runtimeRoot, 'opt', 'python', 'bin', 'python.exe'),
+        path.join(runtimeRoot, 'opt', 'python', 'bin', 'python3.exe'),
         path.join(appDir, 'opt', 'python', 'python.exe'),
         path.join(appDir, 'opt', 'python', 'python3.exe'),
         path.join(appDir, 'opt', 'python', 'bin', 'python.exe'),
         path.join(appDir, 'opt', 'python', 'bin', 'python3.exe')
       ]
     : [
+        path.join(runtimeRoot, 'opt', 'python', 'bin', 'python3'),
+        path.join(runtimeRoot, 'opt', 'python', 'bin', 'python'),
         path.join(appDir, 'opt', 'python', 'bin', 'python3'),
         path.join(appDir, 'opt', 'python', 'bin', 'python')
       ]
@@ -1308,16 +1482,21 @@ const resolveBundledPythonBin = (appDir) => {
 
 const resolveBundledPythonDefaultBin = (appDir) =>
   process.platform === 'win32'
-    ? path.join(appDir, 'opt', 'python', 'python.exe')
-    : path.join(appDir, 'opt', 'python', 'bin', 'python3')
+    ? path.join(resolveDesktopRuntimeRoot(), 'opt', 'python', 'python.exe')
+    : path.join(resolveDesktopRuntimeRoot(), 'opt', 'python', 'bin', 'python3')
 
 const resolveBundledVenvPythonBin = (appDir) => {
+  const runtimeRoot = resolveDesktopRuntimeRoot()
   const candidates = process.platform === 'win32'
     ? [
+        path.join(runtimeRoot, 'opt', 'venv', 'Scripts', 'python.exe'),
+        path.join(runtimeRoot, 'opt', 'venv', 'python.exe'),
         path.join(appDir, 'opt', 'venv', 'Scripts', 'python.exe'),
         path.join(appDir, 'opt', 'venv', 'python.exe')
       ]
     : [
+        path.join(runtimeRoot, 'opt', 'venv', 'bin', 'python3'),
+        path.join(runtimeRoot, 'opt', 'venv', 'bin', 'python'),
         path.join(appDir, 'opt', 'venv', 'bin', 'python3'),
         path.join(appDir, 'opt', 'venv', 'bin', 'python')
       ]
@@ -1325,14 +1504,23 @@ const resolveBundledVenvPythonBin = (appDir) => {
 }
 
 const resolveBundledRgBin = (appDir) => {
+  const runtimeRoot = resolveDesktopRuntimeRoot()
   const candidates = process.platform === 'win32'
     ? [
+        path.join(runtimeRoot, 'opt', 'rg', 'rg.exe'),
+        path.join(runtimeRoot, 'opt', 'rg', 'bin', 'rg.exe'),
+        path.join(runtimeRoot, 'opt', 'ripgrep', 'rg.exe'),
+        path.join(runtimeRoot, 'opt', 'ripgrep', 'bin', 'rg.exe'),
         path.join(appDir, 'opt', 'rg', 'rg.exe'),
         path.join(appDir, 'opt', 'rg', 'bin', 'rg.exe'),
         path.join(appDir, 'opt', 'ripgrep', 'rg.exe'),
         path.join(appDir, 'opt', 'ripgrep', 'bin', 'rg.exe')
       ]
     : [
+        path.join(runtimeRoot, 'opt', 'rg', 'bin', 'rg'),
+        path.join(runtimeRoot, 'opt', 'rg', 'rg'),
+        path.join(runtimeRoot, 'opt', 'ripgrep', 'bin', 'rg'),
+        path.join(runtimeRoot, 'opt', 'ripgrep', 'rg'),
         path.join(appDir, 'opt', 'rg', 'bin', 'rg'),
         path.join(appDir, 'opt', 'rg', 'rg'),
         path.join(appDir, 'opt', 'ripgrep', 'bin', 'rg'),
@@ -1597,14 +1785,33 @@ const choosePythonInterpreter = async (defaultPath = '') => {
 }
 
 const openPathWithDefaultApp = async (targetPath = '') => {
-  const normalized = String(targetPath || '').trim()
-  if (!normalized) {
+  const rawInput = String(targetPath || '').trim()
+  if (!rawInput) {
     throw new Error('Path is required')
+  }
+  const normalized =
+    process.platform === 'win32'
+      ? path.win32.normalize(rawInput.replace(/\//g, '\\'))
+      : path.normalize(rawInput)
+  console.info('[desktop-debug][electron] openPathWithDefaultApp', {
+    targetPath,
+    normalized,
+    exists: fs.existsSync(normalized)
+  })
+  if (!fs.existsSync(normalized)) {
+    throw new Error(`Path not found: ${normalized}`)
   }
   const result = await shell.openPath(normalized)
   if (result) {
+    console.error('[desktop-debug][electron] openPathWithDefaultApp failed', {
+      normalized,
+      result
+    })
     throw new Error(result)
   }
+  console.info('[desktop-debug][electron] openPathWithDefaultApp success', {
+    normalized
+  })
   return true
 }
 
@@ -1638,75 +1845,149 @@ const importSupplementPackage = async () => {
     }
   }
 
-  const packagePath = String(result.filePaths[0] || '').trim()
-  if (!packagePath) {
+  const normalizedPackagePath = String(result.filePaths[0] || '').trim()
+  if (!normalizedPackagePath) {
     return {
       supported: true,
       canceled: true,
       installed: false
     }
   }
-  if (path.extname(packagePath).toLowerCase() !== '.zip') {
-    throw new Error(`Unsupported supplement package format: ${packagePath}`)
+  if (path.extname(normalizedPackagePath).toLowerCase() !== '.zip') {
+    throw new Error(`Unsupported supplement package format: ${normalizedPackagePath}`)
   }
+  const installRoot = resolveDesktopRuntimeRoot()
+  const scriptPath = path.join(
+    app.getPath('temp'),
+    `wunder-supplement-import-${Date.now()}-${process.pid}.ps1`
+  )
+  const script = [
+    'param([string]$ZipPath, [string]$InstallRoot, [string]$TempRoot)',
+    "$ErrorActionPreference = 'Stop'",
+    'function Emit-Json($obj) {',
+    '  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 6))',
+    '}',
+    '$stage = Join-Path $TempRoot ("wunder-supplement-stage-" + [guid]::NewGuid().ToString("N"))',
+    'try {',
+    '  Emit-Json @{ type = "progress"; phase = "extracting"; progress = 14; summary = "正在解压补充包..." }',
+    '  Add-Type -AssemblyName System.IO.Compression.FileSystem',
+    '  if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }',
+    '  New-Item -ItemType Directory -Path $stage -Force | Out-Null',
+    '  [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $stage)',
+    '  Emit-Json @{ type = "progress"; phase = "verifying"; progress = 42; summary = "正在校验补充包内容..." }',
+    '  $extractRoot = $stage',
+    '  $targets = @("opt/python","opt/git","opt/rg")',
+    '  $hasDirect = $false',
+    '  foreach ($relative in $targets) { if (Test-Path -LiteralPath (Join-Path $extractRoot $relative)) { $hasDirect = $true; break } }',
+    '  if (-not $hasDirect) {',
+    '    $children = Get-ChildItem -LiteralPath $stage -Directory -ErrorAction SilentlyContinue',
+    '    foreach ($child in $children) {',
+    '      $candidate = $child.FullName',
+    '      foreach ($relative in $targets) { if (Test-Path -LiteralPath (Join-Path $candidate $relative)) { $extractRoot = $candidate; $hasDirect = $true; break } }',
+    '      if ($hasDirect) { break }',
+    '    }',
+    '  }',
+    '  if (-not $hasDirect) { throw "Supplement package is missing opt/python, opt/git, and opt/rg" }',
+    '  $imported = @()',
+    '  for ($index = 0; $index -lt $targets.Count; $index++) {',
+    '    $relative = $targets[$index]',
+    '    $sourcePath = Join-Path $extractRoot $relative',
+    '    if (-not (Test-Path -LiteralPath $sourcePath)) { continue }',
+    '    Emit-Json @{ type = "progress"; phase = "copying"; progress = (56 + [math]::Round(($index / [math]::Max(1, $targets.Count)) * 28)); summary = ("正在导入 " + $relative + "...") }',
+    '    $targetPath = Join-Path $InstallRoot $relative',
+    '    if (Test-Path -LiteralPath $targetPath) { Remove-Item -LiteralPath $targetPath -Recurse -Force }',
+    '    New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force | Out-Null',
+    '    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force',
+    '    $imported += $targetPath',
+    '  }',
+    '  if ($imported.Count -eq 0) { throw "Supplement package does not contain importable runtime content" }',
+    '  Emit-Json @{ type = "progress"; phase = "finalizing"; progress = 92; summary = "正在整理补充包元数据..." }',
+    '  foreach ($fileName in @("README-win7-supplement.txt","wunder-win7-supplement.json")) {',
+    '    $sourcePath = Join-Path $extractRoot $fileName',
+    '    if (Test-Path -LiteralPath $sourcePath) { Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $InstallRoot $fileName) -Force }',
+    '  }',
+    '  Emit-Json @{ type = "result"; supported = $true; canceled = $false; installed = $true; install_root = $InstallRoot; package_path = $ZipPath; imported_paths = $imported }',
+    '} catch {',
+    '  Emit-Json @{ type = "error"; message = $_.Exception.Message }',
+    '  exit 1',
+    '} finally {',
+    '  if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }',
+    '}'
+  ].join('\r\n')
+  fs.writeFileSync(scriptPath, script, 'utf8')
+  return await new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      scriptPath,
+      normalizedPackagePath,
+      installRoot,
+      app.getPath('temp')
+    ], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    let stderr = ''
+    let settled = false
 
-  const installRoot = resolveDesktopAppDir()
-  const stagingRoot = buildSupplementTempPath('wunder-supplement-stage')
-  try {
-    await new Promise((resolve) => setImmediate(resolve))
-    extractZipArchiveWithPowershell(packagePath, stagingRoot)
-    await new Promise((resolve) => setImmediate(resolve))
-    const extractRoot = resolveSupplementExtractRoot(stagingRoot)
-    if (!extractRoot) {
-      throw new Error('Supplement package is missing opt/python, opt/git, and opt/rg')
-    }
+    child.stdout.on('data', (chunk) => {
+      const text = String(chunk || '')
+      text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line) => {
+          try {
+            const payload = JSON.parse(line)
+            if (payload?.type === 'result') {
+              settled = true
+              registerBundledToolPaths()
+              resolve(payload)
+            } else if (payload?.type === 'error') {
+              settled = true
+              reject(new Error(String(payload.message || 'Supplement import failed')))
+            }
+          } catch {
+            // Ignore malformed worker output.
+          }
+        })
+    })
 
-    const importedPaths = []
-    for (const relativePath of ['opt/python', 'opt/git', 'opt/rg']) {
-      const sourcePath = path.join(extractRoot, ...relativePath.split('/'))
-      if (!fs.existsSync(sourcePath)) {
-        continue
-      }
-      const targetPath = path.join(installRoot, ...relativePath.split('/'))
-      removePathIfExists(targetPath)
-      copyDirectoryRecursive(sourcePath, targetPath)
-      importedPaths.push(targetPath)
-    }
-    await new Promise((resolve) => setImmediate(resolve))
-    if (!importedPaths.length) {
-      throw new Error('Supplement package does not contain importable runtime content')
-    }
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk || '')
+    })
 
-    for (const fileName of ['README-win7-supplement.txt', 'wunder-win7-supplement.json']) {
-      const sourcePath = path.join(extractRoot, fileName)
-      if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
-        continue
-      }
-      fs.copyFileSync(sourcePath, path.join(installRoot, fileName))
-    }
+    child.on('error', (error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    })
 
-    await new Promise((resolve) => setImmediate(resolve))
-    registerBundledToolPaths()
-    return {
-      supported: true,
-      canceled: false,
-      installed: true,
-      install_root: installRoot,
-      package_path: packagePath,
-      imported_paths: importedPaths
-    }
-  } finally {
-    removePathIfExists(stagingRoot)
-  }
+    child.on('close', (code) => {
+      if (settled) return
+      settled = true
+      reject(new Error(stderr.trim() || `Supplement import failed with exit code ${code}`))
+    })
+    child.on('exit', () => {
+      removePathIfExists(scriptPath)
+    })
+  })
 }
 
 const registerBundledToolPaths = () => {
   const appDir = resolveDesktopAppDir()
-  if (!appDir || !fs.existsSync(appDir)) {
+  const runtimeRoot = resolveDesktopRuntimeRoot()
+  const roots = [runtimeRoot, appDir].filter((candidate) => candidate && fs.existsSync(candidate))
+  if (!roots.length) {
     return
   }
 
   process.env.WUNDER_DESKTOP_APP_DIR = appDir
+  process.env.WUNDER_DESKTOP_RUNTIME_ROOT = runtimeRoot
   const bundledPythonBin = resolveBundledPythonBin(appDir)
   if (bundledPythonBin) {
     process.env.WUNDER_PYTHON_BIN = bundledPythonBin
@@ -1716,17 +1997,20 @@ const registerBundledToolPaths = () => {
     process.env.WUNDER_RG_BIN = bundledRgBin
   }
 
-  const candidates = [
-    path.join(appDir, 'opt', 'python'),
-    path.join(appDir, 'opt', 'python', 'Scripts'),
-    path.join(appDir, 'opt', 'python', 'bin'),
-    path.join(appDir, 'opt', 'git', 'cmd'),
-    path.join(appDir, 'opt', 'git', 'bin'),
-    path.join(appDir, 'opt', 'rg'),
-    path.join(appDir, 'opt', 'rg', 'bin'),
-    path.join(appDir, 'opt', 'ripgrep'),
-    path.join(appDir, 'opt', 'ripgrep', 'bin')
-  ].filter((candidate) => fs.existsSync(candidate))
+  const candidates = roots.flatMap((root) => [
+    path.join(root, 'opt', 'python'),
+    path.join(root, 'opt', 'python', 'Scripts'),
+    path.join(root, 'opt', 'python', 'bin'),
+    path.join(root, 'opt', 'venv'),
+    path.join(root, 'opt', 'venv', 'Scripts'),
+    path.join(root, 'opt', 'venv', 'bin'),
+    path.join(root, 'opt', 'git', 'cmd'),
+    path.join(root, 'opt', 'git', 'bin'),
+    path.join(root, 'opt', 'rg'),
+    path.join(root, 'opt', 'rg', 'bin'),
+    path.join(root, 'opt', 'ripgrep'),
+    path.join(root, 'opt', 'ripgrep', 'bin')
+  ]).filter((candidate) => fs.existsSync(candidate))
 
   if (!candidates.length) {
     return
@@ -3036,6 +3320,7 @@ const serializeCompanionState = (value) => {
     selectedId: normalized.selectedId,
     displayName: normalized.displayName,
     description: normalized.description,
+    spritesheetDataUrl: normalized.spritesheetDataUrl,
     state: normalized.state,
     scale: normalized.scale,
     x: normalized.x,
@@ -3053,6 +3338,29 @@ const saveCompanionState = (patch) => {
   companionState = normalizeCompanionState({ ...companionState, ...(patch && typeof patch === 'object' ? patch : {}) })
   writeJsonFile(resolveCompanionStatePath(), serializeCompanionState(companionState))
   return companionState
+}
+
+const loadCompanionPackageState = () => readJsonFile(resolveCompanionPackageStatePath(), {})
+
+const saveCompanionPackageState = (value) => {
+  writeJsonFile(resolveCompanionPackageStatePath(), value && typeof value === 'object' ? value : {})
+}
+
+const loadCompanionLibraryState = () => readJsonFile(resolveCompanionLibraryStatePath(), {
+  companions: [],
+  settings: {},
+  agentOverrides: {}
+})
+
+const saveCompanionLibraryState = (value) => {
+  const source = value && typeof value === 'object' ? value : {}
+  writeJsonFile(resolveCompanionLibraryStatePath(), {
+    companions: Array.isArray(source.companions) ? source.companions : [],
+    settings: source.settings && typeof source.settings === 'object' ? source.settings : {},
+    agentOverrides:
+      source.agentOverrides && typeof source.agentOverrides === 'object' ? source.agentOverrides : {},
+    updated_at: Date.now()
+  })
 }
 
 const parseBridgePort = (line) => {
@@ -3085,6 +3393,12 @@ const startBridge = async () => {
   const hasFrontendRoot = Boolean(frontendRoot && fs.existsSync(frontendRoot))
   const tempRoot = path.join(app.getPath('userData'), 'WUNDER_TEMPD')
   const workspaceRoot = path.join(app.getPath('userData'), 'WUNDER_WORK')
+  console.info('[desktop-debug][electron] bridge paths', {
+    frontendRoot,
+    hasFrontendRoot,
+    tempRoot,
+    workspaceRoot
+  })
   bridgePort = await getFreePort()
   logStartupSegment('electron', 'bridge_prepare_paths', startBridgeNs, {
     has_frontend_root: hasFrontendRoot ? 1 : 0,
@@ -3118,6 +3432,16 @@ const startBridge = async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })
+
+const isPortAvailable = (port) =>
+  new Promise((resolve) => {
+    const server = net.createServer()
+    server.unref()
+    server.on('error', () => resolve(false))
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolve(true))
+    })
+  })
   logStartupSegment('electron', 'bridge_spawn_process', bridgeSpawnNs, {
     pid: bridgeProcess?.pid || 0,
     port: bridgePort
@@ -3149,6 +3473,9 @@ const startBridge = async () => {
     }
   })
   bridgeProcess.on('exit', (code, signal) => {
+    if (bridgeRestarting) {
+      return
+    }
     if (app.isQuitting) {
       return
     }
@@ -3182,6 +3509,37 @@ const stopBridge = () => {
     console.warn('Failed to stop bridge process:', err)
   }
   bridgeProcess = null
+}
+
+const waitForPortRelease = async (port, timeoutMs = 8000) => {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const available = await isPortAvailable(port)
+    if (available) {
+      return true
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+  return false
+}
+
+const restartBridge = async () => {
+  const previousQuitting = app.isQuitting === true
+  bridgeRestarting = true
+  const previousPort = bridgePort
+  stopBridge()
+  if (previousPort) {
+    await waitForPortRelease(previousPort)
+  }
+  bridgePort = previousPort || null
+  bridgeWebBase = null
+  try {
+    await startBridge()
+    app.isQuitting = previousQuitting
+    return true
+  } finally {
+    bridgeRestarting = false
+  }
 }
 
 const toggleMainDevTools = () => {
@@ -3617,6 +3975,7 @@ if (!gotLock) {
         return setLaunchAtLoginState(enabled)
       })
       ipcMain.handle('wunder:python-runtime-info', () => resolveDesktopPythonRuntimeInfo())
+      ipcMain.handle('wunder:bridge-restart', () => restartBridge())
       ipcMain.handle('wunder:supplement-import', () => importSupplementPackage())
       ipcMain.handle('wunder:open-path-default-app', (_event, payload) => {
         const source = payload && typeof payload === 'object' ? payload.path : payload
@@ -3699,7 +4058,13 @@ if (!gotLock) {
       ipcMain.handle('wunder:companion-update', (_event, payload) => updateCompanion(payload))
       ipcMain.handle('wunder:companion-hide', (_event, payload) => hideCompanion(payload))
       ipcMain.handle('wunder:companion-state', () => loadCompanionState())
+      ipcMain.handle('wunder:companion-library-state-get', () => loadCompanionLibraryState())
+      ipcMain.handle('wunder:companion-library-state-set', (_event, payload) => {
+        saveCompanionLibraryState(payload)
+        return true
+      })
       ipcMain.handle('wunder:companion-drag', (_event, payload) => moveCompanionBy(payload))
+      ipcMain.handle('wunder:companion-drag-end', () => endCompanionDrag())
       ipcMain.handle(COMPANION_COMMAND_CHANNEL, (_event, payload) => emitCompanionCommand(payload))
       logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)

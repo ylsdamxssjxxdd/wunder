@@ -13,7 +13,7 @@ import {
   fetchRealtimeSystemPrompt
 } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
-import { fetchDesktopSettings } from '@/api/desktop';
+import { fetchDesktopSettings, updateDesktopSettings } from '@/api/desktop';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import {
@@ -583,6 +583,67 @@ export function installMessengerControllerTimelineFileActions(ctx: MessengerCont
       delete nextQuery.conversation_id;
       delete nextQuery.panel;
       ctx.router.push({ path: `${ctx.basePrefix.value}/settings`, query: nextQuery }).catch(() => undefined);
+  };
+
+  ctx.openChatWorkspaceBindingDialog = (payload: { containerId?: number; currentPath?: string } = {}) => {
+      const nextContainerId = Math.min(10, Math.max(1, Number.parseInt(String(payload.containerId ?? ctx.currentContainerId.value), 10) || ctx.currentContainerId.value));
+      ctx.chatWorkspaceBindingCurrentPath.value = String(payload.currentPath || ctx.fileContainerLocalLocation.value || '/').trim() || '/';
+      ctx.selectedFileContainerId.value = nextContainerId;
+      ctx.chatWorkspaceBindingDialogVisible.value = true;
+  };
+
+  ctx.handleChatWorkspaceBindingConfirm = async (payload: { containerId: number; localRoot?: string }) => {
+      const containerId = Math.min(10, Math.max(1, Number.parseInt(String(payload.containerId ?? ctx.currentContainerId.value), 10) || ctx.currentContainerId.value));
+      try {
+          if (ctx.desktopMode.value) {
+              const normalizedRows = Object.entries(ctx.desktopContainerRootMap.value || {})
+                  .map(([id, root]) => ({
+                      container_id: Number.parseInt(id, 10),
+                      root: String(root || '').trim()
+                  }))
+                  .filter((item) => Number.isFinite(item.container_id) && item.root);
+              const nextRows = normalizedRows.filter((item) => item.container_id !== containerId);
+              if (String(payload.localRoot || '').trim()) {
+                  nextRows.push({
+                      container_id: containerId,
+                      root: String(payload.localRoot || '').trim()
+                  });
+              }
+              const response = await updateDesktopSettings({
+                  container_roots: nextRows
+              });
+              const data = (response?.data?.data || {}) as Record<string, unknown>;
+              if (Array.isArray(data.container_roots)) {
+                  const nextRoots: Record<number, string> = {};
+                  (data.container_roots as Array<Record<string, unknown>>).forEach((item) => {
+                      const id = Number.parseInt(String(item.container_id ?? ''), 10);
+                      const root = String(item.root || '').trim();
+                      if (Number.isFinite(id)) {
+                          nextRoots[id] = root;
+                      }
+                  });
+                  ctx.desktopContainerRootMap.value = nextRoots;
+              }
+          }
+
+          const targetAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value || DEFAULT_AGENT_KEY);
+          const updated = await ctx.agentStore.updateAgent(targetAgentId || DEFAULT_AGENT_KEY, {
+              sandbox_container_id: containerId
+          });
+          if (targetAgentId === DEFAULT_AGENT_KEY) {
+              ctx.defaultAgentProfile.value = (updated as Record<string, unknown> | null) || ctx.defaultAgentProfile.value;
+          }
+          else if (targetAgentId && targetAgentId === ctx.activeAgentId.value) {
+              ctx.activeAgent.value = (updated as Record<string, unknown> | null) || ctx.activeAgent.value;
+              ctx.activeAgentDetailProfile.value = (updated as Record<string, unknown> | null) || ctx.activeAgentDetailProfile.value;
+          }
+
+          ctx.selectedFileContainerId.value = containerId;
+          ctx.chatWorkspaceBindingDialogVisible.value = false;
+          ElMessage.success(ctx.t('desktop.common.saveSuccess'));
+      } catch (error) {
+          showApiError(error, ctx.t('desktop.common.saveFailed'));
+      }
   };
 
   ctx.openFileContainerMenu = async (event: MouseEvent, scope: 'user' | 'agent', containerId: number) => {

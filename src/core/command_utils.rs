@@ -83,12 +83,19 @@ pub fn build_direct_command_with_python_override(
     if is_shell_builtin(program) {
         return None;
     }
-    let mut cmd = if is_python_program(program) {
-        Command::new(python_bin)
+    let mut cmd = if is_python_program(program) || command_is_pip_invocation(program) {
+        let mut python_cmd = Command::new(python_bin);
+        if command_is_pip_invocation(program) {
+            python_cmd.arg("-m").arg("pip");
+            if program_index + 1 < parts.len() {
+                python_cmd.args(&parts[program_index + 1..]);
+            }
+        }
+        python_cmd
     } else {
         Command::new(program)
     };
-    if program_index + 1 < parts.len() {
+    if !command_is_pip_invocation(program) && program_index + 1 < parts.len() {
         cmd.args(&parts[program_index + 1..]);
     }
     for (key, value) in envs {
@@ -300,6 +307,15 @@ fn is_python_program(program: &str) -> bool {
         || lower == "py"
         || lower == "py.exe"
         || lower.starts_with("python3.")
+}
+
+fn command_is_pip_invocation(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    lower == "pip"
+        || lower == "pip.exe"
+        || lower == "pip3"
+        || lower == "pip3.exe"
+        || lower.starts_with("pip3.")
 }
 
 #[cfg(test)]

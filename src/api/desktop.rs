@@ -70,6 +70,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/desktop/sync/seed/control",
             post(desktop_seed_control),
         )
+        .route(
+            "/wunder/desktop/workspace/resolve_path",
+            get(desktop_workspace_resolve_path),
+        )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +185,14 @@ struct DesktopDirectoryListQuery {
     include_files: bool,
     #[serde(default)]
     file_names: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct DesktopWorkspaceResolvePathQuery {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    container_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -675,6 +687,50 @@ async fn desktop_fs_list(
             "parent_path": parent_path,
             "roots": list_desktop_directory_roots(),
             "items": items,
+        }
+    })))
+}
+
+async fn desktop_workspace_resolve_path(
+    State(_state): State<Arc<AppState>>,
+    Query(query): Query<DesktopWorkspaceResolvePathQuery>,
+) -> Result<Json<Value>, Response> {
+    let (settings_path, app_dir, default_workspace_root) =
+        resolve_desktop_paths().map_err(bad_request)?;
+    let user_id = resolve_desktop_user_id();
+    let mut settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+    let resolved_workspace_root =
+        resolve_desktop_workspace_root(&settings, &default_workspace_root, &app_dir);
+    settings.container_roots = normalize_desktop_container_roots(
+        &settings.container_roots,
+        &resolved_workspace_root,
+        &user_id,
+        &app_dir,
+    );
+    settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
+
+    let normalized_path = query.path.trim().replace('\\', "/");
+    if normalized_path.is_empty() {
+        return Err(bad_request("path is required".to_string()));
+    }
+    let container_id =
+        normalize_workspace_container_id(query.container_id.unwrap_or(USER_PRIVATE_CONTAINER_ID));
+    let root = settings
+        .container_roots
+        .get(&container_id)
+        .cloned()
+        .unwrap_or_else(|| {
+            build_default_container_root(&resolved_workspace_root, &user_id, container_id)
+                .to_string_lossy()
+                .to_string()
+        });
+    let target = PathBuf::from(root).join(PathBuf::from(normalized_path.replace('/', "\\")));
+    Ok(Json(json!({
+        "data": {
+            "path": query.path,
+            "container_id": container_id,
+            "absolute_path": target.to_string_lossy().to_string(),
+            "exists": target.exists(),
         }
     })))
 }

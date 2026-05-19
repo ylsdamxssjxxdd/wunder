@@ -113,6 +113,14 @@ body.desktop-shell-active .el-notification {
   top: calc(var(--desktop-window-chrome-height, 36px) + 12px) !important;
 }
 
+body.desktop-shell-active .workspace-dialog--file-preview.el-dialog,
+body.desktop-shell-active .workspace-dialog--file-editor.el-dialog,
+body.desktop-shell-active .workspace-dialog--onlyoffice.el-dialog,
+body.desktop-shell-active .workspace-dialog--drawio.el-dialog {
+  margin-top: calc(var(--desktop-window-chrome-height, 36px) + 8px) !important;
+  max-height: calc(var(--app-viewport-height, 100vh) - 16px) !important;
+}
+
 body.desktop-shell-active .messenger-timeline-detail-dialog {
   margin-top: calc(var(--desktop-window-chrome-height, 36px) + 12px) !important;
   max-height: calc(var(--app-viewport-height, 100vh) - 24px);

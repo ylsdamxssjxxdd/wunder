@@ -869,7 +869,15 @@ const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
 );
 const selectedProviderUsesManualModelInput = computed(
-  () => normalizeProviderId(selectedModel.value?.provider) === 'openai_compatible'
+  () => {
+    const current = selectedModel.value;
+    if (!current) return true;
+    const modelType = normalizeModelType(current.model_type);
+    if (modelType !== 'llm') {
+      return true;
+    }
+    return normalizeProviderId(current.provider) === 'openai_compatible';
+  }
 );
 const modelOptionsForSelectedModel = computed(() => {
   const current = selectedModel.value;

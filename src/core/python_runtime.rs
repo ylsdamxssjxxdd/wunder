@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command as TokioCommand;
 
 const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
+const DESKTOP_RUNTIME_ROOT_ENV: &str = "WUNDER_DESKTOP_RUNTIME_ROOT";
 const DESKTOP_SETTINGS_PATH_ENV: &str = "WUNDER_DESKTOP_SETTINGS_PATH";
 
 #[derive(Clone, Debug)]
@@ -36,14 +37,15 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
     }
 
     let app_dir = resolve_app_dir()?;
-    let python_root = app_dir.join("opt/python");
+    let runtime_root = resolve_runtime_root().unwrap_or_else(|| app_dir.clone());
+    let python_root = runtime_root.join("opt/python");
     for python_bin in embedded_python_candidates(&python_root) {
         if python_bin.is_file() {
             return Some(python_runtime_from_home(python_root, python_bin));
         }
     }
 
-    for venv_bin in venv_python_candidates(&app_dir) {
+    for venv_bin in venv_python_candidates(&runtime_root) {
         if venv_bin.is_file() {
             return Some(python_runtime_from_bin(venv_bin));
         }
@@ -191,6 +193,14 @@ fn resolve_app_dir() -> Option<PathBuf> {
                 .and_then(|path| path.parent().map(PathBuf::from))
                 .filter(|value| value.is_dir())
         })
+}
+
+fn resolve_runtime_root() -> Option<PathBuf> {
+    env::var(DESKTOP_RUNTIME_ROOT_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .filter(|value| value.is_dir())
 }
 
 fn python_runtime_from_bin(bin: PathBuf) -> PythonRuntime {

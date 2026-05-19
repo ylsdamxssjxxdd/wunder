@@ -4,7 +4,8 @@ param(
   [string]$LabRoot = '',
   [string]$SupplementRoot = '',
   [string]$ElectronVersion = '22.3.27',
-  [string]$ElectronBuilderVersion = '24.13.3'
+  [string]$ElectronBuilderVersion = '24.13.3',
+  [switch]$SkipFrontendBuild
 )
 
 Set-StrictMode -Version Latest
@@ -103,6 +104,22 @@ function Resolve-AppVersion {
   return $resolvedVersion.Trim()
 }
 
+function Invoke-FrontendBuild {
+  param([string]$RepoRoot)
+
+  Write-Step "building frontend/dist from current source"
+  Push-Location $RepoRoot
+  try {
+    & npm.cmd run build:frontend
+    if ($LASTEXITCODE -ne 0) {
+      throw "frontend build failed with exit code $LASTEXITCODE"
+    }
+  }
+  finally {
+    Pop-Location
+  }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..')).Path
 $appVersion = Resolve-AppVersion -RepoRoot $repoRoot
@@ -112,6 +129,9 @@ if (-not $LabRoot) {
 $LabRoot = Resolve-FullPath -Path $LabRoot -BasePath $repoRoot
 
 $frontendDist = Join-Path $repoRoot 'frontend\dist'
+if (-not $SkipFrontendBuild) {
+  Invoke-FrontendBuild -RepoRoot $repoRoot
+}
 if (-not (Test-Path $frontendDist)) {
   throw "frontend/dist is missing. Build it first: npm run build --workspace wunder-frontend"
 }

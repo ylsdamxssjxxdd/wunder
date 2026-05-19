@@ -3142,23 +3142,35 @@ const normalizeWorkflowRef = (value: unknown): string => String(value || '').tri
 const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
   const output: WorkflowItem[] = [];
   let lastKey = '';
+  let lastExecuteCommandRef = '';
   items.forEach((item) => {
     const kind = resolveToolEventKind(item);
     if (!kind) {
       output.push(item);
       lastKey = '';
+      lastExecuteCommandRef = '';
       return;
     }
+    const toolName = resolveToolName(item).trim().toLowerCase();
+    const workflowRef = normalizeWorkflowRef(item.commandSessionId || item.toolCallId);
     const key = [
       kind,
-      resolveToolName(item).trim().toLowerCase(),
-      normalizeWorkflowRef(item.toolCallId),
+      toolName,
+      workflowRef,
       String(item.status || '').trim().toLowerCase(),
       String(item.title || '').trim(),
       String(item.detail || '').trim()
     ].join('::');
     if (key && key === lastKey) {
       return;
+    }
+    if (toolName === 'execute_command' && workflowRef) {
+      if (lastExecuteCommandRef === workflowRef && kind === 'result') {
+        return;
+      }
+      lastExecuteCommandRef = workflowRef;
+    } else {
+      lastExecuteCommandRef = '';
     }
     output.push(item);
     lastKey = key;

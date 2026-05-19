@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tokio_util::io::ReaderStream;
-use tracing::warn;
+use tracing::{info, warn};
 use url::Url;
 
 const MAX_PATH_DECODE_PASSES: usize = 3;
@@ -38,6 +38,15 @@ async fn editor_config(
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
     let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     let normalized_path = normalize_relative_path(&params.path);
+    info!(
+        target: "desktop_debug",
+        action = "onlyoffice_config_request",
+        workspace_id = %workspace_id,
+        container_id = ?params.container_id,
+        raw_path = %params.path,
+        normalized_path = %normalized_path,
+        "received onlyoffice config request"
+    );
     if normalized_path.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -75,6 +84,16 @@ async fn editor_config(
         .workspace
         .resolve_path(&workspace_id, &normalized_path)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    info!(
+        target: "desktop_debug",
+        action = "onlyoffice_config_resolved_path",
+        workspace_id = %workspace_id,
+        normalized_path = %normalized_path,
+        resolved_target = %target.display(),
+        exists = target.exists(),
+        is_file = target.is_file(),
+        "resolved onlyoffice config target path"
+    );
     if !target.exists() || !target.is_file() {
         return Err(error_response(
             StatusCode::NOT_FOUND,
@@ -83,6 +102,13 @@ async fn editor_config(
     }
     let extension = extension_from_path(&target);
     if !onlyoffice_service::is_supported_extension(&extension) {
+        info!(
+            target: "desktop_debug",
+            action = "onlyoffice_config_unsupported_extension",
+            extension = %extension,
+            normalized_path = %normalized_path,
+            "onlyoffice rejected unsupported extension"
+        );
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "OnlyOffice does not support this file type".to_string(),

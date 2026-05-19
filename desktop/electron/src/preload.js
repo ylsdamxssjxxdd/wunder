@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   updateCompanion: (payload) => ipcRenderer.invoke('wunder:companion-update', payload || {}),
   hideCompanion: (payload) => ipcRenderer.invoke('wunder:companion-hide', payload || {}),
   getCompanionState: () => ipcRenderer.invoke('wunder:companion-state'),
+  getCompanionLibraryState: () => ipcRenderer.invoke('wunder:companion-library-state-get'),
+  setCompanionLibraryState: (payload) =>
+    ipcRenderer.invoke('wunder:companion-library-state-set', payload || {}),
   onCompanionCommand: (listener) => {
     if (typeof listener !== 'function') {
       return () => {};

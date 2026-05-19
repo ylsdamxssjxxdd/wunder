@@ -1274,7 +1274,21 @@ const addPresetQuestion = () => {
 const hasUnsavedChanges = computed(() => {
   if (!canEdit.value || !loadedSnapshot.value) return false;
   const current = buildFormSnapshot();
-  return JSON.stringify(current) !== JSON.stringify(loadedSnapshot.value);
+  if (JSON.stringify(current) !== JSON.stringify(loadedSnapshot.value)) {
+    return true;
+  }
+  if (current.icon_kind === 'companion' && current.companion_id) {
+    const override = companionStore.getAgentOverride(normalizedAgentId.value);
+    const effectiveShow = override?.show ?? true;
+    const effectiveScale = normalizeCompanionScale(override?.scale ?? current.companion_scale);
+    if (effectiveShow !== current.companion_show) {
+      return true;
+    }
+    if (effectiveScale !== current.companion_scale) {
+      return true;
+    }
+  }
+  return false;
 });
 
 watch(
@@ -1678,7 +1692,14 @@ const saveAgent = async () => {
     if (!payload.hive_description) delete payload.hive_description;
     const updated = await agentStore.updateAgent(normalizedAgentId.value, payload);
     currentAgent.value = (updated as Record<string, unknown> | null) || currentAgent.value;
-    companionStore.clearAgentOverride(normalizedAgentId.value);
+    if (form.icon_kind === 'companion' && String(form.companion_id || '').trim()) {
+      companionStore.setAgentOverride(normalizedAgentId.value, {
+        show: form.companion_show !== false,
+        scale: normalizeCompanionScale(form.companion_scale)
+      });
+    } else {
+      companionStore.clearAgentOverride(normalizedAgentId.value);
+    }
     markFormClean();
     await beeroomStore.loadGroups().catch(() => null);
     ElMessage.success(t('portal.agent.updateSuccess'));

@@ -238,12 +238,22 @@ const openEditor = async () => {
   errorText.value = '';
   destroyEditor();
   try {
-    const { data } = await fetchWunderWorkspaceOnlyOfficeConfig(requestParams());
+    const params = requestParams();
+    console.info('[desktop-debug][onlyoffice] request', {
+      path: props.path,
+      params
+    });
+    const { data } = await fetchWunderWorkspaceOnlyOfficeConfig(params);
     const apiUrl = String(data?.api_url || '').trim();
     const config = data?.config || {};
     if (!apiUrl || !config || typeof config !== 'object') {
       throw new Error(t('workspace.onlyoffice.configFailed'));
     }
+    console.info('[desktop-debug][onlyoffice] config-loaded', {
+      path: props.path,
+      apiUrl,
+      containerId: normalizedContainerId.value
+    });
     await loadOnlyOfficeScript(apiUrl);
     await nextTick();
     const host = hostRef.value;
@@ -251,6 +261,14 @@ const openEditor = async () => {
     if (!host || !win.DocsAPI?.DocEditor) {
       throw new Error(t('workspace.onlyoffice.scriptFailed'));
     }
+    const shell = host.closest('.workspace-editor-shell, .el-dialog') as HTMLElement | null;
+    const shellRect = shell?.getBoundingClientRect();
+    console.info('[desktop-debug][onlyoffice] layout', {
+      chromeHeight: getComputedStyle(document.documentElement).getPropertyValue('--desktop-window-chrome-height').trim(),
+      shellTop: shellRect?.top ?? null,
+      shellLeft: shellRect?.left ?? null,
+      path: props.path
+    });
     const editorId = `onlyoffice-${Math.random().toString(36).slice(2, 10)}`;
     host.innerHTML = `<div id="${editorId}" class="workspace-onlyoffice-editor"></div>`;
     editorInstance.value = new win.DocsAPI.DocEditor(editorId, config as Record<string, unknown>);
@@ -265,6 +283,14 @@ const openEditor = async () => {
       source.response?.data?.error ||
       source.message ||
       t('workspace.onlyoffice.openFailed');
+    console.error('[desktop-debug][onlyoffice] open-failed', {
+      path: props.path,
+      containerId: normalizedContainerId.value,
+      userId: String(props.userId || '').trim(),
+      agentId: String(props.agentId || '').trim(),
+      response: source.response?.data || null,
+      message
+    });
     errorText.value = message;
     emitFallback(message);
     emit('update:visible', false);
