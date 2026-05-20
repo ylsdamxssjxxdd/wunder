@@ -124,6 +124,12 @@ const CLICK_WAVE_DURATION_MS = 700;
 const MESSAGE_HINT_DURATION_MS = 3200;
 const POSITION_STORAGE_KEY = 'wunder_agent_companion_positions';
 const DEFAULT_AGENT_KEY = '__default__';
+const DESKTOP_TRANSIENT_SPRITE_STATES = new Set<CompanionSpriteStateId>([
+  'running-left',
+  'running-right',
+  'waving',
+  'waiting'
+]);
 
 const props = withDefaults(
   defineProps<{
@@ -448,7 +454,7 @@ function resolveRuntimeSpriteState(agentId: string): CompanionSpriteStateId {
     case 'running':
       return 'running';
     case 'pending':
-      return reviewingCurrentAgent ? 'review' : 'waiting';
+      return reviewingCurrentAgent ? 'review' : 'idle';
     case 'done':
       return 'jumping';
     case 'error':
@@ -459,7 +465,17 @@ function resolveRuntimeSpriteState(agentId: string): CompanionSpriteStateId {
 }
 
 function resolveEntrySpriteState(entry: FloatingEntry): CompanionSpriteStateId {
-  return spriteStateByKey[entry.key] || resolveRuntimeSpriteState(entry.agentId);
+  const override = spriteStateByKey[entry.key];
+  if (override) {
+    return override;
+  }
+  const runtimeState = resolveRuntimeSpriteState(entry.agentId);
+  return runtimeState === 'waiting' ? 'idle' : runtimeState;
+}
+
+function resolveDesktopBaseSpriteState(entry: FloatingEntry): CompanionSpriteStateId {
+  const runtimeState = resolveEntrySpriteState(entry);
+  return DESKTOP_TRANSIENT_SPRITE_STATES.has(runtimeState) ? 'idle' : runtimeState;
 }
 
 function clearSpriteStateOverride(key: string): void {
@@ -527,7 +543,7 @@ async function syncDesktopOverlay(): Promise<void> {
     displayName: entry.name,
     description: entry.companion.description,
     spritesheetDataUrl: entry.companion.spritesheetDataUrl,
-    state: resolveEntrySpriteState(entry),
+    state: resolveDesktopBaseSpriteState(entry),
     scale: entry.scale,
     message: entry.message,
     messageKind: entry.messageKind,
@@ -699,6 +715,7 @@ function handlePointerDown(event: PointerEvent, entry: FloatingEntry): void {
   if (event.button !== 0) return;
   const target = event.currentTarget as HTMLElement | null;
   const position = positions.value[entry.key] || defaultPosition(0);
+  setSpriteState(entry.key, 'waiting');
   pointerState = {
     pointerId: event.pointerId,
     key: entry.key,
@@ -735,7 +752,7 @@ function stopDrag(): void {
   if (draggingKey.value) {
     clickSuppressUntil = Date.now() + 250;
   }
-  clearSpriteStateOverride(pointerState.key);
+  setSpriteState(pointerState.key, 'idle', 900);
   pointerState = null;
   draggingKey.value = '';
 }

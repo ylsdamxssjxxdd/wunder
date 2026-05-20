@@ -13,7 +13,10 @@ import { initI18n } from '@/i18n';
 import { loadRuntimeConfig } from '@/config/runtime';
 import { initDesktopRuntime } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
-import { clearAsyncComponentReloadMarker } from '@/utils/asyncComponentRecovery';
+import {
+  clearAsyncComponentReloadMarker,
+  reloadOnceForAsyncComponentFailure
+} from '@/utils/asyncComponentRecovery';
 import { installAuthSessionSync } from '@/utils/authSessionSync';
 import { clearAllAccessTokens } from '@/utils/authTokenStorage';
 
@@ -74,17 +77,16 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
   // Recover from stale Vite optimized-deps/chunk URLs after hot updates or server cache invalidation.
   window.addEventListener('vite:preloadError', (event) => {
     event.preventDefault();
-    window.location.reload();
+    reloadOnceForAsyncComponentFailure();
   });
 }
-
-clearAsyncComponentReloadMarker();
 
 const bootstrap = async () => {
   await initDesktopRuntime();
   await loadRuntimeConfig();
   await initI18n();
   app.mount('#app');
+  clearAsyncComponentReloadMarker();
 };
 
 bootstrap();

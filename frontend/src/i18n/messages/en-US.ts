@@ -1032,6 +1032,7 @@ export default {
   'desktop.system.modelTypeMismatch': 'Current model is not of type {type}',
   'desktop.system.modelUnnamed': 'Unnamed model',
   'desktop.system.modelsTitle': 'Models',
+  'desktop.system.modelShort': 'Model',
   'desktop.system.modelListEmpty': 'No model configs yet',
   'desktop.system.resetWorkStateTitle': 'Reset work state',
   'desktop.system.resetWorkStateDescription':

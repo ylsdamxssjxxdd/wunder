@@ -411,6 +411,19 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerFileToolSettings(ctx: MessengerControllerContext): void {
+  const applyDesktopContainerRootsFromSettings = (settings: unknown) => {
+      const data = settings && typeof settings === 'object' ? (settings as Record<string, unknown>) : {};
+      const roots = Array.isArray(data.container_roots)
+          ? (data.container_roots as Array<Record<string, unknown>>)
+          : [];
+      const normalized: Record<number, string> = {};
+      roots.forEach((item) => {
+          const containerId = Math.min(10, Math.max(0, Number.parseInt(String(item.container_id ?? ''), 10) || 0));
+          normalized[containerId] = String(item.root || '').trim();
+      });
+      ctx.desktopContainerRootMap.value = normalized;
+  };
+
   ctx.handleFileContainerMenuCopyId = async () => {
       const target = ctx.fileContainerContextMenu.value.target;
       ctx.closeFileContainerMenu();
@@ -479,6 +492,20 @@ export function installMessengerControllerFileToolSettings(ctx: MessengerControl
           normalized[containerId] = String(value || '').trim();
       });
       ctx.desktopContainerRootMap.value = normalized;
+  };
+
+  ctx.hydrateDesktopContainerRoots = async () => {
+      if (!ctx.desktopMode.value) {
+          ctx.desktopContainerRootMap.value = {};
+          return;
+      }
+      try {
+          const response = await fetchDesktopSettings();
+          applyDesktopContainerRootsFromSettings(response?.data?.data || {});
+      }
+      catch {
+          // Keep current in-memory map when desktop settings cannot be loaded.
+      }
   };
 
   ctx.normalizeToolEntry = (item: unknown): ToolEntry | null => {

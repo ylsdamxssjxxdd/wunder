@@ -508,6 +508,7 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import { resolveDesktopWorkspacePath } from '@/api/desktop';
 import DrawioEditorDialog from '@/components/chat/DrawioEditorDialog.vue';
 import OnlyOfficeEditorDialog from '@/components/chat/OnlyOfficeEditorDialog.vue';
 import CodeMirrorEditor from '@/components/common/CodeMirrorEditor.vue';
@@ -634,6 +635,22 @@ const pathJoinWindows = (basePath: string, relativePath: string): string => {
   const relative = String(relativePath || '').trim().replace(/\//g, '\\');
   if (!base) return relative;
   return `${base.replace(/[\\/]+$/, '')}\\${relative.replace(/^\\+/, '')}`;
+};
+
+const resolveDesktopAbsoluteWorkspacePathAsync = async (relativePath: string): Promise<string> => {
+  const normalized = normalizeWorkspacePath(relativePath);
+  if (!normalized) return '';
+  try {
+    const response = await resolveDesktopWorkspacePath(normalized, normalizedContainerId.value);
+    const payload = response?.data?.data || {};
+    const absolutePath = String(payload.absolute_path || '').trim();
+    if (absolutePath) {
+      return absolutePath;
+    }
+  } catch {
+    // Fall back to client-side path composition below.
+  }
+  return resolveDesktopAbsoluteWorkspacePath(normalized);
 };
 const resourceActionLabel = computed(() =>
   desktopLocalMode.value ? t('workspace.action.exportCopy') : t('common.download')
@@ -3458,19 +3475,20 @@ const openPreview = async (entry) => {
 
 const openOnlyOfficeEditor = (entry) => {
   if (!entry || entry.type !== 'file') return;
-  console.info('[desktop-debug][workspace-panel] open-onlyoffice', {
-    path: entry.path,
-    containerId: normalizedContainerId.value,
-    desktopLocalMode: desktopLocalMode.value,
-    absolutePath: desktopLocalMode.value ? resolveDesktopAbsoluteWorkspacePath(entry.path) : ''
-  });
   if (desktopLocalMode.value) {
     const bridge = getDesktopBridge();
     if (bridge?.openPathWithDefaultApp) {
       void (async () => {
         try {
+          const absolutePath = await resolveDesktopAbsoluteWorkspacePathAsync(entry.path);
+          console.info('[desktop-debug][workspace-panel] open-onlyoffice', {
+            path: entry.path,
+            containerId: normalizedContainerId.value,
+            desktopLocalMode: desktopLocalMode.value,
+            absolutePath
+          });
           const opened = Boolean(
-            await bridge.openPathWithDefaultApp(resolveDesktopAbsoluteWorkspacePath(entry.path))
+            await bridge.openPathWithDefaultApp(absolutePath)
           );
           if (opened) {
             return;
@@ -3497,16 +3515,21 @@ const openOnlyOfficeEditor = (entry) => {
 
 const openDrawioEditor = (entry) => {
   if (!entry || entry.type !== 'file') return;
-  console.info('[desktop-debug][workspace-panel] open-drawio', {
-    path: entry.path,
-    containerId: normalizedContainerId.value,
-    desktopLocalMode: desktopLocalMode.value,
-    absolutePath: desktopLocalMode.value ? resolveDesktopAbsoluteWorkspacePath(entry.path) : ''
-  });
-  state.preview.visible = false;
-  state.drawio.fallbackEntry = entry;
-  state.drawio.entry = entry;
-  state.drawio.visible = true;
+  void (async () => {
+    const absolutePath = desktopLocalMode.value
+      ? await resolveDesktopAbsoluteWorkspacePathAsync(entry.path)
+      : '';
+    console.info('[desktop-debug][workspace-panel] open-drawio', {
+      path: entry.path,
+      containerId: normalizedContainerId.value,
+      desktopLocalMode: desktopLocalMode.value,
+      absolutePath
+    });
+    state.preview.visible = false;
+    state.drawio.fallbackEntry = entry;
+    state.drawio.entry = entry;
+    state.drawio.visible = true;
+  })();
 };
 
 const openWorkspaceBindingDialog = () => {
@@ -3530,7 +3553,9 @@ const handleDrawioFallback = async (payload: { path?: string; message?: string }
     if (bridge?.openPathWithDefaultApp) {
       try {
         opened = Boolean(
-          await bridge.openPathWithDefaultApp(resolveDesktopAbsoluteWorkspacePath(fallbackEntry.path))
+          await bridge.openPathWithDefaultApp(
+            await resolveDesktopAbsoluteWorkspacePathAsync(fallbackEntry.path)
+          )
         );
       } catch {
         opened = false;
@@ -3571,7 +3596,9 @@ const handleOnlyOfficeFallback = async (payload: { path?: string; message?: stri
     if (bridge?.openPathWithDefaultApp) {
       try {
         opened = Boolean(
-          await bridge.openPathWithDefaultApp(resolveDesktopAbsoluteWorkspacePath(fallbackEntry.path))
+          await bridge.openPathWithDefaultApp(
+            await resolveDesktopAbsoluteWorkspacePathAsync(fallbackEntry.path)
+          )
         );
       } catch {
         opened = false;

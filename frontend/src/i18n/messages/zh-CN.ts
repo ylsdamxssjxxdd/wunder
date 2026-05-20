@@ -1007,6 +1007,7 @@ export default {
   'desktop.system.modelTypeMismatch': '当前模型类型不是 {type}',
   'desktop.system.modelUnnamed': '未命名模型',
   'desktop.system.modelsTitle': '模型列表',
+  'desktop.system.modelShort': '模型',
   'desktop.system.modelListEmpty': '暂无模型配置',
   'desktop.system.resetWorkStateTitle': '一键重置工作状态',
   'desktop.system.resetWorkStateDescription':

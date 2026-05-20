@@ -490,6 +490,7 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
               }
           }
       }
+      await ctx.hydrateDesktopContainerRoots?.();
       await Promise.all([ctx.hydrateCurrentUserAppearance(), ctx.hydrateMessengerOrderPreferences()]);
       const initialSection = ctx.desktopMode.value
           ? ('messages' as MessengerSection)

@@ -66,3 +66,4 @@ pub mod worker_card_files;
 pub mod worker_card_protocol;
 pub mod worker_card_settings;
 pub mod workspace;
+pub mod workspace_file_templates;

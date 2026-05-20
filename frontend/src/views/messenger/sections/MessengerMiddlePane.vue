@@ -856,40 +856,30 @@
           </div>
         </div>
       </button>
-      <button
-        v-if="desktopMode"
-        class="messenger-list-item"
-        :class="{ active: settingsPanelMode === 'desktop-models' }"
-        type="button"
-        @click="updateSettingsPanelMode('desktop-models')"
-      >
-        <div class="messenger-list-avatar"><i class="fa-solid fa-desktop" aria-hidden="true"></i></div>
-        <div class="messenger-list-main">
-          <div class="messenger-list-row">
-            <span class="messenger-list-name">{{ t('messenger.settings.desktopModels') }}</span>
+      <template v-if="desktopMode && settingsPanelMode === 'desktop-models'">
+        <div class="messenger-block-title messenger-block-title--tight">{{ t('desktop.system.modelsTitle') }}</div>
+        <button
+          v-for="item in desktopModelItems"
+          :key="`desktop-model-${item.key}`"
+          class="messenger-list-item messenger-list-item--compact"
+          :class="{ active: selectedDesktopModelKey === item.key }"
+          type="button"
+          @click="emit('update:selectedDesktopModelKey', item.key)"
+        >
+          <div class="messenger-list-avatar"><i class="fa-solid" :class="resolveDesktopModelTypeIcon(item.type)" aria-hidden="true"></i></div>
+          <div class="messenger-list-main">
+            <div class="messenger-list-row">
+              <span class="messenger-list-name">{{ item.key || t('desktop.system.modelUnnamed') }}</span>
+              <span class="messenger-kind-tag">{{ item.type || 'llm' }}</span>
+            </div>
+            <div class="messenger-list-row">
+              <span class="messenger-list-preview">{{ item.model || '-' }} · {{ item.baseUrl || '-' }}</span>
+            </div>
           </div>
-          <div class="messenger-list-row">
-            <span class="messenger-list-preview">{{ t('messenger.settings.desktopModelsHint') }}</span>
-          </div>
-        </div>
-      </button>
-      <button
-        v-if="desktopMode"
-        class="messenger-list-item"
-        :class="{ active: settingsPanelMode === 'desktop-lan' }"
-        type="button"
-        @click="updateSettingsPanelMode('desktop-lan')"
-      >
-        <div class="messenger-list-avatar"><i class="fa-solid fa-network-wired" aria-hidden="true"></i></div>
-        <div class="messenger-list-main">
-          <div class="messenger-list-row">
-            <span class="messenger-list-name">{{ t('messenger.settings.desktopLan') }}</span>
-          </div>
-          <div class="messenger-list-row">
-            <span class="messenger-list-preview">{{ t('messenger.settings.desktopLanHint') }}</span>
-          </div>
-        </div>
-      </button>
+        </button>
+        <div v-if="desktopModelsLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+        <div v-else-if="!desktopModelItems.length" class="messenger-list-empty">{{ t('desktop.system.modelListEmpty') }}</div>
+      </template>
     </template>
   </div>
 
@@ -973,6 +963,7 @@ import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { getBeeroomGroup } from '@/api/beeroom';
+import { fetchDesktopSettings } from '@/api/desktop';
 import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
@@ -1119,6 +1110,7 @@ const {
   unboundAgentFileContainers,
   settingsPanelMode,
   desktopMode,
+  selectedDesktopModelKey,
   currentUsername,
   settingsLogoutDisabled,
   handleSettingsLogout,
@@ -1211,6 +1203,8 @@ const {
   unboundAgentFileContainers: ContainerEntry[];
   settingsPanelMode: string;
   desktopMode: boolean;
+  selectedDesktopModelKey?: string;
+  'onUpdate:selectedDesktopModelKey'?: (value: string) => void;
   currentUsername: string;
   settingsLogoutDisabled: boolean;
   handleSettingsLogout: () => void;
@@ -1272,6 +1266,52 @@ const middlePaneSearchableSections = new Set([
   'orchestrations',
   'agents'
 ]);
+
+const desktopModelItems = ref<Array<{ key: string; model: string; type: string; baseUrl: string }>>([]);
+const desktopModelsLoading = ref(false);
+
+const loadDesktopModelItems = async () => {
+  if (!desktopMode || settingsPanelMode !== 'desktop-models') return;
+  desktopModelsLoading.value = true;
+  try {
+    const response = await fetchDesktopSettings();
+    const llm = (response?.data?.data?.llm || {}) as Record<string, any>;
+    const models = (llm.models || {}) as Record<string, Record<string, unknown>>;
+    desktopModelItems.value = Object.entries(models).map(([key, value]) => ({
+      key: String(key || '').trim(),
+      model: String(value?.model || '').trim(),
+      type: String(value?.model_type || 'llm').trim(),
+      baseUrl: String(value?.base_url || '').trim()
+    }));
+    if (!selectedDesktopModelKey && desktopModelItems.value.length) {
+      emit('update:selectedDesktopModelKey', desktopModelItems.value[0].key);
+    }
+  } catch {
+    desktopModelItems.value = [];
+  } finally {
+    desktopModelsLoading.value = false;
+  }
+};
+
+const resolveDesktopModelTypeIcon = (value: string): string => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'embedding') return 'fa-fingerprint';
+  if (normalized === 'asr') return 'fa-wave-square';
+  if (normalized === 'tts') return 'fa-headphones';
+  if (normalized === 'image') return 'fa-image';
+  if (normalized === 'video') return 'fa-film';
+  return 'fa-brain';
+};
+
+watch(
+  () => [desktopMode, settingsPanelMode] as const,
+  ([nextDesktopMode, nextPanelMode]) => {
+    if (nextDesktopMode && nextPanelMode === 'desktop-models') {
+      void loadDesktopModelItems();
+    }
+  },
+  { immediate: true }
+);
 const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
 );
@@ -1797,6 +1837,7 @@ const emit = defineEmits<{
   (event: 'update:selectedContactUnitId', value: string): void;
   (event: 'update:selectedAgentHiveGroupId', value: string): void;
   (event: 'update:settingsPanelMode', value: string): void;
+  (event: 'update:selectedDesktopModelKey', value: string): void;
   (event: 'activate-settings-panel', value: string): void;
 }>();
 

@@ -411,6 +411,37 @@ type WorldScreenshotCaptureOption = {
 
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
+const normalizeVoiceModelType = (value: unknown): 'llm' | 'embedding' | 'asr' | 'tts' | 'image' | 'video' => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'embedding' || raw === 'embed' || raw === 'embeddings') return 'embedding';
+  if (
+    raw === 'asr' ||
+    raw === 'stt' ||
+    raw === 'speech_to_text' ||
+    raw === 'audio_transcription' ||
+    raw === 'transcription' ||
+    raw === 'audio_to_text'
+  ) {
+    return 'asr';
+  }
+  if (raw === 'tts' || raw === 'speech' || raw === 'text_to_speech' || raw === 'text-to-speech') {
+    return 'tts';
+  }
+  if (raw === 'image' || raw === 'draw' || raw === 'drawing' || raw === 'text_to_image' || raw === 'text-to-image') {
+    return 'image';
+  }
+  if (
+    raw === 'video' ||
+    raw === 'movie' ||
+    raw === 'animation' ||
+    raw === 'text_to_video' ||
+    raw === 'text-to-video'
+  ) {
+    return 'video';
+  }
+  return 'llm';
+};
+
 export function installMessengerControllerWorldMessagingActions(ctx: MessengerControllerContext): void {
   ctx.normalizeUploadPath = (value: unknown): string => String(value || '')
       .replace(/\\/g, '/')
@@ -833,7 +864,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           }
           const models = ctx.asObjectRecord(llm.models);
           const model = ctx.asObjectRecord(models[defaultAsrKey]);
-          return ctx.normalizeModelType(model.model_type) === 'asr';
+          return normalizeVoiceModelType(model.model_type) === 'asr';
       }
       catch {
           return false;

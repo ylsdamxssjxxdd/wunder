@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::path_utils::strip_windows_verbatim_prefix;
+use crate::services::workspace_file_templates::build_workspace_file_template;
 use crate::state::AppState;
 use crate::storage::{normalize_workspace_container_id, DEFAULT_SANDBOX_CONTAINER_ID};
 use crate::workspace::WorkspaceEntry;
@@ -936,9 +937,15 @@ async fn workspace_file_update(
             ));
         }
     }
-    tokio::fs::write(&target, request.content.as_bytes())
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(template_bytes) = build_workspace_file_template(&normalized, &request.content) {
+        tokio::fs::write(&target, template_bytes)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    } else {
+        tokio::fs::write(&target, request.content.as_bytes())
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
     state.workspace.refresh_workspace_tree(&workspace_id);
     let tree_version = state.workspace.get_tree_version(&workspace_id);
     Ok(Json(WorkspaceActionResponse {

@@ -50,7 +50,7 @@
             :aria-label="item.label"
             @mouseenter="queuePreviewMiddlePaneSection(item.key)"
             @focus="previewMiddlePaneSection(item.key)"
-            @click="switchSection(item.key)"
+            @click="item.key === 'desktop-models-quick' ? activateSettingsPanel('desktop-models') : switchSection(item.key)"
           >
             <i :class="item.icon" aria-hidden="true"></i>
             <span class="messenger-left-nav-btn-label">{{ resolveLeftNavButtonLabel(item.key) }}</span>
@@ -130,6 +130,7 @@
           :selected-agent-hive-group-id="selectedAgentHiveGroupId"
           @update:selected-agent-hive-group-id="handleMiddlePaneAgentHiveGroupIdUpdate"
           v-model:settings-panel-mode="settingsPanelMode"
+          v-model:selected-desktop-model-key="selectedDesktopModelKey"
           :active-section="middlePaneActiveSection"
           :active-section-title="middlePaneActiveSectionTitle"
           :active-section-subtitle="middlePaneActiveSectionSubtitle"
@@ -928,6 +929,8 @@
                         ? 'lan'
                         : 'models'
                   "
+                  :detail-only="settingsPanelMode === 'desktop-models'"
+                  :selected-model-key="selectedDesktopModelKey"
                   @desktop-model-meta-changed="handleDesktopModelMetaChanged"
                 />
               </div>
@@ -2874,6 +2877,7 @@ const settingsAgentIdForApi = controller.settingsAgentIdForApi;
 const settingsAgentIdForPanel = controller.settingsAgentIdForPanel;
 const settingsLogoutDisabled = controller.settingsLogoutDisabled;
 const settingsPanelMode = controller.settingsPanelMode;
+const selectedDesktopModelKey = controller.selectedDesktopModelKey;
 const settingsPanelRenderKey = controller.settingsPanelRenderKey;
 const settingsRuntimeAgentIdForApi = controller.settingsRuntimeAgentIdForApi;
 const settleAgentSessionBusyAfterRefresh = controller.settleAgentSessionBusyAfterRefresh;

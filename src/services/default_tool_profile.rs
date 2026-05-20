@@ -13,7 +13,6 @@ const DEFAULT_BUILTIN_TOOL_NAMES: &[&str] = &[
     "网页抓取",
     "技能调用",
     "写入文件",
-    "文本编辑",
     "应用补丁",
 ];
 
@@ -79,6 +78,17 @@ mod tests {
     #[test]
     fn curated_default_selection_keeps_self_status_disabled() {
         let canonical = resolve_tool_name("self_status");
+        let mut allowed = curated_default_tool_candidates()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        allowed.insert(canonical.clone());
+        let selected = curated_default_tool_names(&allowed);
+        assert!(!selected.contains(&canonical));
+    }
+
+    #[test]
+    fn curated_default_selection_keeps_edit_file2_disabled() {
+        let canonical = resolve_tool_name("edit_file2");
         let mut allowed = curated_default_tool_candidates()
             .into_iter()
             .collect::<HashSet<_>>();

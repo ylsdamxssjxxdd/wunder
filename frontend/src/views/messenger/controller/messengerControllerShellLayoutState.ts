@@ -432,10 +432,27 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
       ];
   });
 
-  ctx.leftRailMainSectionOptions = computed(() => ctx.sectionOptions.value.filter((item) => item.key === 'messages' ||
-      item.key === 'agents' ||
-      item.key === 'tools' ||
-      item.key === 'files'));
+  ctx.leftRailMainSectionOptions = computed(() => {
+      const items = ctx.sectionOptions.value.filter((item) => item.key === 'messages' ||
+          item.key === 'agents' ||
+          item.key === 'tools' ||
+          item.key === 'files');
+      if (ctx.desktopMode.value) {
+          const fileIndex = items.findIndex((item) => item.key === 'files');
+          const modelItem = {
+              key: 'desktop-models-quick',
+              icon: 'fa-solid fa-brain',
+              label: ctx.t('desktop.system.modelShort')
+          };
+          if (fileIndex >= 0) {
+              items.splice(fileIndex + 1, 0, modelItem as (typeof items)[number]);
+          }
+          else {
+              items.push(modelItem as (typeof items)[number]);
+          }
+      }
+      return items;
+  });
 
   ctx.leftRailSocialSectionOptions = computed(() => ctx.sectionOptions.value.filter((item) => item.key === 'swarms' ||
       item.key === 'orchestrations' ||
@@ -443,11 +460,17 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
       item.key === 'groups' ||
       (!ctx.desktopMode.value && item.key === 'plaza')));
 
-  ctx.isLeftNavSectionActive = (section: MessengerSection): boolean => {
+  ctx.isLeftNavSectionActive = (section: MessengerSection | 'desktop-models-quick'): boolean => {
+      if (section === 'desktop-models-quick') {
+          return ctx.sessionHub.activeSection === 'more' && ctx.settingsPanelMode.value === 'desktop-models';
+      }
       return ctx.isSectionButtonActive(section);
   };
 
-  ctx.resolveLeftNavButtonLabel = (section: MessengerSection): string => {
+  ctx.resolveLeftNavButtonLabel = (section: MessengerSection | 'desktop-models-quick'): string => {
+      if (section === 'desktop-models-quick') {
+          return ctx.t('desktop.system.modelShort');
+      }
       switch (section) {
           case 'messages':
               return ctx.t('messenger.section.messages');

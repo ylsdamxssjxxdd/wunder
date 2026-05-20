@@ -37,8 +37,8 @@
       v-if="showModelPanel"
       class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
     >
-      <div class="desktop-system-settings-layout">
-      <aside class="desktop-system-settings-model-list-wrap">
+      <div class="desktop-system-settings-layout" :class="{ 'desktop-system-settings-layout--detail-only': detailOnly }">
+      <aside v-if="!detailOnly" class="desktop-system-settings-model-list-wrap">
         <div class="desktop-system-settings-model-list-head">
           <span class="desktop-system-settings-model-list-title">{{ t('desktop.system.modelsTitle') }}</span>
           <div class="desktop-system-settings-model-list-head-actions">
@@ -686,9 +686,13 @@ const VIDEO_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_video_model';
 const props = withDefaults(
   defineProps<{
     panel?: 'system' | 'models' | 'lan' | 'all';
+    detailOnly?: boolean;
+    selectedModelKey?: string;
   }>(),
   {
-    panel: 'all'
+    panel: 'all',
+    detailOnly: false,
+    selectedModelKey: ''
   }
 );
 const emit = defineEmits<{
@@ -867,6 +871,24 @@ const modelRowsForList = computed(() =>
 );
 const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
+);
+
+watch(
+  () => [props.selectedModelKey, modelRows.value.length] as const,
+  ([selectedModelKey]) => {
+    const normalized = String(selectedModelKey || '').trim();
+    if (!normalized) {
+      if (props.detailOnly && modelRows.value.length && !selectedModelUid.value) {
+        selectedModelUid.value = modelRows.value[0].uid;
+      }
+      return;
+    }
+    const matched = modelRows.value.find((item) => String(item.key || '').trim() === normalized);
+    if (matched) {
+      selectedModelUid.value = matched.uid;
+    }
+  },
+  { immediate: true }
 );
 const selectedProviderUsesManualModelInput = computed(
   () => {
@@ -2108,6 +2130,10 @@ onMounted(() => {
   gap: 12px;
   min-height: 0;
   height: 100%;
+}
+
+.desktop-system-settings-layout--detail-only {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .desktop-system-settings-model-list-wrap {

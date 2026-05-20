@@ -245,6 +245,9 @@ let updateState = createUpdateSnapshot()
 let overlayWindow = null
 let overlayHideTimer = null
 let companionWindow = null
+let companionTransientState = ''
+let companionTransientTimer = null
+let companionTransientUntil = 0
 let companionState = {
   enabled: false,
   key: '',
@@ -267,6 +270,56 @@ const COMPANION_FRAME_HEIGHT = 208
 const COMPANION_SCREEN_MARGIN = 8
 const COMPANION_MIN_SCALE = 0.5
 const COMPANION_MAX_SCALE = 1.6
+const COMPANION_BASE_FALLBACK_STATE = 'idle'
+const COMPANION_NON_PERSISTENT_STATES = new Set([
+  'running-left',
+  'running-right',
+  'waving',
+  'waiting'
+])
+
+const normalizeCompanionBaseState = (state) => {
+  const normalized = String(state || '').trim().toLowerCase()
+  if (!normalized || COMPANION_NON_PERSISTENT_STATES.has(normalized)) {
+    return COMPANION_BASE_FALLBACK_STATE
+  }
+  return normalized
+}
+
+const clearCompanionTransientState = () => {
+  if (companionTransientTimer) {
+    clearTimeout(companionTransientTimer)
+    companionTransientTimer = null
+  }
+  companionTransientState = ''
+  companionTransientUntil = 0
+}
+
+const setCompanionTransientState = (state, durationMs) => {
+  const nextState = String(state || '').trim().toLowerCase()
+  if (!nextState) {
+    clearCompanionTransientState()
+    return
+  }
+  clearCompanionTransientState()
+  companionTransientState = nextState
+  companionTransientUntil = Date.now() + Math.max(120, Number(durationMs || 0))
+  companionTransientTimer = setTimeout(() => {
+    companionTransientTimer = null
+    companionTransientState = ''
+    companionTransientUntil = 0
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      renderCompanionWindow()
+    }
+  }, Math.max(120, Number(durationMs || 0)))
+}
+
+const resolveRenderedCompanionState = () => {
+  if (companionTransientState && companionTransientUntil > Date.now()) {
+    return companionTransientState
+  }
+  return normalizeCompanionBaseState(companionState.state)
+}
 
 const createOverlayHtml = () => `<!doctype html>
 <html>
@@ -824,9 +877,10 @@ const createCompanionHtml = () => `<!doctype html>
     let frame = 0;
     let timer = null;
     let drag = null;
-    let dragResumeState = 'idle';
     let suppressClick = false;
+    let hasDragged = false;
     let animationSignature = '';
+    let baseState = 'idle';
     let menuState = false;
     let currentScale = 1;
     let lastPosition = { x: 0, y: 0 };
@@ -899,16 +953,18 @@ const createCompanionHtml = () => `<!doctype html>
       root.classList.toggle('dragging', active);
       sprite.classList.toggle('dragging', active);
     };
+    const applyLocalState = (state) => {
+      payload.state = normalizeState(state);
+      refreshAnimationIfNeeded();
+    };
     const applyDragState = (dx) => {
       if (Math.abs(dx) < 1) {
         return;
       }
-      payload.state = dx < 0 ? 'running-left' : 'running-right';
-      refreshAnimationIfNeeded();
+      applyLocalState(dx < 0 ? 'running-left' : 'running-right');
     };
     const resetDragState = () => {
-      payload.state = 'waiting';
-      refreshAnimationIfNeeded();
+      applyLocalState(baseState);
     };
     const flushDragFrame = () => {
       dragFrameId = null;
@@ -962,6 +1018,7 @@ const createCompanionHtml = () => `<!doctype html>
     const render = (next) => {
       payload = Object.assign({}, payload, next || {});
       currentPayload = payload;
+      baseState = normalizeState(payload.state);
       const scale = Math.min(1.6, Math.max(0.7, Number(payload.scale || 1)));
       sprite.style.width = Math.round(frameWidth * scale) + 'px';
       sprite.style.height = Math.round(frameHeight * scale) + 'px';
@@ -996,7 +1053,12 @@ const createCompanionHtml = () => `<!doctype html>
     sprite.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      openMenu(event.clientX, event.clientY);
+      sendCommand('context-menu', {
+        key: currentPayload.key || currentPayload.selectedId,
+        agentId: currentPayload.agentId,
+        x: event.screenX,
+        y: event.screenY
+      });
     });
     window.addEventListener('mousedown', (event) => {
       if (!menuState) return;
@@ -1010,11 +1072,11 @@ const createCompanionHtml = () => `<!doctype html>
       if (menuState) {
         closeMenu();
       }
-      dragResumeState = normalizeState(currentPayload.state || payload.state);
       drag = { x: event.screenX, y: event.screenY };
       pendingDragDelta = { dx: 0, dy: 0 };
       pendingDragOrigin = { x: drag.x, y: drag.y };
       suppressClick = false;
+      hasDragged = false;
       setDragging(true);
       sprite.setPointerCapture(event.pointerId);
     });
@@ -1024,11 +1086,11 @@ const createCompanionHtml = () => `<!doctype html>
       const dy = event.screenY - drag.y;
       if (!suppressClick && Math.hypot(dx, dy) > 3) {
         suppressClick = true;
+        hasDragged = true;
       }
       queueDragFrame(dx, dy);
     });
     sprite.addEventListener('click', (event) => {
-      if (menuState) return;
       if (suppressClick) {
         event.preventDefault();
         event.stopPropagation();
@@ -1041,15 +1103,10 @@ const createCompanionHtml = () => `<!doctype html>
         });
         return;
       }
-      payload.state = 'waving';
-      refreshAnimationIfNeeded();
-      window.setTimeout(() => {
-        if (drag) {
-          return;
-        }
-        payload.state = 'waiting';
-        refreshAnimationIfNeeded();
-      }, 700);
+      sendCommand('wave', {
+        key: currentPayload.key || currentPayload.selectedId,
+        agentId: currentPayload.agentId
+      });
     });
     sprite.addEventListener('wheel', (event) => {
       if (!event.altKey) return;
@@ -1069,28 +1126,32 @@ const createCompanionHtml = () => `<!doctype html>
       }
       drag = null;
       setDragging(false);
-      try { sprite.releasePointerCapture(event.pointerId); } catch {}
+      if (event && event.pointerId !== undefined) {
+        try { sprite.releasePointerCapture(event.pointerId); } catch {}
+      }
       resetDragState();
-      ipcRenderer.invoke('wunder:companion-drag-end').catch(() => {});
+      if (hasDragged) {
+        ipcRenderer.invoke('wunder:companion-drag-end').catch(() => {});
+      }
       window.setTimeout(() => {
         suppressClick = false;
+        hasDragged = false;
       }, 180);
     };
     sprite.addEventListener('pointerup', stopDrag);
     sprite.addEventListener('pointercancel', stopDrag);
+    sprite.addEventListener('lostpointercapture', stopDrag);
+    window.addEventListener('pointerup', stopDrag);
+    window.addEventListener('pointercancel', stopDrag);
+    window.addEventListener('mouseup', stopDrag);
+    window.addEventListener('blur', stopDrag);
     window.addEventListener('beforeunload', () => {
       if (dragFrameId !== null && typeof window !== 'undefined') {
         window.cancelAnimationFrame(dragFrameId);
         dragFrameId = null;
       }
+      stopDrag();
       stopAnimation();
-    });
-    menu.addEventListener('pointerdown', (event) => {
-      event.stopPropagation();
-    });
-    menu.addEventListener('contextmenu', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
     });
   </script>
 </body>
@@ -1194,7 +1255,11 @@ const renderCompanionWindow = () => {
   if (window.webContents.isLoading()) {
     return true
   }
-  window.webContents.send('wunder:companion-render', companionState)
+  const renderState = resolveRenderedCompanionState()
+  window.webContents.send('wunder:companion-render', {
+    ...companionState,
+    state: renderState
+  })
   if (!window.isVisible()) {
     window.showInactive()
   }
@@ -1202,6 +1267,7 @@ const renderCompanionWindow = () => {
 }
 
 const showCompanion = (payload) => {
+  const incomingState = normalizeCompanionBaseState(payload?.state)
   const next = normalizeCompanionState({
     ...companionState,
     key: payload?.key || payload?.id || companionState.key,
@@ -1210,7 +1276,7 @@ const showCompanion = (payload) => {
     displayName: payload?.displayName || companionState.displayName,
     description: payload?.description || companionState.description,
     spritesheetDataUrl: payload?.spritesheetDataUrl || companionState.spritesheetDataUrl,
-    state: payload?.state || companionState.state,
+    state: incomingState || companionState.state,
     scale: payload?.scale ?? companionState.scale,
     x: payload?.x ?? companionState.x,
     y: payload?.y ?? companionState.y,
@@ -1226,6 +1292,7 @@ const showCompanion = (payload) => {
 const updateCompanion = (payload) => showCompanion(payload)
 
 const hideCompanion = (payload = {}) => {
+  clearCompanionTransientState()
   if (payload?.persistEnabled === true) {
     saveCompanionState({ enabled: false })
   }
@@ -1244,10 +1311,53 @@ const emitCompanionStateChanged = () => {
   }
 }
 
+const showCompanionContextMenu = (payload = {}) => {
+  if (!companionWindow || companionWindow.isDestroyed()) {
+    return false
+  }
+  const template = [
+    {
+      label: '进入聊天',
+      click: () => emitCompanionCommand({ action: 'open-chat', key: companionState.key, agentId: companionState.agentId })
+    },
+    {
+      label: '隐藏',
+      click: () => hideCompanion({ persistEnabled: true })
+    }
+  ]
+  Menu.buildFromTemplate(template).popup({
+    window: companionWindow
+  })
+  return true
+}
+
 const emitCompanionCommand = (payload) => {
   const action = String(payload?.action || '').trim().toLowerCase()
   if (action === 'open-chat') {
+    setCompanionTransientState('waving', 900)
+    renderCompanionWindow()
     showMainWindow({ explicit: true })
+    return true
+  }
+  if (action === 'hide') {
+    hideCompanion({ persistEnabled: true })
+    return true
+  }
+  if (action === 'set-scale') {
+    const scale = Number(payload?.scale)
+    if (Number.isFinite(scale)) {
+      saveCompanionState({ scale, state: normalizeCompanionBaseState(companionState.state) })
+      renderCompanionWindow()
+    }
+    return true
+  }
+  if (action === 'wave') {
+    setCompanionTransientState('waving', 1100)
+    renderCompanionWindow()
+    return true
+  }
+  if (action === 'context-menu') {
+    return showCompanionContextMenu(payload)
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
@@ -1284,13 +1394,15 @@ const endCompanionDrag = () => {
     ...companionState,
     x: windowLayout.point.x,
     y: windowLayout.point.y,
-    state: 'waiting'
+    state: normalizeCompanionBaseState(companionState.state)
   })
-  saveCompanionState({ x: windowLayout.point.x, y: windowLayout.point.y, state: 'waiting' })
-  companionWindow.webContents.send('wunder:companion-render', {
-    ...companionState,
-    state: 'waiting'
+  clearCompanionTransientState()
+  saveCompanionState({
+    x: windowLayout.point.x,
+    y: windowLayout.point.y,
+    state: normalizeCompanionBaseState(companionState.state)
   })
+  renderCompanionWindow()
   emitCompanionStateChanged()
   return true
 }
@@ -3286,7 +3398,7 @@ const normalizeCompanionState = (value) => {
   const displayName = String(source.displayName || source.display_name || '').trim()
   const description = String(source.description || '').trim()
   const spritesheetDataUrl = String(source.spritesheetDataUrl || source.spritesheet_data_url || '').trim()
-  const state = String(source.state || '').trim().toLowerCase() || 'idle'
+  const state = normalizeCompanionBaseState(source.state)
   const scale = Number(source.scale)
   const x = Number(source.x)
   const y = Number(source.y)

@@ -294,29 +294,35 @@ function Seed-Win7GnuCargoHome {
   }
 }
 
-function Resolve-WindowsTargetsCompatLibDir {
+function Resolve-WindowsTargetsCompatLibDirs {
   param(
     [string]$CargoHome,
     [string]$Arch
   )
 
-  $crateDirName = if ($Arch -eq 'ia32') { 'windows_i686_gnu-0.48.5' } else { 'windows_x86_64_gnu-0.48.5' }
+  $crateDirPrefix = if ($Arch -eq 'ia32') { 'windows_i686_gnu-' } else { 'windows_x86_64_gnu-' }
   $registrySrcRoot = Join-Path $CargoHome 'registry\src'
   if (-not (Test-Path $registrySrcRoot)) {
-    return $null
+    return @()
   }
 
+  $resolved = New-Object System.Collections.Generic.List[string]
   $candidateDirs = Get-ChildItem -Path $registrySrcRoot -Directory -ErrorAction SilentlyContinue |
     Sort-Object Name
 
   foreach ($candidate in $candidateDirs) {
-    $compatLibDir = Join-Path $candidate.FullName (Join-Path $crateDirName 'lib')
-    if (Test-Path $compatLibDir) {
-      return $compatLibDir
+    $crateDirs = Get-ChildItem -Path $candidate.FullName -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -like "$crateDirPrefix*" } |
+      Sort-Object Name
+    foreach ($crateDir in $crateDirs) {
+      $compatLibDir = Join-Path $crateDir.FullName 'lib'
+      if (Test-Path $compatLibDir) {
+        [void]$resolved.Add($compatLibDir)
+      }
     }
   }
 
-  return $null
+  return @($resolved | Select-Object -Unique)
 }
 
 function Set-Win7GnuBaseEnvironment {
@@ -352,8 +358,8 @@ function Set-Win7GnuRustFlags {
     $rustFlagParts += $previousRustFlags
   }
 
-  $compatLibDir = Resolve-WindowsTargetsCompatLibDir -CargoHome $Context.CargoHome -Arch $Context.Arch
-  if ($compatLibDir) {
+  $compatLibDirs = Resolve-WindowsTargetsCompatLibDirs -CargoHome $Context.CargoHome -Arch $Context.Arch
+  foreach ($compatLibDir in $compatLibDirs) {
     Write-Win7GnuStep "using extra windows-targets import lib: $compatLibDir"
     $rustFlagParts += "-L native=$compatLibDir"
   }

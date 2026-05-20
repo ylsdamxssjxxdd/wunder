@@ -224,6 +224,9 @@ export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
     });
   };
   const stream = await requestStream();
+  if (MediaRecorderCtor) {
+    return createMediaRecorderSession(stream, MediaRecorderCtor);
+  }
   let context: RecorderAudioContext | null = null;
   let sourceNode: MediaStreamAudioSourceNode | null = null;
   let processorNode: ScriptProcessorNode | null = null;

@@ -753,6 +753,7 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
   ctx.agentSettingsFocusToken = ref(0);
 
   ctx.settingsPanelMode = ref<SettingsPanelMode>('general');
+  ctx.selectedDesktopModelKey = ref('');
 
   ctx.rightDockCollapsed = ref(false);
 

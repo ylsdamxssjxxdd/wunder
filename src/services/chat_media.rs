@@ -50,6 +50,8 @@ pub struct ChatMediaProcessResult {
     pub name: String,
     pub source_public_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_frame_rate: Option<f64>,
@@ -208,6 +210,7 @@ async fn process_audio_source(
         kind: "audio".to_string(),
         name: filename.to_string(),
         source_public_path: source_public_path.clone(),
+        transcript: transcript.clone(),
         duration_ms: probe.duration_ms,
         requested_frame_rate: None,
         applied_frame_rate: None,
@@ -260,6 +263,7 @@ async fn process_image_source(
         kind: "image".to_string(),
         name: filename.clone(),
         source_public_path: public_path.clone(),
+        transcript: None,
         duration_ms: None,
         requested_frame_rate: None,
         applied_frame_rate: None,
@@ -315,6 +319,7 @@ async fn process_gif_source(
             kind: "gif".to_string(),
             name: filename.to_string(),
             source_public_path: public_path,
+            transcript: None,
             duration_ms: None,
             requested_frame_rate: None,
             applied_frame_rate: None,
@@ -351,6 +356,7 @@ async fn process_gif_source(
         kind: "gif".to_string(),
         name: filename.to_string(),
         source_public_path: public_path,
+        transcript: None,
         duration_ms: None,
         requested_frame_rate: None,
         applied_frame_rate: None,
@@ -410,6 +416,7 @@ async fn process_video_source(
             MAX_VIDEO_FRAMES
         ));
     }
+    let mut video_transcript: Option<String> = None;
     let mut attachments = Vec::with_capacity(frame_paths.len().saturating_add(1));
     for frame_path in frame_paths {
         let public_path = workspace.display_path(workspace_id, &frame_path);
@@ -447,6 +454,9 @@ async fn process_video_source(
                     .clone()
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or_else(|| build_audio_placeholder(filename));
+                if video_transcript.is_none() {
+                    video_transcript = transcript.clone().filter(|value| !value.trim().is_empty());
+                }
                 if transcript.is_none() {
                     warnings.push(
                         "Video audio transcript unavailable, using placeholder text context."
@@ -494,6 +504,7 @@ async fn process_video_source(
         kind: "video".to_string(),
         name: filename.to_string(),
         source_public_path,
+        transcript: video_transcript,
         duration_ms: probe.duration_ms,
         requested_frame_rate: Some(requested),
         applied_frame_rate: Some(applied),

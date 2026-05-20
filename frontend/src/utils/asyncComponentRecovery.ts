@@ -16,7 +16,7 @@ const isDynamicImportFetchError = (error: unknown) => {
   );
 };
 
-const reloadOnceForAsyncComponentFailure = () => {
+export const reloadOnceForAsyncComponentFailure = () => {
   if (typeof window === 'undefined') {
     return;
   }
