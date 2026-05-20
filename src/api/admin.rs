@@ -4593,7 +4593,10 @@ async fn admin_org_units_import(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
     let tree = org_units::build_unit_tree(&imported_units);
-    let items = imported_units.iter().map(org_unit_payload).collect::<Vec<_>>();
+    let items = imported_units
+        .iter()
+        .map(org_unit_payload)
+        .collect::<Vec<_>>();
     Ok(Json(json!({
         "data": {
             "items": items,
@@ -5195,7 +5198,9 @@ async fn admin_user_accounts_list(
         items.sort();
         items
     });
-    let requested_unit_scope = requested_unit_id.as_ref().map(|unit_id| vec![unit_id.clone()]);
+    let requested_unit_scope = requested_unit_id
+        .as_ref()
+        .map(|unit_id| vec![unit_id.clone()]);
     let query_unit_scope = match (scoped_unit_ids.as_deref(), requested_unit_scope.as_deref()) {
         (Some(scope), Some(requested)) => {
             let requested_set = requested.iter().collect::<HashSet<_>>();
@@ -6892,7 +6897,9 @@ fn append_import_org_unit_records(
         return Err(anyhow::anyhow!("org unit name is empty"));
     }
     if level > MAX_ORG_UNIT_LEVEL {
-        return Err(anyhow::anyhow!("org unit level exceeds {MAX_ORG_UNIT_LEVEL}"));
+        return Err(anyhow::anyhow!(
+            "org unit level exceeds {MAX_ORG_UNIT_LEVEL}"
+        ));
     }
     let mut path_names = parent_path_names.to_vec();
     path_names.push(name.to_string());

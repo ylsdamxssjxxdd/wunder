@@ -245,6 +245,8 @@ let updateState = createUpdateSnapshot()
 let overlayWindow = null
 let overlayHideTimer = null
 let companionWindow = null
+let companionWindowMouseIgnored = false
+let companionWindowShapeEnabled = false
 let companionTransientState = ''
 let companionTransientTimer = null
 let companionTransientUntil = 0
@@ -264,6 +266,7 @@ let companionState = {
   messageKind: 'info',
   messageVisible: false
 }
+const companionRuntimes = new Map()
 const COMPANION_COMMAND_CHANNEL = 'wunder:companion-command'
 const COMPANION_FRAME_WIDTH = 192
 const COMPANION_FRAME_HEIGHT = 208
@@ -286,7 +289,93 @@ const normalizeCompanionBaseState = (state) => {
   return normalized
 }
 
-const clearCompanionTransientState = () => {
+const normalizeCompanionWindowKey = (value = {}) => {
+  const source = value && typeof value === 'object' ? value : {}
+  const key = String(
+    source.key ||
+    source.agentId ||
+    source.agent_id ||
+    source.selectedId ||
+    source.selected_id ||
+    source.id ||
+    ''
+  ).trim()
+  return key || '__default__'
+}
+
+const getCompanionRuntime = (value = {}) => {
+  const key = normalizeCompanionWindowKey(value)
+  let runtime = companionRuntimes.get(key)
+  if (!runtime) {
+    runtime = {
+      key,
+      window: null,
+      mouseIgnored: false,
+      shapeEnabled: false,
+      transientState: '',
+      transientTimer: null,
+      transientUntil: 0,
+      state: {
+        ...companionState,
+        key
+      }
+    }
+    companionRuntimes.set(key, runtime)
+  }
+  return runtime
+}
+
+const findCompanionRuntime = (value = {}) => {
+  const source = value && typeof value === 'object' ? value : {}
+  const key = normalizeCompanionWindowKey(source)
+  if (companionRuntimes.has(key)) {
+    return companionRuntimes.get(key)
+  }
+  const agentId = String(source.agentId || source.agent_id || '').trim()
+  if (agentId) {
+    const matched = Array.from(companionRuntimes.values()).find((runtime) => runtime.state.agentId === agentId)
+    if (matched) {
+      return matched
+    }
+  }
+  const selectedId = String(source.selectedId || source.selected_id || source.id || '').trim()
+  if (selectedId) {
+    const matched = Array.from(companionRuntimes.values()).find((runtime) => runtime.state.selectedId === selectedId)
+    if (matched) {
+      return matched
+    }
+  }
+  return companionRuntimes.values().next().value || null
+}
+
+const rememberPrimaryCompanionRuntime = (runtime) => {
+  if (!runtime) {
+    return
+  }
+  companionState = runtime.state
+  companionWindow = runtime.window
+  companionWindowMouseIgnored = runtime.mouseIgnored
+  companionWindowShapeEnabled = runtime.shapeEnabled
+}
+
+const clearRuntimeTransientState = (runtime) => {
+  if (!runtime) {
+    return
+  }
+  if (runtime.transientTimer) {
+    clearTimeout(runtime.transientTimer)
+    runtime.transientTimer = null
+  }
+  runtime.transientState = ''
+  runtime.transientUntil = 0
+}
+
+const clearCompanionTransientState = (target = null) => {
+  if (target) {
+    clearRuntimeTransientState(target.state ? target : findCompanionRuntime(target))
+    return
+  }
+  Array.from(companionRuntimes.values()).forEach((runtime) => clearRuntimeTransientState(runtime))
   if (companionTransientTimer) {
     clearTimeout(companionTransientTimer)
     companionTransientTimer = null
@@ -295,30 +384,37 @@ const clearCompanionTransientState = () => {
   companionTransientUntil = 0
 }
 
-const setCompanionTransientState = (state, durationMs) => {
-  const nextState = String(state || '').trim().toLowerCase()
+const setCompanionTransientState = (target, state, durationMs) => {
+  const runtime = typeof target === 'string'
+    ? findCompanionRuntime(companionState) || getCompanionRuntime(companionState)
+    : getCompanionRuntime(target || companionState)
+  const rawState = typeof target === 'string' ? target : state
+  const rawDurationMs = typeof target === 'string' ? state : durationMs
+  const nextState = String(rawState || '').trim().toLowerCase()
   if (!nextState) {
-    clearCompanionTransientState()
+    clearRuntimeTransientState(runtime)
     return
   }
-  clearCompanionTransientState()
-  companionTransientState = nextState
-  companionTransientUntil = Date.now() + Math.max(120, Number(durationMs || 0))
-  companionTransientTimer = setTimeout(() => {
-    companionTransientTimer = null
-    companionTransientState = ''
-    companionTransientUntil = 0
-    if (companionWindow && !companionWindow.isDestroyed()) {
-      renderCompanionWindow()
+  clearRuntimeTransientState(runtime)
+  const safeDurationMs = Math.max(120, Number(rawDurationMs || 0))
+  runtime.transientState = nextState
+  runtime.transientUntil = Date.now() + safeDurationMs
+  runtime.transientTimer = setTimeout(() => {
+    runtime.transientTimer = null
+    runtime.transientState = ''
+    runtime.transientUntil = 0
+    if (runtime.window && !runtime.window.isDestroyed()) {
+      renderCompanionWindow(runtime)
     }
-  }, Math.max(120, Number(durationMs || 0)))
+  }, safeDurationMs)
 }
 
-const resolveRenderedCompanionState = () => {
-  if (companionTransientState && companionTransientUntil > Date.now()) {
-    return companionTransientState
+const resolveRenderedCompanionState = (runtime = null) => {
+  const target = runtime || findCompanionRuntime(companionState)
+  if (target?.transientState && target.transientUntil > Date.now()) {
+    return target.transientState
   }
-  return normalizeCompanionBaseState(companionState.state)
+  return normalizeCompanionBaseState((target?.state || companionState).state)
 }
 
 const createOverlayHtml = () => `<!doctype html>
@@ -758,6 +854,8 @@ const createCompanionHtml = () => `<!doctype html>
     overflow: hidden;
     cursor: pointer;
     pointer-events: auto;
+    touch-action: none;
+    -ms-touch-action: none;
   }
   #root.dragging #sprite { cursor: grabbing; }
   #sheet {
@@ -887,17 +985,241 @@ const createCompanionHtml = () => `<!doctype html>
     let currentPayload = {};
     let dragFrameId = null;
     let pendingDragDelta = { dx: 0, dy: 0 };
-    let pendingDragOrigin = { x: 0, y: 0 };
+    let pendingDragTarget = null;
+    let lastPointerClientPoint = null;
+    let hitCanvas = null;
+    let hitContext = null;
+    let hitImage = null;
+    let hitImageSource = '';
+    let hitImageReady = false;
+    let shapeFrameSignature = '';
+    let shapeSupported = true;
+    let shapeSuspended = false;
+    let mouseTransparent = false;
+    const hitAlphaThreshold = 12;
+    const shapeStride = 3;
+    const shapeMaxRects = 900;
+    const dragActivateDistance = 4;
+    const dragDirectionThreshold = 2;
+    const resolveWindowPoint = () => ({
+      x: Number(window.screenX || window.screenLeft || 0),
+      y: Number(window.screenY || window.screenTop || 0)
+    });
+    const readClientPoint = (event) => {
+      const x = Number(event?.clientX);
+      const y = Number(event?.clientY);
+      return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+    };
+    const resolveClientPoint = (event) => readClientPoint(event) || { x: 0, y: 0 };
+    const rememberPointerClientPoint = (event) => {
+      const point = readClientPoint(event);
+      if (!point) return;
+      lastPointerClientPoint = {
+        x: point.x,
+        y: point.y,
+        at: Date.now()
+      };
+    };
+    const resolvePointerPoint = (event) => {
+      const windowPoint = resolveWindowPoint();
+      const clientPoint = resolveClientPoint(event);
+      const fallback = {
+        x: windowPoint.x + clientPoint.x,
+        y: windowPoint.y + clientPoint.y
+      };
+      const screenX = Number(event?.screenX);
+      const screenY = Number(event?.screenY);
+      if (Number.isFinite(screenX) && Number.isFinite(screenY)) {
+        if (event?.pointerType === 'touch') {
+          const drift = Math.hypot(screenX - fallback.x, screenY - fallback.y);
+          return drift < 96 ? { x: screenX, y: screenY } : fallback;
+        }
+        return { x: screenX, y: screenY };
+      }
+      return fallback;
+    };
+    const resolveMenuPoint = (event) => {
+      const rawPoint = readClientPoint(event);
+      const hasRecentPointerPoint = lastPointerClientPoint && Date.now() - lastPointerClientPoint.at < 1600;
+      const clientPoint = (!rawPoint || (rawPoint.x === 0 && rawPoint.y === 0 && hasRecentPointerPoint))
+        ? lastPointerClientPoint || { x: 0, y: 0 }
+        : rawPoint;
+      return {
+        x: Math.max(0, Math.min(Math.round(clientPoint.x), Math.max(0, window.innerWidth - 1))),
+        y: Math.max(0, Math.min(Math.round(clientPoint.y), Math.max(0, window.innerHeight - 1)))
+      };
+    };
 
     const normalizeState = (value) => states[value] ? value : 'idle';
+    const identityPayload = (extra) => Object.assign({
+      key: currentPayload.key || currentPayload.selectedId,
+      agentId: currentPayload.agentId,
+      selectedId: currentPayload.selectedId
+    }, extra || {});
     const sendCommand = (action, extra) => {
       ipcRenderer.invoke('${COMPANION_COMMAND_CHANNEL}', Object.assign({ action }, extra || {})).catch(() => {});
+    };
+    const setMouseTransparent = (transparent) => {
+      if (mouseTransparent === transparent) return;
+      mouseTransparent = transparent;
+      ipcRenderer.invoke('wunder:companion-pointer-events', identityPayload({ ignore: transparent })).catch(() => {});
+    };
+    const ensureHitCanvas = () => {
+      if (!hitCanvas) {
+        hitCanvas = document.createElement('canvas');
+        hitCanvas.width = frameWidth;
+        hitCanvas.height = frameHeight;
+        hitContext = hitCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      return hitContext;
+    };
+    const clearHitImage = () => {
+      hitImage = null;
+      hitImageSource = '';
+      hitImageReady = false;
+      shapeFrameSignature = '';
+    };
+    const updateHitImage = () => {
+      const source = String(payload.spritesheetDataUrl || '');
+      if (!source) {
+        clearHitImage();
+        return;
+      }
+      if (source === hitImageSource) {
+        return;
+      }
+      hitImageSource = source;
+      hitImageReady = false;
+      hitImage = new Image();
+      hitImage.onload = () => {
+        hitImageReady = true;
+        shapeFrameSignature = '';
+        syncHitShape();
+      };
+      hitImage.onerror = clearHitImage;
+      hitImage.src = source;
+    };
+    const resolveFullShapeRects = () => {
+      const scale = Math.min(1.6, Math.max(0.5, Number(payload.scale || 1)));
+      return [{
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.round(frameWidth * scale)),
+        height: Math.max(1, Math.round(frameHeight * scale))
+      }];
+    };
+    const resetHitShape = () => {
+      shapeFrameSignature = '';
+      if (!shapeSupported) return;
+      ipcRenderer.invoke('wunder:companion-hit-shape', identityPayload({ rects: resolveFullShapeRects() })).then((supported) => {
+        if (supported === false) shapeSupported = false;
+      }).catch(() => {
+        shapeSupported = false;
+      });
+    };
+    const buildFrameShapeRects = () => {
+      if (!hitImageReady || !hitImage) return null;
+      const context = ensureHitCanvas();
+      if (!context) return null;
+      const state = states[normalizeState(payload.state)];
+      const scale = Math.min(1.6, Math.max(0.5, Number(payload.scale || 1)));
+      const width = Math.max(1, Math.round(frameWidth * scale));
+      const height = Math.max(1, Math.round(frameHeight * scale));
+      const sourceX = frame * frameWidth;
+      const sourceY = state.row * frameHeight;
+      try {
+        if (hitCanvas.width !== frameWidth || hitCanvas.height !== frameHeight) {
+          hitCanvas.width = frameWidth;
+          hitCanvas.height = frameHeight;
+        }
+        context.clearRect(0, 0, frameWidth, frameHeight);
+        context.drawImage(hitImage, sourceX, sourceY, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight);
+        const data = context.getImageData(0, 0, frameWidth, frameHeight).data;
+        const rects = [];
+        for (let y = 0; y < frameHeight; y += shapeStride) {
+          let start = -1;
+          for (let x = 0; x <= frameWidth; x += shapeStride) {
+            const sampleX = Math.min(frameWidth - 1, x);
+            const sampleY = Math.min(frameHeight - 1, y);
+            const alpha = x < frameWidth ? data[(sampleY * frameWidth + sampleX) * 4 + 3] : 0;
+            if (alpha >= hitAlphaThreshold) {
+              if (start < 0) start = x;
+            } else if (start >= 0) {
+              rects.push({
+                x: Math.max(0, Math.floor(start * scale)),
+                y: Math.max(0, Math.floor(y * scale)),
+                width: Math.max(1, Math.ceil((x - start + shapeStride) * scale)),
+                height: Math.max(1, Math.ceil(shapeStride * scale))
+              });
+              start = -1;
+              if (rects.length >= shapeMaxRects) return rects;
+            }
+          }
+        }
+        return rects.length ? rects : [{ x: 0, y: 0, width, height }];
+      } catch {
+        return null;
+      }
+    };
+    const syncHitShape = () => {
+      if (!shapeSupported || shapeSuspended) return;
+      if (!hitImageReady || !hitImage) {
+        resetHitShape();
+        return;
+      }
+      const signature = [
+        String(payload.spritesheetDataUrl || ''),
+        normalizeState(payload.state),
+        String(frame),
+        String(payload.scale || 1)
+      ].join('|');
+      if (signature === shapeFrameSignature) return;
+      shapeFrameSignature = signature;
+      const rects = buildFrameShapeRects();
+      if (!rects) return;
+      ipcRenderer.invoke('wunder:companion-hit-shape', identityPayload({ rects })).then((supported) => {
+        if (supported === false) shapeSupported = false;
+      }).catch(() => {
+        shapeSupported = false;
+      });
+    };
+    const isOpaqueSpritePoint = (clientX, clientY) => {
+      const rect = sprite.getBoundingClientRect();
+      if (!rect.width || !rect.height) return false;
+      if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+        return false;
+      }
+      if (!hitImageReady || !hitImage) {
+        return true;
+      }
+      const context = ensureHitCanvas();
+      if (!context) {
+        return true;
+      }
+      const state = states[normalizeState(payload.state)];
+      const sourceX = Math.max(0, Math.min(frameWidth - 1, frame * frameWidth));
+      const sourceY = Math.max(0, Math.min(frameHeight - 1, state.row * frameHeight));
+      const localX = Math.max(0, Math.min(frameWidth - 1, Math.floor((clientX - rect.left) * frameWidth / rect.width)));
+      const localY = Math.max(0, Math.min(frameHeight - 1, Math.floor((clientY - rect.top) * frameHeight / rect.height)));
+      try {
+        context.clearRect(0, 0, 1, 1);
+        context.drawImage(hitImage, sourceX + localX, sourceY + localY, 1, 1, 0, 0, 1, 1);
+        return context.getImageData(0, 0, 1, 1).data[3] >= hitAlphaThreshold;
+      } catch {
+        return true;
+      }
+    };
+    const isOpaquePointerEvent = (event) => {
+      const point = readClientPoint(event);
+      if (!point) return true;
+      return isOpaqueSpritePoint(point.x, point.y);
     };
     const clampScale = (value) => Math.min(1.6, Math.max(0.5, Number(value) || 1));
     const applyFrame = () => {
       const stateKey = normalizeState(payload.state);
       const state = states[stateKey];
       sheet.style.backgroundPosition = '-' + (frame * frameWidth) + 'px -' + (state.row * frameHeight) + 'px';
+      syncHitShape();
     };
     const stopAnimation = () => {
       if (timer) {
@@ -958,7 +1280,7 @@ const createCompanionHtml = () => `<!doctype html>
       refreshAnimationIfNeeded();
     };
     const applyDragState = (dx) => {
-      if (Math.abs(dx) < 1) {
+      if (Math.abs(dx) < dragDirectionThreshold) {
         return;
       }
       applyLocalState(dx < 0 ? 'running-left' : 'running-right');
@@ -973,21 +1295,19 @@ const createCompanionHtml = () => `<!doctype html>
       }
       const dx = pendingDragDelta.dx;
       const dy = pendingDragDelta.dy;
+      const target = pendingDragTarget;
       pendingDragDelta = { dx: 0, dy: 0 };
-      if (dx === 0 && dy === 0) {
+      pendingDragTarget = null;
+      if (!target && dx === 0 && dy === 0) {
         return;
       }
-      drag = {
-        x: pendingDragOrigin.x,
-        y: pendingDragOrigin.y
-      };
       applyDragState(dx);
-      ipcRenderer.invoke('wunder:companion-drag', { dx, dy }).catch(() => {});
+      ipcRenderer.invoke('wunder:companion-drag', identityPayload(target ? { x: target.x, y: target.y, dx, dy } : { dx, dy })).catch(() => {});
     };
-    const queueDragFrame = (dx, dy) => {
+    const queueDragFrame = (targetX, targetY, dx, dy) => {
       pendingDragDelta.dx += dx;
       pendingDragDelta.dy += dy;
-      pendingDragOrigin = { x: drag.x + pendingDragDelta.dx, y: drag.y + pendingDragDelta.dy };
+      pendingDragTarget = { x: targetX, y: targetY };
       if (dragFrameId !== null || typeof window === 'undefined') {
         return;
       }
@@ -1019,11 +1339,14 @@ const createCompanionHtml = () => `<!doctype html>
       payload = Object.assign({}, payload, next || {});
       currentPayload = payload;
       baseState = normalizeState(payload.state);
-      const scale = Math.min(1.6, Math.max(0.7, Number(payload.scale || 1)));
+      mouseTransparent = false;
+      const scale = Math.min(1.6, Math.max(0.5, Number(payload.scale || 1)));
       sprite.style.width = Math.round(frameWidth * scale) + 'px';
       sprite.style.height = Math.round(frameHeight * scale) + 'px';
       sheet.style.backgroundImage = payload.spritesheetDataUrl ? 'url("' + payload.spritesheetDataUrl + '")' : '';
       sheet.style.transform = 'scale(' + Math.round(scale * 1000) / 1000 + ')';
+      updateHitImage();
+      shapeFrameSignature = '';
       const text = String(payload.message || '').trim();
       if (text && payload.messageVisible) {
         bubble.textContent = text;
@@ -1051,13 +1374,21 @@ const createCompanionHtml = () => `<!doctype html>
       });
     });
     sprite.addEventListener('contextmenu', (event) => {
+      if (!isOpaquePointerEvent(event)) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
+      if (drag) {
+        suppressClick = true;
+        stopDrag(event);
+      }
+      const menuPoint = resolveMenuPoint(event);
       sendCommand('context-menu', {
         key: currentPayload.key || currentPayload.selectedId,
         agentId: currentPayload.agentId,
-        x: event.screenX,
-        y: event.screenY
+        x: menuPoint.x,
+        y: menuPoint.y
       });
     });
     window.addEventListener('mousedown', (event) => {
@@ -1069,28 +1400,75 @@ const createCompanionHtml = () => `<!doctype html>
     window.addEventListener('blur', closeMenu);
     sprite.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
+      if (!isOpaquePointerEvent(event)) {
+        setMouseTransparent(true);
+        return;
+      }
+      if (drag) return;
+      if (event.pointerType === 'touch' && event.isPrimary === false) return;
       if (menuState) {
         closeMenu();
       }
-      drag = { x: event.screenX, y: event.screenY };
+      rememberPointerClientPoint(event);
+      const point = resolvePointerPoint(event);
+      const windowPoint = resolveWindowPoint();
+      drag = {
+        pointerId: event.pointerId,
+        startX: point.x,
+        startY: point.y,
+        x: point.x,
+        y: point.y,
+        grabX: point.x - windowPoint.x,
+        grabY: point.y - windowPoint.y,
+        targetX: windowPoint.x,
+        targetY: windowPoint.y
+      };
       pendingDragDelta = { dx: 0, dy: 0 };
-      pendingDragOrigin = { x: drag.x, y: drag.y };
+      pendingDragTarget = null;
       suppressClick = false;
       hasDragged = false;
+      shapeSuspended = true;
+      resetHitShape();
+      setMouseTransparent(false);
       setDragging(true);
       sprite.setPointerCapture(event.pointerId);
     });
     sprite.addEventListener('pointermove', (event) => {
+      if (!drag && !menuState) {
+        setMouseTransparent(!isOpaquePointerEvent(event));
+        return;
+      }
       if (!drag) return;
-      const dx = event.screenX - drag.x;
-      const dy = event.screenY - drag.y;
-      if (!suppressClick && Math.hypot(dx, dy) > 3) {
+      if (event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      rememberPointerClientPoint(event);
+      const point = resolvePointerPoint(event);
+      const dx = point.x - drag.x;
+      const dy = point.y - drag.y;
+      drag.x = point.x;
+      drag.y = point.y;
+      if (!suppressClick && Math.hypot(point.x - drag.startX, point.y - drag.startY) > dragActivateDistance) {
         suppressClick = true;
         hasDragged = true;
       }
-      queueDragFrame(dx, dy);
+      const targetX = Math.round(point.x - drag.grabX);
+      const targetY = Math.round(point.y - drag.grabY);
+      const targetDx = targetX - drag.targetX;
+      const targetDy = targetY - drag.targetY;
+      if (targetDx === 0 && targetDy === 0) {
+        return;
+      }
+      drag.targetX = targetX;
+      drag.targetY = targetY;
+      queueDragFrame(targetX, targetY, targetDx, targetDy);
     });
     sprite.addEventListener('click', (event) => {
+      if (!isOpaquePointerEvent(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        setMouseTransparent(true);
+        return;
+      }
       if (suppressClick) {
         event.preventDefault();
         event.stopPropagation();
@@ -1110,6 +1488,7 @@ const createCompanionHtml = () => `<!doctype html>
     });
     sprite.addEventListener('wheel', (event) => {
       if (!event.altKey) return;
+      if (!isOpaquePointerEvent(event)) return;
       event.preventDefault();
       const nextScale = clampScale(currentScale + (event.deltaY > 0 ? -0.1 : 0.1));
       sendCommand('set-scale', {
@@ -1120,18 +1499,32 @@ const createCompanionHtml = () => `<!doctype html>
     }, { passive: false });
     const stopDrag = (event) => {
       if (!drag) return;
+      if (event && event.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
       if (dragFrameId !== null && typeof window !== 'undefined') {
         window.cancelAnimationFrame(dragFrameId);
         dragFrameId = null;
       }
+      const dx = pendingDragDelta.dx;
+      const dy = pendingDragDelta.dy;
+      const target = pendingDragTarget;
+      pendingDragDelta = { dx: 0, dy: 0 };
+      pendingDragTarget = null;
+      if (target || dx !== 0 || dy !== 0) {
+        ipcRenderer.invoke('wunder:companion-drag', identityPayload(target ? { x: target.x, y: target.y, dx, dy } : { dx, dy })).catch(() => {});
+      }
+      const pointerId = drag.pointerId;
       drag = null;
       setDragging(false);
-      if (event && event.pointerId !== undefined) {
-        try { sprite.releasePointerCapture(event.pointerId); } catch {}
+      setMouseTransparent(false);
+      if (pointerId !== undefined) {
+        try { sprite.releasePointerCapture(pointerId); } catch {}
       }
       resetDragState();
+      shapeSuspended = false;
+      shapeFrameSignature = '';
+      syncHitShape();
       if (hasDragged) {
-        ipcRenderer.invoke('wunder:companion-drag-end').catch(() => {});
+        ipcRenderer.invoke('wunder:companion-drag-end', identityPayload()).catch(() => {});
       }
       window.setTimeout(() => {
         suppressClick = false;
@@ -1151,6 +1544,7 @@ const createCompanionHtml = () => `<!doctype html>
         dragFrameId = null;
       }
       stopDrag();
+      setMouseTransparent(false);
       stopAnimation();
     });
   </script>
@@ -1194,12 +1588,130 @@ const resolveCompanionWindowBounds = (state) => {
   }
 }
 
-const ensureCompanionWindow = () => {
-  if (companionWindow && !companionWindow.isDestroyed()) {
-    return companionWindow
+const hasCompanionRuntimeIdentity = (payload = {}) => {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  return Boolean(
+    String(source.key || '').trim() ||
+    String(source.agentId || source.agent_id || '').trim() ||
+    String(source.selectedId || source.selected_id || source.id || '').trim()
+  )
+}
+
+const findCompanionRuntimeByWebContents = (webContents) => {
+  if (!webContents) {
+    return null
   }
-  const windowLayout = resolveCompanionWindowBounds(companionState)
-  companionWindow = new BrowserWindow({
+  return Array.from(companionRuntimes.values()).find((runtime) =>
+    runtime.window && !runtime.window.isDestroyed() && runtime.window.webContents.id === webContents.id
+  ) || null
+}
+
+const resolveCompanionRuntimeForIpc = (event, payload = {}, create = false) => {
+  if (hasCompanionRuntimeIdentity(payload)) {
+    return create ? getCompanionRuntime(payload) : findCompanionRuntime(payload)
+  }
+  const bySender = findCompanionRuntimeByWebContents(event?.sender)
+  if (bySender) {
+    return bySender
+  }
+  return create ? getCompanionRuntime(payload) : findCompanionRuntime(payload)
+}
+
+const syncLegacyCompanionGlobals = (runtime) => {
+  if (!runtime) {
+    return
+  }
+  rememberPrimaryCompanionRuntime(runtime)
+}
+
+const setCompanionPointerEvents = (payload = {}, event = null) => {
+  const runtime = resolveCompanionRuntimeForIpc(event, payload)
+  if (!runtime?.window || runtime.window.isDestroyed()) {
+    return false
+  }
+  const ignore = payload?.ignore === true
+  if (runtime.mouseIgnored === ignore) {
+    return true
+  }
+  runtime.mouseIgnored = ignore
+  runtime.window.setIgnoreMouseEvents(ignore, ignore ? { forward: true } : undefined)
+  syncLegacyCompanionGlobals(runtime)
+  return true
+}
+
+const resetCompanionWindowInput = (runtime) => {
+  if (!runtime?.window || runtime.window.isDestroyed()) {
+    return false
+  }
+  try {
+    runtime.window.setIgnoreMouseEvents(false)
+    runtime.mouseIgnored = false
+  } catch {
+    runtime.mouseIgnored = false
+  }
+  if (typeof runtime.window.setShape === 'function') {
+    try {
+      const size = resolveCompanionWindowSize(runtime.state)
+      runtime.window.setShape([{ x: 0, y: 0, width: size.width, height: size.height }])
+      runtime.shapeEnabled = false
+    } catch {
+      runtime.shapeEnabled = false
+    }
+  }
+  syncLegacyCompanionGlobals(runtime)
+  return true
+}
+
+const updateCompanionHitShape = (payload = {}, event = null) => {
+  const runtime = resolveCompanionRuntimeForIpc(event, payload)
+  if (!runtime?.window || runtime.window.isDestroyed()) {
+    return false
+  }
+  if (typeof runtime.window.setShape !== 'function') {
+    runtime.shapeEnabled = false
+    syncLegacyCompanionGlobals(runtime)
+    return false
+  }
+  const size = resolveCompanionWindowSize(runtime.state)
+  const sourceRects = Array.isArray(payload?.rects) ? payload.rects : []
+  const rects = sourceRects
+    .map((rect) => {
+      const x = Number(rect?.x)
+      const y = Number(rect?.y)
+      const width = Number(rect?.width)
+      const height = Number(rect?.height)
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+        return null
+      }
+      const left = Math.max(0, Math.min(size.width, Math.round(x)))
+      const top = Math.max(0, Math.min(size.height, Math.round(y)))
+      const right = Math.max(left, Math.min(size.width, Math.round(x + width)))
+      const bottom = Math.max(top, Math.min(size.height, Math.round(y + height)))
+      if (right <= left || bottom <= top) {
+        return null
+      }
+      return { x: left, y: top, width: right - left, height: bottom - top }
+    })
+    .filter(Boolean)
+  try {
+    runtime.window.setShape(rects.length ? rects : [{ x: 0, y: 0, width: size.width, height: size.height }])
+    runtime.shapeEnabled = true
+    syncLegacyCompanionGlobals(runtime)
+    return true
+  } catch {
+    runtime.shapeEnabled = false
+    syncLegacyCompanionGlobals(runtime)
+    return false
+  }
+}
+
+const ensureCompanionWindow = (runtime = getCompanionRuntime(companionState)) => {
+  if (runtime.window && !runtime.window.isDestroyed()) {
+    syncLegacyCompanionGlobals(runtime)
+    return runtime.window
+  }
+  const windowLayout = resolveCompanionWindowBounds(runtime.state)
+  const window = new BrowserWindow({
     x: windowLayout.bounds.x,
     y: windowLayout.bounds.y,
     width: windowLayout.bounds.width,
@@ -1225,39 +1737,61 @@ const ensureCompanionWindow = () => {
       backgroundThrottling: false
     }
   })
-  companionWindow.setMenuBarVisibility(false)
-  companionWindow.setAlwaysOnTop(true, 'screen-saver')
-  companionWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  companionWindow.on('closed', () => {
-    companionWindow = null
+  runtime.window = window
+  runtime.mouseIgnored = false
+  runtime.shapeEnabled = false
+  window.setMenuBarVisibility(false)
+  window.setAlwaysOnTop(true, 'screen-saver')
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  window.on('closed', () => {
+    clearRuntimeTransientState(runtime)
+    runtime.window = null
+    runtime.mouseIgnored = false
+    runtime.shapeEnabled = false
+    companionRuntimes.delete(runtime.key)
+    if (companionWindow === window) {
+      companionWindow = null
+      companionWindowMouseIgnored = false
+      companionWindowShapeEnabled = false
+    }
   })
-  companionWindow.webContents.once('did-finish-load', () => {
-    renderCompanionWindow()
+  window.webContents.once('did-finish-load', () => {
+    renderCompanionWindow(runtime)
   })
-  companionWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createCompanionHtml())}`)
-  return companionWindow
+  window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createCompanionHtml())}`)
+  syncLegacyCompanionGlobals(runtime)
+  return window
 }
 
-const renderCompanionWindow = () => {
-  if (!companionState.enabled || !companionState.spritesheetDataUrl) {
-    if (companionWindow && !companionWindow.isDestroyed()) {
-      companionWindow.hide()
+const renderCompanionWindow = (target = null) => {
+  const runtime = target?.state ? target : getCompanionRuntime(target || companionState)
+  const state = runtime.state
+  if (!state.enabled || !state.spritesheetDataUrl) {
+    if (runtime.window && !runtime.window.isDestroyed()) {
+      runtime.window.hide()
     }
     return false
   }
-  const window = ensureCompanionWindow()
+  const window = ensureCompanionWindow(runtime)
   if (!window || window.isDestroyed()) {
     return false
   }
-  const windowLayout = resolveCompanionWindowBounds(companionState)
+  const windowLayout = resolveCompanionWindowBounds(state)
   window.setBounds(windowLayout.bounds, false)
-  saveCompanionState({ x: windowLayout.point.x, y: windowLayout.point.y })
+  runtime.state = normalizeCompanionState({
+    ...state,
+    x: windowLayout.point.x,
+    y: windowLayout.point.y
+  })
+  resetCompanionWindowInput(runtime)
+  syncLegacyCompanionGlobals(runtime)
   if (window.webContents.isLoading()) {
     return true
   }
-  const renderState = resolveRenderedCompanionState()
+  const renderState = resolveRenderedCompanionState(runtime)
   window.webContents.send('wunder:companion-render', {
-    ...companionState,
+    ...runtime.state,
+    key: runtime.key,
     state: renderState
   })
   if (!window.isVisible()) {
@@ -1267,93 +1801,147 @@ const renderCompanionWindow = () => {
 }
 
 const showCompanion = (payload) => {
+  const runtime = getCompanionRuntime(payload)
   const incomingState = normalizeCompanionBaseState(payload?.state)
   const next = normalizeCompanionState({
-    ...companionState,
-    key: payload?.key || payload?.id || companionState.key,
-    agentId: payload?.agentId || payload?.agent_id || companionState.agentId,
-    selectedId: payload?.selectedId || payload?.id || companionState.selectedId,
-    displayName: payload?.displayName || companionState.displayName,
-    description: payload?.description || companionState.description,
-    spritesheetDataUrl: payload?.spritesheetDataUrl || companionState.spritesheetDataUrl,
-    state: incomingState || companionState.state,
-    scale: payload?.scale ?? companionState.scale,
-    x: payload?.x ?? companionState.x,
-    y: payload?.y ?? companionState.y,
+    ...runtime.state,
+    key: payload?.key || runtime.key,
+    agentId: payload?.agentId || payload?.agent_id || runtime.state.agentId,
+    selectedId: payload?.selectedId || payload?.id || runtime.state.selectedId,
+    displayName: payload?.displayName || runtime.state.displayName,
+    description: payload?.description || runtime.state.description,
+    spritesheetDataUrl: payload?.spritesheetDataUrl || runtime.state.spritesheetDataUrl,
+    state: incomingState || runtime.state.state,
+    scale: payload?.scale ?? runtime.state.scale,
+    x: payload?.x ?? runtime.state.x,
+    y: payload?.y ?? runtime.state.y,
     message: payload?.message || '',
     messageKind: payload?.messageKind || 'info',
     messageVisible: payload?.messageVisible === true,
     enabled: true
   })
-  saveCompanionState(next)
-  return renderCompanionWindow()
+  runtime.state = next
+  syncLegacyCompanionGlobals(runtime)
+  if (payload?.persist !== false) {
+    saveCompanionState(next)
+  }
+  return renderCompanionWindow(runtime)
 }
 
 const updateCompanion = (payload) => showCompanion(payload)
 
 const hideCompanion = (payload = {}) => {
-  clearCompanionTransientState()
-  if (payload?.persistEnabled === true) {
-    saveCompanionState({ enabled: false })
-  }
-  if (companionWindow && !companionWindow.isDestroyed()) {
-    companionWindow.hide()
+  const shouldHideAll = !hasCompanionRuntimeIdentity(payload)
+  const runtimes = shouldHideAll
+    ? Array.from(companionRuntimes.values())
+    : [findCompanionRuntime(payload)].filter(Boolean)
+  runtimes.forEach((runtime) => {
+    clearRuntimeTransientState(runtime)
+    resetCompanionWindowInput(runtime)
+    if (payload?.persistEnabled === true) {
+      runtime.state = normalizeCompanionState({ ...runtime.state, enabled: false })
+      saveCompanionState(runtime.state)
+    }
+    if (runtime.window && !runtime.window.isDestroyed()) {
+      runtime.window.hide()
+    }
+    syncLegacyCompanionGlobals(runtime)
+  })
+  if (shouldHideAll && !runtimes.length) {
+    clearCompanionTransientState()
+    if (payload?.persistEnabled === true) {
+      saveCompanionState({ enabled: false })
+    }
   }
   if (payload?.persistEnabled === true && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('wunder:companion-state-changed', companionState)
+    runtimes.forEach((runtime) => {
+      mainWindow.webContents.send('wunder:companion-state-changed', runtime.state)
+    })
   }
   return true
 }
 
-const emitCompanionStateChanged = () => {
+const emitCompanionStateChanged = (runtime = null) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('wunder:companion-state-changed', companionState)
+    mainWindow.webContents.send('wunder:companion-state-changed', (runtime?.state || companionState))
   }
 }
 
 const showCompanionContextMenu = (payload = {}) => {
-  if (!companionWindow || companionWindow.isDestroyed()) {
+  const runtime = findCompanionRuntime(payload)
+  if (!runtime?.window || runtime.window.isDestroyed()) {
     return false
   }
+  const x = Number.isFinite(Number(payload?.x)) ? Math.max(0, Math.round(Number(payload.x))) : undefined
+  const y = Number.isFinite(Number(payload?.y)) ? Math.max(0, Math.round(Number(payload.y))) : undefined
   const template = [
     {
       label: '进入聊天',
-      click: () => emitCompanionCommand({ action: 'open-chat', key: companionState.key, agentId: companionState.agentId })
+      click: () => emitCompanionCommand({ action: 'open-chat', key: runtime.key, agentId: runtime.state.agentId })
     },
     {
       label: '隐藏',
-      click: () => hideCompanion({ persistEnabled: true })
+      click: () => emitCompanionCommand({ action: 'hide', key: runtime.key, agentId: runtime.state.agentId })
     }
   ]
+  template[0].label = '\u8fdb\u5165\u804a\u5929'
+  template[1].label = '\u9690\u85cf'
   Menu.buildFromTemplate(template).popup({
-    window: companionWindow
+    window: runtime.window,
+    x,
+    y
   })
   return true
 }
 
 const emitCompanionCommand = (payload) => {
   const action = String(payload?.action || '').trim().toLowerCase()
+  const runtime = action === 'context-menu'
+    ? findCompanionRuntime(payload)
+    : resolveCompanionRuntimeForIpc(null, payload)
   if (action === 'open-chat') {
-    setCompanionTransientState('waving', 900)
-    renderCompanionWindow()
+    setCompanionTransientState(runtime?.state || payload, 'waving', 900)
+    if (runtime) {
+      renderCompanionWindow(runtime)
+    }
     showMainWindow({ explicit: true })
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
+    }
     return true
   }
   if (action === 'hide') {
-    hideCompanion({ persistEnabled: true })
+    if (runtime) {
+      hideCompanion({ key: runtime.key, persistEnabled: false })
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
+    } else if (runtime) {
+      hideCompanion({ key: runtime.key, persistEnabled: true })
+    }
     return true
   }
   if (action === 'set-scale') {
     const scale = Number(payload?.scale)
-    if (Number.isFinite(scale)) {
-      saveCompanionState({ scale, state: normalizeCompanionBaseState(companionState.state) })
-      renderCompanionWindow()
+    if (Number.isFinite(scale) && runtime) {
+      runtime.state = normalizeCompanionState({
+        ...runtime.state,
+        scale,
+        state: normalizeCompanionBaseState(runtime.state.state)
+      })
+      syncLegacyCompanionGlobals(runtime)
+      renderCompanionWindow(runtime)
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
     }
     return true
   }
   if (action === 'wave') {
-    setCompanionTransientState('waving', 1100)
-    renderCompanionWindow()
+    setCompanionTransientState(runtime?.state || payload, 'waving', 1100)
+    if (runtime) {
+      renderCompanionWindow(runtime)
+    }
     return true
   }
   if (action === 'context-menu') {
@@ -1365,45 +1953,55 @@ const emitCompanionCommand = (payload) => {
   return true
 }
 
-const moveCompanionBy = (payload) => {
-  if (!companionWindow || companionWindow.isDestroyed()) {
+const moveCompanionBy = (payload, event = null) => {
+  const runtime = resolveCompanionRuntimeForIpc(event, payload)
+  if (!runtime?.window || runtime.window.isDestroyed()) {
     return false
   }
+  const targetX = Number(payload?.x)
+  const targetY = Number(payload?.y)
   const dx = Number(payload?.dx || 0)
   const dy = Number(payload?.dy || 0)
+  const hasTarget = Number.isFinite(targetX) && Number.isFinite(targetY)
   const windowLayout = resolveCompanionWindowBounds({
-    ...companionState,
-    x: companionState.x + dx,
-    y: companionState.y + dy
+    ...runtime.state,
+    x: hasTarget ? targetX : runtime.state.x + dx,
+    y: hasTarget ? targetY : runtime.state.y + dy
   })
-  companionState = normalizeCompanionState({
-    ...companionState,
+  runtime.state = normalizeCompanionState({
+    ...runtime.state,
     x: windowLayout.point.x,
     y: windowLayout.point.y
   })
-  companionWindow.setBounds(windowLayout.bounds, false)
+  runtime.window.setBounds(windowLayout.bounds, false)
+  syncLegacyCompanionGlobals(runtime)
   return true
 }
 
-const endCompanionDrag = () => {
-  if (!companionWindow || companionWindow.isDestroyed()) {
+const endCompanionDrag = (payload = {}, event = null) => {
+  const runtime = resolveCompanionRuntimeForIpc(event, payload)
+  if (!runtime?.window || runtime.window.isDestroyed()) {
     return false
   }
-  const windowLayout = resolveCompanionWindowBounds(companionState)
-  companionState = normalizeCompanionState({
-    ...companionState,
+  const windowLayout = resolveCompanionWindowBounds(runtime.state)
+  runtime.state = normalizeCompanionState({
+    ...runtime.state,
     x: windowLayout.point.x,
     y: windowLayout.point.y,
-    state: normalizeCompanionBaseState(companionState.state)
+    state: normalizeCompanionBaseState(runtime.state.state)
   })
-  clearCompanionTransientState()
+  clearRuntimeTransientState(runtime)
   saveCompanionState({
+    key: runtime.key,
+    agentId: runtime.state.agentId,
+    selectedId: runtime.state.selectedId,
     x: windowLayout.point.x,
     y: windowLayout.point.y,
-    state: normalizeCompanionBaseState(companionState.state)
+    state: normalizeCompanionBaseState(runtime.state.state)
   })
-  renderCompanionWindow()
-  emitCompanionStateChanged()
+  syncLegacyCompanionGlobals(runtime)
+  renderCompanionWindow(runtime)
+  emitCompanionStateChanged(runtime)
   return true
 }
 
@@ -3234,6 +3832,16 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
     attempt()
   })
 
+const isPortAvailable = (port) =>
+  new Promise((resolve) => {
+    const server = net.createServer()
+    server.unref()
+    server.on('error', () => resolve(false))
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolve(true))
+    })
+  })
+
 const isLoopbackHostname = (host) => {
   const normalized = String(host || '').trim().toLowerCase()
   if (!normalized) {
@@ -3545,15 +4153,6 @@ const startBridge = async () => {
     windowsHide: true
   })
 
-const isPortAvailable = (port) =>
-  new Promise((resolve) => {
-    const server = net.createServer()
-    server.unref()
-    server.on('error', () => resolve(false))
-    server.listen(port, '127.0.0.1', () => {
-      server.close(() => resolve(true))
-    })
-  })
   logStartupSegment('electron', 'bridge_spawn_process', bridgeSpawnNs, {
     pid: bridgeProcess?.pid || 0,
     port: bridgePort
@@ -4175,8 +4774,10 @@ if (!gotLock) {
         saveCompanionLibraryState(payload)
         return true
       })
-      ipcMain.handle('wunder:companion-drag', (_event, payload) => moveCompanionBy(payload))
-      ipcMain.handle('wunder:companion-drag-end', () => endCompanionDrag())
+      ipcMain.handle('wunder:companion-drag', (event, payload) => moveCompanionBy(payload, event))
+      ipcMain.handle('wunder:companion-drag-end', (event, payload) => endCompanionDrag(payload, event))
+      ipcMain.handle('wunder:companion-pointer-events', (event, payload) => setCompanionPointerEvents(payload, event))
+      ipcMain.handle('wunder:companion-hit-shape', (event, payload) => updateCompanionHitShape(payload, event))
       ipcMain.handle(COMPANION_COMMAND_CHANNEL, (_event, payload) => emitCompanionCommand(payload))
       logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)

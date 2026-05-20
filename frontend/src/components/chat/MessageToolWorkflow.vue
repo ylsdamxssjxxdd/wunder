@@ -116,6 +116,10 @@ import {
 import { buildApplyPatchEmptyPreviewText } from './toolWorkflowPatchPreview';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import {
+  buildWorkflowToolCallDebugText,
+  extractWorkflowCallArgs
+} from './toolWorkflowCallDebug';
+import {
   buildWorkflowToolRuns,
   resolveWorkflowPendingPlaceholder,
   type RawToolRun as RawEntry,
@@ -1132,20 +1136,7 @@ const extractToolOutputStreams = (
 };
 
 const extractCallArgs = (item: WorkflowItem | null): UnknownObject | null => {
-  if (!item) return null;
-  const detailObject = parseDetailObject(item.detail);
-  if (!detailObject) return null;
-  const nestedFunction = asObject(detailObject.function);
-  const candidates: unknown[] = [detailObject.args, detailObject.arguments, nestedFunction?.arguments];
-  for (const candidate of candidates) {
-    const directObject = asObject(candidate);
-    if (directObject) return directObject;
-    if (typeof candidate === 'string') {
-      const parsed = parseDetailObject(candidate);
-      if (parsed) return parsed;
-    }
-  }
-  return detailObject;
+  return extractWorkflowCallArgs(item);
 };
 
 const appendPathCandidate = (target: Set<string>, value: unknown) => {
@@ -2389,48 +2380,8 @@ const splitEntrySummary = (
   };
 };
 
-const normalizeDetailText = (detail: unknown): string =>
-  String(detail || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-
-const stringifyDebugPayload = (payload: unknown): string => {
-  try {
-    return JSON.stringify(payload, null, 2);
-  } catch {
-    return '';
-  }
-};
-
-const buildToolCallDebugText = (entry: RawEntry): string => {
-  const callArgs = extractCallArgs(entry.callItem);
-  if (callArgs) {
-    const normalized = stringifyDebugPayload({
-      tool: entry.toolFunctionName || entry.toolName,
-      arguments: callArgs
-    });
-    if (normalized) {
-      return normalizeDetailText(normalized);
-    }
-  }
-  if (isExecuteCommandTool(entry.toolName)) {
-    const command = pickString(resolveCommandFromCall(entry.callItem));
-    if (command) {
-      const snapshot = stringifyDebugPayload({
-        tool: entry.toolFunctionName || entry.toolName,
-        arguments: {
-          content: command
-        }
-      });
-      if (snapshot) {
-        return normalizeDetailText(snapshot);
-      }
-    }
-  }
-  const rawDetail = normalizeDetailText(entry.callItem?.detail);
-  if (rawDetail) {
-    return rawDetail;
-  }
-  return '';
-};
+const buildToolCallDebugText = (entry: RawEntry): string =>
+  buildWorkflowToolCallDebugText(entry);
 
 const extractResultPayload = (
   resultItem: WorkflowItem | null

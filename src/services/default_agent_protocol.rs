@@ -100,6 +100,7 @@ pub fn record_from_default_agent_config(
         tool_names: config.tool_names.clone(),
         declared_tool_names: config.declared_tool_names.clone(),
         declared_skill_names: config.declared_skill_names.clone(),
+        visible_unit_ids: config.visible_unit_ids.clone(),
         preset_questions: config.preset_questions.clone(),
         access_level: access_level.trim().to_string(),
         approval_mode: config.approval_mode.clone(),

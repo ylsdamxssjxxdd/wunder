@@ -1270,6 +1270,7 @@
   - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
   - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
   - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
+  - 说明：带原生工具调用的请求默认仍走流式；如果流式返回的工具调用被判定为坏 payload，编排层会在后续自动重试里降级为非流式，以避免工具参数在流式阶段被截断或包裹成不可执行 payload。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
@@ -1278,6 +1279,7 @@
   - 说明：服务端当前会同时下发 `thinking_token_budget`（对齐 vLLM / OpenAI-compatible 扩展）与 `thinking_budget_tokens`（对齐 `llama.cpp` server 请求体）；Anthropic `messages` 协议不下发这两个非标准字段。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
+  - 说明：当模型返回空正文、空 reasoning 且未给出可执行工具调用时，编排层会先写入内部恢复提示并继续下一轮；达到次数上限后返回 `LLM_UNAVAILABLE`，不会再把“未返回可展示最终答复”当作 completed 兜底文案。
 - `POST` 入参：
   - `llm.default`：默认对话模型配置名称
   - `llm.default_embedding/default_asr/default_tts/default_image/default_video`：默认嵌入/声转文/语音/绘图/视频模型配置名称（可选）

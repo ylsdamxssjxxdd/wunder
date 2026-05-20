@@ -146,6 +146,7 @@ import {
   resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
+  createAudioTranscriptionWavFile,
   isAudioRecordingSupported,
   startAudioRecording,
   type AudioRecordingResult,
@@ -850,6 +851,87 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       return meta.hearingSupported;
   };
 
+
+  ctx.readDesktopAsrDebugMeta = async (): Promise<{
+      defaultAsrKey: string;
+      modelType: string;
+      provider: string;
+      baseUrl: string;
+      modelName: string;
+      hasApiKey: boolean;
+  }> => {
+      try {
+          const response = await fetchDesktopSettings();
+          const settings = (response?.data?.data || {}) as Record<string, unknown>;
+          const llm = ctx.asObjectRecord(settings.llm);
+          const defaultAsrKey = String(llm.default_asr || '').trim();
+          const models = ctx.asObjectRecord(llm.models);
+          const model = ctx.asObjectRecord(defaultAsrKey ? models[defaultAsrKey] : null);
+          return {
+              defaultAsrKey,
+              modelType: String(model.model_type || '').trim(),
+              provider: String(model.provider || '').trim(),
+              baseUrl: String(model.base_url || '').trim(),
+              modelName: String(model.model || model.model_name || model.name || '').trim(),
+              hasApiKey: Boolean(String(model.api_key || '').trim())
+          };
+      }
+      catch {
+          return {
+              defaultAsrKey: '',
+              modelType: '',
+              provider: '',
+              baseUrl: '',
+              modelName: '',
+              hasApiKey: false
+          };
+      }
+  };
+
+  ctx.buildVoiceTranscribeDebugMessage = (
+      meta: {
+          defaultAsrKey: string;
+          modelType: string;
+          provider: string;
+          baseUrl: string;
+          modelName: string;
+          hasApiKey: boolean;
+      },
+      payload: Record<string, unknown> | null,
+      error: unknown
+  ): string => {
+      const warnings = Array.isArray(payload?.warnings)
+          ? payload.warnings.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
+      const payloadText = String(
+          payload?.transcript ||
+          payload?.text ||
+          payload?.transcribed_text ||
+          payload?.transcribedText ||
+          ''
+      ).trim();
+      const attachmentPreview = Array.isArray(payload?.attachments)
+          ? payload.attachments
+              .map((item) => String((item as Record<string, unknown>)?.content || '').trim())
+              .filter(Boolean)
+              .slice(0, 2)
+          : [];
+      const message = String((error as { message?: unknown } | null)?.message || '').trim();
+      return [
+          `${ctx.t('messenger.world.voice.transcribeDebugTitle')}:`,
+          `default_asr=${meta.defaultAsrKey || '(empty)'}`,
+          `model_type=${meta.modelType || '(empty)'}`,
+          `provider=${meta.provider || '(empty)'}`,
+          `base_url=${meta.baseUrl || '(empty)'}`,
+          `model=${meta.modelName || '(empty)'}`,
+          `api_key_configured=${meta.hasApiKey ? 'yes' : 'no'}`,
+          `payload_text=${payloadText || '(empty)'}`,
+          `attachment_preview=${attachmentPreview.join(' | ') || '(empty)'}`,
+          `warnings=${warnings.join(' | ') || '(none)'}`,
+          `error=${message || '(empty)'}`
+      ].join('\n');
+  };
+
   ctx.hasDesktopAsrModelConfigured = async (): Promise<boolean> => {
       if (!ctx.desktopMode.value) {
           return true;
@@ -937,6 +1019,32 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
 
   ctx.buildAgentVoiceFileName = (): string => `agent-voice-${Date.now()}.wav`;
 
+  ctx.prepareRecordedAudioForTranscription = async (
+      recording: AudioRecordingResult,
+      fileName: string
+  ): Promise<File> => {
+      try {
+          return await createAudioTranscriptionWavFile(recording.blob, fileName);
+      }
+      catch (error) {
+          const normalizedMimeType = String(recording.mimeType || '').trim().toLowerCase();
+          const fallbackExtension = normalizedMimeType.includes('webm')
+              ? 'webm'
+              : normalizedMimeType.includes('ogg') || normalizedMimeType.includes('opus')
+                  ? 'ogg'
+                  : 'audio';
+          const fallbackName = fileName.replace(/\.[^.\\/]+$/, '') + `.${fallbackExtension}`;
+          console.warn('[voice][prepare_transcription_wav_failed]', {
+              error,
+              mimeType: recording.mimeType,
+              size: recording.blob?.size || 0,
+              fileName,
+              fallbackName
+          });
+          return new File([recording.blob], fallbackName, { type: recording.mimeType || 'application/octet-stream' });
+      }
+  };
+
   ctx.stopAgentVoiceRecordingAndSend = async () => {
       const runtime = ctx.agentVoiceRecordingRuntime;
       if (!runtime)
@@ -964,7 +1072,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           ElMessage.warning(ctx.t('messenger.world.voice.asrNotConfigured'));
           return;
       }
-      const voiceFile = new File([recording.blob], ctx.buildAgentVoiceFileName(), { type: 'audio/wav' });
+      const voiceFile = await ctx.prepareRecordedAudioForTranscription(recording, ctx.buildAgentVoiceFileName());
       ctx.agentVoiceTranscribing.value = true;
       try {
           const transcript = await ctx.transcribeRecordedAudioToText(voiceFile);
@@ -972,7 +1080,11 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           ElMessage.success(ctx.t('messenger.world.voice.transcribedToComposer'));
       }
       catch (error) {
-          showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
+          const meta = await ctx.readDesktopAsrDebugMeta();
+          const payload = (error as { voiceDebugPayload?: Record<string, unknown> } | null)?.voiceDebugPayload || null;
+          const debugMessage = ctx.buildVoiceTranscribeDebugMessage(meta, payload, error);
+          console.error('[voice][agent][transcribe_failed]', debugMessage, { payload, error });
+          ElMessage.error(ctx.t('messenger.world.voice.transcribeFailed'));
       }
       finally {
           ctx.agentVoiceTranscribing.value = false;
@@ -1057,6 +1169,22 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       formData.append('file', file);
       const response = await processChatMediaAttachment(formData);
       const payload = (response?.data?.data || {}) as Record<string, unknown>;
+      console.debug('[voice][transcribe_response_payload]', {
+          status: response?.status,
+          data: payload,
+          rawText: String(payload.text || '').trim(),
+          rawTranscript: String(payload.transcript || '').trim(),
+          attachments: Array.isArray(payload.attachments)
+              ? payload.attachments.map((item) => ({
+                  content: String((item as Record<string, unknown>)?.content || '').trim(),
+                  contentType: String((item as Record<string, unknown>)?.content_type || '').trim(),
+                  publicPath: String((item as Record<string, unknown>)?.public_path || '').trim()
+              }))
+              : [],
+          warnings: Array.isArray(payload.warnings)
+              ? payload.warnings.map((item) => String(item || '').trim()).filter(Boolean)
+              : []
+      });
       const text = String(
           payload.transcript ||
           payload.text ||
@@ -1067,14 +1195,10 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       if (text) {
         return text;
       }
-      const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
-      const attachmentContent = attachments
-          .map((item) => String((item as Record<string, unknown>)?.content || '').trim())
-          .find((value) => value) || '';
-      if (attachmentContent) {
-          throw new Error(ctx.t('messenger.world.voice.transcribeFailed'));
-      }
-      throw new Error(String(payload.message || ctx.t('messenger.world.voice.transcribeFailed')));
+      const errorMessage = String(payload.message || ctx.t('messenger.world.voice.transcribeFailed'));
+      const error = new Error(errorMessage);
+      (error as Error & { voiceDebugPayload?: Record<string, unknown> }).voiceDebugPayload = payload;
+      throw error;
   };
 
   ctx.appendTextToAgentComposerDraft = async (text: string) => {
@@ -1143,7 +1267,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           ctx.worldVoiceTranscribing.value = false;
           return;
       }
-      const voiceFile = new File([recording.blob], ctx.buildWorldVoiceFileName(), { type: 'audio/wav' });
+      const voiceFile = await ctx.prepareRecordedAudioForTranscription(recording, ctx.buildWorldVoiceFileName());
       ctx.worldUploading.value = true;
       ctx.worldVoiceTranscribing.value = true;
       try {
@@ -1152,7 +1276,11 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           ElMessage.success(ctx.t('messenger.world.voice.transcribedToComposer'));
       }
       catch (error) {
-          showApiError(error, ctx.t('messenger.world.voice.transcribeFailed'));
+          const meta = await ctx.readDesktopAsrDebugMeta();
+          const payload = (error as { voiceDebugPayload?: Record<string, unknown> } | null)?.voiceDebugPayload || null;
+          const debugMessage = ctx.buildVoiceTranscribeDebugMessage(meta, payload, error);
+          console.error('[voice][world][transcribe_failed]', debugMessage, { payload, error });
+          ElMessage.error(ctx.t('messenger.world.voice.transcribeFailed'));
       }
       finally {
           ctx.worldUploading.value = false;

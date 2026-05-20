@@ -32,6 +32,8 @@ export type WorkflowItem = {
   call_id?: string | number;
   commandSessionId?: string | number;
   command_session_id?: string | number;
+  toolCallRawDetail?: string;
+  tool_call_raw_detail?: string;
 };
 
 export type RawToolRun = {

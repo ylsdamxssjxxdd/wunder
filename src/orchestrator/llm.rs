@@ -230,28 +230,21 @@ fn detect_invalid_tool_calls(tool_calls: Option<&Value>) -> Option<InvalidToolCa
         let Some(function) = item.get("function").and_then(Value::as_object) else {
             continue;
         };
-        let Some(arguments) = function.get("arguments").and_then(Value::as_str) else {
-            continue;
-        };
-        let trimmed = arguments.trim();
-        let invalid = if trimmed.is_empty() {
-            true
-        } else if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            value
-                .get("raw")
-                .and_then(Value::as_str)
-                .is_some_and(|raw| raw.trim() == "{")
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let arguments = function.get("arguments").and_then(Value::as_str);
+        let invalid = if let Some(name) = name {
+            is_known_bad_tool_call_name(name)
         } else {
             true
         };
+        let invalid = invalid || is_invalid_tool_call_arguments(arguments);
         if invalid {
             count = count.saturating_add(1);
-            if let Some(name) = function
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
+            if let Some(name) = name {
                 if sample_names.len() < 3 {
                     sample_names.push(name.to_string());
                 }
@@ -263,6 +256,40 @@ fn detect_invalid_tool_calls(tool_calls: Option<&Value>) -> Option<InvalidToolCa
         reason: "invalid_tool_call_arguments",
         sample_names,
     })
+}
+
+fn is_invalid_tool_call_arguments(arguments: Option<&str>) -> bool {
+    let Some(trimmed) = arguments.map(str::trim) else {
+        return true;
+    };
+    if trimmed.is_empty() {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+        return true;
+    };
+    raw_tool_arguments_look_truncated(&value)
+}
+
+fn raw_tool_arguments_look_truncated(value: &Value) -> bool {
+    let Some(raw) = value.get("raw").and_then(Value::as_str).map(str::trim) else {
+        return false;
+    };
+    if raw.is_empty() || matches!(raw, "{" | "[" | "}" | "]") {
+        return true;
+    }
+    let lowered = raw.to_ascii_lowercase();
+    if lowered.contains("\"calls\"") && lowered.contains("\"parameters\"") {
+        return true;
+    }
+    raw.starts_with('{') && serde_json::from_str::<Value>(raw).is_err()
+}
+
+fn is_known_bad_tool_call_name(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        "programmatic_tool_calls" | "tool_calls" | "function_calls"
+    )
 }
 
 impl Orchestrator {
@@ -622,9 +649,13 @@ impl Orchestrator {
             native_tools_attached,
         )
         .then_some("native_tools_non_stream_policy");
-        let will_stream = stream && stream_disabled_reason.is_none();
+        let initial_will_stream = stream && stream_disabled_reason.is_none();
         let request_payload = log_payload.then(|| {
-            client.build_request_payload_with_tools(&chat_messages.messages, will_stream, tools)
+            client.build_request_payload_with_tools(
+                &chat_messages.messages,
+                initial_will_stream,
+                tools,
+            )
         });
         let context_cache_probe =
             build_context_cache_probe(&chat_messages.messages, tools, request_payload.as_ref());
@@ -635,7 +666,7 @@ impl Orchestrator {
                     "provider": effective_config.provider,
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
-                    "stream": will_stream,
+                    "stream": initial_will_stream,
                     "stream_requested": stream,
                     "payload": request_payload.clone().unwrap_or(Value::Null),
                     "context_cache_probe": context_cache_probe,
@@ -645,7 +676,7 @@ impl Orchestrator {
                     "provider": effective_config.provider,
                     "model": effective_config.model,
                     "base_url": effective_config.base_url,
-                    "stream": will_stream,
+                    "stream": initial_will_stream,
                     "stream_requested": stream,
                     "payload_omitted": true,
                     "context_cache_probe": context_cache_probe,
@@ -673,10 +704,12 @@ impl Orchestrator {
         };
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
+        let mut force_non_stream_retry = false;
         loop {
             attempt += 1;
             let request_started_at = Instant::now();
             let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
+            let will_stream = initial_will_stream && !force_non_stream_retry;
             let result = if will_stream {
                 let emitter_snapshot = emitter.clone();
                 let timing_snapshot = Arc::clone(&output_timing);
@@ -735,6 +768,7 @@ impl Orchestrator {
                         if let Some(invalid_tool_calls) =
                             detect_invalid_tool_calls(tool_calls.as_ref())
                         {
+                            force_non_stream_retry = true;
                             if emit_events {
                                 let mut retry_payload = json!({
                                     "attempt": attempt,
@@ -1344,7 +1378,7 @@ mod tests {
     }
 
     #[test]
-    fn native_tools_disable_streaming_for_vllm_compatible_backends() {
+    fn native_tools_keep_streaming_until_retry_recovery() {
         let config = LlmModelConfig {
             provider: Some("vllm_ascend".to_string()),
             base_url: Some("http://10.10.10.10:8000/v1".to_string()),
@@ -1373,6 +1407,25 @@ mod tests {
         assert_eq!(report.count, 1);
         assert_eq!(report.reason, "invalid_tool_call_arguments");
         assert_eq!(report.sample_names, vec!["ptc".to_string()]);
+    }
+
+    #[test]
+    fn detects_invalid_tool_call_arguments_wrapped_as_broken_calls_payload() {
+        let payload = json!([{
+            "type": "function",
+            "function": {
+                "name": "programmatic_tool_calls",
+                "arguments": "{\"raw\":\"{\\\"calls\\\": [name\\\": \\\"programmatic_tool_call\\\", \\\"parameters\\\": {}}\"}"
+            }
+        }]);
+
+        let report = detect_invalid_tool_calls(Some(&payload)).expect("invalid tool call");
+        assert_eq!(report.count, 1);
+        assert_eq!(report.reason, "invalid_tool_call_arguments");
+        assert_eq!(
+            report.sample_names,
+            vec!["programmatic_tool_calls".to_string()]
+        );
     }
 
     #[test]

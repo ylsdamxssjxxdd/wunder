@@ -12,24 +12,19 @@ pub type MonitorDisks = System;
 pub type MonitorDisks = Disks;
 
 pub fn new_system() -> MonitorSystem {
-    let mut system = System::new_all();
-    system.refresh_all();
-    system
+    // Delay expensive host discovery until the first actual snapshot refresh.
+    System::new()
 }
 
 pub fn new_disks() -> MonitorDisks {
     #[cfg(target_vendor = "win7")]
     {
-        let mut system = System::new_all();
-        system.refresh_disks_list();
-        system.refresh_disks();
-        system
+        // Win7 bridge startup must stay lightweight; disk enumeration is deferred.
+        System::new()
     }
     #[cfg(not(target_vendor = "win7"))]
     {
-        let mut disks = Disks::new_with_refreshed_list();
-        disks.refresh();
-        disks
+        Disks::new()
     }
 }
 

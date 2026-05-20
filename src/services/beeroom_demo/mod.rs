@@ -1443,6 +1443,7 @@ mod tests {
             tool_names: vec!["list_files".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "A".to_string(),
             approval_mode: "full_auto".to_string(),

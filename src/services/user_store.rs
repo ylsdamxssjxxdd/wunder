@@ -1534,6 +1534,7 @@ mod tests {
             tool_names: vec!["file_read".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
             preset_questions: vec![
                 "请先帮我梳理现状".to_string(),
                 "给我一个执行清单".to_string(),

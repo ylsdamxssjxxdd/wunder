@@ -643,6 +643,7 @@ async fn import_worker_card_item(
         tool_names: filter_allowed_tools(&selection.tool_names, &allowed_tool_names),
         declared_tool_names: selection.declared_tool_names,
         declared_skill_names: selection.declared_skill_names,
+        visible_unit_ids: Vec::new(),
         preset_questions: parsed.preset_questions.clone(),
         access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
         approval_mode: parsed.approval_mode.clone(),

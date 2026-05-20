@@ -128,6 +128,7 @@ pub async fn ensure_external_embed_agent_with_runtime(
         ability_items: Vec::new(),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
+        visible_unit_ids: Vec::new(),
         tool_names,
         preset_questions: Vec::new(),
         access_level: "A".to_string(),

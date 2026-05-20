@@ -169,9 +169,15 @@ async fn admin_org_units_import_replaces_units_and_migrates_users() {
     assert_eq!(body["data"]["migrated_user_count"], json!(1));
     assert_eq!(body["data"]["migrate_user_root_name"], json!("一级单位2"));
 
-    let units = context.state.user_store.list_org_units().expect("list org units");
+    let units = context
+        .state
+        .user_store
+        .list_org_units()
+        .expect("list org units");
     assert_eq!(units.len(), 4);
-    assert!(units.iter().all(|item| item.name.starts_with("一级单位") || item.name.starts_with("二级单位")));
+    assert!(units
+        .iter()
+        .all(|item| item.name.starts_with("一级单位") || item.name.starts_with("二级单位")));
     let migrated_root = units
         .iter()
         .find(|item| item.parent_id.is_none() && item.name == "一级单位2")
@@ -182,5 +188,8 @@ async fn admin_org_units_import_replaces_units_and_migrates_users() {
         .get_user_by_id(&imported_user.user_id)
         .expect("reload user")
         .expect("user exists");
-    assert_eq!(migrated_user.unit_id.as_deref(), Some(migrated_root.unit_id.as_str()));
+    assert_eq!(
+        migrated_user.unit_id.as_deref(),
+        Some(migrated_root.unit_id.as_str())
+    );
 }

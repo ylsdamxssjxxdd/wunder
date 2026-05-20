@@ -1,4 +1,5 @@
 use crate::config::{Config, LlmModelConfig};
+use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
 use crate::llm::{
     build_model_auth_headers, build_openai_model_resource_endpoint, is_asr_model, is_image_model,
     is_tts_model, is_video_model, normalize_provider, resolve_model_base_url,
@@ -11,6 +12,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
+use tokio::process::Command;
 
 const AUDIO_SPEECH_RESOURCE: &str = "audio/speech";
 const AUDIO_TRANSCRIPTIONS_RESOURCE: &str = "audio/transcriptions";
@@ -26,6 +28,7 @@ const DEFAULT_IMAGE_TIMEOUT_S: u64 = 300;
 const DEFAULT_VIDEO_TIMEOUT_S: u64 = 1800;
 const WHISPER_CPP_PROVIDER: &str = "whisper_cpp";
 const WHISPER_CPP_INFERENCE_PATH: &str = "/inference";
+const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
 
 fn tts_voice_cache() -> &'static dashmap::DashMap<String, String> {
     static CACHE: OnceLock<dashmap::DashMap<String, String>> = OnceLock::new();
@@ -559,10 +562,12 @@ async fn transcribe_audio_with_whisper_cpp(
             .or(config.asr_response_format.as_deref()),
     );
 
-    let mut part = Part::bytes(request.audio_bytes.to_vec()).file_name(request.filename.clone());
-    if !request.content_type.trim().is_empty() {
+    let upload = prepare_whisper_cpp_audio_upload(request).await?;
+
+    let mut part = Part::bytes(upload.audio_bytes).file_name(upload.filename);
+    if !upload.content_type.trim().is_empty() {
         part = part
-            .mime_str(request.content_type.trim())
+            .mime_str(upload.content_type.trim())
             .context("invalid asr content type")?;
     }
 
@@ -1241,6 +1246,176 @@ fn build_whisper_cpp_inference_endpoint(base_url: &str) -> Option<String> {
         return None;
     }
     Some(format!("{trimmed}{WHISPER_CPP_INFERENCE_PATH}"))
+}
+
+#[derive(Debug)]
+struct WhisperCppAudioUpload {
+    audio_bytes: Vec<u8>,
+    filename: String,
+    content_type: String,
+}
+
+async fn prepare_whisper_cpp_audio_upload(
+    request: &AudioTranscriptionRequest,
+) -> Result<WhisperCppAudioUpload> {
+    if is_wav_audio_bytes(request.audio_bytes.as_ref()) {
+        return Ok(WhisperCppAudioUpload {
+            audio_bytes: request.audio_bytes.to_vec(),
+            filename: ensure_extension(&request.filename, "wav"),
+            content_type: "audio/wav".to_string(),
+        });
+    }
+
+    let converted = convert_audio_bytes_to_wav(
+        request.audio_bytes.as_ref(),
+        &request.filename,
+        request.content_type.as_str(),
+    )
+    .await
+    .context("convert whisper.cpp audio input to wav")?;
+    Ok(WhisperCppAudioUpload {
+        audio_bytes: converted,
+        filename: replace_extension(&request.filename, "wav"),
+        content_type: "audio/wav".to_string(),
+    })
+}
+
+fn is_wav_audio_bytes(bytes: &[u8]) -> bool {
+    bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE"
+}
+
+fn ensure_extension(filename: &str, extension: &str) -> String {
+    let trimmed = filename.trim();
+    if Path::new(trimmed)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case(extension))
+        .unwrap_or(false)
+    {
+        return trimmed.to_string();
+    }
+    replace_extension(trimmed, extension)
+}
+
+fn replace_extension(filename: &str, extension: &str) -> String {
+    let trimmed = filename.trim();
+    let stem = Path::new(trimmed)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("audio");
+    format!("{stem}.{extension}")
+}
+
+async fn convert_audio_bytes_to_wav(
+    bytes: &[u8],
+    filename: &str,
+    content_type: &str,
+) -> Result<Vec<u8>> {
+    let temp_root =
+        std::env::temp_dir().join(format!("wunder_asr_{}", uuid::Uuid::new_v4().simple()));
+    tokio::fs::create_dir_all(&temp_root)
+        .await
+        .context("create asr temp dir")?;
+    let input_extension = audio_extension_for_upload(filename, content_type);
+    let input_path = temp_root.join(format!("input.{input_extension}"));
+    let output_path = temp_root.join("output.wav");
+    let cleanup_root = temp_root.clone();
+    let result = async {
+        tokio::fs::write(&input_path, bytes)
+            .await
+            .context("write asr temp input")?;
+        let binary = resolve_ffmpeg_binary();
+        let mut command = Command::new(&binary);
+        command.args(vec![
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-i".to_string(),
+            input_path.to_string_lossy().to_string(),
+            "-vn".to_string(),
+            "-ac".to_string(),
+            "1".to_string(),
+            "-ar".to_string(),
+            "16000".to_string(),
+            "-f".to_string(),
+            "wav".to_string(),
+            output_path.to_string_lossy().to_string(),
+        ]);
+        apply_platform_spawn_options(&mut command);
+        let output = command.output().await.map_err(|err| {
+            if is_not_found_error(&err) {
+                anyhow!(
+                    "required executable `{binary}` not found; set {FFMPEG_BIN_ENV} or install ffmpeg"
+                )
+            } else {
+                anyhow!("failed to start `{binary}`: {err}")
+            }
+        })?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "ffmpeg audio conversion failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let converted = tokio::fs::read(&output_path)
+            .await
+            .context("read converted asr wav")?;
+        if !is_wav_audio_bytes(&converted) {
+            return Err(anyhow!("converted asr audio is not wav"));
+        }
+        Ok(converted)
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(cleanup_root).await;
+    result
+}
+
+fn resolve_ffmpeg_binary() -> String {
+    std::env::var(FFMPEG_BIN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "ffmpeg".to_string())
+}
+
+fn audio_extension_for_upload(filename: &str, content_type: &str) -> &'static str {
+    let lowered_mime = content_type.trim().to_ascii_lowercase();
+    if lowered_mime.contains("webm") {
+        return "webm";
+    }
+    if lowered_mime.contains("ogg") || lowered_mime.contains("opus") {
+        return "ogg";
+    }
+    if lowered_mime.contains("mp4") || lowered_mime.contains("m4a") {
+        return "m4a";
+    }
+    if lowered_mime.contains("flac") {
+        return "flac";
+    }
+    if lowered_mime.contains("aac") {
+        return "aac";
+    }
+    if lowered_mime.contains("mpeg") || lowered_mime.contains("mp3") {
+        return "mp3";
+    }
+    match Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "webm" => "webm",
+        "ogg" | "opus" => "ogg",
+        "m4a" | "mp4" => "m4a",
+        "flac" => "flac",
+        "aac" => "aac",
+        "mp3" => "mp3",
+        _ => "audio",
+    }
 }
 
 fn whisper_cpp_content_type(format: &str) -> &'static str {

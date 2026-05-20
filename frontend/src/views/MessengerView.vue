@@ -25,6 +25,7 @@
     <aside
       ref="leftRailRef"
       class="messenger-left-rail"
+      :class="{ 'messenger-left-rail--more-open': leftRailMoreExpanded }"
       @mouseenter="cancelMiddlePaneOverlayHide"
       @mouseleave="scheduleMiddlePaneOverlayHide"
     >
@@ -131,6 +132,7 @@
           @update:selected-agent-hive-group-id="handleMiddlePaneAgentHiveGroupIdUpdate"
           v-model:settings-panel-mode="settingsPanelMode"
           v-model:selected-desktop-model-key="selectedDesktopModelKey"
+          :desktop-model-rows="desktopModelRows"
           :active-section="middlePaneActiveSection"
           :active-section-title="middlePaneActiveSectionTitle"
           :active-section-subtitle="middlePaneActiveSectionSubtitle"
@@ -218,7 +220,7 @@
           :move-agent-item="moveAgentListItem"
           :move-swarm-item="moveBeeroomGroupItem"
           :after-hive-pack-imported="handleHivePackImportedFromMiddlePane"
-          @activate-settings-panel="activateSettingsPanel"
+          @activate-settings-panel="handleActivateSettingsPanelFromMiddlePane"
       />
     </section>
 
@@ -923,15 +925,17 @@
                 "
                 class="messenger-chat-settings-scroll messenger-chat-settings-scroll--desktop-system"
               >
-                <DesktopSystemSettingsPanel
-                  :panel="
-                    settingsPanelMode === 'desktop-lan'
-                        ? 'lan'
-                        : 'models'
-                  "
-                  :detail-only="settingsPanelMode === 'desktop-models'"
+                <DesktopModelSettingsPanel
+                  v-if="settingsPanelMode === 'desktop-models'"
                   :selected-model-key="selectedDesktopModelKey"
+                  :create-model-request="desktopModelCreateRequest"
+                  @desktop-model-rows-change="handleDesktopModelRowsChange"
+                  @desktop-model-selection-change="handleDesktopModelSelectionChange"
                   @desktop-model-meta-changed="handleDesktopModelMetaChanged"
+                />
+                <DesktopSystemSettingsPanel
+                  v-else
+                  panel="lan"
                 />
               </div>
               <div v-else class="messenger-chat-settings-scroll">
@@ -1805,8 +1809,16 @@ defineOptions({
 
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
+import { ref as vueRef } from 'vue';
 
 const controller = useMessengerViewController();
+const desktopModelRows = vueRef<Array<Record<string, unknown>>>([]);
+const handleDesktopModelRowsChange = (rows: Array<Record<string, unknown>> = []) => {
+  desktopModelRows.value = Array.isArray(rows) ? rows : [];
+};
+const handleDesktopModelSelectionChange = (value: string) => {
+  selectedDesktopModelKey.value = String(value || '').trim();
+};
 const handleWorkspaceQuotePath = async (payload: { paths?: string[] } = {}) => {
   const paths = Array.isArray(payload.paths)
     ? payload.paths.map((item) => String(item || '').trim()).filter(Boolean)
@@ -2115,6 +2127,7 @@ const desktopInitialSectionPinned = controller.desktopInitialSectionPinned;
 const desktopLocalMode = controller.desktopLocalMode;
 const desktopMode = controller.desktopMode;
 const desktopShowFirstLaunchDefaultAgentHint = controller.desktopShowFirstLaunchDefaultAgentHint;
+const DesktopModelSettingsPanel = controller.DesktopModelSettingsPanel;
 const DesktopSystemSettingsPanel = controller.DesktopSystemSettingsPanel;
 const desktopUpdateAvailable = controller.desktopUpdateAvailable;
 const detectAudioRecordingSupport = controller.detectAudioRecordingSupport;
@@ -2707,6 +2720,19 @@ const resolveHttpStatus = controller.resolveHttpStatus;
 const resolveLatestCompactionSnapshot = controller.resolveLatestCompactionSnapshot;
 const resolveLatestConversationMessageTimestamp = controller.resolveLatestConversationMessageTimestamp;
 const resolveLeftNavButtonLabel = controller.resolveLeftNavButtonLabel;
+const handleActivateSettingsPanelFromMiddlePane = (value) => {
+  const normalized = String(value || '').trim();
+  if (normalized.startsWith('desktop-models:add')) {
+    const requestedType = String(normalized.split(':')[2] || 'llm').trim() || 'llm';
+    desktopModelCreateRequest.value = {
+      nonce: desktopModelCreateRequest.value.nonce + 1,
+      modelType: requestedType
+    };
+    activateSettingsPanel('desktop-models');
+    return;
+  }
+  activateSettingsPanel(normalized);
+};
 const resolveMarkdownWorkspacePath = controller.resolveMarkdownWorkspacePath;
 const resolveMessageAgentAvatarState = controller.resolveMessageAgentAvatarState;
 const resolveMessageModelName = controller.resolveMessageModelName;
@@ -2878,6 +2904,7 @@ const settingsAgentIdForPanel = controller.settingsAgentIdForPanel;
 const settingsLogoutDisabled = controller.settingsLogoutDisabled;
 const settingsPanelMode = controller.settingsPanelMode;
 const selectedDesktopModelKey = controller.selectedDesktopModelKey;
+const desktopModelCreateRequest = controller.desktopModelCreateRequest;
 const settingsPanelRenderKey = controller.settingsPanelRenderKey;
 const settingsRuntimeAgentIdForApi = controller.settingsRuntimeAgentIdForApi;
 const settleAgentSessionBusyAfterRefresh = controller.settleAgentSessionBusyAfterRefresh;

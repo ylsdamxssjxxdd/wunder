@@ -441,14 +441,23 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           buildWorkflowUsageMeta(detailSource, data, payload)
         );
         const timingMeta = buildWorkflowTimingMeta(detailSource, data, payload);
+        const rawToolCallDetail = ctx.isExecuteCommandTool(toolName)
+          ? ctx.buildToolCallRawDetail?.(toolName, detailSource) || ''
+          : '';
         if (ctx.isExecuteCommandTool(toolName)) {
           if (commandSessionId) {
             ctx.syncCommandSessionSnapshot(detailSource);
-            ctx.ensureCommandSessionCallItem(
+            const commandItemId = ctx.ensureCommandSessionCallItem(
               commandSessionId,
               detailSource,
               detailSource?.command ?? ''
             );
+            if (commandItemId && rawToolCallDetail) {
+              updateWorkflowItem(ctx.assistantMessage.workflowItems, commandItemId, {
+                toolCallRawDetail: rawToolCallDetail,
+                tool_call_raw_detail: rawToolCallDetail
+              });
+            }
           }
           ctx.registerToolStats(toolName);
           if (ctx.lastRound !== null) {
@@ -465,6 +474,9 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           toolName: String(toolName || ''),
           toolCallId: toolCallId || commandSessionId || undefined,
           commandSessionId: commandSessionId || undefined,
+          ...(rawToolCallDetail
+            ? { toolCallRawDetail: rawToolCallDetail, tool_call_raw_detail: rawToolCallDetail }
+            : {}),
           ...buildToolIdentityMeta(data, payload, detailSource),
           modelRound: toolCallRound ?? undefined,
           ...usageMeta,

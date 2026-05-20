@@ -140,6 +140,22 @@ const normalizeRecord = (value: unknown): CompanionPackageRecord | null => {
   };
 };
 
+const mergeCompanionRecords = (
+  ...groups: Array<Array<CompanionPackageRecord | null | undefined>>
+): CompanionPackageRecord[] => {
+  const map = new Map<string, CompanionPackageRecord>();
+  groups.flat().forEach((item) => {
+    if (!item?.id) {
+      return;
+    }
+    const current = map.get(item.id);
+    if (!current || item.updatedAt >= current.updatedAt || (item.spritesheetDataUrl && !current.spritesheetDataUrl)) {
+      map.set(item.id, item);
+    }
+  });
+  return Array.from(map.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+};
+
 const normalizeDesktopStateCompanionRecord = (value: unknown): CompanionPackageRecord | null => {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
   const id = String(source.selectedId || source.selected_id || source.id || '').trim();
@@ -477,7 +493,11 @@ export const useCompanionStore = defineStore('companions', () => {
             .map((item) => normalizeRecord(item))
             .filter((item): item is CompanionPackageRecord => Boolean(item))
         : [];
-      companions.value = desktopCompanions.length ? desktopCompanions : await listStoredCompanions();
+      const storedCompanions = await listStoredCompanions();
+      companions.value = mergeCompanionRecords(desktopCompanions, storedCompanions);
+      if (companions.value.length) {
+        await Promise.all(companions.value.map((item) => saveStoredCompanion(item).catch(() => undefined)));
+      }
       if (desktopState?.settings) {
         settings.value = normalizeSettings(desktopState.settings);
       }

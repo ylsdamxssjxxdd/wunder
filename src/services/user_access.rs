@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::services::visibility::filter_tool_visibility;
 use crate::skills::SkillRegistry;
 use crate::state::AppState;
 use crate::storage::OrgUnitRecord;
@@ -9,7 +10,6 @@ use crate::tools::{
     collect_available_tool_names, collect_enabled_tool_names_for_catalog, resolve_tool_name,
 };
 use crate::user_tools::UserToolBindings;
-use crate::services::visibility::filter_tool_visibility;
 use std::collections::HashSet;
 
 pub struct UserToolContext {

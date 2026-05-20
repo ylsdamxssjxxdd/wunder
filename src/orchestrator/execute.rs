@@ -24,6 +24,18 @@ struct PlannedToolCall {
     function_name: String,
 }
 
+struct ToolPlanningResult {
+    planned: Vec<PlannedToolCall>,
+    rejected: Vec<RejectedToolCall>,
+}
+
+struct RejectedToolCall {
+    name: String,
+    resolved_name: String,
+    reason: &'static str,
+    arguments_preview: String,
+}
+
 struct ToolExecutionOutcome {
     call: ToolCall,
     name: String,
@@ -128,6 +140,9 @@ const DEFAULT_DB_QUERY_TOOL_BUDGET_PER_TURN: u32 = 2_000;
 const EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN: u32 = 10_000;
 const DEFAULT_MEMORY_RECALL_BUDGET_PER_TURN: u32 = 2_000;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
+const INVALID_TOOL_CALL_REROUTE_MAX_PER_TURN: u32 = 2;
+const INVALID_TOOL_CALL_ARGUMENT_PREVIEW_CHARS: usize = 320;
+const EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN: u32 = 3;
 const WORKSPACE_UPDATE_MAX_CHANGED_PATHS: usize = 24;
 const CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: &str = "_channel_display_question";
 const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
@@ -489,6 +504,8 @@ impl Orchestrator {
             let mut retry_governor = RetryGovernor::new(repeated_tool_failure_threshold);
             let mut reroute_notice_count = 0_u32;
             let mut reroute_notice_fingerprints: HashSet<String> = HashSet::new();
+            let mut invalid_tool_call_reroute_count = 0_u32;
+            let mut empty_final_answer_reroute_count = 0_u32;
             let memory_manager_tool_name = resolve_tool_name("memory_manager");
             let tool_budget_limits = ToolBudgetLimits {
                 total: DEFAULT_TOOL_CALL_BUDGET_PER_TURN,
@@ -860,12 +877,91 @@ impl Orchestrator {
                         ),
                     )
                 };
-                let planned_calls = build_planned_tool_calls(tool_calls, &allowed_tool_names);
+                let planning_result = build_planned_tool_calls(tool_calls, &allowed_tool_names);
+                let planned_calls = planning_result.planned;
+                if planned_calls.is_empty()
+                    && !planning_result.rejected.is_empty()
+                    && !prepared.skip_tool_calls
+                    && invalid_tool_call_reroute_count < INVALID_TOOL_CALL_REROUTE_MAX_PER_TURN
+                {
+                    invalid_tool_call_reroute_count =
+                        invalid_tool_call_reroute_count.saturating_add(1);
+                    let model_notice = build_invalid_tool_call_model_notice(
+                        &planning_result.rejected,
+                        &allowed_tool_names,
+                    );
+                    let mut reroute_payload = json!({
+                        "stage": "invalid_tool_call_reroute",
+                        "summary": "Model returned tool calls that could not be executed; model instructed to repair the call or answer directly.",
+                        "attempt": invalid_tool_call_reroute_count,
+                        "max_attempts": INVALID_TOOL_CALL_REROUTE_MAX_PER_TURN,
+                        "rejected_tool_calls": rejected_tool_calls_event_payload(
+                            &planning_result.rejected
+                        ),
+                    });
+                    if let Value::Object(ref mut map) = reroute_payload {
+                        round_info.insert_into(map);
+                    }
+                    emitter.emit("progress", reroute_payload).await;
+                    let model_notice_message = json!({
+                        "role": "user",
+                        "content": encode_observation_prefixed_json(&model_notice),
+                    });
+                    messages.push(model_notice_message.clone());
+                    self.append_model_context_entry(
+                        &user_id,
+                        &session_id,
+                        &model_notice_message,
+                    );
+                    continue;
+                }
                 if planned_calls.is_empty() {
                     if prepared.skip_tool_calls {
                         answer = content.trim().to_string();
                     } else {
                         answer = self.resolve_final_answer(&content);
+                    }
+                    if answer.trim().is_empty() {
+                        if empty_final_answer_reroute_count
+                            < EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN
+                        {
+                            empty_final_answer_reroute_count =
+                                empty_final_answer_reroute_count.saturating_add(1);
+                            let model_notice = build_empty_final_answer_model_notice(
+                                empty_final_answer_reroute_count,
+                                EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                                !content.trim().is_empty(),
+                                !reasoning.trim().is_empty(),
+                                tool_calls_payload.is_some(),
+                                !prepared.skip_tool_calls,
+                            );
+                            let mut reroute_payload = json!({
+                                "stage": "empty_final_answer_reroute",
+                                "summary": "Model returned no usable final content; model instructed to continue instead of ending the turn.",
+                                "attempt": empty_final_answer_reroute_count,
+                                "max_attempts": EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                            });
+                            if let Value::Object(ref mut map) = reroute_payload {
+                                round_info.insert_into(map);
+                            }
+                            emitter.emit("progress", reroute_payload).await;
+                            let model_notice_message = json!({
+                                "role": "user",
+                                "content": encode_observation_prefixed_json(&model_notice),
+                            });
+                            messages.push(model_notice_message.clone());
+                            self.append_model_context_entry(
+                                &user_id,
+                                &session_id,
+                                &model_notice_message,
+                            );
+                            continue;
+                        }
+                        return Err(OrchestratorError::llm_unavailable(
+                            build_empty_final_answer_retry_exhausted_error(
+                                EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                            ),
+                        ));
                     }
                     if !answer.trim().is_empty() {
                         answer = self.reconcile_final_answer_workspace_images(
@@ -1830,7 +1926,6 @@ impl Orchestrator {
                                         &answer,
                                     );
                                 }
-                                stop_reason = Some("final_tool".to_string());
                                 self.log_final_tool_call(
                                     &user_id,
                                     &session_id,
@@ -1838,6 +1933,49 @@ impl Orchestrator {
                                     &args,
                                     log_payload,
                                 );
+                                if answer.trim().is_empty() {
+                                    if empty_final_answer_reroute_count
+                                        < EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN
+                                    {
+                                        empty_final_answer_reroute_count = empty_final_answer_reroute_count
+                                            .saturating_add(1);
+                                        let model_notice = build_empty_final_answer_model_notice(
+                                            empty_final_answer_reroute_count,
+                                            EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                                            !args.is_null(),
+                                            false,
+                                            true,
+                                            true,
+                                        );
+                                        let mut reroute_payload = json!({
+                                            "stage": "empty_final_answer_reroute",
+                                            "summary": "Model returned no usable final content from final_response; model instructed to continue instead of ending the turn.",
+                                            "attempt": empty_final_answer_reroute_count,
+                                            "max_attempts": EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                                        });
+                                        if let Value::Object(ref mut map) = reroute_payload {
+                                            round_info.insert_into(map);
+                                        }
+                                        emitter.emit("progress", reroute_payload).await;
+                                        let model_notice_message = json!({
+                                            "role": "user",
+                                            "content": encode_observation_prefixed_json(&model_notice),
+                                        });
+                                        messages.push(model_notice_message.clone());
+                                        self.append_model_context_entry(
+                                            &user_id,
+                                            &session_id,
+                                            &model_notice_message,
+                                        );
+                                        continue;
+                                    }
+                                    return Err(OrchestratorError::llm_unavailable(
+                                        build_empty_final_answer_retry_exhausted_error(
+                                            EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                                        ),
+                                    ));
+                                }
+                                stop_reason = Some("final_tool".to_string());
                                 if !answer.trim().is_empty() {
                                     self.append_chat(
                                         &user_id,
@@ -1883,12 +2021,11 @@ impl Orchestrator {
                 }
             }
             if answer.is_empty() {
-                let (fallback_answer, fallback_reason) =
-                    resolve_empty_answer_fallback();
-                answer = fallback_answer;
-                if stop_reason.is_none() {
-                    stop_reason = Some(fallback_reason.to_string());
-                }
+                return Err(OrchestratorError::llm_unavailable(
+                    build_empty_final_answer_retry_exhausted_error(
+                        EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN,
+                    ),
+                ));
             }
 
             let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());
@@ -2614,36 +2751,93 @@ impl Orchestrator {
 fn build_planned_tool_calls(
     calls: Vec<ToolCall>,
     allowed_tool_names: &HashSet<String>,
-) -> Vec<PlannedToolCall> {
-    calls
-        .into_iter()
-        .filter_map(|mut call| {
-            let name = call.name.trim();
-            if name.is_empty() {
-                return None;
-            }
-            let function_name = call
-                .function_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or(name)
-                .to_string();
-            let resolved = resolve_tool_name(name);
-            if resolved.trim().is_empty() {
-                return None;
-            }
-            if !allowed_tool_names.contains(&resolved) && !allowed_tool_names.contains(name) {
-                return None;
-            }
-            call.name = resolved.clone();
-            Some(PlannedToolCall {
-                call,
-                name: resolved,
-                function_name,
+) -> ToolPlanningResult {
+    let mut planned = Vec::new();
+    let mut rejected = Vec::new();
+    for mut call in calls {
+        let name = call.name.trim();
+        if name.is_empty() {
+            rejected.push(RejectedToolCall {
+                name: String::new(),
+                resolved_name: String::new(),
+                reason: "empty_tool_name",
+                arguments_preview: tool_call_arguments_preview(&call.arguments),
+            });
+            continue;
+        }
+        let function_name = call
+            .function_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(name)
+            .to_string();
+        let resolved = resolve_tool_name(name);
+        if resolved.trim().is_empty() {
+            rejected.push(RejectedToolCall {
+                name: name.to_string(),
+                resolved_name: resolved,
+                reason: "empty_resolved_tool_name",
+                arguments_preview: tool_call_arguments_preview(&call.arguments),
+            });
+            continue;
+        }
+        if !allowed_tool_names.contains(&resolved) && !allowed_tool_names.contains(name) {
+            rejected.push(RejectedToolCall {
+                name: name.to_string(),
+                resolved_name: resolved,
+                reason: "tool_not_allowed_or_unknown",
+                arguments_preview: tool_call_arguments_preview(&call.arguments),
+            });
+            continue;
+        }
+        call.name = resolved.clone();
+        planned.push(PlannedToolCall {
+            call,
+            name: resolved,
+            function_name,
+        });
+    }
+    ToolPlanningResult { planned, rejected }
+}
+
+fn tool_call_arguments_preview(arguments: &Value) -> String {
+    let text = serde_json::to_string(arguments).unwrap_or_else(|_| String::new());
+    trim_text_to_chars(&text, INVALID_TOOL_CALL_ARGUMENT_PREVIEW_CHARS, "...")
+}
+
+fn build_invalid_tool_call_model_notice(
+    rejected: &[RejectedToolCall],
+    allowed_tool_names: &HashSet<String>,
+) -> Value {
+    let mut allowed = allowed_tool_names.iter().cloned().collect::<Vec<_>>();
+    allowed.sort();
+    allowed.truncate(64);
+    json!({
+        "type": "invalid_tool_call_notice",
+        "ok": false,
+        "reason": "model_emitted_unexecutable_tool_calls",
+        "rejected_tool_calls": rejected_tool_calls_event_payload(rejected),
+        "allowed_tool_names_sample": allowed,
+        "instruction": "The previous assistant message contained tool calls that this runtime cannot execute. Do not repeat the same invalid tool name or malformed argument wrapper. Emit one valid allowed tool call with valid JSON arguments, or call final_response with a concise final answer if no tool is needed.",
+    })
+}
+
+fn rejected_tool_calls_event_payload(rejected: &[RejectedToolCall]) -> Value {
+    Value::Array(
+        rejected
+            .iter()
+            .take(8)
+            .map(|entry| {
+                json!({
+                    "name": entry.name,
+                    "resolved_name": entry.resolved_name,
+                    "reason": entry.reason,
+                    "arguments_preview": entry.arguments_preview,
+                })
             })
-        })
-        .collect()
+            .collect(),
+    )
 }
 
 fn append_terminal_tool_context_result(
@@ -3120,8 +3314,34 @@ fn resolve_tool_failure_guard_threshold(config: &Config) -> u32 {
     threshold.max(1)
 }
 
-fn resolve_empty_answer_fallback() -> (String, &'static str) {
-    (i18n::t("error.empty_no_final_answer"), "empty_response")
+fn build_empty_final_answer_model_notice(
+    attempt: u32,
+    max_attempts: u32,
+    had_content: bool,
+    had_reasoning: bool,
+    had_tool_payload: bool,
+    allow_tool_calls: bool,
+) -> Value {
+    let instruction = if allow_tool_calls {
+        "Continue the task now. Do not end this turn with an empty assistant message. Either emit one valid allowed tool call with valid JSON arguments, or call final_response with a concise final answer."
+    } else {
+        "Continue the task now. Do not end this turn with an empty assistant message. Respond directly with a concise final answer."
+    };
+    json!({
+        "type": "empty_final_answer_notice",
+        "ok": false,
+        "reason": "model_returned_no_final_content",
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "had_content": had_content,
+        "had_reasoning": had_reasoning,
+        "had_tool_payload": had_tool_payload,
+        "instruction": instruction,
+    })
+}
+
+fn build_empty_final_answer_retry_exhausted_error(max_attempts: u32) -> String {
+    format!("LLM unavailable after {max_attempts} automatic recovery attempts.")
 }
 
 fn build_tool_failure_signature(tool_name: &str, result: &ToolResultPayload) -> String {
@@ -3735,13 +3955,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_empty_answer_fallback_uses_empty_response_reason() {
-        let (answer, stop_reason) = resolve_empty_answer_fallback();
-        assert!(!answer.trim().is_empty());
-        assert_eq!(stop_reason, "empty_response");
-    }
-
-    #[test]
     fn recover_from_context_overflow_when_code_matches() {
         let err = OrchestratorError::context_window_exceeded("context length exceeded".to_string());
         assert!(should_recover_from_context_overflow(&err));
@@ -4081,9 +4294,11 @@ mod tests {
                 arguments: json!({ "timestamp": "..." }),
             },
         ];
-        let planned = build_planned_tool_calls(calls, &allowed);
-        assert_eq!(planned.len(), 1);
-        assert_eq!(planned[0].name, resolve_tool_name("read_file"));
+        let result = build_planned_tool_calls(calls, &allowed);
+        assert_eq!(result.planned.len(), 1);
+        assert_eq!(result.planned[0].name, resolve_tool_name("read_file"));
+        assert_eq!(result.rejected.len(), 1);
+        assert_eq!(result.rejected[0].name, "2026-03-03");
     }
 
     #[test]
@@ -4095,9 +4310,82 @@ mod tests {
             function_name: None,
             arguments: json!({ "content": "ok" }),
         }];
-        let planned = build_planned_tool_calls(calls, &allowed);
-        assert_eq!(planned.len(), 1);
-        assert_eq!(planned[0].name, resolve_tool_name("final_response"));
+        let result = build_planned_tool_calls(calls, &allowed);
+        assert_eq!(result.planned.len(), 1);
+        assert_eq!(result.planned[0].name, resolve_tool_name("final_response"));
+        assert!(result.rejected.is_empty());
+    }
+
+    #[test]
+    fn build_planned_tool_calls_reports_unknown_tool_call() {
+        let allowed = HashSet::from([resolve_tool_name("programmatic_tool_call")]);
+        let calls = vec![ToolCall {
+            id: None,
+            name: "programmatic_tool_calls".to_string(),
+            function_name: None,
+            arguments: json!({ "raw": "{\"calls\":[name\":\"programmatic_tool_call\"}" }),
+        }];
+
+        let result = build_planned_tool_calls(calls, &allowed);
+
+        assert!(result.planned.is_empty());
+        assert_eq!(result.rejected.len(), 1);
+        assert_eq!(result.rejected[0].name, "programmatic_tool_calls");
+        assert_eq!(result.rejected[0].reason, "tool_not_allowed_or_unknown");
+        assert!(result.rejected[0].arguments_preview.contains("calls"));
+    }
+
+    #[test]
+    fn invalid_tool_call_notice_instructs_repair_or_final_response() {
+        let allowed = HashSet::from([
+            resolve_tool_name("final_response"),
+            resolve_tool_name("programmatic_tool_call"),
+        ]);
+        let rejected = vec![RejectedToolCall {
+            name: "programmatic_tool_calls".to_string(),
+            resolved_name: "programmatic_tool_calls".to_string(),
+            reason: "tool_not_allowed_or_unknown",
+            arguments_preview: "{\"raw\":\"bad\"}".to_string(),
+        }];
+
+        let notice = build_invalid_tool_call_model_notice(&rejected, &allowed);
+
+        assert_eq!(notice.get("type"), Some(&json!("invalid_tool_call_notice")));
+        let instruction = notice
+            .get("instruction")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(instruction.contains("final_response"));
+        assert!(instruction.contains("valid JSON arguments"));
+    }
+
+    #[test]
+    fn empty_final_answer_notice_instructs_continue_not_empty_stop() {
+        let notice = build_empty_final_answer_model_notice(1, 3, false, true, false, true);
+
+        assert_eq!(
+            notice.get("type"),
+            Some(&json!("empty_final_answer_notice"))
+        );
+        assert_eq!(notice.get("had_reasoning"), Some(&json!(true)));
+        let instruction = notice
+            .get("instruction")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(instruction.contains("Continue the task now"));
+        assert!(instruction.contains("final_response"));
+    }
+
+    #[test]
+    fn empty_final_answer_notice_without_tools_requests_direct_answer() {
+        let notice = build_empty_final_answer_model_notice(2, 3, true, false, true, false);
+
+        let instruction = notice
+            .get("instruction")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(instruction.contains("Respond directly"));
+        assert!(!instruction.contains("final_response"));
     }
 
     #[test]

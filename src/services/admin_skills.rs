@@ -268,7 +268,6 @@ mod tests {
         resolve_admin_custom_skills_root_path, resolve_builtin_skills_root_path,
         ADMIN_CUSTOM_SKILLS_ROOT_ENV, BUILTIN_SKILLS_ROOT_ENV,
     };
-    use crate::config::Config;
     use crate::config_store::ConfigStore;
     use std::path::Path;
     use std::sync::{Mutex, OnceLock};

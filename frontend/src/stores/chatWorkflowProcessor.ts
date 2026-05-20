@@ -1054,6 +1054,26 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     return fallbackStatus;
   };
 
+  const buildToolCallRawDetail = (toolName, source) => {
+    if (!toolName || !source || typeof source !== 'object') return '';
+    try {
+      return JSON.stringify(
+        {
+          tool: String(toolName || ''),
+          arguments:
+            source.args ??
+            source.arguments ??
+            source.function?.arguments ??
+            {}
+        },
+        null,
+        2
+      );
+    } catch (_error) {
+      return '';
+    }
+  };
+
   const ensureCommandSessionCallItem = (commandSessionId, source, command = '') => {
     const normalizedSessionId = normalizeCommandSessionRef(commandSessionId);
     if (!normalizedSessionId) return null;
@@ -1094,7 +1114,15 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     };
     const existing = toolCallItemMap.get(workflowRef) || toolCallItemMap.get(normalizedSessionId);
     if (existing) {
-      updateWorkflowItem(assistantMessage.workflowItems, existing, patch);
+      const currentItem = assistantMessage.workflowItems.find((item) => item?.id === existing);
+      const rawDetail =
+        currentItem?.toolCallRawDetail ?? currentItem?.tool_call_raw_detail;
+      updateWorkflowItem(assistantMessage.workflowItems, existing, {
+        ...patch,
+        ...(rawDetail
+          ? { toolCallRawDetail: rawDetail, tool_call_raw_detail: rawDetail }
+          : {})
+      });
       toolCallItemMap.set(normalizedSessionId, existing);
       if (normalizedToolCallId) {
         toolCallItemMap.set(normalizedToolCallId, existing);
@@ -1957,6 +1985,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     buildToolOutputDetail, clearToolOutputFlush, scheduleToolOutputFlush, ensureToolOutputItem,
     finalizeToolOutputItem, resolveCommandSessionStatus, ensureCommandSessionCallItem,
     mergeCommandSessionSummaryIntoBuffer, upsertCommandSessionResultItem, extractCommandSessionResultRows,
+    buildToolCallRawDetail,
     isContextOverflowText, markCompactionProgressFailed, finalizeCompactionProgressItem,
     appendCompactionOutcomeNotice, finalizeLingeringCompactionProgressItems, shouldKeepCompactionMarkerLayout, resolveActiveCompactionWorkflowRef, resolveStandaloneCompactionWorkflowRef, ensureCompactionProgressItem,
     clearCompactionProgressRef, normalizeSubagentWorkflowStatus, ensureSubagentDispatchItem, upsertSubagentPayloads, resolveRound, advanceModelRound, buildOutputDetail, thinkStreamParser,

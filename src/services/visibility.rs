@@ -24,22 +24,6 @@ pub fn expand_visible_unit_ids(
     org_units::collect_descendant_unit_ids(units, &roots)
 }
 
-pub fn is_visible_to_user(
-    user: &UserAccountRecord,
-    visible_unit_ids: &[String],
-    units: &[OrgUnitRecord],
-) -> bool {
-    let normalized = normalize_visible_unit_ids(visible_unit_ids.to_vec());
-    if normalized.is_empty() {
-        return true;
-    }
-    let Some(user_unit_id) = user.unit_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    let visible_units = expand_visible_unit_ids(&normalized, units);
-    visible_units.contains(user_unit_id)
-}
-
 pub fn normalize_tool_visibility_rules(rules: Vec<ToolVisibilityRule>) -> Vec<ToolVisibilityRule> {
     let mut seen = HashSet::new();
     let mut output = Vec::new();
@@ -55,14 +39,6 @@ pub fn normalize_tool_visibility_rules(rules: Vec<ToolVisibilityRule>) -> Vec<To
     output
 }
 
-pub fn tool_visibility_rule_map(rules: &[ToolVisibilityRule]) -> HashSet<String> {
-    rules
-        .iter()
-        .map(|rule| crate::tools::resolve_tool_name(rule.name.trim()))
-        .filter(|name| !name.is_empty())
-        .collect()
-}
-
 pub fn filter_tool_visibility(
     allowed: HashSet<String>,
     rules: &[ToolVisibilityRule],
@@ -72,7 +48,11 @@ pub fn filter_tool_visibility(
     if rules.is_empty() {
         return allowed;
     }
-    let user_unit_id = user.unit_id.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let user_unit_id = user
+        .unit_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let rule_map = normalize_tool_visibility_rules(rules.to_vec())
         .into_iter()
         .map(|rule| {
@@ -85,10 +65,7 @@ pub fn filter_tool_visibility(
     let mut filtered = HashSet::new();
     for tool_name in allowed {
         let canonical = crate::tools::resolve_tool_name(&tool_name);
-        let Some((_, visible_units)) = rule_map
-            .iter()
-            .find(|(name, _)| name == &canonical)
-        else {
+        let Some((_, visible_units)) = rule_map.iter().find(|(name, _)| name == &canonical) else {
             filtered.insert(tool_name);
             continue;
         };

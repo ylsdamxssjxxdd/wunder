@@ -108,6 +108,7 @@ type DesktopCompanionBridge = {
   updateCompanion?: (payload: Record<string, unknown>) => Promise<boolean> | boolean;
   hideCompanion?: (payload?: Record<string, unknown>) => Promise<boolean> | boolean;
   onCompanionCommand?: (listener: (payload: unknown) => void) => (() => void) | void;
+  onCompanionStateChanged?: (listener: (payload: unknown) => void) => (() => void) | void;
 };
 
 type DesktopCompanionCommand = {
@@ -158,9 +159,9 @@ const menuRef = ref<HTMLElement | null>(null);
 const menuPosition = ref({ x: 8, y: 8 });
 let nowTimer: number | null = null;
 let clickSuppressUntil = 0;
-let desktopOverlayActive = false;
-let desktopOverlayKey = '';
+const desktopOverlayActiveKeys = new Set<string>();
 let desktopCommandUnsubscribe: (() => void) | null = null;
+let desktopStateUnsubscribe: (() => void) | null = null;
 const menuState = ref<{ x: number; y: number; entry: FloatingEntry } | null>(null);
 let pointerState:
   | {
@@ -349,14 +350,6 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
 
 const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
 const renderedEntries = computed(() => (effectiveDesktopMode.value ? [] : visibleEntries.value));
-const desktopEntry = computed<FloatingEntry | null>(() => {
-  const activeAgentId = String(activeSessionAgentId.value || '').trim();
-  if (activeAgentId) {
-    const matched = visibleEntries.value.find((entry) => entry.agentId === activeAgentId);
-    return matched || null;
-  }
-  return visibleEntries.value[0] || null;
-});
 
 const menuStyle = computed(() => {
   if (!menuState.value) {
@@ -513,49 +506,62 @@ async function syncDesktopOverlay(): Promise<void> {
   if (effectiveDesktopMode.value && !companionStore.hydrated) {
     return;
   }
-  const entry = desktopEntry.value;
   const bridge = getDesktopBridge();
-  if (!effectiveDesktopMode.value || !entry || !bridge) {
-    if (desktopOverlayActive && typeof bridge?.hideCompanion === 'function') {
+  if (!effectiveDesktopMode.value || !bridge) {
+    if (typeof bridge?.hideCompanion === 'function') {
       await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     }
-    desktopOverlayActive = false;
-    desktopOverlayKey = '';
+    desktopOverlayActiveKeys.clear();
     return;
   }
-  const handler = desktopOverlayActive && typeof bridge.updateCompanion === 'function'
-    ? bridge.updateCompanion
-    : bridge.showCompanion;
-  if (typeof handler !== 'function') {
-    desktopOverlayActive = false;
-    desktopOverlayKey = '';
+  const showHandler = typeof bridge.showCompanion === 'function' ? bridge.showCompanion : null;
+  const updateHandler = typeof bridge.updateCompanion === 'function' ? bridge.updateCompanion : showHandler;
+  if (!showHandler && !updateHandler) {
+    desktopOverlayActiveKeys.clear();
     return;
   }
-  const position = effectiveDesktopMode.value
-    ? companionStore.settings.position
-    : (positions.value[entry.key] || defaultPosition(0));
-  const includePosition = !desktopOverlayActive || desktopOverlayKey !== entry.key;
-  const nextPayload: Record<string, unknown> = {
-    key: entry.key,
-    id: entry.companion.id,
-    selectedId: entry.companion.id,
-    agentId: entry.agentId,
-    displayName: entry.name,
-    description: entry.companion.description,
-    spritesheetDataUrl: entry.companion.spritesheetDataUrl,
-    state: resolveDesktopBaseSpriteState(entry),
-    scale: entry.scale,
-    message: entry.message,
-    messageKind: entry.messageKind,
-    messageVisible: entry.messageVisible
-  };
-  if (includePosition) {
-    nextPayload.x = position.x;
-    nextPayload.y = position.y;
+  const nextKeys = new Set(visibleEntries.value.map((entry) => entry.key));
+  const staleKeys = Array.from(desktopOverlayActiveKeys).filter((key) => !nextKeys.has(key));
+  if (typeof bridge.hideCompanion === 'function') {
+    await Promise.all(staleKeys.map((key) => Promise.resolve(bridge.hideCompanion?.({ key, persistEnabled: false }))));
   }
-  desktopOverlayActive = (await Promise.resolve(handler.call(bridge, nextPayload))) === true;
-  if (desktopOverlayActive) {
-    desktopOverlayKey = entry.key;
+  staleKeys.forEach((key) => desktopOverlayActiveKeys.delete(key));
+  await Promise.all(visibleEntries.value.map(async (entry, index) => {
+    const isActive = desktopOverlayActiveKeys.has(entry.key);
+    const handler = isActive ? updateHandler : (showHandler || updateHandler);
+    if (typeof handler !== 'function') {
+      return;
+    }
+    const position = positions.value[entry.key] || defaultPosition(index);
+    const nextPayload: Record<string, unknown> = {
+      key: entry.key,
+      id: entry.companion.id,
+      selectedId: entry.companion.id,
+      agentId: entry.agentId,
+      displayName: entry.name,
+      description: entry.companion.description,
+      spritesheetDataUrl: entry.companion.spritesheetDataUrl,
+      state: resolveDesktopBaseSpriteState(entry),
+      scale: entry.scale,
+      message: entry.message,
+      messageKind: entry.messageKind,
+      messageVisible: entry.messageVisible,
+      persist: false
+    };
+    if (!isActive) {
+      nextPayload.x = position.x;
+      nextPayload.y = position.y;
+    }
+    const visible = (await Promise.resolve(handler.call(bridge, nextPayload))) === true;
+    if (visible) {
+      desktopOverlayActiveKeys.add(entry.key);
+    } else {
+      desktopOverlayActiveKeys.delete(entry.key);
+    }
+  }));
+  if (!visibleEntries.value.length && typeof bridge.hideCompanion === 'function') {
+    await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
+    desktopOverlayActiveKeys.clear();
   }
 }
 
@@ -574,7 +580,7 @@ function resolveEntryForDesktopCommand(command: DesktopCompanionCommand): Floati
       return matchedByAgentId;
     }
   }
-  return desktopEntry.value;
+  return visibleEntries.value[0] || null;
 }
 
 async function handleDesktopCommand(payload: unknown): Promise<void> {
@@ -601,6 +607,24 @@ async function handleDesktopCommand(payload: unknown): Promise<void> {
     return;
   }
   await applyCompanionScale(entry, resolveScaleValue(source.scale));
+}
+
+function applyDesktopStatePosition(payload: unknown): void {
+  const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  const key = String(source.key || '').trim();
+  const x = Number(source.x);
+  const y = Number(source.y);
+  if (!key || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return;
+  }
+  const entry = visibleEntries.value.find((item) => item.key === key);
+  if (!entry) {
+    return;
+  }
+  setPosition(key, {
+    x: Math.max(0, Math.round(x)),
+    y: Math.max(0, Math.round(y))
+  });
 }
 
 function handleClick(entry: FloatingEntry): void {
@@ -787,6 +811,12 @@ onMounted(async () => {
     });
     desktopCommandUnsubscribe = typeof unsubscribe === 'function' ? unsubscribe : null;
   }
+  if (typeof bridge?.onCompanionStateChanged === 'function') {
+    const unsubscribe = bridge.onCompanionStateChanged((payload: unknown) => {
+      applyDesktopStatePosition(payload);
+    });
+    desktopStateUnsubscribe = typeof unsubscribe === 'function' ? unsubscribe : null;
+  }
   window.addEventListener('resize', clampAfterResize);
   document.addEventListener('mousedown', closeEntryMenu);
   window.addEventListener('blur', closeEntryMenu);
@@ -831,6 +861,8 @@ onBeforeUnmount(() => {
   Array.from(spriteStateTimeoutByKey.keys()).forEach((key) => clearSpriteStateOverride(key));
   desktopCommandUnsubscribe?.();
   desktopCommandUnsubscribe = null;
+  desktopStateUnsubscribe?.();
+  desktopStateUnsubscribe = null;
   window.removeEventListener('resize', clampAfterResize);
   window.removeEventListener('pointermove', handlePointerMove);
   document.removeEventListener('mousedown', closeEntryMenu);
@@ -895,7 +927,6 @@ watch(
 watch(
   () => visibleEntries.value.map((entry) => [
     companionStore.hydrated ? 1 : 0,
-    desktopEntry.value?.key || '',
     entry.key,
     entry.scale,
     entry.message,

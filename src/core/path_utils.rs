@@ -60,8 +60,14 @@ mod tests {
 
     #[test]
     fn strip_windows_verbatim_prefix_handles_double_slash_variants() {
-        assert_eq!(strip_windows_verbatim_prefix(r"\\?\C:\demo\file.txt"), r"C:\demo\file.txt");
-        assert_eq!(strip_windows_verbatim_prefix("//?/C:/demo/file.txt"), "C:/demo/file.txt");
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\C:\demo\file.txt"),
+            r"C:\demo\file.txt"
+        );
+        assert_eq!(
+            strip_windows_verbatim_prefix("//?/C:/demo/file.txt"),
+            "C:/demo/file.txt"
+        );
     }
 
     #[test]

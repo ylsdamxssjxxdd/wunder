@@ -829,7 +829,8 @@ impl WorkspaceManager {
                 .strip_prefix(&root)
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| {
-                    if normalize_path_for_compare(&entry_path) == normalize_path_for_compare(&root) {
+                    if normalize_path_for_compare(&entry_path) == normalize_path_for_compare(&root)
+                    {
                         String::new()
                     } else {
                         entry_path.to_string_lossy().replace('\\', "/")

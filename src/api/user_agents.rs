@@ -1168,6 +1168,10 @@ async fn create_agent(
     } else {
         normalize_preset_questions(payload.preset_questions)
     };
+    let visible_unit_ids = copy_source
+        .as_ref()
+        .map(|source| source.visible_unit_ids.clone())
+        .unwrap_or_default();
 
     let record = crate::storage::UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),
@@ -1186,6 +1190,7 @@ async fn create_agent(
         tool_names,
         declared_tool_names: ability_selection.declared_tool_names,
         declared_skill_names: ability_selection.declared_skill_names,
+        visible_unit_ids,
         preset_questions,
         access_level,
         approval_mode,

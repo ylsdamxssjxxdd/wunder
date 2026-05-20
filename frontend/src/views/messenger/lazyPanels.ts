@@ -16,6 +16,9 @@ export const AgentSettingsPanel = lazy(
 export const DesktopContainerManagerPanel = lazy(
   () => import('@/components/messenger/DesktopContainerManagerPanel.vue')
 );
+export const DesktopModelSettingsPanel = lazy(
+  () => import('@/components/messenger/DesktopModelSettingsPanel.vue')
+);
 export const DesktopSystemSettingsPanel = lazy(
   () => import('@/components/messenger/DesktopSystemSettingsPanel.vue')
 );
@@ -99,7 +102,10 @@ const scheduleSecondaryMorePanelsPreload = (desktopMode: boolean): void => {
       import('@/components/messenger/MessengerHelpManualPanel.vue')
     ];
     if (desktopMode) {
-      tasks.push(import('@/components/messenger/DesktopSystemSettingsPanel.vue'));
+      tasks.push(
+        import('@/components/messenger/DesktopModelSettingsPanel.vue'),
+        import('@/components/messenger/DesktopSystemSettingsPanel.vue')
+      );
     }
     void Promise.allSettled(tasks);
   });

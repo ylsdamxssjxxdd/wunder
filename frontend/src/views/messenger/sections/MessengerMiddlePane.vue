@@ -1,6 +1,25 @@
 ﻿<template>
   <div v-if="showMiddlePaneSearch" class="messenger-search-row">
-    <div v-if="activeSection === 'agents'" class="messenger-search-slot">
+    <div v-if="showDesktopModelSearchTools" class="messenger-search-slot">
+      <el-dropdown trigger="click" placement="bottom-start" @command="handleDesktopModelTypeFilterCommand">
+        <button class="messenger-search messenger-search-select" type="button">
+          <span class="messenger-search-select-label">{{ selectedDesktopModelTypeLabel }}</span>
+          <i class="fa-solid fa-chevron-down messenger-search-select-caret" aria-hidden="true"></i>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="__all__">{{ t('desktop.system.modelTypeAll') }}</el-dropdown-item>
+            <el-dropdown-item command="llm">{{ t('desktop.system.modelTypeLlm') }}</el-dropdown-item>
+            <el-dropdown-item command="embedding">{{ t('desktop.system.modelTypeEmbedding') }}</el-dropdown-item>
+            <el-dropdown-item command="asr">{{ t('desktop.system.modelTypeAsr') }}</el-dropdown-item>
+            <el-dropdown-item command="tts">{{ t('desktop.system.modelTypeTts') }}</el-dropdown-item>
+            <el-dropdown-item command="image">{{ t('desktop.system.modelTypeImage') }}</el-dropdown-item>
+            <el-dropdown-item command="video">{{ t('desktop.system.modelTypeVideo') }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
+    <div v-else-if="activeSection === 'agents'" class="messenger-search-slot">
       <el-dropdown
         trigger="click"
         placement="bottom-start"
@@ -26,7 +45,7 @@
         </template>
       </el-dropdown>
     </div>
-    <label v-if="activeSection !== 'agents'" class="messenger-search">
+    <label v-if="activeSection !== 'agents' && !showDesktopModelSearchTools" class="messenger-search">
       <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
       <input
         :value="keyword"
@@ -65,7 +84,12 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
-    <div v-if="activeSection === 'agents'" class="messenger-search-actions">
+    <div v-if="showDesktopModelSearchTools" class="messenger-search-actions messenger-search-actions--single">
+      <button class="messenger-plus-btn" type="button" @click="emit('activate-settings-panel', `desktop-models:add:${selectedDesktopModelType === '__all__' ? 'llm' : selectedDesktopModelType}`)">
+        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div v-else-if="activeSection === 'agents'" class="messenger-search-actions">
       <el-dropdown
         trigger="click"
         placement="bottom-end"
@@ -791,6 +815,32 @@
       </button>
     </template>
 
+    <template v-else-if="activeSection === 'more' && desktopMode && settingsPanelMode === 'desktop-models'">
+      <button
+        v-for="item in filteredDesktopModelItems"
+        :key="`desktop-model-${item.uid}`"
+        class="messenger-list-item messenger-agent-item messenger-desktop-model-item"
+        :class="{ active: selectedDesktopModelKey === resolveDesktopModelSelectionKey(item) }"
+        type="button"
+        @click="emit('update:selectedDesktopModelKey', resolveDesktopModelSelectionKey(item))"
+      >
+        <span v-if="item.isDefault" class="messenger-desktop-model-default-bookmark">
+          {{ t('desktop.system.defaultBadge') }}
+        </span>
+        <div class="messenger-list-avatar"><i class="fa-solid" :class="resolveDesktopModelTypeIcon(item.type)" aria-hidden="true"></i></div>
+        <div class="messenger-list-main messenger-desktop-model-item__main">
+          <div class="messenger-list-row messenger-desktop-model-item__name-row">
+            <span class="messenger-list-name messenger-desktop-model-item__name">{{ item.key || t('desktop.system.modelUnnamed') }}</span>
+          </div>
+          <div class="messenger-list-row messenger-desktop-model-item__meta-row">
+            <span class="messenger-list-preview messenger-desktop-model-item__meta">{{ item.meta }}</span>
+          </div>
+        </div>
+      </button>
+      <div v-if="desktopModelsLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+      <div v-else-if="!filteredDesktopModelItems.length" class="messenger-list-empty">{{ t('desktop.system.modelListEmpty') }}</div>
+    </template>
+
     <template v-else>
       <button
         class="messenger-list-item"
@@ -856,34 +906,10 @@
           </div>
         </div>
       </button>
-      <template v-if="desktopMode && settingsPanelMode === 'desktop-models'">
-        <div class="messenger-block-title messenger-block-title--tight">{{ t('desktop.system.modelsTitle') }}</div>
-        <button
-          v-for="item in desktopModelItems"
-          :key="`desktop-model-${item.key}`"
-          class="messenger-list-item messenger-list-item--compact"
-          :class="{ active: selectedDesktopModelKey === item.key }"
-          type="button"
-          @click="emit('update:selectedDesktopModelKey', item.key)"
-        >
-          <div class="messenger-list-avatar"><i class="fa-solid" :class="resolveDesktopModelTypeIcon(item.type)" aria-hidden="true"></i></div>
-          <div class="messenger-list-main">
-            <div class="messenger-list-row">
-              <span class="messenger-list-name">{{ item.key || t('desktop.system.modelUnnamed') }}</span>
-              <span class="messenger-kind-tag">{{ item.type || 'llm' }}</span>
-            </div>
-            <div class="messenger-list-row">
-              <span class="messenger-list-preview">{{ item.model || '-' }} · {{ item.baseUrl || '-' }}</span>
-            </div>
-          </div>
-        </button>
-        <div v-if="desktopModelsLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
-        <div v-else-if="!desktopModelItems.length" class="messenger-list-empty">{{ t('desktop.system.modelListEmpty') }}</div>
-      </template>
     </template>
   </div>
 
-  <div v-if="activeSection === 'more'" class="messenger-middle-footer">
+  <div v-if="activeSection === 'more' && settingsPanelMode !== 'desktop-models'" class="messenger-middle-footer">
     <button
       class="messenger-middle-logout-btn"
       type="button"
@@ -1111,6 +1137,7 @@ const {
   settingsPanelMode,
   desktopMode,
   selectedDesktopModelKey,
+  desktopModelRows,
   currentUsername,
   settingsLogoutDisabled,
   handleSettingsLogout,
@@ -1204,6 +1231,7 @@ const {
   settingsPanelMode: string;
   desktopMode: boolean;
   selectedDesktopModelKey?: string;
+  desktopModelRows?: Array<Record<string, unknown>>;
   'onUpdate:selectedDesktopModelKey'?: (value: string) => void;
   currentUsername: string;
   settingsLogoutDisabled: boolean;
@@ -1267,8 +1295,53 @@ const middlePaneSearchableSections = new Set([
   'agents'
 ]);
 
-const desktopModelItems = ref<Array<{ key: string; model: string; type: string; baseUrl: string }>>([]);
+type DesktopModelListItem = {
+  uid: string;
+  key: string;
+  model: string;
+  type: string;
+  baseUrl: string;
+  typeLabel: string;
+  meta: string;
+  isDefault: boolean;
+};
+
+type DesktopModelDefaultKeys = Partial<Record<'llm' | 'embedding' | 'asr' | 'tts' | 'image' | 'video', string>>;
+
+const selectedDesktopModelType = ref('__all__');
+const desktopModelItems = ref<DesktopModelListItem[]>([]);
 const desktopModelsLoading = ref(false);
+
+const normalizeDesktopModelType = (value: unknown): keyof DesktopModelDefaultKeys => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'embedding' || normalized === 'asr' || normalized === 'tts' || normalized === 'image' || normalized === 'video') {
+    return normalized;
+  }
+  return 'llm';
+};
+
+const normalizeDesktopModelItems = (
+  entries: Array<Record<string, unknown>>,
+  defaultKeys: DesktopModelDefaultKeys = {}
+) =>
+  entries.map((value, index) => {
+    const key = String(value?.key || '').trim();
+    const type = normalizeDesktopModelType(value?.model_type || value?.type || 'llm');
+    const model = String(value?.model || '').trim();
+    const baseUrl = String(value?.base_url || value?.baseUrl || '').trim();
+    const uid = String(value?.uid || key || `draft-${index}`).trim();
+    const isDefault = value?.is_default === true || (Boolean(key) && key === String(defaultKeys[type] || '').trim());
+    return {
+      uid,
+      key,
+      model,
+      type,
+      baseUrl,
+      typeLabel: modelTypeLabel(type),
+      meta: [model, baseUrl].filter(Boolean).join(' · '),
+      isDefault
+    };
+  });
 
 const loadDesktopModelItems = async () => {
   if (!desktopMode || settingsPanelMode !== 'desktop-models') return;
@@ -1277,14 +1350,20 @@ const loadDesktopModelItems = async () => {
     const response = await fetchDesktopSettings();
     const llm = (response?.data?.data?.llm || {}) as Record<string, any>;
     const models = (llm.models || {}) as Record<string, Record<string, unknown>>;
-    desktopModelItems.value = Object.entries(models).map(([key, value]) => ({
-      key: String(key || '').trim(),
-      model: String(value?.model || '').trim(),
-      type: String(value?.model_type || 'llm').trim(),
-      baseUrl: String(value?.base_url || '').trim()
-    }));
+    const defaultKeys: DesktopModelDefaultKeys = {
+      llm: String(llm.default || '').trim(),
+      embedding: String(llm.default_embedding || '').trim(),
+      asr: String(llm.default_asr || '').trim(),
+      tts: String(llm.default_tts || '').trim(),
+      image: String(llm.default_image || '').trim(),
+      video: String(llm.default_video || '').trim()
+    };
+    desktopModelItems.value = normalizeDesktopModelItems(
+      Object.entries(models).map(([key, value]) => ({ ...value, key })),
+      defaultKeys
+    );
     if (!selectedDesktopModelKey && desktopModelItems.value.length) {
-      emit('update:selectedDesktopModelKey', desktopModelItems.value[0].key);
+      emit('update:selectedDesktopModelKey', resolveDesktopModelSelectionKey(desktopModelItems.value[0]));
     }
   } catch {
     desktopModelItems.value = [];
@@ -1292,6 +1371,9 @@ const loadDesktopModelItems = async () => {
     desktopModelsLoading.value = false;
   }
 };
+
+const resolveDesktopModelSelectionKey = (item: { uid?: string; key?: string }): string =>
+  String(item.uid || item.key || '').trim();
 
 const resolveDesktopModelTypeIcon = (value: string): string => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -1303,6 +1385,39 @@ const resolveDesktopModelTypeIcon = (value: string): string => {
   return 'fa-brain';
 };
 
+const modelTypeLabel = (value: string): string => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'embedding') return t('desktop.system.modelTypeEmbedding');
+  if (normalized === 'asr') return t('desktop.system.modelTypeAsr');
+  if (normalized === 'tts') return t('desktop.system.modelTypeTts');
+  if (normalized === 'image') return t('desktop.system.modelTypeImage');
+  if (normalized === 'video') return t('desktop.system.modelTypeVideo');
+  return t('desktop.system.modelTypeLlm');
+};
+
+const selectedDesktopModelTypeLabel = computed(() => {
+  const normalized = String(selectedDesktopModelType.value || '').trim().toLowerCase();
+  if (!normalized || normalized === '__all__') return t('desktop.system.modelTypeAll');
+  return modelTypeLabel(normalized);
+});
+
+const filteredDesktopModelItems = computed(() => {
+  const normalized = String(selectedDesktopModelType.value || '').trim().toLowerCase();
+  if (!normalized || normalized === '__all__') {
+    return desktopModelItems.value;
+  }
+  return desktopModelItems.value.filter((item) => String(item.type || '').trim().toLowerCase() === normalized);
+});
+
+const handleDesktopModelTypeFilterCommand = (command: string | number | Record<string, unknown>) => {
+  const normalized = String(command || '').trim().toLowerCase();
+  selectedDesktopModelType.value = normalized || '__all__';
+};
+
+const showDesktopModelSearchTools = computed(
+  () => activeSection === 'more' && desktopMode && settingsPanelMode === 'desktop-models'
+);
+
 watch(
   () => [desktopMode, settingsPanelMode] as const,
   ([nextDesktopMode, nextPanelMode]) => {
@@ -1312,8 +1427,41 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  () => desktopModelRows,
+  (rows) => {
+    if (!desktopMode || settingsPanelMode !== 'desktop-models' || !Array.isArray(rows)) {
+      return;
+    }
+    desktopModelItems.value = normalizeDesktopModelItems(rows);
+    const currentSelection = String(selectedDesktopModelKey || '').trim();
+    if (!currentSelection) {
+      return;
+    }
+    const matchedBySelection = desktopModelItems.value.find(
+      (item) => resolveDesktopModelSelectionKey(item) === currentSelection
+    );
+    if (matchedBySelection) {
+      return;
+    }
+    const matchedByModelKey = desktopModelItems.value.find(
+      (item) => String(item.key || '').trim() === currentSelection
+    );
+    if (matchedByModelKey) {
+      emit('update:selectedDesktopModelKey', resolveDesktopModelSelectionKey(matchedByModelKey));
+      return;
+    }
+    if (desktopModelItems.value.length) {
+      emit('update:selectedDesktopModelKey', resolveDesktopModelSelectionKey(desktopModelItems.value[0]));
+    }
+  },
+  { deep: true, immediate: true }
+);
 const showMiddlePaneSearch = computed(
-  () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
+  () =>
+    !showHelperAppsWorkspace &&
+    (showDesktopModelSearchTools.value || middlePaneSearchableSections.has(String(activeSection || '').trim()))
 );
 
 const plazaHivePageIconUrl = `${import.meta.env.BASE_URL}beeroom.png`;
@@ -2507,6 +2655,11 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   border-radius: 7px;
 }
 
+.messenger-search-actions--single {
+  flex: 0 0 32px;
+  width: 32px;
+}
+
 .messenger-conversation-item,
 .messenger-agent-item {
   position: relative;
@@ -2516,6 +2669,76 @@ const handleSwarmExport = async (group: Record<string, any>) => {
 .messenger-conversation-item .messenger-list-main,
 .messenger-agent-item .messenger-list-main {
   padding-right: 10px;
+}
+
+.messenger-desktop-model-item {
+  align-items: center;
+}
+
+.messenger-desktop-model-item .messenger-list-avatar {
+  align-self: center;
+}
+
+.messenger-desktop-model-item__main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.messenger-desktop-model-item__name-row,
+.messenger-desktop-model-item__meta-row {
+  min-height: 20px;
+}
+
+.messenger-desktop-model-item__name {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+  font-size: calc(14px * var(--messenger-font-scale, 1));
+}
+
+.messenger-desktop-model-item__meta {
+  line-height: 1.45;
+}
+
+.messenger-desktop-model-default-bookmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: -1px;
+  right: 12px;
+  z-index: 2;
+  min-width: 26px;
+  height: 34px;
+  padding: 0 8px 6px;
+  border-radius: 0 0 11px 11px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-top: 0;
+  background: linear-gradient(180deg, rgba(255, 243, 199, 0.98), rgba(254, 230, 138, 0.94));
+  color: #9a670d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 8px 18px rgba(217, 119, 6, 0.14);
+}
+
+.messenger-desktop-model-default-bookmark::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  background: inherit;
+  border-left: 1px solid rgba(245, 158, 11, 0.3);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  transform: translateX(-50%) rotate(-45deg);
+  transform-origin: center;
 }
 
 .messenger-orchestration-bookmark {

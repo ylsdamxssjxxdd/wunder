@@ -437,6 +437,7 @@ impl PostgresStorage {
             tool_names: tool_names.clone(),
             declared_tool_names: Self::parse_declared_tool_names(row.get(8)),
             declared_skill_names: Self::parse_string_list(row.get(9)),
+            visible_unit_ids: Self::parse_string_list(row.get(24)),
             preset_questions: Self::parse_string_list(row.get(19)),
             access_level: row.get(11),
             approval_mode: row.get(12),
@@ -1046,6 +1047,12 @@ impl PostgresStorage {
         if !columns.contains("declared_skill_names") {
             conn.execute(
                 "ALTER TABLE user_agents ADD COLUMN declared_skill_names TEXT",
+                &[],
+            )?;
+        }
+        if !columns.contains("visible_unit_ids") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN visible_unit_ids TEXT",
                 &[],
             )?;
         }
@@ -2299,6 +2306,7 @@ impl StorageBackend for PostgresStorage {
                   tool_names TEXT,
                   declared_tool_names TEXT,
                   declared_skill_names TEXT,
+                  visible_unit_ids TEXT,
                   ability_items TEXT,
                   access_level TEXT NOT NULL,
                   approval_mode TEXT NOT NULL DEFAULT 'full_auto',
@@ -9729,6 +9737,11 @@ impl StorageBackend for PostgresStorage {
         } else {
             Some(Self::string_list_to_json(&record.declared_skill_names))
         };
+        let visible_unit_ids = if record.visible_unit_ids.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.visible_unit_ids))
+        };
         let ability_items = if record.ability_items.is_empty() {
             None
         } else {
@@ -9750,7 +9763,7 @@ impl StorageBackend for PostgresStorage {
         let sandbox_container_id = normalize_sandbox_container_id(record.sandbox_container_id);
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, name = EXCLUDED.name, description = EXCLUDED.description,              system_prompt = EXCLUDED.system_prompt, model_name = EXCLUDED.model_name, tool_names = EXCLUDED.tool_names, declared_tool_names = EXCLUDED.declared_tool_names, declared_skill_names = EXCLUDED.declared_skill_names, ability_items = EXCLUDED.ability_items, access_level = EXCLUDED.access_level, approval_mode = EXCLUDED.approval_mode,              is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at, preset_questions = EXCLUDED.preset_questions, preset_binding = EXCLUDED.preset_binding, silent = EXCLUDED.silent, prefer_mother = EXCLUDED.prefer_mother, preview_skill = EXCLUDED.preview_skill",
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill, visible_unit_ids)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, name = EXCLUDED.name, description = EXCLUDED.description,              system_prompt = EXCLUDED.system_prompt, model_name = EXCLUDED.model_name, tool_names = EXCLUDED.tool_names, declared_tool_names = EXCLUDED.declared_tool_names, declared_skill_names = EXCLUDED.declared_skill_names, ability_items = EXCLUDED.ability_items, access_level = EXCLUDED.access_level, approval_mode = EXCLUDED.approval_mode,              is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at, preset_questions = EXCLUDED.preset_questions, preset_binding = EXCLUDED.preset_binding, silent = EXCLUDED.silent, prefer_mother = EXCLUDED.prefer_mother, preview_skill = EXCLUDED.preview_skill, visible_unit_ids = EXCLUDED.visible_unit_ids",
             &[
                 &record.agent_id,
                 &record.user_id,
@@ -9776,6 +9789,7 @@ impl StorageBackend for PostgresStorage {
                 &silent,
                 &prefer_mother,
                 &preview_skill,
+                &visible_unit_ids,
             ],
         )?;
         Ok(())
@@ -9790,7 +9804,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill FROM user_agents WHERE user_id = $1 AND agent_id = $2",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill, visible_unit_ids FROM user_agents WHERE user_id = $1 AND agent_id = $2",
             &[&cleaned_user, &cleaned_agent],
         )?;
         Ok(row.map(|row| Self::read_user_agent_row(&row)))
@@ -9804,7 +9818,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill FROM user_agents WHERE agent_id = $1",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill, visible_unit_ids FROM user_agents WHERE agent_id = $1",
             &[&cleaned_agent],
         )?;
         Ok(row.map(|row| Self::read_user_agent_row(&row)))
@@ -9818,7 +9832,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill, visible_unit_ids FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
         let mut output = Vec::new();
@@ -9841,7 +9855,7 @@ impl StorageBackend for PostgresStorage {
         let normalized_hive_id = normalize_hive_id(hive_id);
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill FROM user_agents WHERE user_id = $1 AND hive_id = $2 ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill, visible_unit_ids FROM user_agents WHERE user_id = $1 AND hive_id = $2 ORDER BY updated_at DESC",
             &[&cleaned_user, &normalized_hive_id],
         )?;
         let mut output = Vec::new();
@@ -9859,7 +9873,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill FROM user_agents WHERE is_shared = 1 AND user_id <> $1 ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother, preview_skill, visible_unit_ids FROM user_agents WHERE is_shared = 1 AND user_id <> $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
         let mut output = Vec::new();

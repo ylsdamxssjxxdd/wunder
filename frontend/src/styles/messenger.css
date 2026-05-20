@@ -693,6 +693,25 @@
   gap: 0;
 }
 
+@media (max-height: 640px) {
+  .messenger-left-rail--more-open .messenger-avatar-btn,
+  .messenger-left-rail--more-open .messenger-left-rail-divider,
+  .messenger-left-rail--more-open .messenger-left-nav {
+    opacity: 0.36;
+    filter: blur(1.4px);
+    pointer-events: none;
+    transition:
+      opacity var(--messenger-motion-fast) var(--messenger-ease-standard),
+      filter var(--messenger-motion-fast) var(--messenger-ease-standard);
+  }
+
+  .messenger-left-rail--more-open .messenger-left-more-wrap {
+    opacity: 1;
+    filter: none;
+    pointer-events: auto;
+  }
+}
+
 .messenger-left-nav-btn--helper {
   border: 0;
   background: rgba(var(--ui-accent-rgb), 0.1);

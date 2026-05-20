@@ -30,6 +30,7 @@ export type AudioRecordingResult = {
   blob: Blob;
   durationMs: number;
   sampleRate: number;
+  mimeType: string;
 };
 
 export type AudioRecordingSession = {
@@ -180,6 +181,99 @@ const encodePcmToWav = (pcmSamples: Float32Array, sampleRate: number): Blob => {
   return new Blob([buffer], { type: 'audio/wav' });
 };
 
+const hasWavHeader = (buffer: ArrayBuffer): boolean => {
+  if (buffer.byteLength < 12) return false;
+  const view = new DataView(buffer);
+  return (
+    view.getUint8(0) === 0x52 &&
+    view.getUint8(1) === 0x49 &&
+    view.getUint8(2) === 0x46 &&
+    view.getUint8(3) === 0x46 &&
+    view.getUint8(8) === 0x57 &&
+    view.getUint8(9) === 0x41 &&
+    view.getUint8(10) === 0x56 &&
+    view.getUint8(11) === 0x45
+  );
+};
+
+const blobHasWavHeader = async (blob: Blob): Promise<boolean> => {
+  if (blob.size < 12) return false;
+  return hasWavHeader(await blob.slice(0, 12).arrayBuffer());
+};
+
+const decodeAudioBlob = async (blob: Blob): Promise<AudioBuffer> => {
+  const AudioContextCtor = resolveAudioContextCtor();
+  if (!AudioContextCtor) {
+    throw new Error('audio decoding is not supported');
+  }
+  const context = new AudioContextCtor();
+  try {
+    const data = await blob.arrayBuffer();
+    return await new Promise<AudioBuffer>((resolve, reject) => {
+      let settled = false;
+      const settleResolve = (value: AudioBuffer) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const settleReject = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(error instanceof Error ? error : new Error('audio decoding failed'));
+      };
+      try {
+        const decoded = context.decodeAudioData(data, settleResolve, settleReject);
+        if (decoded && typeof (decoded as Promise<AudioBuffer>).then === 'function') {
+          (decoded as Promise<AudioBuffer>).then(settleResolve, settleReject);
+        }
+      } catch (error) {
+        settleReject(error);
+      }
+    });
+  } finally {
+    try {
+      await context.close();
+    } catch {
+      // ignore close errors
+    }
+  }
+};
+
+const mixAudioBufferToMono = (buffer: AudioBuffer): Float32Array => {
+  const length = buffer.length;
+  const channelCount = Math.max(1, buffer.numberOfChannels);
+  const output = new Float32Array(length);
+  for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+    const channel = buffer.getChannelData(channelIndex);
+    for (let sampleIndex = 0; sampleIndex < length; sampleIndex += 1) {
+      output[sampleIndex] += channel[sampleIndex] / channelCount;
+    }
+  }
+  return output;
+};
+
+export const convertAudioBlobToWav = async (blob: Blob): Promise<Blob> => {
+  if (await blobHasWavHeader(blob)) {
+    return blob.type === 'audio/wav' ? blob : new Blob([blob], { type: 'audio/wav' });
+  }
+  const decoded = await decodeAudioBlob(blob);
+  if (!decoded.length) {
+    throw new Error('decoded audio is empty');
+  }
+  return encodePcmToWav(mixAudioBufferToMono(decoded), decoded.sampleRate || DEFAULT_SAMPLE_RATE);
+};
+
+export const createAudioTranscriptionWavFile = async (
+  blob: Blob,
+  filename: string
+): Promise<File> => {
+  const wavBlob = await convertAudioBlobToWav(blob);
+  const stem = String(filename || 'voice')
+    .trim()
+    .replace(/\.[^.\\/]+$/, '') || 'voice';
+  return new File([wavBlob], `${stem}.wav`, { type: 'audio/wav' });
+};
+
 const stopMediaTracks = (stream: MediaStream) => {
   stream.getTracks().forEach((track) => {
     try {
@@ -324,7 +418,8 @@ export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
       return {
         blob: new Blob([], { type: 'audio/wav' }),
         durationMs: 0,
-        sampleRate
+        sampleRate,
+        mimeType: 'audio/wav'
       };
     }
     if (!totalSamples) {
@@ -333,7 +428,7 @@ export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
     const mergedSamples = mergeFloatChunks(chunks, totalSamples);
     const blob = encodePcmToWav(mergedSamples, sampleRate);
     const durationMs = Math.max(1, Math.round((totalSamples / sampleRate) * 1000));
-    return { blob, durationMs, sampleRate };
+    return { blob, durationMs, sampleRate, mimeType: 'audio/wav' };
   };
 
   return {
@@ -418,7 +513,12 @@ const createMediaRecorderSession = (
       const handleStop = () => {
         cleanup();
         if (discard) {
-          settleResolve({ blob: new Blob([], { type: mimeType || 'audio/webm' }), durationMs: 0, sampleRate: 0 });
+          settleResolve({
+            blob: new Blob([], { type: mimeType || 'audio/webm' }),
+            durationMs: 0,
+            sampleRate: 0,
+            mimeType: mimeType || 'audio/webm'
+          });
           return;
         }
         const firstChunkMimeType = chunks.find((chunk): chunk is Blob => chunk instanceof Blob)?.type || '';
@@ -428,7 +528,12 @@ const createMediaRecorderSession = (
           return;
         }
         const durationMs = Math.max(1, Date.now() - startedAt);
-        settleResolve({ blob, durationMs, sampleRate: 0 });
+        settleResolve({
+          blob,
+          durationMs,
+          sampleRate: 0,
+          mimeType: blob.type || mimeType || firstChunkMimeType || 'audio/webm'
+        });
       };
       const handleError = (event: Event) => {
         cleanup();

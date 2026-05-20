@@ -754,6 +754,10 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.settingsPanelMode = ref<SettingsPanelMode>('general');
   ctx.selectedDesktopModelKey = ref('');
+  ctx.desktopModelCreateRequest = ref<{ nonce: number; modelType: string }>({
+      nonce: 0,
+      modelType: 'llm'
+  });
 
   ctx.rightDockCollapsed = ref(false);
 

@@ -5581,7 +5581,7 @@ mod tests {
     }
 
     #[test]
-    fn disables_native_tool_streaming_for_private_openai_compatible_backends() {
+    fn keeps_native_tool_streaming_for_private_openai_compatible_backends() {
         let config = LlmModelConfig {
             provider: Some("openai_compatible".to_string()),
             base_url: Some("http://192.168.1.88:8000/v1".to_string()),
@@ -5593,7 +5593,7 @@ mod tests {
     }
 
     #[test]
-    fn disables_native_tool_streaming_for_public_openai_compatible_backends() {
+    fn keeps_native_tool_streaming_for_public_openai_compatible_backends() {
         let config = LlmModelConfig {
             provider: Some("openai_compatible".to_string()),
             base_url: Some("https://api.openrouter.ai/v1".to_string()),
@@ -5604,10 +5604,21 @@ mod tests {
     }
 
     #[test]
-    fn disables_native_tool_streaming_for_vllm_ascend_provider() {
+    fn keeps_native_tool_streaming_for_vllm_ascend_provider_until_retry_recovery() {
         let config = LlmModelConfig {
             provider: Some("vllm_ascend".to_string()),
             base_url: Some("http://10.0.0.8:8000/v1".to_string()),
+            ..Default::default()
+        };
+
+        assert!(!should_disable_streaming_for_native_tools(&config, true));
+    }
+
+    #[test]
+    fn keeps_native_tool_streaming_for_official_openai_provider() {
+        let config = LlmModelConfig {
+            provider: Some("openai".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
             ..Default::default()
         };
 

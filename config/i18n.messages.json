@@ -272,8 +272,8 @@
     "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
   },
   "error.empty_no_final_answer": {
-    "en-US": "The model did not return a displayable final answer. Please retry or check the model stream settings.",
-    "zh-CN": "模型未返回可展示的最终答复，请重试或检查模型流式设置。"
+    "en-US": "LLM unavailable after automatic recovery attempts reached the configured limit.",
+    "zh-CN": "模型在自动恢复达到次数限制后仍不可用。"
   },
   "error.mcp_server_disabled": {
     "en-US": "MCP server disabled: {name}",

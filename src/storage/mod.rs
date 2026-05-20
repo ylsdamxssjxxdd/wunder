@@ -190,6 +190,7 @@ pub struct UserAgentRecord {
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,
+    pub visible_unit_ids: Vec<String>,
     pub preset_questions: Vec<String>,
     pub access_level: String,
     pub approval_mode: String,

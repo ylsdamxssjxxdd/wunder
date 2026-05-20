@@ -464,6 +464,9 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
       if (section === 'desktop-models-quick') {
           return ctx.sessionHub.activeSection === 'more' && ctx.settingsPanelMode.value === 'desktop-models';
       }
+      if (section === 'more' && ctx.desktopMode.value && ctx.settingsPanelMode.value === 'desktop-models') {
+          return false;
+      }
       return ctx.isSectionButtonActive(section);
   };
 

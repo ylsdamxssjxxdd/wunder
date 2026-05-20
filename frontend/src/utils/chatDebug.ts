@@ -15,6 +15,7 @@ const DEBUG_ENABLE_FN_KEY = '__wunderChatDebugEnable';
 const DEBUG_DISABLE_FN_KEY = '__wunderChatDebugDisable';
 const DEBUG_ENABLE_VERBOSE_FN_KEY = '__wunderChatDebugEnableVerbose';
 const DEBUG_DISABLE_VERBOSE_FN_KEY = '__wunderChatDebugDisableVerbose';
+const DEBUG_STATUS_FN_KEY = '__wunderChatDebugStatus';
 const DEBUG_MAX_HISTORY = 2000;
 const DEBUG_VERBOSE_SCOPES = new Set([
   'chat.store.preload',
@@ -145,6 +146,30 @@ const setDebugVerboseStorageFlag = (enabled: boolean) => {
   }
 };
 
+const readDebugHistory = (): ChatDebugEntry[] => {
+  if (typeof window === 'undefined') return [];
+  const target = window as unknown as Record<string, unknown>;
+  return Array.isArray(target[DEBUG_HISTORY_KEY])
+    ? (target[DEBUG_HISTORY_KEY] as ChatDebugEntry[])
+    : [];
+};
+
+const buildDebugStatus = () => ({
+  enabled: isChatDebugEnabled(),
+  verbose: isChatDebugVerboseEnabled(),
+  historyCount: readDebugHistory().length,
+  storageKey: DEBUG_STORAGE_KEYS[0],
+  verboseStorageKey: DEBUG_VERBOSE_STORAGE_KEYS[0],
+  dump: `${DEBUG_DUMP_FN_KEY}()`,
+  clear: `${DEBUG_CLEAR_FN_KEY}()`,
+  verboseEnable: `${DEBUG_ENABLE_VERBOSE_FN_KEY}()`
+});
+
+const announceDebugStatus = (event: string) => {
+  if (typeof console === 'undefined') return;
+  console.info(`[wunder-chat-debug] ${event}`, buildDebugStatus());
+};
+
 const shouldLogScopeEvent = (scope: string, event: string): boolean => {
   const normalizedScope = String(scope || '').trim() || 'unknown';
   const normalizedEvent = String(event || '').trim() || 'event';
@@ -167,35 +192,37 @@ const shouldLogScopeEvent = (scope: string, event: string): boolean => {
 const ensureDebugAccessors = () => {
   if (typeof window === 'undefined') return;
   const target = window as unknown as Record<string, unknown>;
-  if (typeof target[DEBUG_DUMP_FN_KEY] === 'function') {
-    return;
-  }
   target[DEBUG_DUMP_FN_KEY] = () => {
-    const entries = Array.isArray(target[DEBUG_HISTORY_KEY]) ? target[DEBUG_HISTORY_KEY] : [];
-    return JSON.stringify(entries, null, 2);
+    return JSON.stringify(readDebugHistory(), null, 2);
   };
   target[DEBUG_CLEAR_FN_KEY] = () => {
-    const entries = Array.isArray(target[DEBUG_HISTORY_KEY]) ? target[DEBUG_HISTORY_KEY] : [];
+    const entries = readDebugHistory();
     const cleared = entries.length;
     target[DEBUG_HISTORY_KEY] = [];
     return cleared;
   };
   target[DEBUG_ENABLE_FN_KEY] = () => {
     setDebugStorageFlag(true);
+    announceDebugStatus('enabled');
     return true;
   };
   target[DEBUG_DISABLE_FN_KEY] = () => {
     setDebugStorageFlag(false);
+    announceDebugStatus('disabled');
     return false;
   };
   target[DEBUG_ENABLE_VERBOSE_FN_KEY] = () => {
+    setDebugStorageFlag(true);
     setDebugVerboseStorageFlag(true);
+    announceDebugStatus('verbose enabled');
     return true;
   };
   target[DEBUG_DISABLE_VERBOSE_FN_KEY] = () => {
     setDebugVerboseStorageFlag(false);
+    announceDebugStatus('verbose disabled');
     return false;
   };
+  target[DEBUG_STATUS_FN_KEY] = () => buildDebugStatus();
 };
 
 const pushDebugEntry = (entry: ChatDebugEntry) => {
@@ -229,10 +256,10 @@ export const chatDebugLog = (scope: string, event: string, payload?: unknown): v
   pushDebugEntry(entry);
   const prefix = `[wunder-chat-debug][${entry.time}][${entry.scope}] ${entry.event}`;
   if (payload === undefined) {
-    console.debug(prefix);
+    console.info(prefix);
     return;
   }
-  console.debug(prefix, payload);
+  console.info(prefix, payload);
 };
 
 ensureDebugAccessors();

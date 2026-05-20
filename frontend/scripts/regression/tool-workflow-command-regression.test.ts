@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCommandCardView } from '../../src/components/chat/toolWorkflowActionViews';
+import { buildWorkflowToolCallDebugText } from '../../src/components/chat/toolWorkflowCallDebug';
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.command': 'Command',
@@ -39,4 +40,91 @@ test('empty command card does not synthesize placeholder command text', () => {
   assert.equal(view.command, '');
   assert.equal(view.terminalText, '');
   assert.equal(view.previewBody, '');
+});
+
+test('command tool call debug text excludes runtime session snapshot fields', () => {
+  const debugText = buildWorkflowToolCallDebugText({
+    key: 'cmd-1',
+    toolName: 'execute_command',
+    toolDisplayName: '执行命令',
+    toolRuntimeName: 'execute_command',
+    toolFunctionName: 'execute_command',
+    callItem: {
+      id: 'call-1',
+      eventType: 'tool_call',
+      toolName: 'execute_command',
+      toolCallId: 'call-1',
+      commandSessionId: 'cmd-1',
+      detail: JSON.stringify({
+        command: 'npm run build 2>&1',
+        command_index: 0,
+        command_session_id: 'cmd-1',
+        cwd: 'C:\\workspace',
+        exit_code: 0,
+        started_at: '2026-05-20T00:00:00Z',
+        status: 'exited',
+        stdout_tail: 'built'
+      })
+    },
+    outputItem: null,
+    resultItem: null
+  });
+
+  assert.equal(
+    debugText,
+    JSON.stringify(
+      {
+        tool: 'execute_command',
+        arguments: {
+          content: 'npm run build 2>&1'
+        }
+      },
+      null,
+      2
+    )
+  );
+  assert.ok(!debugText.includes('stdout_tail'));
+  assert.ok(!debugText.includes('exit_code'));
+  assert.ok(!debugText.includes('command_session_id'));
+});
+
+test('command tool call debug text prefers saved original model call over later runtime detail', () => {
+  const original = JSON.stringify(
+    {
+      tool: 'execute_command',
+      arguments: {
+        content: 'docker compose ps 2>&1',
+        workdir: 'C:\\workspace'
+      }
+    },
+    null,
+    2
+  );
+  const debugText = buildWorkflowToolCallDebugText({
+    key: 'cmd-2',
+    toolName: 'execute_command',
+    toolDisplayName: '执行命令',
+    toolRuntimeName: 'execute_command',
+    toolFunctionName: 'execute_command',
+    callItem: {
+      id: 'call-2',
+      eventType: 'tool_call',
+      toolName: 'execute_command',
+      toolCallId: 'call-2',
+      commandSessionId: 'cmd-2',
+      toolCallRawDetail: original,
+      detail: JSON.stringify({
+        command: 'docker compose ps 2>&1',
+        command_session_id: 'cmd-2',
+        exit_code: 0,
+        stdout_tail: 'NAME IMAGE COMMAND'
+      })
+    },
+    outputItem: null,
+    resultItem: null
+  });
+
+  assert.equal(debugText, original);
+  assert.ok(debugText.includes('"workdir": "C:\\\\workspace"'));
+  assert.ok(!debugText.includes('stdout_tail'));
 });

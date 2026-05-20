@@ -1033,6 +1033,7 @@ export default {
   'desktop.system.modelUnnamed': 'Unnamed model',
   'desktop.system.modelsTitle': 'Models',
   'desktop.system.modelShort': 'Model',
+  'desktop.system.modelTypeAll': 'All types',
   'desktop.system.modelListEmpty': 'No model configs yet',
   'desktop.system.resetWorkStateTitle': 'Reset work state',
   'desktop.system.resetWorkStateDescription':
@@ -1089,6 +1090,7 @@ export default {
   'desktop.system.modelTypeTts': 'Text-to-speech model',
   'desktop.system.modelTypeImage': 'Image model',
   'desktop.system.modelTypeVideo': 'Video model',
+  'desktop.system.modelRemoveConfirm': 'Remove model "{name}"? Saving will delete this config from the local model list.',
   'desktop.system.modelKeyRequired': 'Model key cannot be empty',
   'desktop.system.modelKeyDuplicate': 'Duplicate model key: {key}',
   'desktop.system.provider': 'Provider preset',
@@ -1120,6 +1122,7 @@ export default {
   'desktop.system.sectionLlmOnly': 'This section is only available for chat models',
   'desktop.system.sectionConnectionOnly': 'This type only needs connection settings',
   'desktop.system.modelDefaultOption': 'Model default',
+  'desktop.system.defaultBadge': 'Default',
   'desktop.system.ttsVoice': 'Voice',
   'desktop.system.ttsVoicePlaceholder':
     'Leave empty to auto-detect an available voice when possible; strict providers should set this explicitly',
@@ -2627,6 +2630,7 @@ export default {
   'messenger.world.voice.transcribeFailed': 'Speech recognition failed',
   'messenger.world.voice.asrNotConfigured':
     'No speech-to-text model is configured. Add one in system settings and set it as the default ASR model first.',
+  'messenger.world.voice.transcribeDebugTitle': 'Speech recognition debug info',
   'messenger.agent.voice.modelUnsupported':
     'The current model does not support hearing. Please enable hearing support in model settings.',
   'messenger.world.historyEmpty': 'No recent messages',

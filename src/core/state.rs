@@ -33,8 +33,9 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -246,9 +247,15 @@ impl AppState {
         config: Config,
         options: AppStateInitOptions,
     ) -> Result<Self> {
+        let app_state_start = Instant::now();
+        info!("[startup][app-state] point=new_begin total_ms=0.0");
         let runtime_profile = options.runtime_profile;
         let runtime_capabilities = options.resolve_capabilities(&config);
         let storage = init_storage(&config)?;
+        info!(
+            "[startup][app-state] point=init_storage_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
         let workspace = Arc::new(WorkspaceManager::new(
             &config.workspace.root,
             storage.clone(),
@@ -256,14 +263,26 @@ impl AppState {
             &config.workspace.container_roots,
         ));
         let lsp_manager = LspManager::new(workspace.clone());
+        info!(
+            "[startup][app-state] point=workspace_lsp_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
         let monitor = Arc::new(MonitorState::new(
             storage.clone(),
             config.observability.clone(),
             config.workspace.root.clone(),
         ));
+        info!(
+            "[startup][app-state] point=monitor_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
         let a2a_store = Arc::new(A2aStore::new());
         let skills_registry = load_skills(&config, true, true, true);
         let skills = Arc::new(RwLock::new(skills_registry));
+        info!(
+            "[startup][app-state] point=load_skills_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
         let user_tool_store = Arc::new(
             UserToolStore::new(&config, workspace.clone()).context("初始化用户工具存储失败")?,
         );
@@ -284,6 +303,10 @@ impl AppState {
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
         let command_sessions = Arc::new(CommandSessionBroker::new());
+        info!(
+            "[startup][app-state] point=base_services_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
 
         if options.resolved_seed_org_units() {
             org_units::seed_org_units_if_empty(user_store.as_ref())
@@ -302,6 +325,10 @@ impl AppState {
             gateway.clone().spawn_maintenance();
         }
         let cron_wake_signal = CronWakeSignal::new();
+        info!(
+            "[startup][app-state] point=gateway_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
 
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
@@ -321,6 +348,10 @@ impl AppState {
             beeroom_realtime.clone(),
             Some(cron_wake_signal.clone()),
         ));
+        info!(
+            "[startup][app-state] point=orchestrator_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
         let swarm_service = Arc::new(SwarmService::new(storage.clone()));
         let mission_runtime = MissionRuntime::new(
             config_store.clone(),
@@ -343,6 +374,10 @@ impl AppState {
         if options.resolved_start_thread_runtime() {
             thread_runtime.clone().start();
         }
+        info!(
+            "[startup][app-state] point=thread_runtime_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
 
         let memory = Arc::new(MemoryStore::new(storage.clone()));
         let channels = Arc::new(ChannelHub::new(
@@ -364,6 +399,10 @@ impl AppState {
                 },
             },
         ));
+        info!(
+            "[startup][app-state] point=channel_hub_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
         let cron = CronScheduler::new(
             config_store.clone(),
             storage.clone(),
@@ -376,6 +415,10 @@ impl AppState {
         if options.resolved_start_cron() {
             cron.start();
         }
+        info!(
+            "[startup][app-state] point=cron_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
+        );
 
         let throughput = ThroughputManager::new();
         let benchmark = BenchmarkManager::new(
@@ -386,6 +429,10 @@ impl AppState {
             orchestrator.clone(),
             skills.clone(),
             user_tool_manager.clone(),
+        );
+        info!(
+            "[startup][app-state] point=new_done total_ms={:.1}",
+            app_state_start.elapsed().as_secs_f64() * 1000.0
         );
         Ok(Self {
             config_store,

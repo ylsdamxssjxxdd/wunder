@@ -230,6 +230,7 @@ fn record_from_preset_update(preset_id: &str, update: &WorkerCardRecordUpdate) -
         tool_names: normalize_tool_list(update.tool_names.clone()),
         declared_tool_names: normalize_tool_list(update.declared_tool_names.clone()),
         declared_skill_names: normalize_tool_list(update.declared_skill_names.clone()),
+        visible_unit_ids: normalize_tool_list(update.visible_unit_ids.clone()),
         preset_questions: normalize_preset_questions(update.preset_questions.clone()),
         access_level: "A".to_string(),
         approval_mode: normalize_agent_approval_mode(Some(&update.approval_mode)),
@@ -357,6 +358,7 @@ mod tests {
             Some(WorkerCardPreset {
                 revision: 3,
                 status: "active".to_string(),
+                visible_unit_ids: Vec::new(),
             })
         );
         assert!(
