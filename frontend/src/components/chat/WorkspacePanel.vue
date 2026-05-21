@@ -351,7 +351,7 @@
           <div class="workspace-editor-body">
             <div v-if="editor.previewMode" class="workspace-editor-preview">
               <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
-                <iframe class="workspace-editor-preview-iframe" :srcdoc="editorHtmlPreviewSrcdoc"></iframe>
+                <iframe class="workspace-editor-preview-iframe" :src="editorHtmlPreviewUrl"></iframe>
               </div>
               <div v-else class="workspace-editor-preview-markdown messenger-markdown">
                 <div class="markdown-body" v-html="editorPreviewHtml"></div>
@@ -444,7 +444,7 @@
       <div class="workspace-editor-body">
         <div v-if="editor.previewMode" class="workspace-editor-preview">
           <div v-if="editorPreviewType === 'html'" class="workspace-editor-preview-frame">
-            <iframe class="workspace-editor-preview-iframe" :srcdoc="editorHtmlPreviewSrcdoc"></iframe>
+            <iframe class="workspace-editor-preview-iframe" :src="editorHtmlPreviewUrl"></iframe>
           </div>
           <div v-else class="workspace-editor-preview-markdown messenger-markdown">
             <div class="markdown-body" v-html="editorPreviewHtml"></div>
@@ -517,6 +517,7 @@ import WorkspaceNewFileDialog, {
   type WorkspaceNewFileTemplate
 } from '@/components/chat/WorkspaceNewFileDialog.vue';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
+import { buildWorkspaceHtmlPreviewDocument } from './workspaceHtmlPreview';
 import {
   collectWorkspaceRefreshTargets,
   findWorkspaceEntryByPath,
@@ -531,7 +532,6 @@ import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvent
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 import { renderMarkdown } from '@/utils/markdown';
-import { buildWorkspacePublicPath } from '@/utils/messageWorkspacePath';
 import {
   buildWorkspaceTreeCacheKey,
   cloneWorkspaceEntries,
@@ -541,7 +541,6 @@ import {
   writeWorkspaceTreeCache
 } from '@/utils/workspaceTreeCache';
 import { chatPerf } from '@/utils/chatPerf';
-import { useAuthStore } from '@/stores/auth';
 
 const props = defineProps({
   agentId: {
@@ -585,7 +584,6 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const authStore = useAuthStore();
 const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
 const preserveDockLayout = computed(() => props.preserveDockLayout);
@@ -1091,25 +1089,9 @@ const editorPreviewToggleVisible = computed(() => Boolean(editorPreviewType.valu
 const editorPreviewHtml = computed(() =>
   editorPreviewType.value === 'markdown' ? renderMarkdown(String(state.editor.content || '')) : ''
 );
-const editorHtmlPreviewSrcdoc = computed(() => {
-  if (editorPreviewType.value !== 'html') return '';
-  const entryPath = normalizeWorkspacePath(state.editor.entry?.path || '');
-  if (!entryPath) {
-    return String(state.editor.content || '');
-  }
-  const parentPath = getWorkspaceParentPath(entryPath);
-  const basePath = buildWorkspaceEditorPreviewBasePath(parentPath);
-  const rawHtml = String(state.editor.content || '');
-  if (!basePath) return rawHtml;
-  const baseTag = `<base href="${escapeHtmlAttribute(basePath)}">`;
-  if (/<head[\s>]/i.test(rawHtml)) {
-    return rawHtml.replace(/<head(\s[^>]*)?>/i, (matched) => `${matched}${baseTag}`);
-  }
-  if (/<html[\s>]/i.test(rawHtml)) {
-    return rawHtml.replace(/<html(\s[^>]*)?>/i, (matched) => `${matched}<head>${baseTag}</head>`);
-  }
-  return `<!DOCTYPE html><html><head>${baseTag}</head><body>${rawHtml}</body></html>`;
-});
+const editorHtmlPreviewUrl = ref('');
+let editorHtmlPreviewBuildSerial = 0;
+let editorHtmlPreviewObjectUrls: string[] = [];
 const workspaceNewFileTemplates = computed<WorkspaceNewFileTemplate[]>(() => [
   {
     id: 'text',
@@ -3673,7 +3655,59 @@ const openEditor = async (entry) => {
   }
 };
 
+const revokeEditorHtmlPreviewUrls = () => {
+  if (editorHtmlPreviewUrl.value) {
+    URL.revokeObjectURL(editorHtmlPreviewUrl.value);
+    editorHtmlPreviewUrl.value = '';
+  }
+  editorHtmlPreviewObjectUrls.forEach((url) => {
+    URL.revokeObjectURL(url);
+  });
+  editorHtmlPreviewObjectUrls = [];
+};
+
+const createWorkspaceHtmlPreviewResourceFetcher = () => async (relativePath: string) => {
+  const response = await downloadWunderWorkspaceFile(
+    withAgentParams({ path: normalizeWorkspacePath(relativePath) })
+  );
+  const blob = response.data;
+  return blob instanceof Blob ? blob : new Blob([blob]);
+};
+
+const rebuildEditorHtmlPreview = async () => {
+  const serial = ++editorHtmlPreviewBuildSerial;
+  if (!state.editor.visible || !state.editor.previewMode || editorPreviewType.value !== 'html') {
+    revokeEditorHtmlPreviewUrls();
+    return;
+  }
+  const entryPath = normalizeWorkspacePath(state.editor.entry?.path || '');
+  try {
+    const previewDocument = await buildWorkspaceHtmlPreviewDocument({
+      rawHtml: String(state.editor.content || ''),
+      entryPath,
+      fetchResource: createWorkspaceHtmlPreviewResourceFetcher()
+    });
+    const previewBlob = new Blob([previewDocument.html], { type: 'text/html' });
+    const previewUrl = URL.createObjectURL(previewBlob);
+    if (serial !== editorHtmlPreviewBuildSerial) {
+      URL.revokeObjectURL(previewUrl);
+      previewDocument.objectUrls.forEach((url) => URL.revokeObjectURL(url));
+      return;
+    }
+    revokeEditorHtmlPreviewUrls();
+    editorHtmlPreviewUrl.value = previewUrl;
+    editorHtmlPreviewObjectUrls = previewDocument.objectUrls;
+  } catch {
+    if (serial !== editorHtmlPreviewBuildSerial) return;
+    const fallbackUrl = URL.createObjectURL(new Blob([String(state.editor.content || '')], { type: 'text/html' }));
+    revokeEditorHtmlPreviewUrls();
+    editorHtmlPreviewUrl.value = fallbackUrl;
+  }
+};
+
 const closeEditor = () => {
+  revokeEditorHtmlPreviewUrls();
+  editorHtmlPreviewBuildSerial += 1;
   state.editor.visible = false;
   state.editor.entry = null;
   state.editor.content = '';
@@ -3690,27 +3724,6 @@ const toggleEditorPreview = () => {
 const toggleEditorFullscreen = () => {
   state.editor.fullscreen = !state.editor.fullscreen;
 };
-
-const buildWorkspaceEditorPreviewBasePath = (relativeDirectoryPath: string): string => {
-  const normalized = normalizeWorkspacePath(relativeDirectoryPath);
-  const ownerId = String(authStore.user?.id || authStore.user?.user_id || authStore.user?.username || '').trim();
-  if (!ownerId) return '';
-  const base = buildWorkspacePublicPath(ownerId, normalized || '.', normalizedContainerId.value);
-  return ensureTrailingSlash(base);
-};
-
-const ensureTrailingSlash = (value: string): string => {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  return text.endsWith('/') ? text : `${text}/`;
-};
-
-const escapeHtmlAttribute = (value: string): string =>
-  String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 
 const saveEditor = async () => {
   if (!state.editor.entry) return;
@@ -3823,8 +3836,26 @@ watch(
   { flush: 'post' }
 );
 
+watch(
+  () => [
+    state.editor.visible,
+    state.editor.previewMode,
+    editorPreviewType.value,
+    state.editor.entry?.path || '',
+    state.editor.content,
+    normalizedAgentId.value,
+    normalizedContainerId.value
+  ],
+  () => {
+    void rebuildEditorHtmlPreview();
+  },
+  { flush: 'post' }
+);
+
 onBeforeUnmount(() => {
   clearPreviewUrl();
+  revokeEditorHtmlPreviewUrls();
+  editorHtmlPreviewBuildSerial += 1;
   cancelWorkspaceThemeIconWarmup();
   if (searchTimer) {
     clearTimeout(searchTimer);

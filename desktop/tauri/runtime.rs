@@ -45,6 +45,8 @@ pub struct DesktopSettings {
     pub desktop_token: String,
     #[serde(default)]
     pub python_path: String,
+    #[serde(default = "default_python_runtime_mode")]
+    pub python_runtime_mode: String,
     #[serde(default)]
     pub container_roots: HashMap<i32, String>,
     #[serde(default)]
@@ -64,6 +66,7 @@ impl Default for DesktopSettings {
             workspace_root: String::new(),
             desktop_token: uuid::Uuid::new_v4().simple().to_string(),
             python_path: String::new(),
+            python_runtime_mode: default_python_runtime_mode(),
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
@@ -222,10 +225,14 @@ impl DesktopRuntime {
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
         prepend_embedded_tool_paths(&app_dir);
-        if let Some(python_bin) = resolve_desktop_python_bin(&settings, &app_dir)
-            .or_else(|| resolve_embedded_python_bin(&app_dir))
-        {
-            set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
+        match resolve_desktop_python_bin(&settings, &app_dir) {
+            DesktopPythonBin::Custom(python_bin) | DesktopPythonBin::Auto(python_bin) => {
+                set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
+            }
+            DesktopPythonBin::System => {
+                std::env::remove_var("WUNDER_PYTHON_BIN");
+            }
+            DesktopPythonBin::None => {}
         }
         if let Some(rg_bin) = resolve_embedded_rg_bin(&app_dir) {
             set_env_path_if_exists("WUNDER_RG_BIN", &rg_bin);
@@ -786,13 +793,36 @@ fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
     }
 }
 
-fn resolve_desktop_python_bin(settings: &DesktopSettings, app_dir: &Path) -> Option<PathBuf> {
+fn default_python_runtime_mode() -> String {
+    "auto".to_string()
+}
+
+enum DesktopPythonBin {
+    Auto(PathBuf),
+    Custom(PathBuf),
+    System,
+    None,
+}
+
+fn resolve_desktop_python_bin(settings: &DesktopSettings, app_dir: &Path) -> DesktopPythonBin {
     let trimmed = settings.python_path.trim();
-    if trimmed.is_empty() {
-        return None;
+    if !trimmed.is_empty() {
+        let candidate = resolve_workspace_path_input(trimmed, app_dir);
+        if candidate.is_file() {
+            return DesktopPythonBin::Custom(candidate);
+        }
+        return DesktopPythonBin::System;
     }
-    let candidate = resolve_workspace_path_input(trimmed, app_dir);
-    candidate.is_file().then_some(candidate)
+    if settings
+        .python_runtime_mode
+        .trim()
+        .eq_ignore_ascii_case("system")
+    {
+        return DesktopPythonBin::System;
+    }
+    resolve_embedded_python_bin(app_dir)
+        .map(DesktopPythonBin::Auto)
+        .unwrap_or(DesktopPythonBin::None)
 }
 
 fn sanitize_workspace_scope(value: &str) -> String {

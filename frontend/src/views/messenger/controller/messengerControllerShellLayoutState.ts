@@ -460,6 +460,29 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
       item.key === 'groups' ||
       (!ctx.desktopMode.value && item.key === 'plaza')));
 
+  ctx.resolveLeftRailPreviewTarget = (section: MessengerSection | 'desktop-models-quick') => {
+      if (section === 'desktop-models-quick') {
+          return {
+              section: 'more' as MessengerSection,
+              options: { settingsPanelMode: 'desktop-models' }
+          };
+      }
+      return {
+          section,
+          options: {}
+      };
+  };
+
+  ctx.queueLeftRailPreview = (section: MessengerSection | 'desktop-models-quick') => {
+      const target = ctx.resolveLeftRailPreviewTarget(section);
+      ctx.queuePreviewMiddlePaneSection(target.section, target.options);
+  };
+
+  ctx.previewLeftRailSection = (section: MessengerSection | 'desktop-models-quick') => {
+      const target = ctx.resolveLeftRailPreviewTarget(section);
+      ctx.previewMiddlePaneSection(target.section, target.options);
+  };
+
   ctx.isLeftNavSectionActive = (section: MessengerSection | 'desktop-models-quick'): boolean => {
       if (section === 'desktop-models-quick') {
           return ctx.sessionHub.activeSection === 'more' && ctx.settingsPanelMode.value === 'desktop-models';
@@ -748,6 +771,7 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
     effectiveSection: middlePaneActiveSection,
     effectiveSectionSubtitle: middlePaneActiveSectionSubtitle,
     effectiveSectionTitle: middlePaneActiveSectionTitle,
+    effectiveSettingsPanelMode: middlePanePreviewSettingsPanelMode,
     isHelperWorkspaceButtonActive: isHelperAppsMiddlePaneActive,
     isSectionButtonActive,
     queuePreviewMiddlePaneSection,
@@ -765,6 +789,13 @@ export function installMessengerControllerShellLayoutState(ctx: MessengerControl
   ctx.middlePaneActiveSection = middlePaneActiveSection;
   ctx.middlePaneActiveSectionSubtitle = middlePaneActiveSectionSubtitle;
   ctx.middlePaneActiveSectionTitle = middlePaneActiveSectionTitle;
+  ctx.middlePanePreviewSettingsPanelMode = middlePanePreviewSettingsPanelMode;
+  ctx.middlePaneSettingsPanelMode = computed(() => {
+      const previewMode = String(ctx.middlePanePreviewSettingsPanelMode.value || '').trim();
+      return middlePaneActiveSection.value === 'more' && previewMode
+          ? previewMode
+          : ctx.settingsPanelMode.value;
+  });
   ctx.isHelperAppsMiddlePaneActive = isHelperAppsMiddlePaneActive;
   ctx.isSectionButtonActive = isSectionButtonActive;
   ctx.queuePreviewMiddlePaneSection = queuePreviewMiddlePaneSection;

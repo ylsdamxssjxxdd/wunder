@@ -4296,12 +4296,12 @@ button.messenger-chat-header-model {
 
 .messenger-tool-section {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
   justify-content: start;
   width: 100%;
-  max-width: 1156px;
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -4374,7 +4374,7 @@ button.messenger-chat-header-model {
 
 .messenger-tool-options {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
   width: 100%;
@@ -4526,13 +4526,8 @@ button.messenger-chat-header-model {
 }
 
 @media (max-width: 1320px) {
-  .messenger-tool-section {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    max-width: 100%;
-  }
-
   .messenger-tool-options {
-    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -4554,6 +4549,12 @@ button.messenger-chat-header-model {
 @media (max-width: 720px) {
   .messenger-tool-section {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .messenger-tool-options {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

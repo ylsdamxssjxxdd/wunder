@@ -1,5 +1,6 @@
-use super::tool_calls::{collect_tool_calls_from_payload, ToolCall};
+use super::tool_calls::{ToolCall, collect_tool_calls_from_payload};
 use super::*;
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
 pub(super) struct ContextManager;
@@ -19,23 +20,16 @@ impl ContextManager {
         }
         let mut output = Vec::with_capacity(messages.len());
         let mut pending: Vec<PendingToolCall> = Vec::new();
+        let mut deferred: Vec<Value> = Vec::new();
+        let mut queue = VecDeque::from(messages);
 
-        for raw_message in messages {
+        while let Some(raw_message) = queue.pop_front() {
             let mut message = raw_message;
             let mut role = message
                 .get("role")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let content = message.get("content").unwrap_or(&Value::Null);
-            let is_observation =
-                role == "user" && Orchestrator::is_observation_message(role.as_str(), content);
-
-            if !pending.is_empty() && role != "tool" && !is_observation {
-                append_missing_tool_results(&mut output, &pending);
-                pending.clear();
-            }
-
             if role == "tool" {
                 let tool_call_id = extract_tool_call_id(&message);
                 let matched = if let Some(id) = tool_call_id.as_deref() {
@@ -47,11 +41,37 @@ impl ContextManager {
                 };
                 if let Some(pos) = matched {
                     pending.remove(pos);
+                    output.push(message);
+                    if pending.is_empty() {
+                        prepend_deferred_messages(&mut queue, &mut deferred);
+                    }
+                    continue;
                 } else {
                     message = convert_orphan_tool_message_to_observation(&message);
                     role = "user".to_string();
                 }
-            } else if is_observation {
+            }
+
+            let content = message.get("content").unwrap_or(&Value::Null);
+            let is_observation =
+                role == "user" && Orchestrator::is_observation_message(role.as_str(), content);
+            if !pending.is_empty() && role != "tool" && pending_has_native_ids(&pending) {
+                // Native OpenAI-compatible tool calls require all tool result messages to
+                // immediately follow the assistant message. User observations emitted by
+                // recovery paths are deferred until the pending native results are closed.
+                deferred.push(message);
+                continue;
+            }
+
+            if !pending.is_empty() && role != "tool" && !is_observation {
+                append_missing_tool_results(&mut output, &pending);
+                pending.clear();
+                prepend_deferred_messages(&mut queue, &mut deferred);
+                queue.push_front(message);
+                continue;
+            }
+
+            if is_observation {
                 if let Some(pos) = pending.iter().position(|call| call.id.is_none()) {
                     pending.remove(pos);
                 }
@@ -76,7 +96,21 @@ impl ContextManager {
         if !pending.is_empty() {
             append_missing_tool_results(&mut output, &pending);
         }
+        if !deferred.is_empty() {
+            let deferred = std::mem::take(&mut deferred);
+            output.extend(self.normalize_messages(deferred));
+        }
         output
+    }
+}
+
+fn pending_has_native_ids(pending: &[PendingToolCall]) -> bool {
+    pending.iter().any(|call| call.id.is_some())
+}
+
+fn prepend_deferred_messages(queue: &mut VecDeque<Value>, deferred: &mut Vec<Value>) {
+    for message in deferred.drain(..).rev() {
+        queue.push_front(message);
     }
 }
 
@@ -358,6 +392,66 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_defers_observation_until_native_tool_results_close() {
+        let manager = ContextManager;
+        let observation = format!(
+            "{OBSERVATION_PREFIX}{}",
+            r#"{"type":"tool_failure_reroute_notice","instruction":"continue"}"#
+        );
+        let messages = vec![
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "execute_command", "arguments": r#"{"command":"a"}"# }
+                    },
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": { "name": "execute_command", "arguments": r#"{"command":"b"}"# }
+                    },
+                    {
+                        "id": "call_3",
+                        "type": "function",
+                        "function": { "name": "execute_command", "arguments": r#"{"command":"c"}"# }
+                    }
+                ]
+            }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": r#"{"tool":"execute_command","ok":false}"#
+            }),
+            json!({ "role": "user", "content": observation }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_2",
+                "content": r#"{"tool":"execute_command","ok":false}"#
+            }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_3",
+                "content": r#"{"tool":"execute_command","ok":false}"#
+            }),
+        ];
+
+        let normalized = manager.normalize_messages(messages);
+
+        assert_eq!(normalized.len(), 5);
+        assert_eq!(normalized[1]["role"], json!("tool"));
+        assert_eq!(normalized[1]["tool_call_id"], json!("call_1"));
+        assert_eq!(normalized[2]["role"], json!("tool"));
+        assert_eq!(normalized[2]["tool_call_id"], json!("call_2"));
+        assert_eq!(normalized[3]["role"], json!("tool"));
+        assert_eq!(normalized[3]["tool_call_id"], json!("call_3"));
+        assert_eq!(normalized[4]["role"], json!("user"));
+        assert_eq!(normalized[4]["content"], json!(observation));
+    }
+
+    #[test]
     fn test_normalize_converts_orphan_tool_message() {
         let manager = ContextManager;
         let messages = vec![
@@ -405,15 +499,15 @@ mod tests {
         let normalized = manager.normalize_messages(messages);
         assert_eq!(normalized.len(), 4);
         assert_eq!(
-            normalized[1].get("role").and_then(Value::as_str),
+            normalized[2].get("role").and_then(Value::as_str),
             Some("user")
         );
         assert_eq!(
-            normalized[2].get("role").and_then(Value::as_str),
+            normalized[1].get("role").and_then(Value::as_str),
             Some("tool")
         );
         assert_eq!(
-            normalized[2].get("tool_call_id").and_then(Value::as_str),
+            normalized[1].get("tool_call_id").and_then(Value::as_str),
             Some("call_expected")
         );
     }

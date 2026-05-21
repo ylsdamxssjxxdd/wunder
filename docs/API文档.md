@@ -213,7 +213,7 @@
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
-- 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；若同一工具命中同一个明确的不可重试错误，默认会在第 3 次相同失败后提前触发保护，避免模型持续硬撞同一错误。
+- 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；同一工具命中同一个明确的不可重试错误时，也默认在第 5 次相同失败后触发保护，避免模型持续硬撞同一错误。
 - 说明：管理员会话跳过上述限制（会话锁/Token 余额/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
@@ -221,6 +221,7 @@
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 第一阶段实时协议已落地：`tool_output_delta` 与每条命令结果会补充 `command_session_id/command_index`，用于把一次工具调用内的多条子命令拆成独立工作流条目。
+- `execute_command` 在 Windows 本地/桌面运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
 - 新增命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary`。当前阶段只持久化生命周期与摘要事件，不向客户端额外广播高频 `command_session_delta`，避免在旧前端仍消费 `tool_output_delta` 时造成双倍热路径流量。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。

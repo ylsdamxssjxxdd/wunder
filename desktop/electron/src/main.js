@@ -2086,6 +2086,27 @@ const prependProcessPathEntries = (entries) => {
   process.env.PATH = merged.join(path.delimiter)
 }
 
+const normalizeProcessPathEntry = (entry) => {
+  const raw = String(entry || '').trim()
+  if (!raw) {
+    return ''
+  }
+  const normalized = path.normalize(raw)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+const removeProcessPathEntries = (entries) => {
+  const blocked = new Set(entries.map((entry) => normalizeProcessPathEntry(entry)).filter((entry) => entry))
+  if (!blocked.size) {
+    return
+  }
+  const filtered = String(process.env.PATH || '')
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter((item) => item && !blocked.has(normalizeProcessPathEntry(item)))
+  process.env.PATH = filtered.join(path.delimiter)
+}
+
 const resolveDesktopAppDir = () => {
   const manual = String(process.env.WUNDER_DESKTOP_APP_DIR || '').trim()
   if (manual && fs.existsSync(manual)) {
@@ -2166,6 +2187,15 @@ const readDesktopSettings = () => {
   } catch {
     return {}
   }
+}
+
+const normalizePythonRuntimeMode = (value, pythonPath = '') => {
+  const rawPath = String(pythonPath || '').trim()
+  if (rawPath) {
+    return 'custom'
+  }
+  const mode = String(value || '').trim().toLowerCase()
+  return mode === 'system' ? 'system' : 'auto'
 }
 
 const resolveBundledPythonBin = (appDir) => {
@@ -2289,17 +2319,18 @@ const resolveDesktopPythonRuntimeInfo = () => {
   const settings = readDesktopSettings()
   const settingsBin = resolveExistingFilePath(settings.python_path, appDir)
   const envBin = resolveExistingFilePath(process.env.WUNDER_PYTHON_BIN, appDir)
+  const runtimeMode = normalizePythonRuntimeMode(settings.python_runtime_mode, settings.python_path)
   const bundledDefaultBin = resolveBundledPythonDefaultBin(appDir)
   const bundledDefaultExists = fs.existsSync(bundledDefaultBin)
   const bundledBin = resolveBundledPythonBin(appDir)
   const venvBin = resolveBundledVenvPythonBin(appDir)
-  const preferredBin = settingsBin || envBin || bundledBin || venvBin
+  const preferredBin =
+    runtimeMode === 'system'
+      ? ''
+      : settingsBin || envBin || bundledBin || venvBin
   const normalizedBin = resolveExistingFilePath(preferredBin, appDir)
   const detectedBins = collectDetectedPythonBins([
-    settingsBin,
-    envBin,
-    bundledBin,
-    venvBin,
+    ...(runtimeMode === 'system' ? [] : [settingsBin, envBin, bundledBin, venvBin]),
     normalizedBin
   ])
   const normalizedAppDir = String(appDir || '')
@@ -2349,6 +2380,7 @@ const resolveDesktopPythonRuntimeInfo = () => {
     version,
     source,
     bundled,
+    runtime_mode: runtimeMode,
     bundled_default_bin: bundledDefaultBin,
     bundled_default_exists: bundledDefaultExists,
     detected_bins: detectedBins
@@ -2698,8 +2730,12 @@ const registerBundledToolPaths = () => {
 
   process.env.WUNDER_DESKTOP_APP_DIR = appDir
   process.env.WUNDER_DESKTOP_RUNTIME_ROOT = runtimeRoot
+  const settings = readDesktopSettings()
+  const runtimeMode = normalizePythonRuntimeMode(settings.python_runtime_mode, settings.python_path)
   const bundledPythonBin = resolveBundledPythonBin(appDir)
-  if (bundledPythonBin) {
+  if (runtimeMode === 'system') {
+    delete process.env.WUNDER_PYTHON_BIN
+  } else if (bundledPythonBin) {
     process.env.WUNDER_PYTHON_BIN = bundledPythonBin
   }
   const bundledRgBin = resolveBundledRgBin(appDir)
@@ -2707,20 +2743,28 @@ const registerBundledToolPaths = () => {
     process.env.WUNDER_RG_BIN = bundledRgBin
   }
 
-  const candidates = roots.flatMap((root) => [
+  const pythonCandidates = roots.flatMap((root) => [
     path.join(root, 'opt', 'python'),
     path.join(root, 'opt', 'python', 'Scripts'),
     path.join(root, 'opt', 'python', 'bin'),
     path.join(root, 'opt', 'venv'),
     path.join(root, 'opt', 'venv', 'Scripts'),
-    path.join(root, 'opt', 'venv', 'bin'),
-    path.join(root, 'opt', 'git', 'cmd'),
-    path.join(root, 'opt', 'git', 'bin'),
-    path.join(root, 'opt', 'rg'),
-    path.join(root, 'opt', 'rg', 'bin'),
-    path.join(root, 'opt', 'ripgrep'),
-    path.join(root, 'opt', 'ripgrep', 'bin')
-  ]).filter((candidate) => fs.existsSync(candidate))
+    path.join(root, 'opt', 'venv', 'bin')
+  ])
+  if (runtimeMode === 'system') {
+    removeProcessPathEntries(pythonCandidates)
+  }
+  const candidates = [
+    ...(runtimeMode === 'system' ? [] : pythonCandidates),
+    ...roots.flatMap((root) => [
+      path.join(root, 'opt', 'git', 'cmd'),
+      path.join(root, 'opt', 'git', 'bin'),
+      path.join(root, 'opt', 'rg'),
+      path.join(root, 'opt', 'rg', 'bin'),
+      path.join(root, 'opt', 'ripgrep'),
+      path.join(root, 'opt', 'ripgrep', 'bin')
+    ])
+  ].filter((candidate) => fs.existsSync(candidate))
 
   if (!candidates.length) {
     return

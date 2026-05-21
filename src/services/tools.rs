@@ -6927,6 +6927,8 @@ async fn run_command_streaming(
     };
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut cmd, runtime);
+    } else {
+        python_runtime::apply_system_python_env_if_configured(&mut cmd);
     }
     let initial_launch_mode = if used_direct {
         CommandSessionLaunchMode::Direct
@@ -6951,6 +6953,8 @@ async fn run_command_streaming(
             let mut cmd = command_utils::build_shell_command(command, cwd);
             if let Some(runtime) = runtime.as_ref() {
                 python_runtime::apply_python_env(&mut cmd, runtime);
+            } else {
+                python_runtime::apply_system_python_env_if_configured(&mut cmd);
             }
             cmd.kill_on_drop(true);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -7066,12 +7070,16 @@ async fn run_ptc_python_script_streaming(
             }
         }
     }
+    let system_python_runtime = python_runtime::desktop_python_runtime_mode_is_system();
     for (program, prefix_args) in candidates {
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(*prefix_args);
         cmd.arg(script_path);
         cmd.current_dir(workdir);
         cmd.env("PYTHONIOENCODING", "utf-8");
+        if system_python_runtime {
+            python_runtime::apply_system_python_env_if_configured(&mut cmd);
+        }
         command_utils::apply_platform_spawn_options(&mut cmd);
         cmd.kill_on_drop(true);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());

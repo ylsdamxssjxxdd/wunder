@@ -2,9 +2,9 @@ use super::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 3;
-const MAX_SAME_RETRYABLE_FAILURES: u32 = 2;
-const MAX_SAME_TOOL_FAILURES: u32 = 3;
+const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 5;
+const MAX_SAME_RETRYABLE_FAILURES: u32 = 5;
+const MAX_SAME_TOOL_FAILURES: u32 = 5;
 const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 5;
 const FINGERPRINT_DETAIL_MAX_CHARS: usize = 240;
 
@@ -90,7 +90,7 @@ impl RetryGovernor {
 
         if tool_name != apply_patch
             && fingerprint.retryable
-            && self.same_fingerprint_failures > MAX_SAME_RETRYABLE_FAILURES
+            && self.same_fingerprint_failures >= MAX_SAME_RETRYABLE_FAILURES
         {
             return Some(RetryStopDecision {
                 reason: "same_retryable_failure_exhausted",
@@ -250,7 +250,10 @@ fn normalize_detail(detail: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RetryGovernor, ToolResultPayload, MAX_SAME_NON_RETRYABLE_FAILURES};
+    use super::{
+        RetryGovernor, ToolResultPayload, MAX_SAME_NON_RETRYABLE_FAILURES,
+        MAX_SAME_RETRYABLE_FAILURES,
+    };
     use crate::tools::resolve_tool_name;
     use chrono::Utc;
     use serde_json::json;
@@ -269,11 +272,12 @@ mod tests {
                 "error_retryable": false
             })),
         };
-        assert!(governor.record_failure("ptc", &payload).is_none());
-        assert!(governor.record_failure("ptc", &payload).is_none());
+        for _ in 0..(MAX_SAME_NON_RETRYABLE_FAILURES - 1) {
+            assert!(governor.record_failure("ptc", &payload).is_none());
+        }
         let stop = governor
             .record_failure("ptc", &payload)
-            .expect("should stop on third same non-retryable failure");
+            .expect("should stop when same non-retryable failures reach the default threshold");
         assert_eq!(stop.reason, "same_non_retryable_failure");
         assert_eq!(stop.threshold, MAX_SAME_NON_RETRYABLE_FAILURES);
     }
@@ -292,11 +296,12 @@ mod tests {
                 "error_retryable": true
             })),
         };
-        assert!(governor.record_failure("read_file", &payload).is_none());
-        assert!(governor.record_failure("read_file", &payload).is_none());
+        for _ in 0..(MAX_SAME_RETRYABLE_FAILURES - 1) {
+            assert!(governor.record_failure("read_file", &payload).is_none());
+        }
         let stop = governor
             .record_failure("read_file", &payload)
-            .expect("should stop on third same retryable failure");
+            .expect("should stop when same retryable failures reach the default threshold");
         assert_eq!(stop.reason, "same_retryable_failure_exhausted");
     }
 

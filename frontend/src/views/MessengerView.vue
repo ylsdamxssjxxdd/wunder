@@ -49,8 +49,8 @@
             type="button"
             :title="item.label"
             :aria-label="item.label"
-            @mouseenter="queuePreviewMiddlePaneSection(item.key)"
-            @focus="previewMiddlePaneSection(item.key)"
+            @mouseenter="queueLeftRailPreview(item.key)"
+            @focus="previewLeftRailSection(item.key)"
             @click="item.key === 'desktop-models-quick' ? activateSettingsPanel('desktop-models') : switchSection(item.key)"
           >
             <i :class="item.icon" aria-hidden="true"></i>
@@ -130,7 +130,8 @@
           @update:selected-contact-unit-id="handleMiddlePaneContactUnitIdUpdate"
           :selected-agent-hive-group-id="selectedAgentHiveGroupId"
           @update:selected-agent-hive-group-id="handleMiddlePaneAgentHiveGroupIdUpdate"
-          v-model:settings-panel-mode="settingsPanelMode"
+          :settings-panel-mode="middlePaneSettingsPanelMode"
+          @update:settingsPanelMode="settingsPanelMode = normalizeSettingsPanelMode($event)"
           v-model:selected-desktop-model-key="selectedDesktopModelKey"
           :desktop-model-rows="desktopModelRows"
           :active-section="middlePaneActiveSection"
@@ -2471,6 +2472,7 @@ const MessengerWorldComposer = controller.MessengerWorldComposer;
 const middlePaneActiveSection = controller.middlePaneActiveSection;
 const middlePaneActiveSectionSubtitle = controller.middlePaneActiveSectionSubtitle;
 const middlePaneActiveSectionTitle = controller.middlePaneActiveSectionTitle;
+const middlePaneSettingsPanelMode = controller.middlePaneSettingsPanelMode;
 const middlePaneMounted = controller.middlePaneMounted;
 const middlePaneOverlayHideTimer = controller.middlePaneOverlayHideTimer;
 const middlePaneOverlayVisible = controller.middlePaneOverlayVisible;
@@ -2605,6 +2607,7 @@ const preloadMixedConversation = controller.preloadMixedConversation;
 const preloadTimelinePreview = controller.preloadTimelinePreview;
 const prepareMessageMarkdownContent = controller.prepareMessageMarkdownContent;
 const previewMiddlePaneSection = controller.previewMiddlePaneSection;
+const previewLeftRailSection = controller.previewLeftRailSection;
 const prioritizeImportedBeeroomAgents = controller.prioritizeImportedBeeroomAgents;
 const PROFILE_AVATAR_COLORS = controller.PROFILE_AVATAR_COLORS;
 const PROFILE_AVATAR_IMAGE_KEYS = controller.PROFILE_AVATAR_IMAGE_KEYS;
@@ -2615,6 +2618,7 @@ const profileAvatarOptions = controller.profileAvatarOptions;
 const pruneMessageVirtualHeightCache = controller.pruneMessageVirtualHeightCache;
 const queuedSessionDetailPrefetchIds = controller.queuedSessionDetailPrefetchIds;
 const queuePreviewMiddlePaneSection = controller.queuePreviewMiddlePaneSection;
+const queueLeftRailPreview = controller.queueLeftRailPreview;
 const queueSessionDetailPrefetch = controller.queueSessionDetailPrefetch;
 const quickCreateCopyFromAgents = controller.quickCreateCopyFromAgents;
 const quickCreatingAgent = controller.quickCreatingAgent;

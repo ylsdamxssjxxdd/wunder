@@ -166,6 +166,8 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
         .stderr(std::process::Stdio::piped());
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut command, runtime);
+    } else {
+        python_runtime::apply_system_python_env_if_configured(&mut command);
     }
     command_utils::apply_platform_spawn_options(&mut command);
     let mut child = command.spawn()?;

@@ -136,6 +136,7 @@ const pickingPythonPath = ref(false);
 const importingSupplement = ref(false);
 const pythonPathDraft = ref('');
 const configuredPythonPath = ref('');
+const pythonRuntimeMode = ref<'auto' | 'system' | 'custom'>('auto');
 const pythonRuntimeBin = ref('');
 const bundledDefaultPythonPath = ref('');
 const bundledDefaultPythonExists = ref(false);
@@ -165,6 +166,9 @@ const supplementImportSupported = computed(() => {
   return Boolean(bridge && typeof bridge.importSupplementPackage === 'function');
 });
 const pythonPathPlaceholder = computed(() => {
+  if (pythonRuntimeMode.value === 'system') {
+    return t('desktop.system.pythonInterpreterPathPlaceholder');
+  }
   if (bundledDefaultPythonExists.value && bundledDefaultPythonPath.value) {
     return bundledDefaultPythonPath.value;
   }
@@ -192,6 +196,16 @@ function normalizePathForCompare(value: string): string {
     normalized = normalized.toLowerCase();
   }
   return normalized;
+}
+
+function normalizePythonRuntimeMode(value: unknown, pythonPath = configuredPythonPath.value): 'auto' | 'system' | 'custom' {
+  if (String(pythonPath || '').trim()) {
+    return 'custom';
+  }
+  const mode = String(value || '')
+    .trim()
+    .toLowerCase();
+  return mode === 'system' ? 'system' : 'auto';
 }
 
 function normalizeWindowCloseBehavior(value: unknown): WindowCloseBehavior {
@@ -241,6 +255,7 @@ function applySettingsData(data: DesktopSettingsData | Record<string, unknown> |
   const source = (data || {}) as Record<string, unknown>;
   configuredPythonPath.value = String(source.python_path || '').trim();
   pythonPathDraft.value = configuredPythonPath.value;
+  pythonRuntimeMode.value = normalizePythonRuntimeMode(source.python_runtime_mode, configuredPythonPath.value);
 }
 
 function applyFallbackPythonRuntimeInfo() {
@@ -430,8 +445,10 @@ async function savePythonPath(nextPath = pythonPathDraft.value, silent = true) {
   }
   savingPythonPath.value = true;
   try {
+    const trimmedPath = String(nextPath || '').trim();
     const response = await updateDesktopSettings({
-      python_path: String(nextPath || '').trim()
+      python_path: trimmedPath,
+      python_runtime_mode: trimmedPath ? 'custom' : 'system'
     });
     if (disposed) return;
     applySettingsData((response?.data?.data || {}) as DesktopSettingsData);

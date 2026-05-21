@@ -6,6 +6,7 @@ type TranslateFn = (key: string) => string;
 
 type PreviewOptions = {
   helperWorkspace?: boolean;
+  settingsPanelMode?: string;
 };
 
 const MIDDLE_PANE_PREVIEW_HOVER_DELAY_MS = 70;
@@ -27,6 +28,7 @@ export const useMiddlePaneOverlayPreview = ({
 }: UseMiddlePaneOverlayPreviewOptions) => {
   const previewSection = ref<MessengerSection | ''>('');
   const previewHelperWorkspace = ref(false);
+  const previewSettingsPanelMode = ref('');
   let previewTimer: number | null = null;
 
   const clearPendingPreview = () => {
@@ -54,6 +56,14 @@ export const useMiddlePaneOverlayPreview = ({
       return false;
     }
     return isPreviewing.value ? previewHelperWorkspace.value : helperAppsWorkspaceMode.value;
+  });
+
+  const effectiveSettingsPanelMode = computed(() => {
+    const normalizedPreviewMode = String(previewSettingsPanelMode.value || '').trim();
+    if (isPreviewing.value && effectiveSection.value === 'more') {
+      return normalizedPreviewMode || 'general';
+    }
+    return '';
   });
 
   const effectiveSectionTitle = computed(() => {
@@ -88,6 +98,7 @@ export const useMiddlePaneOverlayPreview = ({
     // so hovering does not mutate the main content before the user clicks.
     previewSection.value = section;
     previewHelperWorkspace.value = section === 'groups' && options.helperWorkspace === true;
+    previewSettingsPanelMode.value = section === 'more' ? String(options.settingsPanelMode || '').trim() : '';
     middlePaneOverlayVisible.value = true;
   };
 
@@ -117,6 +128,7 @@ export const useMiddlePaneOverlayPreview = ({
     clearPendingPreview();
     previewSection.value = '';
     previewHelperWorkspace.value = false;
+    previewSettingsPanelMode.value = '';
   };
 
   const isSectionButtonActive = (section: MessengerSection): boolean => {
@@ -141,6 +153,7 @@ export const useMiddlePaneOverlayPreview = ({
     effectiveSection,
     effectiveSectionSubtitle,
     effectiveSectionTitle,
+    effectiveSettingsPanelMode,
     isHelperWorkspaceButtonActive,
     isPreviewing,
     isSectionButtonActive,

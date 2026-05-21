@@ -7,6 +7,7 @@ use tokio::process::Command as TokioCommand;
 const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
 const DESKTOP_RUNTIME_ROOT_ENV: &str = "WUNDER_DESKTOP_RUNTIME_ROOT";
 const DESKTOP_SETTINGS_PATH_ENV: &str = "WUNDER_DESKTOP_SETTINGS_PATH";
+const PYTHON_BIN_ENV: &str = "WUNDER_PYTHON_BIN";
 
 #[derive(Clone, Debug)]
 pub struct PythonRuntime {
@@ -22,14 +23,22 @@ pub struct PythonRuntime {
 struct DesktopPythonSettings {
     #[serde(default)]
     python_path: String,
+    #[serde(default)]
+    python_runtime_mode: String,
 }
 
 pub fn resolve_python_runtime() -> Option<PythonRuntime> {
-    if let Some(configured_bin) = resolve_desktop_settings_python_bin() {
-        return Some(python_runtime_from_bin(configured_bin));
+    match resolve_desktop_settings_python_preference() {
+        DesktopPythonPreference::Custom(configured_bin) => {
+            return Some(python_runtime_from_bin(configured_bin));
+        }
+        DesktopPythonPreference::System => {
+            return None;
+        }
+        DesktopPythonPreference::Auto => {}
     }
 
-    if let Ok(raw) = env::var("WUNDER_PYTHON_BIN") {
+    if let Ok(raw) = env::var(PYTHON_BIN_ENV) {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
             return Some(python_runtime_from_bin(PathBuf::from(trimmed)));
@@ -55,13 +64,14 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
 }
 
 pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
+    cmd.env(PYTHON_BIN_ENV, runtime.bin.to_string_lossy().to_string());
+    let runtime_path_entries = python_runtime_path_entries(runtime);
+    for entry in runtime_path_entries.iter().rev() {
+        prepend_path_env(cmd, "PATH", entry);
+    }
     if !runtime.embedded {
         return;
     }
-    cmd.env(
-        "WUNDER_PYTHON_BIN",
-        runtime.bin.to_string_lossy().to_string(),
-    );
     if let Some(home) = &runtime.home {
         cmd.env("PYTHONHOME", home.to_string_lossy().to_string());
     }
@@ -86,9 +96,6 @@ pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
     }
     cmd.env("PYTHONNOUSERSITE", "1");
     cmd.env("PIP_NO_INDEX", "1");
-    if let Some(bin_dir) = runtime.bin.parent() {
-        prepend_path_env(cmd, "PATH", bin_dir);
-    }
 
     if let Some(lib_dir) = &runtime.lib_dir {
         if cfg!(windows) {
@@ -97,6 +104,39 @@ pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
             prepend_path_env(cmd, "LD_LIBRARY_PATH", lib_dir);
         }
     }
+}
+
+pub fn apply_system_python_env_if_configured(cmd: &mut TokioCommand) {
+    if !desktop_python_runtime_mode_is_system() {
+        return;
+    }
+    cmd.env_remove(PYTHON_BIN_ENV);
+    cmd.env_remove("PYTHONHOME");
+    cmd.env_remove("PYTHONPATH");
+    cmd.env_remove("PYTHONNOUSERSITE");
+    cmd.env_remove("PIP_NO_INDEX");
+    remove_path_env_entries(cmd, "PATH", &bundled_python_path_entries());
+}
+
+pub fn desktop_python_runtime_mode_is_system() -> bool {
+    matches!(
+        resolve_desktop_settings_python_preference(),
+        DesktopPythonPreference::System
+    )
+}
+
+fn python_runtime_path_entries(runtime: &PythonRuntime) -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    if let Some(parent) = runtime.bin.parent() {
+        entries.push(parent.to_path_buf());
+        for child in ["Scripts", "bin"] {
+            let candidate = parent.join(child);
+            if candidate.is_dir() {
+                entries.push(candidate);
+            }
+        }
+    }
+    dedupe_paths(entries)
 }
 
 fn embedded_python_candidates(python_root: &Path) -> Vec<PathBuf> {
@@ -147,28 +187,123 @@ fn prepend_path_env(cmd: &mut TokioCommand, key: &str, value: &Path) {
     };
 }
 
-fn resolve_desktop_settings_python_bin() -> Option<PathBuf> {
-    let settings_path = env::var(DESKTOP_SETTINGS_PATH_ENV)
+fn remove_path_env_entries(cmd: &mut TokioCommand, key: &str, removals: &[PathBuf]) {
+    if removals.is_empty() {
+        return;
+    }
+    let Some(existing) = env::var_os(key) else {
+        return;
+    };
+    let removal_keys = removals
+        .iter()
+        .map(|path| normalize_path_for_compare(path))
+        .collect::<Vec<_>>();
+    let entries = env::split_paths(&existing)
+        .filter(|entry| {
+            let normalized = normalize_path_for_compare(entry);
+            !removal_keys.iter().any(|item| item == &normalized)
+        })
+        .collect::<Vec<_>>();
+    if let Ok(joined) = env::join_paths(entries) {
+        cmd.env(key, joined);
+    }
+}
+
+fn bundled_python_path_entries() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(runtime_root) = resolve_runtime_root() {
+        roots.push(runtime_root);
+    }
+    if let Some(app_dir) = resolve_app_dir() {
+        roots.push(app_dir);
+    }
+    let entries = roots
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.join("opt/python"),
+                root.join("opt/python/Scripts"),
+                root.join("opt/python/bin"),
+                root.join("opt/venv"),
+                root.join("opt/venv/Scripts"),
+                root.join("opt/venv/bin"),
+            ]
+        })
+        .collect::<Vec<_>>();
+    dedupe_paths(entries)
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = Vec::new();
+    let mut output = Vec::new();
+    for path in paths {
+        let key = normalize_path_for_compare(&path);
+        if key.is_empty() || seen.iter().any(|item| item == &key) {
+            continue;
+        }
+        seen.push(key);
+        output.push(path);
+    }
+    output
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    if cfg!(windows) {
+        normalized = normalized.to_ascii_lowercase();
+    }
+    normalized
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DesktopPythonPreference {
+    Auto,
+    System,
+    Custom(PathBuf),
+}
+
+fn resolve_desktop_settings_python_preference() -> DesktopPythonPreference {
+    let Some(settings_path) = env::var(DESKTOP_SETTINGS_PATH_ENV)
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from)?;
-    let text = fs::read_to_string(settings_path).ok()?;
+        .map(PathBuf::from)
+    else {
+        return DesktopPythonPreference::Auto;
+    };
+    let Ok(text) = fs::read_to_string(settings_path) else {
+        return DesktopPythonPreference::Auto;
+    };
     if text.trim().is_empty() {
-        return None;
+        return DesktopPythonPreference::Auto;
     }
-    let settings = serde_json::from_str::<DesktopPythonSettings>(&text).ok()?;
+    let Ok(settings) = serde_json::from_str::<DesktopPythonSettings>(&text) else {
+        return DesktopPythonPreference::Auto;
+    };
+    let mode = settings.python_runtime_mode.trim().to_ascii_lowercase();
     let raw_path = settings.python_path.trim();
     if raw_path.is_empty() {
-        return None;
+        if mode == "system" {
+            return DesktopPythonPreference::System;
+        }
+        return DesktopPythonPreference::Auto;
     }
     let candidate = PathBuf::from(raw_path);
     let resolved = if candidate.is_absolute() {
         candidate
     } else {
-        resolve_app_dir()?.join(candidate)
+        let Some(app_dir) = resolve_app_dir() else {
+            return DesktopPythonPreference::System;
+        };
+        app_dir.join(candidate)
     };
-    resolved.is_file().then_some(resolved)
+    if resolved.is_file() {
+        return DesktopPythonPreference::Custom(resolved);
+    }
+    DesktopPythonPreference::System
 }
 
 fn resolve_app_dir() -> Option<PathBuf> {
@@ -318,8 +453,8 @@ fn find_site_packages(home: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_site_packages, resolve_desktop_settings_python_bin, resolve_python_lib_dir,
-        DESKTOP_APP_DIR_ENV, DESKTOP_SETTINGS_PATH_ENV,
+        find_site_packages, resolve_desktop_settings_python_preference, resolve_python_lib_dir,
+        DesktopPythonPreference, DESKTOP_APP_DIR_ENV, DESKTOP_SETTINGS_PATH_ENV,
     };
     use std::env;
     use std::sync::Mutex;
@@ -343,41 +478,70 @@ mod tests {
         assert_eq!(find_site_packages(temp.path()), Some(site_packages));
     }
 
-    #[test]
-    fn resolve_desktop_settings_python_bin_supports_relative_paths() {
+    fn with_env_lock<T>(body: impl FnOnce() -> T) -> T {
         let _guard = ENV_MUTEX.lock().expect("lock env mutex");
-        let temp = tempdir().expect("tempdir");
-        let app_dir = temp.path().join("app");
-        let python_bin = app_dir.join("runtime/python.exe");
-        std::fs::create_dir_all(
-            python_bin
-                .parent()
-                .expect("relative python path should have parent"),
-        )
-        .expect("create python dir");
-        std::fs::write(&python_bin, b"").expect("write python stub");
+        body()
+    }
 
-        let settings_path = temp.path().join("desktop.settings.json");
-        std::fs::write(&settings_path, r#"{"python_path":"runtime/python.exe"}"#)
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => env::set_var(key, value),
+            None => env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn resolve_desktop_settings_python_preference_supports_relative_paths() {
+        with_env_lock(|| {
+            let temp = tempdir().expect("tempdir");
+            let app_dir = temp.path().join("app");
+            let python_bin = app_dir.join("runtime/python.exe");
+            std::fs::create_dir_all(
+                python_bin
+                    .parent()
+                    .expect("relative python path should have parent"),
+            )
+            .expect("create python dir");
+            std::fs::write(&python_bin, b"").expect("write python stub");
+
+            let settings_path = temp.path().join("desktop.settings.json");
+            std::fs::write(&settings_path, r#"{"python_path":"runtime/python.exe"}"#)
+                .expect("write settings");
+
+            let previous_app_dir = env::var_os(DESKTOP_APP_DIR_ENV);
+            let previous_settings_path = env::var_os(DESKTOP_SETTINGS_PATH_ENV);
+
+            env::set_var(DESKTOP_APP_DIR_ENV, &app_dir);
+            env::set_var(DESKTOP_SETTINGS_PATH_ENV, &settings_path);
+
+            let resolved = resolve_desktop_settings_python_preference();
+
+            restore_env(DESKTOP_APP_DIR_ENV, previous_app_dir);
+            restore_env(DESKTOP_SETTINGS_PATH_ENV, previous_settings_path);
+
+            assert_eq!(resolved, DesktopPythonPreference::Custom(python_bin));
+        });
+    }
+
+    #[test]
+    fn resolve_desktop_settings_python_preference_system_mode_blocks_fallback() {
+        with_env_lock(|| {
+            let temp = tempdir().expect("tempdir");
+            let settings_path = temp.path().join("desktop.settings.json");
+            std::fs::write(
+                &settings_path,
+                r#"{"python_path":"","python_runtime_mode":"system"}"#,
+            )
             .expect("write settings");
 
-        let previous_app_dir = env::var_os(DESKTOP_APP_DIR_ENV);
-        let previous_settings_path = env::var_os(DESKTOP_SETTINGS_PATH_ENV);
+            let previous_settings_path = env::var_os(DESKTOP_SETTINGS_PATH_ENV);
+            env::set_var(DESKTOP_SETTINGS_PATH_ENV, &settings_path);
 
-        env::set_var(DESKTOP_APP_DIR_ENV, &app_dir);
-        env::set_var(DESKTOP_SETTINGS_PATH_ENV, &settings_path);
+            let resolved = resolve_desktop_settings_python_preference();
 
-        let resolved = resolve_desktop_settings_python_bin();
+            restore_env(DESKTOP_SETTINGS_PATH_ENV, previous_settings_path);
 
-        match previous_app_dir {
-            Some(value) => env::set_var(DESKTOP_APP_DIR_ENV, value),
-            None => env::remove_var(DESKTOP_APP_DIR_ENV),
-        }
-        match previous_settings_path {
-            Some(value) => env::set_var(DESKTOP_SETTINGS_PATH_ENV, value),
-            None => env::remove_var(DESKTOP_SETTINGS_PATH_ENV),
-        }
-
-        assert_eq!(resolved, Some(python_bin));
+            assert_eq!(resolved, DesktopPythonPreference::System);
+        });
     }
 }

@@ -1011,6 +1011,8 @@ async fn run_shell_command(
     {
         if let Some(runtime) = runtime.as_ref() {
             python_runtime::apply_python_env(&mut cmd, runtime);
+        } else {
+            python_runtime::apply_system_python_env_if_configured(&mut cmd);
         }
         match run_command_output(cmd, timeout_s, stdout_policy, stderr_policy).await {
             Ok(output) => return Ok(output),
@@ -1022,6 +1024,8 @@ async fn run_shell_command(
     let mut cmd = command_utils::build_shell_command(command, cwd);
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut cmd, runtime);
+    } else {
+        python_runtime::apply_system_python_env_if_configured(&mut cmd);
     }
     run_command_output(cmd, timeout_s, stdout_policy, stderr_policy)
         .await
@@ -1044,6 +1048,8 @@ async fn run_python_script(
     cmd.env("PYTHONIOENCODING", "utf-8");
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut cmd, runtime);
+    } else {
+        python_runtime::apply_system_python_env_if_configured(&mut cmd);
     }
     command_utils::apply_platform_spawn_options(&mut cmd);
     run_command_output(

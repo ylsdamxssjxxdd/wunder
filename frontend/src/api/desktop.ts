@@ -69,6 +69,7 @@ export type DesktopSettingsData = {
   workspace_root: string;
   python_path?: string;
   python_path_valid?: boolean;
+  python_runtime_mode?: 'auto' | 'system' | 'custom' | string;
   container_roots: DesktopContainerRoot[];
   container_mounts?: DesktopContainerMount[];
   language: string;

@@ -1,8 +1,8 @@
 use super::context::normalize_model_context_message;
 use super::retry_governor::RetryGovernor;
 use super::thread_runtime::{
-    thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
-    ThreadRuntimeUpdate,
+    ThreadRuntimeStatus, ThreadRuntimeUpdate, thread_closed_payload, thread_not_loaded_payload,
+    thread_status_payload,
 };
 use super::tool_calls::ToolCall;
 use super::tool_parallel::tool_call_supports_parallel;
@@ -16,7 +16,7 @@ use crate::services::goal;
 use crate::services::orchestration_context::session_orchestration_run_root;
 use crate::services::subagents;
 use crate::services::tools::sessions_yield_tool;
-use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
+use crate::services::tools::tool_error::{ToolErrorMeta, with_error_meta};
 
 struct PlannedToolCall {
     call: ToolCall,
@@ -461,6 +461,23 @@ impl Orchestrator {
                 }
             }
             messages.extend(model_context_entries);
+            let context_messages_before_normalize = messages.clone();
+            messages = context_manager.normalize_messages(messages);
+            if messages != context_messages_before_normalize {
+                let repaired_model_context_entries =
+                    super::context::model_context_entries_from_messages(&messages);
+                if let Err(err) = self.workspace.replace_model_context_entries(
+                    &user_id,
+                    &session_id,
+                    &repaired_model_context_entries,
+                ) {
+                    warn!(
+                        "replace repaired model context entries failed for session {session_id}: {err}"
+                    );
+                } else {
+                    let _ = self.workspace.flush_writes_async().await;
+                }
+            }
             let user_message = self
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
@@ -1637,149 +1654,155 @@ impl Orchestrator {
                             );
                         }
 
-                        if result.ok {
-                            retry_governor.record_success();
-                        } else if let Some(stop) = retry_governor.record_failure(&name, &result) {
-                            if result.error.trim().is_empty() && !stop.detail.trim().is_empty() {
-                                result.error = stop.detail.clone();
-                            }
-                            let stop_reason_key = stop.reason;
-                            let stop_fingerprint = stop.fingerprint.clone();
-                            let stop_same_tool_failures = stop.same_tool_failures;
-                            let stop_retryable = stop.retryable;
-                            let stop_error_code = stop.error_code.clone();
-                            let repeat_count = stop.repeat_count.max(stop.same_tool_failures);
-                            let threshold = stop.threshold.max(1);
-                            let legacy_signature = build_tool_failure_signature(&name, &result);
-                            if should_request_tool_failure_reroute(
-                                stop_reason_key,
-                                reroute_notice_count,
-                                stop_fingerprint.as_str(),
-                                &reroute_notice_fingerprints,
-                            )
-                            {
-                                reroute_notice_count = reroute_notice_count.saturating_add(1);
-                                reroute_notice_fingerprints.insert(stop_fingerprint.clone());
-                                let model_notice = build_tool_failure_reroute_model_notice(
-                                    &name,
-                                    &stop,
-                                    repeat_count,
-                                    threshold,
-                                    result.error.as_str(),
-                                );
-                                let next_step_hint = build_tool_failure_next_step_hint(
-                                    &name,
-                                    stop_error_code.as_str(),
-                                    result.error.as_str(),
-                                );
-                                let mut reroute_payload = json!({
-                                    "stage": "tool_failure_reroute",
-                                    "summary": "Tool failure reroute triggered; model instructed to change strategy.",
-                                    "tool": name.clone(),
-                                    "reason": stop_reason_key,
-                                    "fingerprint": stop_fingerprint.clone(),
-                                    "legacy_signature": legacy_signature,
-                                    "repeat_count": repeat_count,
-                                    "same_tool_failures": stop_same_tool_failures,
-                                    "threshold": threshold,
-                                    "retryable": stop_retryable,
-                                    "error_code": stop_error_code.clone(),
-                                    "reroute_notice_count": reroute_notice_count,
-                                    "tool_error": if result.error.trim().is_empty() {
-                                        Value::Null
-                                    } else {
-                                        Value::String(result.error.clone())
-                                    },
-                                    "next_step_hint": if next_step_hint.trim().is_empty() {
-                                        Value::Null
-                                    } else {
-                                        Value::String(next_step_hint)
-                                    },
-                                });
-                                if let Value::Object(ref mut map) = reroute_payload {
-                                    round_info.insert_into(map);
-                                }
-                                emitter.emit("progress", reroute_payload).await;
-                                failure_reroute_notice = Some(model_notice);
+                        if failure_reroute_notice.is_none() {
+                            if result.ok {
                                 retry_governor.record_success();
-                                break;
-                            }
+                            } else if let Some(stop) =
+                                retry_governor.record_failure(&name, &result)
                             {
-                                answer = build_tool_failure_guard_answer(
-                                    &name,
-                                    &result,
-                                    repeat_count,
-                                    threshold,
-                                );
-                                let next_step_hint = build_tool_failure_next_step_hint(
-                                    &name,
-                                    stop_error_code.as_str(),
-                                    result.error.as_str(),
-                                );
-                                stop_reason = Some("tool_failure_guard".to_string());
-                                let guard_meta = json!({
-                                    "type": "tool_failure_guard",
-                                    "tool": name.clone(),
-                                    "reason": stop_reason_key,
-                                    "fingerprint": stop_fingerprint.clone(),
-                                    "legacy_signature": legacy_signature,
-                                    "repeat_count": repeat_count,
-                                    "same_tool_failures": stop_same_tool_failures,
-                                    "threshold": threshold,
-                                    "retryable": stop_retryable,
-                                    "error_code": stop_error_code.clone(),
-                                    "next_step_hint": if next_step_hint.trim().is_empty() {
-                                        Value::Null
-                                    } else {
-                                        Value::String(next_step_hint.clone())
-                                    },
-                                    "tool_error": if result.error.trim().is_empty() {
-                                        Value::Null
-                                    } else {
-                                        Value::String(result.error.clone())
-                                    },
-                                });
-                                stop_meta = Some(guard_meta.clone());
-                                let mut guard_payload = json!({
-                                    "stage": "tool_failure_guard",
-                                    "summary": "Repeated tool failures detected; stopped retries to keep session alive.",
-                                    "tool": name.clone(),
-                                    "reason": stop_reason_key,
-                                    "fingerprint": stop_fingerprint,
-                                    "legacy_signature": legacy_signature,
-                                    "repeat_count": repeat_count,
-                                    "same_tool_failures": stop_same_tool_failures,
-                                    "threshold": threshold,
-                                    "retryable": stop_retryable,
-                                    "error_code": stop_error_code,
-                                    "next_step_hint": if next_step_hint.trim().is_empty() {
-                                        Value::Null
-                                    } else {
-                                        Value::String(next_step_hint)
-                                    },
-                                    "tool_error": if result.error.trim().is_empty() {
-                                        Value::Null
-                                    } else {
-                                        Value::String(result.error.clone())
-                                    },
-                                });
-                                if let Value::Object(ref mut map) = guard_payload {
-                                    round_info.insert_into(map);
+                                if result.error.trim().is_empty()
+                                    && !stop.detail.trim().is_empty()
+                                {
+                                    result.error = stop.detail.clone();
                                 }
-                                emitter.emit("progress", guard_payload).await;
-                                self.append_chat(
-                                    &user_id,
-                                    &session_id,
-                                    "assistant",
-                                    Some(&json!(answer.clone())),
-                                    None,
-                                    Some(&guard_meta),
-                                    None,
-                                    None,
-                                    None,
-                                );
-                                should_finish = true;
-                                break;
+                                let stop_reason_key = stop.reason;
+                                let stop_fingerprint = stop.fingerprint.clone();
+                                let stop_same_tool_failures = stop.same_tool_failures;
+                                let stop_retryable = stop.retryable;
+                                let stop_error_code = stop.error_code.clone();
+                                let repeat_count = stop.repeat_count.max(stop.same_tool_failures);
+                                let threshold = stop.threshold.max(1);
+                                let legacy_signature =
+                                    build_tool_failure_signature(&name, &result);
+                                if should_request_tool_failure_reroute(
+                                    stop_reason_key,
+                                    reroute_notice_count,
+                                    stop_fingerprint.as_str(),
+                                    &reroute_notice_fingerprints,
+                                ) {
+                                    reroute_notice_count =
+                                        reroute_notice_count.saturating_add(1);
+                                    reroute_notice_fingerprints
+                                        .insert(stop_fingerprint.clone());
+                                    let model_notice = build_tool_failure_reroute_model_notice(
+                                        &name,
+                                        &stop,
+                                        repeat_count,
+                                        threshold,
+                                        result.error.as_str(),
+                                    );
+                                    let next_step_hint = build_tool_failure_next_step_hint(
+                                        &name,
+                                        stop_error_code.as_str(),
+                                        result.error.as_str(),
+                                    );
+                                    let mut reroute_payload = json!({
+                                        "stage": "tool_failure_reroute",
+                                        "summary": "Tool failure reroute triggered; model instructed to change strategy.",
+                                        "tool": name.clone(),
+                                        "reason": stop_reason_key,
+                                        "fingerprint": stop_fingerprint.clone(),
+                                        "legacy_signature": legacy_signature,
+                                        "repeat_count": repeat_count,
+                                        "same_tool_failures": stop_same_tool_failures,
+                                        "threshold": threshold,
+                                        "retryable": stop_retryable,
+                                        "error_code": stop_error_code.clone(),
+                                        "reroute_notice_count": reroute_notice_count,
+                                        "tool_error": if result.error.trim().is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(result.error.clone())
+                                        },
+                                        "next_step_hint": if next_step_hint.trim().is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(next_step_hint)
+                                        },
+                                    });
+                                    if let Value::Object(ref mut map) = reroute_payload {
+                                        round_info.insert_into(map);
+                                    }
+                                    emitter.emit("progress", reroute_payload).await;
+                                    failure_reroute_notice = Some(model_notice);
+                                    retry_governor.record_success();
+                                } else {
+                                    answer = build_tool_failure_guard_answer(
+                                        &name,
+                                        &result,
+                                        repeat_count,
+                                        threshold,
+                                    );
+                                    let next_step_hint = build_tool_failure_next_step_hint(
+                                        &name,
+                                        stop_error_code.as_str(),
+                                        result.error.as_str(),
+                                    );
+                                    stop_reason = Some("tool_failure_guard".to_string());
+                                    let guard_meta = json!({
+                                        "type": "tool_failure_guard",
+                                        "tool": name.clone(),
+                                        "reason": stop_reason_key,
+                                        "fingerprint": stop_fingerprint.clone(),
+                                        "legacy_signature": legacy_signature,
+                                        "repeat_count": repeat_count,
+                                        "same_tool_failures": stop_same_tool_failures,
+                                        "threshold": threshold,
+                                        "retryable": stop_retryable,
+                                        "error_code": stop_error_code.clone(),
+                                        "next_step_hint": if next_step_hint.trim().is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(next_step_hint.clone())
+                                        },
+                                        "tool_error": if result.error.trim().is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(result.error.clone())
+                                        },
+                                    });
+                                    stop_meta = Some(guard_meta.clone());
+                                    let mut guard_payload = json!({
+                                        "stage": "tool_failure_guard",
+                                        "summary": "Repeated tool failures detected; stopped retries to keep session alive.",
+                                        "tool": name.clone(),
+                                        "reason": stop_reason_key,
+                                        "fingerprint": stop_fingerprint,
+                                        "legacy_signature": legacy_signature,
+                                        "repeat_count": repeat_count,
+                                        "same_tool_failures": stop_same_tool_failures,
+                                        "threshold": threshold,
+                                        "retryable": stop_retryable,
+                                        "error_code": stop_error_code,
+                                        "next_step_hint": if next_step_hint.trim().is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(next_step_hint)
+                                        },
+                                        "tool_error": if result.error.trim().is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(result.error.clone())
+                                        },
+                                    });
+                                    if let Value::Object(ref mut map) = guard_payload {
+                                        round_info.insert_into(map);
+                                    }
+                                    emitter.emit("progress", guard_payload).await;
+                                    self.append_chat(
+                                        &user_id,
+                                        &session_id,
+                                        "assistant",
+                                        Some(&json!(answer.clone())),
+                                        None,
+                                        Some(&guard_meta),
+                                        None,
+                                        None,
+                                        None,
+                                    );
+                                    should_finish = true;
+                                    break;
+                                }
                             }
                         }
 
@@ -4163,8 +4186,8 @@ mod tests {
             reason: "tool_failure_reroute_required",
             fingerprint: "TOOL_TIMEOUT:deadbeef".to_string(),
             repeat_count: 1,
-            same_tool_failures: 3,
-            threshold: 3,
+            same_tool_failures: 5,
+            threshold: 5,
             retryable: true,
             error_code: "TOOL_TIMEOUT".to_string(),
             detail: "timeout while calling service".to_string(),

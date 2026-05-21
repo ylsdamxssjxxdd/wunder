@@ -642,7 +642,19 @@ impl Orchestrator {
         }
 
         let client = build_llm_client(&effective_config, self.http.clone());
-        let chat_messages = sanitize_chat_messages_for_request(&self.build_chat_messages(messages));
+        let context_manager = ContextManager;
+        let request_messages = context_manager.normalize_messages(messages.to_vec());
+        let message_repair = (request_messages.as_slice() != messages).then(|| {
+            json!({
+                "kind": "chat_messages",
+                "source": "message_sequence",
+                "strategy": "normalize_tool_result_adjacency",
+                "before_count": messages.len(),
+                "after_count": request_messages.len(),
+            })
+        });
+        let chat_messages =
+            sanitize_chat_messages_for_request(&self.build_chat_messages(&request_messages));
         let native_tools_attached = tools.is_some_and(|items| !items.is_empty());
         let stream_disabled_reason = crate::llm::should_disable_streaming_for_native_tools(
             &effective_config,
@@ -685,6 +697,9 @@ impl Orchestrator {
             if let Value::Object(ref mut map) = request_payload {
                 if let Some(repair) = chat_messages.repair.clone() {
                     map.insert("repair".to_string(), repair);
+                }
+                if let Some(repair) = message_repair.clone() {
+                    map.insert("message_repair".to_string(), repair);
                 }
                 if let Some(reason) = stream_disabled_reason {
                     map.insert(
@@ -813,10 +828,11 @@ impl Orchestrator {
                         }
                     }
                     let mut usage = usage.filter(|item| item.total > 0).unwrap_or_else(|| {
-                        self.estimate_token_usage(messages, &content, &reasoning)
+                        self.estimate_token_usage(&request_messages, &content, &reasoning)
                     });
                     if (usage.input == 0 || usage.output == 0) && usage.total > 0 {
-                        let estimated = self.estimate_token_usage(messages, &content, &reasoning);
+                        let estimated =
+                            self.estimate_token_usage(&request_messages, &content, &reasoning);
                         if estimated.total > 0 {
                             let ratio = usage.total as f64 / estimated.total as f64;
                             let mut input = (estimated.input as f64 * ratio).round() as u64;
@@ -1164,11 +1180,11 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
+        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES, LlmFailureKind,
         build_context_cache_probe, classify_llm_failure, detect_invalid_tool_calls,
         extract_context_window_limit_hint, is_context_window_error_text,
         is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
-        resolve_llm_retry_delay, LlmFailureKind, DEFAULT_LLM_MAX_ATTEMPTS,
-        LLM_UNAVAILABLE_MIN_RETRIES,
+        resolve_llm_retry_delay,
     };
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;

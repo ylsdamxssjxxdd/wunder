@@ -36,6 +36,10 @@ const DESKTOP_DEFAULT_WORKSPACE_ROOT_ENV: &str = "WUNDER_DESKTOP_DEFAULT_WORKSPA
 const DESKTOP_USER_ID_ENV: &str = "WUNDER_DESKTOP_USER_ID";
 const DEFAULT_SEED_QUERY_LIMIT: usize = 50;
 
+fn default_desktop_python_runtime_mode() -> String {
+    "auto".to_string()
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -82,6 +86,8 @@ struct DesktopSettingsFile {
     desktop_token: String,
     #[serde(default)]
     python_path: String,
+    #[serde(default = "default_desktop_python_runtime_mode")]
+    python_runtime_mode: String,
     #[serde(default)]
     container_roots: HashMap<i32, String>,
     #[serde(default)]
@@ -101,6 +107,7 @@ impl Default for DesktopSettingsFile {
             workspace_root: String::new(),
             desktop_token: String::new(),
             python_path: String::new(),
+            python_runtime_mode: default_desktop_python_runtime_mode(),
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
@@ -146,6 +153,8 @@ struct DesktopSettingsUpdateRequest {
     workspace_root: Option<String>,
     #[serde(default)]
     python_path: Option<String>,
+    #[serde(default)]
+    python_runtime_mode: Option<String>,
     #[serde(default)]
     container_roots: Option<Vec<DesktopContainerRootInput>>,
     #[serde(default)]
@@ -811,8 +820,18 @@ async fn desktop_settings_update(
     settings.container_cloud_workspaces = container_cloud_workspaces.clone();
     settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
     if let Some(python_path) = payload.python_path.as_deref() {
+        let trimmed_python_path = python_path.trim();
         settings.python_path =
-            normalize_desktop_python_path(python_path, &app_dir).map_err(bad_request)?;
+            normalize_desktop_python_path(trimmed_python_path, &app_dir).map_err(bad_request)?;
+        if trimmed_python_path.is_empty() && payload.python_runtime_mode.is_none() {
+            settings.python_runtime_mode = "system".to_string();
+        } else if !settings.python_path.trim().is_empty() {
+            settings.python_runtime_mode = "custom".to_string();
+        }
+    }
+    if let Some(mode) = payload.python_runtime_mode.as_deref() {
+        settings.python_runtime_mode =
+            normalize_desktop_python_runtime_mode(mode, settings.python_path.trim());
     }
 
     if let Some(language) = payload.language.as_deref().map(str::trim) {
@@ -1069,11 +1088,16 @@ fn build_settings_payload(
     };
     let llm = settings.llm.clone().unwrap_or_else(|| config.llm.clone());
     let (python_path, python_path_valid) = describe_desktop_python_path(settings, app_dir);
+    let python_runtime_mode = normalize_desktop_python_runtime_mode(
+        &settings.python_runtime_mode,
+        settings.python_path.trim(),
+    );
 
     json!({
         "workspace_root": workspace_root,
         "python_path": python_path,
         "python_path_valid": python_path_valid,
+        "python_runtime_mode": python_runtime_mode,
         "container_roots": container_roots,
         "container_mounts": container_mounts,
         "language": language,
@@ -1652,6 +1676,17 @@ fn normalize_desktop_python_path(raw: &str, app_dir: &Path) -> Result<String, St
         ));
     }
     Ok(candidate.to_string_lossy().to_string())
+}
+
+fn normalize_desktop_python_runtime_mode(raw: &str, python_path: &str) -> String {
+    let mode = raw.trim().to_ascii_lowercase();
+    if !python_path.trim().is_empty() {
+        return "custom".to_string();
+    }
+    match mode.as_str() {
+        "system" => "system".to_string(),
+        _ => "auto".to_string(),
+    }
 }
 
 fn describe_desktop_python_path(settings: &DesktopSettingsFile, app_dir: &Path) -> (String, bool) {
