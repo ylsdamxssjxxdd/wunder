@@ -131,6 +131,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { applyPlanUpdate, buildToolIdentityMeta, buildWorkflowItem, hasPlanSteps, isQuestionPanelToolName, normalizeInquiryPanelPayload, normalizeInquiryPanelState, normalizePlanPayload, safeJsonParse, shouldAutoShowPlan, tailText } from './chatDemoPanels';
 import { applyDesktopOverlayEvent } from './chatPersist';
+import { STREAM_FLUSH_BASE_MS, STREAM_FLUSH_MAX_MS } from './chatRuntimeControls';
 import { resolveSessionKey, sessionSubagentsCache } from './chatRuntimeState';
 import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveContextPreviewTokens, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
 import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments } from './chatStreamIds';
@@ -1795,12 +1796,33 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   let pendingReasoningExplicit = '';
   let pendingReasoningFallback = '';
   const thinkStreamParser = createThinkTagStreamParser();
+  const streamFlushDelayMs = Math.min(
+    STREAM_FLUSH_MAX_MS,
+    Math.max(0, Number.isFinite(options.streamFlushMs) ? Number(options.streamFlushMs) : STREAM_FLUSH_BASE_MS)
+  );
+  const streamFlushMaxWaitMs = Math.max(streamFlushDelayMs, STREAM_FLUSH_MAX_MS);
   let streamTimer = null;
-  const flushStream = (force = false) => {
+  let streamFrame = null;
+  let streamLastFlushedAt = 0;
+  const hasRequestAnimationFrame =
+    typeof globalThis.requestAnimationFrame === 'function' &&
+    typeof globalThis.cancelAnimationFrame === 'function';
+  const nowMs = () => {
+    const perf = globalThis.performance;
+    return perf && typeof perf.now === 'function' ? perf.now() : Date.now();
+  };
+  const clearScheduledStreamFlush = () => {
+    if (streamFrame !== null && hasRequestAnimationFrame) {
+      globalThis.cancelAnimationFrame(streamFrame);
+    }
+    streamFrame = null;
     if (streamTimer !== null) {
       clearTimeout(streamTimer);
       streamTimer = null;
     }
+  };
+  const flushStream = (force = false) => {
+    clearScheduledStreamFlush();
     if (force) {
       const trailingDelta = thinkStreamParser.push('', true);
       if (trailingDelta.content) {
@@ -1817,6 +1839,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     if (!hasContentDelta && !hasReasoningDelta && !force) {
       return;
     }
+    streamLastFlushedAt = nowMs();
     if (pendingReasoningExplicit) {
       outputReasoningExplicit += pendingReasoningExplicit;
       pendingReasoningExplicit = '';
@@ -1865,14 +1888,45 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   };
 
   const scheduleStreamFlush = () => {
-    flushStream();
+    if (!pendingContent && !pendingReasoningExplicit && !pendingReasoningFallback) {
+      return;
+    }
+    if (streamFlushDelayMs <= 0) {
+      flushStream();
+      return;
+    }
+    if (streamFrame !== null || streamTimer !== null) {
+      return;
+    }
+    const now = nowMs();
+    const elapsedSinceFlush = streamLastFlushedAt > 0 ? now - streamLastFlushedAt : streamFlushMaxWaitMs;
+    const delayMs = streamLastFlushedAt > 0
+      ? Math.max(0, Math.min(streamFlushDelayMs, streamFlushMaxWaitMs - elapsedSinceFlush))
+      : streamFlushDelayMs;
+    const run = () => {
+      streamFrame = null;
+      if (streamTimer !== null) {
+        clearTimeout(streamTimer);
+        streamTimer = null;
+      }
+      flushStream();
+    };
+    const runOnFrame = () => {
+      if (hasRequestAnimationFrame) {
+        streamFrame = globalThis.requestAnimationFrame(run);
+      } else {
+        run();
+      }
+    };
+    if (delayMs <= 0) {
+      runOnFrame();
+      return;
+    }
+    streamTimer = setTimeout(runOnFrame, delayMs);
   };
 
   const resetStreamPending = () => {
-    if (streamTimer !== null) {
-      clearTimeout(streamTimer);
-      streamTimer = null;
-    }
+    clearScheduledStreamFlush();
     pendingContent = '';
     pendingReasoningExplicit = '';
     pendingReasoningFallback = '';

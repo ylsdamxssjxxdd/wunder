@@ -504,7 +504,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           routeEntry: ctx.route.query?.entry,
           activeSessionId: ctx.chatStore.activeSessionId,
           draftAgentId: ctx.chatStore.draftAgentId,
-          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length,
           worldConversationId: ctx.userWorldStore.activeConversationId,
           worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages)
               ? ctx.userWorldStore.activeMessages.length
@@ -524,7 +524,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               activeConversation: ctx.sessionHub.activeConversation,
               activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
               draftAgentId: String(ctx.chatStore.draftAgentId || '').trim(),
-              messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+              messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length,
               worldConversationId: String(ctx.userWorldStore.activeConversationId || '').trim(),
               worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages) ? ctx.userWorldStore.activeMessages.length : 0
           });
@@ -538,7 +538,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       }
       if (String(ctx.chatStore.activeSessionId || '').trim() ||
           String(ctx.chatStore.draftAgentId || '').trim() ||
-          (Array.isArray(ctx.chatStore.messages) && ctx.chatStore.messages.length > 0)) {
+          ctx.resolveActiveAgentRenderableMessageRecords().length > 0) {
           ctx.chatStore.activeSessionId = null;
           ctx.chatStore.draftAgentId = '';
           ctx.chatStore.draftToolOverrides = null;
@@ -650,7 +650,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           });
           return;
       }
-      if (!String(ctx.chatStore.draftAgentId || '').trim() && !ctx.chatStore.messages.length) {
+      if (!String(ctx.chatStore.draftAgentId || '').trim() && !ctx.resolveActiveAgentRenderableMessageRecords().length) {
           if (!ctx.hasAnyMixedConversations.value) {
               ctx.clearMessagePanelWhenConversationEmpty();
           }
@@ -664,7 +664,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       });
       chatDebugLog('messenger.conversation', 'restore-agent-draft', {
           draftAgentId: draftAgent,
-          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0
+          messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length
       });
   };
 
@@ -955,7 +955,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           draftAgentId: String(ctx.chatStore.draftAgentId || '').trim(),
           activeConversation: ctx.activeConversation.value,
           targetAgentId,
-          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length,
           contentLength: finalContent.length,
           attachmentCount: attachments.length
       });
@@ -965,7 +965,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       ctx.autoStickToBottom.value = true;
       ctx.setRuntimeStateOverride(targetAgentId, 'running', 30000);
       ctx.pendingAssistantCenter = true;
-      ctx.pendingAssistantCenterCount = ctx.chatStore.messages.length;
+      ctx.pendingAssistantCenterCount = ctx.resolveActiveAgentRenderableMessageRecords().length;
       try {
           await ctx.chatStore.sendMessage(finalContent, {
               attachments,
@@ -1004,7 +1004,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       const resolveStopSnapshot = () => {
           const currentSessionId = String(ctx.chatStore.activeSessionId || '').trim();
           const targetMessages = targetSessionId && targetSessionId === currentSessionId
-              ? (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])
+              ? ctx.resolveActiveAgentRenderableMessageRecords()
               : ctx.chatStore.getCachedSessionMessages(targetSessionId);
           return captureStopRunSnapshot({
               sessionId: targetSessionId,

@@ -34,6 +34,7 @@ type WsRequestPayload = {
   closeOnFinal?: boolean;
   resolveOnQueued?: boolean;
   keepPendingAfterQueuedAck?: boolean;
+  queuedAckGraceMs?: number;
   signal?: AbortSignal;
   cancelOnAbort?: boolean;
   sessionId?: string;
@@ -48,6 +49,8 @@ type PendingEntry = {
   closeOnFinal: boolean;
   resolveOnQueued: boolean;
   keepPendingAfterQueuedAck: boolean;
+  queuedAckGraceMs: number;
+  queuedAckGraceTimer: ReturnType<typeof setTimeout> | null;
   signal?: AbortSignal;
   abortHandler: (() => void) | null;
   cancelOnAbort: boolean;
@@ -453,6 +456,10 @@ export const createWsMultiplexer = (
   };
 
   const cleanupRequest = (entry: PendingEntry | undefined): void => {
+    if (entry?.queuedAckGraceTimer) {
+      clearTimeout(entry.queuedAckGraceTimer);
+      entry.queuedAckGraceTimer = null;
+    }
     if (entry?.signal && entry.abortHandler) {
       entry.signal.removeEventListener('abort', entry.abortHandler);
     }
@@ -474,17 +481,23 @@ export const createWsMultiplexer = (
     const entry = pending.get(requestId);
     if (!entry) return;
     if (!entry.keepPendingAfterQueuedAck) {
+      settleResolve(entry);
+      return;
+    }
+    settleResolve(entry);
+    if (entry.queuedAckGraceTimer || entry.queuedAckGraceMs <= 0) return;
+    // Some WS producers send a queued ack before more request-scoped events; keep a short
+    // grace window, then release the pending slot if no terminal event arrived on it.
+    entry.queuedAckGraceTimer = setTimeout(() => {
+      entry.queuedAckGraceTimer = null;
+      if (pending.get(requestId) !== entry) return;
       pending.delete(requestId);
       cleanupRequest(entry);
-      settleResolve(entry);
       if (pending.size === 0) {
         clearPingTimer();
       }
       scheduleIdleClose();
-      return;
-    }
-    // Some WS producers send a queued ack before more request-scoped events.
-    settleResolve(entry);
+    }, entry.queuedAckGraceMs);
   };
 
   const resolveRequest = (requestId: string): void => {
@@ -686,6 +699,10 @@ export const createWsMultiplexer = (
         closeOnFinal: payload?.closeOnFinal !== false,
         resolveOnQueued: payload?.resolveOnQueued === true,
         keepPendingAfterQueuedAck: payload?.keepPendingAfterQueuedAck === true,
+        queuedAckGraceMs: Number.isFinite(Number(payload?.queuedAckGraceMs))
+          ? Math.max(0, Number(payload?.queuedAckGraceMs))
+          : 30000,
+        queuedAckGraceTimer: null,
         settled: false,
         signal: payload?.signal,
         abortHandler: null,

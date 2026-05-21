@@ -53,6 +53,7 @@ export type ChatRuntimeEventType =
   | 'tool_call_delta'
   | 'tool_call_completed'
   | 'tool_call_failed'
+  | 'workflow_event'
   | 'turn_completed'
   | 'turn_failed'
   | 'turn_cancelled'
@@ -62,6 +63,10 @@ export type ChatRuntimeEventType =
 export type ChatRuntimeEventSource = 'ws' | 'local' | 'snapshot' | 'legacy' | 'test';
 
 export type ChatRuntimeRawMessage = Record<string, unknown>;
+
+export type ChatRuntimeWorkflowItemProjection = Record<string, unknown>;
+
+export type ChatRuntimeSubagentProjection = Record<string, unknown>;
 
 export type ChatRuntimeEvent = {
   event_type: ChatRuntimeEventType | string;
@@ -108,6 +113,14 @@ export type ChatRuntimeQuarantinedEvent = {
   event: ChatRuntimeEvent;
 };
 
+export type ChatRuntimePendingSequentialEvent = {
+  eventSeq: number;
+  eventId: string;
+  eventType: string;
+  receivedAt: number;
+  event: ChatRuntimeEvent;
+};
+
 export type ChatRuntimeMessageProjection = {
   id: string;
   role: ChatRuntimeMessageRole;
@@ -122,6 +135,8 @@ export type ChatRuntimeMessageProjection = {
   final: boolean;
   failed: boolean;
   cancelled: boolean;
+  workflowItems?: ChatRuntimeWorkflowItemProjection[];
+  subagents?: ChatRuntimeSubagentProjection[];
   legacyKey?: string;
   raw?: ChatRuntimeRawMessage;
 };
@@ -162,6 +177,7 @@ export type ChatRuntimeSessionProjection = {
   modelTurnById: Record<string, ChatRuntimeModelTurnProjection>;
   invariantViolations: ChatRuntimeViolation[];
   quarantinedEvents: ChatRuntimeQuarantinedEvent[];
+  pendingSequentialEvents: ChatRuntimePendingSequentialEvent[];
 };
 
 export type ChatRuntimeDebugEvent = {
@@ -185,6 +201,8 @@ export type ChatRuntimeApplyResult = {
   applied: boolean;
   ignored: boolean;
   quarantined: boolean;
+  pending?: boolean;
+  drained?: number;
   sessionId: string;
   eventSeq: number | null;
   reason?: string;

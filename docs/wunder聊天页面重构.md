@@ -108,7 +108,8 @@
 - 所有 WS、HTTP events、session snapshot 都转成统一 `ChatRuntimeEvent`。
 - 重复 `event_id` 忽略。
 - `event_seq` 小于等于已应用序号忽略。
-- `event_seq` 出现 gap 时标记 `syncRequired`，暂停局部猜测，触发一次 snapshot/event replay。
+- `event_seq` 出现小范围 gap 时先进入有界顺序缓冲，不立即应用后续 delta/final；缺口补齐后按序排空，避免后到的早期 delta 被 stale 规则吞掉。
+- `event_seq` 超过有界缓冲能力或缓冲溢出时标记 `syncRequired` 并立即触发一次 events/snapshot 恢复；在后端尚未保证连续 canonical seq 前，前端仍兼容应用该事件，避免误伤合法跳号的历史链路。
 - 没有 `session_id`、`event_id`、`event_seq`、turn id、message id 的严格事件进入 quarantine，不写消息。
 - terminal event 只结算对应 `model_turn_id`，不扫描相邻 assistant。
 - snapshot hydrate 只能补齐或覆盖 projection，不直接 splice 当前渲染数组。
@@ -334,12 +335,38 @@ terminal event 必须携带 `model_turn_id` 和最终 runtime status。前端只
 
 - 后端按时间或字符聚合 delta，减少 WS 帧数量。
 - 前端 subscription 收到 delta 后用 `requestAnimationFrame` 或 30-50ms flush 合并更新。
+- legacy `chatWorkflowProcessor` 只能把正文与 reasoning delta 先累积在普通变量里，按 `streamFlushMs` + `requestAnimationFrame` 合并后再写 `assistantMessage.content/reasoning`；`final/error/cancel/stop` 这类边界事件必须 `flushStream(true)` 强制落最后一段。
+- `notifySessionSnapshot` 需要用可见消息签名判断是否推进 `messageMutationVersion`、projection reconcile、窗口计算和快照落盘；纯轮次、内部 pending、无可见变化的流式 bookkeeping 不应触发整页重算。
 - 工具 timeline 与正文 streaming 分开更新，避免一个 token 触发整个 workflow 面板重算。
 - 长历史分页只进入 normalized store，不一次性深响应式挂载所有 raw message。
 - Markdown 渲染对 final message 缓存 AST 或 HTML；streaming preview 使用轻量纯文本/增量渲染。
 - 虚拟列表开启阈值提升到基于 DOM 成本和消息数的组合判断，不在短列表里引入虚拟滚动复杂性。
 
 ## 迁移节点
+
+### 当前实施进度（2026-05-21）
+
+- 已完成 canonical runtime projection 侧车：本地提交、send/watch/resume WS 事件、HTTP events snapshot 已统一投递到 `chatRuntimeReducer`，旧 `messages` 仍是当前 UI 渲染源。
+- 已完成 request-scoped queued 保护：`queued` ack 只解析请求，不再立即丢弃后续同 request 事件。
+- 已完成 events-first snapshot 基础：`GET /wunder/chat/sessions/{session_id}/events` 已返回原始 `events`，并为存储与 WS 事件补齐 `event_seq`。
+- 已完成 shadow comparison 基础：新增 `frontend/src/realtime/chat/chatRuntimeShadow.ts`，在 chat debug 开启时对 canonical projection 与 legacy `messages` 做影子一致性检查，覆盖缺失、重复、顺序漂移、内容/reasoning/status 漂移和 busy 漂移。
+- 已完成受控 selector render adapter：新增 `frontend/src/realtime/chat/chatRuntimeRenderAdapter.ts`，可通过 `wunder:chat-runtime-render` / `wunder_chat_runtime_render` 或 URL 参数 `chat_runtime_render` / `chatRuntimeRender` 显式把 Messenger 气泡渲染源切到 canonical projection；默认仍使用 legacy `messages`，projection 为空时自动回退。
+- 已接入 Messenger 渲染侧车：`agentRenderableMessages` 可读取 projection 物化结果，稳定 key 来自 runtime message id；最新助手消息、实时 stats 也改为读取 renderable 列表，避免 projection 渲染开关开启后头像状态和 footer 继续读旧数组。
+- 已新增 render-source shadow：`frontend/src/realtime/chat/chatRuntimeRenderShadow.ts` 比较 legacy renderable 与 projection renderable 的 key、缺失、顺序、内容、reasoning、streaming flag、workflow timeline 和 subagent 摘要；`wunder:chat-runtime-render=shadow` 或 `wunder:chat-runtime-render-shadow=1` 可在不切换真实 UI 的情况下输出差异。
+- 已继续收敛 Messenger 直接读旧数组的渲染辅助：附件预加载、计划面板、询问面板、最新助手布局刷新、虚拟列表刷新触发、stats 上下文等开始跟随 `agentRenderableMessages`。
+- 已推进展示派生层统一读 renderable source：`installMessengerControllerRenderableMessages` 提前到身份与导航状态之前安装，新增 `resolveActiveAgentRenderableMessageRecords()` 作为当前会话 UI 消息记录入口；顶部模型名、会话保留判断、忙碌判断/快照、会话预览刷新和发送后居中计数不再各自直接读取旧 `chatStore.messages`。新增 `test:messenger-renderable-source` 静态回归锁定安装顺序和展示读取源。
+- 已完成 render-source key 统一：新增 `frontend/src/realtime/chat/chatRuntimeMessageKeys.ts`，投影渲染和 Messenger 路由偏好共用同一套稳定 key 解析，优先使用 `__runtime_message_id/message_id/client_message_id/request_id`，仅无稳定身份时才退回 index。
+- 已补齐投影工具时间线：`ChatRuntimeMessageProjection` 支持 `workflowItems/subagents`，`tool_call_started/tool_call_completed/tool_call_failed` 会按 `tool_call_id/command_session_id/approval_id` 稳定 upsert 工具条目；render adapter 会把投影工作流复制为旧消息组件可读的 `workflowItems`，并在投影已产生工作流差异时禁止复用旧 raw 对象，避免投影模式下工具卡片丢失。
+- 已补齐 subagent/team/approval 运行态投影：`subagent_*`、`team_*` 统一转为 `workflow_event`，reducer 按 `run_id/session_id/dispatch_id/task_id` 稳定更新同一条 workflow/subagent 记录；`approval_request/approval_result` 按 `approval_id` 合并同一审批卡片，并保持 `waiting_approval` 会话状态，避免审批等待被派生逻辑覆盖回普通 running。
+- 已修正投影终态和 legacy 活动判断：terminal/idle 会同时收敛 workflowItems 与 subagents；旧快照即使只有 active subagents、没有 `workflowItems/workflowStreaming`，也会被视为 tooling/running，不再把仍在运行的子智能体误判成 idle。
+- 已新增投影渲染刷新时钟：`runtimeProjectionVersion` 独立于旧 `messageMutationVersion`，所有 canonical/legacy projection 写入会按应用结果触发版本推进；流式 delta 默认用 `requestAnimationFrame` 或 16ms fallback 合并，提交、终态、snapshot、runtime status 等边界事件立即刷新。Messenger 在 projection/shadow 模式下读取 `toRaw(runtimeProjection)`，只依赖显式版本号重算，避免深层响应式追踪把 token 级事件扩散成整页重排。
+- 已继续收敛显示态读取源：发送控制器的发送起点日志、待助手居中计数、停止确认快照改为读取 `resolveActiveAgentRenderableMessageRecords()`；`ChatComposer` 增加 `contextMessages` 输入，由 `MessengerView` 传入 `agentRenderableContextMessages`，输入区上下文占用和发送日志计数不再直接订阅旧消息数组。`test:messenger-renderable-source` 已锁定 message commands、composer、MessengerView 的读取来源。
+- 已收紧 projection 渲染空列表语义：`chatRuntimeRenderAdapter` 暴露 `hasChatRuntimeRenderSession()`，Messenger 在 projection 模式下如果投影已知道当前 session，即使 renderable 列表为空也直接渲染空列表，不再自动回退 legacy `messages`；只有投影尚未见过该 session 时才允许 legacy fallback，避免空会话、清空面板或空快照被旧数组残留气泡污染。
+- 已落地严格事件顺序缓冲：`chatRuntimeReducer` 为每个 session 增加 `pendingSequentialEvents` 有界缓冲，小范围 `event_seq` 乱序先等待缺失事件，不再让后续 delta/final 抢跑污染 projection；缺口补齐后按序排空并保持稳定 assistant message。超过缓冲能力的大 gap 会返回 `event_seq_gap` 并保留 `syncRequired`，当前兼容应用该事件，等后端连续 canonical seq 稳定后再升级为硬阻塞。
+- 已接入 gap 主动恢复：`applyCanonicalStreamRuntimeEvent` 会把 `pending_event_seq_gap/event_seq_gap` 暴露给 watch/send/resume 入口；watch 小 gap 延迟一个 reconcile 窗口再拉取，硬 gap 立即 reconcile，send/resume 小 gap 延迟恢复、硬 gap 立即调用 `ensureActiveSessionRealtime`，避免只等 watchdog 才修复真实丢包。
+- 已完成 legacy 流式输出可见刷新节流：`chatWorkflowProcessor` 不再在每个 `llm_output_delta` 上直接改气泡正文或 reasoning，而是按 40ms 基准窗口和下一帧合并刷新，最长等待受 `STREAM_FLUSH_MAX_MS` 约束；终态事件仍强制 flush。`notifySessionSnapshot` 同步增加可见签名闸门，无可见变化的流式 bookkeeping 不再推动 `messageMutationVersion`、legacy reconcile、窗口重算和快照落盘。新增 `test:chat-workflow-stream-flush` 并接入 `test:chat-realtime`。
+- 当前剩余允许直接碰旧 `chatStore.messages` 的位置主要是会话删除/清空等写路径、legacy renderable builder、helper 内部 fallback；projection 渲染仍保持 feature flag，不直接默认切换。
+- 下一步继续做 projection 默认切换前的场景压测：长流式乱序、真实工具调用、审批等待、子智能体运行、切会话与刷新恢复的 shadow/e2e 验证；当 render shadow 和 reducer shadow 在这些场景下稳定无 drift 后，再把 projection 模式从人工开关推进到小流量灰度默认，并继续削减旧 `messages` 数组直接写入路径。
 
 ### 阶段 0：冻结问题与观测
 

@@ -1822,6 +1822,12 @@ const showCompanion = (payload) => {
   })
   runtime.state = next
   syncLegacyCompanionGlobals(runtime)
+  if (String(payload?.scope || '').trim().toLowerCase() !== 'global') {
+    upsertCompanionLibraryRecord({
+      ...next,
+      displayName: payload?.companionDisplayName || payload?.companion_display_name || next.displayName
+    })
+  }
   if (payload?.persist !== false) {
     saveCompanionState(next)
   }
@@ -1835,23 +1841,33 @@ const hideCompanion = (payload = {}) => {
   const runtimes = shouldHideAll
     ? Array.from(companionRuntimes.values())
     : [findCompanionRuntime(payload)].filter(Boolean)
+  const shouldPersistRuntimeState = payload?.persistEnabled === true || payload?.persistState === true
+  let changedPersistentState = false
   runtimes.forEach((runtime) => {
     clearRuntimeTransientState(runtime)
     resetCompanionWindowInput(runtime)
-    if (payload?.persistEnabled === true) {
-      runtime.state = normalizeCompanionState({ ...runtime.state, enabled: false })
-      saveCompanionState(runtime.state)
-    }
+    runtime.state = normalizeCompanionState({ ...runtime.state, enabled: false })
+    changedPersistentState = shouldPersistRuntimeState
     if (runtime.window && !runtime.window.isDestroyed()) {
       runtime.window.hide()
     }
     syncLegacyCompanionGlobals(runtime)
   })
+  if (shouldPersistRuntimeState) {
+    const activeRuntime = Array.from(companionRuntimes.values()).find((runtime) =>
+      normalizeCompanionState(runtime.state).enabled
+    )
+    if (activeRuntime) {
+      syncLegacyCompanionGlobals(activeRuntime)
+    }
+  }
   if (shouldHideAll && !runtimes.length) {
     clearCompanionTransientState()
     if (payload?.persistEnabled === true) {
       saveCompanionState({ enabled: false })
     }
+  } else if (shouldPersistRuntimeState && changedPersistentState) {
+    writeJsonFile(resolveCompanionStatePath(), serializeCompanionStateFile())
   }
   if (payload?.persistEnabled === true && mainWindow && !mainWindow.isDestroyed()) {
     runtimes.forEach((runtime) => {
@@ -1995,6 +2011,7 @@ const endCompanionDrag = (payload = {}, event = null) => {
     key: runtime.key,
     agentId: runtime.state.agentId,
     selectedId: runtime.state.selectedId,
+    enabled: runtime.state.enabled,
     x: windowLayout.point.x,
     y: windowLayout.point.y,
     state: normalizeCompanionBaseState(runtime.state.state)
@@ -2153,10 +2170,16 @@ const readJsonFile = (filePath, fallback = {}) => {
 const writeJsonFile = (filePath, value) => {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
-    fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
+    fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+    fs.renameSync(tempPath, filePath)
   } catch {
     // Ignore desktop preference persistence failures.
   }
+}
+
+const writeDesktopSettings = (value) => {
+  writeJsonFile(resolveDesktopSettingsPath(), value)
 }
 
 const resolveExistingFilePath = (value, appDir) => {
@@ -2171,6 +2194,8 @@ const resolveExistingFilePath = (value, appDir) => {
     return ''
   }
 }
+
+const resolveToolFile = (value, appDir) => resolveExistingFilePath(value, appDir)
 
 const readDesktopSettings = () => {
   const settingsPath = resolveDesktopSettingsPath()
@@ -2187,6 +2212,50 @@ const readDesktopSettings = () => {
   } catch {
     return {}
   }
+}
+
+const resolveBundledPipBin = (appDir) => {
+  const runtimeRoot = resolveDesktopRuntimeRoot()
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(runtimeRoot, 'opt', 'python', 'Scripts', 'pip.exe'),
+        path.join(runtimeRoot, 'opt', 'python', 'pip.exe'),
+        path.join(runtimeRoot, 'opt', 'python', 'Scripts', 'pip3.exe'),
+        path.join(runtimeRoot, 'opt', 'venv', 'Scripts', 'pip.exe'),
+        path.join(appDir, 'opt', 'python', 'Scripts', 'pip.exe'),
+        path.join(appDir, 'opt', 'python', 'pip.exe'),
+        path.join(appDir, 'opt', 'python', 'Scripts', 'pip3.exe'),
+        path.join(appDir, 'opt', 'venv', 'Scripts', 'pip.exe')
+      ]
+    : [
+        path.join(runtimeRoot, 'opt', 'python', 'bin', 'pip3'),
+        path.join(runtimeRoot, 'opt', 'python', 'bin', 'pip'),
+        path.join(runtimeRoot, 'opt', 'venv', 'bin', 'pip3'),
+        path.join(runtimeRoot, 'opt', 'venv', 'bin', 'pip'),
+        path.join(appDir, 'opt', 'python', 'bin', 'pip3'),
+        path.join(appDir, 'opt', 'python', 'bin', 'pip'),
+        path.join(appDir, 'opt', 'venv', 'bin', 'pip3'),
+        path.join(appDir, 'opt', 'venv', 'bin', 'pip')
+      ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || ''
+}
+
+const resolveBundledGitBin = (appDir) => {
+  const runtimeRoot = resolveDesktopRuntimeRoot()
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(runtimeRoot, 'opt', 'git', 'cmd', 'git.exe'),
+        path.join(runtimeRoot, 'opt', 'git', 'bin', 'git.exe'),
+        path.join(appDir, 'opt', 'git', 'cmd', 'git.exe'),
+        path.join(appDir, 'opt', 'git', 'bin', 'git.exe')
+      ]
+    : [
+        path.join(runtimeRoot, 'opt', 'git', 'bin', 'git'),
+        path.join(runtimeRoot, 'opt', 'git', 'cmd', 'git'),
+        path.join(appDir, 'opt', 'git', 'bin', 'git'),
+        path.join(appDir, 'opt', 'git', 'cmd', 'git')
+      ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || ''
 }
 
 const normalizePythonRuntimeMode = (value, pythonPath = '') => {
@@ -2318,11 +2387,17 @@ const resolveDesktopPythonRuntimeInfo = () => {
   const appDir = resolveDesktopAppDir()
   const settings = readDesktopSettings()
   const settingsBin = resolveExistingFilePath(settings.python_path, appDir)
+  const settingsPipBin = resolveToolFile(settings.pip_path, appDir)
+  const settingsGitBin = resolveToolFile(settings.git_path, appDir)
+  const settingsRgBin = resolveToolFile(settings.rg_path, appDir)
   const envBin = resolveExistingFilePath(process.env.WUNDER_PYTHON_BIN, appDir)
   const runtimeMode = normalizePythonRuntimeMode(settings.python_runtime_mode, settings.python_path)
   const bundledDefaultBin = resolveBundledPythonDefaultBin(appDir)
   const bundledDefaultExists = fs.existsSync(bundledDefaultBin)
   const bundledBin = resolveBundledPythonBin(appDir)
+  const bundledPipBin = resolveBundledPipBin(appDir)
+  const bundledGitBin = resolveBundledGitBin(appDir)
+  const bundledRgBin = resolveBundledRgBin(appDir)
   const venvBin = resolveBundledVenvPythonBin(appDir)
   const preferredBin =
     runtimeMode === 'system'
@@ -2383,7 +2458,13 @@ const resolveDesktopPythonRuntimeInfo = () => {
     runtime_mode: runtimeMode,
     bundled_default_bin: bundledDefaultBin,
     bundled_default_exists: bundledDefaultExists,
-    detected_bins: detectedBins
+    detected_bins: detectedBins,
+    pip_bin: settingsPipBin || bundledPipBin,
+    git_bin: settingsGitBin || bundledGitBin,
+    rg_bin: settingsRgBin || bundledRgBin,
+    bundled_pip_bin: bundledPipBin,
+    bundled_git_bin: bundledGitBin,
+    bundled_rg_bin: bundledRgBin
   }
 }
 
@@ -2469,6 +2550,66 @@ const hasSupplementContent = (rootDir) =>
     fs.existsSync(path.join(rootDir, ...relativePath.split('/')))
   )
 
+const resolveImportedRuntimePaths = (installRoot) => {
+  const pythonCandidates = process.platform === 'win32'
+    ? [
+        path.join(installRoot, 'opt', 'python', 'python.exe'),
+        path.join(installRoot, 'opt', 'python', 'python3.exe'),
+        path.join(installRoot, 'opt', 'python', 'bin', 'python.exe'),
+        path.join(installRoot, 'opt', 'python', 'bin', 'python3.exe')
+      ]
+    : [
+        path.join(installRoot, 'opt', 'python', 'bin', 'python3'),
+        path.join(installRoot, 'opt', 'python', 'bin', 'python')
+      ]
+  const pipCandidates = process.platform === 'win32'
+    ? [
+        path.join(installRoot, 'opt', 'python', 'Scripts', 'pip.exe'),
+        path.join(installRoot, 'opt', 'python', 'pip.exe'),
+        path.join(installRoot, 'opt', 'python', 'Scripts', 'pip3.exe')
+      ]
+    : [
+        path.join(installRoot, 'opt', 'python', 'bin', 'pip3'),
+        path.join(installRoot, 'opt', 'python', 'bin', 'pip')
+      ]
+  const gitCandidates = process.platform === 'win32'
+    ? [
+        path.join(installRoot, 'opt', 'git', 'cmd', 'git.exe'),
+        path.join(installRoot, 'opt', 'git', 'bin', 'git.exe')
+      ]
+    : [
+        path.join(installRoot, 'opt', 'git', 'bin', 'git'),
+        path.join(installRoot, 'opt', 'git', 'cmd', 'git')
+      ]
+  const rgCandidates = process.platform === 'win32'
+    ? [
+        path.join(installRoot, 'opt', 'rg', 'rg.exe'),
+        path.join(installRoot, 'opt', 'rg', 'bin', 'rg.exe')
+      ]
+    : [
+        path.join(installRoot, 'opt', 'rg', 'bin', 'rg'),
+        path.join(installRoot, 'opt', 'rg', 'rg')
+      ]
+  const existing = (items) => items.find((candidate) => fs.existsSync(candidate)) || ''
+  const pythonPath = existing(pythonCandidates)
+  let pipPath = existing(pipCandidates)
+  if (process.platform === 'win32' && pythonPath && !pipPath) {
+    const wrapperPath = path.join(path.dirname(pythonPath), 'pip.cmd')
+    try {
+      fs.writeFileSync(wrapperPath, '@echo off\r\n"%~dp0python.exe" -m pip %*\r\n', 'utf8')
+      pipPath = fs.existsSync(wrapperPath) ? wrapperPath : ''
+    } catch {
+      pipPath = ''
+    }
+  }
+  return {
+    python_path: pythonPath,
+    pip_path: pipPath,
+    git_path: existing(gitCandidates),
+    rg_path: existing(rgCandidates)
+  }
+}
+
 const resolveSupplementExtractRoot = (stagingDir) => {
   if (hasSupplementContent(stagingDir)) {
     return stagingDir
@@ -2515,6 +2656,28 @@ const choosePythonInterpreter = async (defaultPath = '') => {
   }
   if (process.platform === 'win32') {
     openDialogOptions.filters = [{ name: 'Python Executable', extensions: ['exe'] }]
+  }
+  const result = await withMainWindow(
+    (window) => dialog.showOpenDialog(window, openDialogOptions),
+    () => dialog.showOpenDialog(openDialogOptions)
+  )
+  if (result?.canceled || !Array.isArray(result?.filePaths) || !result.filePaths.length) {
+    return ''
+  }
+  return String(result.filePaths[0] || '').trim()
+}
+
+const chooseRuntimeExecutable = async (payload = {}) => {
+  const defaultPath = typeof payload === 'string' ? payload : payload?.defaultPath
+  const title = String(payload?.title || 'Select Runtime Executable')
+  const normalizedDefaultPath = resolveDialogDefaultPath(defaultPath)
+  const openDialogOptions = {
+    title,
+    defaultPath: normalizedDefaultPath || undefined,
+    properties: ['openFile']
+  }
+  if (process.platform === 'win32') {
+    openDialogOptions.filters = [{ name: 'Executable', extensions: ['exe', 'cmd', 'bat'] }]
   }
   const result = await withMainWindow(
     (window) => dialog.showOpenDialog(window, openDialogOptions),
@@ -2648,7 +2811,20 @@ const importSupplementPackage = async () => {
     '    $sourcePath = Join-Path $extractRoot $fileName',
     '    if (Test-Path -LiteralPath $sourcePath) { Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $InstallRoot $fileName) -Force }',
     '  }',
-    '  Emit-Json @{ type = "result"; supported = $true; canceled = $false; installed = $true; install_root = $InstallRoot; package_path = $ZipPath; imported_paths = $imported }',
+    '  $pythonPath = ""',
+    '  foreach ($relative in @("opt/python/python.exe","opt/python/python3.exe","opt/python/bin/python.exe","opt/python/bin/python3.exe")) { $candidate = Join-Path $InstallRoot $relative; if ((-not $pythonPath) -and (Test-Path -LiteralPath $candidate)) { $pythonPath = $candidate } }',
+    '  $pipPath = ""',
+    '  foreach ($relative in @("opt/python/Scripts/pip.exe","opt/python/pip.exe","opt/python/Scripts/pip3.exe")) { $candidate = Join-Path $InstallRoot $relative; if ((-not $pipPath) -and (Test-Path -LiteralPath $candidate)) { $pipPath = $candidate } }',
+    '  if ((-not $pipPath) -and $pythonPath) {',
+    '    $pipWrapper = Join-Path (Split-Path -Parent $pythonPath) "pip.cmd"',
+    '    Set-Content -LiteralPath $pipWrapper -Encoding ASCII -Value "@echo off`r`n`"%~dp0python.exe`" -m pip %*`r`n"',
+    '    if (Test-Path -LiteralPath $pipWrapper) { $pipPath = $pipWrapper }',
+    '  }',
+    '  $gitPath = ""',
+    '  foreach ($relative in @("opt/git/cmd/git.exe","opt/git/bin/git.exe")) { $candidate = Join-Path $InstallRoot $relative; if ((-not $gitPath) -and (Test-Path -LiteralPath $candidate)) { $gitPath = $candidate } }',
+    '  $rgPath = ""',
+    '  foreach ($relative in @("opt/rg/rg.exe","opt/rg/bin/rg.exe")) { $candidate = Join-Path $InstallRoot $relative; if ((-not $rgPath) -and (Test-Path -LiteralPath $candidate)) { $rgPath = $candidate } }',
+    '  Emit-Json @{ type = "result"; supported = $true; canceled = $false; installed = $true; install_root = $InstallRoot; package_path = $ZipPath; imported_paths = $imported; runtime_paths = @{ python_path = $pythonPath; pip_path = $pipPath; git_path = $gitPath; rg_path = $rgPath } }',
     '} catch {',
     '  Emit-Json @{ type = "error"; message = $_.Exception.Message }',
     '  exit 1',
@@ -2687,6 +2863,21 @@ const importSupplementPackage = async () => {
             const payload = JSON.parse(line)
             if (payload?.type === 'result') {
               settled = true
+              const runtimePaths = resolveImportedRuntimePaths(installRoot)
+              const settings = readDesktopSettings()
+              const nextSettings = {
+                ...settings,
+                ...Object.fromEntries(
+                  Object.entries(runtimePaths).filter(([, value]) => String(value || '').trim())
+                ),
+                python_runtime_mode: 'custom',
+                updated_at: Date.now() / 1000
+              }
+              writeDesktopSettings(nextSettings)
+              payload.runtime_paths = {
+                ...(payload.runtime_paths || {}),
+                ...runtimePaths
+              }
               registerBundledToolPaths()
               resolve(payload)
             } else if (payload?.type === 'error') {
@@ -2732,15 +2923,18 @@ const registerBundledToolPaths = () => {
   process.env.WUNDER_DESKTOP_RUNTIME_ROOT = runtimeRoot
   const settings = readDesktopSettings()
   const runtimeMode = normalizePythonRuntimeMode(settings.python_runtime_mode, settings.python_path)
+  const settingsBin = resolveExistingFilePath(settings.python_path, appDir)
   const bundledPythonBin = resolveBundledPythonBin(appDir)
   if (runtimeMode === 'system') {
     delete process.env.WUNDER_PYTHON_BIN
+  } else if (settingsBin) {
+    process.env.WUNDER_PYTHON_BIN = settingsBin
   } else if (bundledPythonBin) {
     process.env.WUNDER_PYTHON_BIN = bundledPythonBin
   }
-  const bundledRgBin = resolveBundledRgBin(appDir)
-  if (bundledRgBin) {
-    process.env.WUNDER_RG_BIN = bundledRgBin
+  const rgBin = resolveToolFile(settings.rg_path, appDir) || resolveBundledRgBin(appDir)
+  if (rgBin) {
+    process.env.WUNDER_RG_BIN = rgBin
   }
 
   const pythonCandidates = roots.flatMap((root) => [
@@ -2775,6 +2969,38 @@ const registerBundledToolPaths = () => {
   prependProcessPathEntries(candidates)
 }
 
+const syncDesktopRuntimePathsFromSupplement = () => {
+  if (process.platform !== 'win32') {
+    return
+  }
+  const installRoot = resolveDesktopRuntimeRoot()
+  if (!fs.existsSync(installRoot)) {
+    return
+  }
+  const runtimePaths = resolveImportedRuntimePaths(installRoot)
+  if (!Object.values(runtimePaths).some((value) => String(value || '').trim())) {
+    return
+  }
+  const settings = readDesktopSettings()
+  const missingRuntimePaths = Object.fromEntries(
+    Object.entries(runtimePaths).filter(
+      ([key, value]) => String(value || '').trim() && !String(settings[key] || '').trim()
+    )
+  )
+  if (!Object.keys(missingRuntimePaths).length) {
+    return
+  }
+  const nextSettings = {
+    ...settings,
+    ...missingRuntimePaths,
+    python_runtime_mode:
+      missingRuntimePaths.python_path ? 'custom' : settings.python_runtime_mode,
+    updated_at: Date.now() / 1000
+  }
+  writeDesktopSettings(nextSettings)
+}
+
+syncDesktopRuntimePathsFromSupplement()
 registerBundledToolPaths()
 
 if (process.platform === 'win32') {
@@ -4092,16 +4318,115 @@ const serializeCompanionState = (value) => {
   }
 }
 
+const hasPersistableCompanionState = (value) => {
+  const state = normalizeCompanionState(value)
+  return Boolean(state.key || state.agentId || state.selectedId || state.spritesheetDataUrl)
+}
+
+const normalizePersistedCompanionStates = (value) => {
+  const source = value && typeof value === 'object' ? value : {}
+  const groups = []
+  if (Array.isArray(source.runtimes)) {
+    groups.push(source.runtimes)
+  }
+  if (Array.isArray(source.states)) {
+    groups.push(source.states)
+  }
+  if (Array.isArray(source.companions)) {
+    groups.push(source.companions)
+  }
+  const candidates = groups.flat()
+  if (!candidates.length && hasPersistableCompanionState(source)) {
+    candidates.push(source)
+  }
+  const map = new Map()
+  candidates.forEach((item) => {
+    const normalized = normalizeCompanionState({
+      ...(item && typeof item === 'object' ? item : {}),
+      message: '',
+      messageVisible: false
+    })
+    if (!hasPersistableCompanionState(normalized)) {
+      return
+    }
+    map.set(normalizeCompanionWindowKey(normalized), normalized)
+  })
+  return Array.from(map.values())
+}
+
+const collectCompanionPersistedStates = () => {
+  const map = new Map()
+  Array.from(companionRuntimes.values()).forEach((runtime) => {
+    const state = normalizeCompanionState(runtime.state)
+    if (state.enabled && hasPersistableCompanionState(state)) {
+      map.set(normalizeCompanionWindowKey(state), serializeCompanionState(state))
+    }
+  })
+  const primaryState = normalizeCompanionState(companionState)
+  if (primaryState.enabled && hasPersistableCompanionState(primaryState)) {
+    map.set(normalizeCompanionWindowKey(primaryState), serializeCompanionState(primaryState))
+  }
+  return Array.from(map.values())
+}
+
+const serializeCompanionStateFile = () => {
+  const runtimes = collectCompanionPersistedStates()
+  const currentActiveKey = normalizeCompanionWindowKey(companionState)
+  const activeState = runtimes.find((state) => normalizeCompanionWindowKey(state) === currentActiveKey) || runtimes[0] || null
+  return {
+    version: 2,
+    activeKey: activeState ? normalizeCompanionWindowKey(activeState) : '',
+    runtimes,
+    updated_at: Date.now()
+  }
+}
+
 const loadCompanionState = () => {
   const persisted = readJsonFile(resolveCompanionStatePath(), {})
-  companionState = normalizeCompanionState({ ...companionState, ...persisted, message: '', messageVisible: false })
-  return companionState
+  const persistedStates = normalizePersistedCompanionStates(persisted)
+  persistedStates.forEach((state) => {
+    const runtime = getCompanionRuntime(state)
+    runtime.state = normalizeCompanionState({
+      ...runtime.state,
+      ...state,
+      message: '',
+      messageVisible: false
+    })
+  })
+  const activeKey = String(persisted.activeKey || persisted.active_key || '').trim()
+  const activeState = activeKey
+    ? persistedStates.find((state) => normalizeCompanionWindowKey(state) === activeKey)
+    : null
+  const activeRuntime =
+    (activeState ? getCompanionRuntime(activeState) : null) ||
+    (persistedStates[0] ? getCompanionRuntime(persistedStates[0]) : null)
+  companionState = normalizeCompanionState({
+    ...companionState,
+    ...(activeRuntime?.state || persistedStates[0] || persisted),
+    message: '',
+    messageVisible: false
+  })
+  if (activeRuntime) {
+    syncLegacyCompanionGlobals(activeRuntime)
+  }
+  return {
+    ...companionState,
+    runtimes: collectCompanionPersistedStates()
+  }
 }
 
 const saveCompanionState = (patch) => {
-  companionState = normalizeCompanionState({ ...companionState, ...(patch && typeof patch === 'object' ? patch : {}) })
-  writeJsonFile(resolveCompanionStatePath(), serializeCompanionState(companionState))
-  return companionState
+  const source = patch && typeof patch === 'object' ? patch : {}
+  const runtime = hasCompanionRuntimeIdentity(source)
+    ? getCompanionRuntime(source)
+    : findCompanionRuntime(companionState) || getCompanionRuntime(companionState)
+  runtime.state = normalizeCompanionState({
+    ...runtime.state,
+    ...source
+  })
+  syncLegacyCompanionGlobals(runtime)
+  writeJsonFile(resolveCompanionStatePath(), serializeCompanionStateFile())
+  return runtime.state
 }
 
 const loadCompanionPackageState = () => readJsonFile(resolveCompanionPackageStatePath(), {})
@@ -4116,10 +4441,92 @@ const loadCompanionLibraryState = () => readJsonFile(resolveCompanionLibraryStat
   agentOverrides: {}
 })
 
+const normalizeCompanionLibraryRecord = (value) => {
+  const source = value && typeof value === 'object' ? value : {}
+  const id = String(source.id || source.selectedId || source.selected_id || '').trim()
+  const displayName = String(
+    source.companionDisplayName ||
+    source.companion_display_name ||
+    source.displayName ||
+    source.display_name ||
+    id
+  ).trim()
+  const spritesheetDataUrl = String(source.spritesheetDataUrl || source.spritesheet_data_url || '').trim()
+  const spritesheetPath = String(source.spritesheetPath || source.spritesheet_path || '').trim()
+  if (!id || !displayName || !spritesheetDataUrl.startsWith('data:image/')) {
+    return null
+  }
+  const mimeMatch = /^data:([^;]+);/i.exec(spritesheetDataUrl)
+  const spritesheetMime = String(
+    source.spritesheetMime ||
+    source.spritesheet_mime ||
+    mimeMatch?.[1] ||
+    'image/webp'
+  ).trim()
+  const extension = spritesheetMime.split('/').pop() || 'webp'
+  const now = Date.now()
+  return {
+    id,
+    displayName,
+    description: String(source.description || '').trim(),
+    spritesheetPath: spritesheetPath || `${id}.${extension}`,
+    spritesheetDataUrl,
+    spritesheetMime,
+    importedAt: Number.isFinite(Number(source.importedAt || source.imported_at))
+      ? Number(source.importedAt || source.imported_at)
+      : now,
+    updatedAt: Number.isFinite(Number(source.updatedAt || source.updated_at))
+      ? Number(source.updatedAt || source.updated_at)
+      : now,
+    scope: 'private'
+  }
+}
+
+const mergeCompanionLibraryRecords = (...groups) => {
+  const map = new Map()
+  groups.flat().forEach((item) => {
+    const normalized = normalizeCompanionLibraryRecord(item)
+    if (!normalized) {
+      return
+    }
+    const current = map.get(normalized.id)
+    if (!current || normalized.updatedAt >= current.updatedAt || (normalized.spritesheetDataUrl && !current.spritesheetDataUrl)) {
+      map.set(normalized.id, normalized)
+    }
+  })
+  return Array.from(map.values()).sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+const upsertCompanionLibraryRecord = (value) => {
+  const record = normalizeCompanionLibraryRecord(value)
+  if (!record) {
+    return false
+  }
+  const current = loadCompanionLibraryState()
+  const currentCompanions = Array.isArray(current.companions) ? current.companions : []
+  const existing = currentCompanions.find((item) => String(item?.id || '').trim() === record.id)
+  if (
+    existing &&
+    String(existing.spritesheetDataUrl || '').trim() === record.spritesheetDataUrl &&
+    String(existing.displayName || '').trim() === record.displayName &&
+    String(existing.description || '').trim() === record.description
+  ) {
+    return true
+  }
+  writeJsonFile(resolveCompanionLibraryStatePath(), {
+    companions: mergeCompanionLibraryRecords(currentCompanions, [record]),
+    settings: current.settings && typeof current.settings === 'object' ? current.settings : {},
+    agentOverrides:
+      current.agentOverrides && typeof current.agentOverrides === 'object' ? current.agentOverrides : {},
+    updated_at: Date.now()
+  })
+  return true
+}
+
 const saveCompanionLibraryState = (value) => {
   const source = value && typeof value === 'object' ? value : {}
   writeJsonFile(resolveCompanionLibraryStatePath(), {
-    companions: Array.isArray(source.companions) ? source.companions : [],
+    companions: mergeCompanionLibraryRecords(Array.isArray(source.companions) ? source.companions : []),
     settings: source.settings && typeof source.settings === 'object' ? source.settings : {},
     agentOverrides:
       source.agentOverrides && typeof source.agentOverrides === 'object' ? source.agentOverrides : {},
@@ -4773,6 +5180,9 @@ if (!gotLock) {
         const rawDefaultPath =
           payload && typeof payload === 'object' ? String(payload.defaultPath || '').trim() : ''
         return choosePythonInterpreter(rawDefaultPath)
+      })
+      ipcMain.handle('wunder:choose-runtime-executable', async (_event, payload) => {
+        return chooseRuntimeExecutable(payload && typeof payload === 'object' ? payload : {})
       })
       ipcMain.handle('wunder:choose-directory', async (_event, payload) => {
         const rawDefaultPath =

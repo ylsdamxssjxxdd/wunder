@@ -180,6 +180,7 @@ import {
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { resolveChatRuntimeRenderableKey } from '@/realtime/chat/chatRuntimeMessageKeys';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -412,9 +413,7 @@ type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerMessageRoutingPreferences(ctx: MessengerControllerContext): void {
   ctx.resolveAgentMessageKey = (message: Record<string, unknown>, index: number): string => {
-      const base = String(message?.id || message?.message_id || message?.request_id || message?.role || 'm');
-      const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
-      return `${base}:${safeIndex}`;
+      return resolveChatRuntimeRenderableKey(message, index);
   };
 
   ctx.buildMessageWorkflowRenderVersion = (message: Record<string, unknown>): string => {

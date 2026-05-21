@@ -149,6 +149,7 @@ export const useChatStore = defineStore('chat', {
     activeSessionId: null,
     messages: [],
     messageMutationVersion: 0,
+    runtimeProjectionVersion: 0,
     sessionsLoadedAt: 0,
     loadingBySession: {},
     sessionGoals: {} as Record<string, SessionGoal>,
@@ -165,6 +166,7 @@ export const useChatStore = defineStore('chat', {
       return Boolean(state.loadingBySession[key]);
     },
     isSessionBusy: (state) => (sessionId) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
       const key = resolveSessionKey(sessionId);
       if (!key) return false;
       const activeKey = resolveSessionKey(state.activeSessionId);
@@ -181,6 +183,7 @@ export const useChatStore = defineStore('chat', {
       });
     },
     sessionRuntimeStatus: (state) => (sessionId) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
       const key = resolveSessionKey(sessionId);
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
@@ -196,6 +199,7 @@ export const useChatStore = defineStore('chat', {
       });
     },
     sessionBusyReason: (state) => (sessionId) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
       const key = resolveSessionKey(sessionId);
       if (!key) return null;
       return selectSessionBusyReason(state.runtimeProjection, key);
@@ -211,9 +215,11 @@ export const useChatStore = defineStore('chat', {
       return isGoalActiveForLock(state.sessionGoals[key]);
     },
     messageRuntimeStatus: (state) => (sessionId, message) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
       return resolveLegacyMessageRuntimeStatusFromStore(state, sessionId, message);
     },
     visibleMessages: (state) => (sessionId = null) => {
+      const _projectionVersion = state.runtimeProjectionVersion;
       return resolveProjectedVisibleMessagesFromStore(state, sessionId || state.activeSessionId);
     },
     historyLoading: () => (sessionId) => {

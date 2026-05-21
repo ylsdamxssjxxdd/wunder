@@ -926,7 +926,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.rightDockSkillContentPath.value = '';
   });
 
-  watch(() => [ctx.chatStore.activeSessionId, ctx.chatStore.messages.length], () => {
+  watch(() => [ctx.chatStore.activeSessionId, ctx.resolveActiveAgentRenderableMessageRecords().length], () => {
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (!sessionId)
           return;
@@ -945,8 +945,9 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   });
 
   watch(() => [
-      ctx.chatStore.messages.length,
+      ctx.agentRenderableMessages.value.length,
       ctx.chatStore.messageMutationVersion,
+      ctx.chatStore.runtimeProjectionVersion,
       ctx.userWorldStore.activeMessages.length,
       ctx.sessionHub.activeConversationKey
   ], () => {
@@ -963,11 +964,11 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
       if (ctx.pendingAssistantCenter &&
           ctx.isAgentConversationActive.value &&
-          ctx.chatStore.messages.length > ctx.pendingAssistantCenterCount) {
-          const lastMessage = ctx.chatStore.messages[ctx.chatStore.messages.length - 1] as Record<string, unknown> | undefined;
+          ctx.agentRenderableMessages.value.length > ctx.pendingAssistantCenterCount) {
+          const lastMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
           if (String(lastMessage?.role || '') === 'assistant') {
               ctx.pendingAssistantCenter = false;
-              ctx.pendingAssistantCenterCount = ctx.chatStore.messages.length;
+              ctx.pendingAssistantCenterCount = ctx.agentRenderableMessages.value.length;
               ctx.agentSendForegroundLock.value = false;
               ctx.agentSendForegroundLockSessionId.value = '';
               ctx.autoStickToBottom.value = false;
@@ -994,10 +995,11 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   });
 
   watch(() => {
-      const latestMessage = ctx.chatStore.messages[ctx.chatStore.messages.length - 1] as Record<string, unknown> | undefined;
+      const latestMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
       return [
           ctx.chatStore.activeSessionId,
           ctx.chatStore.messageMutationVersion,
+          ctx.chatStore.runtimeProjectionVersion,
           ctx.latestAgentRenderableMessageKey.value,
           ctx.buildLatestAssistantLayoutSignature(latestMessage)
       ].join('::');

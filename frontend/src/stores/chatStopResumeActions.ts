@@ -132,7 +132,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { buildWorkflowItem, dismissStaleInquiryPanels, normalizeInquiryPanelState, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent, writeSessionGoalState } from './chatPersist';
 import { WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeResumeStreamState, clearSlowClientResume, insertWatchUserMessage, markRuntimeResumeStreamActivity, markRuntimeResumeStreamStarted, resolveHiddenInternalUserEvent, resolveMaterializedMessageEventId, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, clearAssistantRetryState, resetAssistantWaitingOutputPhase, resolveTimestampMs } from './chatStats';
@@ -141,6 +141,8 @@ import { ResumeStreamOptions } from './chatTypes';
 import { abortCompactRequest, abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, finalizeManualCompactionAsCancelled, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
 import { getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalRuntimeStatus, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
 import { createWorkflowProcessor } from './chatWorkflowProcessor';
+
+const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
 
 export const chatStopResumeActions = {
     async stopSessionActivity(
@@ -284,6 +286,33 @@ export const chatStopResumeActions = {
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
+          applyCanonicalStreamRuntimeEvent(
+            this,
+            sessionId,
+            normalizedEventType || eventType,
+            payload,
+            eventId,
+            {
+              requestId: runtime?.resumeRequestId || resumeRequestId,
+              phase: 'resume',
+              onSyncRequired: (reason) => {
+                const run = () => {
+                  void this.ensureActiveSessionRealtime({
+                    sessionId,
+                    reason: String(reason || '') === 'event_seq_gap'
+                      ? 'resume_event_seq_gap'
+                      : 'resume_pending_event_seq_gap',
+                    forceHydrate: true
+                  }).catch(() => {});
+                };
+                if (String(reason || '') === 'event_seq_gap') {
+                  run();
+                  return;
+                }
+                globalThis.setTimeout(run, RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS);
+              }
+            }
+          );
           if (perfEnabled) {
             chatPerf.count('chat_resume_event', 1, { eventType: normalizedEventType || eventType, sessionId });
           }

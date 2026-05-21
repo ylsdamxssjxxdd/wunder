@@ -56,7 +56,7 @@ const installWebSocketMock = () => {
   };
 };
 
-test('ws multiplexer resolves and clears request-scoped queued ack by default', async () => {
+test('ws multiplexer resolves queued ack but keeps request-scoped events by default', async () => {
   const restore = installWebSocketMock();
   try {
     const { createWsMultiplexer } = await import('../../src/utils/ws');
@@ -99,7 +99,11 @@ test('ws multiplexer resolves and clears request-scoped queued ack by default', 
 
     await sleep(0);
 
-    assert.deepEqual(events, ['queued:{"queued":true}']);
+    assert.deepEqual(events, [
+      'queued:{"queued":true}',
+      'delta:{"text":"after queued"}',
+      'final:{"done":true}'
+    ]);
     assert.equal(socket.sent.length, 1);
   } finally {
     restore();
@@ -206,6 +210,52 @@ test('ws multiplexer removes kept queued request on explicit cancel', async () =
       request_id: 'request-3',
       session_id: 'session-3'
     });
+  } finally {
+    restore();
+  }
+});
+
+test('ws multiplexer releases kept queued request after grace timeout', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const events: string[] = [];
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const requestPromise = client.request({
+      requestId: 'request-queued-timeout',
+      resolveOnQueued: true,
+      keepPendingAfterQueuedAck: true,
+      queuedAckGraceMs: 5,
+      closeOnFinal: true,
+      message: { type: 'run', request_id: 'request-queued-timeout' },
+      onEvent: (eventType) => {
+        events.push(eventType);
+      }
+    });
+
+    socket.open();
+    socket.emit({
+      type: 'event',
+      request_id: 'request-queued-timeout',
+      payload: { event: 'queued', data: { queued: true } }
+    });
+
+    await requestPromise;
+    await sleep(20);
+    socket.emit({
+      type: 'event',
+      request_id: 'request-queued-timeout',
+      payload: { event: 'delta', data: { text: 'late ignored' } }
+    });
+
+    await sleep(0);
+
+    assert.deepEqual(events, ['queued']);
   } finally {
     restore();
   }

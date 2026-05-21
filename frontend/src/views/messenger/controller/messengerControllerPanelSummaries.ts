@@ -614,7 +614,7 @@ export function installMessengerControllerPanelSummaries(ctx: MessengerControlle
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (!sessionId)
           return false;
-      return ctx.resolveEffectiveSessionBusy(sessionId, Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : []);
+      return ctx.resolveEffectiveSessionBusy(sessionId, ctx.resolveActiveAgentRenderableMessageRecords());
   });
 
   ctx.buildActiveSessionBusyDebugSnapshot = () => {
@@ -623,7 +623,7 @@ export function installMessengerControllerPanelSummaries(ctx: MessengerControlle
           ? ctx.resolveSessionRuntimeStatus(activeSessionId)
           : '';
       const loadingBySession = activeSessionId ? ctx.resolveSessionLoadingFlag(activeSessionId) : false;
-      const messages = Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [];
+      const messages = ctx.resolveActiveAgentRenderableMessageRecords();
       let lastUserIndex = -1;
       for (let index = messages.length - 1; index >= 0; index -= 1) {
           if (String((messages[index] as Record<string, unknown> | null)?.role || '') === 'user') {
@@ -668,7 +668,7 @@ export function installMessengerControllerPanelSummaries(ctx: MessengerControlle
       () => String(ctx.chatStore.activeSessionId || ''),
       () => ctx.agentSessionLoading.value,
       () => ctx.resolveSessionRuntimeStatus(String(ctx.chatStore.activeSessionId || '').trim()),
-      () => Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+      () => ctx.resolveActiveAgentRenderableMessageRecords().length,
       () => Boolean(ctx.isMessengerInteractionBlocked.value)
   ], () => {
       chatDebugLog('messenger.busy', 'snapshot-change', ctx.buildActiveSessionBusyDebugSnapshot());

@@ -133,7 +133,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
 import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId } from './chatRuntimeControls';
-import { applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeSessionProtectedRealtimeMessages, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeSessionProtectedRealtimeMessages, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -338,6 +338,9 @@ export const chatCacheActions = {
         );
         const runtime = ensureRuntime(targetId);
         applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
+        applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
+          phase: 'preload'
+        });
         const remoteRunning = eventsPayload?.running === true;
         const remoteLastEventId = normalizeStreamEventId(
           eventsPayload?.last_event_id ?? eventsPayload?.lastEventId

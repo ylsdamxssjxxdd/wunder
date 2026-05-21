@@ -11,6 +11,7 @@ import {
 } from './chatRuntimeControls';
 import {
   buildRuntimeDebugSnapshot,
+  applyCanonicalSessionEventsSnapshot,
   ensureRuntime,
   getRuntime,
   getSessionMessages,
@@ -84,6 +85,9 @@ export const chatRealtimeRecoveryActions = {
           allowCached: false,
           dedupeInFlight: false,
           minLastEventId: localLastEventId
+        });
+        applyCanonicalSessionEventsSnapshot(this, targetSessionId, snapshot, {
+          phase: 'realtime_recovery'
         });
         const remoteLastEventId = normalizeStreamEventId(
           snapshot?.last_event_id ?? snapshot?.lastEventId

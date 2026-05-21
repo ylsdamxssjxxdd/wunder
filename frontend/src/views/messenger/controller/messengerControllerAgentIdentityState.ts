@@ -621,7 +621,7 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
           routeEntry: ctx.route.query?.entry,
           activeSessionId: ctx.chatStore.activeSessionId,
           draftAgentId: ctx.chatStore.draftAgentId,
-          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length,
           worldConversationId: ctx.userWorldStore.activeConversationId,
           worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages)
               ? ctx.userWorldStore.activeMessages.length
@@ -643,7 +643,7 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
           routeEntry: ctx.route.query?.entry,
           activeSessionId: ctx.chatStore.activeSessionId,
           draftAgentId: ctx.chatStore.draftAgentId,
-          messageCount: Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages.length : 0,
+          messageCount: ctx.resolveActiveAgentRenderableMessageRecords().length,
           worldConversationId: ctx.userWorldStore.activeConversationId,
           worldMessageCount: Array.isArray(ctx.userWorldStore.activeMessages)
               ? ctx.userWorldStore.activeMessages.length
@@ -861,7 +861,7 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
   ctx.activeAgentRuntimeModelName = computed(() => {
       if (!ctx.isAgentConversationActive.value)
           return '';
-      const messages = Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [];
+      const messages = ctx.resolveActiveAgentRenderableMessageRecords();
       for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
           const message = ctx.asObjectRecord(messages[cursor]);
           if (String(message.role || '').trim().toLowerCase() !== 'assistant') {

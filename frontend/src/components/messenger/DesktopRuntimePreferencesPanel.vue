@@ -8,36 +8,40 @@
         <div class="messenger-settings-title">{{ t('desktop.system.runtimeTitle') }}</div>
         <div class="messenger-settings-subtitle">{{ t('desktop.system.runtimeHint') }}</div>
       </div>
+      <el-button
+        v-if="supplementImportSupported"
+        class="desktop-runtime-preferences-btn desktop-runtime-preferences-import-btn"
+        :loading="importingSupplement"
+        @click="handleImportSupplementPackage"
+      >
+        {{ t('desktop.system.pythonSupplementImport') }}
+      </el-button>
     </div>
 
-    <div class="desktop-runtime-preferences-block">
-      <label class="desktop-runtime-preferences-field">
-        <span class="desktop-runtime-preferences-field-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
+    <div class="desktop-runtime-preferences-block desktop-runtime-preferences-tool-grid">
+      <label
+        v-for="tool in runtimeToolFields"
+        :key="tool.key"
+        class="desktop-runtime-preferences-field"
+      >
+        <span class="desktop-runtime-preferences-field-label">{{ tool.label }}</span>
         <div class="desktop-runtime-preferences-editor">
           <div class="desktop-runtime-preferences-input-row">
             <el-input
-              v-model="pythonPathDraft"
+              v-model="tool.draft.value"
               clearable
               class="desktop-runtime-preferences-input"
-              :placeholder="pythonPathPlaceholder"
-              @blur="handlePythonPathInputCommit"
-              @keyup.enter="handlePythonPathInputCommit"
+              :placeholder="tool.placeholder.value"
+              @blur="() => handleRuntimeToolPathInputCommit(tool.key)"
+              @keyup.enter="() => handleRuntimeToolPathInputCommit(tool.key)"
             />
             <div class="desktop-runtime-preferences-inline-actions">
               <el-button
                 class="desktop-runtime-preferences-btn"
-                :loading="pickingPythonPath"
-                @click="openPythonPathPicker"
+                :loading="pickingToolKey === tool.key"
+                @click="openRuntimeToolPathPicker(tool.key)"
               >
                 {{ t('desktop.common.browse') }}
-              </el-button>
-              <el-button
-                v-if="supplementImportSupported"
-                class="desktop-runtime-preferences-btn"
-                :loading="importingSupplement"
-                @click="handleImportSupplementPackage"
-              >
-                {{ t('desktop.system.pythonSupplementImport') }}
               </el-button>
             </div>
           </div>
@@ -86,7 +90,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type ComputedRef, type Ref } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import {
@@ -109,6 +113,10 @@ type DesktopRuntimeBridge = {
   setLaunchAtLogin?: (enabled: boolean) => Promise<unknown> | unknown;
   importSupplementPackage?: () => Promise<unknown> | unknown;
   choosePythonInterpreter?: (defaultPath?: string) => Promise<string | null> | string | null;
+  chooseRuntimeExecutable?: (payload?: {
+    defaultPath?: string;
+    title?: string;
+  }) => Promise<string | null> | string | null;
 };
 type DesktopSupplementImportResult = {
   supported?: boolean;
@@ -117,6 +125,15 @@ type DesktopSupplementImportResult = {
   install_root?: string;
   package_path?: string;
   imported_paths?: string[];
+  runtime_paths?: Partial<Record<`${RuntimeToolKey}_path`, string>>;
+};
+type RuntimeToolKey = 'python' | 'pip' | 'git' | 'rg';
+type RuntimeToolField = {
+  key: RuntimeToolKey;
+  label: string;
+  draft: Ref<string>;
+  configured: Ref<string>;
+  placeholder: ComputedRef<string>;
 };
 
 withDefaults(
@@ -131,13 +148,22 @@ withDefaults(
 const { t } = useI18n();
 
 const loading = ref(false);
-const savingPythonPath = ref(false);
-const pickingPythonPath = ref(false);
+const savingRuntimeToolPath = ref(false);
+const pickingToolKey = ref<RuntimeToolKey | ''>('');
 const importingSupplement = ref(false);
 const pythonPathDraft = ref('');
 const configuredPythonPath = ref('');
+const pipPathDraft = ref('');
+const configuredPipPath = ref('');
+const gitPathDraft = ref('');
+const configuredGitPath = ref('');
+const rgPathDraft = ref('');
+const configuredRgPath = ref('');
 const pythonRuntimeMode = ref<'auto' | 'system' | 'custom'>('auto');
 const pythonRuntimeBin = ref('');
+const pipRuntimeBin = ref('');
+const gitRuntimeBin = ref('');
+const rgRuntimeBin = ref('');
 const bundledDefaultPythonPath = ref('');
 const bundledDefaultPythonExists = ref(false);
 const detectedPythonPaths = ref<string[]>([]);
@@ -153,6 +179,24 @@ const pythonPathDirty = computed(
     normalizePathForCompare(pythonPathDraft.value) !==
     normalizePathForCompare(configuredPythonPath.value)
 );
+const runtimeToolDirtyMap = {
+  python: pythonPathDirty,
+  pip: computed(
+    () =>
+      normalizePathForCompare(pipPathDraft.value) !==
+      normalizePathForCompare(configuredPipPath.value)
+  ),
+  git: computed(
+    () =>
+      normalizePathForCompare(gitPathDraft.value) !==
+      normalizePathForCompare(configuredGitPath.value)
+  ),
+  rg: computed(
+    () =>
+      normalizePathForCompare(rgPathDraft.value) !==
+      normalizePathForCompare(configuredRgPath.value)
+  )
+};
 const windowCloseBehaviorSupported = computed(() => {
   const bridge = getDesktopRuntimeBridge();
   return Boolean(
@@ -183,6 +227,48 @@ const pythonPathPlaceholder = computed(() => {
   }
   return t('desktop.system.pythonInterpreterPathPlaceholder');
 });
+const pipPathPlaceholder = computed(() => {
+  if (pipRuntimeBin.value) return pipRuntimeBin.value;
+  return t('desktop.system.runtimeToolPathPlaceholder');
+});
+const gitPathPlaceholder = computed(() => {
+  if (gitRuntimeBin.value) return gitRuntimeBin.value;
+  return t('desktop.system.runtimeToolPathPlaceholder');
+});
+const rgPathPlaceholder = computed(() => {
+  if (rgRuntimeBin.value) return rgRuntimeBin.value;
+  return t('desktop.system.runtimeToolPathPlaceholder');
+});
+const runtimeToolFields = computed<RuntimeToolField[]>(() => [
+  {
+    key: 'python',
+    label: t('desktop.system.pythonInterpreterPath'),
+    draft: pythonPathDraft,
+    configured: configuredPythonPath,
+    placeholder: pythonPathPlaceholder
+  },
+  {
+    key: 'pip',
+    label: t('desktop.system.pipPath'),
+    draft: pipPathDraft,
+    configured: configuredPipPath,
+    placeholder: pipPathPlaceholder
+  },
+  {
+    key: 'git',
+    label: t('desktop.system.gitPath'),
+    draft: gitPathDraft,
+    configured: configuredGitPath,
+    placeholder: gitPathPlaceholder
+  },
+  {
+    key: 'rg',
+    label: t('desktop.system.rgPath'),
+    draft: rgPathDraft,
+    configured: configuredRgPath,
+    placeholder: rgPathPlaceholder
+  }
+]);
 
 function normalizePathForCompare(value: string): string {
   let normalized = String(value || '')
@@ -255,6 +341,12 @@ function applySettingsData(data: DesktopSettingsData | Record<string, unknown> |
   const source = (data || {}) as Record<string, unknown>;
   configuredPythonPath.value = String(source.python_path || '').trim();
   pythonPathDraft.value = configuredPythonPath.value;
+  configuredPipPath.value = String(source.pip_path || '').trim();
+  pipPathDraft.value = configuredPipPath.value;
+  configuredGitPath.value = String(source.git_path || '').trim();
+  gitPathDraft.value = configuredGitPath.value;
+  configuredRgPath.value = String(source.rg_path || '').trim();
+  rgPathDraft.value = configuredRgPath.value;
   pythonRuntimeMode.value = normalizePythonRuntimeMode(source.python_runtime_mode, configuredPythonPath.value);
 }
 
@@ -267,14 +359,13 @@ function applyFallbackPythonRuntimeInfo() {
   bundledDefaultPythonPath.value = '';
   bundledDefaultPythonExists.value = false;
   detectedPythonPaths.value = pythonRuntimeBin.value ? [pythonRuntimeBin.value] : [];
+  pipRuntimeBin.value = configuredPipPath.value;
+  gitRuntimeBin.value = configuredGitPath.value;
+  rgRuntimeBin.value = configuredRgPath.value;
 }
 
-function resolveInitialPickerPath(): string | undefined {
-  const candidates = [
-    pythonPathDraft.value,
-    configuredPythonPath.value,
-    pythonRuntimeBin.value
-  ].map((item) => String(item || '').trim());
+function resolveInitialPickerPath(toolKey: RuntimeToolKey): string | undefined {
+  const candidates = resolveToolPickerCandidates(toolKey).map((item) => String(item || '').trim());
   for (const item of candidates) {
     if (!item) continue;
     const normalized = item.replace(/[\\/]+$/, '');
@@ -288,6 +379,33 @@ function resolveInitialPickerPath(): string | undefined {
     }
   }
   return undefined;
+}
+
+function resolveToolPickerCandidates(toolKey: RuntimeToolKey): string[] {
+  if (toolKey === 'python') {
+    return [pythonPathDraft.value, configuredPythonPath.value, pythonRuntimeBin.value];
+  }
+  if (toolKey === 'pip') {
+    return [pipPathDraft.value, configuredPipPath.value, pipRuntimeBin.value];
+  }
+  if (toolKey === 'git') {
+    return [gitPathDraft.value, configuredGitPath.value, gitRuntimeBin.value];
+  }
+  return [rgPathDraft.value, configuredRgPath.value, rgRuntimeBin.value];
+}
+
+function resolveToolDraft(toolKey: RuntimeToolKey): Ref<string> {
+  if (toolKey === 'python') return pythonPathDraft;
+  if (toolKey === 'pip') return pipPathDraft;
+  if (toolKey === 'git') return gitPathDraft;
+  return rgPathDraft;
+}
+
+function resolveToolPickerTitle(toolKey: RuntimeToolKey): string {
+  if (toolKey === 'python') return t('desktop.system.pythonPathPickerTitle');
+  if (toolKey === 'pip') return t('desktop.system.pipPathPickerTitle');
+  if (toolKey === 'git') return t('desktop.system.gitPathPickerTitle');
+  return t('desktop.system.rgPathPickerTitle');
 }
 
 async function loadSettings() {
@@ -323,6 +441,9 @@ async function loadPythonRuntimeInfo() {
     detectedPythonPaths.value = Array.isArray(source.detected_bins)
       ? source.detected_bins.map((item) => String(item || '').trim()).filter(Boolean)
       : [];
+    pipRuntimeBin.value = String(source.pip_bin || '').trim();
+    gitRuntimeBin.value = String(source.git_bin || '').trim();
+    rgRuntimeBin.value = String(source.rg_bin || '').trim();
     if (pythonRuntimeBin.value && !detectedPythonPaths.value.includes(pythonRuntimeBin.value)) {
       detectedPythonPaths.value = [pythonRuntimeBin.value, ...detectedPythonPaths.value];
     }
@@ -439,17 +560,21 @@ async function handleWindowCloseBehaviorChange() {
   }
 }
 
-async function savePythonPath(nextPath = pythonPathDraft.value, silent = true) {
-  if (savingPythonPath.value) {
+async function saveRuntimeToolPath(toolKey: RuntimeToolKey, nextPath: string, silent = true) {
+  if (savingRuntimeToolPath.value) {
     return;
   }
-  savingPythonPath.value = true;
+  savingRuntimeToolPath.value = true;
   try {
     const trimmedPath = String(nextPath || '').trim();
-    const response = await updateDesktopSettings({
-      python_path: trimmedPath,
-      python_runtime_mode: trimmedPath ? 'custom' : 'system'
-    });
+    const payload: Record<string, unknown> = {};
+    if (toolKey === 'python') {
+      payload.python_path = trimmedPath;
+      payload.python_runtime_mode = trimmedPath ? 'custom' : 'system';
+    } else {
+      payload[`${toolKey}_path`] = trimmedPath;
+    }
+    const response = await updateDesktopSettings(payload);
     if (disposed) return;
     applySettingsData((response?.data?.data || {}) as DesktopSettingsData);
     await loadPythonRuntimeInfo();
@@ -462,16 +587,16 @@ async function savePythonPath(nextPath = pythonPathDraft.value, silent = true) {
     ElMessage.error(resolveErrorMessage(error, t('desktop.common.saveFailed')));
   } finally {
     if (!disposed) {
-      savingPythonPath.value = false;
+      savingRuntimeToolPath.value = false;
     }
   }
 }
 
-async function handlePythonPathInputCommit() {
-  if (!pythonPathDirty.value || savingPythonPath.value) {
+async function handleRuntimeToolPathInputCommit(toolKey: RuntimeToolKey) {
+  if (!runtimeToolDirtyMap[toolKey].value || savingRuntimeToolPath.value) {
     return;
   }
-  await savePythonPath(pythonPathDraft.value, true);
+  await saveRuntimeToolPath(toolKey, resolveToolDraft(toolKey).value, true);
 }
 
 async function handleImportSupplementPackage() {
@@ -486,6 +611,14 @@ async function handleImportSupplementPackage() {
     if (disposed || !result || result.canceled) {
       return;
     }
+    const runtimePaths = result.runtime_paths || {};
+    if (runtimePaths.python_path) pythonPathDraft.value = String(runtimePaths.python_path || '').trim();
+    if (runtimePaths.pip_path) pipPathDraft.value = String(runtimePaths.pip_path || '').trim();
+    if (runtimePaths.git_path) gitPathDraft.value = String(runtimePaths.git_path || '').trim();
+    if (runtimePaths.rg_path) rgPathDraft.value = String(runtimePaths.rg_path || '').trim();
+    const refreshedSettings = await fetchDesktopSettings();
+    if (disposed) return;
+    applySettingsData((refreshedSettings?.data?.data || {}) as DesktopSettingsData);
     await loadPythonRuntimeInfo();
     const installRoot = String(result.install_root || '').trim();
     if (installRoot) {
@@ -508,32 +641,41 @@ async function handleImportSupplementPackage() {
   }
 }
 
-async function openPythonPathPicker() {
-  if (pickingPythonPath.value) {
+async function openRuntimeToolPathPicker(toolKey: RuntimeToolKey) {
+  if (pickingToolKey.value) {
     return;
   }
   const bridge = getDesktopRuntimeBridge();
-  if (!bridge || typeof bridge.choosePythonInterpreter !== 'function') {
+  const canPickPython = toolKey === 'python' && typeof bridge?.choosePythonInterpreter === 'function';
+  const canPickExecutable = typeof bridge?.chooseRuntimeExecutable === 'function';
+  if (!bridge || (!canPickPython && !canPickExecutable)) {
     ElMessage.error(t('desktop.system.pythonPathPickerLoadFailed'));
     return;
   }
-  pickingPythonPath.value = true;
+  pickingToolKey.value = toolKey;
   try {
-    const picked = await bridge.choosePythonInterpreter(resolveInitialPickerPath());
+    const defaultPath = resolveInitialPickerPath(toolKey);
+    const picked =
+      toolKey === 'python' && canPickPython
+        ? await bridge.choosePythonInterpreter?.(defaultPath)
+        : await bridge.chooseRuntimeExecutable?.({
+            defaultPath,
+            title: resolveToolPickerTitle(toolKey)
+          });
     if (disposed) return;
     const nextPath = String(picked || '').trim();
     if (!nextPath) {
       return;
     }
-    pythonPathDraft.value = nextPath;
-    await savePythonPath(nextPath, true);
+    resolveToolDraft(toolKey).value = nextPath;
+    await saveRuntimeToolPath(toolKey, nextPath, true);
   } catch (error) {
     if (disposed) return;
     console.error(error);
     ElMessage.error(resolveErrorMessage(error, t('desktop.system.pythonPathPickerLoadFailed')));
   } finally {
     if (!disposed) {
-      pickingPythonPath.value = false;
+      pickingToolKey.value = '';
     }
   }
 }
@@ -571,6 +713,10 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.desktop-runtime-preferences-import-btn {
+  flex: 0 0 auto;
+}
+
 .desktop-runtime-preferences-block {
   border: 1px solid var(--portal-border, #d8dee8);
   border-radius: 14px;
@@ -582,6 +728,13 @@ onBeforeUnmount(() => {
 .desktop-runtime-preferences-field {
   display: grid;
   gap: 8px;
+  min-width: 0;
+}
+
+.desktop-runtime-preferences-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .desktop-runtime-preferences-field-label {
@@ -712,6 +865,19 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .desktop-runtime-preferences-head {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-runtime-preferences-import-btn {
+    justify-self: flex-start;
+  }
+
+  .desktop-runtime-preferences-tool-grid {
+    grid-template-columns: 1fr;
+  }
+
   .desktop-runtime-preferences-input-row {
     grid-template-columns: 1fr;
   }

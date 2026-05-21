@@ -1,3 +1,4 @@
+use crate::api::chat::persist_user_cancelled_turn_marker;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
@@ -692,10 +693,17 @@ async fn handle_ws(
                         if let Some(session_id) = cancel_session_id {
                             match validate_session_access(&state, &user, &session_id) {
                                 Ok(()) => {
-                                    let _ = state.monitor.cancel_with_source(
+                                    let cancel_source = cancel_source.unwrap_or("core_ws_cancel");
+                                    let _ = state
+                                        .monitor
+                                        .cancel_with_source(&session_id, cancel_source);
+                                    let _ = persist_user_cancelled_turn_marker(
+                                        state.as_ref(),
+                                        &user.user_id,
                                         &session_id,
-                                        cancel_source.unwrap_or("core_ws_cancel"),
-                                    );
+                                        cancel_source,
+                                    )
+                                    .await;
                                 }
                                 Err(SessionAccessError::NotFound) => {
                                     let _ = send_ws_error(

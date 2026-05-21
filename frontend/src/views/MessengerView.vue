@@ -1535,6 +1535,7 @@
             :approval-mode-syncing="composerApprovalModeSyncing"
             :model-name="agentHeaderModelDisplayName"
             :context-total-tokens="activeAgentUsingDesktopDefaultModel ? desktopDefaultModelMaxContext : null"
+            :context-messages="agentRenderableContextMessages"
             :workspace-agent-id="activeAgentIdForApi"
             :workspace-container-id="currentContainerId"
             :goal-locked="activeSessionGoalLocked"
@@ -1917,6 +1918,7 @@ const agentComposerViewRef = controller.agentComposerViewRef;
 const AgentQuickCreateDialog = controller.AgentQuickCreateDialog;
 const agentQuickCreateVisible = controller.agentQuickCreateVisible;
 const agentRenderableMessages = controller.agentRenderableMessages;
+const agentRenderableContextMessages = controller.agentRenderableContextMessages;
 const agentVirtualBottomSpacer = controller.agentVirtualBottomSpacer;
 const agentVirtualGroups = controller.agentVirtualGroups;
 const agentVirtualTopSpacer = controller.agentVirtualTopSpacer;

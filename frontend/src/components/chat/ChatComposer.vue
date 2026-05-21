@@ -593,6 +593,10 @@ const props = defineProps({
     type: [Number, String],
     default: null
   },
+  contextMessages: {
+    type: Array,
+    default: () => []
+  },
   goalLocked: {
     type: Boolean,
     default: false
@@ -863,7 +867,7 @@ const resolveCurrentSession = (): Record<string, unknown> | null => {
 };
 const composerContextUsageSource = computed(() =>
   resolveComposerContextUsageSource(
-    Array.isArray(chatStore.messages) ? chatStore.messages : [],
+    Array.isArray(props.contextMessages) ? props.contextMessages : [],
     resolveCurrentSession(),
     Boolean(props.loading)
   )
@@ -2690,7 +2694,7 @@ const handleSend = async () => {
   if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
   chatDebugLog('messenger.send', 'composer-send-emit', {
     activeSessionId: String(chatStore.activeSessionId || '').trim(),
-    messageCount: Array.isArray(chatStore.messages) ? chatStore.messages.length : 0,
+    messageCount: Array.isArray(props.contextMessages) ? props.contextMessages.length : 0,
     contentLength: content.length,
     attachmentCount: payloadAttachments.length,
     hasInquirySelection: hasInquirySelection.value

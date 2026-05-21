@@ -132,7 +132,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoChatCache } from './chatDemoPanels';
 import { applyGoalStreamEvent, applyMainSession, persistAgentSession } from './chatPersist';
 import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, refreshRuntimeStreamLifecycle, resolveSessionContextTokens, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, refreshRuntimeStreamLifecycle, resolveSessionContextTokens, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, resolveTimestampMs } from './chatStats';
@@ -141,6 +141,8 @@ import { SendMessageOptions } from './chatTypes';
 import { abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
 import { buildDetail, buildSessionTitle, getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalRuntimeStatus, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldAutoTitle, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
 import { createWorkflowProcessor } from './chatWorkflowProcessor';
+
+const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
 
 export const chatSendActions = {
     async sendMessage(content: string, options: SendMessageOptions = {}) {
@@ -262,6 +264,19 @@ export const chatSendActions = {
         sessionMessagesRef.push(assistantMessageRaw);
       }
       const assistantMessage = assistantMessageRaw;
+      const clientMessageId = String(
+        (userMessage as Record<string, unknown>).message_id ??
+          (userMessage as Record<string, unknown>).messageId ??
+          (userMessage as Record<string, unknown>).id ??
+          `local-user:${sessionId}:${requestStartMs}`
+      ).trim();
+      applyCanonicalClientMessageSubmittedRuntimeEvent(this, {
+        sessionId,
+        content,
+        clientMessageId,
+        createdAt: userMessage.created_at,
+        userTurnId: `user-turn:${sessionId}:round:${nextLocalStreamRound}`
+      });
       chatDebugLog('messenger.send', 'store-placeholder-appended', {
         sessionId,
         bootstrappingDraftSession,
@@ -349,6 +364,33 @@ export const chatSendActions = {
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
+          applyCanonicalStreamRuntimeEvent(
+            this,
+            sessionId,
+            normalizedEventType || eventType,
+            payload,
+            eventId,
+            {
+              requestId: runtime?.sendRequestId || sendRequestId || requestId,
+              phase: 'send',
+              onSyncRequired: (reason) => {
+                const run = () => {
+                  void this.ensureActiveSessionRealtime({
+                    sessionId,
+                    reason: String(reason || '') === 'event_seq_gap'
+                      ? 'send_event_seq_gap'
+                      : 'send_pending_event_seq_gap',
+                    forceHydrate: true
+                  }).catch(() => {});
+                };
+                if (String(reason || '') === 'event_seq_gap') {
+                  run();
+                  return;
+                }
+                globalThis.setTimeout(run, RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS);
+              }
+            }
+          );
           handleApprovalEvent(
             this,
             normalizedEventType || eventType,
@@ -489,6 +531,7 @@ export const chatSendActions = {
           signal: runtime?.sendController?.signal,
           closeOnFinal: true,
           resolveOnQueued: true,
+          keepPendingAfterQueuedAck: true,
           cancelOnAbort: false
         });
       } catch (error) {

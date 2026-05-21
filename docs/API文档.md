@@ -48,7 +48,7 @@
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的主线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
-- 智能体形象能力统一复用智能体 `icon` 字段：静态头像保存为 `{"kind":"static","name":"avatar-046","color":"#94a3b8"}`，动态形象保存为 `{"kind":"companion","scope":"global|private","id":"...","color":"#94a3b8","show":true,"messageHints":true,"scale":1}`。标准形象包为 zip，根目录包含 `pet.json` 与 `spritesheetPath` 指向的帧图；用户私有形象仅保存在浏览器 IndexedDB，管理员全局形象由 `/wunder/admin/companions*` 管理并通过 `/wunder/companions/global*` 供用户侧读取。Electron 桌面壳通过 `window.wunderDesktop.showCompanion/updateCompanion/hideCompanion/getCompanionState/onCompanionStateChanged` 同步透明桌面浮窗状态；Web/Tauri 不支持独立桌面浮窗时回退为浏览器内可拖动浮层。
+- 智能体形象能力统一复用智能体 `icon` 字段：静态头像保存为 `{"kind":"static","name":"avatar-046","color":"#94a3b8"}`，动态形象保存为 `{"kind":"companion","scope":"global|private","id":"...","color":"#94a3b8","show":true,"messageHints":true,"scale":1}`。标准形象包为 zip，根目录包含 `pet.json` 与 `spritesheetPath` 指向的帧图；用户私有形象保存在浏览器 IndexedDB，并在 Electron 桌面端同步到 userData 下的 `desktop-companion-library-state.json` 作为重启恢复兜底；管理员全局形象由 `/wunder/admin/companions*` 管理并通过 `/wunder/companions/global*` 供用户侧读取。Electron 桌面壳通过 `window.wunderDesktop.showCompanion/updateCompanion/hideCompanion/getCompanionState/onCompanionStateChanged` 同步透明桌面浮窗状态，`getCompanionState` 兼容返回 `runtimes[]` 多形象状态；Web/Tauri 不支持独立桌面浮窗时回退为浏览器内可拖动浮层。
 - Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
 - 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
 - Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
@@ -225,6 +225,8 @@
 - 新增命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary`。当前阶段只持久化生命周期与摘要事件，不向客户端额外广播高频 `command_session_delta`，避免在旧前端仍消费 `tool_output_delta` 时造成双倍热路径流量。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
+- 会话事件摘要接口现在同时返回 `data.events[]` 原始持久化事件流，保留既有 `data.rounds[]` 工作流摘要；新前端状态投影应优先消费 `data.events[]`，缺失时再回退到 `data.rounds[]`。
+- `data.events[]` 与聊天 WS 事件 payload 会补充 `event_seq`；当前 `event_seq` 与会话内递增的 `event_id` 对齐，用于前端 reducer 去重、乱序检测和 HTTP snapshot 回放。
 - 会话级实时订阅支持 `cancel`、连接关闭和任务自然结束后的幂等清理，避免断连后残留状态。
 - 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段，用于前端刷新后直接恢复工作流里的终端预览。
 - 新增命令会话回放接口：
@@ -251,7 +253,7 @@
   - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑。
   - `DELETE /wunder/chat/sessions/{session_id}/goal`：清除当前目标。
 - `chat/ws` 新增 `goal.get / goal.set / goal` 消息类型；响应类型为 `goal`。
-- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。
+- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。
 - 目标事件：`goal_updated / goal_cleared / goal_continuation_started / goal_budget_limited / goal_continuation_ready`。
 - 目标续跑通过隐藏内部用户消息触发，不改写 frozen system prompt；目标在 `paused / budget_limited / complete` 状态下停止自动续跑。
 
@@ -1699,7 +1701,7 @@
 - `session.context_tokens/context_tokens_peak` 汇总优先采用模型服务端返回的显式 `context_occupancy_tokens/context_tokens` 作为有效占用；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
 - `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
 - 新接入展示“当前上下文占用”时优先读取 `context_occupancy_tokens`，展示“单次请求消耗”或扣费统计时读取 `request_consumed_tokens`/`round_usage.total_tokens`。
-- 取消请求会在 `session.cancel_source`、`cancel` 事件、最终 `cancelled` 事件和 `CANCELLED.detail.cancel_source` 中记录来源。REST 停止使用 `rest_cancel`，WebSocket 停止默认使用 `ws_cancel`/`core_ws_cancel`，客户端本地 Abort 若确实转成后端取消会使用 `client_abort`。
+- 取消请求会在 `session.cancel_source`、`cancel` 事件、最终 `cancelled` 事件和 `CANCELLED.detail.cancel_source` 中记录来源。REST 停止使用 `rest_cancel`，WebSocket 停止默认使用 `ws_cancel`/`core_ws_cancel`，客户端本地 Abort 若确实转成后端取消会使用 `client_abort`。当取消发生在用户消息已持久化但模型尚未产生可见回复的窗口，服务端会幂等写入 `meta.type=session_cancelled`、`stop_reason=user_stop` 的 assistant 历史标记，避免刷新后只剩用户消息。
 - Token 余额不足时返回 `USER_TOKEN_INSUFFICIENT`，错误明细会附带 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`，便于客户端直接刷新 Token 账户视图。
 
 

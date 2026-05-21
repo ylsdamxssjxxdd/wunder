@@ -1213,6 +1213,10 @@ impl WorkspaceManager {
             .unwrap_or(false)
     }
 
+    pub fn flush_writes(&self) -> bool {
+        self.write_queue.flush()
+    }
+
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         let limit = normalize_history_limit(limit);
         let history = self.storage.load_chat_history(user_id, session_id, limit)?;

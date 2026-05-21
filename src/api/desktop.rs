@@ -86,6 +86,12 @@ struct DesktopSettingsFile {
     desktop_token: String,
     #[serde(default)]
     python_path: String,
+    #[serde(default)]
+    pip_path: String,
+    #[serde(default)]
+    git_path: String,
+    #[serde(default)]
+    rg_path: String,
     #[serde(default = "default_desktop_python_runtime_mode")]
     python_runtime_mode: String,
     #[serde(default)]
@@ -107,6 +113,9 @@ impl Default for DesktopSettingsFile {
             workspace_root: String::new(),
             desktop_token: String::new(),
             python_path: String::new(),
+            pip_path: String::new(),
+            git_path: String::new(),
+            rg_path: String::new(),
             python_runtime_mode: default_desktop_python_runtime_mode(),
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
@@ -153,6 +162,12 @@ struct DesktopSettingsUpdateRequest {
     workspace_root: Option<String>,
     #[serde(default)]
     python_path: Option<String>,
+    #[serde(default)]
+    pip_path: Option<String>,
+    #[serde(default)]
+    git_path: Option<String>,
+    #[serde(default)]
+    rg_path: Option<String>,
     #[serde(default)]
     python_runtime_mode: Option<String>,
     #[serde(default)]
@@ -833,6 +848,18 @@ async fn desktop_settings_update(
         settings.python_runtime_mode =
             normalize_desktop_python_runtime_mode(mode, settings.python_path.trim());
     }
+    if let Some(pip_path) = payload.pip_path.as_deref() {
+        settings.pip_path =
+            normalize_desktop_tool_path(pip_path, &app_dir, "pip").map_err(bad_request)?;
+    }
+    if let Some(git_path) = payload.git_path.as_deref() {
+        settings.git_path =
+            normalize_desktop_tool_path(git_path, &app_dir, "git").map_err(bad_request)?;
+    }
+    if let Some(rg_path) = payload.rg_path.as_deref() {
+        settings.rg_path =
+            normalize_desktop_tool_path(rg_path, &app_dir, "rg").map_err(bad_request)?;
+    }
 
     if let Some(language) = payload.language.as_deref().map(str::trim) {
         if !language.is_empty() {
@@ -1088,6 +1115,9 @@ fn build_settings_payload(
     };
     let llm = settings.llm.clone().unwrap_or_else(|| config.llm.clone());
     let (python_path, python_path_valid) = describe_desktop_python_path(settings, app_dir);
+    let (pip_path, pip_path_valid) = describe_desktop_tool_path(&settings.pip_path, app_dir);
+    let (git_path, git_path_valid) = describe_desktop_tool_path(&settings.git_path, app_dir);
+    let (rg_path, rg_path_valid) = describe_desktop_tool_path(&settings.rg_path, app_dir);
     let python_runtime_mode = normalize_desktop_python_runtime_mode(
         &settings.python_runtime_mode,
         settings.python_path.trim(),
@@ -1097,6 +1127,12 @@ fn build_settings_payload(
         "workspace_root": workspace_root,
         "python_path": python_path,
         "python_path_valid": python_path_valid,
+        "pip_path": pip_path,
+        "pip_path_valid": pip_path_valid,
+        "git_path": git_path,
+        "git_path_valid": git_path_valid,
+        "rg_path": rg_path,
+        "rg_path_valid": rg_path_valid,
         "python_runtime_mode": python_runtime_mode,
         "container_roots": container_roots,
         "container_mounts": container_mounts,
@@ -1678,6 +1714,25 @@ fn normalize_desktop_python_path(raw: &str, app_dir: &Path) -> Result<String, St
     Ok(candidate.to_string_lossy().to_string())
 }
 
+fn normalize_desktop_tool_path(
+    raw: &str,
+    app_dir: &Path,
+    tool_name: &str,
+) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let candidate = resolve_workspace_path(trimmed, app_dir);
+    if !candidate.is_file() {
+        return Err(format!(
+            "{tool_name} executable not found: {}",
+            candidate.display()
+        ));
+    }
+    Ok(candidate.to_string_lossy().to_string())
+}
+
 fn normalize_desktop_python_runtime_mode(raw: &str, python_path: &str) -> String {
     let mode = raw.trim().to_ascii_lowercase();
     if !python_path.trim().is_empty() {
@@ -1701,6 +1756,18 @@ fn describe_desktop_python_path(settings: &DesktopSettingsFile, app_dir: &Path) 
         return (candidate.to_string_lossy().to_string(), true);
     }
     (raw.to_string(), false)
+}
+
+fn describe_desktop_tool_path(raw: &str, app_dir: &Path) -> (String, bool) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return (String::new(), true);
+    }
+    let candidate = resolve_workspace_path(trimmed, app_dir);
+    if candidate.is_file() {
+        return (candidate.to_string_lossy().to_string(), true);
+    }
+    (trimmed.to_string(), false)
 }
 
 fn resolve_desktop_workspace_root(

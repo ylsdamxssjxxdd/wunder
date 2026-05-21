@@ -422,8 +422,8 @@ export function installMessengerControllerMessagePanelsPresentation(ctx: Messeng
   ctx.activeAgentInquiryPanel = computed<ActiveAgentInquiryPanel | null>(() => {
       if (!ctx.isAgentConversationActive.value)
           return null;
-      for (let index = ctx.chatStore.messages.length - 1; index >= 0; index -= 1) {
-          const message = ctx.chatStore.messages[index] as Record<string, unknown> | undefined;
+      for (let index = ctx.agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
+          const message = ctx.agentRenderableMessages.value[index]?.message as Record<string, unknown> | undefined;
           if (String(message?.role || '') !== 'assistant')
               continue;
           const panel = (message?.questionPanel || null) as AgentInquiryPanelData | null;

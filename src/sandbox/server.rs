@@ -1000,20 +1000,25 @@ async fn run_shell_command(
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
 ) -> Result<CommandOutput, String> {
-    let runtime = python_runtime::resolve_python_runtime();
+    let command_env = python_runtime::resolve_desktop_command_env();
+    let command_overrides = command_utils::CommandProgramOverrides {
+        pip_bin: command_env.command_overrides.pip_bin.clone(),
+        git_bin: command_env.command_overrides.git_bin.clone(),
+        rg_bin: command_env.command_overrides.rg_bin.clone(),
+    };
 
-    if let Some(mut cmd) = runtime
-        .as_ref()
-        .and_then(|runtime| {
-            command_utils::build_direct_command_with_python_override(command, cwd, &runtime.bin)
-        })
-        .or_else(|| command_utils::build_direct_command(command, cwd))
+    if let Some(mut cmd) = command_utils::build_direct_command_with_overrides(
+        command,
+        cwd,
+        command_env
+            .python_runtime
+            .as_ref()
+            .map(|runtime| runtime.bin.as_path()),
+        command_overrides,
+    )
+    .or_else(|| command_utils::build_direct_command(command, cwd))
     {
-        if let Some(runtime) = runtime.as_ref() {
-            python_runtime::apply_python_env(&mut cmd, runtime);
-        } else {
-            python_runtime::apply_system_python_env_if_configured(&mut cmd);
-        }
+        python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
         match run_command_output(cmd, timeout_s, stdout_policy, stderr_policy).await {
             Ok(output) => return Ok(output),
             Err(err) if err.kind == CommandErrorKind::SpawnNotFound => {}
@@ -1022,11 +1027,7 @@ async fn run_shell_command(
     }
 
     let mut cmd = command_utils::build_shell_command(command, cwd);
-    if let Some(runtime) = runtime.as_ref() {
-        python_runtime::apply_python_env(&mut cmd, runtime);
-    } else {
-        python_runtime::apply_system_python_env_if_configured(&mut cmd);
-    }
+    python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
     run_command_output(cmd, timeout_s, stdout_policy, stderr_policy)
         .await
         .map_err(|err| err.detail)

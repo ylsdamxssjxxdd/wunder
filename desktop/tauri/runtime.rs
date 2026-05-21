@@ -45,6 +45,12 @@ pub struct DesktopSettings {
     pub desktop_token: String,
     #[serde(default)]
     pub python_path: String,
+    #[serde(default)]
+    pub pip_path: String,
+    #[serde(default)]
+    pub git_path: String,
+    #[serde(default)]
+    pub rg_path: String,
     #[serde(default = "default_python_runtime_mode")]
     pub python_runtime_mode: String,
     #[serde(default)]
@@ -66,6 +72,9 @@ impl Default for DesktopSettings {
             workspace_root: String::new(),
             desktop_token: uuid::Uuid::new_v4().simple().to_string(),
             python_path: String::new(),
+            pip_path: String::new(),
+            git_path: String::new(),
+            rg_path: String::new(),
             python_runtime_mode: default_python_runtime_mode(),
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
@@ -234,7 +243,9 @@ impl DesktopRuntime {
             }
             DesktopPythonBin::None => {}
         }
-        if let Some(rg_bin) = resolve_embedded_rg_bin(&app_dir) {
+        if let Some(rg_bin) = resolve_desktop_tool_bin(&settings.rg_path, &app_dir)
+            .or_else(|| resolve_embedded_rg_bin(&app_dir))
+        {
             set_env_path_if_exists("WUNDER_RG_BIN", &rg_bin);
         }
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
@@ -823,6 +834,15 @@ fn resolve_desktop_python_bin(settings: &DesktopSettings, app_dir: &Path) -> Des
     resolve_embedded_python_bin(app_dir)
         .map(DesktopPythonBin::Auto)
         .unwrap_or(DesktopPythonBin::None)
+}
+
+fn resolve_desktop_tool_bin(raw: &str, app_dir: &Path) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = resolve_workspace_path_input(trimmed, app_dir);
+    candidate.is_file().then_some(candidate)
 }
 
 fn sanitize_workspace_scope(value: &str) -> String {

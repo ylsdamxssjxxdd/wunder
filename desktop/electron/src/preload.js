@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
       : undefined,
   choosePythonInterpreter: (defaultPath) =>
     ipcRenderer.invoke('wunder:choose-python-interpreter', { defaultPath }),
+  chooseRuntimeExecutable: (payload) =>
+    ipcRenderer.invoke('wunder:choose-runtime-executable', payload || {}),
   startWindowDrag: () => ipcRenderer.invoke('wunder:window-start-drag'),
   checkForUpdates: () => ipcRenderer.invoke('wunder:update-check'),
   getUpdateState: () => ipcRenderer.invoke('wunder:update-status'),

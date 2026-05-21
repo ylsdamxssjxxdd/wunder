@@ -1026,6 +1026,13 @@ export default {
   'desktop.system.pythonInterpreterPath': 'Python 解析器路径',
   'desktop.system.pythonInterpreterPathPlaceholder':
     '留空则优先使用内置 Python，例如：C:\\Python311\\python.exe',
+  'desktop.system.runtimeToolPathPlaceholder': '留空时使用补充包或系统 PATH',
+  'desktop.system.pipPath': 'pip 路径',
+  'desktop.system.gitPath': 'Git 路径',
+  'desktop.system.rgPath': 'rg 路径',
+  'desktop.system.pipPathPickerTitle': '选择 pip 可执行文件',
+  'desktop.system.gitPathPickerTitle': '选择 Git 可执行文件',
+  'desktop.system.rgPathPickerTitle': '选择 rg 可执行文件',
   'desktop.system.pythonInterpreterHint': '支持绝对路径；相对路径会按桌面程序目录解析并保存。',
   'desktop.system.pythonInterpreterBundledHint': '当前：自动使用桌面端内置 Python 运行时',
   'desktop.system.pythonInterpreterCustomHint': '当前：优先使用你指定的 Python 解释器',

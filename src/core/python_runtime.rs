@@ -24,7 +24,26 @@ struct DesktopPythonSettings {
     #[serde(default)]
     python_path: String,
     #[serde(default)]
+    pip_path: String,
+    #[serde(default)]
+    git_path: String,
+    #[serde(default)]
+    rg_path: String,
+    #[serde(default)]
     python_runtime_mode: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DesktopCommandOverrides {
+    pub pip_bin: Option<PathBuf>,
+    pub git_bin: Option<PathBuf>,
+    pub rg_bin: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DesktopCommandEnv {
+    pub python_runtime: Option<PythonRuntime>,
+    pub command_overrides: DesktopCommandOverrides,
 }
 
 pub fn resolve_python_runtime() -> Option<PythonRuntime> {
@@ -61,6 +80,13 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
     }
 
     None
+}
+
+pub fn resolve_desktop_command_env() -> DesktopCommandEnv {
+    DesktopCommandEnv {
+        python_runtime: resolve_python_runtime(),
+        command_overrides: resolve_desktop_command_overrides(),
+    }
 }
 
 pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
@@ -116,6 +142,26 @@ pub fn apply_system_python_env_if_configured(cmd: &mut TokioCommand) {
     cmd.env_remove("PYTHONNOUSERSITE");
     cmd.env_remove("PIP_NO_INDEX");
     remove_path_env_entries(cmd, "PATH", &bundled_python_path_entries());
+}
+
+pub fn apply_desktop_command_env(cmd: &mut TokioCommand, env: &DesktopCommandEnv) {
+    if let Some(runtime) = env.python_runtime.as_ref() {
+        apply_python_env(cmd, runtime);
+    } else {
+        apply_system_python_env_if_configured(cmd);
+    }
+    for bin in [
+        env.command_overrides.pip_bin.as_ref(),
+        env.command_overrides.git_bin.as_ref(),
+        env.command_overrides.rg_bin.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(parent) = bin.parent() {
+            prepend_path_env(cmd, "PATH", parent);
+        }
+    }
 }
 
 pub fn desktop_python_runtime_mode_is_system() -> bool {
@@ -266,21 +312,7 @@ enum DesktopPythonPreference {
 }
 
 fn resolve_desktop_settings_python_preference() -> DesktopPythonPreference {
-    let Some(settings_path) = env::var(DESKTOP_SETTINGS_PATH_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    else {
-        return DesktopPythonPreference::Auto;
-    };
-    let Ok(text) = fs::read_to_string(settings_path) else {
-        return DesktopPythonPreference::Auto;
-    };
-    if text.trim().is_empty() {
-        return DesktopPythonPreference::Auto;
-    }
-    let Ok(settings) = serde_json::from_str::<DesktopPythonSettings>(&text) else {
+    let Some(settings) = read_desktop_python_settings() else {
         return DesktopPythonPreference::Auto;
     };
     let mode = settings.python_runtime_mode.trim().to_ascii_lowercase();
@@ -304,6 +336,44 @@ fn resolve_desktop_settings_python_preference() -> DesktopPythonPreference {
         return DesktopPythonPreference::Custom(resolved);
     }
     DesktopPythonPreference::System
+}
+
+fn resolve_desktop_command_overrides() -> DesktopCommandOverrides {
+    let Some(settings) = read_desktop_python_settings() else {
+        return DesktopCommandOverrides::default();
+    };
+    DesktopCommandOverrides {
+        pip_bin: resolve_desktop_settings_file_path(&settings.pip_path),
+        git_bin: resolve_desktop_settings_file_path(&settings.git_path),
+        rg_bin: resolve_desktop_settings_file_path(&settings.rg_path),
+    }
+}
+
+fn read_desktop_python_settings() -> Option<DesktopPythonSettings> {
+    let settings_path = env::var(DESKTOP_SETTINGS_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)?;
+    let text = fs::read_to_string(settings_path).ok()?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str::<DesktopPythonSettings>(&text).ok()
+}
+
+fn resolve_desktop_settings_file_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = PathBuf::from(trimmed);
+    let resolved = if candidate.is_absolute() {
+        candidate
+    } else {
+        resolve_app_dir()?.join(candidate)
+    };
+    resolved.is_file().then_some(resolved)
 }
 
 fn resolve_app_dir() -> Option<PathBuf> {

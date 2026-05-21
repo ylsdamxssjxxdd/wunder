@@ -485,7 +485,7 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       if (!ctx.isAgentConversationActive.value) {
           return;
       }
-      const latestMessage = ctx.chatStore.messages[ctx.chatStore.messages.length - 1] as Record<string, unknown> | undefined;
+      const latestMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
       if (!latestMessage || String(latestMessage.role || '') !== 'assistant') {
           return;
       }

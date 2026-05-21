@@ -9,15 +9,19 @@ import type {
   ChatRuntimeModelTurnProjection,
   ChatRuntimeProjection,
   ChatRuntimeRawMessage,
+  ChatRuntimeSubagentProjection,
   ChatRuntimeSessionProjection,
   ChatRuntimeUserTurnProjection,
   ChatRuntimeViolation,
+  ChatRuntimeWorkflowItemProjection,
   ChatSessionRuntimeStatus
 } from './chatRuntimeTypes';
 
 const DEBUG_EVENT_LIMIT = 300;
 const QUARANTINE_LIMIT = 100;
 const VIOLATION_LIMIT = 100;
+const PENDING_SEQUENTIAL_EVENT_LIMIT = 200;
+const SMALL_SEQUENTIAL_GAP_LIMIT = 4;
 
 const BUSY_STATUSES = new Set<ChatSessionRuntimeStatus>([
   'queued',
@@ -37,6 +41,60 @@ const TERMINAL_EVENT_TYPES = new Set([
 ]);
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+const FAILED_WORKFLOW_STATUSES = new Set([
+  'aborted',
+  'cancelled',
+  'canceled',
+  'closed',
+  'error',
+  'failed',
+  'not_found',
+  'partial',
+  'rejected',
+  'timeout'
+]);
+const ACTIVE_SUBAGENT_STATUSES = new Set([
+  'accepted',
+  'cancelling',
+  'in_progress',
+  'inprogress',
+  'loading',
+  'pending',
+  'processing',
+  'queued',
+  'running',
+  'started',
+  'waiting'
+]);
+const TOOL_RESULT_EVENT_TYPES = new Set(['tool_call_completed', 'tool_call_failed']);
+const SUBAGENT_WORKFLOW_EVENT_TYPES = new Set([
+  'subagent_dispatch_start',
+  'subagent_dispatch_item_update',
+  'subagent_dispatch_finish',
+  'subagent_status',
+  'subagent_interrupt',
+  'subagent_close',
+  'subagent_resume',
+  'subagent_announce'
+]);
+const TEAM_WORKFLOW_EVENT_TYPES = new Set([
+  'team_start',
+  'team_task_dispatch',
+  'team_task_update',
+  'team_task_result',
+  'team_merge',
+  'team_finish',
+  'team_error'
+]);
+const SUCCESS_WORKFLOW_STATUSES = new Set([
+  'complete',
+  'completed',
+  'done',
+  'finished',
+  'idle',
+  'success',
+  'succeeded'
+]);
 
 export const createChatRuntimeProjection = (): ChatRuntimeProjection => ({
   activeSessionId: null,
@@ -64,7 +122,8 @@ export const createChatRuntimeSessionProjection = (
   userTurnById: {},
   modelTurnById: {},
   invariantViolations: [],
-  quarantinedEvents: []
+  quarantinedEvents: [],
+  pendingSequentialEvents: []
 });
 
 export const resolveChatRuntimeSession = (
@@ -111,6 +170,7 @@ export const applyChatRuntimeEvent = (
 ): ChatRuntimeApplyResult => {
   const event = normalizeRuntimeEvent(rawEvent);
   const session = resolveChatRuntimeSession(projection, event.sessionId);
+  ensureRuntimeSessionCollections(session);
   const beforeSummary = summarizeSession(session);
   const duplicateEventId = event.eventId && session.eventIdIndex[event.eventId];
 
@@ -127,6 +187,7 @@ export const applyChatRuntimeEvent = (
   }
 
   if (event.eventSeq !== null && event.eventSeq <= session.appliedSeq) {
+    removePendingSequentialEvent(session, event);
     appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
     return {
       applied: false,
@@ -154,21 +215,61 @@ export const applyChatRuntimeEvent = (
     }
   }
 
-  if (
-    event.eventSeq !== null &&
-    session.appliedSeq > 0 &&
-    event.eventSeq > session.appliedSeq + 1 &&
-    event.source !== 'legacy'
-  ) {
-    session.syncRequired = true;
-    pushViolation(session, {
-      code: 'event_seq_gap',
-      message: 'event_seq advanced beyond the next expected value',
+  const pendingReason = queueSequentialEventIfNeeded(session, event);
+  if (pendingReason) {
+    appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
+    return {
+      applied: false,
+      ignored: pendingReason === 'duplicate_pending_event_id',
+      quarantined: false,
+      pending: pendingReason !== 'duplicate_pending_event_id',
+      sessionId: session.sessionId,
       eventSeq: event.eventSeq,
-      eventType: event.type
-    });
+      reason: pendingReason
+    };
   }
 
+  const hardGapReason = shouldApplySequentialGapImmediately(session, event) ? 'event_seq_gap' : '';
+  applyNormalizedRuntimeEvent(session, event);
+  const drained = drainPendingSequentialEvents(session);
+  appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
+  return {
+    applied: true,
+    ignored: false,
+    quarantined: false,
+    drained,
+    sessionId: session.sessionId,
+    eventSeq: event.eventSeq,
+    reason: hardGapReason || undefined
+  };
+};
+
+type NormalizedRuntimeEvent = ChatRuntimeEvent & {
+  type: string;
+  source: string;
+  strict: boolean;
+  sessionId: string;
+  agentId: string;
+  eventId: string;
+  eventSeq: number | null;
+  snapshotSeq: number | null;
+  userTurnId: string;
+  modelTurnId: string;
+  messageId: string;
+  role: ChatRuntimeMessageRole;
+  content: string;
+  reasoning: string;
+  delta: string;
+  reasoningDelta: string;
+  runtimeStatus: ChatSessionRuntimeStatus;
+  createdAt: string;
+  payload: Record<string, unknown>;
+};
+
+const applyNormalizedRuntimeEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): void => {
   if (event.eventId) {
     session.eventIdIndex[event.eventId] = true;
   }
@@ -189,6 +290,9 @@ export const applyChatRuntimeEvent = (
       break;
     case 'assistant_delta':
       applyAssistantDelta(session, event, 'content');
+      if (event.reasoningDelta || event.reasoning) {
+        applyAssistantDelta(session, event, 'reasoning');
+      }
       break;
     case 'assistant_reasoning_delta':
       applyAssistantDelta(session, event, 'reasoning');
@@ -205,6 +309,9 @@ export const applyChatRuntimeEvent = (
       break;
     case 'tool_call_failed':
       applyToolFailed(session, event);
+      break;
+    case 'workflow_event':
+      applyWorkflowEvent(session, event);
       break;
     case 'turn_completed':
       applyTurnTerminal(session, event, 'completed');
@@ -243,36 +350,135 @@ export const applyChatRuntimeEvent = (
   }
   deriveSessionRuntime(session);
   validateSessionInvariants(session, event);
-  appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
-  return {
-    applied: true,
-    ignored: false,
-    quarantined: false,
-    sessionId: session.sessionId,
-    eventSeq: event.eventSeq
-  };
 };
 
-type NormalizedRuntimeEvent = ChatRuntimeEvent & {
-  type: string;
-  source: string;
-  strict: boolean;
-  sessionId: string;
-  agentId: string;
-  eventId: string;
-  eventSeq: number | null;
-  snapshotSeq: number | null;
-  userTurnId: string;
-  modelTurnId: string;
-  messageId: string;
-  role: ChatRuntimeMessageRole;
-  content: string;
-  reasoning: string;
-  delta: string;
-  reasoningDelta: string;
-  runtimeStatus: ChatSessionRuntimeStatus;
-  createdAt: string;
-  payload: Record<string, unknown>;
+const ensureRuntimeSessionCollections = (session: ChatRuntimeSessionProjection): void => {
+  if (!Array.isArray(session.pendingSequentialEvents)) {
+    session.pendingSequentialEvents = [];
+  }
+};
+
+const shouldBufferSequentialEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): boolean => {
+  if (!event.strict || event.eventSeq === null) return false;
+  if (event.source === 'legacy' || event.source === 'snapshot') return false;
+  if (session.appliedSeq <= 0) return false;
+  return event.eventSeq > session.appliedSeq + 1;
+};
+
+const shouldApplySequentialGapImmediately = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): boolean => {
+  if (!shouldBufferSequentialEvent(session, event)) return false;
+  return Number(event.eventSeq) - session.appliedSeq - 1 > SMALL_SEQUENTIAL_GAP_LIMIT;
+};
+
+const queueSequentialEventIfNeeded = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): string => {
+  if (!shouldBufferSequentialEvent(session, event)) return '';
+  ensureRuntimeSessionCollections(session);
+  if (shouldApplySequentialGapImmediately(session, event)) {
+    session.syncRequired = true;
+    pushViolation(session, {
+      code: 'event_seq_gap',
+      message: 'event_seq advanced beyond the bounded reorder buffer',
+      eventSeq: event.eventSeq,
+      eventType: event.type
+    });
+    return '';
+  }
+  if (
+    event.eventId &&
+    session.pendingSequentialEvents.some((pending) => pending.eventId === event.eventId)
+  ) {
+    return 'duplicate_pending_event_id';
+  }
+  if (session.pendingSequentialEvents.length >= PENDING_SEQUENTIAL_EVENT_LIMIT) {
+    session.pendingSequentialEvents.splice(0);
+    session.syncRequired = true;
+    pushViolation(session, {
+      code: 'event_seq_buffer_overflow',
+      message: 'pending sequential runtime events exceeded the bounded buffer',
+      eventSeq: event.eventSeq,
+      eventType: event.type
+    });
+    return '';
+  }
+  session.pendingSequentialEvents.push({
+    eventSeq: event.eventSeq,
+    eventId: event.eventId,
+    eventType: event.type,
+    receivedAt: Date.now(),
+    event
+  });
+  session.pendingSequentialEvents.sort((left, right) =>
+    left.eventSeq - right.eventSeq || left.receivedAt - right.receivedAt
+  );
+  session.syncRequired = true;
+  pushViolation(session, {
+    code: 'event_seq_gap_buffered',
+    message: 'runtime event arrived ahead of the next expected sequence and was buffered',
+    eventSeq: event.eventSeq,
+    eventType: event.type
+  });
+  return 'pending_event_seq_gap';
+};
+
+const drainPendingSequentialEvents = (session: ChatRuntimeSessionProjection): number => {
+  ensureRuntimeSessionCollections(session);
+  let drained = 0;
+  while (session.pendingSequentialEvents.length > 0) {
+    session.pendingSequentialEvents.sort((left, right) =>
+      left.eventSeq - right.eventSeq || left.receivedAt - right.receivedAt
+    );
+    const staleIndex = session.pendingSequentialEvents.findIndex(
+      (pending) => pending.eventSeq <= session.appliedSeq
+    );
+    if (staleIndex >= 0) {
+      session.pendingSequentialEvents.splice(staleIndex, 1);
+      continue;
+    }
+    const nextIndex = session.pendingSequentialEvents.findIndex(
+      (pending) => pending.eventSeq === session.appliedSeq + 1
+    );
+    if (nextIndex < 0) break;
+    const pending = session.pendingSequentialEvents.splice(nextIndex, 1)[0];
+    const event = normalizeRuntimeEvent(pending.event);
+    if (event.eventId && session.eventIdIndex[event.eventId]) {
+      continue;
+    }
+    applyNormalizedRuntimeEvent(session, event);
+    drained += 1;
+  }
+  if (
+    session.pendingSequentialEvents.length === 0 &&
+    !session.invariantViolations.some((violation) =>
+      violation.code === 'event_seq_gap' ||
+      violation.code === 'event_seq_buffer_overflow'
+    )
+  ) {
+    session.syncRequired = false;
+  }
+  return drained;
+};
+
+const removePendingSequentialEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): boolean => {
+  ensureRuntimeSessionCollections(session);
+  const index = session.pendingSequentialEvents.findIndex((pending) =>
+    (event.eventId && pending.eventId === event.eventId) ||
+    pending.eventSeq === event.eventSeq
+  );
+  if (index < 0) return false;
+  session.pendingSequentialEvents.splice(index, 1);
+  return true;
 };
 
 const normalizeRuntimeEvent = (event: ChatRuntimeEvent): NormalizedRuntimeEvent => {
@@ -330,7 +536,8 @@ const resolveStrictEventQuarantineReason = (event: NormalizedRuntimeEvent): stri
       event.type === 'tool_call_started' ||
       event.type === 'tool_call_delta' ||
       event.type === 'tool_call_completed' ||
-      event.type === 'tool_call_failed'
+      event.type === 'tool_call_failed' ||
+      event.type === 'workflow_event'
     ) &&
     (!event.modelTurnId || !event.messageId)
   ) {
@@ -432,6 +639,12 @@ const applyAssistantFinal = (
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   modelTurn.status = 'completed';
   modelTurn.finalMessageId = message.id;
+  const userTurn = session.userTurnById[modelTurn.userTurnId];
+  if (userTurn) {
+    userTurn.status = 'completed';
+  }
+  session.runtimeStatus = 'completed';
+  session.busyReason = null;
 };
 
 const applyToolActivity = (
@@ -439,15 +652,25 @@ const applyToolActivity = (
   event: NormalizedRuntimeEvent,
   completed: boolean
 ): void => {
+  const sourceType = normalizeText(event.payload.source_event_type);
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(
     session,
     event,
     completed ? 'streaming' : 'tooling'
   );
+  upsertToolWorkflowItem(message, event, completed ? 'completed' : 'loading');
   message.status = completed ? 'streaming' : 'tooling';
+  message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   modelTurn.status = completed ? 'streaming' : 'tool_running';
-  if (!completed) {
+  if (sourceType === 'approval_request') {
+    setSessionBusy(session, 'waiting_approval', 'waiting_approval');
+  } else if (completed && (
+    sourceType === 'approval_result' ||
+    sourceType === 'approval_resolved'
+  )) {
+    setSessionBusy(session, 'running', 'streaming');
+  } else if (!completed) {
     setSessionBusy(session, 'running', 'tool_running');
   }
 };
@@ -458,11 +681,37 @@ const applyToolFailed = (
 ): void => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(session, event, 'failed');
+  upsertToolWorkflowItem(message, event, 'failed');
   message.status = 'failed';
   message.failed = true;
+  message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   modelTurn.status = 'failed';
   session.runtimeStatus = 'failed';
   session.busyReason = null;
+};
+
+const applyWorkflowEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): void => {
+  const sourceType = normalizeText(event.payload.source_event_type);
+  const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
+  const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
+  const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
+  upsertProjectedWorkflowEventItem(message, event, sourceType, status);
+  if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    upsertProjectedSubagents(message, event, sourceType, status);
+  }
+  message.status = status === 'failed' ? 'failed' : status === 'completed' ? 'streaming' : 'tooling';
+  message.failed = message.failed || status === 'failed';
+  message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  modelTurn.status = status === 'failed' ? 'failed' : status === 'completed' ? 'streaming' : 'tool_running';
+  if (status === 'failed') {
+    session.runtimeStatus = 'failed';
+    session.busyReason = null;
+  } else if (status !== 'completed') {
+    setSessionBusy(session, 'running', 'tool_running');
+  }
 };
 
 const applyTurnTerminal = (
@@ -478,13 +727,16 @@ const applyTurnTerminal = (
     if (terminal === 'completed' && message.status !== 'failed' && message.status !== 'cancelled') {
       message.status = 'final';
       message.final = true;
+      settleProjectedWorkflowItems(message, 'completed');
       modelTurn.finalMessageId = modelTurn.finalMessageId || message.id;
     } else if (terminal === 'failed') {
       message.status = 'failed';
       message.failed = true;
+      settleProjectedWorkflowItems(message, 'failed');
     } else if (terminal === 'cancelled') {
       message.status = 'cancelled';
       message.cancelled = true;
+      settleProjectedWorkflowItems(message, 'failed');
     }
   });
   const userTurn = session.userTurnById[modelTurn.userTurnId];
@@ -511,6 +763,7 @@ const applySessionIdle = (
     if (message.status === 'placeholder' || message.status === 'waiting_first_output' || message.status === 'streaming' || message.status === 'tooling') {
       message.status = 'final';
       message.final = true;
+      settleProjectedWorkflowItems(message, 'completed');
       message.updatedSeq = event.eventSeq ?? message.updatedSeq;
     }
   });
@@ -586,7 +839,7 @@ const applyLegacyMessagesReconciled = (
   });
   const loading = normalizeFlag(event.loading ?? event.payload.loading);
   const running = normalizeFlag(event.running ?? event.payload.running);
-  if (loading || running) {
+  if (loading || running || hasActiveLegacyRuntime(messages)) {
     setSessionBusy(session, 'running', resolveLegacyBusyReason(messages));
   } else {
     settleLegacyActiveMessages(session);
@@ -602,6 +855,7 @@ const settleLegacyActiveMessages = (session: ChatRuntimeSessionProjection): void
     if (!isActiveMessageStatus(message.status)) return;
     message.status = 'final';
     message.final = true;
+    settleProjectedWorkflowItems(message, 'completed');
   });
   Object.values(session.modelTurnById).forEach((turn) => {
     if (
@@ -866,6 +1120,16 @@ const patchMessageFromRaw = (
   message.final = status === 'final';
   message.failed = status === 'failed';
   message.cancelled = status === 'cancelled';
+  if (Array.isArray(raw.workflowItems)) {
+    message.workflowItems = raw.workflowItems
+      .filter(isPlainRecord)
+      .map((item) => ({ ...item }));
+  }
+  if (Array.isArray(raw.subagents)) {
+    message.subagents = raw.subagents
+      .filter(isPlainRecord)
+      .map((item) => ({ ...item }));
+  }
   message.updatedSeq = Math.max(message.updatedSeq, seq);
 };
 
@@ -941,6 +1205,734 @@ const ensureAssistantMessageForModelTurn = (
   return message;
 };
 
+const upsertToolWorkflowItem = (
+  message: ChatRuntimeMessageProjection,
+  event: NormalizedRuntimeEvent,
+  status: 'loading' | 'completed' | 'failed'
+): void => {
+  if (message.role !== 'assistant') return;
+  const items = ensureProjectedWorkflowItems(message);
+  const payload = event.payload;
+  const data = asRecord(payload.data);
+  const eventType = resolveProjectedWorkflowEventType(event, status);
+  const toolName = firstText(
+    data.tool,
+    data.name,
+    data.tool_name,
+    data.toolName,
+    payload.tool,
+    payload.name,
+    payload.tool_name,
+    payload.toolName
+  );
+  const toolCallId = resolveToolWorkflowRef(event, payload, data);
+  const commandSessionId = firstText(
+    data.command_session_id,
+    data.commandSessionId,
+    payload.command_session_id,
+    payload.commandSessionId
+  );
+  const approvalId = firstText(
+    data.approval_id,
+    data.approvalId,
+    payload.approval_id,
+    payload.approvalId
+  );
+  const itemId = resolveProjectedWorkflowItemId(event, eventType, toolCallId, commandSessionId, approvalId);
+  const workflowRef = eventType === 'approval_request' || eventType === 'approval_result'
+    ? approvalId || toolCallId
+    : toolCallId;
+  const existing = findProjectedWorkflowItem(items, itemId, workflowRef, commandSessionId, approvalId);
+  const detailSource = Object.keys(data).length > 0 ? data : payload;
+  const title = resolveProjectedWorkflowTitle(eventType, toolName);
+  const next: ChatRuntimeWorkflowItemProjection = {
+    ...(existing || {}),
+    id: itemId,
+    title,
+    detail: stringifyWorkflowDetail(detailSource),
+    status,
+    isTool: true,
+    eventType,
+    sourceEventType: event.type,
+    updatedSeq: event.eventSeq ?? message.updatedSeq
+  };
+  if (toolName) {
+    next.toolName = toolName;
+    next.tool = toolName;
+  }
+  if (toolCallId) {
+    next.toolCallId = toolCallId;
+    next.tool_call_id = toolCallId;
+  }
+  if (commandSessionId) {
+    next.commandSessionId = commandSessionId;
+    next.command_session_id = commandSessionId;
+  }
+  if (approvalId) {
+    next.approvalId = approvalId;
+    next.approval_id = approvalId;
+  }
+
+  if (existing) {
+    Object.assign(existing, next);
+  } else {
+    items.push({
+      ...next,
+      createdSeq: event.eventSeq ?? message.updatedSeq
+    });
+  }
+};
+
+const resolveProjectedWorkflowStatus = (
+  sourceType: string,
+  payload: Record<string, unknown>
+): 'loading' | 'completed' | 'failed' => {
+  if (sourceType === 'team_error') return 'failed';
+  if (sourceType === 'team_finish') return 'completed';
+  const data = asRecord(payload.data);
+  const status = normalizeText(
+    data.status ??
+      payload.status ??
+      data.thread_status ??
+      data.threadStatus ??
+      payload.thread_status ??
+      payload.threadStatus
+  );
+  if (FAILED_WORKFLOW_STATUSES.has(status)) return 'failed';
+  if (SUCCESS_WORKFLOW_STATUSES.has(status)) return 'completed';
+  if (!status && (
+    sourceType === 'subagent_interrupt' ||
+    sourceType === 'subagent_close' ||
+    sourceType === 'subagent_announce'
+  )) {
+    return 'completed';
+  }
+  if (
+    sourceType === 'subagent_dispatch_finish' ||
+    sourceType === 'team_task_result' ||
+    sourceType === 'team_merge'
+  ) {
+    return 'completed';
+  }
+  return 'loading';
+};
+
+const upsertProjectedWorkflowEventItem = (
+  message: ChatRuntimeMessageProjection,
+  event: NormalizedRuntimeEvent,
+  sourceType: string,
+  status: 'loading' | 'completed' | 'failed'
+): void => {
+  if (message.role !== 'assistant') return;
+  const items = ensureProjectedWorkflowItems(message);
+  const payload = event.payload;
+  const data = asRecord(payload.data);
+  const detailSource = Object.keys(data).length > 0 ? data : payload;
+  const refs = resolveWorkflowEventRefs(event, payload, data);
+  const itemId = resolveProjectedGenericWorkflowItemId(event, sourceType, refs);
+  const existing = findProjectedWorkflowItem(
+    items,
+    itemId,
+    refs.toolCallId || refs.runId || refs.sessionId,
+    refs.commandSessionId || refs.dispatchId,
+    refs.approvalId || refs.taskId
+  );
+  const title = resolveProjectedGenericWorkflowTitle(sourceType, detailSource, status);
+  const next: ChatRuntimeWorkflowItemProjection = {
+    ...(existing || {}),
+    id: itemId,
+    title,
+    detail: stringifyWorkflowDetail(detailSource),
+    status,
+    eventType: sourceType || 'workflow_event',
+    sourceEventType: sourceType || event.type,
+    updatedSeq: event.eventSeq ?? message.updatedSeq
+  };
+  if (refs.dispatchId) {
+    next.dispatchId = refs.dispatchId;
+    next.dispatch_id = refs.dispatchId;
+  }
+  if (refs.sessionId) {
+    next.sessionId = refs.sessionId;
+    next.session_id = refs.sessionId;
+  }
+  if (refs.runId) {
+    next.runId = refs.runId;
+    next.run_id = refs.runId;
+  }
+  if (refs.taskId) {
+    next.taskId = refs.taskId;
+    next.task_id = refs.taskId;
+  }
+  if (refs.agentId) {
+    next.agentId = refs.agentId;
+    next.agent_id = refs.agentId;
+  }
+  if (TEAM_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    next.kind = 'team';
+  }
+  if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    next.kind = 'subagent';
+  }
+
+  if (existing) {
+    Object.assign(existing, next);
+  } else {
+    items.push({
+      ...next,
+      createdSeq: event.eventSeq ?? message.updatedSeq
+    });
+  }
+};
+
+const upsertProjectedSubagents = (
+  message: ChatRuntimeMessageProjection,
+  event: NormalizedRuntimeEvent,
+  sourceType: string,
+  status: 'loading' | 'completed' | 'failed'
+): void => {
+  if (message.role !== 'assistant') return;
+  const items = ensureProjectedSubagents(message);
+  const payload = event.payload;
+  const data = asRecord(payload.data);
+  const source = Object.keys(data).length > 0 ? data : payload;
+  const payloads = collectProjectedSubagentPayloads(source);
+  const candidates = payloads.length > 0 ? payloads : [source];
+  candidates.forEach((candidate) => {
+    const next = buildProjectedSubagent(candidate, event, sourceType, status);
+    if (!next) return;
+    const existing = findProjectedSubagent(items, next);
+    if (existing) {
+      Object.assign(existing, next);
+    } else {
+      items.push(next);
+    }
+  });
+  message.subagents = sortProjectedSubagents(items);
+};
+
+type WorkflowEventRefs = {
+  dispatchId: string;
+  sessionId: string;
+  runId: string;
+  taskId: string;
+  agentId: string;
+  toolCallId: string;
+  commandSessionId: string;
+  approvalId: string;
+};
+
+const resolveWorkflowEventRefs = (
+  event: NormalizedRuntimeEvent,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): WorkflowEventRefs => ({
+  dispatchId: firstText(
+    data.dispatch_id,
+    data.dispatchId,
+    payload.dispatch_id,
+    payload.dispatchId
+  ),
+  sessionId: firstText(
+    data.session_id,
+    data.sessionId,
+    data.target_session_id,
+    data.targetSessionId,
+    data.spawned_session_id,
+    data.spawnedSessionId,
+    payload.session_id,
+    payload.sessionId,
+    payload.target_session_id,
+    payload.targetSessionId,
+    payload.spawned_session_id,
+    payload.spawnedSessionId
+  ),
+  runId: firstText(
+    data.run_id,
+    data.runId,
+    data.session_run_id,
+    data.sessionRunId,
+    payload.run_id,
+    payload.runId,
+    payload.session_run_id,
+    payload.sessionRunId
+  ),
+  taskId: firstText(
+    data.task_id,
+    data.taskId,
+    payload.task_id,
+    payload.taskId
+  ),
+  agentId: firstText(
+    data.agent_id,
+    data.agentId,
+    payload.agent_id,
+    payload.agentId
+  ),
+  toolCallId: resolveToolWorkflowRef(event, payload, data),
+  commandSessionId: firstText(
+    data.command_session_id,
+    data.commandSessionId,
+    payload.command_session_id,
+    payload.commandSessionId
+  ),
+  approvalId: firstText(
+    data.approval_id,
+    data.approvalId,
+    payload.approval_id,
+    payload.approvalId
+  )
+});
+
+const resolveProjectedGenericWorkflowItemId = (
+  event: NormalizedRuntimeEvent,
+  sourceType: string,
+  refs: WorkflowEventRefs
+): string => {
+  const workflowKind = SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)
+    ? 'subagent'
+    : TEAM_WORKFLOW_EVENT_TYPES.has(sourceType)
+      ? 'team'
+      : sourceType || 'workflow';
+  const workflowRef =
+    refs.runId ||
+    refs.sessionId ||
+    refs.dispatchId ||
+    refs.taskId ||
+    refs.toolCallId ||
+    refs.commandSessionId ||
+    refs.approvalId;
+  if (workflowRef) {
+    return `runtime-workflow:${event.modelTurnId || event.messageId}:${workflowKind}:${workflowRef}`;
+  }
+  if (event.eventId) {
+    return `runtime-workflow:${event.modelTurnId || event.messageId}:event:${event.eventId}`;
+  }
+  return `runtime-workflow:${event.modelTurnId || event.messageId}:${workflowKind}:${event.eventSeq ?? 'local'}`;
+};
+
+const resolveProjectedGenericWorkflowTitle = (
+  sourceType: string,
+  source: Record<string, unknown>,
+  status: 'loading' | 'completed' | 'failed'
+): string => {
+  const label = firstText(
+    source.label,
+    source.spawn_label,
+    source.spawnLabel,
+    source.title,
+    source.name,
+    source.task_title,
+    source.taskTitle,
+    source.task
+  );
+  if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    if (sourceType === 'subagent_dispatch_start') {
+      return label ? `Subagent dispatch: ${label}` : 'Subagent dispatch';
+    }
+    if (sourceType === 'subagent_dispatch_finish') {
+      return label ? `Subagent result: ${label}` : 'Subagent result';
+    }
+    return label ? `Subagent: ${label}` : 'Subagent event';
+  }
+  if (TEAM_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    return label ? `Team event: ${label}` : `Team event: ${sourceType}`;
+  }
+  if (status === 'failed') return 'Workflow failed';
+  if (status === 'loading') return 'Workflow running';
+  return 'Workflow completed';
+};
+
+const ensureProjectedSubagents = (
+  message: ChatRuntimeMessageProjection
+): ChatRuntimeSubagentProjection[] => {
+  if (!Array.isArray(message.subagents)) {
+    message.subagents = [];
+  }
+  return message.subagents;
+};
+
+const buildProjectedSubagent = (
+  source: Record<string, unknown>,
+  event: NormalizedRuntimeEvent,
+  sourceType: string,
+  workflowStatus: 'loading' | 'completed' | 'failed'
+): ChatRuntimeSubagentProjection | null => {
+  const agentState = asRecord(source.agent_state ?? source.agentState);
+  const detail = buildProjectedSubagentDetail(source, agentState);
+  const sessionId = firstText(
+    source.session_id,
+    source.sessionId,
+    source.target_session_id,
+    source.targetSessionId,
+    source.spawned_session_id,
+    source.spawnedSessionId,
+    detail.session_id,
+    detail.sessionId
+  );
+  const runId = firstText(
+    source.run_id,
+    source.runId,
+    source.session_run_id,
+    source.sessionRunId,
+    detail.run_id,
+    detail.runId
+  );
+  const dispatchId = firstText(source.dispatch_id, source.dispatchId, detail.dispatch_id, detail.dispatchId);
+  const key = runId || sessionId || dispatchId;
+  if (!key) return null;
+  const sourceStatus = normalizeText(source.status ?? agentState.status ?? detail.status);
+  const status = resolveProjectedSubagentStatus(sourceStatus, workflowStatus);
+  const label = firstText(
+    source.label,
+    source.spawn_label,
+    source.spawnLabel,
+    source.title,
+    detail.label,
+    detail.spawn_label,
+    detail.spawnLabel,
+    detail.title
+  );
+  const title = label || sessionId || runId || 'Subagent';
+  const summary = firstText(
+    source.summary,
+    detail.summary,
+    source.assistant_message,
+    source.assistantMessage,
+    detail.assistant_message,
+    detail.assistantMessage,
+    source.result,
+    detail.result,
+    agentState.message,
+    source.error,
+    source.error_message,
+    source.errorMessage,
+    detail.error,
+    detail.error_message,
+    detail.errorMessage
+  );
+  const updatedAtMs = resolveProjectedTimestampMs(
+    source.updated_time,
+    source.updatedTime,
+    source.finished_time,
+    source.finishedTime,
+    source.started_time,
+    source.startedTime,
+    source.queued_time,
+    source.queuedTime,
+    source.created_at,
+    source.createdAt,
+    event.createdAt
+  );
+  const terminal =
+    normalizeFlag(source.terminal) ||
+    workflowStatus === 'completed' ||
+    workflowStatus === 'failed' ||
+    SUCCESS_WORKFLOW_STATUSES.has(status) ||
+    FAILED_WORKFLOW_STATUSES.has(status);
+  const failed = normalizeFlag(source.failed) || workflowStatus === 'failed' || FAILED_WORKFLOW_STATUSES.has(status);
+  return {
+    key,
+    session_id: sessionId,
+    run_id: runId,
+    dispatch_id: dispatchId,
+    title,
+    label,
+    status,
+    summary,
+    terminal,
+    failed,
+    canTerminate: normalizeFlag(source.can_terminate ?? source.canTerminate ?? (!terminal && !failed)),
+    updated_at: updatedAtMs === null ? '' : new Date(updatedAtMs).toISOString(),
+    updated_at_ms: updatedAtMs,
+    parent_user_round: normalizeOptionalRound(source.parent_user_round ?? source.parentUserRound),
+    parent_model_round: normalizeOptionalRound(source.parent_model_round ?? source.parentModelRound),
+    detail,
+    agent_state: {
+      status: firstText(agentState.status, status),
+      message: firstText(agentState.message, summary)
+    },
+    eventType: sourceType,
+    sourceEventType: sourceType,
+    updatedSeq: event.eventSeq ?? 0
+  };
+};
+
+const buildProjectedSubagentDetail = (
+  source: Record<string, unknown>,
+  agentState: Record<string, unknown>
+): Record<string, unknown> => {
+  const detail = asRecord(source.detail);
+  const output: Record<string, unknown> = {};
+  const copy = (key: string, value: unknown): void => {
+    if (value !== undefined && value !== null && value !== '') {
+      output[key] = value;
+    }
+  };
+  copy('agent_id', firstText(detail.agent_id, detail.agentId, source.agent_id, source.agentId));
+  copy('session_id', firstText(detail.session_id, detail.sessionId, source.session_id, source.sessionId));
+  copy('run_id', firstText(detail.run_id, detail.runId, source.run_id, source.runId));
+  copy('status', firstText(agentState.status, detail.status, source.status));
+  copy('assistant_message', firstText(detail.assistant_message, detail.assistantMessage, source.assistant_message, source.assistantMessage, source.result, agentState.message));
+  copy('error', firstText(detail.error, detail.error_message, detail.errorMessage, source.error, source.error_message, source.errorMessage));
+  copy('model_name', firstText(detail.model_name, detail.modelName, source.model_name, source.modelName));
+  copy('requested_by', firstText(detail.requested_by, detail.requestedBy, source.requested_by, source.requestedBy));
+  copy('spawned_by', firstText(detail.spawned_by, detail.spawnedBy, source.spawned_by, source.spawnedBy));
+  copy('queued_at', firstText(detail.queued_at, detail.queuedAt, source.queued_at, source.queuedAt));
+  copy('started_at', firstText(detail.started_at, detail.startedAt, source.started_at, source.startedAt));
+  copy('finished_at', firstText(detail.finished_at, detail.finishedAt, source.finished_at, source.finishedAt));
+  copy('updated_at', firstText(detail.updated_at, detail.updatedAt, source.updated_at, source.updatedAt));
+  return Object.keys(output).length > 0 ? output : { ...source };
+};
+
+const resolveProjectedSubagentStatus = (
+  sourceStatus: string,
+  workflowStatus: 'loading' | 'completed' | 'failed'
+): string => {
+  if (workflowStatus === 'failed' && (!sourceStatus || ACTIVE_SUBAGENT_STATUSES.has(sourceStatus))) {
+    return 'failed';
+  }
+  if (workflowStatus === 'completed' && (!sourceStatus || ACTIVE_SUBAGENT_STATUSES.has(sourceStatus))) {
+    return 'completed';
+  }
+  if (sourceStatus) return sourceStatus;
+  if (workflowStatus === 'failed') return 'failed';
+  if (workflowStatus === 'completed') return 'completed';
+  return 'running';
+};
+
+const findProjectedSubagent = (
+  items: ChatRuntimeSubagentProjection[],
+  incoming: ChatRuntimeSubagentProjection
+): ChatRuntimeSubagentProjection | null => {
+  const key = firstText(incoming.key, incoming.run_id, incoming.runId, incoming.session_id, incoming.sessionId);
+  if (!key) return null;
+  return items.find((item) => {
+    const candidate = firstText(item.key, item.run_id, item.runId, item.session_id, item.sessionId);
+    return candidate === key;
+  }) || null;
+};
+
+const sortProjectedSubagents = (
+  items: ChatRuntimeSubagentProjection[]
+): ChatRuntimeSubagentProjection[] => [...items].sort((left, right) => {
+  const leftTime = Number(left.updated_at_ms ?? left.updatedAtMs ?? left.updatedSeq ?? 0);
+  const rightTime = Number(right.updated_at_ms ?? right.updatedAtMs ?? right.updatedSeq ?? 0);
+  return rightTime - leftTime;
+});
+
+const collectProjectedSubagentPayloads = (
+  source: unknown
+): Record<string, unknown>[] => {
+  const output: Record<string, unknown>[] = [];
+  const append = (item: unknown): void => {
+    if (!isPlainRecord(item)) return;
+    if (hasProjectedSubagentIdentity(item)) {
+      output.push(item);
+    }
+    resolveProjectedSubagentPayloadItems(item).forEach(append);
+  };
+  append(source);
+  return output;
+};
+
+const resolveProjectedSubagentPayloadItems = (
+  source: Record<string, unknown>
+): unknown[] => {
+  const nested = asRecord(source.data);
+  return [
+    source.item,
+    source.selected_item,
+    source.selectedItem,
+    source.winner_item,
+    source.winnerItem,
+    ...(Array.isArray(source.items) ? source.items : []),
+    ...(Array.isArray(source.selected_items) ? source.selected_items : []),
+    ...(Array.isArray(source.selectedItems) ? source.selectedItems : []),
+    ...(Array.isArray(source.settled_items) ? source.settled_items : []),
+    ...(Array.isArray(source.settledItems) ? source.settledItems : []),
+    ...(Object.keys(nested).length > 0 ? resolveProjectedSubagentPayloadItems(nested) : [])
+  ];
+};
+
+const hasProjectedSubagentIdentity = (
+  source: Record<string, unknown>
+): boolean => Boolean(firstText(
+  source.session_id,
+  source.sessionId,
+  source.target_session_id,
+  source.targetSessionId,
+  source.spawned_session_id,
+  source.spawnedSessionId,
+  source.run_id,
+  source.runId,
+  source.session_run_id,
+  source.sessionRunId,
+  source.dispatch_id,
+  source.dispatchId
+));
+
+const resolveProjectedTimestampMs = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value > 0 && value < 10_000_000_000 ? value * 1000 : value;
+    }
+    const text = String(value).trim();
+    if (!text) continue;
+    const numeric = Number(text);
+    if (Number.isFinite(numeric)) {
+      return numeric > 0 && numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+    }
+    const parsed = Date.parse(text);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+};
+
+const normalizeOptionalRound = (value: unknown): number | null => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const ensureProjectedWorkflowItems = (
+  message: ChatRuntimeMessageProjection
+): ChatRuntimeWorkflowItemProjection[] => {
+  if (!Array.isArray(message.workflowItems)) {
+    message.workflowItems = [];
+  }
+  return message.workflowItems;
+};
+
+const settleProjectedWorkflowItems = (
+  message: ChatRuntimeMessageProjection,
+  terminalStatus: 'completed' | 'failed'
+): void => {
+  if (Array.isArray(message.workflowItems)) {
+    message.workflowItems.forEach((item) => {
+      const status = normalizeText(item.status);
+      if (ACTIVE_WORKFLOW_STATUSES.has(status)) {
+        item.status = terminalStatus;
+      }
+    });
+  }
+  settleProjectedSubagents(message, terminalStatus);
+};
+
+const settleProjectedSubagents = (
+  message: ChatRuntimeMessageProjection,
+  terminalStatus: 'completed' | 'failed'
+): void => {
+  if (!Array.isArray(message.subagents)) return;
+  message.subagents.forEach((item) => {
+    const status = normalizeText(item.status ?? (asRecord(item.agent_state).status));
+    if (!status || ACTIVE_SUBAGENT_STATUSES.has(status)) {
+      item.status = terminalStatus;
+      item.terminal = true;
+      item.failed = terminalStatus === 'failed';
+      item.canTerminate = false;
+      const agentState = asRecord(item.agent_state);
+      item.agent_state = {
+        ...agentState,
+        status: terminalStatus
+      };
+    }
+  });
+};
+
+const findProjectedWorkflowItem = (
+  items: ChatRuntimeWorkflowItemProjection[],
+  itemId: string,
+  toolCallId: string,
+  commandSessionId: string,
+  approvalId: string
+): ChatRuntimeWorkflowItemProjection | null => {
+  const exact = items.find((item) => normalizeId(item.id ?? item.itemId ?? item.item_id) === itemId);
+  if (exact) return exact;
+  const ref = toolCallId || commandSessionId || approvalId;
+  if (!ref) return null;
+  return items.find((item) => {
+    const candidate = firstText(
+      item.toolCallId,
+      item.tool_call_id,
+      item.callId,
+      item.call_id,
+      item.commandSessionId,
+      item.command_session_id,
+      item.approvalId,
+      item.approval_id
+    );
+    if (candidate !== ref) return false;
+    const eventType = normalizeText(item.eventType ?? item.event ?? item.event_type);
+    return !TOOL_RESULT_EVENT_TYPES.has(eventType);
+  }) || null;
+};
+
+const resolveProjectedWorkflowItemId = (
+  event: NormalizedRuntimeEvent,
+  eventType: string,
+  toolCallId: string,
+  commandSessionId: string,
+  approvalId: string
+): string => {
+  const ref = eventType === 'approval_request' || eventType === 'approval_result'
+    ? approvalId || toolCallId || commandSessionId
+    : toolCallId || commandSessionId || approvalId;
+  if (ref) return `runtime-workflow:${event.modelTurnId || event.messageId}:${ref}`;
+  if (event.eventId) return `runtime-workflow:${event.modelTurnId || event.messageId}:event:${event.eventId}`;
+  return `runtime-workflow:${event.modelTurnId || event.messageId}:${eventType}:${event.eventSeq ?? 'local'}`;
+};
+
+const resolveProjectedWorkflowEventType = (
+  event: NormalizedRuntimeEvent,
+  status: 'loading' | 'completed' | 'failed'
+): string => {
+  const sourceType = normalizeText(event.payload.source_event_type);
+  if (sourceType === 'approval_request' || sourceType === 'approval_result' || sourceType === 'approval_resolved') {
+    return status === 'loading' ? 'approval_request' : 'approval_result';
+  }
+  return status === 'loading' ? 'tool_call' : 'tool_result';
+};
+
+const resolveProjectedWorkflowTitle = (
+  eventType: string,
+  toolName: string
+): string => {
+  if (eventType === 'approval_request') return toolName ? `Approval required: ${toolName}` : 'Approval required';
+  if (eventType === 'approval_result') return toolName ? `Approval result: ${toolName}` : 'Approval result';
+  if (eventType === 'tool_result') return toolName ? `Tool result: ${toolName}` : 'Tool result';
+  return toolName ? `Tool call: ${toolName}` : 'Tool call';
+};
+
+const resolveToolWorkflowRef = (
+  event: NormalizedRuntimeEvent,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): string => firstText(
+  data.tool_call_id,
+  data.toolCallId,
+  data.call_id,
+  data.callId,
+  data.id,
+  payload.tool_call_id,
+  payload.toolCallId,
+  payload.call_id,
+  payload.callId,
+  payload.tool_run_id,
+  payload.toolRunId,
+  event.eventId
+);
+
+const stringifyWorkflowDetail = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return String(value ?? '');
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
+
 const ensureMessage = (
   session: ChatRuntimeSessionProjection,
   options: {
@@ -968,7 +1960,8 @@ const ensureMessage = (
       modelTurnId: options.modelTurnId,
       final: options.role !== 'assistant',
       failed: false,
-      cancelled: false
+      cancelled: false,
+      ...(options.role === 'assistant' ? { workflowItems: [], subagents: [] } : {})
     };
   }
   const message = session.messageById[id];
@@ -984,6 +1977,14 @@ const ensureMessage = (
 const deriveSessionRuntime = (session: ChatRuntimeSessionProjection): void => {
   if (session.connectionState === 'reconnecting') {
     setSessionBusy(session, 'reconnecting', 'reconnecting');
+    return;
+  }
+  if (
+    session.runtimeStatus === 'waiting_approval' ||
+    session.runtimeStatus === 'waiting_user_input' ||
+    session.runtimeStatus === 'finalizing'
+  ) {
+    session.busyReason = session.busyReason || resolveBusyReasonForStatus(session.runtimeStatus);
     return;
   }
   const activeMessage = Object.values(session.messageById)
@@ -1003,6 +2004,11 @@ const deriveSessionRuntime = (session: ChatRuntimeSessionProjection): void => {
     return;
   }
   if (session.runtimeStatus === 'failed' || session.runtimeStatus === 'cancelled' || session.runtimeStatus === 'system_error') {
+    session.busyReason = null;
+    return;
+  }
+  if (session.runtimeStatus === 'completed') {
+    session.runtimeStatus = 'idle';
     session.busyReason = null;
     return;
   }
@@ -1173,7 +2179,11 @@ const resolveLegacyMessageStatus = (message: ChatRuntimeRawMessage): ChatRuntime
       0
   ) > 0;
   const hasVisibleOutput = Boolean(String(message.content ?? '').trim() || String(message.reasoning ?? '').trim());
-  if (normalizeFlag(message.workflowStreaming) || hasActiveWorkflowItems(message.workflowItems)) {
+  if (
+    normalizeFlag(message.workflowStreaming) ||
+    hasActiveWorkflowItems(message.workflowItems) ||
+    hasActiveSubagentItems(message.subagents)
+  ) {
     return 'tooling';
   }
   if (normalizeFlag(message.stream_incomplete) || normalizeFlag(message.reasoningStreaming)) {
@@ -1196,11 +2206,32 @@ const resolveLegacyBusyReason = (messages: ChatRuntimeRawMessage[]): ChatRuntime
   return 'streaming';
 };
 
+const hasActiveLegacyRuntime = (messages: ChatRuntimeRawMessage[]): boolean =>
+  Array.isArray(messages) &&
+  messages.some((message) =>
+    normalizeRole(message?.role) === 'assistant' &&
+    isActiveMessageStatus(resolveLegacyMessageStatus(message))
+  );
+
 const hasActiveWorkflowItems = (workflowItems: unknown): boolean => {
   if (!Array.isArray(workflowItems)) return false;
   return workflowItems.some((item) => {
     if (!item || typeof item !== 'object') return false;
     return ACTIVE_WORKFLOW_STATUSES.has(normalizeText((item as Record<string, unknown>).status));
+  });
+};
+
+const hasActiveSubagentItems = (subagents: unknown): boolean => {
+  if (!Array.isArray(subagents)) return false;
+  return subagents.some((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as Record<string, unknown>;
+    const status = normalizeText(record.status ?? asRecord(record.agent_state).status);
+    if (ACTIVE_SUBAGENT_STATUSES.has(status)) return true;
+    if (SUCCESS_WORKFLOW_STATUSES.has(status) || FAILED_WORKFLOW_STATUSES.has(status)) return false;
+    if (normalizeFlag(record.terminal) || normalizeFlag(record.failed)) return false;
+    if (normalizeFlag(record.reply_pending ?? record.replyPending)) return true;
+    return Boolean(firstText(record.session_id, record.sessionId, record.run_id, record.runId));
   });
 };
 
@@ -1271,9 +2302,20 @@ const asRecord = (value: unknown): Record<string, unknown> =>
     ? value as Record<string, unknown>
     : {};
 
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
 const addUnique = (target: string[], value: string): void => {
   if (!value || target.includes(value)) return;
   target.push(value);
+};
+
+const firstText = (...values: unknown[]): string => {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
 };
 
 const nextLocalSeq = (session: ChatRuntimeSessionProjection): number => {

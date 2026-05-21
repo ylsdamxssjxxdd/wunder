@@ -1,4 +1,6 @@
-use crate::api::chat::{build_chat_request, ChatAttachment, ChatRequestOverrides};
+use crate::api::chat::{
+    build_chat_request, persist_user_cancelled_turn_marker, ChatAttachment, ChatRequestOverrides,
+};
 use crate::api::chat_goal::apply_goal_command;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
@@ -826,10 +828,16 @@ async fn handle_ws(
                                     &session_id,
                                 )
                                 .await;
-                                let _ = state.monitor.cancel_with_source(
+                                let cancel_source = cancel_source.unwrap_or("ws_cancel");
+                                let _ =
+                                    state.monitor.cancel_with_source(&session_id, cancel_source);
+                                let _ = persist_user_cancelled_turn_marker(
+                                    state.as_ref(),
+                                    &user.user_id,
                                     &session_id,
-                                    cancel_source.unwrap_or("ws_cancel"),
-                                );
+                                    cancel_source,
+                                )
+                                .await;
                             }
                         }
                     }

@@ -1051,6 +1051,13 @@ export default {
   'desktop.system.pythonInterpreterPath': 'Python Interpreter Path',
   'desktop.system.pythonInterpreterPathPlaceholder':
     'Leave empty to prefer the bundled Python, e.g. C:\\Python311\\python.exe',
+  'desktop.system.runtimeToolPathPlaceholder': 'Leave empty to use the supplement package or system PATH',
+  'desktop.system.pipPath': 'pip Path',
+  'desktop.system.gitPath': 'Git Path',
+  'desktop.system.rgPath': 'rg Path',
+  'desktop.system.pipPathPickerTitle': 'Choose pip executable',
+  'desktop.system.gitPathPickerTitle': 'Choose Git executable',
+  'desktop.system.rgPathPickerTitle': 'Choose rg executable',
   'desktop.system.pythonInterpreterHint':
     'Absolute paths are supported. Relative paths are resolved against the desktop app directory.',
   'desktop.system.pythonInterpreterBundledHint': 'Current: automatically use the bundled desktop Python runtime',

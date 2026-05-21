@@ -1,5 +1,7 @@
 use std::io;
 use std::path::Path;
+#[cfg(not(windows))]
+use std::path::PathBuf;
 use std::process::Command as StdCommand;
 #[cfg(windows)]
 use std::{env, path::PathBuf, sync::OnceLock};
@@ -70,6 +72,27 @@ pub fn build_direct_command_with_python_override(
     cwd: &Path,
     python_bin: &Path,
 ) -> Option<Command> {
+    build_direct_command_with_overrides(
+        command,
+        cwd,
+        Some(python_bin),
+        CommandProgramOverrides::default(),
+    )
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CommandProgramOverrides {
+    pub pip_bin: Option<PathBuf>,
+    pub git_bin: Option<PathBuf>,
+    pub rg_bin: Option<PathBuf>,
+}
+
+pub fn build_direct_command_with_overrides(
+    command: &str,
+    cwd: &Path,
+    python_bin: Option<&Path>,
+    overrides: CommandProgramOverrides,
+) -> Option<Command> {
     let trimmed = command.trim();
     if trimmed.is_empty() || contains_shell_meta(trimmed) {
         return None;
@@ -83,19 +106,33 @@ pub fn build_direct_command_with_python_override(
     if is_shell_builtin(program) {
         return None;
     }
-    let mut cmd = if is_python_program(program) || command_is_pip_invocation(program) {
-        let mut python_cmd = Command::new(python_bin);
-        if command_is_pip_invocation(program) {
+    let pip_invocation = command_is_pip_invocation(program);
+    let mut cmd = if is_python_program(program) {
+        Command::new(python_bin?)
+    } else if pip_invocation {
+        if let Some(pip_bin) = overrides.pip_bin.as_ref() {
+            command_for_executable_path(pip_bin)
+        } else if let Some(python_bin) = python_bin {
+            let mut python_cmd = Command::new(python_bin);
             python_cmd.arg("-m").arg("pip");
-            if program_index + 1 < parts.len() {
-                python_cmd.args(&parts[program_index + 1..]);
-            }
+            python_cmd
+        } else {
+            Command::new(program)
         }
-        python_cmd
+    } else if is_git_program(program) {
+        match overrides.git_bin.as_ref() {
+            Some(git_bin) => command_for_executable_path(git_bin),
+            None => Command::new(program),
+        }
+    } else if is_rg_program(program) {
+        match overrides.rg_bin.as_ref() {
+            Some(rg_bin) => command_for_executable_path(rg_bin),
+            None => Command::new(program),
+        }
     } else {
         Command::new(program)
     };
-    if !command_is_pip_invocation(program) && program_index + 1 < parts.len() {
+    if program_index + 1 < parts.len() {
         cmd.args(&parts[program_index + 1..]);
     }
     for (key, value) in envs {
@@ -104,6 +141,23 @@ pub fn build_direct_command_with_python_override(
     cmd.current_dir(cwd);
     apply_platform_spawn_options(&mut cmd);
     Some(cmd)
+}
+
+fn command_for_executable_path(path: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if extension == "cmd" || extension == "bat" {
+            let mut cmd = Command::new("cmd.exe");
+            cmd.arg("/C").arg(path);
+            return cmd;
+        }
+    }
+    Command::new(path)
 }
 
 pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
@@ -254,6 +308,16 @@ fn command_is_pip_invocation(program: &str) -> bool {
         || lower == "pip3"
         || lower == "pip3.exe"
         || lower.starts_with("pip3.")
+}
+
+fn is_git_program(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    lower == "git" || lower == "git.exe"
+}
+
+fn is_rg_program(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    lower == "rg" || lower == "rg.exe"
 }
 
 #[cfg(test)]

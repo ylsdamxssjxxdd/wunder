@@ -131,7 +131,6 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 
 import { applyPlanUpdate, buildToolIdentityMeta, buildWorkflowItem, hasPlanSteps, isQuestionPanelToolName, normalizeInquiryPanelPayload, normalizeInquiryPanelState, normalizePlanPayload, safeJsonParse, shouldAutoShowPlan, tailText } from './chatDemoPanels';
 import { applyDesktopOverlayEvent } from './chatPersist';
-import { STREAM_FLUSH_BASE_MS, resolveStreamFlushMs } from './chatRuntimeControls';
 import { resolveSessionKey, sessionSubagentsCache } from './chatRuntimeState';
 import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
 import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments } from './chatStreamIds';
@@ -891,6 +890,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
         break;
       }
       case 'llm_output_delta': {
+        let clearedVisibleOutput = false;
         const round = ctx.resolveRound(payload, data);
         clearAssistantRetryState(ctx.assistantMessage);
         if (round !== null) {
@@ -898,7 +898,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           ctx.assistantMessage.stream_round = round;
         }
         if (round !== null && ctx.blockedRounds.has(round)) {
-          break;
+          return;
         }
         if (round !== null && ctx.visibleRound !== round) {
           if (ctx.visibleRound === null && ctx.outputContent) {
@@ -906,6 +906,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           } else {
             ctx.clearVisibleOutput();
             ctx.visibleRound = round;
+            clearedVisibleOutput = true;
           }
         }
         const segmentedDelta = parseSegmentedDelta(payload, data);
@@ -944,7 +945,10 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
           ctx.ensureOutputItem();
           ctx.scheduleStreamFlush();
         }
-        break;
+        if (clearedVisibleOutput && !ctx.pendingContent && !ctx.pendingReasoningExplicit && !ctx.pendingReasoningFallback) {
+          ctx.notifySnapshot();
+        }
+        return;
       }
       case 'llm_output': {
         const round = ctx.resolveRound(payload, data);

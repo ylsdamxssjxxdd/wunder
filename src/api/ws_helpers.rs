@@ -420,11 +420,14 @@ pub(crate) async fn send_ws_event(
     request_id: Option<&str>,
     event: StreamEvent,
 ) -> Result<(), ()> {
-    let is_delta = event.event == "llm_output_delta";
+    let event_name = event.event.clone();
+    let is_delta = event_name == "llm_output_delta";
+    let event_id = event.id.clone();
+    let data = enrich_ws_event_data(event.data, event_id.as_deref());
     let payload = json!({
-        "event": event.event,
-        "id": event.id,
-        "data": event.data,
+        "event": event_name,
+        "id": event_id,
+        "data": data,
     });
     if is_delta {
         let queue_capacity = tx.tx.capacity();
@@ -441,7 +444,7 @@ pub(crate) async fn send_ws_event(
         let text = build_ws_text("event", request_id, Some(payload));
         return try_send_text_lossy(tx, text).map_err(|_| ());
     }
-    let text = build_ws_text("event", request_id, Some(payload));
+    let text = build_ws_text("event", request_id, Some(payload.clone()));
     match try_send_text_strict(tx, text) {
         Ok(()) => Ok(()),
         Err(WsTrySendError::Full) => {
@@ -452,21 +455,39 @@ pub(crate) async fn send_ws_event(
                 tx.tx.capacity(),
                 false,
             );
-            let retry_text = build_ws_text(
-                "event",
-                request_id,
-                Some(json!({
-                    "event": event.event,
-                    "id": event.id,
-                    "data": event.data,
-                })),
-            );
+            let retry_text = build_ws_text("event", request_id, Some(payload));
             send_text_backpressured(tx, retry_text)
                 .await
                 .map_err(|_| ())
         }
         Err(WsTrySendError::Closed) => Err(()),
     }
+}
+
+fn enrich_ws_event_data(data: Value, event_id: Option<&str>) -> Value {
+    let Some(parsed_id) = event_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<i64>().ok())
+    else {
+        return data;
+    };
+    let mut data = data;
+    if let Value::Object(ref mut map) = data {
+        map.entry("event_id".to_string())
+            .or_insert_with(|| json!(parsed_id));
+        map.entry("event_seq".to_string())
+            .or_insert_with(|| json!(parsed_id));
+        if let Some(Value::Object(inner)) = map.get_mut("data") {
+            inner
+                .entry("event_id".to_string())
+                .or_insert_with(|| json!(parsed_id));
+            inner
+                .entry("event_seq".to_string())
+                .or_insert_with(|| json!(parsed_id));
+        }
+    }
+    data
 }
 
 pub(crate) async fn send_ws_error(
@@ -760,6 +781,36 @@ mod tests {
             panic!("expected tool_call message");
         };
         assert!(raw.contains("\"event\":\"tool_call\""));
+    }
+
+    #[tokio::test]
+    async fn ws_event_data_exposes_event_sequence_for_projection_replay() {
+        let (tx, mut rx) = mpsc::channel::<Message>(4);
+        let sender = WsSender::new(tx);
+        let event = StreamEvent {
+            event: "final".to_string(),
+            data: json!({"data":{"answer":"ok"}}),
+            id: Some("7".to_string()),
+            timestamp: None,
+        };
+        assert!(send_ws_event(&sender, Some("req-seq"), event).await.is_ok());
+        let message = rx.recv().await.expect("ws event");
+        let Message::Text(raw) = message else {
+            panic!("expected text ws event");
+        };
+        let payload: Value = serde_json::from_str(&raw).expect("ws json");
+        let data = payload
+            .get("payload")
+            .and_then(|value| value.get("data"))
+            .expect("event data");
+        assert_eq!(data.get("event_id").and_then(Value::as_i64), Some(7));
+        assert_eq!(data.get("event_seq").and_then(Value::as_i64), Some(7));
+        assert_eq!(
+            data.get("data")
+                .and_then(|value| value.get("event_seq"))
+                .and_then(Value::as_i64),
+            Some(7)
+        );
     }
 
     #[tokio::test]

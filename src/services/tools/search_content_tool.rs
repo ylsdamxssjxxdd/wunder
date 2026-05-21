@@ -5,6 +5,7 @@ use super::{
     MAX_SEARCH_MATCHES,
 };
 use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
+use crate::core::python_runtime;
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -373,8 +374,14 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
 
     let started_at = Instant::now();
     let deadline = started_at + Duration::from_millis(params.timeout_ms);
-    let rg_launch_candidates =
-        resolve_rg_launch_candidates(context.config.tools.search.rg_path.as_deref());
+    let command_env = python_runtime::resolve_desktop_command_env();
+    let configured_rg_path = command_env
+        .command_overrides
+        .rg_bin
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string())
+        .or_else(|| context.config.tools.search.rg_path.clone());
+    let rg_launch_candidates = resolve_rg_launch_candidates(configured_rg_path.as_deref());
     let mut selected_attempt: Option<&SearchAttempt> = None;
     let mut selected_result: Option<SearchAttemptResult> = None;
     let mut last_result: Option<SearchAttemptResult> = None;
@@ -1031,10 +1038,10 @@ fn resolve_rg_launch_candidates(configured_rg_path: Option<&str>) -> Vec<RgLaunc
     let mut seen = HashSet::new();
     let base_dirs = collect_rg_candidate_base_dirs();
 
-    if let Ok(raw) = std::env::var(RG_BINARY_ENV) {
+    if let Some(raw) = configured_rg_path {
         push_rg_candidate_reference(&mut candidates, &mut seen, raw.trim(), &base_dirs);
     }
-    if let Some(raw) = configured_rg_path {
+    if let Ok(raw) = std::env::var(RG_BINARY_ENV) {
         push_rg_candidate_reference(&mut candidates, &mut seen, raw.trim(), &base_dirs);
     }
 

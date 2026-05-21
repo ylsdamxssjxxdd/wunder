@@ -3306,9 +3306,12 @@ impl StorageBackend for SqliteStorage {
             if let Some(mut value) = Self::json_from_str(&payload) {
                 if let Value::Object(ref mut map) = value {
                     map.insert("event_id".to_string(), json!(event_id));
+                    map.insert("event_seq".to_string(), json!(event_id));
                     records.push(value);
                 } else {
-                    records.push(json!({ "event_id": event_id, "data": value }));
+                    records.push(
+                        json!({ "event_id": event_id, "event_seq": event_id, "data": value }),
+                    );
                 }
             }
         }

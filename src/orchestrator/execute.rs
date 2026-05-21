@@ -1,8 +1,8 @@
 use super::context::normalize_model_context_message;
 use super::retry_governor::RetryGovernor;
 use super::thread_runtime::{
-    ThreadRuntimeStatus, ThreadRuntimeUpdate, thread_closed_payload, thread_not_loaded_payload,
-    thread_status_payload,
+    thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
+    ThreadRuntimeUpdate,
 };
 use super::tool_calls::ToolCall;
 use super::tool_parallel::tool_call_supports_parallel;
@@ -16,7 +16,7 @@ use crate::services::goal;
 use crate::services::orchestration_context::session_orchestration_run_root;
 use crate::services::subagents;
 use crate::services::tools::sessions_yield_tool;
-use crate::services::tools::tool_error::{ToolErrorMeta, with_error_meta};
+use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
 
 struct PlannedToolCall {
     call: ToolCall,

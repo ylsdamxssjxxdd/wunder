@@ -377,10 +377,32 @@ const loadDesktopCompanionLibraryState = async (): Promise<{
   }
 };
 
+const normalizeDesktopCompanionRecords = (value: unknown): CompanionPackageRecord[] =>
+  (Array.isArray(value) ? value : [])
+    .map((item) => normalizeRecord(item))
+    .filter((item): item is CompanionPackageRecord => Boolean(item));
+
+const normalizeDesktopAgentOverrides = (value: unknown): Record<string, AgentCompanionOverride> => {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const output: Record<string, AgentCompanionOverride> = {};
+  Object.entries(source).forEach(([key, item]) => {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return;
+    const normalized = normalizeAgentCompanionOverride(item);
+    if (normalized) {
+      output[normalizedKey] = normalized;
+    }
+  });
+  return output;
+};
+
 const saveDesktopCompanionLibraryState = async (payload: {
   companions: CompanionPackageRecord[];
   settings: CompanionSettings;
   agentOverrides: Record<string, AgentCompanionOverride>;
+  replaceCompanions?: boolean;
 }): Promise<void> => {
   const bridge = getDesktopBridge();
   const writer = bridge?.setCompanionLibraryState;
@@ -388,11 +410,25 @@ const saveDesktopCompanionLibraryState = async (payload: {
     return;
   }
   try {
+    const previous = await loadDesktopCompanionLibraryState();
+    const previousSettings = normalizeSettings(previous?.settings);
+    const previousAgentOverrides = normalizeDesktopAgentOverrides(previous?.agentOverrides);
     await Promise.resolve(
       writer.call(bridge, {
-        companions: payload.companions,
-        settings: payload.settings,
-        agentOverrides: payload.agentOverrides
+        companions: payload.replaceCompanions
+          ? payload.companions
+          : mergeCompanionRecords(
+              normalizeDesktopCompanionRecords(previous?.companions),
+              payload.companions
+            ),
+        settings: {
+          ...previousSettings,
+          ...payload.settings
+        },
+        agentOverrides: {
+          ...previousAgentOverrides,
+          ...payload.agentOverrides
+        }
       })
     );
   } catch {
@@ -442,6 +478,12 @@ export const useCompanionStore = defineStore('companions', () => {
 
   const applyDesktopState = (value: unknown): void => {
     const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+    if (Array.isArray(source.runtimes)) {
+      source.runtimes.forEach((item) => applyDesktopState(item));
+      if (!source.selectedId && !source.selected_id) {
+        return;
+      }
+    }
     const selectedId = String(source.selectedId || source.selected_id || '').trim();
     if (selectedId && companions.value.some((item) => item.id === selectedId)) {
       settings.value.selectedId = selectedId;
@@ -488,11 +530,7 @@ export const useCompanionStore = defineStore('companions', () => {
     lastError.value = '';
     try {
       const desktopState = await loadDesktopCompanionLibraryState();
-      const desktopCompanions = Array.isArray(desktopState?.companions)
-        ? desktopState.companions
-            .map((item) => normalizeRecord(item))
-            .filter((item): item is CompanionPackageRecord => Boolean(item))
-        : [];
+      const desktopCompanions = normalizeDesktopCompanionRecords(desktopState?.companions);
       const storedCompanions = await listStoredCompanions();
       companions.value = mergeCompanionRecords(desktopCompanions, storedCompanions);
       if (companions.value.length) {
@@ -527,12 +565,21 @@ export const useCompanionStore = defineStore('companions', () => {
       const getCompanionState = bridge?.getCompanionState;
       if (typeof getCompanionState === 'function') {
         const desktopOverlayState = await Promise.resolve(getCompanionState.call(bridge));
-        if (!companions.value.length) {
-          const reconstructed = normalizeDesktopStateCompanionRecord(desktopOverlayState);
-          if (reconstructed) {
-            companions.value = [reconstructed];
-            await saveStoredCompanion(reconstructed).catch(() => undefined);
-          }
+        const overlayStates = [
+          ...(desktopOverlayState && typeof desktopOverlayState === 'object'
+            ? Array.isArray((desktopOverlayState as Record<string, unknown>).runtimes)
+              ? ((desktopOverlayState as Record<string, unknown>).runtimes as unknown[])
+              : []
+            : []),
+          desktopOverlayState
+        ];
+        const reconstructed = overlayStates
+          .map((item) => normalizeDesktopStateCompanionRecord(item))
+          .filter((item): item is CompanionPackageRecord => Boolean(item))
+          .filter((item) => !companions.value.some((current) => current.id === item.id));
+        if (reconstructed.length) {
+          companions.value = mergeCompanionRecords(companions.value, reconstructed);
+          await Promise.all(reconstructed.map((item) => saveStoredCompanion(item).catch(() => undefined)));
         }
         applyDesktopState(desktopOverlayState);
       }
@@ -688,11 +735,12 @@ export const useCompanionStore = defineStore('companions', () => {
       settings.value.selectedId = companions.value[0]?.id || '';
       settings.value.enabled = Boolean(settings.value.selectedId) && settings.value.enabled;
     }
-    persistSettings();
+    saveSettings(settings.value);
     await saveDesktopCompanionLibraryState({
       companions: companions.value,
       settings: settings.value,
-      agentOverrides: agentOverrides.value
+      agentOverrides: agentOverrides.value,
+      replaceCompanions: true
     });
   };
 

@@ -6911,25 +6911,29 @@ async fn run_command_streaming(
     command_index: usize,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
-    let runtime = python_runtime::resolve_python_runtime();
-    let (mut cmd, used_direct) = if let Some(runtime) = runtime.as_ref() {
-        if let Some(cmd) =
-            command_utils::build_direct_command_with_python_override(command, cwd, &runtime.bin)
-        {
-            (cmd, true)
-        } else {
-            (command_utils::build_shell_command(command, cwd), false)
-        }
+    let command_env = python_runtime::resolve_desktop_command_env();
+    let command_overrides = command_utils::CommandProgramOverrides {
+        pip_bin: command_env.command_overrides.pip_bin.clone(),
+        git_bin: command_env.command_overrides.git_bin.clone(),
+        rg_bin: command_env.command_overrides.rg_bin.clone(),
+    };
+    let (mut cmd, used_direct) = if let Some(cmd) =
+        command_utils::build_direct_command_with_overrides(
+            command,
+            cwd,
+            command_env
+                .python_runtime
+                .as_ref()
+                .map(|runtime| runtime.bin.as_path()),
+            command_overrides,
+        ) {
+        (cmd, true)
     } else if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
         (cmd, true)
     } else {
         (command_utils::build_shell_command(command, cwd), false)
     };
-    if let Some(runtime) = runtime.as_ref() {
-        python_runtime::apply_python_env(&mut cmd, runtime);
-    } else {
-        python_runtime::apply_system_python_env_if_configured(&mut cmd);
-    }
+    python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
     let initial_launch_mode = if used_direct {
         CommandSessionLaunchMode::Direct
     } else {
@@ -6951,11 +6955,7 @@ async fn run_command_streaming(
         ),
         Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
             let mut cmd = command_utils::build_shell_command(command, cwd);
-            if let Some(runtime) = runtime.as_ref() {
-                python_runtime::apply_python_env(&mut cmd, runtime);
-            } else {
-                python_runtime::apply_system_python_env_if_configured(&mut cmd);
-            }
+            python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
             cmd.kill_on_drop(true);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             let fallback_shell_name = command_utils::resolve_shell_name(command).to_string();

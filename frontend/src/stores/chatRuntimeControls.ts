@@ -542,7 +542,7 @@ export const WATCHDOG_INTERVAL_MS_HIDDEN = 7000;
 export const WATCH_RECONCILE_DELAY_MS = 150;
 export const WATCH_RECONCILE_COOLDOWN_MS = 1800;
 export const SLOW_CLIENT_RESUME_DELAY_MS = 120;
-export const STREAM_FLUSH_BASE_MS = 20;
+export const STREAM_FLUSH_BASE_MS = 40;
 export const STREAM_FLUSH_MAX_MS = 160;
 export const HISTORY_PAGE_LIMIT = 80;
 export const HISTORY_PAGE_MAX = 200;
@@ -553,9 +553,9 @@ export const WINDOWING_ENABLED_KEY = 'wunder_chat_windowing';
 
 export const resolveStreamFlushMs = (messageCount, override) => {
   if (Number.isFinite(override)) {
-    return Math.max(0, Number(override));
+    return Math.min(STREAM_FLUSH_MAX_MS, Math.max(0, Number(override)));
   }
-  return 0;
+  return STREAM_FLUSH_BASE_MS;
 };
 
 export const resolveStreamFlushMsForMessages = (messages) =>

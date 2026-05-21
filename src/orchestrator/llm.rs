@@ -1180,11 +1180,11 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_LLM_MAX_ATTEMPTS, LLM_UNAVAILABLE_MIN_RETRIES, LlmFailureKind,
         build_context_cache_probe, classify_llm_failure, detect_invalid_tool_calls,
         extract_context_window_limit_hint, is_context_window_error_text,
         is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
-        resolve_llm_retry_delay,
+        resolve_llm_retry_delay, LlmFailureKind, DEFAULT_LLM_MAX_ATTEMPTS,
+        LLM_UNAVAILABLE_MIN_RETRIES,
     };
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;

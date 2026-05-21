@@ -523,7 +523,11 @@ async function syncDesktopOverlay(): Promise<void> {
   const nextKeys = new Set(visibleEntries.value.map((entry) => entry.key));
   const staleKeys = Array.from(desktopOverlayActiveKeys).filter((key) => !nextKeys.has(key));
   if (typeof bridge.hideCompanion === 'function') {
-    await Promise.all(staleKeys.map((key) => Promise.resolve(bridge.hideCompanion?.({ key, persistEnabled: false }))));
+    await Promise.all(staleKeys.map((key) => Promise.resolve(bridge.hideCompanion?.({
+      key,
+      persistEnabled: false,
+      persistState: true
+    }))));
   }
   staleKeys.forEach((key) => desktopOverlayActiveKeys.delete(key));
   await Promise.all(visibleEntries.value.map(async (entry, index) => {
@@ -537,8 +541,10 @@ async function syncDesktopOverlay(): Promise<void> {
       key: entry.key,
       id: entry.companion.id,
       selectedId: entry.companion.id,
+      scope: entry.companion.scope || entry.config.scope || 'private',
       agentId: entry.agentId,
       displayName: entry.name,
+      companionDisplayName: entry.companion.displayName,
       description: entry.companion.description,
       spritesheetDataUrl: entry.companion.spritesheetDataUrl,
       state: resolveDesktopBaseSpriteState(entry),

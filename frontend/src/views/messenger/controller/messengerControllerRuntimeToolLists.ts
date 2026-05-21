@@ -459,7 +459,7 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       const messages = Array.isArray(messagesOverride)
           ? messagesOverride
           : normalizedSessionId === String(ctx.chatStore.activeSessionId || '').trim()
-              ? (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])
+              ? ctx.resolveActiveAgentRenderableMessageRecords()
               : ctx.chatStore.getCachedSessionMessages(normalizedSessionId);
       const busyByStoreGetter = ctx.isSessionBusy(normalizedSessionId);
       if (!loadingBySession &&

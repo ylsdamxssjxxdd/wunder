@@ -72,6 +72,17 @@ import {
   applyChatRuntimeEvent
 } from '@/realtime/chat/chatRuntimeReducer';
 import {
+  applyChatRuntimeEventsWithInvalidation,
+  clearRuntimeProjectionInvalidation,
+  markRuntimeProjectionChanged
+} from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+export { clearRuntimeProjectionInvalidation } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+import {
+  buildCanonicalClientMessageSubmittedEvent,
+  buildCanonicalSessionEventsSnapshot,
+  buildCanonicalStreamRuntimeEvents
+} from '@/realtime/chat/chatRuntimeBridge';
+import {
   selectLegacyMessageStatus,
   selectVisibleMessageProjections,
   selectSessionBusy,
@@ -79,6 +90,10 @@ import {
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
 import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
+import {
+  compareChatRuntimeShadow,
+  summarizeChatRuntimeShadowReport
+} from '@/realtime/chat/chatRuntimeShadow';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
@@ -161,6 +176,7 @@ export const sessionSubagentsInFlight = new Map();
 export const sessionSubagentsCache = new Map<string, { cachedAt: number; items: unknown[] }>();
 export const sessionDetailWarmState = new Map();
 export const sessionHistoryState = new Map();
+export const sessionRuntimeShadowState = new Map<string, { fingerprint: string; loggedAt: number }>();
 
 export const SESSION_LIST_CACHE_TTL_MS = 15 * 1000;
 export const SESSION_EVENTS_CACHE_TTL_MS = 2500;
@@ -168,6 +184,7 @@ export const SESSION_EVENTS_RUNNING_CACHE_TTL_MS = 600;
 export const SESSION_DETAIL_SNAPSHOT_TTL_MS = 2500;
 export const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
 export const SESSION_SUBAGENTS_CACHE_TTL_MS = 12 * 1000;
+export const SESSION_RUNTIME_SHADOW_LOG_COOLDOWN_MS = 1500;
 
 export const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
 
@@ -1451,21 +1468,111 @@ export const syncSessionContextTokens = (store, sessionId, contextTokens, contex
   syncDemoChatCache({ sessions: store.sessions });
 };
 
+const messageRuntimeSignatureCache = new WeakMap<object, string>();
+
+const buildVisibleMessageMutationSignature = (message: unknown): string => {
+  if (!message || typeof message !== 'object') {
+    return '';
+  }
+  const record = message as Record<string, unknown>;
+  const stats = (record.stats && typeof record.stats === 'object'
+    ? record.stats
+    : {}) as Record<string, unknown>;
+  const usage = (stats.usage && typeof stats.usage === 'object'
+    ? stats.usage
+    : {}) as Record<string, unknown>;
+  const workflowItems = Array.isArray(record.workflowItems) ? record.workflowItems : [];
+  const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
+  const subagents = Array.isArray(record.subagents) ? record.subagents : [];
+  const lastSubagent = subagents[subagents.length - 1] as Record<string, unknown> | undefined;
+  return [
+    String(record.role || '').trim(),
+    String(record.id || record.message_id || record.localId || '').trim(),
+    String(record.content || '').length,
+    String(record.reasoning || '').length,
+    Boolean(record.workflowStreaming),
+    Boolean(record.reasoningStreaming),
+    Boolean(record.stream_incomplete),
+    Boolean(record.failed),
+    Boolean(record.cancelled),
+    Boolean(record.resume_available),
+    Boolean(record.slow_client),
+    Number(stats.contextTokens ?? stats.context_tokens ?? stats.contextPreviewTokens ?? 0) || 0,
+    Number(stats.contextTotalTokens ?? stats.context_total_tokens ?? 0) || 0,
+    Number(stats.partialQuotaConsumed ?? stats.partial_quota_consumed ?? 0) || 0,
+    Number(usage.total ?? usage.total_tokens ?? 0) || 0,
+    Number(usage.input ?? usage.input_tokens ?? 0) || 0,
+    Number(usage.output ?? usage.output_tokens ?? 0) || 0,
+    Number(stats.prefill_duration_s ?? 0) || 0,
+    Number(stats.decode_duration_s ?? 0) || 0,
+    Number(stats.avg_model_round_speed_tps ?? 0) || 0,
+    workflowItems.length,
+    lastWorkflowItem
+      ? [
+          String(lastWorkflowItem.id || lastWorkflowItem.toolCallId || lastWorkflowItem.eventType || '').trim(),
+          String(lastWorkflowItem.status || '').trim(),
+          String(lastWorkflowItem.title || lastWorkflowItem.toolName || '').length,
+          String(lastWorkflowItem.detail || '').length
+        ].join(':')
+      : '',
+    subagents.length,
+    lastSubagent
+      ? [
+          String(lastSubagent.key || lastSubagent.run_id || lastSubagent.session_id || '').trim(),
+          String(lastSubagent.status || '').trim(),
+          String(lastSubagent.summary || '').length
+        ].join(':')
+      : ''
+  ].join('::');
+};
+
+const hasVisibleMessageMutation = (messages: unknown[]): boolean => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return false;
+  }
+  let changed = false;
+  messages.forEach((message) => {
+    if (!message || typeof message !== 'object') {
+      return;
+    }
+    const signature = buildVisibleMessageMutationSignature(message);
+    const previous = messageRuntimeSignatureCache.get(message);
+    if (previous !== signature) {
+      changed = true;
+      messageRuntimeSignatureCache.set(message, signature);
+    }
+  });
+  return changed;
+};
+
 export const notifySessionSnapshot = (store, sessionId, messages, immediate = false, options: { skipWindowing?: boolean } = {}) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
   dedupeTerminalCompactionMarkersInPlace(messages);
+  const visibleChanged = hasVisibleMessageMutation(messages);
+  const shouldPropagateVisibleChange = immediate || visibleChanged;
   cacheSessionMessages(key, messages);
-  syncChatRuntimeProjectionFromLegacy(store, key, messages);
+  if (shouldPropagateVisibleChange) {
+    syncChatRuntimeProjectionFromLegacy(store, key, messages, {
+      immediate
+    });
+    inspectChatRuntimeShadow(store, key, messages, {
+      phase: 'legacy-snapshot'
+    });
+  }
   const activeKey = resolveSessionKey(store?.activeSessionId);
   if (activeKey && activeKey === key) {
     if (store && typeof store === 'object') {
-      store.messageMutationVersion = Number(store.messageMutationVersion || 0) + 1;
+      if (shouldPropagateVisibleChange) {
+        store.messageMutationVersion = Number(store.messageMutationVersion || 0) + 1;
+      }
     }
-    if (options.skipWindowing !== true) {
+    if (shouldPropagateVisibleChange && options.skipWindowing !== true) {
       applyMessageWindow(store, key, messages);
     }
-    scheduleChatSnapshot(store, immediate);
+    if (shouldPropagateVisibleChange) {
+      scheduleChatSnapshot(store, immediate);
+    }
   }
 };
 
@@ -1488,7 +1595,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
   store,
   sessionId,
   messages = null,
-  options: { loading?: boolean; running?: boolean } = {}
+  options: { immediate?: boolean; loading?: boolean; running?: boolean } = {}
 ) => {
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
@@ -1506,7 +1613,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
     options.running === undefined
       ? loading || isThreadRuntimeBusy(runtime?.threadStatus)
       : Boolean(options.running);
-  applyChatRuntimeEvent(
+  const result = applyChatRuntimeEvent(
     projection,
     buildLegacyMessagesReconciledEvent({
       sessionId: key,
@@ -1516,6 +1623,12 @@ export const syncChatRuntimeProjectionFromLegacy = (
       running
     })
   );
+  if (result.applied) {
+    markRuntimeProjectionChanged(store, {
+      immediate: options.immediate === true || options.loading !== undefined || options.running !== undefined,
+      reason: 'legacy-reconcile'
+    });
+  }
 };
 
 export const syncChatRuntimeProjectionStatus = (
@@ -1528,7 +1641,7 @@ export const syncChatRuntimeProjectionStatus = (
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return;
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
-  applyChatRuntimeEvent(projection, {
+  const result = applyChatRuntimeEvent(projection, {
     event_type: options.eventType || 'session_runtime',
     source: 'legacy',
     strict: false,
@@ -1536,6 +1649,165 @@ export const syncChatRuntimeProjectionStatus = (
     agent_id: resolveProjectionAgentId(store, key),
     runtime_status: status
   });
+  if (result.applied) {
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      reason: 'runtime-status'
+    });
+  }
+  inspectChatRuntimeShadow(store, key, null, {
+    phase: options.eventType || 'session_runtime',
+    legacyBusy: isThreadRuntimeBusy(status)
+  });
+};
+
+export const inspectChatRuntimeShadow = (
+  store,
+  sessionId,
+  messages = null,
+  options: { phase?: string; legacyBusy?: boolean | null } = {}
+) => {
+  if (!isChatDebugEnabled()) return null;
+  const key = resolveSessionKey(sessionId);
+  const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
+  if (!key || !projection) return null;
+  const activeKey = resolveSessionKey(store?.activeSessionId);
+  const targetMessages = Array.isArray(messages)
+    ? messages
+    : activeKey === key
+      ? store?.messages
+      : getSessionMessages(key);
+  if (!Array.isArray(targetMessages)) return null;
+  const legacyBusy =
+    options.legacyBusy === undefined
+      ? Boolean(store?.loadingBySession?.[key]) || isThreadRuntimeBusy(getRuntime(key)?.threadStatus)
+      : options.legacyBusy;
+  const report = compareChatRuntimeShadow({
+    projection,
+    sessionId: key,
+    legacyMessages: targetMessages,
+    legacyBusy,
+    phase: options.phase
+  });
+  if (report.ok) return report;
+
+  const now = Date.now();
+  const previous = sessionRuntimeShadowState.get(key);
+  if (
+    previous &&
+    previous.fingerprint === report.fingerprint &&
+    now - previous.loggedAt < SESSION_RUNTIME_SHADOW_LOG_COOLDOWN_MS
+  ) {
+    return report;
+  }
+  sessionRuntimeShadowState.set(key, {
+    fingerprint: report.fingerprint,
+    loggedAt: now
+  });
+  chatDebugLog('chat.runtime.shadow', 'projection-legacy-drift', summarizeChatRuntimeShadowReport(report));
+  return report;
+};
+
+export const applyCanonicalStreamRuntimeEvent = (
+  store,
+  sessionId,
+  eventType,
+  payload,
+  eventId,
+  options: { requestId?: string; phase?: string; onSyncRequired?: (reason: string) => void } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return [];
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const events = buildCanonicalStreamRuntimeEvents({
+    sessionId: key,
+    eventType,
+    payload: payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : { value: payload },
+    eventId,
+    requestId: options.requestId,
+    phase: options.phase
+  });
+  const results = applyChatRuntimeEventsWithInvalidation(store, projection, events, {
+    immediate: options.phase === 'snapshot',
+    reason: `stream:${options.phase || 'ws'}`
+  });
+  const session = projection.sessions[key];
+  if (
+    typeof options.onSyncRequired === 'function' &&
+    session?.syncRequired &&
+    results.some((result) =>
+      result.reason === 'event_seq_gap' ||
+      result.reason === 'pending_event_seq_gap'
+    )
+  ) {
+    const reason = results.some((result) => result.reason === 'event_seq_gap')
+      ? 'event_seq_gap'
+      : 'pending_event_seq_gap';
+    options.onSyncRequired(reason);
+  }
+  return events;
+};
+
+export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
+  store,
+  payload: {
+    sessionId: string;
+    content: string;
+    clientMessageId: string;
+    createdAt?: unknown;
+    userTurnId?: string;
+  }
+) => {
+  const key = resolveSessionKey(payload?.sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return null;
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const event = buildCanonicalClientMessageSubmittedEvent({
+    sessionId: key,
+    agentId: resolveProjectionAgentId(store, key),
+    content: payload.content,
+    clientMessageId: payload.clientMessageId,
+    createdAt: payload.createdAt,
+    userTurnId: payload.userTurnId
+  });
+  const result = applyChatRuntimeEvent(projection, event);
+  if (result.applied) {
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      reason: 'client-submitted'
+    });
+  }
+  return event;
+};
+
+export const applyCanonicalSessionEventsSnapshot = (
+  store,
+  sessionId,
+  payload,
+  options: { phase?: string } = {}
+) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return [];
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const events = buildCanonicalSessionEventsSnapshot({
+    sessionId: key,
+    payload: payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {},
+    phase: options.phase
+  });
+  applyChatRuntimeEventsWithInvalidation(store, projection, events, {
+    immediate: true,
+    reason: 'session-events-snapshot'
+  });
+  inspectChatRuntimeShadow(store, key, null, {
+    phase: options.phase || 'session-events-snapshot'
+  });
+  return events;
 };
 
 export const shouldPreferCachedMessages = (cached, server) => {

@@ -133,7 +133,7 @@ import { buildWorkflowItem, dismissStaleInquiryPanels, hydrateSessionCommandSess
 import { findAssistantMessageByRound, findAssistantMessageByUserRound } from './chatMessageLookup';
 import { applyGoalStreamEvent } from './chatPersist';
 import { SLOW_CLIENT_RESUME_DELAY_MS, WATCH_RECONCILE_COOLDOWN_MS, WATCH_RECONCILE_DELAY_MS, WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeInteractiveControllers, clearRuntimeResumeStreamState, clearRuntimeSendStreamState, clearSessionWatcher, clearSlowClientResume, clearWatchdog, insertWatchUserMessage, recoverRuntimeInteractiveControllers, resolveHiddenInternalUserEvent, resolveLastAssistantStreamEventId, resolveLastAssistantTimestampMs, resolveLastStreamEventId, resolveMaxStreamEventId, resolveMaxStreamRound, resolveStreamFlushMsForMessages, resolveWatchdogProfile, setSessionLoading } from './chatRuntimeControls';
-import { applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionSubagentsCache, sessionSubagentsInFlight, settleTerminalSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, applySessionRuntimeSnapshot, buildLatestAssistantRuntimeDebugSnapshot, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, claimRuntimePendingManualCompaction, clearRuntimePendingManualCompaction, clearRuntimeProjectionInvalidation, clearSessionEventsSnapshot, countAssistantStreamingMessages, ensureRuntime, getRuntime, getSessionMessages, handleThreadControlWorkflowEvent, hasKnownSessionInStore, isSessionUnavailableStatus, loadSessionEventsSnapshot, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, purgeUnavailableSession, refreshRuntimeStreamLifecycle, resolveChatHttpStatus, resolveSessionContextTokens, resolveSessionKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionDetailSnapshotCache, sessionDetailWarmState, sessionEventsSnapshotCache, sessionEventsSnapshotInFlight, sessionHistoryState, sessionHydratedMessageVersion, sessionListCache, sessionListCacheInFlight, sessionMessages, sessionProtectedRealtimeMessages, sessionRuntime, sessionRuntimeShadowState, sessionSubagentsCache, sessionSubagentsInFlight, settleTerminalSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
@@ -601,6 +601,9 @@ export const startSessionWatcher = (store, sessionId) => {
         const payload = response;
         hydrateSessionCommandSessions(key, payload?.command_sessions ?? payload?.commandSessions);
         applySessionRuntimeSnapshot(runtime, payload?.runtime);
+        applyCanonicalSessionEventsSnapshot(store, key, payload, {
+          phase: 'watchdog'
+        });
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
         updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
@@ -689,6 +692,19 @@ export const startSessionWatcher = (store, sessionId) => {
     if (applyGoalStreamEvent(store, key, normalizedEventType, data ?? payload)) {
       return;
     }
+    applyCanonicalStreamRuntimeEvent(
+      store,
+      key,
+      normalizedEventType || eventType,
+      payload,
+      eventId,
+      {
+        requestId,
+        phase: 'watch',
+        onSyncRequired: (reason) =>
+          scheduleWatchReconcile(reason === 'event_seq_gap' ? 0 : WATCH_RECONCILE_DELAY_MS)
+      }
+    );
     if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
       const normalizedEventId = normalizeStreamEventId(eventId);
       if (normalizedEventId !== null) {
@@ -1234,6 +1250,8 @@ export const resetChatRuntimeState = () => {
   sessionSubagentsCache.clear();
   sessionDetailWarmState.clear();
   sessionHistoryState.clear();
+  sessionRuntimeShadowState.clear();
+  clearRuntimeProjectionInvalidation();
   sessionWorkflowState.clear();
   clearScheduledChatSnapshot();
   clearAllChatSnapshots();

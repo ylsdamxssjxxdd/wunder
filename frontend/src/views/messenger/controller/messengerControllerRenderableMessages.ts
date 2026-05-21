@@ -1,7 +1,7 @@
 // @ts-nocheck
 // User attachments, agent/world renderable message lists, virtualization helpers, and plan state.
 import type { MessengerControllerContext } from './messengerControllerContext';
-import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, toRaw, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 import { createAgent as createAgentApi, deleteAgent as deleteAgentApi, listAgentUserRounds, listRunningAgents } from '@/api/agents';
@@ -183,6 +183,19 @@ import {
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import {
+  buildChatRuntimeRenderableMessages,
+  hasChatRuntimeRenderSession,
+  isChatRuntimeProjectionRenderEnabled,
+  isChatRuntimeProjectionRenderShadowEnabled,
+  resolveChatRuntimeRenderableSourceDecision,
+  resolveChatRuntimeProjectionRenderMode,
+  summarizeChatRuntimeRenderableMessages
+} from '@/realtime/chat/chatRuntimeRenderAdapter';
+import {
+  compareChatRuntimeRenderShadow,
+  summarizeChatRuntimeRenderShadowReport
+} from '@/realtime/chat/chatRuntimeRenderShadow';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -563,6 +576,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       if (!ctx.isAgentConversationActive.value) {
           return [];
       }
+      const renderableMessages = (ctx.agentRenderableMessages?.value || [])
+          .map((item) => item.message as Record<string, unknown>);
       if (ctx.shouldVirtualizeMessages?.value && ctx.agentVirtualWindow?.value?.enabled) {
           const renderable = [
               ...(ctx.visibleAgentRenderableMessages?.value || []),
@@ -570,7 +585,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           ];
           return ctx.collectUserAttachmentWorkspacePaths(renderable.map((item) => item.message));
       }
-      return ctx.collectUserAttachmentWorkspacePaths(ctx.chatStore.messages as Record<string, unknown>[]);
+      return ctx.collectUserAttachmentWorkspacePaths(renderableMessages);
   });
 
   ctx.hasUserImageAttachments = (message: Record<string, unknown>): boolean => ctx.resolveUserImageAttachments(message).length > 0;
@@ -606,9 +621,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
   };
 
-  ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
-      const _renderVersion = ctx.chatStore.messageMutationVersion;
-      return ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
+  const buildLegacyAgentRenderableMessages = (): AgentRenderableMessage[] => ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
       const message = (rawMessage || {}) as Record<string, unknown>;
       if (!ctx.shouldRenderAgentMessage(message)) {
           return acc;
@@ -620,7 +633,107 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       });
       return acc;
   }, []);
+
+  let lastAgentRenderSourceSignature = '';
+  const logAgentRenderSource = (event: string, payload: Record<string, unknown>) => {
+      if (!isChatDebugEnabled())
+          return;
+      const signature = [
+          event,
+          String(payload.activeSessionId || ''),
+          String(payload.count || payload.legacyCount || 0),
+          Array.isArray(payload.keys) ? payload.keys.join('|') : ''
+      ].join('::');
+      if (signature === lastAgentRenderSourceSignature)
+          return;
+      lastAgentRenderSourceSignature = signature;
+      chatDebugLog('chat.runtime.render', event, payload);
+  };
+
+  let lastAgentRenderShadowSignature = '';
+  const inspectAgentRuntimeRenderShadow = (legacyRenderable: AgentRenderableMessage[], projectionRenderable: AgentRenderableMessage[]) => {
+      if (!isChatDebugEnabled() && !isChatRuntimeProjectionRenderShadowEnabled())
+          return;
+      if (!projectionRenderable.length && !legacyRenderable.length)
+          return;
+      const report = compareChatRuntimeRenderShadow({
+          sessionId: ctx.chatStore.activeSessionId,
+          legacy: legacyRenderable,
+          projection: projectionRenderable
+      });
+      if (report.ok)
+          return;
+      if (report.fingerprint === lastAgentRenderShadowSignature)
+          return;
+      lastAgentRenderShadowSignature = report.fingerprint;
+      const summary = summarizeChatRuntimeRenderShadowReport(report);
+      if (isChatDebugEnabled()) {
+          chatDebugLog('chat.runtime.render', 'render-source-drift', summary);
+      } else if (typeof console !== 'undefined') {
+          console.info('[wunder-chat-runtime-render] render-source-drift', summary);
+      }
+  };
+
+  ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
+      const _renderVersion = ctx.chatStore.messageMutationVersion;
+      const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
+      const renderMode = resolveChatRuntimeProjectionRenderMode();
+      const shadowEnabled = isChatRuntimeProjectionRenderShadowEnabled();
+      const legacyRenderable = buildLegacyAgentRenderableMessages();
+      if (renderMode !== 'legacy' || shadowEnabled) {
+          const projection = toRaw(ctx.chatStore.runtimeProjection);
+          const projectionRenderable = buildChatRuntimeRenderableMessages({
+            projection,
+            sessionId: ctx.chatStore.activeSessionId,
+            shouldRenderMessage: ctx.shouldRenderAgentMessage
+          }) as AgentRenderableMessage[];
+          const hasProjectionSession = hasChatRuntimeRenderSession(projection, ctx.chatStore.activeSessionId);
+          const decision = resolveChatRuntimeRenderableSourceDecision({
+              renderMode,
+              projectionCount: projectionRenderable.length,
+              projectionSessionKnown: hasProjectionSession,
+              shadowEnabled
+          });
+          if (decision.inspectShadow) {
+              inspectAgentRuntimeRenderShadow(legacyRenderable, projectionRenderable);
+          }
+          if (decision.event === 'projection-source') {
+              logAgentRenderSource('projection-source', {
+                  activeSessionId: ctx.chatStore.activeSessionId,
+                  projectionSessionKnown: hasProjectionSession,
+                  ...summarizeChatRuntimeRenderableMessages(projectionRenderable)
+              });
+              return projectionRenderable;
+          }
+          if (decision.event === 'projection-empty-fallback') {
+              logAgentRenderSource('projection-empty-fallback', {
+                  activeSessionId: ctx.chatStore.activeSessionId,
+                  legacyCount: legacyRenderable.length
+              });
+          } else if (decision.event === 'projection-shadow') {
+              logAgentRenderSource('projection-shadow', {
+                  activeSessionId: ctx.chatStore.activeSessionId,
+                  renderMode,
+                  ...summarizeChatRuntimeRenderableMessages(projectionRenderable)
+              });
+          }
+      }
+      return legacyRenderable;
   });
+
+  ctx.resolveActiveAgentRenderableMessageRecords = (): Record<string, unknown>[] => {
+      const renderable = ctx.agentRenderableMessages?.value;
+      if (Array.isArray(renderable)) {
+          return renderable
+              .map((item) => (item?.message || {}) as Record<string, unknown>)
+              .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+      }
+      return (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])
+          .map((item) => (item || {}) as Record<string, unknown>)
+          .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+  };
+
+  ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => ctx.resolveActiveAgentRenderableMessageRecords());
 
   ctx.buildWorkflowSurfaceDebugSnapshot = () => {
       const renderable = ctx.agentRenderableMessages.value;
@@ -700,6 +813,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           ? (message.workflowItems as unknown[])
           : [];
       const renderVersion = ctx.chatStore.messageMutationVersion;
+      const projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
       const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
       const workflowSignature = lastWorkflowItem
           ? [
@@ -723,6 +837,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return [
           ctx.latestAgentRenderableMessageKey.value,
           renderVersion,
+          projectionRenderVersion,
           String(message.id || message.localId || '').trim(),
           String(message.content || '').length,
           String(message.reasoning || '').length,
@@ -947,8 +1062,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       (!ctx.isCompactionMarkerMessage(message) || ctx.shouldShowCompactionDivider(message));
 
   ctx.latestVisibleAgentAssistantMessage = computed<Record<string, unknown> | null>(() => {
-      for (let index = ctx.chatStore.messages.length - 1; index >= 0; index -= 1) {
-          const message = (ctx.chatStore.messages[index] || {}) as Record<string, unknown>;
+      for (let index = ctx.agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
+          const message = (ctx.agentRenderableMessages.value[index]?.message || {}) as Record<string, unknown>;
           if (ctx.isVisibleAgentAssistantMessage(message)) {
               return message;
           }
@@ -981,8 +1096,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.messageStatsTimer = null;
 
-  ctx.hasLiveAssistantStats = computed(() => ctx.chatStore.messages.some((rawMessage) => {
-      const message = (rawMessage || {}) as Record<string, unknown>;
+  ctx.hasLiveAssistantStats = computed(() => ctx.agentRenderableMessages.value.some((item) => {
+      const message = (item?.message || {}) as Record<string, unknown>;
       if (String(message?.role || '') !== 'assistant' || message?.isGreeting) {
           return false;
       }
@@ -1022,6 +1137,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const signature = [
           ctx.chatStore.activeSessionId,
           ctx.chatStore.messageMutationVersion,
+          ctx.chatStore.runtimeProjectionVersion,
           nowTick,
           String(messageKey || '').trim(),
           latestActiveAssistantBusy,
@@ -1048,7 +1164,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const entries = buildAssistantMessageStatsEntries(
           message as Record<string, any>,
           ctx.t,
-          ctx.chatStore.messages as Record<string, any>[],
+          ctx.agentRenderableMessages.value.map((item) => item.message as Record<string, any>),
           nowTick,
           {
               activeSessionBusy,
@@ -1125,8 +1241,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       void ctx.dismissedPlanVersion.value;
       if (!ctx.isAgentConversationActive.value)
           return null;
-      for (let index = ctx.chatStore.messages.length - 1; index >= 0; index -= 1) {
-          const message = ctx.chatStore.messages[index] as Record<string, unknown> | undefined;
+      for (let index = ctx.agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
+          const message = ctx.agentRenderableMessages.value[index]?.message as Record<string, unknown> | undefined;
           if (String(message?.role || '') !== 'assistant')
               continue;
           if (!ctx.hasPlanSteps(message?.plan))

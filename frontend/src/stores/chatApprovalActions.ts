@@ -146,6 +146,7 @@ export const chatApprovalActions = {
       resetChatRuntimeState();
       this.$reset();
       this.runtimeProjection = createChatRuntimeProjection();
+      this.runtimeProjectionVersion = 0;
     },
     enqueueApprovalRequest(requestId, sessionId, payload) {
       const approval = normalizePendingApproval(payload, requestId, sessionId);
