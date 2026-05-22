@@ -5,7 +5,9 @@ import { createChatRuntimeProjection, applyChatRuntimeEvent } from '../../src/re
 import {
   buildChatRuntimeRenderableMessages,
   hasChatRuntimeRenderSession,
+  isChatRuntimeProjectionRenderEnabled,
   materializeChatRuntimeMessages,
+  resolveChatRuntimeProjectionRenderMode,
   resolveChatRuntimeRenderableSourceDecision,
   resolveChatRuntimeMessageRenderKey
 } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
@@ -15,6 +17,30 @@ const apply = (events: ChatRuntimeEvent[]) => {
   const projection = createChatRuntimeProjection();
   events.forEach((event) => applyChatRuntimeEvent(projection, event));
   return projection;
+};
+
+const withWindowFlags = (
+  flags: Record<string, string>,
+  fn: () => void,
+  search = ''
+) => {
+  const previousWindow = (globalThis as Record<string, unknown>).window;
+  const storage = new Map<string, string>(Object.entries(flags));
+  (globalThis as Record<string, unknown>).window = {
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null
+    },
+    location: { search }
+  };
+  try {
+    fn();
+  } finally {
+    if (previousWindow === undefined) {
+      delete (globalThis as Record<string, unknown>).window;
+    } else {
+      (globalThis as Record<string, unknown>).window = previousWindow;
+    }
+  }
 };
 
 test('chat runtime render adapter keeps stable keys across streaming updates', () => {
@@ -486,7 +512,21 @@ test('chat runtime render adapter reports known empty projection sessions', () =
   assert.equal(hasChatRuntimeRenderSession(projection, 'session-empty'), true);
 });
 
-test('chat runtime render source decision keeps legacy as default source', () => {
+test('chat runtime render mode defaults to projection with explicit legacy rollback', () => {
+  withWindowFlags({}, () => {
+    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'projection');
+    assert.equal(isChatRuntimeProjectionRenderEnabled(), true);
+  });
+  withWindowFlags({ 'wunder:chat-runtime-render': 'legacy' }, () => {
+    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'legacy');
+    assert.equal(isChatRuntimeProjectionRenderEnabled(), false);
+  });
+  withWindowFlags({}, () => {
+    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'legacy');
+  }, '?chat_runtime_render=off');
+});
+
+test('chat runtime render source decision keeps legacy only when rollback mode is explicit', () => {
   assert.deepEqual(
     resolveChatRuntimeRenderableSourceDecision({
       renderMode: 'legacy',

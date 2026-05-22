@@ -1,6 +1,4 @@
-use crate::api::chat::{
-    build_chat_request, persist_user_cancelled_turn_marker, ChatAttachment, ChatRequestOverrides,
-};
+use crate::api::chat::{build_chat_request, ChatAttachment, ChatRequestOverrides};
 use crate::api::chat_goal::apply_goal_command;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
@@ -23,6 +21,7 @@ use crate::core::approval_registry::{
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
+use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::goal::{self, GoalCommand};
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::state::AppState;
@@ -832,7 +831,8 @@ async fn handle_ws(
                                 let _ =
                                     state.monitor.cancel_with_source(&session_id, cancel_source);
                                 let _ = persist_user_cancelled_turn_marker(
-                                    state.as_ref(),
+                                    state.workspace.clone(),
+                                    state.user_store.clone(),
                                     &user.user_id,
                                     &session_id,
                                     cancel_source,

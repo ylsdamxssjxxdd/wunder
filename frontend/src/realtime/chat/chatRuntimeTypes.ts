@@ -92,6 +92,8 @@ export type ChatRuntimeEvent = {
   messages?: ChatRuntimeRawMessage[];
   running?: unknown;
   loading?: unknown;
+  authoritative?: unknown;
+  prune_missing?: unknown;
 };
 
 export type ChatRuntimeViolation = {

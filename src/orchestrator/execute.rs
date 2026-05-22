@@ -12,6 +12,7 @@ use crate::core::approval::{
 };
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
 use crate::services::chat_attachments::persist_user_chat_attachments;
+use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::goal;
 use crate::services::orchestration_context::session_orchestration_run_root;
 use crate::services::subagents;
@@ -2251,6 +2252,19 @@ impl Orchestrator {
                             .mark_cancelled_with_source(&session_id, cancel_source);
                     } else {
                         self.monitor.mark_cancelled(&session_id);
+                    }
+                    if let Err(marker_err) = persist_user_cancelled_turn_marker(
+                        self.workspace.clone(),
+                        Arc::new(UserStore::new(self.storage.clone())),
+                        &user_id,
+                        &session_id,
+                        cancel_source.unwrap_or("orchestrator_cancel"),
+                    )
+                    .await
+                    {
+                        warn!(
+                            "persist cancelled turn marker failed for session {session_id}: {marker_err}"
+                        );
                     }
                 } else if err.code() != "USER_BUSY" {
                     self.monitor.mark_error(&session_id, err.message());

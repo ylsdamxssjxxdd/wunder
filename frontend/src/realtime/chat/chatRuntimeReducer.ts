@@ -574,8 +574,9 @@ const applyUserMessageCreated = (
 ): void => {
   const turn = ensureUserTurn(session, event.userTurnId, event.eventSeq);
   turn.status = event.type === 'client_message_submitted' ? 'created' : 'accepted';
+  const messageId = resolveUserMessageIdForTurn(session, turn, event.messageId, event);
   const message = ensureMessage(session, {
-    id: event.messageId,
+    id: messageId,
     role: 'user',
     createdSeq: event.eventSeq,
     createdAt: event.createdAt,
@@ -586,6 +587,7 @@ const applyUserMessageCreated = (
   message.status = 'final';
   addUnique(turn.messageIds, message.id);
   addUnique(session.messages, message.id);
+  pruneUserTurnUserMessages(session, turn, message.id);
   setSessionBusy(session, 'running', 'waiting_first_output');
 };
 
@@ -815,7 +817,8 @@ const applySessionSnapshot = (
       : [];
   mergeLegacyMessages(session, messages, {
     snapshotSeq,
-    replaceExistingAtOrBelowSeq: true
+    replaceExistingAtOrBelowSeq: true,
+    authoritative: normalizeFlag(event.authoritative ?? event.payload.authoritative ?? event.prune_missing ?? event.payload.prune_missing)
   });
   applySessionRuntime(session, {
     ...event,
@@ -833,12 +836,18 @@ const applyLegacyMessagesReconciled = (
       ? event.payload.messages as ChatRuntimeRawMessage[]
       : [];
   const reconcileSeq = event.eventSeq ?? nextLocalSeq(session);
-  mergeLegacyMessages(session, messages, {
-    snapshotSeq: reconcileSeq,
-    replaceExistingAtOrBelowSeq: true
-  });
   const loading = normalizeFlag(event.loading ?? event.payload.loading);
   const running = normalizeFlag(event.running ?? event.payload.running);
+  const authoritative =
+    normalizeFlag(event.authoritative ?? event.payload.authoritative ?? event.prune_missing ?? event.payload.prune_missing) &&
+    !loading &&
+    !running &&
+    !hasActiveLegacyRuntime(messages);
+  mergeLegacyMessages(session, messages, {
+    snapshotSeq: reconcileSeq,
+    replaceExistingAtOrBelowSeq: true,
+    authoritative
+  });
   if (loading || running || hasActiveLegacyRuntime(messages)) {
     setSessionBusy(session, 'running', resolveLegacyBusyReason(messages));
   } else {
@@ -873,29 +882,36 @@ const settleLegacyActiveMessages = (session: ChatRuntimeSessionProjection): void
 const mergeLegacyMessages = (
   session: ChatRuntimeSessionProjection,
   messages: ChatRuntimeRawMessage[],
-  options: { snapshotSeq: number; replaceExistingAtOrBelowSeq: boolean }
+  options: { snapshotSeq: number; replaceExistingAtOrBelowSeq: boolean; authoritative?: boolean }
 ): void => {
   const plans = buildLegacyMessagePlans(session, messages, options.snapshotSeq);
+  const assistantBatchMessageIds = new Set<string>();
+  const authoritativeMessageIds = new Set<string>();
+  const authoritativeMessageOrder: string[] = [];
   plans.forEach((plan) => {
     const { raw, role, id, status, userTurnId, modelTurnId, createdSeq } = plan;
     if (role === 'user') {
       const turn = ensureUserTurn(session, userTurnId, createdSeq);
-      const existed = Boolean(session.messageById[id]);
+      const messageId = resolveUserMessageIdForTurn(session, turn, id, raw);
+      const existed = Boolean(session.messageById[messageId]);
       const message = ensureMessage(session, {
-        id,
+        id: messageId,
         role,
         createdSeq,
         createdAt: normalizeCreatedAt(raw.created_at ?? raw.createdAt),
         userTurnId: turn.id,
         modelTurnId: ''
       });
-      if (existed === false || shouldReplaceSnapshotMessage(message, options.snapshotSeq, options.replaceExistingAtOrBelowSeq)) {
+      if (existed === false || message.id !== id || shouldReplaceSnapshotMessage(message, options.snapshotSeq, options.replaceExistingAtOrBelowSeq)) {
         patchMessageFromRaw(message, raw, status, options.snapshotSeq);
       }
       message.legacyKey = id;
       message.raw = raw;
       addUnique(turn.messageIds, message.id);
       addUnique(session.messages, message.id);
+      pruneUserTurnUserMessages(session, turn, message.id);
+      authoritativeMessageIds.add(message.id);
+      authoritativeMessageOrder.push(message.id);
       return;
     }
     const modelTurn = ensureModelTurn(
@@ -904,16 +920,30 @@ const mergeLegacyMessages = (
       userTurnId,
       createdSeq
     );
-    const existed = Boolean(session.messageById[id]);
+    const messageId = resolveAssistantMessageIdForModelTurn(session, modelTurn, id);
+    const seenInBatch = assistantBatchMessageIds.has(messageId);
+    const existingMessage = session.messageById[messageId];
+    const existed = Boolean(existingMessage);
+    const foldedIntoExisting = existed && messageId !== id;
+    const canReplaceSnapshot = existingMessage
+      ? shouldReplaceSnapshotMessage(
+          existingMessage,
+          options.snapshotSeq,
+          options.replaceExistingAtOrBelowSeq
+        )
+      : false;
+    const messageUserTurnId = modelTurn.userTurnId || userTurnId;
     const message = ensureMessage(session, {
-      id,
+      id: messageId,
       role,
       createdSeq,
       createdAt: normalizeCreatedAt(raw.created_at ?? raw.createdAt),
-      userTurnId,
+      userTurnId: messageUserTurnId,
       modelTurnId: modelTurn.id
     });
-    if (existed === false || shouldReplaceSnapshotMessage(message, options.snapshotSeq, options.replaceExistingAtOrBelowSeq)) {
+    if (seenInBatch || (foldedIntoExisting && canReplaceSnapshot && shouldMergeFoldedLegacyMessage(raw, status))) {
+      mergeMessageFromRaw(message, raw, status, options.snapshotSeq);
+    } else if (existed === false || canReplaceSnapshot || (foldedIntoExisting && canReplaceSnapshot)) {
       patchMessageFromRaw(message, raw, status, options.snapshotSeq);
     }
     message.legacyKey = id;
@@ -923,7 +953,110 @@ const mergeLegacyMessages = (
       modelTurn.finalMessageId = modelTurn.finalMessageId || message.id;
     }
     addUnique(session.messages, message.id);
+    pruneModelTurnAssistantMessages(session, modelTurn, message.id);
+    assistantBatchMessageIds.add(message.id);
+    authoritativeMessageIds.add(message.id);
+    authoritativeMessageOrder.push(message.id);
   });
+  if (options.authoritative === true) {
+    pruneProjectionToAuthoritativeMessages(session, authoritativeMessageIds, authoritativeMessageOrder);
+  }
+};
+
+const pruneProjectionToAuthoritativeMessages = (
+  session: ChatRuntimeSessionProjection,
+  keepMessageIds: Set<string>,
+  orderedMessageIds: string[]
+): void => {
+  const staleMessageIds = Object.keys(session.messageById)
+    .filter((messageId) => !keepMessageIds.has(messageId));
+  const staleSet = new Set(staleMessageIds);
+  staleMessageIds.forEach((messageId) => {
+    delete session.messageById[messageId];
+  });
+  session.messages = session.messages.filter((messageId) =>
+    keepMessageIds.has(messageId) && Boolean(session.messageById[messageId])
+  );
+  const orderIndex = new Map(orderedMessageIds.map((messageId, index) => [messageId, index]));
+  session.messages = [...new Set(session.messages)].sort((left, right) =>
+    (orderIndex.get(left) ?? Number.MAX_SAFE_INTEGER) -
+      (orderIndex.get(right) ?? Number.MAX_SAFE_INTEGER)
+  );
+  Object.values(session.userTurnById).forEach((turn) => {
+    turn.messageIds = turn.messageIds.filter((messageId) => keepMessageIds.has(messageId));
+    turn.modelTurnIds = turn.modelTurnIds.filter((modelTurnId) => {
+      const modelTurn = session.modelTurnById[modelTurnId];
+      if (!modelTurn) return false;
+      modelTurn.messageIds = modelTurn.messageIds.filter((messageId) => keepMessageIds.has(messageId));
+      if (modelTurn.finalMessageId && staleSet.has(modelTurn.finalMessageId)) {
+        modelTurn.finalMessageId = modelTurn.messageIds.find((messageId) =>
+          session.messageById[messageId]?.role === 'assistant' &&
+          session.messageById[messageId]?.final
+        ) || '';
+      }
+      return modelTurn.messageIds.length > 0;
+    });
+  });
+  session.modelTurns = session.modelTurns.filter((modelTurnId) => {
+    const modelTurn = session.modelTurnById[modelTurnId];
+    if (!modelTurn || modelTurn.messageIds.length === 0) {
+      delete session.modelTurnById[modelTurnId];
+      return false;
+    }
+    return true;
+  });
+  session.userTurns = session.userTurns.filter((turnId) => {
+    const turn = session.userTurnById[turnId];
+    if (!turn || (turn.messageIds.length === 0 && turn.modelTurnIds.length === 0)) {
+      delete session.userTurnById[turnId];
+      return false;
+    }
+    return true;
+  });
+  session.userTurns = [...session.userTurns]
+    .filter((turnId) => Boolean(session.userTurnById[turnId]))
+    .sort((leftId, rightId) =>
+      resolveUserTurnAuthoritativeOrder(session, leftId, orderIndex) -
+      resolveUserTurnAuthoritativeOrder(session, rightId, orderIndex)
+    );
+  session.modelTurns = [...session.modelTurns]
+    .filter((turnId) => Boolean(session.modelTurnById[turnId]))
+    .sort((leftId, rightId) =>
+      resolveModelTurnAuthoritativeOrder(session, leftId, orderIndex) -
+      resolveModelTurnAuthoritativeOrder(session, rightId, orderIndex)
+    );
+};
+
+const resolveUserTurnAuthoritativeOrder = (
+  session: ChatRuntimeSessionProjection,
+  turnId: string,
+  orderIndex: Map<string, number>
+): number => {
+  const turn = session.userTurnById[turnId];
+  if (!turn) return Number.MAX_SAFE_INTEGER;
+  const ids = [
+    ...turn.messageIds,
+    ...turn.modelTurnIds.flatMap((modelTurnId) => session.modelTurnById[modelTurnId]?.messageIds || [])
+  ];
+  const indexes = ids
+    .map((messageId) => orderIndex.get(messageId) ?? Number.MAX_SAFE_INTEGER)
+    .filter((index) => index >= 0);
+  return indexes.length > 0 ? Math.min(...indexes) : Number.MAX_SAFE_INTEGER;
+};
+
+const resolveModelTurnAuthoritativeOrder = (
+  session: ChatRuntimeSessionProjection,
+  turnId: string,
+  orderIndex: Map<string, number>
+): number => {
+  const turn = session.modelTurnById[turnId];
+  if (!turn) return Number.MAX_SAFE_INTEGER;
+  const indexes = turn.messageIds
+    .map((messageId) => orderIndex.get(messageId) ?? Number.MAX_SAFE_INTEGER)
+    .filter((index) => index >= 0);
+  if (indexes.length > 0) return Math.min(...indexes);
+  const fallback = orderIndex.get(turn.finalMessageId);
+  return fallback ?? Number.MAX_SAFE_INTEGER;
 };
 
 type LegacyMessagePlan = {
@@ -934,10 +1067,29 @@ type LegacyMessagePlan = {
   status: ChatRuntimeMessageStatus;
   streamRound: number | null;
   userTurnId: string;
+  userTurnBinding: LegacyUserTurnBindingStrength;
+  userTurnBindingSource: LegacyUserTurnBindingSource;
   modelTurnId: string;
   createdAtMs: number | null;
   createdSeq: number;
   turnOrder: number;
+};
+
+type LegacyUserTurnBindingStrength = 'none' | 'weak' | 'strong';
+
+type LegacyUserTurnBindingSource =
+  | 'none'
+  | 'explicit'
+  | 'stream_round'
+  | 'message'
+  | 'timestamp'
+  | 'adjacent_previous'
+  | 'nearest_existing';
+
+type LegacyUserTurnResolution = {
+  userTurnId: string;
+  strength: LegacyUserTurnBindingStrength;
+  source: LegacyUserTurnBindingSource;
 };
 
 const buildLegacyMessagePlans = (
@@ -956,17 +1108,15 @@ const buildLegacyMessagePlans = (
     const explicitUserTurnId = normalizeId(raw.user_turn_id ?? raw.userTurnId);
     const explicitModelTurnId = normalizeId(raw.model_turn_id ?? raw.modelTurnId);
     const createdAtMs = normalizeCreatedAtMs(raw.created_at ?? raw.createdAt);
+    const resolvedUserTurn = role === 'user' && !explicitUserTurnId
+      ? streamRound !== null
+        ? resolveLegacyUserTurnIdForRound(session, streamRound)
+        : resolveLegacyUserTurnIdForMessage(session, raw, id, createdAtMs)
+      : '';
     const userTurnId =
       explicitUserTurnId ||
-      (role === 'user'
-        ? streamRound !== null
-          ? `legacy-user-turn:round:${streamRound}`
-          : `legacy-user-turn:${id}`
-        : '');
-    const modelTurnId = role === 'assistant'
-      ? explicitModelTurnId ||
-        (streamRound !== null ? `legacy-model-turn:round:${streamRound}` : `legacy-model-turn:${id}`)
-      : '';
+      resolvedUserTurn;
+    const modelTurnId = role === 'assistant' ? explicitModelTurnId : '';
     plans.push({
       raw,
       index,
@@ -975,6 +1125,14 @@ const buildLegacyMessagePlans = (
       status,
       streamRound,
       userTurnId,
+      userTurnBinding: userTurnId ? 'strong' : 'none',
+      userTurnBindingSource: explicitUserTurnId
+        ? 'explicit'
+        : resolvedUserTurn
+          ? streamRound !== null
+            ? 'stream_round'
+            : 'message'
+          : 'none',
       modelTurnId,
       createdAtMs,
       createdSeq: snapshotSeq + index + 1,
@@ -982,22 +1140,40 @@ const buildLegacyMessagePlans = (
     });
   });
 
-  const userTurnByRound = new Map<number, string>();
+  const userPlansByRound = new Map<number, LegacyMessagePlan[]>();
   const userPlans = plans.filter((plan) => plan.role === 'user');
   userPlans.forEach((plan) => {
     if (plan.role !== 'user') return;
     if (plan.streamRound !== null) {
-      userTurnByRound.set(plan.streamRound, plan.userTurnId);
+      const bucket = userPlansByRound.get(plan.streamRound) || [];
+      bucket.push(plan);
+      userPlansByRound.set(plan.streamRound, bucket);
     }
   });
 
   plans.forEach((plan) => {
     if (plan.role !== 'assistant' || plan.userTurnId) return;
-    plan.userTurnId =
-      (plan.streamRound !== null ? userTurnByRound.get(plan.streamRound) : '') ||
-      resolveLegacyUserTurnByTimestamp(userPlans, plan) ||
+    const resolution =
+      resolveLegacyUserTurnByRound(userPlans, userPlansByRound, plan) ||
       resolveAdjacentLegacyUserTurn(userPlans, plan) ||
-      resolveNearestLegacyUserTurnId(session, plan.index);
+      resolveLegacyUserTurnByTimestamp(userPlans, plan) ||
+      (userPlans.length === 0 ? resolveNearestLegacyUserTurnId(session, plan.index) : null);
+    if (!resolution) return;
+    plan.userTurnId = resolution.userTurnId;
+    plan.userTurnBinding = resolution.strength;
+    plan.userTurnBindingSource = resolution.source;
+  });
+  plans.forEach((plan) => {
+    if (plan.role !== 'assistant' || plan.modelTurnId) return;
+    plan.modelTurnId = resolveLegacyModelTurnId(
+      session,
+      plan.userTurnId,
+      plan.userTurnBinding,
+      plan.userTurnBindingSource,
+      plan.streamRound,
+      plan.id,
+      plan.status
+    );
   });
 
   const orderedUserPlans = [...userPlans].sort(compareLegacyUserPlanOrder);
@@ -1009,7 +1185,8 @@ const buildLegacyMessagePlans = (
   );
   plans.forEach((plan) => {
     if (plan.role === 'assistant') {
-      plan.turnOrder = turnOrderByUserTurnId.get(plan.userTurnId) ?? orderedUserPlans.length + plan.index;
+      plan.turnOrder = turnOrderByUserTurnId.get(plan.userTurnId) ??
+        resolveOrphanLegacyAssistantTurnOrder(orderedUserPlans, plan);
     }
   });
 
@@ -1021,37 +1198,153 @@ const buildLegacyMessagePlans = (
   return semanticOrder;
 };
 
+const resolveLegacyUserTurnByRound = (
+  userPlans: LegacyMessagePlan[],
+  userPlansByRound: Map<number, LegacyMessagePlan[]>,
+  assistantPlan: LegacyMessagePlan
+): LegacyUserTurnResolution | null => {
+  if (assistantPlan.streamRound === null) return null;
+  const sameRoundUsers = userPlansByRound.get(assistantPlan.streamRound) || [];
+  if (sameRoundUsers.length !== 1) return null;
+  const matchedUser = sameRoundUsers[0];
+  const hasInterveningUser = userPlans.some((plan) =>
+    plan.index > matchedUser.index && plan.index < assistantPlan.index
+  );
+  if (hasInterveningUser) return null;
+  return {
+    userTurnId: matchedUser.userTurnId,
+    strength: 'strong',
+    source: 'stream_round'
+  };
+};
+
 const resolveLegacyUserTurnByTimestamp = (
   userPlans: LegacyMessagePlan[],
   assistantPlan: LegacyMessagePlan
-): string => {
-  if (assistantPlan.createdAtMs === null) return '';
+): LegacyUserTurnResolution | null => {
+  if (assistantPlan.createdAtMs === null) return null;
   const precedingUser = userPlans
     .filter((plan) => plan.createdAtMs !== null && Number(plan.createdAtMs) <= Number(assistantPlan.createdAtMs))
     .sort((left, right) => {
       const timeDiff = Number(right.createdAtMs) - Number(left.createdAtMs);
       return timeDiff || right.index - left.index;
     })[0];
-  if (precedingUser) return precedingUser.userTurnId;
-  return userPlans
-    .filter((plan) => plan.createdAtMs !== null)
-    .sort((left, right) => {
-      const timeDiff = Number(left.createdAtMs) - Number(right.createdAtMs);
-      return timeDiff || left.index - right.index;
-    })[0]?.userTurnId || '';
+  return precedingUser
+    ? {
+        userTurnId: precedingUser.userTurnId,
+        strength: 'strong',
+        source: 'timestamp'
+      }
+    : null;
 };
 
 const resolveAdjacentLegacyUserTurn = (
   userPlans: LegacyMessagePlan[],
   assistantPlan: LegacyMessagePlan
-): string => {
+): LegacyUserTurnResolution | null => {
   const previousUser = userPlans
     .filter((plan) => plan.index < assistantPlan.index)
     .sort((left, right) => right.index - left.index)[0];
-  if (previousUser) return previousUser.userTurnId;
-  return userPlans
-    .filter((plan) => plan.index > assistantPlan.index)
-    .sort((left, right) => left.index - right.index)[0]?.userTurnId || '';
+  if (
+    previousUser &&
+    previousUser.createdAtMs !== null &&
+    assistantPlan.createdAtMs !== null &&
+    Number(assistantPlan.createdAtMs) < Number(previousUser.createdAtMs)
+  ) {
+    return null;
+  }
+  return previousUser
+    ? {
+        userTurnId: previousUser.userTurnId,
+        strength: 'strong',
+        source: 'adjacent_previous'
+      }
+    : null;
+};
+
+const resolveLegacyUserTurnIdForRound = (
+  session: ChatRuntimeSessionProjection,
+  streamRound: number
+): string => {
+  const canonical = `user-turn:${session.sessionId}:round:${streamRound}`;
+  if (session.userTurnById[canonical]) return canonical;
+  const legacy = `legacy-user-turn:round:${streamRound}`;
+  if (session.userTurnById[legacy]) return legacy;
+  const suffix = `:round:${streamRound}`;
+  const existing = session.userTurns.find((turnId) => turnId.endsWith(suffix));
+  return existing || canonical;
+};
+
+const resolveLegacyUserTurnIdForMessage = (
+  session: ChatRuntimeSessionProjection,
+  raw: ChatRuntimeRawMessage,
+  legacyMessageId: string,
+  createdAtMs: number | null
+): string => {
+  const clientMessageId = firstText(
+    raw.client_message_id,
+    raw.clientMessageId,
+    asRecord(raw.payload).client_message_id,
+    asRecord(raw.payload).clientMessageId
+  );
+  if (clientMessageId) {
+    const clientMessage = session.messageById[clientMessageId];
+    if (clientMessage?.role === 'user') {
+      return clientMessage.userTurnId;
+    }
+  }
+  const explicitMessageId = firstText(raw.message_id, raw.messageId, raw.id);
+  if (explicitMessageId) {
+    const existingMessage = session.messageById[explicitMessageId];
+    if (existingMessage?.role === 'user') {
+      return existingMessage.userTurnId;
+    }
+  }
+  const matchedMessage = findLegacyUserMessageByContent(session, raw, createdAtMs);
+  if (matchedMessage) {
+    return matchedMessage.userTurnId;
+  }
+  return `legacy-user-turn:${legacyMessageId}`;
+};
+
+const resolveLegacyModelTurnId = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string,
+  userTurnBinding: LegacyUserTurnBindingStrength,
+  userTurnBindingSource: LegacyUserTurnBindingSource,
+  streamRound: number | null,
+  legacyMessageId: string,
+  status: ChatRuntimeMessageStatus
+): string => {
+  if (userTurnId && userTurnBinding === 'strong') {
+    const reusable = resolveReusableModelTurnForUserTurn(
+      session,
+      userTurnId,
+      true,
+      status === 'cancelled' ? ['cancelled'] : ['completed', 'failed']
+    );
+    if (reusable) return reusable.id;
+  } else if (userTurnId && status !== 'final') {
+    const activeReusable = resolveReusableModelTurnForUserTurn(session, userTurnId);
+    if (activeReusable) return activeReusable.id;
+  }
+  if (streamRound !== null && userTurnBindingSource === 'stream_round') {
+    const canonical = `model-turn:${session.sessionId}:user:${streamRound}:model:1`;
+    if (session.modelTurnById[canonical]) return canonical;
+    const suffix = `:user:${streamRound}:model:1`;
+    const existingByRound = session.modelTurns.find((turnId) => turnId.endsWith(suffix));
+    if (existingByRound) return existingByRound;
+    return canonical;
+  }
+  return `legacy-model-turn:${legacyMessageId}`;
+};
+
+const resolveOrphanLegacyAssistantTurnOrder = (
+  orderedUserPlans: LegacyMessagePlan[],
+  assistantPlan: LegacyMessagePlan
+): number => {
+  const precedingUserCount = orderedUserPlans.filter((plan) => plan.index < assistantPlan.index).length;
+  return precedingUserCount - 0.5;
 };
 
 const compareLegacyUserPlanOrder = (
@@ -1133,6 +1426,129 @@ const patchMessageFromRaw = (
   message.updatedSeq = Math.max(message.updatedSeq, seq);
 };
 
+const mergeMessageFromRaw = (
+  message: ChatRuntimeMessageProjection,
+  raw: ChatRuntimeRawMessage,
+  status: ChatRuntimeMessageStatus,
+  seq: number
+): void => {
+  const nextContent = String(raw.content ?? '');
+  const nextReasoning = String(raw.reasoning ?? '');
+  if (nextContent) {
+    message.content = mergeLegacyText(message.content, nextContent);
+  }
+  if (nextReasoning) {
+    message.reasoning = mergeLegacyText(message.reasoning, nextReasoning);
+  }
+  message.status = pickMergedMessageStatus(message.status, status);
+  message.final = message.status === 'final';
+  message.failed = message.failed || status === 'failed';
+  message.cancelled = message.cancelled || status === 'cancelled';
+  mergeProjectionRecords(message, 'workflowItems', raw.workflowItems);
+  mergeProjectionRecords(message, 'subagents', raw.subagents);
+  message.updatedSeq = Math.max(message.updatedSeq, seq);
+};
+
+const shouldMergeFoldedLegacyMessage = (
+  raw: ChatRuntimeRawMessage,
+  status: ChatRuntimeMessageStatus
+): boolean => {
+  if (!isActiveMessageStatus(status)) return false;
+  const streamEventId = normalizeSeq(raw.stream_event_id ?? raw.streamEventId);
+  return streamEventId !== null;
+};
+
+const mergeLegacyText = (current: string, incoming: string): string => {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  if (incoming === current) return current;
+  if (incoming.startsWith(current)) return incoming;
+  if (current.startsWith(incoming)) return current;
+  const overlap = resolveTextOverlapLength(current, incoming);
+  return overlap > 0 ? `${current}${incoming.slice(overlap)}` : `${current}${incoming}`;
+};
+
+const resolveTextOverlapLength = (current: string, incoming: string): number => {
+  const limit = Math.min(current.length, incoming.length, 1024);
+  for (let size = limit; size > 0; size -= 1) {
+    if (current.endsWith(incoming.slice(0, size))) return size;
+  }
+  return 0;
+};
+
+const pickMergedMessageStatus = (
+  current: ChatRuntimeMessageStatus,
+  incoming: ChatRuntimeMessageStatus
+): ChatRuntimeMessageStatus => {
+  if (incoming === 'failed' || current === 'failed') return 'failed';
+  if (incoming === 'cancelled' || current === 'cancelled') return 'cancelled';
+  if (incoming === 'tooling' || current === 'tooling') return 'tooling';
+  if (incoming === 'streaming' || current === 'streaming') return 'streaming';
+  if (incoming === 'waiting_first_output' || current === 'waiting_first_output') {
+    return 'waiting_first_output';
+  }
+  if (incoming === 'placeholder' || current === 'placeholder') return 'placeholder';
+  return 'final';
+};
+
+const mergeProjectionRecords = (
+  message: ChatRuntimeMessageProjection,
+  field: 'workflowItems' | 'subagents',
+  value: unknown
+): void => {
+  if (!Array.isArray(value)) return;
+  const incoming = value.filter(isPlainRecord).map((item) => ({ ...item }));
+  if (incoming.length === 0) return;
+  const existing = Array.isArray(message[field]) ? message[field] || [] : [];
+  message[field] = incoming.length >= existing.length
+    ? incoming
+    : dedupeProjectionRecords([...existing, ...incoming]);
+};
+
+const dedupeProjectionRecords = (
+  records: ChatRuntimeWorkflowItemProjection[] | ChatRuntimeSubagentProjection[]
+): ChatRuntimeWorkflowItemProjection[] | ChatRuntimeSubagentProjection[] => {
+  const seen = new Set<string>();
+  return records.filter((record, index) => {
+    const key = resolveProjectionRecordIdentity(record, index);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const resolveProjectionRecordIdentity = (
+  record: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection,
+  index: number
+): string => {
+  const stable = firstText(
+    record.id,
+    record.key,
+    record.taskId,
+    record.task_id,
+    record.toolCallId,
+    record.tool_call_id,
+    record.callId,
+    record.call_id,
+    record.commandSessionId,
+    record.command_session_id,
+    record.approvalId,
+    record.approval_id,
+    record.runId,
+    record.run_id,
+    record.sessionId,
+    record.session_id,
+    record.eventId,
+    record.event_id
+  );
+  if (stable) return stable;
+  try {
+    return JSON.stringify(record);
+  } catch {
+    return `record:${index}`;
+  }
+};
+
 const ensureUserTurn = (
   session: ChatRuntimeSessionProjection,
   userTurnId: string,
@@ -1152,13 +1568,122 @@ const ensureUserTurn = (
   return session.userTurnById[id];
 };
 
+const resolveUserMessageIdForTurn = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeUserTurnProjection,
+  eventMessageId: string,
+  source: Record<string, unknown>
+): string => {
+  const clientMessageId = firstText(
+    source.client_message_id,
+    source.clientMessageId,
+    asRecord(source.payload).client_message_id,
+    asRecord(source.payload).clientMessageId
+  );
+  if (clientMessageId && session.messageById[clientMessageId]?.role === 'user') {
+    return clientMessageId;
+  }
+  const exactExisting = eventMessageId ? session.messageById[eventMessageId] : null;
+  if (exactExisting?.role === 'user') {
+    return exactExisting.id;
+  }
+  const byTurn = turn.messageIds.find((messageId) => session.messageById[messageId]?.role === 'user');
+  if (byTurn) return byTurn;
+  const content = String(source.content ?? asRecord(source.payload).content ?? '');
+  const byContent = findRecentUserMessageByContent(session, turn.id, content);
+  if (byContent) return byContent.id;
+  return eventMessageId || `local-user:${turn.id}`;
+};
+
+const findRecentUserMessageByContent = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string,
+  content: string
+): ChatRuntimeMessageProjection | null => {
+  if (!content) return null;
+  const sameTurn = Object.values(session.messageById)
+    .filter((message) =>
+      message.role === 'user' &&
+      message.userTurnId === userTurnId &&
+      message.content === content
+    )
+    .sort((left, right) => left.createdSeq - right.createdSeq)[0];
+  if (sameTurn) return sameTurn;
+  return Object.values(session.messageById)
+    .filter((message) =>
+      message.role === 'user' &&
+      message.content === content &&
+      isLocalOptimisticUserTurn(message.userTurnId) &&
+      !hasTerminalModelTurnForUserTurn(session, message.userTurnId)
+    )
+    .sort((left, right) => right.createdSeq - left.createdSeq)[0] || null;
+};
+
+const hasTerminalModelTurnForUserTurn = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string
+): boolean =>
+  Boolean(session.userTurnById[userTurnId]?.modelTurnIds?.some((turnId) => {
+    const status = session.modelTurnById[turnId]?.status;
+    return status === 'completed' || status === 'failed' || status === 'cancelled';
+  }));
+
+const findLegacyUserMessageByContent = (
+  session: ChatRuntimeSessionProjection,
+  raw: ChatRuntimeRawMessage,
+  createdAtMs: number | null
+): ChatRuntimeMessageProjection | null => {
+  const content = String(raw.content ?? asRecord(raw.payload).content ?? '');
+  if (!content) return null;
+  const candidates = Object.values(session.messageById)
+    .filter((message) => message.role === 'user' && message.content === content);
+  if (candidates.length === 0) return null;
+  return candidates.sort((left, right) => {
+    if (createdAtMs !== null) {
+      const leftMs = normalizeCreatedAtMs(left.createdAt);
+      const rightMs = normalizeCreatedAtMs(right.createdAt);
+      if (leftMs !== null && rightMs !== null) {
+        const delta = Math.abs(leftMs - createdAtMs) - Math.abs(rightMs - createdAtMs);
+        if (delta !== 0) return delta;
+      }
+    }
+    const leftOptimistic = isLocalOptimisticUserTurn(left.userTurnId) ? 1 : 0;
+    const rightOptimistic = isLocalOptimisticUserTurn(right.userTurnId) ? 1 : 0;
+    if (leftOptimistic !== rightOptimistic) {
+      return rightOptimistic - leftOptimistic;
+    }
+    return right.createdSeq - left.createdSeq;
+  })[0] || null;
+};
+
+const pruneUserTurnUserMessages = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeUserTurnProjection,
+  keepMessageId: string
+): void => {
+  const staleIds = turn.messageIds.filter((messageId) => {
+    if (messageId === keepMessageId) return false;
+    return session.messageById[messageId]?.role === 'user';
+  });
+  if (staleIds.length === 0) return;
+  turn.messageIds = turn.messageIds.filter((messageId) => !staleIds.includes(messageId));
+  session.messages = session.messages.filter((messageId) => !staleIds.includes(messageId));
+  staleIds.forEach((messageId) => {
+    delete session.messageById[messageId];
+  });
+};
+
+const isLocalOptimisticUserTurn = (userTurnId: string): boolean =>
+  userTurnId.startsWith('user-turn:') || userTurnId.startsWith('local-user-turn:');
+
 const ensureModelTurn = (
   session: ChatRuntimeSessionProjection,
   modelTurnId: string,
   userTurnId: string,
   seq: number | null
 ): ChatRuntimeModelTurnProjection => {
-  const id = modelTurnId || `local-model-turn:${session.sessionId}:${session.modelTurns.length + 1}`;
+  const id = resolveModelTurnIdentity(session, modelTurnId, userTurnId) ||
+    `local-model-turn:${session.sessionId}:${session.modelTurns.length + 1}`;
   if (!session.modelTurnById[id]) {
     const resolvedUserTurnId = userTurnId || `orphan-user-turn:${id}`;
     const userTurn = ensureUserTurn(session, resolvedUserTurnId, seq);
@@ -1183,13 +1708,85 @@ const ensureModelTurn = (
   return session.modelTurnById[id];
 };
 
+const resolveModelTurnIdentity = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string
+): string => {
+  if (!modelTurnId) return '';
+  const existing = session.modelTurnById[modelTurnId];
+  if (existing) return modelTurnId;
+  const existingForUserTurn = resolveReusableModelTurnForUserTurn(session, userTurnId);
+  if (
+    existingForUserTurn &&
+    shouldFoldModelTurnIntoExisting(modelTurnId, existingForUserTurn, userTurnId)
+  ) {
+    return existingForUserTurn.id;
+  }
+  return modelTurnId;
+};
+
+const resolveReusableModelTurnForUserTurn = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string,
+  includeTerminal = false,
+  terminalStatuses: Array<ChatRuntimeModelTurnProjection['status']> = [
+    'completed',
+    'failed',
+    'cancelled'
+  ]
+): ChatRuntimeModelTurnProjection | null => {
+  if (!userTurnId) return null;
+  const userTurn = session.userTurnById[userTurnId];
+  const turnIds = userTurn?.modelTurnIds?.length
+    ? userTurn.modelTurnIds
+    : session.modelTurns.filter((turnId) => session.modelTurnById[turnId]?.userTurnId === userTurnId);
+  for (let index = turnIds.length - 1; index >= 0; index -= 1) {
+    const turn = session.modelTurnById[turnIds[index]];
+    if (!turn) {
+      continue;
+    }
+    if (
+      !includeTerminal &&
+      (turn.status === 'completed' || turn.status === 'failed' || turn.status === 'cancelled')
+    ) {
+      continue;
+    }
+    if (
+      includeTerminal &&
+      (turn.status === 'completed' || turn.status === 'failed' || turn.status === 'cancelled') &&
+      !terminalStatuses.includes(turn.status)
+    ) {
+      continue;
+    }
+    if (turn.messageIds.some((messageId) => session.messageById[messageId]?.role === 'assistant')) {
+      return turn;
+    }
+  }
+  return null;
+};
+
+const shouldFoldModelTurnIntoExisting = (
+  incomingModelTurnId: string,
+  existing: ChatRuntimeModelTurnProjection,
+  userTurnId: string
+): boolean => {
+  if (!incomingModelTurnId || !existing || !userTurnId) return false;
+  if (incomingModelTurnId.startsWith('legacy-model-turn:')) return true;
+  if (incomingModelTurnId.startsWith(`model-turn:${userTurnId}`)) return true;
+  if (incomingModelTurnId.startsWith(`model-turn:${existing.userTurnId}`)) return true;
+  if (incomingModelTurnId.includes(`:${userTurnId}:`)) return true;
+  if (incomingModelTurnId.includes(':model:')) return true;
+  return incomingModelTurnId.startsWith('model-turn:');
+};
+
 const ensureAssistantMessageForModelTurn = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent,
   status: ChatRuntimeMessageStatus
 ): ChatRuntimeMessageProjection => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
-  const messageId = event.messageId || modelTurn.finalMessageId || `local-assistant:${modelTurn.id}`;
+  const messageId = resolveAssistantMessageIdForModelTurn(session, modelTurn, event.messageId);
   const message = ensureMessage(session, {
     id: messageId,
     role: 'assistant',
@@ -1202,7 +1799,39 @@ const ensureAssistantMessageForModelTurn = (
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   addUnique(modelTurn.messageIds, message.id);
   addUnique(session.messages, message.id);
+  pruneModelTurnAssistantMessages(session, modelTurn, message.id);
   return message;
+};
+
+const resolveAssistantMessageIdForModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  modelTurn: ChatRuntimeModelTurnProjection,
+  eventMessageId: string
+): string => {
+  if (modelTurn.finalMessageId) return modelTurn.finalMessageId;
+  const existingAssistantId = modelTurn.messageIds.find((messageId) => {
+    const message = session.messageById[messageId];
+    return message?.role === 'assistant';
+  });
+  if (existingAssistantId) return existingAssistantId;
+  return eventMessageId || `local-assistant:${modelTurn.id}`;
+};
+
+const pruneModelTurnAssistantMessages = (
+  session: ChatRuntimeSessionProjection,
+  modelTurn: ChatRuntimeModelTurnProjection,
+  keepMessageId: string
+): void => {
+  const staleIds = modelTurn.messageIds.filter((messageId) => {
+    if (messageId === keepMessageId) return false;
+    return session.messageById[messageId]?.role === 'assistant';
+  });
+  if (staleIds.length === 0) return;
+  modelTurn.messageIds = modelTurn.messageIds.filter((messageId) => !staleIds.includes(messageId));
+  session.messages = session.messages.filter((messageId) => !staleIds.includes(messageId));
+  staleIds.forEach((messageId) => {
+    delete session.messageById[messageId];
+  });
 };
 
 const upsertToolWorkflowItem = (
@@ -2153,18 +2782,30 @@ const resolveLegacyMessageId = (message: ChatRuntimeRawMessage, index: number): 
 const resolveNearestLegacyUserTurnId = (
   session: ChatRuntimeSessionProjection,
   index: number
-): string => {
+): LegacyUserTurnResolution => {
   const lastUserTurn = [...session.userTurns].reverse().find((turnId) => {
     const turn = session.userTurnById[turnId];
     return turn?.messageIds?.length && turn.createdSeq <= session.snapshotSeq + index + 1;
   });
-  return lastUserTurn || `legacy-user-turn:orphan:${index}`;
+  return {
+    userTurnId: lastUserTurn || `legacy-user-turn:orphan:${index}`,
+    strength: 'weak',
+    source: 'nearest_existing'
+  };
 };
 
 const resolveLegacyMessageStatus = (message: ChatRuntimeRawMessage): ChatRuntimeMessageStatus => {
   if (normalizeRole(message.role) !== 'assistant') return 'final';
-  if (normalizeFlag(message.failed) || normalizeText(message.status) === 'failed') return 'failed';
-  if (normalizeFlag(message.cancelled) || normalizeText(message.status) === 'cancelled') return 'cancelled';
+  const normalizedStatus = normalizeText(message.status);
+  if (normalizeFlag(message.failed) || normalizedStatus === 'failed') return 'failed';
+  if (
+    normalizeFlag(message.cancelled) ||
+    normalizedStatus === 'cancelled' ||
+    normalizedStatus === 'canceled' ||
+    isLegacyCancelledMessage(message)
+  ) {
+    return 'cancelled';
+  }
   const hasWaitingTimestamp = Number(
     message.waiting_updated_at_ms ??
       message.waitingUpdatedAtMs ??
@@ -2193,6 +2834,21 @@ const resolveLegacyMessageStatus = (message: ChatRuntimeRawMessage): ChatRuntime
     return 'waiting_first_output';
   }
   return 'final';
+};
+
+const isLegacyCancelledMessage = (message: ChatRuntimeRawMessage): boolean => {
+  const stopReason = normalizeText(message.stop_reason ?? message.stopReason);
+  if (
+    stopReason === 'user_stop' ||
+    stopReason === 'cancelled' ||
+    stopReason === 'canceled' ||
+    stopReason === 'aborted'
+  ) {
+    return true;
+  }
+  const meta = asRecord(message.meta);
+  const metaType = normalizeText(meta.type);
+  return metaType === 'session_cancelled' || normalizeFlag(meta.cancelled);
 };
 
 const resolveLegacyBusyReason = (messages: ChatRuntimeRawMessage[]): ChatRuntimeBusyReason => {

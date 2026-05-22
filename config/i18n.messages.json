@@ -2356,8 +2356,8 @@
     "zh-CN": "可选，用于声音克隆的工作区相对参考音频路径。服务端会先转成 data URL 再调用上游文转声接口。"
   },
   "tool.spec.generate_speech.args.ref_audio": {
-    "en-US": "Optional direct reference audio for voice cloning. Supports HTTP(S) URLs and data URLs.",
-    "zh-CN": "可选，直接提供用于声音克隆的参考音频。支持 HTTP(S) 链接和 data URL。"
+    "en-US": "Optional direct reference audio for voice cloning. Supports HTTP(S) URLs, data URLs, or local workspace/workdir file paths that can be resolved on the server.",
+    "zh-CN": "可选，直接提供用于声音克隆的参考音频。支持 HTTP(S) 链接、data URL，或服务端可解析的工作区/工作目录文件路径。"
   },
   "tool.spec.generate_speech.args.ref_text": {
     "en-US": "Optional transcript of the reference audio. Some upstream clone models require this field.",

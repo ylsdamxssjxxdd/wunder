@@ -1178,7 +1178,15 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   ctx.closeResourcePreview = () => {
       const currentUrl = String(ctx.resourcePreviewUrl.value || '').trim();
       const currentWorkspacePath = String(ctx.resourcePreviewWorkspacePath.value || '').trim();
-      if (currentUrl && currentWorkspacePath && currentUrl.startsWith('blob:')) {
+      const isCachedObjectUrl =
+          currentUrl.startsWith('blob:') &&
+          Array.from(ctx.workspaceResourceCache.values()).some((entry) => entry?.objectUrl === currentUrl);
+      if (
+          currentUrl &&
+          currentWorkspacePath &&
+          currentUrl.startsWith('blob:') &&
+          !isCachedObjectUrl
+      ) {
           URL.revokeObjectURL(currentUrl);
       }
       ctx.resourcePreviewVisible.value = false;

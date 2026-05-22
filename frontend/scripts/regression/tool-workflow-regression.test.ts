@@ -448,11 +448,9 @@ test('workflow duration resolves nested elapsed timing from tool payload', () =>
   const durationMs = resolveWorkflowDurationMs(
     JSON.stringify({
       result: {
-        data: {
-          meta: {
-            search: {
-              elapsed_ms: 612
-            }
+        meta: {
+          search: {
+            elapsed_ms: 612
           }
         }
       }
@@ -460,6 +458,20 @@ test('workflow duration resolves nested elapsed timing from tool payload', () =>
   );
   assert.equal(durationMs, 612);
   assert.equal(formatWorkflowDurationLabel(durationMs), '612ms');
+});
+
+test('workflow duration ignores byte counts in generated media payloads', () => {
+  const durationMs = resolveWorkflowDurationMs({
+    tool: 'generate_speech',
+    ok: true,
+    data: {
+      path: '/workspaces/demo/generated_media/speech.wav',
+      bytes: 72631,
+      voice_clone: true
+    }
+  });
+  assert.equal(durationMs, null);
+  assert.equal(formatWorkflowDurationLabel(durationMs), '');
 });
 
 test('workflow entry duration prefers explicit result timing when detail is observation only', () => {

@@ -70,12 +70,18 @@ export const selectVisibleMessageProjections = (
     });
   });
   session.messages.forEach(pushMessage);
+  const turnOrder = buildMessageTurnOrder(session);
   return ordered.sort((left, right) => {
-    const leftTurnIndex = resolveMessageTurnIndex(session, left);
-    const rightTurnIndex = resolveMessageTurnIndex(session, right);
+    const leftTurnIndex = resolveMessageTurnIndex(turnOrder, left);
+    const rightTurnIndex = resolveMessageTurnIndex(turnOrder, right);
     if (leftTurnIndex !== rightTurnIndex) return leftTurnIndex - rightTurnIndex;
     if (left.role !== right.role) {
       return left.role === 'user' ? -1 : 1;
+    }
+    const leftTime = resolveMessageCreatedAtMs(left);
+    const rightTime = resolveMessageCreatedAtMs(right);
+    if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+      return leftTime - rightTime;
     }
     return left.createdSeq - right.createdSeq;
   });
@@ -147,9 +153,55 @@ export const isRuntimeMessageActive = (status: ChatRuntimeMessageStatus | null |
   status === 'tooling';
 
 const resolveMessageTurnIndex = (
-  session: ChatRuntimeSessionProjection,
+  turnOrder: Map<string, number>,
   message: ChatRuntimeMessageProjection
 ): number => {
-  const index = session.userTurns.indexOf(message.userTurnId);
-  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+  return turnOrder.get(message.userTurnId) ?? Number.MAX_SAFE_INTEGER;
+};
+
+const buildMessageTurnOrder = (
+  session: ChatRuntimeSessionProjection
+): Map<string, number> => {
+  const orderedTurns = session.userTurns
+    .map((turnId, index) => ({
+      turnId,
+      index,
+      createdAtMs: resolveTurnCreatedAtMs(session, turnId),
+      createdSeq: session.userTurnById[turnId]?.createdSeq ?? Number.MAX_SAFE_INTEGER
+    }))
+    .sort((left, right) =>
+      compareNullableTime(left.createdAtMs, right.createdAtMs) ||
+      left.createdSeq - right.createdSeq || left.index - right.index
+    );
+  return new Map(orderedTurns.map((item, index) => [item.turnId, index]));
+};
+
+const resolveTurnCreatedAtMs = (
+  session: ChatRuntimeSessionProjection,
+  turnId: string
+): number | null => {
+  const turn = session.userTurnById[turnId];
+  const directMessage = turn?.messageIds
+    ?.map((messageId) => session.messageById[messageId])
+    .find(Boolean);
+  if (directMessage) return resolveMessageCreatedAtMs(directMessage);
+  const modelMessage = turn?.modelTurnIds
+    ?.flatMap((modelTurnId) => session.modelTurnById[modelTurnId]?.messageIds || [])
+    .map((messageId) => session.messageById[messageId])
+    .find(Boolean);
+  return modelMessage ? resolveMessageCreatedAtMs(modelMessage) : null;
+};
+
+const compareNullableTime = (left: number | null, right: number | null): number => {
+  if (left !== null && right !== null && left !== right) return left - right;
+  if (left !== null && right === null) return -1;
+  if (left === null && right !== null) return 1;
+  return 0;
+};
+
+const resolveMessageCreatedAtMs = (
+  message: ChatRuntimeMessageProjection
+): number | null => {
+  const value = Date.parse(message.createdAt || '');
+  return Number.isFinite(value) ? value : null;
 };

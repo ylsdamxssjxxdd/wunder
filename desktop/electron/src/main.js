@@ -18,6 +18,7 @@ const { spawn, spawnSync } = require('child_process')
 const fs = require('fs')
 const net = require('net')
 const Module = require('module')
+const os = require('os')
 const path = require('path')
 const {
   DEFAULT_MINIMIZE_RESTORE_COOLDOWN_MS,
@@ -86,12 +87,25 @@ const detectWin7PackageFlavor = () => {
   }
 }
 
+const detectWindows7OrOlder = () => {
+  if (process.platform !== 'win32') {
+    return false
+  }
+  const parts = String(os.release() || '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+  const major = Number.isFinite(parts[0]) ? parts[0] : 0
+  const minor = Number.isFinite(parts[1]) ? parts[1] : 0
+  return major > 0 && (major < 6 || (major === 6 && minor <= 1))
+}
+
 registerRuntimeModuleRoots()
 
 const updaterDisableMarker = resolveUpdaterDisableMarker()
 const runningInAppImage =
   process.platform === 'linux' && Boolean(String(process.env.APPIMAGE || '').trim())
 const runningWin7PackageFlavor = detectWin7PackageFlavor()
+const runningWindows7OrOlder = detectWindows7OrOlder()
 const updaterDisabledReason = updaterDisableMarker
   ? `marker: ${updaterDisableMarker}`
   : runningInAppImage
@@ -146,6 +160,21 @@ const sidecarRuntime = process.env.WUNDER_SIDECAR_RUNTIME === '1'
 const disableGpu = process.env.WUNDER_DISABLE_GPU === '1'
 const suppressGpuWarnings = process.env.WUNDER_SUPPRESS_GPU_WARNINGS !== '0'
 const bridgeVerboseLogs = process.env.WUNDER_BRIDGE_LOG_VERBOSE !== '0'
+const forceDesktopEffectWindows = process.env.WUNDER_ENABLE_DESKTOP_EFFECT_WINDOWS === '1'
+const disableDesktopEffectWindows = process.env.WUNDER_DISABLE_DESKTOP_EFFECT_WINDOWS === '1'
+const desktopEffectWindowsDisabledReason = disableDesktopEffectWindows
+  ? 'env'
+  : !forceDesktopEffectWindows && runningWindows7OrOlder
+    ? 'windows7'
+    : !forceDesktopEffectWindows && runningWin7PackageFlavor
+      ? 'win7-package'
+      : ''
+const desktopEffectWindowsEnabled = !desktopEffectWindowsDisabledReason
+const disableElectronHardwareAcceleration =
+  disableGpu || sidecarRuntime || runningWin7PackageFlavor || runningWindows7OrOlder
+if (!desktopEffectWindowsEnabled) {
+  console.info(`[desktop-effects] native overlay windows disabled by ${desktopEffectWindowsDisabledReason}`)
+}
 const defaultLoadingShellDelayMs = app.isPackaged ? 1200 : 220
 const loadingShellDelayMs = parseEnvNonNegativeNumber(
   process.env.WUNDER_LOADING_SHELL_DELAY_MS,
@@ -659,6 +688,9 @@ const getVirtualDisplayBounds = () => {
 };
 
 const ensureOverlayWindow = () => {
+  if (!desktopEffectWindowsEnabled) {
+    return null
+  }
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     return overlayWindow;
   }
@@ -739,13 +771,14 @@ const hideOverlayNow = () => {
 const sendOverlayPayload = (payload) => {
   const window = ensureOverlayWindow()
   if (!window || window.isDestroyed()) {
-    return
+    return false
   }
   updateOverlayBounds()
   window.webContents.send(OVERLAY_UPDATE_CHANNEL, payload)
   if (!window.isVisible()) {
     window.showInactive()
   }
+  return true
 }
 
 const resolveOverlayPoint = (x, y) => {
@@ -772,20 +805,26 @@ const showControllerOverlay = (payload, state) => {
   const description = String(payload?.description || '').trim()
   const duration = Number(payload?.durationMs ?? payload?.duration_ms)
   const delayMs = Number.isFinite(duration) && duration > 0 ? duration : state === 'done' ? DEFAULT_OVERLAY_DONE_MS : DEFAULT_OVERLAY_HINT_MS
-  sendOverlayPayload({
+  const shown = sendOverlayPayload({
     mode: 'controller',
     state,
     x: point.x,
     y: point.y,
     description
   })
+  if (!shown) {
+    return false
+  }
   scheduleOverlayHide(delayMs)
   return true
 }
 
 const showMonitorOverlay = (payload) => {
   const waitMs = Math.max(0, Number(payload?.waitMs ?? payload?.wait_ms ?? 0))
-  sendOverlayPayload({ mode: 'monitor', waitMs })
+  const shown = sendOverlayPayload({ mode: 'monitor', waitMs })
+  if (!shown) {
+    return false
+  }
   scheduleOverlayHide(waitMs > 0 ? waitMs : DEFAULT_OVERLAY_MIN_HIDE_MS)
   return true
 }
@@ -1706,6 +1745,9 @@ const updateCompanionHitShape = (payload = {}, event = null) => {
 }
 
 const ensureCompanionWindow = (runtime = getCompanionRuntime(companionState)) => {
+  if (!desktopEffectWindowsEnabled) {
+    return null
+  }
   if (runtime.window && !runtime.window.isDestroyed()) {
     syncLegacyCompanionGlobals(runtime)
     return runtime.window
@@ -1766,6 +1808,12 @@ const ensureCompanionWindow = (runtime = getCompanionRuntime(companionState)) =>
 const renderCompanionWindow = (target = null) => {
   const runtime = target?.state ? target : getCompanionRuntime(target || companionState)
   const state = runtime.state
+  if (!desktopEffectWindowsEnabled) {
+    if (runtime.window && !runtime.window.isDestroyed()) {
+      runtime.window.hide()
+    }
+    return false
+  }
   if (!state.enabled || !state.spritesheetDataUrl) {
     if (runtime.window && !runtime.window.isDestroyed()) {
       runtime.window.hide()
@@ -2046,7 +2094,7 @@ if (process.platform === 'linux') {
     app.commandLine.appendSwitch('disable-features', 'Vulkan')
   }
 }
-if (disableGpu || sidecarRuntime) {
+if (disableElectronHardwareAcceleration) {
   app.disableHardwareAcceleration()
 }
 

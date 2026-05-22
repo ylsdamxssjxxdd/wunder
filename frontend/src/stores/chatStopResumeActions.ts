@@ -179,6 +179,11 @@ export const chatStopResumeActions = {
           pendingAssistant.reasoningStreaming = false;
           pendingAssistant.stream_incomplete = false;
           pendingAssistant.resume_available = false;
+          pendingAssistant.status = 'cancelled';
+          pendingAssistant.cancelled = true;
+          pendingAssistant.failed = false;
+          pendingAssistant.final = false;
+          pendingAssistant.stop_reason = 'user_stop';
           clearAssistantRetryState(pendingAssistant);
           if (!pendingAssistant.content) {
             pendingAssistant.content = t('chat.workflow.aborted');
@@ -188,6 +193,10 @@ export const chatStopResumeActions = {
         if (panel && panel.status === 'pending') {
           pendingAssistant.questionPanel = { ...panel, status: 'dismissed' };
         }
+        stopPendingAssistantMessage(pendingAssistant, {
+          cancelled: true,
+          stopReason: 'user_stop'
+        });
         cancelled = true;
       }
       this.dismissPendingInquiryPanel();

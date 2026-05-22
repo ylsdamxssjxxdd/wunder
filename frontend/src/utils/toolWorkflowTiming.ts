@@ -33,7 +33,6 @@ const NESTED_TIMING_KEYS = [
 
 const MAX_SCAN_DEPTH = 4;
 const MAX_ARRAY_SCAN = 16;
-const MAX_OBJECT_SCAN = 40;
 
 const asRecord = (value: unknown): UnknownRecord | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -127,14 +126,6 @@ const resolveDurationFromValue = (
 
   for (const key of NESTED_TIMING_KEYS) {
     const durationMs = resolveDurationFromValue(record[key], depth + 1, seen);
-    if (durationMs !== null) {
-      return durationMs;
-    }
-  }
-
-  const entries = Object.entries(record);
-  for (const [, nestedValue] of entries.slice(0, MAX_OBJECT_SCAN)) {
-    const durationMs = resolveDurationFromValue(nestedValue, depth + 1, seen);
     if (durationMs !== null) {
       return durationMs;
     }

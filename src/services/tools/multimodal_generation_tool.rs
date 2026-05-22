@@ -1,7 +1,8 @@
 use super::tool_error::{build_failed_tool_result, ToolErrorMeta};
-use super::{build_model_tool_success, ToolContext};
+use super::{build_model_tool_success, collect_read_roots, ToolContext};
 use crate::config::LlmModelConfig;
 use crate::llm::normalize_provider;
+use crate::path_utils::{is_within_root, normalize_target_path};
 use crate::services::multimodal_models::{
     self, AudioTranscriptionRequest, ImageGenerationRequest, SpeechSynthesisRequest,
     VideoGenerationRequest,
@@ -11,7 +12,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use tokio::fs;
 
 pub const TOOL_GENERATE_SPEECH: &str = "语音生成";
@@ -702,26 +703,161 @@ async fn resolve_reference_audio(
     direct_ref_audio: Option<String>,
 ) -> Result<Option<String>> {
     if let Some(ref_audio) = direct_ref_audio {
+        if !is_direct_reference_audio_url(&ref_audio) {
+            match resolve_reference_audio_path(context, &ref_audio) {
+                Ok(resolved) => {
+                    return build_reference_audio_data_url(&resolved, &ref_audio)
+                        .await
+                        .map(Some);
+                }
+                Err(err) if should_resolve_ref_audio_as_path(&ref_audio) => return Err(err),
+                Err(_) => {}
+            }
+        }
         return Ok(Some(ref_audio));
     }
     let Some(reference_path) = reference_path else {
         return Ok(None);
     };
-    let resolved = context
-        .workspace
-        .resolve_path(context.workspace_id, reference_path)?;
-    if !resolved.exists() || !resolved.is_file() {
-        return Err(anyhow!("reference audio file not found: {reference_path}"));
-    }
+    let resolved = resolve_reference_audio_path(context, reference_path)?;
+    build_reference_audio_data_url(&resolved, reference_path)
+        .await
+        .map(Some)
+}
+
+async fn build_reference_audio_data_url(resolved: &Path, reference_path: &str) -> Result<String> {
     let bytes = fs::read(&resolved).await?;
     if bytes.is_empty() {
         return Err(anyhow!("reference audio file is empty: {reference_path}"));
     }
     let mime = audio_content_type_from_path(&resolved);
-    Ok(Some(format!(
-        "data:{mime};base64,{}",
-        STANDARD.encode(bytes)
-    )))
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+fn resolve_reference_audio_path(
+    context: &ToolContext<'_>,
+    reference_path: &str,
+) -> Result<PathBuf> {
+    let read_roots = collect_read_roots(context);
+    resolve_reference_audio_path_with_roots(
+        context.workspace.as_ref(),
+        context.workspace_id,
+        reference_path,
+        &read_roots,
+    )
+}
+
+fn resolve_reference_audio_path_with_roots(
+    workspace: &crate::workspace::WorkspaceManager,
+    workspace_id: &str,
+    reference_path: &str,
+    read_roots: &[PathBuf],
+) -> Result<PathBuf> {
+    let path = normalize_reference_audio_path(reference_path);
+    if path.starts_with("workspaces/") || path.starts_with("/workspaces/") {
+        let resolved = workspace.resolve_path(workspace_id, &path)?;
+        if resolved.exists() && resolved.is_file() {
+            return Ok(resolved);
+        }
+        return Err(anyhow!("reference audio file not found: {reference_path}"));
+    }
+    if Path::new(&path).is_absolute() {
+        if let Some(resolved) = resolve_existing_reference_audio_path(&path, read_roots) {
+            return Ok(resolved);
+        }
+        return Err(anyhow!("reference audio file not found: {reference_path}"));
+    }
+    let resolved = workspace.resolve_path(workspace_id, &path)?;
+    if resolved.exists() && resolved.is_file() {
+        return Ok(resolved);
+    }
+    if let Some(resolved) = resolve_existing_reference_audio_path(&path, read_roots) {
+        return Ok(resolved);
+    }
+    Err(anyhow!("reference audio file not found: {reference_path}"))
+}
+
+fn normalize_reference_audio_path(path: &str) -> String {
+    let normalized = path.trim().replace('\\', "/");
+    if let Some(rest) = normalized.strip_prefix("/workspaces/") {
+        format!("workspaces/{rest}")
+    } else {
+        normalized
+    }
+}
+
+fn should_resolve_ref_audio_as_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if is_direct_reference_audio_url(trimmed) {
+        return false;
+    }
+    let normalized = trimmed.replace('\\', "/");
+    normalized.starts_with("/workspaces/")
+        || normalized.starts_with("workspaces/")
+        || normalized.starts_with("./")
+        || normalized.starts_with("../")
+        || normalized.contains('/')
+        || Path::new(trimmed).is_absolute()
+        || Path::new(trimmed)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "mp3" | "wav" | "ogg" | "opus" | "aac" | "flac" | "m4a" | "webm"
+                )
+            })
+            .unwrap_or(false)
+}
+
+fn resolve_existing_reference_audio_path(raw_path: &str, roots: &[PathBuf]) -> Option<PathBuf> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        for root in roots {
+            if is_within_root(root, path) && path.exists() && path.is_file() {
+                return Some(path.to_path_buf());
+            }
+        }
+        return None;
+    }
+    let relative = sanitize_reference_audio_relative_path(trimmed)?;
+    for root in roots {
+        let candidate = normalize_target_path(&root.join(&relative));
+        if candidate.exists() && candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn sanitize_reference_audio_relative_path(raw_path: &str) -> Option<PathBuf> {
+    let normalized = raw_path.trim().replace('\\', "/");
+    let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
+    if stripped.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(stripped);
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return None;
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    Some(path)
+}
+
+fn is_direct_reference_audio_url(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    lower.starts_with("data:") || lower.starts_with("http://") || lower.starts_with("https://")
 }
 
 fn audio_content_type_from_path(path: &Path) -> &'static str {
@@ -883,11 +1019,19 @@ fn extension_from_content_type(content_type: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_image_generation_failure_result, parse_image_size, suggest_aligned_image_size,
-        validate_image_generation_request, GenerateImageArgs, VLLM_OMNI_PROVIDER,
+        build_image_generation_failure_result, parse_image_size,
+        resolve_reference_audio_path_with_roots, should_resolve_ref_audio_as_path,
+        suggest_aligned_image_size, validate_image_generation_request, GenerateImageArgs,
+        VLLM_OMNI_PROVIDER,
     };
     use crate::config::LlmModelConfig;
+    use crate::path_utils::normalize_path_for_compare;
+    use crate::storage::SqliteStorage;
     use serde_json::Value;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     fn image_model(provider: &str) -> LlmModelConfig {
         LlmModelConfig {
@@ -997,5 +1141,88 @@ mod tests {
             super::resolve_effective_image_size(&payload_without_size, &config).as_deref(),
             Some("1024x1024")
         );
+    }
+
+    #[test]
+    fn reference_audio_path_resolves_public_workspace_path() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let storage = Arc::new(SqliteStorage::new(
+            temp.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = crate::workspace::WorkspaceManager::new(
+            &workspace_root.to_string_lossy(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+        let reference = workspace
+            .resolve_path("alice__c__1", "refs/voice.wav")
+            .expect("resolve target");
+        fs::create_dir_all(reference.parent().expect("parent")).expect("mkdir");
+        fs::write(&reference, b"demo").expect("write reference audio");
+
+        let resolved = resolve_reference_audio_path_with_roots(
+            &workspace,
+            "alice__c__1",
+            "/workspaces/alice__c__1/refs/voice.wav",
+            &[],
+        )
+        .expect("resolved");
+
+        assert_eq!(
+            normalize_path_for_compare(&resolved),
+            normalize_path_for_compare(&reference)
+        );
+    }
+
+    #[test]
+    fn reference_audio_path_resolves_existing_read_root_relative_file() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let read_root = temp.path().join("workdir");
+        let reference = read_root.join("refs").join("voice.wav");
+        fs::create_dir_all(reference.parent().expect("parent")).expect("mkdir");
+        fs::write(&reference, b"demo").expect("write reference audio");
+        let storage = Arc::new(SqliteStorage::new(
+            temp.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = crate::workspace::WorkspaceManager::new(
+            &workspace_root.to_string_lossy(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let resolved = resolve_reference_audio_path_with_roots(
+            &workspace,
+            "alice__c__1",
+            "refs/voice.wav",
+            &[read_root],
+        )
+        .expect("resolved");
+
+        assert_eq!(
+            normalize_path_for_compare(&resolved),
+            normalize_path_for_compare(&reference)
+        );
+    }
+
+    #[test]
+    fn ref_audio_path_detection_keeps_urls_as_direct_inputs() {
+        assert!(should_resolve_ref_audio_as_path("refs/voice.wav"));
+        assert!(should_resolve_ref_audio_as_path("/workspaces/u/voice.wav"));
+        assert!(!should_resolve_ref_audio_as_path(
+            "data:audio/wav;base64,AAAA"
+        ));
+        assert!(!should_resolve_ref_audio_as_path(
+            "https://example.test/voice.wav"
+        ));
     }
 }

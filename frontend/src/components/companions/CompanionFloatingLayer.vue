@@ -160,6 +160,7 @@ const menuPosition = ref({ x: 8, y: 8 });
 let nowTimer: number | null = null;
 let clickSuppressUntil = 0;
 const desktopOverlayActiveKeys = new Set<string>();
+const nativeDesktopCompanionAvailable = ref(true);
 let desktopCommandUnsubscribe: (() => void) | null = null;
 let desktopStateUnsubscribe: (() => void) | null = null;
 const menuState = ref<{ x: number; y: number; entry: FloatingEntry } | null>(null);
@@ -349,7 +350,9 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
 });
 
 const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
-const renderedEntries = computed(() => (effectiveDesktopMode.value ? [] : visibleEntries.value));
+const renderedEntries = computed(() =>
+  effectiveDesktopMode.value && nativeDesktopCompanionAvailable.value ? [] : visibleEntries.value
+);
 
 const menuStyle = computed(() => {
   if (!menuState.value) {
@@ -507,16 +510,27 @@ async function syncDesktopOverlay(): Promise<void> {
     return;
   }
   const bridge = getDesktopBridge();
-  if (!effectiveDesktopMode.value || !bridge) {
+  if (!effectiveDesktopMode.value) {
+    nativeDesktopCompanionAvailable.value = true;
     if (typeof bridge?.hideCompanion === 'function') {
       await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     }
     desktopOverlayActiveKeys.clear();
     return;
   }
+  if (!bridge) {
+    nativeDesktopCompanionAvailable.value = false;
+    desktopOverlayActiveKeys.clear();
+    return;
+  }
+  if (!nativeDesktopCompanionAvailable.value) {
+    desktopOverlayActiveKeys.clear();
+    return;
+  }
   const showHandler = typeof bridge.showCompanion === 'function' ? bridge.showCompanion : null;
   const updateHandler = typeof bridge.updateCompanion === 'function' ? bridge.updateCompanion : showHandler;
   if (!showHandler && !updateHandler) {
+    nativeDesktopCompanionAvailable.value = false;
     desktopOverlayActiveKeys.clear();
     return;
   }
@@ -530,6 +544,7 @@ async function syncDesktopOverlay(): Promise<void> {
     }))));
   }
   staleKeys.forEach((key) => desktopOverlayActiveKeys.delete(key));
+  let nativeUnavailable = false;
   await Promise.all(visibleEntries.value.map(async (entry, index) => {
     const isActive = desktopOverlayActiveKeys.has(entry.key);
     const handler = isActive ? updateHandler : (showHandler || updateHandler);
@@ -558,13 +573,27 @@ async function syncDesktopOverlay(): Promise<void> {
       nextPayload.x = position.x;
       nextPayload.y = position.y;
     }
-    const visible = (await Promise.resolve(handler.call(bridge, nextPayload))) === true;
-    if (visible) {
-      desktopOverlayActiveKeys.add(entry.key);
-    } else {
+    try {
+      const visible = (await Promise.resolve(handler.call(bridge, nextPayload))) === true;
+      if (visible) {
+        desktopOverlayActiveKeys.add(entry.key);
+      } else {
+        nativeUnavailable = true;
+        desktopOverlayActiveKeys.delete(entry.key);
+      }
+    } catch {
+      nativeUnavailable = true;
       desktopOverlayActiveKeys.delete(entry.key);
     }
   }));
+  if (nativeUnavailable) {
+    nativeDesktopCompanionAvailable.value = false;
+    if (typeof bridge.hideCompanion === 'function') {
+      await Promise.resolve(bridge.hideCompanion({ persistEnabled: false })).catch(() => false);
+    }
+    desktopOverlayActiveKeys.clear();
+    return;
+  }
   if (!visibleEntries.value.length && typeof bridge.hideCompanion === 'function') {
     await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     desktopOverlayActiveKeys.clear();

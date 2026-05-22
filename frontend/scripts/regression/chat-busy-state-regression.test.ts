@@ -149,6 +149,38 @@ test('merged busy state suppresses stale busy projection after confirmed idle ru
   );
 });
 
+test('merged busy state keeps stop available while a send controller is active', () => {
+  const messages = [
+    { role: 'user', content: 'input' },
+    { role: 'assistant', content: '', stream_incomplete: false, workflowStreaming: false }
+  ];
+
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection: null,
+      sessionId: 'sess_active_controller',
+      loading: false,
+      messages,
+      runtimeStatus: 'idle',
+      runtimeKnown: true,
+      runtimeHasControllers: true
+    }),
+    true
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection: null,
+      sessionId: 'sess_active_controller',
+      loading: false,
+      messages,
+      runtimeStatus: 'idle',
+      runtimeKnown: true,
+      runtimeHasControllers: true
+    }),
+    'running'
+  );
+});
+
 test('merged busy state suppresses stale assistant streaming after completed runtime', () => {
   const projection = createChatRuntimeProjection();
   const messages = [

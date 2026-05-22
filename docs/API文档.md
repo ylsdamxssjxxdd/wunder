@@ -1316,6 +1316,10 @@
   - `instructions`：风格/语气控制（可选）
   - `response_format`：输出格式（可选，支持 `wav/mp3/flac/aac/opus/pcm`）
   - `speed`：语速（可选）
+  - `reference_path`：声音克隆参考音频路径（可选；支持工作区相对路径与 `/workspaces/...` 公共路径，服务端会读取后转为 data URL）
+  - `ref_audio`：声音克隆参考音频（可选；支持 HTTP(S) URL、data URL，也兼容可解析的本地工作区/工作目录文件路径）
+  - `ref_text`：参考音频转写文本（可选；部分上游克隆模型需要）
+  - `model_specific_params`：透传给上游 TTS 接口的模型特定参数（可选）
 - 返回（JSON）：
   - `data.kind`：固定为 `speech`
   - `data.user_id` / `data.container_id` / `data.workspace_id`

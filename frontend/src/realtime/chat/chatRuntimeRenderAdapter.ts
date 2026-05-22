@@ -41,6 +41,7 @@ const RENDER_SHADOW_STORAGE_KEYS = [
   'wunder_chat_runtime_render_shadow'
 ];
 const RENDER_TRUE_VALUES = new Set(['1', 'true', 'on', 'yes', 'debug']);
+const RENDER_LEGACY_VALUES = new Set(['0', 'false', 'off', 'no', 'legacy']);
 const RENDER_SHADOW_VALUES = new Set(['shadow', 'compare', 'dry-run', 'dryrun']);
 const RENDER_SEARCH_KEYS = ['chat_runtime_render', 'chatRuntimeRender'];
 const RENDER_SHADOW_SEARCH_KEYS = ['chat_runtime_render_shadow', 'chatRuntimeRenderShadow'];
@@ -55,6 +56,7 @@ export const isChatRuntimeProjectionRenderShadowEnabled = (): boolean =>
 
 export const resolveChatRuntimeProjectionRenderMode = (): ChatRuntimeProjectionRenderMode => {
   const raw = readRuntimeRenderRawFlag();
+  if (RENDER_LEGACY_VALUES.has(raw)) return 'legacy';
   if (RENDER_SHADOW_VALUES.has(raw)) return 'shadow';
   if (RENDER_TRUE_VALUES.has(raw) || raw === 'projection' || raw === 'projected') {
     return 'projection';
@@ -62,7 +64,7 @@ export const resolveChatRuntimeProjectionRenderMode = (): ChatRuntimeProjectionR
   if (readRuntimeRenderNamedFlag(RENDER_SHADOW_STORAGE_KEYS) || readRuntimeRenderNamedSearchFlag(RENDER_SHADOW_SEARCH_KEYS)) {
     return 'shadow';
   }
-  return 'legacy';
+  return 'projection';
 };
 
 export const materializeChatRuntimeMessages = (

@@ -256,6 +256,24 @@ export const chatSendActions = {
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
       const previousSessionContextTokens = resolveSessionContextTokens(this, sessionId);
+      const clientMessageId = String(
+        (userMessage as Record<string, unknown>).message_id ??
+          (userMessage as Record<string, unknown>).messageId ??
+          (userMessage as Record<string, unknown>).id ??
+          `local-user:${sessionId}:${requestStartMs}`
+      ).trim();
+      const localUserTurnId = `user-turn:${sessionId}:round:${nextLocalStreamRound}`;
+      const localModelTurnId = `model-turn:${sessionId}:user:${nextLocalStreamRound}:model:1`;
+      Object.assign(userMessage as Record<string, unknown>, {
+        message_id: clientMessageId,
+        client_message_id: clientMessageId,
+        user_turn_id: localUserTurnId,
+        stream_round: nextLocalStreamRound > 0 ? nextLocalStreamRound : null
+      });
+      Object.assign(assistantMessageRaw as Record<string, unknown>, {
+        user_turn_id: localUserTurnId,
+        model_turn_id: localModelTurnId
+      });
       if (!bootstrappingDraftSession) {
         this.messages.push(userMessage);
       }
@@ -264,18 +282,12 @@ export const chatSendActions = {
         sessionMessagesRef.push(assistantMessageRaw);
       }
       const assistantMessage = assistantMessageRaw;
-      const clientMessageId = String(
-        (userMessage as Record<string, unknown>).message_id ??
-          (userMessage as Record<string, unknown>).messageId ??
-          (userMessage as Record<string, unknown>).id ??
-          `local-user:${sessionId}:${requestStartMs}`
-      ).trim();
       applyCanonicalClientMessageSubmittedRuntimeEvent(this, {
         sessionId,
         content,
         clientMessageId,
         createdAt: userMessage.created_at,
-        userTurnId: `user-turn:${sessionId}:round:${nextLocalStreamRound}`
+        userTurnId: localUserTurnId
       });
       chatDebugLog('messenger.send', 'store-placeholder-appended', {
         sessionId,

@@ -11,6 +11,7 @@ pub mod beeroom_realtime;
 pub mod bridge;
 pub mod browser;
 pub mod chat_attachments;
+pub mod chat_cancel_marker;
 pub mod chat_media;
 pub mod companions;
 pub mod cron;

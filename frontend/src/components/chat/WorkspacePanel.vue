@@ -228,6 +228,7 @@
         class="workspace-preview"
         :class="{
           embed: preview.embed,
+          'is-image': preview.type === 'image',
           'is-svg': preview.type === 'svg',
           'is-audio': preview.type === 'audio',
           'is-video': preview.type === 'video'

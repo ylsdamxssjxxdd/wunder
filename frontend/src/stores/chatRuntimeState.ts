@@ -1595,7 +1595,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
   store,
   sessionId,
   messages = null,
-  options: { immediate?: boolean; loading?: boolean; running?: boolean } = {}
+  options: { immediate?: boolean; loading?: boolean; running?: boolean; authoritative?: boolean } = {}
 ) => {
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
@@ -1620,7 +1620,8 @@ export const syncChatRuntimeProjectionFromLegacy = (
       agentId: resolveProjectionAgentId(store, key),
       messages: Array.isArray(targetMessages) ? targetMessages : [],
       loading,
-      running
+      running,
+      authoritative: options.authoritative === true
     })
   );
   if (result.applied) {

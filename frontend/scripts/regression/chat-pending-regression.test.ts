@@ -84,6 +84,26 @@ test('stops an active pending assistant in place', () => {
   assert.equal(pending.reasoningStreaming, false);
 });
 
+test('marks a user-stopped pending assistant as cancelled when requested', () => {
+  const pending = {
+    role: 'assistant',
+    stream_incomplete: true,
+    workflowStreaming: true,
+    reasoningStreaming: true,
+    status: 'streaming',
+    failed: false
+  };
+  assert.equal(stopPendingAssistantMessage(pending, { cancelled: true }), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+  assert.equal(pending.status, 'cancelled');
+  assert.equal(pending.cancelled, true);
+  assert.equal(pending.failed, false);
+  assert.equal(pending.final, false);
+  assert.equal(pending.stop_reason, 'user_stop');
+});
+
 test('stops an assistant that only retains workflow and reasoning streaming flags', () => {
   const pending = {
     role: 'assistant',

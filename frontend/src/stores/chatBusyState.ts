@@ -97,13 +97,15 @@ export const resolveMergedSessionBusy = (
     messages,
     options.runtimeStatus
   );
+  if (options.runtimeHasControllers === true) {
+    return true;
+  }
   if (!projectionBusy && !busyBySignals) {
     return false;
   }
   const hasLoadingFlag = Boolean(options.loading);
   const terminalRuntime =
     options.runtimeKnown === true &&
-    options.runtimeHasControllers !== true &&
     isTerminalThreadRuntimeStatus(options.runtimeStatus);
   if (!hasLoadingFlag && terminalRuntime && !hasActiveSubagentsAfterLatestUser(messages)) {
     // Hydrated snapshots can briefly keep old assistant streaming flags after the

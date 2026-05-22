@@ -1,5 +1,13 @@
 # wunder 聊天页面重构设计
 
+## 上线收口状态（2026-05-21）
+
+- 当前结论：聊天页重构主链路已经从“可选影子链路”推进到“默认启用 canonical runtime projection 渲染源”。下个版本用户默认走 projection render，旧 `messages` 数组仅作为未知空投影会话的兜底和显式回退路径。
+- 默认行为：`resolveChatRuntimeProjectionRenderMode()` 无显式配置时返回 `projection`，Messenger 气泡渲染优先读取 `chatRuntimeReducer` 的可见消息投影，使用稳定 runtime message key，避免流式 token 更新时反复重建整页消息数组。
+- 回退方式：线上如遇不可接受回归，可设置 URL 参数 `chat_runtime_render=legacy` / `chatRuntimeRender=off`，或 localStorage `wunder:chat-runtime-render=legacy/off/0/false`，快速退回旧渲染源；`shadow` 模式仍可用于只比较不切换。
+- 本次验证：已通过 `npm run test:chat-realtime`、`npm run typecheck`、`cargo check -j 8`，并保留 `test:chat-runtime-render-adapter` 覆盖默认 projection 与显式 legacy 回退。
+- 仍需上线观察：真实长输出、工具调用、审批、子智能体、多会话快速切换和桌面弱机器场景需要灰度观察；一旦出现 projection/legacy drift，优先打开 shadow/debug 定位，再决定是否临时切 `legacy`。
+
 ## 结论
 
 当前用户侧聊天问题不适合继续靠局部补丁修复。丢消息、重复消息、假死、消息抖动和实时性不稳定，本质上来自“同一条聊天时间线存在多个写入者”：发送流、watch 流、resume 流、HTTP 详情快照、HTTP 事件快照、本地乐观消息、旧 `messages` 数组、`runtimeProjection`、去重和 watchdog 都可能修改同一批消息。

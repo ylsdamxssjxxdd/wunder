@@ -17,6 +17,7 @@ export const buildLegacyMessagesReconciledEvent = (payload: {
   messages: Record<string, unknown>[];
   loading?: boolean;
   running?: boolean;
+  authoritative?: boolean;
   eventSeq?: number;
 }): ChatRuntimeEvent => ({
   event_type: 'legacy_messages_reconciled',
@@ -27,5 +28,6 @@ export const buildLegacyMessagesReconciledEvent = (payload: {
   event_seq: payload.eventSeq,
   messages: payload.messages,
   loading: payload.loading,
-  running: payload.running
+  running: payload.running,
+  authoritative: payload.authoritative
 });

@@ -64,11 +64,21 @@ const ensureAssistantInteractionEnded = (message: ChatMessage): void => {
       : terminalAtMs;
 };
 
-export const stopPendingAssistantMessage = (message: ChatMessage | null | undefined): boolean => {
+export const stopPendingAssistantMessage = (
+  message: ChatMessage | null | undefined,
+  options: { cancelled?: boolean; stopReason?: string } = {}
+): boolean => {
   if (!isAssistantRuntimeMarkedRunning(message)) return false;
   message.stream_incomplete = false;
   message.workflowStreaming = false;
   message.reasoningStreaming = false;
+  if (options.cancelled === true) {
+    message.status = 'cancelled';
+    message.cancelled = true;
+    message.failed = false;
+    message.final = false;
+    message.stop_reason = String(options.stopReason || 'user_stop').trim() || 'user_stop';
+  }
   if (hasAssistantWaitingForCurrentOutput(message)) {
     ensureAssistantInteractionEnded(message);
   }
