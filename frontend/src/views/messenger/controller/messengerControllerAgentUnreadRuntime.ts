@@ -588,7 +588,9 @@ export function installMessengerControllerAgentUnreadRuntime(ctx: MessengerContr
       ctx.agentUnreadRefreshInFlight.add(requestKey);
       try {
           const response = await getChatSessionApi(entry.sessionId);
-          const messages = Array.isArray(response?.data?.data?.messages) ? response.data.data.messages : [];
+          const messages = Array.isArray(response?.data?.data?.transcript)
+              ? response.data.data.transcript
+              : [];
           const unreadCount = messages.filter((message: Record<string, unknown>) => {
               if (String(message?.role || '') !== 'assistant') {
                   return false;

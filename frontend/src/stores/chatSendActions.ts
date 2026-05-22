@@ -65,6 +65,7 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { buildMessageIdentityDebugList, buildMessageIdentityDebugSnapshot } from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
@@ -294,7 +295,15 @@ export const chatSendActions = {
         bootstrappingDraftSession,
         messageCount: Array.isArray(sessionMessagesRef) ? sessionMessagesRef.length : 0,
         assistantPending: true,
-        assistantStreamRound: assistantMessage.stream_round ?? null
+        assistantStreamRound: assistantMessage.stream_round ?? null,
+        identity: {
+          user: buildMessageIdentityDebugSnapshot(userMessage, sessionMessagesRef.indexOf(userMessage)),
+          assistant: buildMessageIdentityDebugSnapshot(
+            assistantMessage,
+            sessionMessagesRef.indexOf(assistantMessage)
+          )
+        },
+        messages: buildMessageIdentityDebugList(sessionMessagesRef)
       });
       clearDraftSessionBootstrapMarkers(sessionMessagesRef);
       cacheSessionMessages(sessionId, sessionMessagesRef);
@@ -426,7 +435,12 @@ export const chatSendActions = {
                 streamIncomplete: Boolean(assistantMessage.stream_incomplete),
                 resumeAvailable: Boolean(assistantMessage.resume_available),
                 slowClient: Boolean(assistantMessage.slow_client)
-              }
+              },
+              latestAssistantIdentity: buildMessageIdentityDebugSnapshot(
+                assistantMessage,
+                sessionMessagesRef.indexOf(assistantMessage)
+              ),
+              messages: buildMessageIdentityDebugList(sessionMessagesRef)
             });
             if (shouldTreatRuntimeEventAsTerminal(normalizedEventType, approvalPayload)) {
               const runtimeStatus = normalizeThreadRuntimeStatus(
@@ -656,6 +670,17 @@ export const chatSendActions = {
           messages: sessionMessagesRef
         });
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+        chatDebugLog('messenger.send', 'stream-finish', {
+          sessionId,
+          requestId: finishedRequestId || null,
+          stopped,
+          terminalSeen,
+          queued,
+          keepStreaming,
+          runtime: runtime ? buildRuntimeDebugSnapshot(runtime) : null,
+          latestAssistant: buildMessageIdentityDebugSnapshot(assistantMessage, sessionMessagesRef.indexOf(assistantMessage)),
+          messages: buildMessageIdentityDebugList(sessionMessagesRef)
+        });
         if (perfEnabled) {
           chatPerf.recordDuration('chat_stream_total', performance.now() - perfStreamStart, {
             sessionId,

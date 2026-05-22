@@ -279,6 +279,137 @@ test('legacy projection clears stale streaming flags after terminal reconcile', 
   assert.equal(selectLegacyMessageStatus(projection, 'session-1', staleAssistant), 'final');
 });
 
+test('authoritative stopped legacy reconcile prunes projection-only assistant turns', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const firstModelTurnId = 'model-turn:session-1:user:1:model:1';
+  const localUser = {
+    role: 'user',
+    content: 'stop this run',
+    client_message_id: 'local-user-1',
+    user_turn_id: userTurnId,
+    stream_round: 1
+  };
+  const visibleAssistant = {
+    role: 'assistant',
+    content: 'visible run',
+    user_turn_id: userTurnId,
+    model_turn_id: firstModelTurnId,
+    stream_round: 1,
+    stream_incomplete: true,
+    workflowStreaming: true
+  };
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'session-1',
+    messages: [localUser, visibleAssistant],
+    loading: true,
+    running: true
+  });
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-10',
+    event_seq: 10,
+    user_turn_id: userTurnId,
+    model_turn_id: firstModelTurnId,
+    message_id: 'assistant-first-model-turn',
+    content: 'visible run'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-11',
+    event_seq: 11,
+    user_turn_id: userTurnId,
+    model_turn_id: 'model-turn:session-1:user:1:model:2',
+    message_id: 'assistant-second-model-turn',
+    delta: 'projection only'
+  }));
+
+  const visibleBeforeStop = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visibleBeforeStop.length, 3);
+  assert.equal(
+    visibleBeforeStop.filter((message) => message.role === 'assistant').length,
+    2
+  );
+
+  visibleAssistant.status = 'cancelled';
+  visibleAssistant.cancelled = true;
+  visibleAssistant.stop_reason = 'user_stop';
+  visibleAssistant.stream_incomplete = false;
+  visibleAssistant.workflowStreaming = false;
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'session-1',
+    messages: [localUser, visibleAssistant],
+    loading: false,
+    running: false,
+    authoritative: true
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:stop this run', 'assistant:visible run']
+  );
+  assert.equal(visible[1].status, 'cancelled');
+  assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
+test('late assistant events do not resurrect a cancelled user turn after local stop', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const modelTurnId = 'model-turn:session-1:user:1:model:1';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-user-stop',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    message_id: 'user-message-stop',
+    content: 'cancel this'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-before-stop',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: 'assistant-message-stop',
+    delta: 'partial'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'turn_cancelled',
+    event_id: 'evt-stop',
+    event_seq: 3,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId
+  }));
+
+  const late = applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-late-after-stop',
+    event_seq: 4,
+    user_turn_id: userTurnId,
+    model_turn_id: 'model-turn:session-1:user:1:model:2',
+    message_id: 'assistant-message-late-after-stop',
+    delta: ' resurrected'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(late.applied, true);
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}:${message.status}`),
+    ['user:cancel this:final', 'assistant:partial:cancelled']
+  );
+  assert.equal(selectSessionBusy(projection, 'session-1'), false);
+  assert.equal(projection.sessions['session-1'].messages.length, 2);
+});
+
 test('visible projection order can map back to original raw message references', () => {
   const projection = createChatRuntimeProjection();
   const assistant = {
@@ -1122,6 +1253,138 @@ test('legacy reconcile does not reuse a stale stream_round across later user tur
   assert.notEqual(visible[1].modelTurnId, visible[3].modelTurnId);
   assert.equal(projection.sessions['session-1'].messages.length, 4);
 });
+
+test('legacy reconcile keeps two same-round assistant replies separate across a refreshed stop-and-continue flow', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: 'greeting',
+        created_at: '2026-04-30T02:14:01.000Z'
+      },
+      {
+        role: 'user',
+        content: 'first',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        role: 'assistant',
+        content: 'first answer',
+        reasoning: 'thinking one',
+        stream_round: 1,
+        stream_event_id: 11,
+        created_at: '2026-04-30T02:14:07.000Z'
+      },
+      {
+        role: 'user',
+        content: 'second',
+        created_at: '2026-04-30T02:14:16.000Z'
+      },
+      {
+        role: 'assistant',
+        content: 'second answer',
+        reasoning: 'thinking two',
+        stream_round: 1,
+        stream_event_id: 12,
+        created_at: '2026-04-30T02:14:18.000Z'
+      }
+    ],
+    loading: false,
+    running: false
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['assistant:greeting', 'user:first', 'assistant:first answer', 'user:second', 'assistant:second answer']
+  );
+  assert.notEqual(visible[2].modelTurnId, visible[4].modelTurnId);
+  assert.equal(projection.sessions['session-1'].messages.length, 5);
+});
+
+test('canonical transcript snapshot rebuilds refresh order from backend turn indexes', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'session-1',
+    payload: {
+      transcript: [
+        {
+          role: 'assistant',
+          content: 'greeting',
+          message_id: 'history:1',
+          user_turn_id: 'user-turn:session-1:round:0',
+          model_turn_id: 'model-turn:session-1:user:0:model:1',
+          turn_index: 1,
+          created_at: '2026-04-30T02:14:01.000Z'
+        },
+        {
+          role: 'user',
+          content: 'first',
+          message_id: 'history:2',
+          user_turn_id: 'user-turn:session-1:round:1',
+          turn_index: 2,
+          created_at: '2026-04-30T02:14:06.000Z'
+        },
+        {
+          role: 'assistant',
+          content: 'cancelled',
+          message_id: 'history:3',
+          user_turn_id: 'user-turn:session-1:round:1',
+          model_turn_id: 'model-turn:session-1:user:1:model:1',
+          turn_index: 3,
+          stream_round: 1,
+          status: 'cancelled',
+          cancelled: true,
+          stop_reason: 'user_stop',
+          created_at: '2026-04-30T02:14:07.000Z'
+        },
+        {
+          role: 'user',
+          content: 'second',
+          message_id: 'history:4',
+          user_turn_id: 'user-turn:session-1:round:2',
+          turn_index: 4,
+          created_at: '2026-04-30T02:14:16.000Z'
+        },
+        {
+          role: 'assistant',
+          content: 'second answer',
+          message_id: 'history:5',
+          user_turn_id: 'user-turn:session-1:round:2',
+          model_turn_id: 'model-turn:session-1:user:2:model:1',
+          turn_index: 5,
+          stream_round: 1,
+          created_at: '2026-04-30T02:14:18.000Z'
+        }
+      ]
+    },
+    loading: false,
+    running: false
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['assistant:greeting', 'user:first', 'assistant:cancelled', 'user:second', 'assistant:second answer']
+  );
+  assert.equal(visible[2].cancelled, true);
+  assert.notEqual(visible[2].modelTurnId, visible[4].modelTurnId);
+  assert.deepEqual(
+    projection.sessions['session-1'].messages,
+    ['history:1', 'history:2', 'history:3', 'history:4', 'history:5']
+  );
+});
+
 
 test('legacy reconcile overlaps text fragments without duplicating shared spans', () => {
   const projection = createChatRuntimeProjection();

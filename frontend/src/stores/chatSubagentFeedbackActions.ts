@@ -287,7 +287,7 @@ export const chatSubagentFeedbackActions = {
           limit: Math.max(HISTORY_PAGE_LIMIT, 120)
         });
         const payload = data?.data || {};
-        const incoming = Array.isArray(payload.messages) ? payload.messages : [];
+        const incoming = Array.isArray(payload.transcript) ? payload.transcript : [];
         const updatedCount = applyAssistantHistoryIdBackfill(targetMessages, incoming);
         if (updatedCount > 0) {
           touchSessionUpdatedAt(this, targetSessionId, Date.now());

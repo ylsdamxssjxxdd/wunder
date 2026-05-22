@@ -65,6 +65,10 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import {
+  summarizeChatMessageDebugList,
+  summarizeChatMessageDebugSnapshot
+} from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
@@ -512,7 +516,7 @@ export const buildWorkflowRoundsFingerprint = (rounds) => {
 };
 
 export const buildSessionHydratedMessageVersion = (sessionDetail, eventsPayload) => {
-  const messages = Array.isArray(sessionDetail?.messages) ? sessionDetail.messages : [];
+  const messages = Array.isArray(sessionDetail?.transcript) ? sessionDetail.transcript : [];
   const rounds = Array.isArray(eventsPayload?.rounds) ? eventsPayload.rounds : [];
   const remoteLastEventId =
     normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId) || 0;
@@ -1275,7 +1279,8 @@ export function settleTerminalSessionRuntime(
     loadingBySession: Boolean(store?.loadingBySession?.[targetId]),
     runtime: beforeRuntime,
     streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
-    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages)
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
+    messages: buildMessageIdentityDebugList(targetMessages)
   });
   const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
     failed: options.failed === true || runtime.threadStatus === 'system_error'
@@ -1288,7 +1293,8 @@ export function settleTerminalSessionRuntime(
     runtime: buildRuntimeDebugSnapshot(runtime),
     streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
     latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
-    settledTerminalArtifacts
+    settledTerminalArtifacts,
+    messages: buildMessageIdentityDebugList(targetMessages)
   });
   if (settledTerminalArtifacts) {
     notifySessionSnapshot(store, targetId, targetMessages, true);
@@ -1310,6 +1316,9 @@ export function settleUserStoppedSessionRuntime(store, sessionId) {
   const runtime = ensureRuntime(targetId);
   if (!runtime) return false;
   const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
+  const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
+    ? store?.messages
+    : getSessionMessages(targetId);
   settleStoppedRuntimeLocalState(runtime, { abortReason: 'user_stop' });
   if (chatWatcherSharedState.sessionWatchSessionId === targetId) {
     chatWatcherSharedState.sessionWatchSessionId = '';
@@ -1318,10 +1327,30 @@ export function settleUserStoppedSessionRuntime(store, sessionId) {
     store.clearPendingApprovals({ sessionId: targetId });
   }
   setSessionLoading(store, targetId, false);
+  if (Array.isArray(targetMessages)) {
+    // A local stop ends the live surface immediately. Reconcile from the
+    // visible transcript before later watcher/server terminal events arrive.
+    syncChatRuntimeProjectionFromLegacy(store, targetId, targetMessages, {
+      immediate: true,
+      loading: false,
+      running: false,
+      authoritative: true
+    });
+  }
+  syncChatRuntimeProjectionStatus(store, targetId, 'cancelled', {
+    eventType: 'session_runtime'
+  });
   chatDebugLog('chat.store.runtime', 'settle-user-stopped-state', {
     sessionId: targetId,
     beforeRuntime,
-    afterRuntime: buildRuntimeDebugSnapshot(runtime)
+    afterRuntime: buildRuntimeDebugSnapshot(runtime),
+    latestMessage: buildMessageIdentityDebugSnapshot(
+      Array.isArray(store?.messages) ? store.messages[store.messages.length - 1] : null,
+      Array.isArray(store?.messages) ? store.messages.length - 1 : -1
+    ),
+    messages: buildMessageIdentityDebugList(
+      targetMessages
+    )
   });
   return true;
 }
@@ -1604,6 +1633,9 @@ export const syncChatRuntimeProjectionFromLegacy = (
   const targetMessages = Array.isArray(messages)
     ? messages
     : getSessionMessages(key) || (resolveSessionKey(store?.activeSessionId) === key ? store?.messages : []);
+  const projectionMessages = Array.isArray(targetMessages)
+    ? targetMessages
+    : [];
   const runtime = getRuntime(key);
   const loading =
     options.loading === undefined
@@ -1618,7 +1650,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
     buildLegacyMessagesReconciledEvent({
       sessionId: key,
       agentId: resolveProjectionAgentId(store, key),
-      messages: Array.isArray(targetMessages) ? targetMessages : [],
+      messages: projectionMessages,
       loading,
       running,
       authoritative: options.authoritative === true
@@ -1705,7 +1737,27 @@ export const inspectChatRuntimeShadow = (
     fingerprint: report.fingerprint,
     loggedAt: now
   });
-  chatDebugLog('chat.runtime.shadow', 'projection-legacy-drift', summarizeChatRuntimeShadowReport(report));
+  chatDebugLog('chat.runtime.shadow', 'projection-legacy-drift', {
+    ...summarizeChatRuntimeShadowReport(report),
+    legacyMessages: buildMessageIdentityDebugList(targetMessages),
+    projectedMessages: buildMessageIdentityDebugList(
+      selectVisibleMessageProjections(projection, key).map((item) => item.raw || {
+        role: item.role,
+        content: item.content,
+        reasoning: item.reasoning,
+        message_id: item.id,
+        user_turn_id: item.userTurnId,
+        model_turn_id: item.modelTurnId,
+        runtime_status: item.status,
+        created_at: item.createdAt,
+        workflowItems: item.workflowItems,
+        subagents: item.subagents,
+        cancelled: item.cancelled,
+        failed: item.failed,
+        final: item.final
+      })
+    )
+  });
   return report;
 };
 
@@ -1811,6 +1863,16 @@ export const applyCanonicalSessionEventsSnapshot = (
   return events;
 };
 
+export const resolveCanonicalSessionTranscript = (sessionDetail, fallbackMessages = null) => {
+  if (Array.isArray(sessionDetail?.transcript)) {
+    return sessionDetail.transcript;
+  }
+  return Array.isArray(fallbackMessages) ? fallbackMessages : [];
+};
+
+export const hasCanonicalSessionTranscript = (sessionDetail): boolean =>
+  Array.isArray(sessionDetail?.transcript);
+
 export const shouldPreferCachedMessages = (cached, server) => {
   if (!Array.isArray(cached) || cached.length === 0) return false;
   if (!Array.isArray(server) || server.length === 0) return true;
@@ -1911,6 +1973,12 @@ export const buildLatestAssistantRuntimeDebugSnapshot = (messages) => {
   }
   return null;
 };
+
+export const buildMessageIdentityDebugList = (messages, options: { limit?: number } = {}) =>
+  summarizeChatMessageDebugList(Array.isArray(messages) ? messages : [], options);
+
+export const buildMessageIdentityDebugSnapshot = (message, index = -1) =>
+  summarizeChatMessageDebugSnapshot(message, index);
 
 export function buildRuntimeDebugSnapshot(runtime) {
   const pendingManualCompactionStartedAt = Number(

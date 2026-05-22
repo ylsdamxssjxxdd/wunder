@@ -498,8 +498,8 @@ const hydrateSwarmWorkerShadowItems = async (
           try {
             const historyResponse = await getSessionHistoryPage(item.sessionId, { limit: 24 });
             if (!signal.aborted) {
-              const historyMessages = Array.isArray(historyResponse?.data?.data?.messages)
-                ? historyResponse.data.data.messages
+              const historyMessages = Array.isArray(historyResponse?.data?.data?.transcript)
+                ? historyResponse.data.data.transcript
                 : [];
               replyText = resolveBeeroomSwarmWorkerReplyFromHistoryMessages(historyMessages);
             }

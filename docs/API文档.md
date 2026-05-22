@@ -2805,17 +2805,33 @@
 - `GET /wunder/chat/sessions/{session_id}/history`
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
+- `GET /wunder/chat/sessions/{session_id}` 与 `GET /wunder/chat/sessions/{session_id}/history` 的历史消息视图统一返回 `data.transcript[]`，不再返回 `data.messages[]`。`transcript` 是刷新页面的唯一权威消息序列，前端必须按数组顺序与 `turn_index` 渲染，不得再使用 `stream_round`、正文或时间戳推断用户/模型轮次身份。
+- `data.transcript[]` 单项常用字段：
+  - `role`：`user` / `assistant`
+  - `content`：可见正文
+  - `reasoning`：助手思考内容（仅存在时返回）
+  - `created_at`：本地时区 RFC3339 时间
+  - `message_id`：稳定消息身份，历史消息为 `history:{history_id}`，运行中临时投影也会生成稳定临时 id
+  - `history_id`：落库历史 id（仅真实历史消息存在）
+  - `user_turn_id`：用户轮次身份
+  - `model_turn_id`：模型轮次身份（仅 `assistant`）
+  - `turn_index`：本次返回数组内的权威顺序，从 1 递增
+  - `user_turn_index` / `model_turn_index`：后端按历史顺序归一化出的用户/模型轮次序号
+  - `status`：`final` / `streaming` / `queued` / `cancelled` / `failed`
+  - `cancelled` / `failed`：终态布尔标记
+  - `stop_reason`：停止原因，例如用户终止时为 `user_stop`
+  - `attachments`、`questionPanel`、`hiddenInternal`、`feedback`：附件、询问面板、内部隐藏标记与消息反馈
 - 当会话仅处于队列等待阶段、最新用户消息尚未落入历史时，`GET /wunder/chat/sessions/{session_id}` 会基于活跃 `agent_tasks` 追加一组临时消息视图：
-  - 最新用户消息会按请求体中的 `question/attachments` 投影到 `data.messages[]`
+  - 最新用户消息会按请求体中的 `question/attachments` 投影到 `data.transcript[]`
   - 对应助手占位会带 `stream_incomplete=true`
   - 对应助手占位会附带队列 workflow 事件（如 `queue_enter`，必要时包含 `queue_start`），便于刷新后立即恢复“排队中/开始处理”的可见状态
   - 该投影仅用于刷新/重连后的实时态恢复，不写回历史；一旦真实历史落库，会以真实消息为准
-- 当消息为 `assistant` 且已反馈时，`messages[].feedback` 结构如下：
+- 当消息为 `assistant` 且已反馈时，`transcript[].feedback` 结构如下：
   - `vote`：`up` / `down`
   - `created_at`：反馈时间（RFC3339）
   - `locked`：`true`
-- 当消息为 `assistant` 且由该条回复触发过子智能体派发时，`messages[].subagents[]` 会返回当前已知的子智能体运行项；典型字段包括 `session_id/run_id/dispatch_id/title/label/status/summary/terminal/failed/can_terminate/updated_at/parent_user_round/parent_model_round/agent_state/detail`。
-- 当消息为系统内部补发的隐藏观察消息时，`messages[].hiddenInternal=true`；该消息仅用于保持父子轮次与自动唤醒链路一致，前端默认应跳过渲染正文。
+- 当消息为 `assistant` 且由该条回复触发过子智能体派发时，`transcript[].subagents[]` 会返回当前已知的子智能体运行项；典型字段包括 `session_id/run_id/dispatch_id/title/label/status/summary/terminal/failed/can_terminate/updated_at/parent_user_round/parent_model_round/agent_state/detail`。
+- 当消息为系统内部补发的隐藏观察消息时，`transcript[].hiddenInternal=true`；该消息仅用于保持父子轮次与自动唤醒链路一致，前端默认应跳过渲染正文。
 
 ### 监控接口补充（管理员侧）
 

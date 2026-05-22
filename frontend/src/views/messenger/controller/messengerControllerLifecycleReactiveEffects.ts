@@ -180,7 +180,7 @@ import {
 } from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -518,7 +518,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   }, { immediate: true });
 
   watch(() => ctx.userAttachmentWorkspacePaths.value, (paths) => {
-      if (isChatDebugEnabled()) {
+      if (isChatDebugVerboseEnabled()) {
           chatDebugLog('messenger.hydration', 'attachment-paths', {
               activeSessionId: ctx.chatStore.activeSessionId,
               activeConversationKey: ctx.sessionHub.activeConversationKey,
@@ -822,7 +822,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.dismissedPlanVersion.value += 1;
       ctx.agentInquirySelection.value = [];
       ctx.scheduleWorkspaceResourceHydration('conversation-key-change');
-      if (isChatDebugEnabled()) {
+      if (isChatDebugVerboseEnabled()) {
           chatDebugLog('messenger.virtual', 'conversation-key-change', ctx.buildMessageVirtualDebugSnapshot?.());
       }
       if (ctx.sessionHub.activeSection === 'messages') {
@@ -959,7 +959,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           });
       });
       ctx.scheduleWorkspaceResourceHydration('message-list-change');
-      if (isChatDebugEnabled()) {
+      if (isChatDebugVerboseEnabled()) {
           chatDebugLog('messenger.virtual', 'message-list-change', ctx.buildMessageVirtualDebugSnapshot?.());
       }
       if (ctx.pendingAssistantCenter &&

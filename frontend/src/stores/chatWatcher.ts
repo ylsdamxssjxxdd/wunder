@@ -65,6 +65,7 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
@@ -720,7 +721,8 @@ export const startSessionWatcher = (store, sessionId) => {
         loadingBySession: Boolean(store?.loadingBySession?.[key]),
         runtimeBefore: buildRuntimeDebugSnapshot(runtime),
         streamingAssistantCount: countAssistantStreamingMessages(sessionMessagesRef),
-        latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(sessionMessagesRef)
+        latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(sessionMessagesRef),
+        messages: buildMessageIdentityDebugList(sessionMessagesRef)
       });
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
       return;

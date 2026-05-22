@@ -133,7 +133,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
 import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeSessionProtectedRealtimeMessages, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeSessionProtectedRealtimeMessages, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -350,7 +350,9 @@ export const chatCacheActions = {
           remoteLastEventId
         );
         const cachedHydratedMessages = dedupeAssistantMessages(getSessionMessages(targetId));
+        const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
         const canReuseHydratedMessages =
+          !hasCanonicalTranscript &&
           !remoteRunning &&
           Array.isArray(cachedHydratedMessages) &&
           cachedHydratedMessages.length > 0 &&
@@ -361,16 +363,23 @@ export const chatCacheActions = {
         } else {
           const rounds = eventsPayload?.rounds || [];
           const workflowState = buildSessionWorkflowState();
-          const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
+          const rawMessages = attachWorkflowEvents(
+            resolveCanonicalSessionTranscript(sessionDetail),
+            rounds
+          );
           messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
-          messages = dedupeAssistantMessages(messages);
+          if (!hasCanonicalTranscript) {
+            messages = dedupeAssistantMessages(messages);
+          }
         }
         dismissStaleInquiryPanels(messages);
         const greetingMessages = ensureGreetingMessage(messages, {
           createdAt: sessionDetail?.created_at,
           greeting: this.greetingOverride
         });
-        mergeSessionProtectedRealtimeMessages(targetId, greetingMessages);
+        if (remoteRunning) {
+          mergeSessionProtectedRealtimeMessages(targetId, greetingMessages);
+        }
         if (!remoteRunning) {
           clearCompletedAssistantStreamingState(greetingMessages);
         }

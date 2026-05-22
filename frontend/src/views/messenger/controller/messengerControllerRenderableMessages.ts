@@ -183,6 +183,7 @@ import {
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
 import {
   buildChatRuntimeRenderableMessages,
   hasChatRuntimeRenderSession,
@@ -634,8 +635,27 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return acc;
   }, []);
 
+  const mergeProjectionRenderableWithSyntheticUiMessages = (
+      legacyRenderable: AgentRenderableMessage[],
+      projectionRenderable: AgentRenderableMessage[]
+  ): AgentRenderableMessage[] => {
+      const synthetic = legacyRenderable.filter((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
+      if (!synthetic.length) {
+          return projectionRenderable;
+      }
+      const projectedHasGreeting = projectionRenderable.some((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
+      if (projectedHasGreeting) {
+          return projectionRenderable;
+      }
+      return [...synthetic, ...projectionRenderable];
+  };
+
   let lastAgentRenderSourceSignature = '';
-  const logAgentRenderSource = (event: string, payload: Record<string, unknown>) => {
+  const logAgentRenderSource = (
+      event: string,
+      payload: Record<string, unknown>,
+      renderable: AgentRenderableMessage[] = []
+  ) => {
       if (!isChatDebugEnabled())
           return;
       const signature = [
@@ -647,7 +667,10 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       if (signature === lastAgentRenderSourceSignature)
           return;
       lastAgentRenderSourceSignature = signature;
-      chatDebugLog('chat.runtime.render', event, payload);
+      chatDebugLog('chat.runtime.render', event, {
+          ...payload,
+          messages: buildMessageIdentityDebugList(renderable.map((item) => item.message as Record<string, unknown>))
+      });
   };
 
   let lastAgentRenderShadowSignature = '';
@@ -668,7 +691,15 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       lastAgentRenderShadowSignature = report.fingerprint;
       const summary = summarizeChatRuntimeRenderShadowReport(report);
       if (isChatDebugEnabled()) {
-          chatDebugLog('chat.runtime.render', 'render-source-drift', summary);
+          chatDebugLog('chat.runtime.render', 'render-source-drift', {
+              ...summary,
+              legacyMessages: buildMessageIdentityDebugList(
+                  legacyRenderable.map((item) => item.message as Record<string, unknown>)
+              ),
+              projectionMessages: buildMessageIdentityDebugList(
+                  projectionRenderable.map((item) => item.message as Record<string, unknown>)
+              )
+          });
       } else if (typeof console !== 'undefined') {
           console.info('[wunder-chat-runtime-render] render-source-drift', summary);
       }
@@ -687,35 +718,40 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
             sessionId: ctx.chatStore.activeSessionId,
             shouldRenderMessage: ctx.shouldRenderAgentMessage
           }) as AgentRenderableMessage[];
+          const displayProjectionRenderable = mergeProjectionRenderableWithSyntheticUiMessages(
+              legacyRenderable,
+              projectionRenderable
+          );
           const hasProjectionSession = hasChatRuntimeRenderSession(projection, ctx.chatStore.activeSessionId);
           const decision = resolveChatRuntimeRenderableSourceDecision({
               renderMode,
-              projectionCount: projectionRenderable.length,
+              projectionCount: displayProjectionRenderable.length,
               projectionSessionKnown: hasProjectionSession,
               shadowEnabled
           });
           if (decision.inspectShadow) {
-              inspectAgentRuntimeRenderShadow(legacyRenderable, projectionRenderable);
+              inspectAgentRuntimeRenderShadow(legacyRenderable, displayProjectionRenderable);
           }
           if (decision.event === 'projection-source') {
               logAgentRenderSource('projection-source', {
                   activeSessionId: ctx.chatStore.activeSessionId,
                   projectionSessionKnown: hasProjectionSession,
-                  ...summarizeChatRuntimeRenderableMessages(projectionRenderable)
-              });
-              return projectionRenderable;
+                  renderMode,
+                  ...summarizeChatRuntimeRenderableMessages(displayProjectionRenderable)
+              }, displayProjectionRenderable);
+              return displayProjectionRenderable;
           }
           if (decision.event === 'projection-empty-fallback') {
               logAgentRenderSource('projection-empty-fallback', {
                   activeSessionId: ctx.chatStore.activeSessionId,
                   legacyCount: legacyRenderable.length
-              });
+              }, legacyRenderable);
           } else if (decision.event === 'projection-shadow') {
               logAgentRenderSource('projection-shadow', {
                   activeSessionId: ctx.chatStore.activeSessionId,
                   renderMode,
-                  ...summarizeChatRuntimeRenderableMessages(projectionRenderable)
-              });
+                  ...summarizeChatRuntimeRenderableMessages(displayProjectionRenderable)
+              }, displayProjectionRenderable);
           }
       }
       return legacyRenderable;

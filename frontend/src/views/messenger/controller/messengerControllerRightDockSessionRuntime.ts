@@ -672,7 +672,9 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
               return;
           }
           const result = await getChatSessionApi(targetId).catch(() => null);
-          const messages = Array.isArray(result?.data?.data?.messages) ? result.data.data.messages : [];
+          const messages = Array.isArray(result?.data?.data?.transcript)
+              ? result.data.data.transcript
+              : [];
           if (!Array.isArray(messages) || !messages.length) {
               ctx.timelinePreviewMap.value.set(targetId, '');
               return;

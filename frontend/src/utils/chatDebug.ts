@@ -30,7 +30,9 @@ const DEBUG_VERBOSE_SCOPES = new Set([
   'messenger.workflow-shell',
   'messenger.workflow-surface',
   'chat.composer',
-  'messenger.order'
+  'messenger.order',
+  'messenger.hydration',
+  'messenger.virtual'
 ]);
 const DEBUG_ALWAYS_SCOPES = new Set([
   'messenger.conversation',

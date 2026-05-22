@@ -270,6 +270,15 @@ const applyNormalizedRuntimeEvent = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent
 ): void => {
+  if (shouldIgnoreEventForCancelledTurn(session, event)) {
+    if (event.eventId) {
+      session.eventIdIndex[event.eventId] = true;
+    }
+    if (event.eventSeq !== null && event.eventSeq > session.appliedSeq) {
+      session.appliedSeq = event.eventSeq;
+    }
+    return;
+  }
   if (event.eventId) {
     session.eventIdIndex[event.eventId] = true;
   }
@@ -812,9 +821,19 @@ const applySessionSnapshot = (
   }
   const messages = Array.isArray(event.messages)
     ? event.messages
+    : Array.isArray(event.payload.transcript)
+      ? event.payload.transcript as ChatRuntimeRawMessage[]
     : Array.isArray(event.payload.messages)
       ? event.payload.messages as ChatRuntimeRawMessage[]
       : [];
+  if (isCanonicalTranscript(messages)) {
+    applyCanonicalTranscriptSnapshot(session, messages, snapshotSeq);
+    applySessionRuntime(session, {
+      ...event,
+      runtimeStatus: normalizeChatRuntimeStatus(event.payload.runtime_status ?? event.payload.status)
+    });
+    return;
+  }
   mergeLegacyMessages(session, messages, {
     snapshotSeq,
     replaceExistingAtOrBelowSeq: true,
@@ -832,12 +851,26 @@ const applyLegacyMessagesReconciled = (
 ): void => {
   const messages = Array.isArray(event.messages)
     ? event.messages
+    : Array.isArray(event.payload.transcript)
+      ? event.payload.transcript as ChatRuntimeRawMessage[]
     : Array.isArray(event.payload.messages)
       ? event.payload.messages as ChatRuntimeRawMessage[]
       : [];
   const reconcileSeq = event.eventSeq ?? nextLocalSeq(session);
   const loading = normalizeFlag(event.loading ?? event.payload.loading);
   const running = normalizeFlag(event.running ?? event.payload.running);
+  if (isCanonicalTranscript(messages)) {
+    applyCanonicalTranscriptSnapshot(session, messages, reconcileSeq);
+    if (loading || running || hasActiveLegacyRuntime(messages)) {
+      setSessionBusy(session, 'running', resolveLegacyBusyReason(messages));
+    } else {
+      settleLegacyActiveMessages(session);
+      session.runtimeStatus = 'idle';
+      session.busyReason = null;
+      deriveSessionRuntime(session);
+    }
+    return;
+  }
   const authoritative =
     normalizeFlag(event.authoritative ?? event.payload.authoritative ?? event.prune_missing ?? event.payload.prune_missing) &&
     !loading &&
@@ -1090,6 +1123,229 @@ type LegacyUserTurnResolution = {
   userTurnId: string;
   strength: LegacyUserTurnBindingStrength;
   source: LegacyUserTurnBindingSource;
+};
+
+const isCanonicalTranscript = (messages: ChatRuntimeRawMessage[]): boolean =>
+  Array.isArray(messages) &&
+  messages.filter((message) => !isSyntheticGreetingRawMessage(message)).length > 0 &&
+  messages.every((message) => isSyntheticGreetingRawMessage(message) || isCanonicalTranscriptMessage(message));
+
+const isSyntheticGreetingRawMessage = (message: ChatRuntimeRawMessage): boolean =>
+  Boolean(
+    message &&
+    typeof message === 'object' &&
+    (message.isGreeting === true || message.is_greeting === true)
+  );
+
+const isCanonicalTranscriptMessage = (message: ChatRuntimeRawMessage): boolean => {
+  if (!message || typeof message !== 'object') return false;
+  const role = normalizeRole(message.role);
+  if (role !== 'user' && role !== 'assistant') return false;
+  return Boolean(
+    normalizeId(message.message_id ?? message.messageId ?? message.id) &&
+    normalizeId(message.user_turn_id ?? message.userTurnId) &&
+    normalizeSeq(message.turn_index ?? message.turnIndex) !== null
+  );
+};
+
+const applyCanonicalTranscriptSnapshot = (
+  session: ChatRuntimeSessionProjection,
+  messages: ChatRuntimeRawMessage[],
+  snapshotSeq: number
+): void => {
+  const plans = messages
+    .filter((raw) => !isSyntheticGreetingRawMessage(raw))
+    .map((raw, index) => buildCanonicalTranscriptPlan(raw, index, snapshotSeq))
+    .filter((plan): plan is LegacyMessagePlan => Boolean(plan))
+    .sort((left, right) => left.createdSeq - right.createdSeq || left.index - right.index);
+  const keepMessageIds = new Set<string>();
+  const keepUserTurnIds = new Set<string>();
+  const keepModelTurnIds = new Set<string>();
+
+  plans.forEach((plan) => {
+    const userTurn = ensureUserTurn(session, plan.userTurnId, plan.createdSeq);
+    keepUserTurnIds.add(userTurn.id);
+    if (plan.role === 'user') {
+      const message = ensureMessage(session, {
+        id: plan.id,
+        role: 'user',
+        createdSeq: plan.createdSeq,
+        createdAt: resolveCanonicalCreatedAt(plan.raw),
+        userTurnId: userTurn.id,
+        modelTurnId: ''
+      });
+      patchMessageFromRaw(message, plan.raw, plan.status, plan.createdSeq);
+      message.userTurnId = userTurn.id;
+      message.modelTurnId = '';
+      addUnique(userTurn.messageIds, message.id);
+      keepMessageIds.add(message.id);
+      return;
+    }
+
+    const modelTurn = ensureCanonicalModelTurn(session, plan.modelTurnId, userTurn.id, plan.createdSeq);
+    keepModelTurnIds.add(modelTurn.id);
+    const message = ensureMessage(session, {
+      id: plan.id,
+      role: 'assistant',
+      createdSeq: plan.createdSeq,
+      createdAt: resolveCanonicalCreatedAt(plan.raw),
+      userTurnId: userTurn.id,
+      modelTurnId: modelTurn.id
+    });
+    patchMessageFromRaw(message, plan.raw, plan.status, plan.createdSeq);
+    message.userTurnId = userTurn.id;
+    message.modelTurnId = modelTurn.id;
+    addUnique(modelTurn.messageIds, message.id);
+    modelTurn.finalMessageId = message.id;
+    modelTurn.status = resolveCanonicalModelTurnStatus(plan.status);
+    addUnique(userTurn.modelTurnIds, modelTurn.id);
+    keepMessageIds.add(message.id);
+  });
+
+  Object.keys(session.messageById).forEach((messageId) => {
+    if (!keepMessageIds.has(messageId)) {
+      delete session.messageById[messageId];
+    }
+  });
+  Object.keys(session.modelTurnById).forEach((modelTurnId) => {
+    if (!keepModelTurnIds.has(modelTurnId)) {
+      delete session.modelTurnById[modelTurnId];
+    }
+  });
+  Object.keys(session.userTurnById).forEach((userTurnId) => {
+    if (!keepUserTurnIds.has(userTurnId)) {
+      delete session.userTurnById[userTurnId];
+    }
+  });
+
+  session.messages = plans.map((plan) => plan.id).filter((id) => keepMessageIds.has(id));
+  Object.values(session.userTurnById).forEach((turn) => {
+    turn.messageIds = turn.messageIds.filter((messageId) => keepMessageIds.has(messageId));
+    turn.modelTurnIds = turn.modelTurnIds.filter((modelTurnId) => keepModelTurnIds.has(modelTurnId));
+    turn.status = resolveCanonicalUserTurnStatus(session, turn);
+  });
+  Object.values(session.modelTurnById).forEach((turn) => {
+    turn.messageIds = turn.messageIds.filter((messageId) => keepMessageIds.has(messageId));
+  });
+  const orderIndex = new Map(session.messages.map((messageId, index) => [messageId, index]));
+  session.userTurns = Object.keys(session.userTurnById).sort((left, right) =>
+    resolveUserTurnAuthoritativeOrder(session, left, orderIndex) -
+    resolveUserTurnAuthoritativeOrder(session, right, orderIndex)
+  );
+  session.modelTurns = Object.keys(session.modelTurnById).sort((left, right) =>
+    resolveModelTurnAuthoritativeOrder(session, left, orderIndex) -
+    resolveModelTurnAuthoritativeOrder(session, right, orderIndex)
+  );
+  session.snapshotSeq = Math.max(session.snapshotSeq, snapshotSeq);
+  session.syncRequired = false;
+};
+
+const buildCanonicalTranscriptPlan = (
+  raw: ChatRuntimeRawMessage,
+  index: number,
+  snapshotSeq: number
+): LegacyMessagePlan | null => {
+  const role = normalizeRole(raw.role);
+  if (role !== 'user' && role !== 'assistant') return null;
+  const userTurnId = normalizeId(raw.user_turn_id ?? raw.userTurnId);
+  const id = normalizeId(raw.message_id ?? raw.messageId ?? raw.id);
+  if (!userTurnId || !id) return null;
+  const explicitModelTurnId = normalizeId(raw.model_turn_id ?? raw.modelTurnId);
+  const modelTurnId = role === 'assistant'
+    ? explicitModelTurnId || `model-turn:${userTurnId}:message:${id}`
+    : '';
+  return {
+    raw,
+    index,
+    role,
+    id,
+    status: resolveLegacyMessageStatus(raw),
+    streamRound: normalizeSeq(raw.stream_round ?? raw.streamRound),
+    userTurnId,
+    userTurnBinding: 'strong',
+    userTurnBindingSource: 'explicit',
+    modelTurnId,
+    createdAtMs: normalizeCreatedAtMs(raw.created_at ?? raw.createdAt),
+    createdSeq: resolveCanonicalTranscriptSeq(raw, index, snapshotSeq),
+    turnOrder: Number.MAX_SAFE_INTEGER
+  };
+};
+
+const resolveCanonicalTranscriptSeq = (
+  raw: ChatRuntimeRawMessage,
+  index: number,
+  snapshotSeq: number
+): number => {
+  const turnIndex = normalizeSeq(raw.turn_index ?? raw.turnIndex);
+  return snapshotSeq + (turnIndex ?? index + 1);
+};
+
+const resolveCanonicalCreatedAt = (raw: ChatRuntimeRawMessage): string =>
+  firstText(raw.created_at, raw.createdAt);
+
+const resolveCanonicalModelTurnStatus = (
+  status: ChatRuntimeMessageStatus
+): ChatRuntimeModelTurnProjection['status'] => {
+  if (status === 'failed') return 'failed';
+  if (status === 'cancelled') return 'cancelled';
+  if (status === 'tooling') return 'tool_running';
+  if (status === 'streaming') return 'streaming';
+  if (status === 'waiting_first_output' || status === 'placeholder') {
+    return 'waiting_first_output';
+  }
+  return 'completed';
+};
+
+const resolveCanonicalUserTurnStatus = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeUserTurnProjection
+): ChatRuntimeUserTurnProjection['status'] => {
+  const modelStatuses = turn.modelTurnIds
+    .map((modelTurnId) => session.modelTurnById[modelTurnId]?.status)
+    .filter(Boolean);
+  if (modelStatuses.includes('failed')) return 'failed';
+  if (modelStatuses.includes('cancelled')) return 'cancelled';
+  if (
+    modelStatuses.some((status) =>
+      status === 'created' ||
+      status === 'waiting_first_output' ||
+      status === 'streaming' ||
+      status === 'tool_running' ||
+      status === 'finalizing'
+    )
+  ) {
+    return 'model_running';
+  }
+  return modelStatuses.length > 0 ? 'completed' : 'accepted';
+};
+
+const ensureCanonicalModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string,
+  seq: number | null
+): ChatRuntimeModelTurnProjection => {
+  const id = modelTurnId || `canonical-model-turn:${session.sessionId}:${session.modelTurns.length + 1}`;
+  const resolvedUserTurnId = userTurnId || `orphan-user-turn:${id}`;
+  if (!session.modelTurnById[id]) {
+    const userTurn = ensureUserTurn(session, resolvedUserTurnId, seq);
+    session.modelTurnById[id] = {
+      id,
+      userTurnId: userTurn.id,
+      createdSeq: seq ?? nextLocalSeq(session),
+      messageIds: [],
+      finalMessageId: '',
+      status: 'created'
+    };
+    addUnique(session.modelTurns, id);
+    addUnique(userTurn.modelTurnIds, id);
+  } else if (userTurnId) {
+    const turn = session.modelTurnById[id];
+    turn.userTurnId = userTurnId;
+    const userTurn = ensureUserTurn(session, userTurnId, seq);
+    addUnique(userTurn.modelTurnIds, id);
+  }
+  return session.modelTurnById[id];
 };
 
 const buildLegacyMessagePlans = (
@@ -2662,6 +2918,36 @@ const isActiveMessageStatus = (status: ChatRuntimeMessageStatus): boolean =>
   status === 'waiting_first_output' ||
   status === 'streaming' ||
   status === 'tooling';
+
+const shouldIgnoreEventForCancelledTurn = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): boolean => {
+  if (!event.userTurnId || isTerminalSafeEventType(event.type)) return false;
+  const userTurn = session.userTurnById[event.userTurnId];
+  if (userTurn?.status !== 'cancelled') return false;
+  return isAssistantRuntimeEventType(event.type);
+};
+
+const isAssistantRuntimeEventType = (eventType: string): boolean =>
+  eventType === 'assistant_message_created' ||
+  eventType === 'assistant_delta' ||
+  eventType === 'assistant_reasoning_delta' ||
+  eventType === 'assistant_final' ||
+  eventType === 'tool_call_started' ||
+  eventType === 'tool_call_delta' ||
+  eventType === 'tool_call_completed' ||
+  eventType === 'tool_call_failed' ||
+  eventType === 'workflow_event';
+
+const isTerminalSafeEventType = (eventType: string): boolean =>
+  eventType === 'turn_cancelled' ||
+  eventType === 'turn_failed' ||
+  eventType === 'turn_completed' ||
+  eventType === 'session_idle' ||
+  eventType === 'session_runtime' ||
+  eventType === 'session_snapshot' ||
+  eventType === 'legacy_messages_reconciled';
 
 const validateSessionInvariants = (
   session: ChatRuntimeSessionProjection,

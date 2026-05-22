@@ -6862,8 +6862,9 @@ button.messenger-chat-header-model {
 }
 
 .workspace-editor-shell {
+  --workspace-editor-shell-top: 8px;
   position: fixed;
-  top: calc(var(--desktop-window-chrome-height, 36px) + 8px);
+  top: var(--workspace-editor-shell-top);
   right: 8px;
   bottom: 8px;
   left: 8px;
@@ -6872,10 +6873,14 @@ button.messenger-chat-header-model {
 }
 
 .workspace-editor-shell--modal {
-  top: calc(var(--desktop-window-chrome-height, 36px) + 8px);
+  top: var(--workspace-editor-shell-top);
   right: 8px;
   bottom: 8px;
   left: 8px;
+}
+
+body.desktop-shell-active .workspace-editor-shell {
+  --workspace-editor-shell-top: calc(var(--desktop-window-chrome-height, 36px) + 8px);
 }
 
 .workspace-editor-shell--with-sidebar {

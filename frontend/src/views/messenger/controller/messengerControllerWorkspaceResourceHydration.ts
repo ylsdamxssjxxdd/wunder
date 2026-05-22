@@ -189,7 +189,7 @@ import {
 } from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -786,7 +786,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       else {
           hydrateExternalMarkdownImages(container);
       }
-      if (isChatDebugEnabled()) {
+      if (isChatDebugVerboseEnabled()) {
           const durationMs = Number(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt).toFixed(1));
           chatDebugLog('messenger.hydration', 'workspace-scan', {
               activeSection: ctx.sessionHub.activeSection,
@@ -821,7 +821,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               }
               ctx.workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
                   ctx.workspaceResourceHydrationFrame = null;
-                  if (isChatDebugEnabled()) {
+                  if (isChatDebugVerboseEnabled()) {
                       chatDebugLog('messenger.hydration', 'workspace-run', {
                           reason,
                           activeSection: ctx.sessionHub.activeSection,

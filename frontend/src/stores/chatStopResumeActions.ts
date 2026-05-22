@@ -65,6 +65,7 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { buildMessageIdentityDebugList, buildMessageIdentityDebugSnapshot } from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
@@ -132,7 +133,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { buildWorkflowItem, dismissStaleInquiryPanels, normalizeInquiryPanelState, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent, writeSessionGoalState } from './chatPersist';
 import { WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeResumeStreamState, clearSlowClientResume, insertWatchUserMessage, markRuntimeResumeStreamActivity, markRuntimeResumeStreamStarted, resolveHiddenInternalUserEvent, resolveMaterializedMessageEventId, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, clearAssistantRetryState, resetAssistantWaitingOutputPhase, resolveTimestampMs } from './chatStats';
@@ -143,6 +144,45 @@ import { getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayloa
 import { createWorkflowProcessor } from './chatWorkflowProcessor';
 
 const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
+
+const normalizeRuntimeRequestId = (value: unknown): string =>
+  String(value || '').trim();
+
+const collectRuntimeCancelRequestIds = (runtime: Record<string, any> | null | undefined): string[] => {
+  const ids = [
+    normalizeRuntimeRequestId(runtime?.sendRequestId),
+    normalizeRuntimeRequestId(runtime?.resumeRequestId),
+    normalizeRuntimeRequestId(runtime?.watchRequestId)
+  ].filter(Boolean);
+  return Array.from(new Set(ids));
+};
+
+const sendWsCancelForSessionStop = (
+  sessionId: string,
+  runtime: Record<string, any> | null | undefined
+): string[] => {
+  const requestIds = collectRuntimeCancelRequestIds(runtime);
+  requestIds.forEach((requestId) => {
+    chatWsClient.sendCancel(requestId, sessionId, 'user_stop');
+  });
+  void chatWsClient
+    .notify({
+      type: 'cancel',
+      session_id: sessionId,
+      payload: {
+        session_id: sessionId,
+        cancel_source: 'user_stop'
+      }
+    })
+    .catch((error) => {
+      chatDebugLog('messenger.send', 'stop-session-ws-cancel-failed', {
+        sessionId,
+        requestIds,
+        message: String((error as { message?: unknown })?.message || '')
+      });
+    });
+  return requestIds;
+};
 
 export const chatStopResumeActions = {
     async stopSessionActivity(
@@ -160,6 +200,7 @@ export const chatStopResumeActions = {
         runtime.sendAbortReason = 'user_stop';
         runtime.resumeAbortReason = 'user_stop';
       }
+      const wsCancelRequestIds = sendWsCancelForSessionStop(targetSessionId, runtime);
       abortSendStream(targetSessionId);
       abortResumeStream(targetSessionId);
       abortCompactRequest(targetSessionId);
@@ -199,6 +240,17 @@ export const chatStopResumeActions = {
         });
         cancelled = true;
       }
+      chatDebugLog('messenger.send', 'stop-session-activity', {
+        sessionId: targetSessionId,
+        terminateSubagents: options.terminateSubagents !== false,
+        runtime: runtime ? buildRuntimeDebugSnapshot(runtime) : null,
+        wsCancelRequestIds,
+        pendingAssistant: buildMessageIdentityDebugSnapshot(
+          pendingAssistant,
+          Array.isArray(targetMessages) ? targetMessages.indexOf(pendingAssistant) : -1
+        ),
+        messages: buildMessageIdentityDebugList(targetMessages)
+      });
       this.dismissPendingInquiryPanel();
       if (Array.isArray(targetMessages)) {
         settleTerminalAssistantArtifactsBase(targetMessages, { failed: true });
@@ -207,6 +259,17 @@ export const chatStopResumeActions = {
         notifySessionSnapshot(this, targetSessionId, targetMessages, true);
       }
       const locallyStopped = settleUserStoppedSessionRuntime(this, targetSessionId);
+      if (Array.isArray(targetMessages)) {
+        // The first snapshot above is taken while the runtime is still busy.
+        // Publish the stopped snapshot again after projection settlement.
+        notifySessionSnapshot(this, targetSessionId, targetMessages, true);
+      }
+      chatDebugLog('messenger.send', 'stop-session-local-settled', {
+        sessionId: targetSessionId,
+        locallyStopped,
+        runtime: runtime ? buildRuntimeDebugSnapshot(runtime) : null,
+        messages: buildMessageIdentityDebugList(targetMessages)
+      });
       try {
         const { data } = await cancelMessageStream(targetSessionId);
         cancelled = Boolean(data?.data?.cancelled) || cancelled;
@@ -215,6 +278,10 @@ export const chatStopResumeActions = {
           cancelled = true;
         }
       } catch (error) {
+        chatDebugLog('messenger.send', 'stop-session-cancel-request-failed', {
+          sessionId: targetSessionId,
+          message: String((error as { message?: unknown })?.message || '')
+        });
         // Ignore cancel API failures; local stop behavior still applies.
       }
       let terminatedSubagentCount = 0;

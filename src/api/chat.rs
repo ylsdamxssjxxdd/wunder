@@ -6,13 +6,11 @@ use crate::orchestrator::OrchestratorError;
 use crate::orchestrator_constants::STREAM_EVENT_FETCH_LIMIT;
 use crate::schemas::{AttachmentPayload, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
-use crate::services::chat_cancel_marker::{
-    is_tool_call_meta, is_tool_payload_text, is_tool_payload_value, normalize_message_content,
-    persist_user_cancelled_turn_marker,
-};
+use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::chat_media::{
     process_chat_media_upload, reprocess_chat_media_source, ChatMediaUpload,
 };
+use crate::services::chat_transcript::build_chat_transcript;
 use crate::services::llm::{
     build_llm_client, is_llm_model, resolve_tool_call_mode, ChatMessage, ToolCallMode,
 };
@@ -616,13 +614,20 @@ async fn get_session(
         &session_id,
         history,
     );
-    let filtered_history = filter_history_messages(history, session_running);
-    let mut messages = filtered_history
+    let mut transcript = build_chat_transcript(&session_id, history, &message_feedback);
+    project_queued_session_messages(&mut transcript, &active_queue_tasks, pure_queue_phase);
+    apply_session_running_state(&mut transcript, session_running);
+    let transcript = transcript
         .into_iter()
-        .filter_map(|item| map_history_message(item, &message_feedback))
+        .enumerate()
+        .map(|(index, item)| {
+            if let Value::Object(mut map) = item {
+                map.insert("turn_index".to_string(), json!((index + 1) as i64));
+                return Value::Object(map);
+            }
+            item
+        })
         .collect::<Vec<_>>();
-    project_queued_session_messages(&mut messages, &active_queue_tasks, pure_queue_phase);
-    apply_session_running_state(&mut messages, session_running);
 
     let config = state.config_store.get().await;
     let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
@@ -646,7 +651,7 @@ async fn get_session(
             "agent_name": agent_name,
             "tool_overrides": record.tool_overrides,
             "history_incomplete": history_incomplete,
-            "messages": messages,
+            "transcript": transcript,
             "model_name": runtime.as_ref().and_then(|runtime| runtime.display_name.clone()),
             "model_key": runtime.as_ref().and_then(|runtime| runtime.config_key.clone()),
             "context_max_tokens": runtime.as_ref().and_then(|runtime| runtime.max_context),
@@ -973,17 +978,23 @@ async fn get_session_history(
         &session_id,
         history,
     );
-    let filtered_history = filter_history_messages(history, false);
     let monitor_record = state.monitor.get_record(&session_id);
     let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
-    let messages = filtered_history
+    let transcript = build_chat_transcript(&session_id, history, &message_feedback)
         .into_iter()
-        .filter_map(|item| map_history_message(item, &message_feedback))
+        .enumerate()
+        .map(|(index, item)| {
+            if let Value::Object(mut map) = item {
+                map.insert("turn_index".to_string(), json!((index + 1) as i64));
+                return Value::Object(map);
+            }
+            item
+        })
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "data": {
             "id": session_id,
-            "messages": messages,
+            "transcript": transcript,
             "history_has_more": has_more,
             "history_before_id": before_id
         }
@@ -1869,6 +1880,10 @@ fn build_projected_queue_user_message(task: &crate::storage::AgentTaskRecord) ->
         "role": "user",
         "content": content,
         "created_at": format_ts(task.created_at),
+        "message_id": format!("queue:{}:user", task.task_id),
+        "user_turn_id": format!("queue-turn:{}:user", task.task_id),
+        "turn_index": i64::MAX - 1,
+        "status": "queued",
     });
     if let Some(attachments) =
         normalize_queue_task_attachments(task.request_payload.get("attachments"))
@@ -1886,6 +1901,11 @@ fn build_projected_queue_assistant_message(task: &crate::storage::AgentTaskRecor
         "role": "assistant",
         "content": "",
         "created_at": format_ts(task.created_at),
+        "message_id": format!("queue:{}:assistant", task.task_id),
+        "user_turn_id": format!("queue-turn:{}:user", task.task_id),
+        "model_turn_id": format!("queue-turn:{}:model", task.task_id),
+        "turn_index": i64::MAX,
+        "status": "streaming",
         "stream_incomplete": true,
     });
     if !workflow_events.is_empty() {
@@ -1980,10 +2000,21 @@ fn apply_session_running_state(messages: &mut Vec<Value>, session_running: bool)
         .and_then(|item| item.get("role").and_then(Value::as_str))
         .unwrap_or("");
     if last_role == "user" || messages.is_empty() {
+        let user_turn_id = messages
+            .last()
+            .and_then(|item| item.get("user_turn_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "runtime-turn:orphan".to_string());
         messages.push(json!({
             "role": "assistant",
             "content": "",
             "created_at": format_ts(now_ts()),
+            "message_id": format!("runtime:{user_turn_id}:assistant"),
+            "user_turn_id": user_turn_id,
+            "model_turn_id": format!("runtime:{user_turn_id}:model"),
+            "turn_index": i64::MAX,
+            "status": "streaming",
             "stream_incomplete": true,
         }));
     } else if let Some(Value::Object(map)) = messages.iter_mut().rev().find(|item| {
@@ -2551,105 +2582,6 @@ async fn parse_chat_media_process_multipart(
     Ok(fields)
 }
 
-fn map_history_message(item: Value, message_feedback: &HashMap<i64, Value>) -> Option<Value> {
-    let role = item.get("role").and_then(Value::as_str)?;
-    if role == "system" || role == "tool" {
-        return None;
-    }
-    let raw_content = item.get("content").cloned().unwrap_or(Value::Null);
-    let content = normalize_message_content(&raw_content);
-    let reasoning = if role == "assistant" {
-        item.get("reasoning_content")
-            .or_else(|| item.get("reasoning"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-    } else {
-        ""
-    };
-    if role == "assistant" {
-        let content_trimmed = content.trim();
-        let keep_tool_message = item
-            .get("_keep_tool_message")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        if !keep_tool_message
-            && (is_tool_call_meta(&item)
-                || is_tool_payload_value(&raw_content)
-                || is_tool_payload_text(content_trimmed)
-                || (content_trimmed.is_empty() && is_tool_payload_text(reasoning)))
-        {
-            return None;
-        }
-    }
-    let created_at_raw = item.get("timestamp").and_then(Value::as_str).unwrap_or("");
-    let created_at = format_ts_text(created_at_raw);
-    let mut message = json!({
-        "role": role,
-        "content": content,
-        "created_at": created_at,
-    });
-    if is_hidden_internal_history_message(&item) {
-        if let Value::Object(ref mut map) = message {
-            map.insert("hiddenInternal".to_string(), Value::Bool(true));
-        }
-    }
-    if let Some(panel) = extract_question_panel(&item) {
-        if let Value::Object(ref mut map) = message {
-            map.insert("questionPanel".to_string(), panel);
-        }
-    }
-    if role == "assistant" && !reasoning.is_empty() {
-        if let Value::Object(ref mut map) = message {
-            map.insert("reasoning".to_string(), json!(reasoning));
-        }
-    }
-    if role == "assistant" {
-        if let Some(stop_reason) = item
-            .get("stop_reason")
-            .or_else(|| item.get("stopReason"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            if let Value::Object(ref mut map) = message {
-                map.insert("stop_reason".to_string(), json!(stop_reason));
-                if matches!(
-                    stop_reason,
-                    "user_stop" | "cancelled" | "canceled" | "aborted"
-                ) {
-                    map.insert("status".to_string(), json!("cancelled"));
-                    map.insert("cancelled".to_string(), Value::Bool(true));
-                }
-            }
-        }
-    }
-    if let Some(attachments) = item.get("attachments") {
-        let should_include = match attachments {
-            Value::Array(items) => !items.is_empty(),
-            Value::Null => false,
-            _ => true,
-        };
-        if should_include {
-            if let Value::Object(ref mut map) = message {
-                map.insert("attachments".to_string(), attachments.clone());
-            }
-        }
-    }
-    if let Some(history_id) = item.get("_history_id").and_then(Value::as_i64) {
-        if let Value::Object(ref mut map) = message {
-            map.insert("history_id".to_string(), json!(history_id));
-            map.insert("message_id".to_string(), json!(format!("history:{history_id}")));
-            if role == "assistant" {
-                if let Some(feedback) = message_feedback.get(&history_id) {
-                    map.insert("feedback".to_string(), feedback.clone());
-                }
-            }
-        }
-    }
-    Some(message)
-}
-
 fn extract_monitor_message_feedback_map(record: Option<&Value>) -> HashMap<i64, Value> {
     let mut feedback_map = HashMap::new();
     let Some(record) = record else {
@@ -2699,52 +2631,6 @@ fn normalize_monitor_message_feedback(raw: &Value) -> Option<Value> {
     Some(feedback)
 }
 
-fn filter_history_messages(mut history: Vec<Value>, preserve_last_assistant: bool) -> Vec<Value> {
-    let mut drop_assistant = vec![false; history.len()];
-    let mut last_assistant_idx: Option<usize> = None;
-    for (index, item) in history.iter().enumerate() {
-        let role = item.get("role").and_then(Value::as_str).unwrap_or("");
-        match role {
-            "assistant" => {
-                last_assistant_idx = Some(index);
-            }
-            "tool" => {
-                if let Some(target) = last_assistant_idx {
-                    drop_assistant[target] = true;
-                }
-            }
-            "user" => {
-                last_assistant_idx = None;
-            }
-            _ => {}
-        }
-    }
-    let preserved_idx = if preserve_last_assistant {
-        history
-            .iter()
-            .rposition(|item| item.get("role").and_then(Value::as_str) == Some("assistant"))
-    } else {
-        None
-    };
-    if let Some(index) = preserved_idx {
-        if let Some(Value::Object(ref mut map)) = history.get_mut(index) {
-            map.insert("_keep_tool_message".to_string(), Value::Bool(true));
-        }
-    }
-    history
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| {
-            if drop_assistant[*index] {
-                Some(*index) == preserved_idx
-            } else {
-                true
-            }
-        })
-        .map(|(_, item)| item)
-        .collect()
-}
-
 fn filter_orchestration_suppressed_history(
     state: &AppState,
     user_id: &str,
@@ -2792,32 +2678,6 @@ fn filter_orchestration_suppressed_history(
             })
         })
         .collect()
-}
-
-fn extract_question_panel(item: &Value) -> Option<Value> {
-    let meta = item.get("meta").and_then(Value::as_object)?;
-    let meta_type = meta.get("type").and_then(Value::as_str).unwrap_or("");
-    if meta_type == "question_panel" {
-        if let Some(panel) = meta.get("panel") {
-            return Some(panel.clone());
-        }
-    }
-    meta.get("question_panel")
-        .or_else(|| meta.get("questionPanel"))
-        .cloned()
-}
-
-fn is_hidden_internal_history_message(item: &Value) -> bool {
-    item.get("meta")
-        .and_then(Value::as_object)
-        .map(|meta| {
-            meta.get("type")
-                .and_then(Value::as_str)
-                .map(|value| value == subagents::HIDDEN_HISTORY_META_TYPE)
-                .unwrap_or(false)
-                || meta.get("hidden").and_then(Value::as_bool).unwrap_or(false)
-        })
-        .unwrap_or(false)
 }
 
 fn resolve_session_main_flag(

@@ -215,6 +215,41 @@ test('ws multiplexer removes kept queued request on explicit cancel', async () =
   }
 });
 
+test('ws multiplexer sends session stop cancel without a request id', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const notifyPromise = client.notify({
+      type: 'cancel',
+      session_id: 'session-stop',
+      payload: {
+        session_id: 'session-stop',
+        cancel_source: 'user_stop'
+      }
+    });
+
+    socket.open();
+    await notifyPromise;
+
+    assert.deepEqual(JSON.parse(socket.sent[0]), {
+      type: 'cancel',
+      session_id: 'session-stop',
+      payload: {
+        session_id: 'session-stop',
+        cancel_source: 'user_stop'
+      }
+    });
+  } finally {
+    restore();
+  }
+});
+
 test('ws multiplexer releases kept queued request after grace timeout', async () => {
   const restore = installWebSocketMock();
   try {
