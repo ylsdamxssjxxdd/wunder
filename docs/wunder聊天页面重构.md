@@ -5,6 +5,7 @@
 - 当前结论：聊天页主链路已切到 canonical runtime projection，刷新后历史顺序、停止后取消标记、同轮 assistant 合并和长输出节流已经形成一条可上线验证的闭环。
 - 默认行为：Messenger 气泡渲染优先读取 `chatRuntimeReducer` 的可见消息投影；旧 `messages` 数组仅作为未知空投影会话的兜底和显式回退路径。
 - 最近收口：失败事件与随后 `turn_terminal` 会合并到同一条 assistant 失败消息；错误正文保留但不会重复生成错误气泡。运行时工具名送入模型前统一清洗为 API 安全函数名，并保留映射回原始运行时名，避免外部渠道触发非法 function name 后重复渲染错误。
+- 外部渠道实时性：当前打开的聊天 session 即使处于空闲态，也保持轻量 `watch` 订阅；微信/渠道/后台入站写入同一会话的 `channel_message` 后应即时进入气泡列表，不再依赖刷新或下一次 hydrate 才出现。
 - 回退方式：线上如遇不可接受回归，可设置 URL 参数 `chat_runtime_render=legacy` / `chatRuntimeRender=off`，或 localStorage `wunder:chat-runtime-render=legacy/off/0/false`，快速退回旧渲染源；`shadow` 模式仍可用于只比较不切换。
 - 本次验证：已通过 `npm run test:chat-runtime-reducer --workspace wunder-frontend`；Rust 侧已通过 `cargo test --release -j 8 prompt::tests::model_function_name_uses_readable_runtime_name_for_mcp_tools --lib -- --nocapture`。全量 `cargo test --release -j 8 model_function_name` 当前被无关测试中的 `UserAgentRecord.visible_unit_ids` 初始化缺字段阻断。
 - 仍需上线观察：真实长输出、工具调用、审批、子智能体、多会话快速切换、微信/外部渠道错误回传和桌面弱机器场景需要灰度观察；一旦出现 projection/legacy drift，优先打开 shadow/debug 定位，再决定是否临时切 `legacy`。

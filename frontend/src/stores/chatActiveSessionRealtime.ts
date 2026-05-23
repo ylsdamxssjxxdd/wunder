@@ -16,6 +16,7 @@ type ActiveSessionRealtimeRecoveryInput = {
   hasWatchController?: unknown;
   hasSendController?: unknown;
   hasResumeController?: unknown;
+  keepActiveSessionWarm?: unknown;
   loading?: unknown;
   runtimeBusy?: unknown;
   hasPendingAssistant?: unknown;
@@ -60,6 +61,10 @@ export const resolveActiveSessionRealtimeRecoveryPlan = (
 
   if (normalizeFlag(input.forceHydrate)) {
     return 'hydrate_then_watch';
+  }
+
+  if (normalizeFlag(input.keepActiveSessionWarm)) {
+    return 'watch';
   }
 
   const hasPendingAssistant = normalizeFlag(input.hasPendingAssistant);
@@ -109,6 +114,7 @@ export const shouldStartWatcherAfterSessionHydration = (input: {
   hasWatchController?: unknown;
   hasSendController?: unknown;
   hasResumeController?: unknown;
+  keepActiveSessionWarm?: unknown;
 }): boolean => {
   if (
     normalizeFlag(input.hasWatchController) ||
@@ -116,6 +122,9 @@ export const shouldStartWatcherAfterSessionHydration = (input: {
     normalizeFlag(input.hasResumeController)
   ) {
     return false;
+  }
+  if (normalizeFlag(input.keepActiveSessionWarm)) {
+    return true;
   }
   if (normalizeFlag(input.remoteRunning)) {
     return true;

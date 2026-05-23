@@ -40,6 +40,7 @@ export const chatRealtimeRecoveryActions = {
     reason?: string;
     hydrateIfCold?: boolean;
     forceHydrate?: boolean;
+    keepActiveSessionWarm?: boolean;
   } = {}) {
     const recoveryStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const targetSessionId = resolveSessionKey(options.sessionId || this.activeSessionId);
@@ -72,6 +73,7 @@ export const chatRealtimeRecoveryActions = {
       runtimeBusy: isThreadRuntimeBusy(runtimeStatus),
       hasPendingAssistant: Boolean(findPendingAssistantMessage(messages)),
       hasRunningAssistant: hasRunningAssistantMessage(messages),
+      keepActiveSessionWarm: options.keepActiveSessionWarm === true,
       hydrateIfCold: options.hydrateIfCold !== false,
       forceHydrate: options.forceHydrate === true,
       hasWarmDetail,
@@ -189,6 +191,7 @@ export const chatRealtimeRecoveryActions = {
         runtimeBusy: isThreadRuntimeBusy(hydratedRuntimeStatus),
         hasPendingAssistant: Boolean(findPendingAssistantMessage(hydratedMessages)),
         hasRunningAssistant: hasRunningAssistantMessage(hydratedMessages),
+        keepActiveSessionWarm: options.keepActiveSessionWarm === true,
         hydrateIfCold: false,
         forceHydrate: false,
         hasWarmDetail: isSessionDetailWarm(targetSessionId),

@@ -13,6 +13,7 @@ type MessengerRealtimeRecoveryContext = {
       reason?: string;
       hydrateIfCold?: boolean;
       forceHydrate?: boolean;
+      keepActiveSessionWarm?: boolean;
     }) => Promise<unknown>;
   };
   isAgentConversationActive?: {
@@ -50,7 +51,8 @@ export const installActiveChatRealtimeRecovery = (
     void ensureRealtime.call(ctx.chatStore, {
       reason,
       hydrateIfCold: true,
-      forceHydrate
+      forceHydrate,
+      keepActiveSessionWarm: true
     }).catch((error: unknown) => {
       chatDebugLog('messenger.conversation', 'active-realtime-recovery-failed', {
         reason,

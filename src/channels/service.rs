@@ -777,8 +777,8 @@ impl ChannelHub {
             }
         }
         if resolved_agent_id.is_none() {
-            warn!(
-                "channel agent unresolved: channel={}, account_id={}, peer_kind={}, peer_id={}, sender_id={}",
+            debug!(
+                "channel agent fallback: channel={}, account_id={}, peer_kind={}, peer_id={}, sender_id={}, session_id={}, user_id={}",
                 message.channel,
                 message.account_id,
                 message.peer.kind,
@@ -787,7 +787,9 @@ impl ChannelHub {
                     .sender
                     .as_ref()
                     .map(|sender| sender.id.as_str())
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
+                session_info.session_id,
+                session_info.user_id
             );
         }
         let agent_display_name =

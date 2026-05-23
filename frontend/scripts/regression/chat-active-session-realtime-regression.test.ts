@@ -79,6 +79,26 @@ test('active session realtime recovery skips an idle warm cached session', () =>
   );
 });
 
+test('active session realtime recovery keeps the active session warm when requested', () => {
+  assert.equal(
+    resolveActiveSessionRealtimeRecoveryPlan({
+      targetSessionId: 'session_demo',
+      activeSessionId: 'session_demo',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false,
+      loading: false,
+      hasPendingAssistant: false,
+      hasRunningAssistant: false,
+      hydrateIfCold: true,
+      hasWarmDetail: true,
+      hasCachedMessages: true,
+      keepActiveSessionWarm: true
+    }),
+    'watch'
+  );
+});
+
 test('active session realtime recovery skips an idle cold cached session', () => {
   assert.equal(
     resolveActiveSessionRealtimeRecoveryPlan({
@@ -180,6 +200,20 @@ test('session hydration restarts a watcher for a running thread', () => {
       hasWatchController: false,
       hasSendController: false,
       hasResumeController: false
+    }),
+    true
+  );
+});
+
+test('session hydration restarts a watcher when the active session should stay warm', () => {
+  assert.equal(
+    shouldStartWatcherAfterSessionHydration({
+      remoteRunning: false,
+      runtimeStatus: 'idle',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false,
+      keepActiveSessionWarm: true
     }),
     true
   );

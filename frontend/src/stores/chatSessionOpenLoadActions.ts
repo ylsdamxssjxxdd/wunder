@@ -927,7 +927,8 @@ export const chatSessionOpenLoadActions = {
           runtimeStatus: runtime?.threadStatus,
           hasWatchController: Boolean(runtime?.watchController),
           hasSendController: Boolean(runtime?.sendController),
-          hasResumeController: Boolean(runtime?.resumeController)
+          hasResumeController: Boolean(runtime?.resumeController),
+          keepActiveSessionWarm: activeSessionKey === targetSessionId
         });
       if (shouldStartWatcher) {
         startSessionWatcher(this, targetSessionId);
