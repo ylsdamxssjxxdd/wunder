@@ -326,7 +326,7 @@ const applyNormalizedRuntimeEvent = (
       applyTurnTerminal(session, event, 'completed');
       break;
     case 'turn_failed':
-      applyTurnTerminal(session, event, 'failed');
+      applyTurnFailed(session, event);
       break;
     case 'turn_cancelled':
       applyTurnTerminal(session, event, 'cancelled');
@@ -758,6 +758,38 @@ const applyTurnTerminal = (
     session.runtimeStatus = terminal === 'completed' ? 'completed' : terminal;
     session.busyReason = null;
   }
+};
+
+const applyTurnFailed = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): void => {
+  const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
+  const hasAssistantMessage = modelTurn.messageIds.some((messageId) =>
+    session.messageById[messageId]?.role === 'assistant'
+  );
+  if (event.content || event.reasoning) {
+    const message = ensureAssistantMessageForModelTurn(session, event, 'failed');
+    if (event.content && !message.content) {
+      message.content = event.content;
+    }
+    if (event.reasoning && !message.reasoning) {
+      message.reasoning = event.reasoning;
+    }
+    applyTurnTerminal(session, event, 'failed');
+    return;
+  }
+  if (hasAssistantMessage) {
+    applyTurnTerminal(session, event, 'failed');
+    return;
+  }
+  modelTurn.status = 'failed';
+  const userTurn = session.userTurnById[modelTurn.userTurnId];
+  if (userTurn) {
+    userTurn.status = 'failed';
+  }
+  session.runtimeStatus = 'failed';
+  session.busyReason = null;
 };
 
 const applySessionIdle = (

@@ -442,17 +442,12 @@ fn build_model_function_name(
     used: &mut HashSet<String>,
 ) -> String {
     let runtime_name = runtime_name.trim();
-    let use_runtime_name = should_use_runtime_name_for_model(runtime_name);
-    let preferred = if use_runtime_name {
+    let preferred = if should_use_runtime_name_for_model(runtime_name) {
         runtime_name.to_string()
     } else {
         select_preferred_tool_name(spec_name, canonical_aliases)
     };
-    let sanitized = if use_runtime_name {
-        sanitize_runtime_function_name(&preferred)
-    } else {
-        sanitize_function_name(&preferred)
-    };
+    let sanitized = sanitize_function_name(&preferred);
     let original = if runtime_name.is_empty() {
         spec_name
     } else {
@@ -476,26 +471,13 @@ fn is_valid_function_name(name: &str) -> bool {
 }
 
 fn sanitize_function_name(name: &str) -> String {
-    sanitize_function_name_inner(name, false)
+    sanitize_function_name_inner(name)
 }
 
-fn sanitize_runtime_function_name(name: &str) -> String {
-    sanitize_function_name_inner(name, true)
-}
-
-fn sanitize_function_name_inner(name: &str, preserve_at_separator: bool) -> String {
+fn sanitize_function_name_inner(name: &str) -> String {
     let mut output = String::new();
     let mut last_underscore = false;
     for ch in name.chars() {
-        if preserve_at_separator && ch == '@' {
-            if output.is_empty() || output.ends_with('@') {
-                last_underscore = false;
-                continue;
-            }
-            output.push('@');
-            last_underscore = false;
-            continue;
-        }
         let mapped = if ch.is_ascii_alphanumeric() {
             ch.to_ascii_lowercase()
         } else if ch == '_' || ch == '-' {
@@ -666,7 +648,7 @@ mod tests {
             &mut used,
         );
 
-        assert_eq!(function_name, "extra_mcp@db_query_sample_table");
+        assert_eq!(function_name, "extra_mcp_db_query_sample_table");
         assert!(!function_name.starts_with("tool_"));
     }
 
@@ -696,7 +678,13 @@ mod tests {
             build_model_function_name("Sample Query", &runtime_name, &HashMap::new(), &mut used);
         name_map.insert(function_name.clone(), runtime_name);
 
-        assert_eq!(function_name, "extra_mcp@db_query_sample_table");
+        assert_eq!(function_name, "extra_mcp_db_query_sample_table");
+        assert_eq!(
+            name_map
+                .get("extra_mcp_db_query_sample_table")
+                .map(String::as_str),
+            Some("extra_mcp@db_query_sample_table")
+        );
         assert_eq!(
             name_map
                 .get("extra_mcp@db_query_sample_table")
@@ -731,9 +719,9 @@ mod tests {
             build_model_function_name("tool_alpha", &runtime_name, &HashMap::new(), &mut used);
         name_map.insert(function_name.clone(), runtime_name);
 
-        assert_eq!(function_name, "server-alpha@tool_alpha");
+        assert_eq!(function_name, "server-alpha_tool_alpha");
         assert_eq!(
-            name_map.get("server-alpha@tool_alpha").map(String::as_str),
+            name_map.get("server-alpha_tool_alpha").map(String::as_str),
             Some("server-alpha@tool_alpha")
         );
     }

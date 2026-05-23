@@ -1933,6 +1933,49 @@ test('canonical snapshot bridge replays raw stream events with event_seq', () =>
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
 });
 
+test('canonical error followed by turn terminal keeps one failed assistant bubble', () => {
+  const projection = createChatRuntimeProjection();
+  const failure = 'LLM stream request failed: invalid tool name';
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'error',
+    eventId: 1,
+    requestId: 'req-failed',
+    payload: {
+      data: {
+        user_round: 3,
+        model_round: 1,
+        message: failure
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'turn_terminal',
+    eventId: 2,
+    requestId: 'req-failed',
+    payload: {
+      data: {
+        user_round: 3,
+        model_round: 1,
+        status: 'failed',
+        error: {
+          message: failure
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].role, 'assistant');
+  assert.equal(visible[0].status, 'failed');
+  assert.equal(visible[0].content, failure);
+  assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'failed');
+});
+
 test('canonical snapshot bridge splits persisted delta segments by event id', () => {
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, baseEvent({
