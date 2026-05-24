@@ -1669,15 +1669,6 @@ const getEntryIcon = (entry) => {
   const icon =
     workspaceThemeIconResolver.value?.resolveFileIconPath(String(entry?.name || entry?.path || ''), ext) ||
     resolveWorkspaceFallbackFileIcon(ext);
-  if (ext === 'md' || ext === 'markdown') {
-    console.info('[desktop-debug][workspace-panel-icon]', {
-      path: entry?.path || '',
-      name: entry?.name || '',
-      ext,
-      icon,
-      hasThemeResolver: Boolean(workspaceThemeIconResolver.value)
-    });
-  }
   if (IMAGE_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.image') };
   }

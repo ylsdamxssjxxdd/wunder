@@ -985,6 +985,15 @@
             </div>
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
+          <div
+            v-else-if="resolvedMessageConversationKind === ''"
+            class="messenger-chat-empty-state"
+          >
+            <div class="messenger-chat-empty-icon">
+              <i class="fa-regular fa-comments" aria-hidden="true"></i>
+            </div>
+            <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
+          </div>
 
           <div v-show="resolvedMessageConversationKind === 'agent'">
             <div

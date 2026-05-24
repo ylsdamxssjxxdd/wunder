@@ -169,10 +169,15 @@ impl AppStateInitOptions {
         }
     }
 
+    pub const fn with_start_thread_runtime(mut self, value: bool) -> Self {
+        self.start_thread_runtime = Some(value);
+        self
+    }
+
     pub fn resolve_capabilities(self, config: &Config) -> AppRuntimeCapabilities {
         AppRuntimeCapabilities {
             embedded_mode: self.runtime_profile.is_embedded(),
-            thread_runtime_active: self.resolved_start_thread_runtime(),
+            thread_runtime_active: self.runtime_profile.default_start_thread_runtime(),
             mission_runtime_active: self.resolved_start_mission_runtime(),
             gateway_maintenance_active: self.resolved_spawn_gateway_maintenance(),
             channels_enabled: config.channels.enabled,

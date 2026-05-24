@@ -84,6 +84,7 @@ import {
 } from '@/stores/companions';
 import { parseAgentAvatarIconConfig, type AgentAvatarIconConfig } from '@/utils/agentAvatar';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
+import { openCompanionAgent } from '@/views/messenger/companionOpenBridge';
 
 type FloatingEntry = {
   key: string;
@@ -160,9 +161,10 @@ const menuPosition = ref({ x: 8, y: 8 });
 let nowTimer: number | null = null;
 let clickSuppressUntil = 0;
 const desktopOverlayActiveKeys = new Set<string>();
-const nativeDesktopCompanionAvailable = ref(true);
 let desktopCommandUnsubscribe: (() => void) | null = null;
 let desktopStateUnsubscribe: (() => void) | null = null;
+let openingCompanionChatKey = '';
+let openingCompanionChatAt = 0;
 const menuState = ref<{ x: number; y: number; entry: FloatingEntry } | null>(null);
 let pointerState:
   | {
@@ -350,9 +352,7 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
 });
 
 const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
-const renderedEntries = computed(() =>
-  effectiveDesktopMode.value && nativeDesktopCompanionAvailable.value ? [] : visibleEntries.value
-);
+const renderedEntries = computed(() => (effectiveDesktopMode.value ? [] : visibleEntries.value));
 
 const menuStyle = computed(() => {
   if (!menuState.value) {
@@ -510,27 +510,16 @@ async function syncDesktopOverlay(): Promise<void> {
     return;
   }
   const bridge = getDesktopBridge();
-  if (!effectiveDesktopMode.value) {
-    nativeDesktopCompanionAvailable.value = true;
+  if (!effectiveDesktopMode.value || !bridge) {
     if (typeof bridge?.hideCompanion === 'function') {
       await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     }
     desktopOverlayActiveKeys.clear();
     return;
   }
-  if (!bridge) {
-    nativeDesktopCompanionAvailable.value = false;
-    desktopOverlayActiveKeys.clear();
-    return;
-  }
-  if (!nativeDesktopCompanionAvailable.value) {
-    desktopOverlayActiveKeys.clear();
-    return;
-  }
   const showHandler = typeof bridge.showCompanion === 'function' ? bridge.showCompanion : null;
   const updateHandler = typeof bridge.updateCompanion === 'function' ? bridge.updateCompanion : showHandler;
   if (!showHandler && !updateHandler) {
-    nativeDesktopCompanionAvailable.value = false;
     desktopOverlayActiveKeys.clear();
     return;
   }
@@ -539,12 +528,10 @@ async function syncDesktopOverlay(): Promise<void> {
   if (typeof bridge.hideCompanion === 'function') {
     await Promise.all(staleKeys.map((key) => Promise.resolve(bridge.hideCompanion?.({
       key,
-      persistEnabled: false,
-      persistState: true
+      persistEnabled: false
     }))));
   }
   staleKeys.forEach((key) => desktopOverlayActiveKeys.delete(key));
-  let nativeUnavailable = false;
   await Promise.all(visibleEntries.value.map(async (entry, index) => {
     const isActive = desktopOverlayActiveKeys.has(entry.key);
     const handler = isActive ? updateHandler : (showHandler || updateHandler);
@@ -556,10 +543,8 @@ async function syncDesktopOverlay(): Promise<void> {
       key: entry.key,
       id: entry.companion.id,
       selectedId: entry.companion.id,
-      scope: entry.companion.scope || entry.config.scope || 'private',
       agentId: entry.agentId,
       displayName: entry.name,
-      companionDisplayName: entry.companion.displayName,
       description: entry.companion.description,
       spritesheetDataUrl: entry.companion.spritesheetDataUrl,
       state: resolveDesktopBaseSpriteState(entry),
@@ -578,22 +563,12 @@ async function syncDesktopOverlay(): Promise<void> {
       if (visible) {
         desktopOverlayActiveKeys.add(entry.key);
       } else {
-        nativeUnavailable = true;
         desktopOverlayActiveKeys.delete(entry.key);
       }
     } catch {
-      nativeUnavailable = true;
       desktopOverlayActiveKeys.delete(entry.key);
     }
   }));
-  if (nativeUnavailable) {
-    nativeDesktopCompanionAvailable.value = false;
-    if (typeof bridge.hideCompanion === 'function') {
-      await Promise.resolve(bridge.hideCompanion({ persistEnabled: false })).catch(() => false);
-    }
-    desktopOverlayActiveKeys.clear();
-    return;
-  }
   if (!visibleEntries.value.length && typeof bridge.hideCompanion === 'function') {
     await Promise.resolve(bridge.hideCompanion({ persistEnabled: false }));
     desktopOverlayActiveKeys.clear();
@@ -756,18 +731,43 @@ async function showCompanion(entry: FloatingEntry): Promise<void> {
 
 async function openCompanionChat(entry: FloatingEntry): Promise<void> {
   closeEntryMenu();
-  const normalizedAgentId = String(entry.agentId || '').trim();
-  const isDefaultAgent = !normalizedAgentId || normalizedAgentId === '__default__';
-  if (typeof props.openAgentById === 'function') {
-    await Promise.resolve(props.openAgentById(isDefaultAgent ? '__default__' : normalizedAgentId));
+  const openingKey = String(entry.key || entry.agentId || '').trim();
+  const nowMs = Date.now();
+  if (openingKey && openingCompanionChatKey === openingKey && nowMs - openingCompanionChatAt < 1200) {
     return;
   }
-  void router.replace({
-    path: `${routeBasePrefix.value}/chat`,
-    query: isDefaultAgent
-      ? { section: 'messages', entry: 'default' }
-      : { section: 'messages', agent_id: normalizedAgentId }
-  });
+  openingCompanionChatKey = openingKey;
+  openingCompanionChatAt = nowMs;
+  const normalizedAgentId = String(entry.agentId || '').trim();
+  const isDefaultAgent = !normalizedAgentId || normalizedAgentId === '__default__';
+  try {
+    await new Promise<void>((resolve) => {
+      if (typeof window === 'undefined') {
+        resolve();
+        return;
+      }
+      window.requestAnimationFrame(() => resolve());
+    });
+    if (!effectiveDesktopMode.value && typeof props.openAgentById === 'function') {
+      await Promise.resolve(props.openAgentById(isDefaultAgent ? '__default__' : normalizedAgentId)).catch(() => undefined);
+      return;
+    }
+    const bridged = await openCompanionAgent(isDefaultAgent ? '__default__' : normalizedAgentId).catch(() => false);
+    if (bridged) {
+      return;
+    }
+    await router.replace({
+      path: `${routeBasePrefix.value}/chat`,
+      query: isDefaultAgent
+        ? { section: 'messages', entry: 'default' }
+        : { section: 'messages', agent_id: normalizedAgentId }
+    }).catch(() => undefined);
+  } finally {
+    if (openingCompanionChatKey === openingKey) {
+      openingCompanionChatKey = '';
+      openingCompanionChatAt = 0;
+    }
+  }
 }
 
 function handlePointerDown(event: PointerEvent, entry: FloatingEntry): void {

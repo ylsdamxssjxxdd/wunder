@@ -114,16 +114,19 @@ WUNDER_BRIDGE_BIN=/path/to/wunder-desktop-bridge
 # 首次初始化工具链与缓存
 npm run setup:desktop:win7:gnu
 
-# Win7 默认正式出包入口（会强制重建 frontend/dist）
+# Win7 默认正式出包入口（会强制重建 frontend/dist，并同时构建 common 补充包）
 npm run build:desktop:win7:gnu
 
-# 已初始化后的快速重建入口（仍会强制重建 frontend/dist，只跳过工具链 bootstrap）
+# 已初始化后的快速重建入口（仍会强制重建 frontend/dist，只跳过工具链 bootstrap，并同时构建 common 补充包）
 npm run build:desktop:win7:gnu:fast
+
+# 只重打安装包，不生成补充包
+powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch ia32 -SkipBootstrap
 ```
 
 - GNU 方案的缓存、staging 与安装包统一隔离在 `temp_dir/win7-gnu-lab/`
 - Win7 版本默认优先使用 `build:desktop:win7:gnu`（即 `ia32`）这条链路出包
-- 默认会同时产出 `setup.exe + wunder补充包-win7-ia32-common.zip`
+- npm 默认脚本会同时产出 `setup.exe + wunder补充包-win7-ia32-common.zip`；如果只需要安装包，请直接运行 `build-win7-gnu.ps1` 且不要传 `-BuildSupplement`
 - Win7 安装包默认不再内置 Python、Git、ripgrep；若需要这三项运行时，请使用同目录产出的 `wunder补充包` zip 手工解压到安装目录
 - Win7 `common` 补充包默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖；如需切回官方源，可在脚本层传 `-SupplementPythonPackageIndexUrl https://pypi.org/simple`
 - 最终安装包路径：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder-desktop-win7-0.3.0-ia32-setup.exe`
@@ -165,10 +168,13 @@ Electron 启动时会：
 - `WUNDER_STARTUP_TIMING=0`：关闭默认启用的启动时序日志
 - `WUNDER_SIDECAR_RUNTIME=1`：标记 sidecar 运行态（通常由 sidecar AppRun 自动注入）
 - `WUNDER_SIDECAR_FORCE_DISABLE_GPU=0`：关闭 sidecar 默认禁用 GPU 的策略
+- `WUNDER_ENABLE_DESKTOP_EFFECT_WINDOWS=1`：强制启用透明桌面效果窗口，主要用于兼容性排查
+- `WUNDER_DISABLE_DESKTOP_EFFECT_WINDOWS=1`：禁用透明桌面效果窗口，形象回退到应用内渲染
 
 ### UI 行为
 - 默认移除菜单栏（避免出现 View / Edit 等菜单）。
 - 等待 `ready-to-show` 再显示窗口，减少首帧卡顿。
+- companion 桌面外置形象在现代 Windows 上保持原先展示路径；Windows 7 或显式禁用桌面效果窗口时，自动回退到应用内渲染，避免透明置顶窗口导致白屏或卡顿。
 - 关闭拼写检查与后台节流，提升前台响应。
 - Linux AppImage 首次运行会自动写入：
   - `~/.local/share/applications/wunder-desktop.desktop`（开始菜单）

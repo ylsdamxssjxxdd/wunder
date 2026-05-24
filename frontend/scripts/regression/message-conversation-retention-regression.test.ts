@@ -148,3 +148,43 @@ test('allows empty state only when no route, session, draft, or message context 
     false
   );
 });
+
+test('resolves agent conversation kind while agent conversation identity is still retained during route switches', () => {
+  assert.equal(
+    resolveMessageConversationKind({
+      foregroundLock: false,
+      activeConversationKind: 'agent',
+      activeConversationId: 'agent-session-1',
+      routeConversationId: '',
+      routeSessionId: '',
+      routeAgentId: '',
+      routeEntry: '',
+      activeSessionId: '',
+      draftAgentId: '',
+      messageCount: 0,
+      worldConversationId: '',
+      worldMessageCount: 0
+    }),
+    'agent'
+  );
+});
+
+test('keeps route-backed world conversations ahead of retained agent conversation identity', () => {
+  assert.equal(
+    resolveMessageConversationKind({
+      foregroundLock: false,
+      activeConversationKind: 'agent',
+      activeConversationId: 'agent-session-1',
+      routeConversationId: 'world-session-1',
+      routeSessionId: '',
+      routeAgentId: '',
+      routeEntry: '',
+      activeSessionId: '',
+      draftAgentId: '',
+      messageCount: 0,
+      worldConversationId: '',
+      worldMessageCount: 0
+    }),
+    'world'
+  );
+});

@@ -40,6 +40,7 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
+import { isAgentAlreadyOpen } from '@/views/messenger/agentOpenState';
 import {
   settleAgentSessionBusyAfterRefresh,
   type SessionBusyRecoveryStatus
@@ -411,6 +412,9 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerConversationOpenActions(ctx: MessengerControllerContext): void {
+  const openingAgentByIdTasks = new Map<string, Promise<void>>();
+  const openingAgentSessionTasks = new Map<string, Promise<void>>();
+
   ctx.handleSearchCreateAction = async (command?: string) => {
       if (ctx.sessionHub.activeSection === 'groups') {
           if (ctx.userWorldPermissionDenied.value) {
@@ -623,30 +627,57 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
 
   ctx.openAgentById = async (agentId: unknown) => {
       const normalized = ctx.normalizeAgentId(agentId);
-      ctx.clearAgentConversationDismissed(normalized);
-      ctx.selectedAgentId.value = normalized;
-      const goalLockedSessionId = ctx.resolveAgentGoalLockedSessionId(normalized);
-      if (goalLockedSessionId) {
-          await ctx.openAgentSession(goalLockedSessionId, normalized);
-          return;
+      const existingTask = openingAgentByIdTasks.get(normalized);
+      if (existingTask) {
+          return existingTask;
       }
-      const preferredSessionId = ctx.resolvePreferredAgentSessionId(normalized);
-      if (preferredSessionId) {
-          await ctx.openAgentSession(preferredSessionId, normalized);
-          return;
-      }
-      try {
-          const freshSessionId = await ctx.openOrReuseFreshAgentSession(normalized);
-          if (freshSessionId) {
-              await ctx.openAgentSession(freshSessionId, normalized);
+      const task = (async () => {
+          ctx.clearAgentConversationDismissed(normalized);
+          ctx.selectedAgentId.value = normalized;
+          if (isAgentAlreadyOpen(normalized, {
+            activeSessionId: ctx.chatStore.activeSessionId,
+            activeConversationKey: ctx.sessionHub.activeConversationKey,
+            draftAgentId: ctx.chatStore.draftAgentId,
+            sessions: ctx.chatStore.sessions
+          })) {
+              const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+              if (activeSessionId) {
+                  await ctx.openAgentSession(activeSessionId, normalized);
+              }
+              else {
+                  await ctx.openAgentDraftSessionWithScroll(normalized);
+              }
               return;
           }
-      }
-      catch (error) {
-          showApiError(error, ctx.t('common.requestFailed'));
-      }
-      // Keep navigation usable when the backend is temporarily unavailable.
-      await ctx.openAgentDraftSessionWithScroll(normalized);
+          const goalLockedSessionId = ctx.resolveAgentGoalLockedSessionId(normalized);
+          if (goalLockedSessionId) {
+              await ctx.openAgentSession(goalLockedSessionId, normalized);
+              return;
+          }
+          const preferredSessionId = ctx.resolvePreferredAgentSessionId(normalized);
+          if (preferredSessionId) {
+              await ctx.openAgentSession(preferredSessionId, normalized);
+              return;
+          }
+          try {
+              const freshSessionId = await ctx.openOrReuseFreshAgentSession(normalized);
+              if (freshSessionId) {
+                  await ctx.openAgentSession(freshSessionId, normalized);
+                  return;
+              }
+          }
+          catch (error) {
+              showApiError(error, ctx.t('common.requestFailed'));
+          }
+          // Keep navigation usable when the backend is temporarily unavailable.
+          await ctx.openAgentDraftSessionWithScroll(normalized);
+      })().finally(() => {
+          if (openingAgentByIdTasks.get(normalized) === task) {
+              openingAgentByIdTasks.delete(normalized);
+          }
+      });
+      openingAgentByIdTasks.set(normalized, task);
+      return task;
   };
 
   ctx.openAgentDraftSession = (agentId: unknown) => {
@@ -1213,6 +1244,11 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       const normalizedSessionId = String(sessionId || '').trim();
       if (!normalizedSessionId)
           return;
+      const existingTask = openingAgentSessionTasks.get(normalizedSessionId);
+      if (existingTask) {
+          return existingTask;
+      }
+      const task = (async () => {
       const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
       const knownSession = ctx.chatStore.sessions.find((item) => String(item?.id || '') === normalizedSessionId);
       const fallbackAgentId = agentId
@@ -1238,10 +1274,13 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           agent_id: fallbackAgentId === DEFAULT_AGENT_KEY ? '' : fallbackAgentId
       } as Record<string, any>;
       delete nextQuery.conversation_id;
-      ctx.router.replace({
-          path: ctx.resolveChatShellPath(),
-          query: nextQuery
-      }).catch(() => undefined);
+      const nextPath = ctx.resolveChatShellPath();
+      if (!ctx.isSameRouteLocation(nextPath, nextQuery)) {
+          ctx.router.replace({
+              path: nextPath,
+              query: nextQuery
+          }).catch(() => undefined);
+      }
       const isForegroundSession = () => String(ctx.chatStore.activeSessionId || '').trim() === normalizedSessionId;
       try {
           ctx.markMessengerPerfTrace(perfTrace, 'beforeLoadSessionDetail');
@@ -1300,5 +1339,12 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           });
           showApiError(error, ctx.t('messenger.error.openConversation'));
       }
+      })().finally(() => {
+          if (openingAgentSessionTasks.get(normalizedSessionId) === task) {
+              openingAgentSessionTasks.delete(normalizedSessionId);
+          }
+      });
+      openingAgentSessionTasks.set(normalizedSessionId, task);
+      return task;
   };
 }

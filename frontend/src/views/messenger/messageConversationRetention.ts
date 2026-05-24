@@ -120,6 +120,9 @@ export function resolveMessageConversationKind(
   if (normalizeText(input.routeConversationId)) {
     return 'world';
   }
+  if (activeConversationKind === 'agent' && normalizeText(input.activeConversationId)) {
+    return 'agent';
+  }
   const routeSessionId = normalizeText(input.routeSessionId);
   const routeAgentId = normalizeText(input.routeAgentId);
   const routeEntry = normalizeText(input.routeEntry).toLowerCase();

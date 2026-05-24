@@ -411,26 +411,58 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleRouteBootstrap(ctx: MessengerControllerContext): void {
-  ctx.restoreConversationFromRoute = async () => {
+  let routeRestorePromise: Promise<void> | null = null;
+  let routeRestoreSignature = '';
+  const buildRouteRestoreSignature = (): string => {
+      const query = ctx.route.query;
+      return [
+          String(ctx.route.path || '').trim(),
+          String(query?.section || '').trim(),
+          String(query?.conversation_id || '').trim(),
+          String(query?.session_id || '').trim(),
+          String(query?.agent_id || '').trim(),
+          String(query?.entry || '').trim().toLowerCase()
+      ].join('|');
+  };
+  const runRouteRestore = async (signature: string): Promise<void> => {
       const query = ctx.route.query;
       const querySection = resolveSectionFromRoute(ctx.route.path, query.section);
       const queryAgentId = String(query?.agent_id || '').trim();
-      if (ctx.isEmbeddedChatRoute.value && querySection === 'agents' && queryAgentId) {
-          ctx.agentOverviewMode.value = 'detail';
-          ctx.selectedAgentId.value = ctx.normalizeAgentId(queryAgentId);
-          ctx.sessionHub.setSection('agents');
+      const queryConversationId = String(query?.conversation_id || '').trim();
+      if (querySection !== 'messages') {
+          ctx.sessionHub.setSection(querySection);
+          if (querySection === 'agents' && queryAgentId) {
+              ctx.agentOverviewMode.value = 'detail';
+              ctx.selectedAgentId.value = ctx.normalizeAgentId(queryAgentId);
+          }
+          if ((querySection === 'users' || querySection === 'groups') && queryConversationId && !ctx.userWorldPermissionDenied.value) {
+              const conversation = ctx.userWorldStore.conversations.find((item) => String(item?.conversation_id || '') === queryConversationId);
+              if (conversation) {
+                  const kind = String(conversation?.conversation_type || '').toLowerCase() === 'group' ? 'group' : 'direct';
+                  await ctx.userWorldStore.setActiveConversation(queryConversationId, { waitForLoad: false });
+                  ctx.sessionHub.setActiveConversation({ kind, id: queryConversationId });
+              }
+          }
           return;
       }
-      const queryConversationId = String(query?.conversation_id || '').trim();
       if (queryConversationId) {
           if (ctx.userWorldPermissionDenied.value) {
               const nextQuery = { ...ctx.route.query } as Record<string, any>;
               delete nextQuery.conversation_id;
               ctx.router.replace({ path: ctx.route.path, query: nextQuery }).catch(() => undefined);
+              return;
           }
           const conversation = ctx.userWorldStore.conversations.find((item) => String(item?.conversation_id || '') === queryConversationId);
           if (conversation) {
               const kind = String(conversation?.conversation_type || '').toLowerCase() === 'group' ? 'group' : 'direct';
+              const conversationKey = `${kind}:${queryConversationId}`;
+              const activeWorldConversationId = String(ctx.userWorldStore.activeConversationId || '').trim();
+              if (
+                  activeWorldConversationId === queryConversationId &&
+                  ctx.sessionHub.activeConversationKey === conversationKey
+              ) {
+                  return;
+              }
               if (ctx.route.path.includes('/chat')) {
                   await ctx.userWorldStore.setActiveConversation(queryConversationId);
                   ctx.sessionHub.setActiveConversation({ kind, id: queryConversationId });
@@ -444,9 +476,14 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           const nextQuery = { ...ctx.route.query } as Record<string, any>;
           delete nextQuery.conversation_id;
           ctx.router.replace({ path: ctx.route.path, query: nextQuery }).catch(() => undefined);
+          return;
       }
       const querySessionId = String(query?.session_id || '').trim();
       if (querySessionId) {
+          const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+          if (activeSessionId === querySessionId && ctx.sessionHub.activeConversationKey === `agent:${querySessionId}`) {
+              return;
+          }
           const session = ctx.chatStore.sessions.find((item) => String(item?.id || '') === querySessionId);
           if (session) {
               await ctx.openAgentSession(querySessionId, ctx.normalizeAgentId(session?.agent_id));
@@ -455,10 +492,25 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           const nextQuery = { ...ctx.route.query } as Record<string, any>;
           delete nextQuery.session_id;
           ctx.router.replace({ path: ctx.route.path, query: nextQuery }).catch(() => undefined);
+          return;
       }
       const queryEntry = String(query?.entry || '').trim().toLowerCase();
       if (queryAgentId || queryEntry === 'default') {
-          await ctx.openAgentById(queryAgentId || DEFAULT_AGENT_KEY);
+          const targetAgentId = ctx.normalizeAgentId(queryAgentId || DEFAULT_AGENT_KEY);
+          const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+          const activeDraftAgentId = String(ctx.chatStore.draftAgentId || '').trim();
+          if (ctx.sessionHub.activeSection === 'messages') {
+              if (activeSessionId) {
+                  const activeSession = ctx.chatStore.sessions.find((item) => String(item?.id || '') === activeSessionId);
+                  if (ctx.resolveSessionAgentId(activeSession || activeSessionId, activeDraftAgentId) === targetAgentId) {
+                      return;
+                  }
+              }
+              if (!activeSessionId && activeDraftAgentId && ctx.normalizeAgentId(activeDraftAgentId) === targetAgentId) {
+                  return;
+              }
+          }
+          await ctx.openAgentById(targetAgentId);
           return;
       }
       const preferredSection = ctx.desktopMode.value
@@ -472,6 +524,19 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           }
       }
       ctx.clearMessagePanelWhenConversationEmpty();
+  };
+  ctx.restoreConversationFromRoute = async () => {
+      const signature = buildRouteRestoreSignature();
+      if (routeRestorePromise && routeRestoreSignature === signature) {
+          return routeRestorePromise;
+      }
+      routeRestoreSignature = signature;
+      routeRestorePromise = runRouteRestore(signature).finally(() => {
+          if (routeRestoreSignature === signature) {
+              routeRestorePromise = null;
+          }
+      });
+      return routeRestorePromise;
   };
 
   ctx.bootstrap = async () => {
@@ -622,4 +687,23 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
   ctx.syncRouteDrivenMessengerViewState();
 
   watch(() => [ctx.route.path, ctx.route.query.section, ctx.route.query.panel, ctx.route.query.helper], ctx.syncRouteDrivenMessengerViewState);
+  watch(
+      () => [
+          ctx.route.path,
+          ctx.route.query.section,
+          ctx.route.query.session_id,
+          ctx.route.query.conversation_id,
+          ctx.route.query.agent_id,
+          ctx.route.query.entry
+      ] as const,
+      () => {
+          if (ctx.bootLoading.value || !String(ctx.route.path || '').includes('/chat')) {
+              return;
+          }
+          if (resolveSectionFromRoute(ctx.route.path, ctx.route.query.section) !== 'messages') {
+              return;
+          }
+          void ctx.restoreConversationFromRoute();
+      }
+  );
 }

@@ -16,6 +16,7 @@ pub mod chat_media;
 pub mod chat_transcript;
 pub mod companions;
 pub mod cron;
+pub mod desktop_runtime_recovery;
 pub mod cron_schedule;
 pub mod default_agent_protocol;
 pub mod default_agent_sync;

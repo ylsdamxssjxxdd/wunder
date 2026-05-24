@@ -11,6 +11,7 @@ use wunder_server::admin_skills;
 use wunder_server::config::{merge_config_value, Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
+use wunder_server::desktop_runtime_recovery::recover_desktop_runtime_state;
 use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
 use wunder_server::storage::{
@@ -305,7 +306,7 @@ impl DesktopRuntime {
             AppState::new_with_options(
                 config_store.clone(),
                 config.clone(),
-                AppStateInitOptions::desktop_default(),
+                AppStateInitOptions::desktop_default().with_start_thread_runtime(false),
             )
             .context("initialize desktop state failed")?,
         );
@@ -334,6 +335,28 @@ impl DesktopRuntime {
             startup_enabled,
             "bridge-runtime",
             "ensure_desktop_identity",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        if state.runtime_capabilities.thread_runtime_active {
+            let summary = recover_desktop_runtime_state(state.as_ref(), &user_id)
+                .await
+                .context("recover desktop runtime state failed")?;
+            state.kernel.thread_runtime.clone().start();
+            info!(
+                cancelled_monitor_sessions = summary.cancelled_monitor_sessions,
+                cancelled_session_locks = summary.cancelled_session_locks,
+                cancelled_agent_tasks = summary.cancelled_agent_tasks,
+                reset_agent_threads = summary.reset_agent_threads,
+                "desktop runtime state recovered"
+            );
+        }
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "desktop_runtime_recovery",
             step_start,
             startup_boot,
         );

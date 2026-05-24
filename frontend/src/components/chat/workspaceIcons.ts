@@ -282,14 +282,6 @@ const buildWorkspaceThemeIconResolver = async (): Promise<WorkspaceThemeIconReso
       const resolved =
         resolveThemeIconPath(iconId, defaultFileIconId) ||
         resolveGuaranteedFallbackIconPath(extension);
-      if (extension === 'md' || extension === 'markdown' || entryName.toLowerCase().endsWith('.md')) {
-        console.info('[desktop-debug][workspace-icon] markdown', {
-          entryName,
-          extension,
-          iconId,
-          resolved
-        });
-      }
       return resolved;
     }
   };

@@ -24,6 +24,10 @@ const {
   DEFAULT_MINIMIZE_RESTORE_COOLDOWN_MS,
   createWindowVisibilityGuard
 } = require('./windowVisibilityGuard')
+const {
+  resolveDesktopEffectWindowsDisabledReason,
+  shouldDisableElectronHardwareAcceleration
+} = require('./desktopCompatibility')
 
 const resolveRuntimeModuleRoots = () => {
   const roots = []
@@ -87,32 +91,19 @@ const detectWin7PackageFlavor = () => {
   }
 }
 
-const detectWindows7OrOlder = () => {
-  if (process.platform !== 'win32') {
-    return false
-  }
-  const parts = String(os.release() || '')
-    .split('.')
-    .map((part) => Number.parseInt(part, 10))
-  const major = Number.isFinite(parts[0]) ? parts[0] : 0
-  const minor = Number.isFinite(parts[1]) ? parts[1] : 0
-  return major > 0 && (major < 6 || (major === 6 && minor <= 1))
-}
-
 registerRuntimeModuleRoots()
 
 const updaterDisableMarker = resolveUpdaterDisableMarker()
 const runningInAppImage =
   process.platform === 'linux' && Boolean(String(process.env.APPIMAGE || '').trim())
 const runningWin7PackageFlavor = detectWin7PackageFlavor()
-const runningWindows7OrOlder = detectWindows7OrOlder()
 const updaterDisabledReason = updaterDisableMarker
   ? `marker: ${updaterDisableMarker}`
   : runningInAppImage
     ? 'appimage'
     : runningWin7PackageFlavor
       ? 'win7-package'
-    : ''
+      : ''
 const updaterDisabledByBuild = Boolean(updaterDisabledReason)
 let autoUpdater = null
 if (!updaterDisabledByBuild) {
@@ -156,22 +147,19 @@ const parseEnvNonNegativeNumber = (raw, fallbackValue) => {
   return fallbackValue
 }
 const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTTLING === '1'
-const sidecarRuntime = process.env.WUNDER_SIDECAR_RUNTIME === '1'
-const disableGpu = process.env.WUNDER_DISABLE_GPU === '1'
 const suppressGpuWarnings = process.env.WUNDER_SUPPRESS_GPU_WARNINGS !== '0'
 const bridgeVerboseLogs = process.env.WUNDER_BRIDGE_LOG_VERBOSE !== '0'
-const forceDesktopEffectWindows = process.env.WUNDER_ENABLE_DESKTOP_EFFECT_WINDOWS === '1'
-const disableDesktopEffectWindows = process.env.WUNDER_DISABLE_DESKTOP_EFFECT_WINDOWS === '1'
-const desktopEffectWindowsDisabledReason = disableDesktopEffectWindows
-  ? 'env'
-  : !forceDesktopEffectWindows && runningWindows7OrOlder
-    ? 'windows7'
-    : !forceDesktopEffectWindows && runningWin7PackageFlavor
-      ? 'win7-package'
-      : ''
+const desktopEffectWindowsDisabledReason = resolveDesktopEffectWindowsDisabledReason({
+  env: process.env,
+  platform: process.platform,
+  release: os.release()
+})
 const desktopEffectWindowsEnabled = !desktopEffectWindowsDisabledReason
-const disableElectronHardwareAcceleration =
-  disableGpu || sidecarRuntime || runningWin7PackageFlavor || runningWindows7OrOlder
+const disableElectronHardwareAcceleration = shouldDisableElectronHardwareAcceleration({
+  env: process.env,
+  platform: process.platform,
+  release: os.release()
+})
 if (!desktopEffectWindowsEnabled) {
   console.info(`[desktop-effects] native overlay windows disabled by ${desktopEffectWindowsDisabledReason}`)
 }
@@ -279,6 +267,8 @@ let companionWindowShapeEnabled = false
 let companionTransientState = ''
 let companionTransientTimer = null
 let companionTransientUntil = 0
+let mainWindowSendReady = false
+const pendingMainWindowMessages = []
 let companionState = {
   enabled: false,
   key: '',
@@ -303,6 +293,8 @@ const COMPANION_SCREEN_MARGIN = 8
 const COMPANION_MIN_SCALE = 0.5
 const COMPANION_MAX_SCALE = 1.6
 const COMPANION_BASE_FALLBACK_STATE = 'idle'
+const MAIN_WINDOW_MESSAGE_RETRY_MS = 120
+const MAIN_WINDOW_MESSAGE_MAX_RETRIES = 6
 const COMPANION_NON_PERSISTENT_STATES = new Set([
   'running-left',
   'running-right',
@@ -316,6 +308,51 @@ const normalizeCompanionBaseState = (state) => {
     return COMPANION_BASE_FALLBACK_STATE
   }
   return normalized
+}
+
+const flushMainWindowMessages = () => {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return false
+  }
+  if (!mainWindowSendReady || mainWindow.webContents.isLoadingMainFrame()) {
+    return false
+  }
+  while (pendingMainWindowMessages.length) {
+    const item = pendingMainWindowMessages.shift()
+    try {
+      mainWindow.webContents.send(item.channel, item.payload)
+    } catch (error) {
+      console.warn(`[desktop-ipc] delayed send failed on ${item.channel}:`, error)
+      return false
+    }
+  }
+  return true
+}
+
+const sendMainWindowMessage = (channel, payload, options = {}) => {
+  const retry = Math.max(0, Number(options.retry || 0))
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return false
+  }
+  if (!mainWindowSendReady || mainWindow.webContents.isLoadingMainFrame()) {
+    if (retry <= 0) {
+      pendingMainWindowMessages.push({ channel, payload })
+    }
+    return false
+  }
+  try {
+    mainWindow.webContents.send(channel, payload)
+    return true
+  } catch (error) {
+    if (retry >= MAIN_WINDOW_MESSAGE_MAX_RETRIES) {
+      console.warn(`[desktop-ipc] send failed on ${channel}:`, error)
+      return false
+    }
+    setTimeout(() => {
+      sendMainWindowMessage(channel, payload, { retry: retry + 1 })
+    }, MAIN_WINDOW_MESSAGE_RETRY_MS)
+    return false
+  }
 }
 
 const normalizeCompanionWindowKey = (value = {}) => {
@@ -1870,12 +1907,6 @@ const showCompanion = (payload) => {
   })
   runtime.state = next
   syncLegacyCompanionGlobals(runtime)
-  if (String(payload?.scope || '').trim().toLowerCase() !== 'global') {
-    upsertCompanionLibraryRecord({
-      ...next,
-      displayName: payload?.companionDisplayName || payload?.companion_display_name || next.displayName
-    })
-  }
   if (payload?.persist !== false) {
     saveCompanionState(next)
   }
@@ -1919,16 +1950,10 @@ const hideCompanion = (payload = {}) => {
   }
   if (payload?.persistEnabled === true && mainWindow && !mainWindow.isDestroyed()) {
     runtimes.forEach((runtime) => {
-      mainWindow.webContents.send('wunder:companion-state-changed', runtime.state)
+      sendMainWindowMessage('wunder:companion-state-changed', runtime.state)
     })
   }
   return true
-}
-
-const emitCompanionStateChanged = (runtime = null) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('wunder:companion-state-changed', (runtime?.state || companionState))
-  }
 }
 
 const showCompanionContextMenu = (payload = {}) => {
@@ -1969,9 +1994,7 @@ const emitCompanionCommand = (payload) => {
       renderCompanionWindow(runtime)
     }
     showMainWindow({ explicit: true })
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
-    }
+    sendMainWindowMessage(COMPANION_COMMAND_CHANNEL, payload)
     return true
   }
   if (action === 'hide') {
@@ -1979,7 +2002,7 @@ const emitCompanionCommand = (payload) => {
       hideCompanion({ key: runtime.key, persistEnabled: false })
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
+      sendMainWindowMessage(COMPANION_COMMAND_CHANNEL, payload)
     } else if (runtime) {
       hideCompanion({ key: runtime.key, persistEnabled: true })
     }
@@ -1997,7 +2020,7 @@ const emitCompanionCommand = (payload) => {
       renderCompanionWindow(runtime)
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
+      sendMainWindowMessage(COMPANION_COMMAND_CHANNEL, payload)
     }
     return true
   }
@@ -2012,7 +2035,7 @@ const emitCompanionCommand = (payload) => {
     return showCompanionContextMenu(payload)
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(COMPANION_COMMAND_CHANNEL, payload)
+    sendMainWindowMessage(COMPANION_COMMAND_CHANNEL, payload)
   }
   return true
 }
@@ -2066,7 +2089,6 @@ const endCompanionDrag = (payload = {}, event = null) => {
   })
   syncLegacyCompanionGlobals(runtime)
   renderCompanionWindow(runtime)
-  emitCompanionStateChanged(runtime)
   return true
 }
 
@@ -4545,32 +4567,6 @@ const mergeCompanionLibraryRecords = (...groups) => {
   return Array.from(map.values()).sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-const upsertCompanionLibraryRecord = (value) => {
-  const record = normalizeCompanionLibraryRecord(value)
-  if (!record) {
-    return false
-  }
-  const current = loadCompanionLibraryState()
-  const currentCompanions = Array.isArray(current.companions) ? current.companions : []
-  const existing = currentCompanions.find((item) => String(item?.id || '').trim() === record.id)
-  if (
-    existing &&
-    String(existing.spritesheetDataUrl || '').trim() === record.spritesheetDataUrl &&
-    String(existing.displayName || '').trim() === record.displayName &&
-    String(existing.description || '').trim() === record.description
-  ) {
-    return true
-  }
-  writeJsonFile(resolveCompanionLibraryStatePath(), {
-    companions: mergeCompanionLibraryRecords(currentCompanions, [record]),
-    settings: current.settings && typeof current.settings === 'object' ? current.settings : {},
-    agentOverrides:
-      current.agentOverrides && typeof current.agentOverrides === 'object' ? current.agentOverrides : {},
-    updated_at: Date.now()
-  })
-  return true
-}
-
 const saveCompanionLibraryState = (value) => {
   const source = value && typeof value === 'object' ? value : {}
   writeJsonFile(resolveCompanionLibraryStatePath(), {
@@ -4996,6 +4992,8 @@ const createWindow = async () => {
       backgroundThrottling: !disableBackgroundThrottling
     }
   })
+  mainWindowSendReady = false
+  pendingMainWindowMessages.length = 0
   logStartupSegment('electron', 'window_construct', constructWindowNs, {
     min_width: 900,
     min_height: 620
@@ -5034,9 +5032,16 @@ const createWindow = async () => {
     handleMainWindowClose(mainWindow, event)
   })
   mainWindow.on('closed', () => {
+    mainWindowSendReady = false
+    pendingMainWindowMessages.length = 0
     mainWindow = null
   })
   let mainUiLoadedLogged = false
+  mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      mainWindowSendReady = false
+    }
+  })
   mainWindow.webContents.on('did-finish-load', () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
       return
@@ -5047,6 +5052,10 @@ const createWindow = async () => {
       logStartupPoint('electron', 'main_ui_loaded', {
         url: currentUrl
       })
+    }
+    if (!currentUrl.startsWith('data:text/html')) {
+      mainWindowSendReady = true
+      flushMainWindowMessages()
     }
   })
   const loadingHtml = createLoadingHtml()

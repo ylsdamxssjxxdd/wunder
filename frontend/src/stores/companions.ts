@@ -156,32 +156,6 @@ const mergeCompanionRecords = (
   return Array.from(map.values()).sort((a, b) => b.updatedAt - a.updatedAt);
 };
 
-const normalizeDesktopStateCompanionRecord = (value: unknown): CompanionPackageRecord | null => {
-  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const id = String(source.selectedId || source.selected_id || source.id || '').trim();
-  const displayName = String(source.displayName || source.display_name || id).trim();
-  const description = String(source.description || '').trim();
-  const spritesheetDataUrl = String(source.spritesheetDataUrl || source.spritesheet_data_url || '').trim();
-  if (!id || !spritesheetDataUrl.startsWith('data:image/')) {
-    return null;
-  }
-  const mimeMatch = /^data:([^;]+);/i.exec(spritesheetDataUrl);
-  const spritesheetMime = String(mimeMatch?.[1] || 'image/webp').trim();
-  const extension = spritesheetMime.split('/').pop() || 'webp';
-  const now = Date.now();
-  return {
-    id,
-    displayName,
-    description,
-    spritesheetPath: `${id}.${extension}`,
-    spritesheetDataUrl,
-    spritesheetMime,
-    importedAt: now,
-    updatedAt: now,
-    scope: 'private'
-  };
-};
-
 let databasePromise: Promise<IDBDatabase> | null = null;
 
 const openDatabase = (): Promise<IDBDatabase> => {
@@ -382,27 +356,10 @@ const normalizeDesktopCompanionRecords = (value: unknown): CompanionPackageRecor
     .map((item) => normalizeRecord(item))
     .filter((item): item is CompanionPackageRecord => Boolean(item));
 
-const normalizeDesktopAgentOverrides = (value: unknown): Record<string, AgentCompanionOverride> => {
-  const source = value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-  const output: Record<string, AgentCompanionOverride> = {};
-  Object.entries(source).forEach(([key, item]) => {
-    const normalizedKey = String(key || '').trim();
-    if (!normalizedKey) return;
-    const normalized = normalizeAgentCompanionOverride(item);
-    if (normalized) {
-      output[normalizedKey] = normalized;
-    }
-  });
-  return output;
-};
-
 const saveDesktopCompanionLibraryState = async (payload: {
   companions: CompanionPackageRecord[];
   settings: CompanionSettings;
   agentOverrides: Record<string, AgentCompanionOverride>;
-  replaceCompanions?: boolean;
 }): Promise<void> => {
   const bridge = getDesktopBridge();
   const writer = bridge?.setCompanionLibraryState;
@@ -410,25 +367,11 @@ const saveDesktopCompanionLibraryState = async (payload: {
     return;
   }
   try {
-    const previous = await loadDesktopCompanionLibraryState();
-    const previousSettings = normalizeSettings(previous?.settings);
-    const previousAgentOverrides = normalizeDesktopAgentOverrides(previous?.agentOverrides);
     await Promise.resolve(
       writer.call(bridge, {
-        companions: payload.replaceCompanions
-          ? payload.companions
-          : mergeCompanionRecords(
-              normalizeDesktopCompanionRecords(previous?.companions),
-              payload.companions
-            ),
-        settings: {
-          ...previousSettings,
-          ...payload.settings
-        },
-        agentOverrides: {
-          ...previousAgentOverrides,
-          ...payload.agentOverrides
-        }
+        companions: payload.companions,
+        settings: payload.settings,
+        agentOverrides: payload.agentOverrides
       })
     );
   } catch {
@@ -478,12 +421,6 @@ export const useCompanionStore = defineStore('companions', () => {
 
   const applyDesktopState = (value: unknown): void => {
     const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-    if (Array.isArray(source.runtimes)) {
-      source.runtimes.forEach((item) => applyDesktopState(item));
-      if (!source.selectedId && !source.selected_id) {
-        return;
-      }
-    }
     const selectedId = String(source.selectedId || source.selected_id || '').trim();
     if (selectedId && companions.value.some((item) => item.id === selectedId)) {
       settings.value.selectedId = selectedId;
@@ -560,28 +497,6 @@ export const useCompanionStore = defineStore('companions', () => {
       }
       if (!settings.value.selectedId && companions.value.length) {
         settings.value.selectedId = companions.value[0].id;
-      }
-      const bridge = getDesktopBridge();
-      const getCompanionState = bridge?.getCompanionState;
-      if (typeof getCompanionState === 'function') {
-        const desktopOverlayState = await Promise.resolve(getCompanionState.call(bridge));
-        const overlayStates = [
-          ...(desktopOverlayState && typeof desktopOverlayState === 'object'
-            ? Array.isArray((desktopOverlayState as Record<string, unknown>).runtimes)
-              ? ((desktopOverlayState as Record<string, unknown>).runtimes as unknown[])
-              : []
-            : []),
-          desktopOverlayState
-        ];
-        const reconstructed = overlayStates
-          .map((item) => normalizeDesktopStateCompanionRecord(item))
-          .filter((item): item is CompanionPackageRecord => Boolean(item))
-          .filter((item) => !companions.value.some((current) => current.id === item.id));
-        if (reconstructed.length) {
-          companions.value = mergeCompanionRecords(companions.value, reconstructed);
-          await Promise.all(reconstructed.map((item) => saveStoredCompanion(item).catch(() => undefined)));
-        }
-        applyDesktopState(desktopOverlayState);
       }
       watchDesktopState();
       persistSettings();
@@ -739,8 +654,7 @@ export const useCompanionStore = defineStore('companions', () => {
     await saveDesktopCompanionLibraryState({
       companions: companions.value,
       settings: settings.value,
-      agentOverrides: agentOverrides.value,
-      replaceCompanions: true
+      agentOverrides: agentOverrides.value
     });
   };
 

@@ -180,6 +180,7 @@ import {
 } from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
+import { registerCompanionOpenHandler } from '@/views/messenger/companionOpenBridge';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
   invalidateAllUserToolsCaches,
@@ -1140,6 +1141,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
       ctx.initDesktopLaunchBehavior();
       ctx.applyUiFontSize(ctx.uiFontSize.value);
+      ctx.unregisterCompanionOpenHandler = registerCompanionOpenHandler((agentId) => ctx.openAgentById(agentId));
       await ctx.bootstrap();
       ctx.refreshAudioRecordingSupport();
       ctx.scheduleMessageViewportRefresh({
@@ -1291,6 +1293,10 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       if (ctx.stopUserToolsUpdatedListener) {
           ctx.stopUserToolsUpdatedListener();
           ctx.stopUserToolsUpdatedListener = null;
+      }
+      if (ctx.unregisterCompanionOpenHandler) {
+          ctx.unregisterCompanionOpenHandler();
+          ctx.unregisterCompanionOpenHandler = null;
       }
       ctx.clearWorkspaceResourceCache();
       ctx.timelinePreviewMap.value.clear();

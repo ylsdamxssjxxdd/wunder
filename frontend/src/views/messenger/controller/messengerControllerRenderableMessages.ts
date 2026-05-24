@@ -707,11 +707,14 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
       const _renderVersion = ctx.chatStore.messageMutationVersion;
-      const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
       const renderMode = resolveChatRuntimeProjectionRenderMode();
       const shadowEnabled = isChatRuntimeProjectionRenderShadowEnabled();
       const legacyRenderable = buildLegacyAgentRenderableMessages();
-      if (renderMode !== 'legacy' || shadowEnabled) {
+      const shouldUseProjectionRender =
+        ctx.sessionHub.activeSection === 'messages' &&
+        (renderMode !== 'legacy' || shadowEnabled);
+      if (shouldUseProjectionRender) {
+          const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
           const projection = toRaw(ctx.chatStore.runtimeProjection);
           const projectionRenderable = buildChatRuntimeRenderableMessages({
             projection,
