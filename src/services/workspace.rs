@@ -1269,6 +1269,12 @@ impl WorkspaceManager {
             .unwrap_or_default()
     }
 
+    pub fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Vec<Value> {
+        self.storage
+            .load_recent_stream_events(session_id, limit)
+            .unwrap_or_default()
+    }
+
     pub fn load_session_system_prompt(
         &self,
         user_id: &str,

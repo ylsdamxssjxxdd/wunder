@@ -19,12 +19,14 @@ export type DesktopRuntimeCapabilities = {
   channel_outbox_worker_enabled: boolean;
   cron_active: boolean;
   lan_overlay_supported: boolean;
+  safe_mode?: boolean;
 };
 
 export type DesktopRuntime = {
   mode: string;
   runtime_profile?: string;
   runtime_capabilities?: DesktopRuntimeCapabilities;
+  safe_mode?: boolean;
   bind_addr: string;
   web_base: string;
   api_base: string;
@@ -61,7 +63,8 @@ const normalizeRuntimeCapabilities = (value: unknown): DesktopRuntimeCapabilitie
     channels_enabled: asBoolean(source.channels_enabled),
     channel_outbox_worker_enabled: asBoolean(source.channel_outbox_worker_enabled),
     cron_active: asBoolean(source.cron_active),
-    lan_overlay_supported: asBoolean(source.lan_overlay_supported)
+    lan_overlay_supported: asBoolean(source.lan_overlay_supported),
+    safe_mode: asBoolean(source.safe_mode)
   };
 };
 
@@ -101,7 +104,8 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
     workspace_root: asString(source.workspace_root),
     temp_root: asString(source.temp_root),
     settings_path: asString(source.settings_path),
-    repo_root: asString(source.repo_root)
+    repo_root: asString(source.repo_root),
+    safe_mode: asBoolean(source.safe_mode)
   };
   const containerRoots = Array.isArray(source.container_roots)
     ? source.container_roots
@@ -253,7 +257,29 @@ export const getDesktopRuntime = (): DesktopRuntime | null => {
   return runtimeCache;
 };
 
+export const isDesktopSafeModeEnabled = (): boolean =>
+  Boolean(getDesktopRuntime()?.safe_mode);
+
 export const isDesktopLocalModeEnabled = (): boolean => isDesktopModeEnabled();
+
+export const reportDesktopRendererStage = (
+  stage: string,
+  payload: Record<string, unknown> = {}
+): void => {
+  const normalizedStage = String(stage || '').trim();
+  if (!normalizedStage || typeof window === 'undefined') {
+    return;
+  }
+  const bridge = (window as Window & {
+    wunderDesktop?: {
+      reportRendererStage?: (stage: string, payload?: Record<string, unknown>) => Promise<boolean> | boolean;
+    };
+  }).wunderDesktop;
+  if (typeof bridge?.reportRendererStage !== 'function') {
+    return;
+  }
+  void Promise.resolve(bridge.reportRendererStage(normalizedStage, payload)).catch(() => undefined);
+};
 
 export const getDesktopLocalToken = (): string => {
   const runtime = getDesktopRuntime();

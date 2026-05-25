@@ -132,6 +132,26 @@ export const shouldStartWatcherAfterSessionHydration = (input: {
   return isThreadRuntimeBusy(input.runtimeStatus);
 };
 
+export const shouldKeepActiveSessionWarmAfterHydration = (input: {
+  isActiveSession?: unknown;
+  desktopMode?: unknown;
+  remoteRunning?: unknown;
+  runtimeStatus?: unknown;
+  hasPendingAssistant?: unknown;
+}): boolean => {
+  if (!normalizeFlag(input.isActiveSession)) {
+    return false;
+  }
+  if (!normalizeFlag(input.desktopMode)) {
+    return true;
+  }
+  return (
+    normalizeFlag(input.remoteRunning) ||
+    isThreadRuntimeBusy(input.runtimeStatus) ||
+    normalizeFlag(input.hasPendingAssistant)
+  );
+};
+
 const resolveLastInteractiveStreamActivityMs = (runtime: Record<string, unknown> | null): number => {
   if (!runtime) return 0;
   return Math.max(

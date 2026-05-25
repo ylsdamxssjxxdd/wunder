@@ -7,9 +7,8 @@ import {
   controlSessionSubagents as controlSessionSubagentsApi,
   createSession,
   deleteSession as deleteSessionApi,
-  getSession,
+  getSessionWithParams,
   getSessionGoal,
-  getSessionEvents,
   getSessionHistoryPage,
   getSessionSubagents,
   listSessions,
@@ -132,7 +131,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommandSessions, normalizeInquiryPanelState, normalizeInquiryPanelStatus, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
-import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId } from './chatRuntimeControls';
+import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveSessionDetailMessageLimit } from './chatRuntimeControls';
 import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeSessionProtectedRealtimeMessages, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
@@ -292,17 +291,20 @@ export const chatCacheActions = {
         let sessionRes = null;
         let eventsPayload = null;
         const knownEventFloor = resolveKnownSessionEventFloor(targetId);
+        const detailLimit = resolveSessionDetailMessageLimit(isDesktopModeEnabled());
         chatDebugLog('chat.store.preload', 'fetch-start', {
           sessionId: targetId,
           force,
           syncActive,
           knownEventFloor,
-          activeSessionId: resolveSessionKey(this.activeSessionId)
+          activeSessionId: resolveSessionKey(this.activeSessionId),
+          detailLimit
         });
         try {
           [sessionRes, eventsPayload] = await Promise.all([
-            getSession(targetId),
+            getSessionWithParams(targetId, { limit: detailLimit }),
             loadSessionEventsSnapshot(targetId, {
+              limit: detailLimit,
               minLastEventId: knownEventFloor
             }).catch((error) => {
               if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {

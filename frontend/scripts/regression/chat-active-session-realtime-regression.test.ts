@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   INTERACTIVE_STREAM_RECONCILE_IDLE_MS,
   resolveActiveSessionRealtimeRecoveryPlan,
+  shouldKeepActiveSessionWarmAfterHydration,
   shouldStartWatcherAfterSessionHydration,
   shouldReconcileInteractiveStream
 } from '../../src/stores/chatActiveSessionRealtime';
@@ -214,6 +215,55 @@ test('session hydration restarts a watcher when the active session should stay w
       hasSendController: false,
       hasResumeController: false,
       keepActiveSessionWarm: true
+    }),
+    true
+  );
+});
+
+test('desktop session hydration does not keep idle active sessions warm', () => {
+  assert.equal(
+    shouldKeepActiveSessionWarmAfterHydration({
+      isActiveSession: true,
+      desktopMode: true,
+      remoteRunning: false,
+      runtimeStatus: 'idle',
+      hasPendingAssistant: false
+    }),
+    false
+  );
+});
+
+test('desktop session hydration keeps hot active sessions warm', () => {
+  assert.equal(
+    shouldKeepActiveSessionWarmAfterHydration({
+      isActiveSession: true,
+      desktopMode: true,
+      remoteRunning: true,
+      runtimeStatus: 'running',
+      hasPendingAssistant: false
+    }),
+    true
+  );
+  assert.equal(
+    shouldKeepActiveSessionWarmAfterHydration({
+      isActiveSession: true,
+      desktopMode: true,
+      remoteRunning: false,
+      runtimeStatus: 'idle',
+      hasPendingAssistant: true
+    }),
+    true
+  );
+});
+
+test('web session hydration still keeps active sessions warm', () => {
+  assert.equal(
+    shouldKeepActiveSessionWarmAfterHydration({
+      isActiveSession: true,
+      desktopMode: false,
+      remoteRunning: false,
+      runtimeStatus: 'idle',
+      hasPendingAssistant: false
     }),
     true
   );

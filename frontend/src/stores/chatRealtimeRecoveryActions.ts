@@ -30,6 +30,8 @@ import {
   resolveActiveSessionRealtimeRecoveryPlan,
   shouldReconcileInteractiveStream
 } from './chatActiveSessionRealtime';
+import { isDesktopModeEnabled } from '@/config/desktop';
+import { resolveMessageWindowLimit } from './chatRuntimeControls';
 
 const normalizeErrorMessage = (error: unknown): string =>
   String((error as { message?: unknown })?.message || error || '').trim();
@@ -83,10 +85,12 @@ export const chatRealtimeRecoveryActions = {
     if (plan === 'skip_interactive_stream' && shouldReconcileInteractiveStream(runtime)) {
       try {
         const localLastEventId = resolveMaterializedMessageEventId(messages);
+        const detailLimit = isDesktopModeEnabled() ? resolveMessageWindowLimit(true) : undefined;
         const snapshot = await loadSessionEventsSnapshot(targetSessionId, {
           allowCached: false,
           dedupeInFlight: false,
-          minLastEventId: localLastEventId
+          minLastEventId: localLastEventId,
+          limit: detailLimit
         });
         applyCanonicalSessionEventsSnapshot(this, targetSessionId, snapshot, {
           phase: 'realtime_recovery'
@@ -165,7 +169,8 @@ export const chatRealtimeRecoveryActions = {
       try {
         await this.loadSessionDetail(targetSessionId, {
           preserveWatcher: true,
-          forceHydrateForeground: true
+          forceHydrateForeground: true,
+          startWatcherAfterHydration: false
         });
         hydrateDurationMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - hydrateStart;
       } catch (error) {

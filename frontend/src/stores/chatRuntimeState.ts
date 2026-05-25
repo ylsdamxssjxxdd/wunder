@@ -10,6 +10,7 @@ import {
   getSession,
   getSessionGoal,
   getSessionEvents,
+  getSessionEventsWithParams,
   getSessionHistoryPage,
   getSessionSubagents,
   listSessions,
@@ -157,7 +158,7 @@ import { chatWatcherSharedState } from './chatSharedState';
 
 import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { DEFAULT_AGENT_KEY, applyMainSession, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
-import { MESSAGE_WINDOW_LIMIT, MESSAGE_WINDOW_THRESHOLD, abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, setSessionLoading } from './chatRuntimeControls';
+import { abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, resolveMessageWindowLimit, resolveMessageWindowThreshold, setSessionLoading } from './chatRuntimeControls';
 import { clearChatSnapshot, findLiveAssistantInsertionIndex, findSnapshotAssistantIndexExcluding, mergeSnapshotAssistant, scheduleChatSnapshot } from './chatSnapshot';
 import { buildMessage, clearAssistantRetryState, normalizeContextTokens, normalizeContextTotalTokens, normalizeMessageSubagents, parseOptionalCount, resolveTimestampIso, resolveTimestampMs } from './chatStats';
 import { assignStreamEventId, normalizeFlag, normalizeStreamEventId, normalizeStreamRound } from './chatStreamIds';
@@ -188,6 +189,21 @@ export const SESSION_EVENTS_RUNNING_CACHE_TTL_MS = 600;
 export const SESSION_DETAIL_SNAPSHOT_TTL_MS = 2500;
 export const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
 export const SESSION_SUBAGENTS_CACHE_TTL_MS = 12 * 1000;
+
+const normalizeSessionEventsSnapshotLimit = (value: unknown): number | null => {
+  const limit = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(limit) && limit > 0 ? limit : null;
+};
+
+const resolveSessionEventsSnapshotCacheKey = (sessionId, limit: unknown = null): string => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return '';
+  const normalizedLimit = normalizeSessionEventsSnapshotLimit(limit);
+  return normalizedLimit === null ? sessionKey : `${sessionKey}|limit:${normalizedLimit}`;
+};
+
+const isSessionEventsSnapshotCacheKeyForSession = (cacheKey: string, sessionKey: string): boolean =>
+  cacheKey === sessionKey || cacheKey.startsWith(`${sessionKey}|`);
 export const SESSION_RUNTIME_SHADOW_LOG_COOLDOWN_MS = 1500;
 
 export const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
@@ -196,7 +212,7 @@ export const buildHistoryState = () => ({
   beforeId: null,
   hasMore: true,
   loading: false,
-  windowLimit: MESSAGE_WINDOW_LIMIT
+  windowLimit: resolveMessageWindowLimit(isDesktopModeEnabled())
 });
 
 export const getHistoryState = (sessionId, options: { reset?: boolean } = {}) => {
@@ -378,8 +394,11 @@ export const applyMessageWindow = (store, sessionId, messages, options: { force?
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
   const state = getHistoryState(key);
-  const limit = Number(state.windowLimit) || MESSAGE_WINDOW_LIMIT;
-  const threshold = Math.max(MESSAGE_WINDOW_THRESHOLD, limit);
+  const desktopMode = isDesktopModeEnabled();
+  const defaultLimit = resolveMessageWindowLimit(desktopMode);
+  const defaultThreshold = resolveMessageWindowThreshold(desktopMode);
+  const limit = Number(state.windowLimit) || defaultLimit;
+  const threshold = Math.max(defaultThreshold, limit);
   if (!options.force && messages.length <= threshold) return;
   if (messages.length <= limit) return;
   const overflow = messages.length - limit;
@@ -547,14 +566,31 @@ export const writeSessionHydratedMessageVersion = (sessionId, version) => {
   return nextVersion;
 };
 
-export const clearSessionEventsSnapshot = (sessionId, options: { keepInFlight?: boolean } = {}) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  if (!sessionKey) return;
-  sessionEventsSnapshotCache.delete(sessionKey);
-  sessionDetailSnapshotCache.delete(sessionKey);
-  sessionHydratedMessageVersion.delete(sessionKey);
+export const clearSessionEventsSnapshot = (sessionId, options: { keepInFlight?: boolean; limit?: unknown } = {}) => {
+  const baseSessionKey = resolveSessionKey(sessionId);
+  if (!baseSessionKey) return;
+  const scopedKey = resolveSessionEventsSnapshotCacheKey(baseSessionKey, options.limit);
+  const keys =
+    normalizeSessionEventsSnapshotLimit(options.limit) === null
+      ? [...sessionEventsSnapshotCache.keys()].filter((key) =>
+          isSessionEventsSnapshotCacheKeyForSession(key, baseSessionKey)
+        )
+      : [scopedKey];
+  for (const key of keys) {
+    sessionEventsSnapshotCache.delete(key);
+  }
+  sessionDetailSnapshotCache.delete(baseSessionKey);
+  sessionHydratedMessageVersion.delete(baseSessionKey);
   if (options.keepInFlight !== true) {
-    sessionEventsSnapshotInFlight.delete(sessionKey);
+    const inflightKeys =
+      normalizeSessionEventsSnapshotLimit(options.limit) === null
+        ? [...sessionEventsSnapshotInFlight.keys()].filter((key) =>
+            isSessionEventsSnapshotCacheKeyForSession(key, baseSessionKey)
+          )
+        : [scopedKey];
+    for (const key of inflightKeys) {
+      sessionEventsSnapshotInFlight.delete(key);
+    }
   }
 };
 
@@ -582,11 +618,17 @@ export const readSessionDetailSnapshot = (sessionId) => {
 };
 
 export const cacheSessionEventsSnapshot = (sessionId, payload) => {
-  const sessionKey = resolveSessionKey(sessionId);
+  const sessionKey = resolveSessionEventsSnapshotCacheKey(
+    sessionId,
+    payload?.limit ?? payload?.requested_limit ?? null
+  );
   if (!sessionKey) return null;
   const clonedPayload = cloneSessionEventsPayload(payload);
   sessionEventsSnapshotCache.set(sessionKey, {
     cachedAt: Date.now(),
+    limit: normalizeSessionEventsSnapshotLimit(
+      clonedPayload?.limit ?? clonedPayload?.requested_limit ?? null
+    ),
     running: clonedPayload?.running === true,
     lastEventId: normalizeStreamEventId(
       clonedPayload?.last_event_id ?? clonedPayload?.lastEventId
@@ -598,10 +640,11 @@ export const cacheSessionEventsSnapshot = (sessionId, payload) => {
 
 export const readSessionEventsSnapshot = (
   sessionId,
-  options: { allowRunning?: boolean; minLastEventId?: unknown } = {}
+  options: { allowRunning?: boolean; minLastEventId?: unknown; limit?: unknown } = {}
 ) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  if (!sessionKey) return null;
+  const baseSessionKey = resolveSessionKey(sessionId);
+  if (!baseSessionKey) return null;
+  const sessionKey = resolveSessionEventsSnapshotCacheKey(baseSessionKey, options.limit);
   const entry = sessionEventsSnapshotCache.get(sessionKey);
   if (!entry) return null;
   const ttlMs = entry.running ? SESSION_EVENTS_RUNNING_CACHE_TTL_MS : SESSION_EVENTS_CACHE_TTL_MS;
@@ -612,7 +655,7 @@ export const readSessionEventsSnapshot = (
   if (entry.running && options.allowRunning !== true) {
     return null;
   }
-  const runtime = sessionRuntime.get(sessionKey) || null;
+  const runtime = sessionRuntime.get(baseSessionKey) || null;
   if (runtime?.sendController || runtime?.resumeController) {
     return null;
   }
@@ -632,6 +675,7 @@ export const loadSessionEventsSnapshot = (
     allowCached?: boolean;
     allowRunningCache?: boolean;
     dedupeInFlight?: boolean;
+    limit?: unknown;
     minLastEventId?: unknown;
   } = {}
 ) => {
@@ -639,26 +683,40 @@ export const loadSessionEventsSnapshot = (
   if (!sessionKey) {
     return Promise.resolve(null);
   }
+  const limit = Number.parseInt(String(options.limit ?? ''), 10);
+  const cacheKey = resolveSessionEventsSnapshotCacheKey(sessionKey, limit);
   if (options.allowCached !== false) {
     const cached = readSessionEventsSnapshot(sessionKey, {
       allowRunning: options.allowRunningCache === true,
-      minLastEventId: options.minLastEventId
+      minLastEventId: options.minLastEventId,
+      limit
     });
     if (cached) {
       return Promise.resolve(cached);
     }
   }
-  const inFlight = sessionEventsSnapshotInFlight.get(sessionKey);
+  const inFlight = sessionEventsSnapshotInFlight.get(cacheKey);
   if (inFlight && options.dedupeInFlight !== false) {
     return inFlight;
   }
-  const request = getSessionEvents(sessionKey).then((response) =>
-    cacheSessionEventsSnapshot(sessionKey, response?.data?.data || null)
-  );
-  sessionEventsSnapshotInFlight.set(sessionKey, request);
+  const requestApi = Number.isFinite(limit) && limit > 0
+    ? getSessionEventsWithParams(sessionKey, { limit })
+    : getSessionEvents(sessionKey);
+  const request = requestApi.then((response) => {
+    const payload = response?.data?.data;
+    const normalizedPayload =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload
+        : {};
+    return cacheSessionEventsSnapshot(sessionKey, {
+      ...normalizedPayload,
+      requested_limit: Number.isFinite(limit) && limit > 0 ? limit : null
+    });
+  });
+  sessionEventsSnapshotInFlight.set(cacheKey, request);
   return request.finally(() => {
-    if (sessionEventsSnapshotInFlight.get(sessionKey) === request) {
-      sessionEventsSnapshotInFlight.delete(sessionKey);
+    if (sessionEventsSnapshotInFlight.get(cacheKey) === request) {
+      sessionEventsSnapshotInFlight.delete(cacheKey);
     }
   });
 };

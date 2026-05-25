@@ -147,6 +147,7 @@ export const startSessionWatcher = (store, sessionId) => {
   clearSessionWatcher();
   const key = resolveSessionKey(sessionId);
   if (!key) return;
+  const desktopMode = isDesktopModeEnabled();
   if (!hasKnownSessionInStore(store, key)) {
     purgeUnavailableSession(store, key);
     return;
@@ -531,6 +532,7 @@ export const startSessionWatcher = (store, sessionId) => {
 
   // Reconcile from server when watch events appear out-of-sync with stream state.
   const scheduleWatchReconcile = (delayMs = WATCH_RECONCILE_DELAY_MS) => {
+    if (desktopMode) return;
     if (controller.signal.aborted) return;
     if (store.activeSessionId !== key) return;
     if (!hasKnownSessionInStore(store, key)) return;
@@ -559,6 +561,7 @@ export const startSessionWatcher = (store, sessionId) => {
   };
 
   const startWatchdog = () => {
+    if (desktopMode) return;
     if (runtime.watchdogTimer) return;
     const scheduleNext = (delayMs) => {
       if (controller.signal.aborted) return;
@@ -1027,7 +1030,7 @@ export const startSessionWatcher = (store, sessionId) => {
         return;
       }
       const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
-      if (store.activeSessionId === key && (pendingMessage || !controller.signal.aborted)) {
+      if (store.activeSessionId === key && (pendingMessage || !desktopMode)) {
         setTimeout(() => startSessionWatcher(store, key), 80);
       }
     });

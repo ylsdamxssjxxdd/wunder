@@ -1093,6 +1093,7 @@ pub trait StorageBackend: Send + Sync {
         after_event_id: i64,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;

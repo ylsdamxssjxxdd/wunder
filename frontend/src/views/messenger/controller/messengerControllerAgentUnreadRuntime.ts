@@ -477,6 +477,10 @@ export function installMessengerControllerAgentUnreadRuntime(ctx: MessengerContr
           window.clearTimeout(ctx.sessionDetailPrefetchTimer);
           ctx.sessionDetailPrefetchTimer = null;
       }
+      if (ctx.desktopMode.value) {
+          ctx.queuedSessionDetailPrefetchIds.clear();
+          return;
+      }
       const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
       const sessionIds = Array.from(ctx.queuedSessionDetailPrefetchIds);
       ctx.queuedSessionDetailPrefetchIds.clear();
@@ -491,6 +495,9 @@ export function installMessengerControllerAgentUnreadRuntime(ctx: MessengerContr
   ctx.queueSessionDetailPrefetch = (sessionId: unknown) => {
       const normalizedSessionId = String(sessionId || '').trim();
       if (!normalizedSessionId) {
+          return;
+      }
+      if (ctx.desktopMode.value) {
           return;
       }
       if (normalizedSessionId === String(ctx.chatStore.activeSessionId || '').trim()) {
@@ -587,17 +594,30 @@ export function installMessengerControllerAgentUnreadRuntime(ctx: MessengerContr
       }
       ctx.agentUnreadRefreshInFlight.add(requestKey);
       try {
-          const response = await getChatSessionApi(entry.sessionId);
-          const messages = Array.isArray(response?.data?.data?.transcript)
-              ? response.data.data.transcript
-              : [];
-          const unreadCount = messages.filter((message: Record<string, unknown>) => {
+          const cachedMessages = ctx.chatStore.getCachedSessionMessages(entry.sessionId);
+          if (ctx.desktopMode.value && !Array.isArray(cachedMessages)) {
+              return;
+          }
+          const messages = Array.isArray(cachedMessages) ? cachedMessages : [];
+          if (!messages.length && ctx.desktopMode.value) {
+              return;
+          }
+          const countUnread = (items: Record<string, unknown>[]): number =>
+            items.filter((message: Record<string, unknown>) => {
               if (String(message?.role || '') !== 'assistant') {
                   return false;
               }
               const timestamp = ctx.normalizeTimestamp(message?.created_at);
               return timestamp > readAt;
-          }).length;
+            }).length;
+          let unreadCount = countUnread(messages);
+          if (!messages.length) {
+              const response = await getChatSessionApi(entry.sessionId);
+              const transcript = Array.isArray(response?.data?.data?.transcript)
+                  ? response.data.data.transcript
+                  : [];
+              unreadCount = countUnread(transcript);
+          }
           const activeEntries = ctx.collectMainAgentSessionEntries();
           const currentMain = activeEntries.find((item) => item.agentId === entry.agentId);
           if (!currentMain || currentMain.sessionId !== entry.sessionId) {

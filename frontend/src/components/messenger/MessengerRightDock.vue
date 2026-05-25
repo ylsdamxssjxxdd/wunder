@@ -156,6 +156,7 @@ import { ElMessage } from 'element-plus';
 import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
+import { isDesktopSafeModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 
 type SkillItem = {
@@ -298,6 +299,9 @@ watch(
 );
 
 const refreshWorkspace = async (options: { background?: boolean } = {}) => {
+  if (isDesktopSafeModeEnabled()) {
+    return false;
+  }
   if (!workspacePanelRef.value?.refreshView) {
     return false;
   }

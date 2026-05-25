@@ -772,7 +772,15 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
   };
 
-  ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => ctx.resolveActiveAgentRenderableMessageRecords());
+  ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => {
+      const records = ctx.resolveActiveAgentRenderableMessageRecords();
+      if (!records.length) {
+          return records;
+      }
+      // Composer only needs recent assistant stats for context display; do not duplicate full history.
+      const limit = isDesktopModeEnabled() ? 32 : 96;
+      return records.length > limit ? records.slice(-limit) : records;
+  });
 
   ctx.buildWorkflowSurfaceDebugSnapshot = () => {
       const renderable = ctx.agentRenderableMessages.value;
@@ -1134,28 +1142,38 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
   ctx.messageStatsNowTick = ref(Date.now());
 
   ctx.messageStatsTimer = null;
+  const isDesktopSafeModeActive = (): boolean => {
+      try {
+          return Boolean(ctx.desktopMode.value && isDesktopSafeModeEnabled());
+      } catch {
+          return false;
+      }
+  };
 
-  ctx.hasLiveAssistantStats = computed(() => ctx.agentRenderableMessages.value.some((item) => {
-      const message = (item?.message || {}) as Record<string, unknown>;
-      if (String(message?.role || '') !== 'assistant' || message?.isGreeting) {
+  ctx.hasLiveAssistantStats = computed(() => {
+      if (isDesktopSafeModeActive()) {
+          return false;
+      }
+      const latestVisibleAssistant = ctx.latestVisibleAgentAssistantMessage.value as Record<string, unknown> | null;
+      if (!latestVisibleAssistant || latestVisibleAssistant.isGreeting) {
           return false;
       }
       return Boolean(
-          message?.resume_available ||
-          message?.slow_client ||
-          message?.workflowStreaming ||
-          message?.reasoningStreaming ||
-          message?.stream_incomplete ||
-          hasAssistantPendingQuestion(message) ||
-          hasAssistantWaitingForCurrentOutput(message) ||
-          isAssistantMessageRunning(message) ||
-          hasActiveSubagentItems(message?.subagents) ||
-          Number.isFinite(Number(message?.retry_started_at_ms ?? message?.retryStartedAtMs)) ||
-          Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
-          Number.isFinite(Number(message?.retry_attempt ?? message?.retryAttempt)) ||
-          Number.isFinite(Number(message?.retry_max_attempts ?? message?.retryMaxAttempts))
+          latestVisibleAssistant?.resume_available ||
+          latestVisibleAssistant?.slow_client ||
+          latestVisibleAssistant?.workflowStreaming ||
+          latestVisibleAssistant?.reasoningStreaming ||
+          latestVisibleAssistant?.stream_incomplete ||
+          hasAssistantPendingQuestion(latestVisibleAssistant) ||
+          hasAssistantWaitingForCurrentOutput(latestVisibleAssistant) ||
+          isAssistantMessageRunning(latestVisibleAssistant) ||
+          hasActiveSubagentItems(latestVisibleAssistant?.subagents) ||
+          Number.isFinite(Number(latestVisibleAssistant?.retry_started_at_ms ?? latestVisibleAssistant?.retryStartedAtMs)) ||
+          Number.isFinite(Number(latestVisibleAssistant?.retry_next_attempt_at_ms ?? latestVisibleAssistant?.retryNextAttemptAtMs)) ||
+          Number.isFinite(Number(latestVisibleAssistant?.retry_attempt ?? latestVisibleAssistant?.retryAttempt)) ||
+          Number.isFinite(Number(latestVisibleAssistant?.retry_max_attempts ?? latestVisibleAssistant?.retryMaxAttempts))
       );
-  }));
+  });
 
   ctx.buildMessageStatsEntries = (message: Record<string, unknown>, index = 0) => {
       const nowTick = ctx.messageStatsNowTick.value;
@@ -1231,6 +1249,10 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   const ensureMessageStatsTimer = () => {
       if (typeof window === 'undefined') {
+          return;
+      }
+      if (isDesktopSafeModeActive()) {
+          stopMessageStatsTimer();
           return;
       }
       if (!ctx.hasLiveAssistantStats.value) {

@@ -7,9 +7,8 @@ import {
   controlSessionSubagents as controlSessionSubagentsApi,
   createSession,
   deleteSession as deleteSessionApi,
-  getSession,
+  getSessionWithParams,
   getSessionGoal,
-  getSessionEvents,
   getSessionHistoryPage,
   getSessionSubagents,
   listSessions,
@@ -33,7 +32,6 @@ import {
   hasRunningAssistantMessage,
   hasStreamingAssistantMessage,
   isSessionBusyFromSignals,
-  isThreadRuntimeBusy,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
 } from '@/utils/chatSessionRuntime';
@@ -132,7 +130,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommandSessions, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
-import { HISTORY_PAGE_LIMIT, MESSAGE_WINDOW_LIMIT, MESSAGE_WINDOW_MAX, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, setSessionLoading } from './chatRuntimeControls';
+import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
 import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, mergeSessionProtectedRealtimeMessages, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, syncChatRuntimeProjectionFromLegacy, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { mergeSnapshotIntoMessages, normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
@@ -146,7 +144,10 @@ import {
 import { AppendLocalMessageOptions, CreateSessionOptions, LoadSessionDetailOptions, LoadSessionsOptions, OpenDraftSessionOptions } from './chatTypes';
 import { abortResumeStream, startSessionWatcher } from './chatWatcher';
 import { attachWorkflowEvents, getSessionWorkflowState, summarizeCompactionRoundEvents } from './chatWorkflowHydration';
-import { shouldStartWatcherAfterSessionHydration } from './chatActiveSessionRealtime';
+import {
+  shouldKeepActiveSessionWarmAfterHydration,
+  shouldStartWatcherAfterSessionHydration
+} from './chatActiveSessionRealtime';
 
 const resolveLoadSessionsCacheKey = (agentId: string | null) =>
   resolveLoadSessionsCacheKeyBase(agentId, resolveSessionListCacheKey);
@@ -158,6 +159,40 @@ const readLoadSessionsCacheEntry = (agentId: string | null, maxAgeMs: number) =>
 
 const writeLoadSessionsCache = (agentId: string | null, sessions: Record<string, unknown>[]) => {
   writeSessionListCache(agentId === null ? ALL_SESSION_LIST_CACHE_KEY : agentId, sessions);
+};
+
+const resolveSessionOpenDetailLimit = (): number => resolveSessionDetailMessageLimit(isDesktopModeEnabled());
+
+const sessionDetailLoadInFlight = new Map<string, Promise<unknown>>();
+
+const resolveSessionDetailLoadInFlightKey = (
+  sessionId: string,
+  options: LoadSessionDetailOptions
+): string =>
+  [
+    sessionId,
+    options.preserveWatcher === true ? 'preserve' : 'replace',
+    options.forceHydrateForeground === true ? 'force' : 'normal',
+    options.startWatcherAfterHydration === false ? 'no-watch' : 'auto-watch'
+  ].join('|');
+
+const withSessionDetailLoadInFlight = <T>(
+  sessionId: string,
+  options: LoadSessionDetailOptions,
+  loader: () => Promise<T>
+): Promise<T> => {
+  const key = resolveSessionDetailLoadInFlightKey(sessionId, options);
+  const existing = sessionDetailLoadInFlight.get(key);
+  if (existing) {
+    return existing as Promise<T>;
+  }
+  const request = loader().finally(() => {
+    if (sessionDetailLoadInFlight.get(key) === request) {
+      sessionDetailLoadInFlight.delete(key);
+    }
+  });
+  sessionDetailLoadInFlight.set(key, request);
+  return request;
 };
 
 export const chatSessionOpenLoadActions = {
@@ -444,497 +479,525 @@ export const chatSessionOpenLoadActions = {
     async loadSessionDetail(sessionId, options: LoadSessionDetailOptions = {}) {
       const targetSessionId = resolveSessionKey(sessionId);
       if (!targetSessionId) return null;
-      const previousSessionId = this.activeSessionId;
-      const previousSessionKey = resolveSessionKey(previousSessionId);
-      const previousForegroundMessages = Array.isArray(this.messages) ? this.messages : [];
-      const runtimeForPreserveGuard = ensureRuntime(targetSessionId);
-      recoverRuntimeInteractiveControllers(this, targetSessionId, runtimeForPreserveGuard);
-      const lifecycleForPreserveGuard = refreshRuntimeStreamLifecycle(runtimeForPreserveGuard);
-      const preserveWatcher =
-        previousSessionKey === targetSessionId &&
-        (
-          options.preserveWatcher === true ||
-          shouldForcePreserveWatcherForActiveSession({
-            isSameActiveSession: true,
-            lifecycle: lifecycleForPreserveGuard,
-            hasSendController: Boolean(runtimeForPreserveGuard?.sendController),
-            hasResumeController: Boolean(runtimeForPreserveGuard?.resumeController)
-          })
-        );
-      if (previousSessionId && previousSessionId !== targetSessionId) {
-        cacheSessionMessages(previousSessionId, this.messages);
-      }
-      if (!preserveWatcher) {
-        abortResumeStream(previousSessionId);
-        clearSessionWatcher();
-        this.activeSessionId = targetSessionId;
-      }
-      getHistoryState(targetSessionId, { reset: true });
-      const knownSessionRecord =
-        this.sessions.find((item) => resolveSessionKey(item?.id) === targetSessionId) || null;
-      const liveSessionMessages = resolveSessionMessageArray(
-        {
-          activeSessionId: previousSessionKey,
-          messages: previousForegroundMessages
-        },
-        targetSessionId,
-        previousSessionKey === targetSessionId ? previousForegroundMessages : null
-      );
-      const cachedSessionMessages = dedupeAssistantMessagesInPlace(liveSessionMessages);
-      const snapshot = previousSessionKey && previousSessionKey !== targetSessionId
-        ? null
-        : this.getSnapshotForSession(targetSessionId);
-      if (cachedSessionMessages?.length) {
-        this.messages = ensureGreetingMessage(cachedSessionMessages, {
-          greeting: this.greetingOverride
-        });
-      } else if (snapshot?.messages?.length) {
-        const cachedMessages = dedupeAssistantMessages(
-          snapshot.messages
-          .map((item) => normalizeSnapshotMessage(item))
-          .filter(Boolean)
-        );
-        this.messages = ensureGreetingMessage(cachedMessages, {
-          greeting: this.greetingOverride
-        });
-      } else if (!preserveWatcher) {
-        // Prevent a session switch from momentarily reusing the previous thread's foreground messages.
-        this.messages = ensureGreetingMessage([], {
-          createdAt: knownSessionRecord?.created_at,
-          greeting: this.greetingOverride
-        });
-      }
-      if (cachedSessionMessages?.length || snapshot?.messages?.length) {
-        cacheSessionMessages(targetSessionId, this.messages);
-      }
-      if (!hasKnownSessionInStore(this, targetSessionId)) {
-        purgeUnavailableSession(this, targetSessionId);
-        return null;
-      }
-      const pendingPrefetch = sessionDetailPrefetchInFlight.get(targetSessionId);
-      let prefetchedSessionDetail = null;
-      if (pendingPrefetch) {
-        try {
-          prefetchedSessionDetail = await pendingPrefetch;
-        } catch (error) {
-          prefetchedSessionDetail = null;
+      return withSessionDetailLoadInFlight(targetSessionId, options, async () => {
+        const previousSessionId = this.activeSessionId;
+        const previousSessionKey = resolveSessionKey(previousSessionId);
+        const previousForegroundMessages = Array.isArray(this.messages) ? this.messages : [];
+        const runtimeForPreserveGuard = ensureRuntime(targetSessionId);
+        recoverRuntimeInteractiveControllers(this, targetSessionId, runtimeForPreserveGuard);
+        const lifecycleForPreserveGuard = refreshRuntimeStreamLifecycle(runtimeForPreserveGuard);
+        const preserveWatcher =
+          previousSessionKey === targetSessionId &&
+          (
+            options.preserveWatcher === true ||
+            shouldForcePreserveWatcherForActiveSession({
+              isSameActiveSession: true,
+              lifecycle: lifecycleForPreserveGuard,
+              hasSendController: Boolean(runtimeForPreserveGuard?.sendController),
+              hasResumeController: Boolean(runtimeForPreserveGuard?.resumeController)
+            })
+          );
+        if (previousSessionId && previousSessionId !== targetSessionId) {
+          cacheSessionMessages(previousSessionId, this.messages);
         }
-      }
-      const latestCachedSessionMessages = dedupeAssistantMessagesInPlace(
-        resolveSessionMessageArray(
+        if (!preserveWatcher) {
+          abortResumeStream(previousSessionId);
+          clearSessionWatcher();
+          this.activeSessionId = targetSessionId;
+        }
+        getHistoryState(targetSessionId, { reset: true });
+        const knownSessionRecord =
+          this.sessions.find((item) => resolveSessionKey(item?.id) === targetSessionId) || null;
+        const liveSessionMessages = resolveSessionMessageArray(
           {
             activeSessionId: previousSessionKey,
             messages: previousForegroundMessages
           },
           targetSessionId,
           previousSessionKey === targetSessionId ? previousForegroundMessages : null
-        )
-      );
-      let sessionRes = null;
-      let eventsPayload = null;
-      let sessionDetail = prefetchedSessionDetail;
-      const knownEventFloor = resolveKnownSessionEventFloor(
-        targetSessionId,
-        latestCachedSessionMessages || cachedSessionMessages
-      );
-      if (!sessionDetail && isSessionDetailWarm(targetSessionId)) {
-        sessionDetail = readSessionDetailSnapshot(targetSessionId);
-      }
-      if (sessionDetail && isSessionDetailWarm(targetSessionId)) {
-        eventsPayload = readSessionEventsSnapshot(targetSessionId, {
-          // Avoid trusting stale running cache when switching into a historical thread.
-          // If cache says running, fall back to fresh events snapshot request below.
-          allowRunning: false,
-          minLastEventId: knownEventFloor
-        });
-      }
-      try {
-        if (!sessionDetail || !eventsPayload) {
-          [sessionRes, eventsPayload] = await Promise.all([
-            getSession(targetSessionId),
-            loadSessionEventsSnapshot(targetSessionId, {
-              minLastEventId: knownEventFloor
-            }).catch((error) => {
-              if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-                throw error;
-              }
-              return null;
-            })
-          ]);
-          sessionDetail = sessionRes?.data?.data || null;
-          cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
+        );
+        const cachedSessionMessages = dedupeAssistantMessagesInPlace(liveSessionMessages);
+        const snapshot = previousSessionKey && previousSessionKey !== targetSessionId
+          ? null
+          : this.getSnapshotForSession(targetSessionId);
+        if (cachedSessionMessages?.length) {
+          this.messages = ensureGreetingMessage(cachedSessionMessages, {
+            greeting: this.greetingOverride
+          });
+        } else if (snapshot?.messages?.length) {
+          const cachedMessages = dedupeAssistantMessages(
+            snapshot.messages
+            .map((item) => normalizeSnapshotMessage(item))
+            .filter(Boolean)
+          );
+          this.messages = ensureGreetingMessage(cachedMessages, {
+            greeting: this.greetingOverride
+          });
+        } else if (!preserveWatcher) {
+          // Prevent a session switch from momentarily reusing the previous thread's foreground messages.
+          this.messages = ensureGreetingMessage([], {
+            createdAt: knownSessionRecord?.created_at,
+            greeting: this.greetingOverride
+          });
         }
-      } catch (error) {
-        if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+        if (cachedSessionMessages?.length || snapshot?.messages?.length) {
+          cacheSessionMessages(targetSessionId, this.messages);
+        }
+        if (!hasKnownSessionInStore(this, targetSessionId)) {
           purgeUnavailableSession(this, targetSessionId);
           return null;
         }
-        throw error;
-      }
-      const data = sessionRes?.data;
-      syncGoalFromSessionRecord(this, sessionDetail);
-      const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
-      hydrateSessionCommandSessions(
-        targetSessionId,
-        eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
-      );
-      const runtime = ensureRuntime(targetSessionId);
-      applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
-      applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
-        phase: 'detail'
-      });
-      const remoteRunning = eventsPayload?.running === true;
-      const remoteLastEventId = normalizeStreamEventId(
-        eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
-      );
-      updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
-      recoverRuntimeInteractiveControllers(this, targetSessionId, runtime, {
-        remoteRunning: eventsPayload?.running,
-        remoteLastEventId,
-        localLastEventId: resolveMaterializedMessageEventId(
-          getSessionMessages(targetSessionId) || (resolveSessionKey(this.activeSessionId) === targetSessionId
-            ? this.messages
-            : [])
-        )
-      });
-      if (eventsPayload?.running === false) {
-        clearRuntimeInteractiveControllers(runtime, { abort: false });
-      }
-      const sessionCreatedAt = sessionDetail?.created_at;
-      if (sessionDetail?.id) {
-        const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
-        if (index >= 0) {
-          this.sessions[index] = patchSessionRuntimeFields({ ...this.sessions[index], ...sessionDetail });
-        } else {
-          this.sessions.unshift(patchSessionRuntimeFields(sessionDetail));
-        }
-      }
-      const resolvedAgentId =
-        sessionDetail?.agent_id ??
-        this.sessions.find((item) => item.id === targetSessionId)?.agent_id ??
-        '';
-      const resolvedAgentIdText = String(resolvedAgentId || '').trim();
-      writeSessionListCache(
-        resolvedAgentIdText,
-        filterSessionsByAgent(resolvedAgentIdText, this.sessions)
-      );
-      const rounds = eventsPayload?.rounds || [];
-      const compactionHydrationRounds = Array.isArray(rounds)
-        ? rounds
-            .map((round) => {
-              const roundNumber = Number(round?.user_round ?? round?.round);
-              const summary = summarizeCompactionRoundEvents(round?.events);
-              if (!summary) return null;
-              return { round: roundNumber, ...summary };
-            })
-            .filter(Boolean)
-        : [];
-      const finalCachedMessages = dedupeAssistantMessages(
-        resolveSessionMessageArray(
-          this,
-          targetSessionId,
-          resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null
-        )
-      );
-      const previousHydratedVersion = readSessionHydratedMessageVersion(targetSessionId);
-      const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
-      const canReuseHydratedMessages =
-        !hasCanonicalTranscript &&
-        !remoteRunning &&
-        Array.isArray(finalCachedMessages) &&
-        finalCachedMessages.length > 0 &&
-        previousHydratedVersion === hydratedVersion;
-      let messages = finalCachedMessages;
-      if (canReuseHydratedMessages) {
-        getSessionWorkflowState(targetSessionId, { reset: true });
-        messages = dedupeAssistantMessages(mergeSnapshotIntoMessages(finalCachedMessages, snapshot));
-      } else {
-        const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
-        const rawMessages = attachWorkflowEvents(
-          resolveCanonicalSessionTranscript(sessionDetail),
-          rounds
-        );
-        messages = rawMessages.map((message) =>
-          hydrateMessage(message, workflowState)
-        );
-        if (!hasCanonicalTranscript) {
-          messages = mergeSnapshotIntoMessages(messages, snapshot);
-          messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
-          messages = dedupeAssistantMessages(messages);
-        }
-      }
-      if (compactionHydrationRounds.length > 0) {
-        chatDebugLog('chat.compaction.hydrate', 'load-session-detail', {
-          sessionId: targetSessionId,
-          remoteRunning,
-          roundCount: rounds.length,
-          cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
-          hydratedMessageCount: Array.isArray(messages) ? messages.length : 0,
-          compactionRounds: compactionHydrationRounds
-        });
-      }
-      if (!remoteRunning) {
-        clearCompletedAssistantStreamingState(finalCachedMessages);
-        clearCompletedAssistantStreamingState(messages);
-      }
-      if (!hasCanonicalTranscript && remoteRunning && shouldPreferCachedMessages(finalCachedMessages, messages)) {
-        messages = dedupeAssistantMessages(
-          mergeSnapshotIntoMessages(finalCachedMessages, { messages })
-        );
-      }
-      if (remoteRunning) {
-        mergeSessionProtectedRealtimeMessages(targetSessionId, messages);
-      }
-      dismissStaleInquiryPanels(messages);
-      let nextMessages = ensureGreetingMessage(messages, {
-        createdAt: sessionCreatedAt,
-        greeting: this.greetingOverride
-      });
-      if (!remoteRunning) {
-        clearCompletedAssistantStreamingState(nextMessages);
-      }
-      clearSupersededPendingAssistantMessages(nextMessages);
-      applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
-      const activeSessionKey = resolveSessionKey(this.activeSessionId);
-      const shouldKeepStableForegroundMessages =
-        !hasCanonicalTranscript &&
-        preserveWatcher &&
-        !remoteRunning &&
-        previousHydratedVersion === hydratedVersion &&
-        Array.isArray(finalCachedMessages) &&
-        finalCachedMessages.length > 0;
-      const hydrateForegroundMessages = shouldApplyForegroundDetailHydration({
-        preserveWatcher,
-        forceHydration: options.forceHydrateForeground === true,
-        lifecycle: refreshRuntimeStreamLifecycle(runtime),
-        hasWatchController: Boolean(runtime?.watchController),
-        hasSendController: Boolean(runtime?.sendController),
-        hasResumeController: Boolean(runtime?.resumeController)
-      });
-      const hasPendingAssistantAfterHydrationPreview = Boolean(findPendingAssistantMessage(nextMessages));
-      const liveForegroundMessages =
-        preserveWatcher || activeSessionKey === targetSessionId
-          ? resolveSessionMessageArray(
-              this,
-              targetSessionId,
-              activeSessionKey === targetSessionId ? this.messages : null
-            )
-          : null;
-      const hasPendingAssistantInForegroundLive = Boolean(
-        findPendingAssistantMessage(liveForegroundMessages)
-      );
-      const keepForegroundRunningGap = shouldKeepForegroundLiveMessagesDuringRunningGap({
-        preserveWatcher,
-        lifecycle: refreshRuntimeStreamLifecycle(runtime),
-        hasSendController: Boolean(runtime?.sendController),
-        hasResumeController: Boolean(runtime?.resumeController),
-        remoteRunning,
-        liveHasPendingAssistant: hasPendingAssistantInForegroundLive,
-        hydratedHasPendingAssistant: hasPendingAssistantAfterHydrationPreview
-      });
-      chatDebugLog('chat.store.detail', 'foreground-sync-decision', {
-        sessionId: targetSessionId,
-        preserveWatcher,
-        hydrateForegroundMessages,
-        remoteRunning,
-        activeSessionKey,
-        keepForegroundRunningGap,
-        hasPendingAssistantInForegroundLive,
-        hasPendingAssistantAfterHydration: hasPendingAssistantAfterHydrationPreview,
-        cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
-        nextMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
-        compactionRoundCount: compactionHydrationRounds.length,
-        runtime: buildRuntimeDebugSnapshot(runtime)
-      });
-      if (shouldKeepStableForegroundMessages) {
-        const watchedMessages = resolveSessionMessageArray(
-          this,
-          targetSessionId,
-          activeSessionKey === targetSessionId ? this.messages : null
-        );
-        if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
-          nextMessages = watchedMessages;
-        }
-      } else if (keepForegroundRunningGap) {
-        const watchedMessages = resolveSessionMessageArray(
-          this,
-          targetSessionId,
-          activeSessionKey === targetSessionId ? this.messages : null
-        );
-        if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
-          chatDebugLog('chat.store.detail', 'foreground-sync-preserve-running-gap', {
-            sessionId: targetSessionId,
-            watchedMessageCount: watchedMessages.length,
-            hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
-            compactionRoundCount: compactionHydrationRounds.length
-          });
-          nextMessages = watchedMessages;
-        }
-      } else if (shouldKeepForegroundLiveMessages({
-        preserveWatcher,
-        hydrateForegroundMessages,
-        remoteRunning
-      })) {
-        const watchedMessages = resolveSessionMessageArray(
-          this,
-          targetSessionId,
-          activeSessionKey === targetSessionId ? this.messages : null
-        );
-        if (Array.isArray(watchedMessages)) {
-          chatDebugLog('chat.store.detail', 'foreground-sync-keep-live', {
-            sessionId: targetSessionId,
-            watchedMessageCount: watchedMessages.length,
-            hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
-            compactionRoundCount: compactionHydrationRounds.length
-          });
-          nextMessages = watchedMessages;
-        }
-      } else if (preserveWatcher) {
-        const watchedMessages = resolveSessionMessageArray(
-          this,
-          targetSessionId,
-          activeSessionKey === targetSessionId ? this.messages : null
-        );
-        const foregroundMerge = mergeForegroundHydratedMessagesWithLive(
-          watchedMessages,
-          nextMessages
-        );
-        const mergedWithCompactionMarkers = mergeCompactionMarkersIntoMessages(
-          foregroundMerge.messages,
-          watchedMessages
-        );
-        chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
-          sessionId: targetSessionId,
-          watchedMessageCount: Array.isArray(watchedMessages) ? watchedMessages.length : 0,
-          hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
-          compactionRoundCount: compactionHydrationRounds.length,
-          merge: {
-            ...foregroundMerge.debug,
-            markerMessageCountBefore:
-              Array.isArray(foregroundMerge.messages)
-                ? foregroundMerge.messages.filter((message) =>
-                    isCompactionMarkerAssistantMessage(message)
-                  ).length
-                : 0,
-            markerMessageCountAfter:
-              Array.isArray(mergedWithCompactionMarkers)
-                ? mergedWithCompactionMarkers.filter((message) =>
-                    isCompactionMarkerAssistantMessage(message)
-                  ).length
-                : 0
+        const pendingPrefetch = sessionDetailPrefetchInFlight.get(targetSessionId);
+        let prefetchedSessionDetail = null;
+        if (pendingPrefetch) {
+          try {
+            prefetchedSessionDetail = await pendingPrefetch;
+          } catch (error) {
+            prefetchedSessionDetail = null;
           }
-        });
-        nextMessages = replaceMessageArrayKeepingReference(
-          watchedMessages,
-          mergedWithCompactionMarkers
-        );
-      }
-      if (!remoteRunning) {
-        const runningCountBeforeClear = countAssistantStreamingMessages(nextMessages);
-        clearCompletedAssistantStreamingState(nextMessages);
-        const runningCountAfterClear = countAssistantStreamingMessages(nextMessages);
-        if (runningCountBeforeClear !== runningCountAfterClear) {
-          chatDebugLog('chat.store.detail', 'idle-stream-state-cleared', {
-            sessionId: targetSessionId,
-            preserveWatcher,
-            hydrateForegroundMessages,
-            runningCountBeforeClear,
-            runningCountAfterClear,
-            messageCount: Array.isArray(nextMessages) ? nextMessages.length : 0
-          });
         }
-      }
-      const hasPendingAssistantAfterHydration = Boolean(findPendingAssistantMessage(nextMessages));
-      cacheSessionMessages(targetSessionId, nextMessages);
-      updateRuntimeLastEventId(
-        runtime,
-        Math.max(resolveMaterializedMessageEventId(nextMessages), remoteLastEventId || 0)
-      );
-      const shouldKeepInteractiveRuntime = shouldKeepForegroundInteractiveRuntime({
-        remoteRunning,
-        hasSendController: Boolean(runtime?.sendController),
-        hasResumeController: Boolean(runtime?.resumeController)
-      });
-      if (!hasPendingAssistantAfterHydration && !shouldKeepInteractiveRuntime) {
-        clearRuntimeInteractiveControllers(runtime, { abort: false });
-        // Keep historical threads idle on entry; avoid reviving stale running status.
-        setSessionLoading(this, targetSessionId, false);
-      }
-      writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
-      markSessionDetailWarm(targetSessionId);
-      // Ignore stale async response: keep current foreground conversation state untouched.
-      if (activeSessionKey !== targetSessionId) {
-        return sessionDetail;
-      }
-      this.draftAgentId = resolvedAgentIdText;
-      persistActiveSession(targetSessionId, resolvedAgentIdText);
-      this.draftToolOverrides = null;
-      if (this.messages !== nextMessages) {
-        this.messages = nextMessages;
-      }
-      syncChatRuntimeProjectionFromLegacy(this, targetSessionId, this.messages, {
-        immediate: true,
-        loading: remoteRunning,
-        running: remoteRunning,
-        authoritative: !remoteRunning
-      });
-      applyMessageWindow(this, targetSessionId, this.messages);
-      syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
-      if (hydrateForegroundMessages) {
-        const pendingMessage = findPendingAssistantMessage(this.messages);
-        if (pendingMessage && remoteRunning) {
-          const resumeAfterEventId =
-            normalizeStreamEventId(pendingMessage.stream_event_id) ?? remoteLastEventId;
-          if (
-            resumeAfterEventId !== null &&
-            resumeAfterEventId > 0 &&
-            normalizeStreamEventId(pendingMessage.stream_event_id) === null
-          ) {
-            pendingMessage.stream_event_id = resumeAfterEventId;
-          }
-          this.resumeStream(
+        const latestCachedSessionMessages = dedupeAssistantMessagesInPlace(
+          resolveSessionMessageArray(
+            {
+              activeSessionId: previousSessionKey,
+              messages: previousForegroundMessages
+            },
             targetSessionId,
-            pendingMessage,
-            resumeAfterEventId !== null && resumeAfterEventId > 0
-              ? { afterEventId: resumeAfterEventId }
-              : {}
-          );
-        } else {
-          if (!remoteRunning) {
-            clearCompletedAssistantStreamingState(this.messages);
-          }
-          setSessionLoading(this, targetSessionId, false);
+            previousSessionKey === targetSessionId ? previousForegroundMessages : null
+          )
+        );
+        let sessionRes = null;
+        let eventsPayload = null;
+        let sessionDetail = prefetchedSessionDetail;
+        const detailLimit = resolveSessionOpenDetailLimit();
+        const knownEventFloor = resolveKnownSessionEventFloor(
+          targetSessionId,
+          latestCachedSessionMessages || cachedSessionMessages
+        );
+        if (!sessionDetail && isSessionDetailWarm(targetSessionId)) {
+          sessionDetail = readSessionDetailSnapshot(targetSessionId);
         }
-      }
-      chatDebugLog('chat.store.detail', 'hydration-message-identity', {
-        sessionId: targetSessionId,
-        hasCanonicalTranscript,
-        remoteRunning,
-        transcriptSummary: buildMessageIdentityDebugList(
-          resolveCanonicalSessionTranscript(sessionDetail)
-        ),
-        hydratedSummary: buildMessageIdentityDebugList(nextMessages),
-        foregroundSummary: buildMessageIdentityDebugList(this.messages)
-      });
-      this.scheduleSnapshot(true);
-      const shouldStartWatcher =
-        (
-          !preserveWatcher ||
-          activeSessionKey === targetSessionId
-        ) &&
-        shouldStartWatcherAfterSessionHydration({
-          remoteRunning,
-          runtimeStatus: runtime?.threadStatus,
+        if (sessionDetail && isSessionDetailWarm(targetSessionId)) {
+          eventsPayload = readSessionEventsSnapshot(targetSessionId, {
+            // Avoid trusting stale running cache when switching into a historical thread.
+            // If cache says running, fall back to fresh events snapshot request below.
+            allowRunning: false,
+            minLastEventId: knownEventFloor,
+            limit: detailLimit
+          });
+        }
+        try {
+          if (!sessionDetail || !eventsPayload) {
+            [sessionRes, eventsPayload] = await Promise.all([
+              getSessionWithParams(targetSessionId, { limit: detailLimit }),
+              loadSessionEventsSnapshot(targetSessionId, {
+                limit: detailLimit,
+                minLastEventId: knownEventFloor
+              }).catch((error) => {
+                if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+                  throw error;
+                }
+                return null;
+              })
+            ]);
+            sessionDetail = sessionRes?.data?.data || null;
+            cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
+          }
+        } catch (error) {
+          if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+            purgeUnavailableSession(this, targetSessionId);
+            return null;
+          }
+          throw error;
+        }
+        const data = sessionRes?.data;
+        const detailTranscriptCount = Array.isArray(sessionDetail?.transcript)
+          ? sessionDetail.transcript.length
+          : 0;
+        const detailEventCount = Array.isArray(eventsPayload?.events)
+          ? eventsPayload.events.length
+          : 0;
+        syncGoalFromSessionRecord(this, sessionDetail);
+        const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
+        hydrateSessionCommandSessions(
+          targetSessionId,
+          eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
+        );
+        const runtime = ensureRuntime(targetSessionId);
+        applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
+        applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
+          phase: 'detail'
+        });
+        const remoteRunning = eventsPayload?.running === true;
+        const remoteLastEventId = normalizeStreamEventId(
+          eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
+        );
+        updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
+        recoverRuntimeInteractiveControllers(this, targetSessionId, runtime, {
+          remoteRunning: eventsPayload?.running,
+          remoteLastEventId,
+          localLastEventId: resolveMaterializedMessageEventId(
+            getSessionMessages(targetSessionId) || (resolveSessionKey(this.activeSessionId) === targetSessionId
+              ? this.messages
+              : [])
+          )
+        });
+        if (eventsPayload?.running === false) {
+          clearRuntimeInteractiveControllers(runtime, { abort: false });
+        }
+        const sessionCreatedAt = sessionDetail?.created_at;
+        if (sessionDetail?.id) {
+          const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
+          if (index >= 0) {
+            this.sessions[index] = patchSessionRuntimeFields({ ...this.sessions[index], ...sessionDetail });
+          } else {
+            this.sessions.unshift(patchSessionRuntimeFields(sessionDetail));
+          }
+        }
+        const resolvedAgentId =
+          sessionDetail?.agent_id ??
+          this.sessions.find((item) => item.id === targetSessionId)?.agent_id ??
+          '';
+        const resolvedAgentIdText = String(resolvedAgentId || '').trim();
+        writeSessionListCache(
+          resolvedAgentIdText,
+          filterSessionsByAgent(resolvedAgentIdText, this.sessions)
+        );
+        const rounds = eventsPayload?.rounds || [];
+        chatDebugLog('chat.store.detail', 'payload-loaded', {
+          sessionId: targetSessionId,
+          desktopMode: isDesktopModeEnabled(),
+          transcriptCount: detailTranscriptCount,
+          eventCount: detailEventCount,
+          roundCount: Array.isArray(rounds) ? rounds.length : 0,
+          limit: resolveSessionOpenDetailLimit()
+        });
+        const compactionHydrationRounds = Array.isArray(rounds)
+          ? rounds
+              .map((round) => {
+                const roundNumber = Number(round?.user_round ?? round?.round);
+                const summary = summarizeCompactionRoundEvents(round?.events);
+                if (!summary) return null;
+                return { round: roundNumber, ...summary };
+              })
+              .filter(Boolean)
+          : [];
+        const finalCachedMessages = dedupeAssistantMessages(
+          resolveSessionMessageArray(
+            this,
+            targetSessionId,
+            resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null
+          )
+        );
+        const previousHydratedVersion = readSessionHydratedMessageVersion(targetSessionId);
+        const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
+        const canReuseHydratedMessages =
+          !hasCanonicalTranscript &&
+          !remoteRunning &&
+          Array.isArray(finalCachedMessages) &&
+          finalCachedMessages.length > 0 &&
+          previousHydratedVersion === hydratedVersion;
+        let messages = finalCachedMessages;
+        if (canReuseHydratedMessages) {
+          getSessionWorkflowState(targetSessionId, { reset: true });
+          messages = dedupeAssistantMessages(mergeSnapshotIntoMessages(finalCachedMessages, snapshot));
+        } else {
+          const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
+          const rawMessages = attachWorkflowEvents(
+            resolveCanonicalSessionTranscript(sessionDetail),
+            rounds
+          );
+          messages = rawMessages.map((message) =>
+            hydrateMessage(message, workflowState)
+          );
+          if (!hasCanonicalTranscript) {
+            messages = mergeSnapshotIntoMessages(messages, snapshot);
+            messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
+            messages = dedupeAssistantMessages(messages);
+          }
+        }
+        if (compactionHydrationRounds.length > 0) {
+          chatDebugLog('chat.compaction.hydrate', 'load-session-detail', {
+            sessionId: targetSessionId,
+            remoteRunning,
+            roundCount: rounds.length,
+            cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
+            hydratedMessageCount: Array.isArray(messages) ? messages.length : 0,
+            compactionRounds: compactionHydrationRounds
+          });
+        }
+        if (!remoteRunning) {
+          clearCompletedAssistantStreamingState(finalCachedMessages);
+          clearCompletedAssistantStreamingState(messages);
+        }
+        if (!hasCanonicalTranscript && remoteRunning && shouldPreferCachedMessages(finalCachedMessages, messages)) {
+          messages = dedupeAssistantMessages(
+            mergeSnapshotIntoMessages(finalCachedMessages, { messages })
+          );
+        }
+        if (remoteRunning) {
+          mergeSessionProtectedRealtimeMessages(targetSessionId, messages);
+        }
+        dismissStaleInquiryPanels(messages);
+        let nextMessages = ensureGreetingMessage(messages, {
+          createdAt: sessionCreatedAt,
+          greeting: this.greetingOverride
+        });
+        if (!remoteRunning) {
+          clearCompletedAssistantStreamingState(nextMessages);
+        }
+        clearSupersededPendingAssistantMessages(nextMessages);
+        applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
+        const activeSessionKey = resolveSessionKey(this.activeSessionId);
+        const shouldKeepStableForegroundMessages =
+          !hasCanonicalTranscript &&
+          preserveWatcher &&
+          !remoteRunning &&
+          previousHydratedVersion === hydratedVersion &&
+          Array.isArray(finalCachedMessages) &&
+          finalCachedMessages.length > 0;
+        const hydrateForegroundMessages = shouldApplyForegroundDetailHydration({
+          preserveWatcher,
+          forceHydration: options.forceHydrateForeground === true,
+          lifecycle: refreshRuntimeStreamLifecycle(runtime),
           hasWatchController: Boolean(runtime?.watchController),
           hasSendController: Boolean(runtime?.sendController),
-          hasResumeController: Boolean(runtime?.resumeController),
-          keepActiveSessionWarm: activeSessionKey === targetSessionId
+          hasResumeController: Boolean(runtime?.resumeController)
         });
-      if (shouldStartWatcher) {
-        startSessionWatcher(this, targetSessionId);
-      }
-      void this.refreshSessionSubagents(targetSessionId).catch(() => null);
-      return sessionDetail;
+        const hasPendingAssistantAfterHydrationPreview = Boolean(findPendingAssistantMessage(nextMessages));
+        const liveForegroundMessages =
+          preserveWatcher || activeSessionKey === targetSessionId
+            ? resolveSessionMessageArray(
+                this,
+                targetSessionId,
+                activeSessionKey === targetSessionId ? this.messages : null
+              )
+            : null;
+        const hasPendingAssistantInForegroundLive = Boolean(
+          findPendingAssistantMessage(liveForegroundMessages)
+        );
+        const keepForegroundRunningGap = shouldKeepForegroundLiveMessagesDuringRunningGap({
+          preserveWatcher,
+          lifecycle: refreshRuntimeStreamLifecycle(runtime),
+          hasSendController: Boolean(runtime?.sendController),
+          hasResumeController: Boolean(runtime?.resumeController),
+          remoteRunning,
+          liveHasPendingAssistant: hasPendingAssistantInForegroundLive,
+          hydratedHasPendingAssistant: hasPendingAssistantAfterHydrationPreview
+        });
+        chatDebugLog('chat.store.detail', 'foreground-sync-decision', {
+          sessionId: targetSessionId,
+          preserveWatcher,
+          hydrateForegroundMessages,
+          remoteRunning,
+          activeSessionKey,
+          keepForegroundRunningGap,
+          hasPendingAssistantInForegroundLive,
+          hasPendingAssistantAfterHydration: hasPendingAssistantAfterHydrationPreview,
+          cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
+          nextMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+          compactionRoundCount: compactionHydrationRounds.length,
+          runtime: buildRuntimeDebugSnapshot(runtime)
+        });
+        if (shouldKeepStableForegroundMessages) {
+          const watchedMessages = resolveSessionMessageArray(
+            this,
+            targetSessionId,
+            activeSessionKey === targetSessionId ? this.messages : null
+          );
+          if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
+            nextMessages = watchedMessages;
+          }
+        } else if (keepForegroundRunningGap) {
+          const watchedMessages = resolveSessionMessageArray(
+            this,
+            targetSessionId,
+            activeSessionKey === targetSessionId ? this.messages : null
+          );
+          if (Array.isArray(watchedMessages) && watchedMessages.length > 0) {
+            chatDebugLog('chat.store.detail', 'foreground-sync-preserve-running-gap', {
+              sessionId: targetSessionId,
+              watchedMessageCount: watchedMessages.length,
+              hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+              compactionRoundCount: compactionHydrationRounds.length
+            });
+            nextMessages = watchedMessages;
+          }
+        } else if (shouldKeepForegroundLiveMessages({
+          preserveWatcher,
+          hydrateForegroundMessages,
+          remoteRunning
+        })) {
+          const watchedMessages = resolveSessionMessageArray(
+            this,
+            targetSessionId,
+            activeSessionKey === targetSessionId ? this.messages : null
+          );
+          if (Array.isArray(watchedMessages)) {
+            chatDebugLog('chat.store.detail', 'foreground-sync-keep-live', {
+              sessionId: targetSessionId,
+              watchedMessageCount: watchedMessages.length,
+              hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+              compactionRoundCount: compactionHydrationRounds.length
+            });
+            nextMessages = watchedMessages;
+          }
+        } else if (preserveWatcher) {
+          const watchedMessages = resolveSessionMessageArray(
+            this,
+            targetSessionId,
+            activeSessionKey === targetSessionId ? this.messages : null
+          );
+          const foregroundMerge = mergeForegroundHydratedMessagesWithLive(
+            watchedMessages,
+            nextMessages
+          );
+          const mergedWithCompactionMarkers = mergeCompactionMarkersIntoMessages(
+            foregroundMerge.messages,
+            watchedMessages
+          );
+          chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
+            sessionId: targetSessionId,
+            watchedMessageCount: Array.isArray(watchedMessages) ? watchedMessages.length : 0,
+            hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+            compactionRoundCount: compactionHydrationRounds.length,
+            merge: {
+              ...foregroundMerge.debug,
+              markerMessageCountBefore:
+                Array.isArray(foregroundMerge.messages)
+                  ? foregroundMerge.messages.filter((message) =>
+                      isCompactionMarkerAssistantMessage(message)
+                    ).length
+                  : 0,
+              markerMessageCountAfter:
+                Array.isArray(mergedWithCompactionMarkers)
+                  ? mergedWithCompactionMarkers.filter((message) =>
+                      isCompactionMarkerAssistantMessage(message)
+                    ).length
+                  : 0
+            }
+          });
+          nextMessages = replaceMessageArrayKeepingReference(
+            watchedMessages,
+            mergedWithCompactionMarkers
+          );
+        }
+        if (!remoteRunning) {
+          const runningCountBeforeClear = countAssistantStreamingMessages(nextMessages);
+          clearCompletedAssistantStreamingState(nextMessages);
+          const runningCountAfterClear = countAssistantStreamingMessages(nextMessages);
+          if (runningCountBeforeClear !== runningCountAfterClear) {
+            chatDebugLog('chat.store.detail', 'idle-stream-state-cleared', {
+              sessionId: targetSessionId,
+              preserveWatcher,
+              hydrateForegroundMessages,
+              runningCountBeforeClear,
+              runningCountAfterClear,
+              messageCount: Array.isArray(nextMessages) ? nextMessages.length : 0
+            });
+          }
+        }
+        const hasPendingAssistantAfterHydration = Boolean(findPendingAssistantMessage(nextMessages));
+        cacheSessionMessages(targetSessionId, nextMessages);
+        updateRuntimeLastEventId(
+          runtime,
+          Math.max(resolveMaterializedMessageEventId(nextMessages), remoteLastEventId || 0)
+        );
+        const shouldKeepInteractiveRuntime = shouldKeepForegroundInteractiveRuntime({
+          remoteRunning,
+          hasSendController: Boolean(runtime?.sendController),
+          hasResumeController: Boolean(runtime?.resumeController)
+        });
+        if (!hasPendingAssistantAfterHydration && !shouldKeepInteractiveRuntime) {
+          clearRuntimeInteractiveControllers(runtime, { abort: false });
+          // Keep historical threads idle on entry; avoid reviving stale running status.
+          setSessionLoading(this, targetSessionId, false);
+        }
+        writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
+        markSessionDetailWarm(targetSessionId);
+        // Ignore stale async response: keep current foreground conversation state untouched.
+        if (activeSessionKey !== targetSessionId) {
+          return sessionDetail;
+        }
+        this.draftAgentId = resolvedAgentIdText;
+        persistActiveSession(targetSessionId, resolvedAgentIdText);
+        this.draftToolOverrides = null;
+        if (this.messages !== nextMessages) {
+          this.messages = nextMessages;
+        }
+        syncChatRuntimeProjectionFromLegacy(this, targetSessionId, this.messages, {
+          immediate: true,
+          loading: remoteRunning,
+          running: remoteRunning,
+          authoritative: !remoteRunning
+        });
+        applyMessageWindow(this, targetSessionId, this.messages);
+        syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
+        if (hydrateForegroundMessages) {
+          const pendingMessage = findPendingAssistantMessage(this.messages);
+          if (pendingMessage && remoteRunning) {
+            const resumeAfterEventId =
+              normalizeStreamEventId(pendingMessage.stream_event_id) ?? remoteLastEventId;
+            if (
+              resumeAfterEventId !== null &&
+              resumeAfterEventId > 0 &&
+              normalizeStreamEventId(pendingMessage.stream_event_id) === null
+            ) {
+              pendingMessage.stream_event_id = resumeAfterEventId;
+            }
+            this.resumeStream(
+              targetSessionId,
+              pendingMessage,
+              resumeAfterEventId !== null && resumeAfterEventId > 0
+                ? { afterEventId: resumeAfterEventId }
+                : {}
+            );
+          } else {
+            if (!remoteRunning) {
+              clearCompletedAssistantStreamingState(this.messages);
+            }
+            setSessionLoading(this, targetSessionId, false);
+          }
+        }
+        chatDebugLog('chat.store.detail', 'hydration-message-identity', {
+          sessionId: targetSessionId,
+          hasCanonicalTranscript,
+          remoteRunning,
+          transcriptSummary: buildMessageIdentityDebugList(
+            resolveCanonicalSessionTranscript(sessionDetail)
+          ),
+          hydratedSummary: buildMessageIdentityDebugList(nextMessages),
+          foregroundSummary: buildMessageIdentityDebugList(this.messages)
+        });
+        this.scheduleSnapshot(true);
+        const allowStartWatcherAfterHydration = options.startWatcherAfterHydration !== false;
+        const shouldKeepActiveSessionWarm = shouldKeepActiveSessionWarmAfterHydration({
+          isActiveSession: activeSessionKey === targetSessionId,
+          desktopMode: isDesktopModeEnabled(),
+          remoteRunning,
+          runtimeStatus: runtime?.threadStatus,
+          hasPendingAssistant: hasPendingAssistantAfterHydration
+        });
+        const shouldStartWatcher =
+          allowStartWatcherAfterHydration &&
+          (
+            !preserveWatcher ||
+            activeSessionKey === targetSessionId
+          ) &&
+          shouldStartWatcherAfterSessionHydration({
+            remoteRunning,
+            runtimeStatus: runtime?.threadStatus,
+            hasWatchController: Boolean(runtime?.watchController),
+            hasSendController: Boolean(runtime?.sendController),
+            hasResumeController: Boolean(runtime?.resumeController),
+            keepActiveSessionWarm: shouldKeepActiveSessionWarm
+          });
+        if (shouldStartWatcher) {
+          startSessionWatcher(this, targetSessionId);
+        }
+        void this.refreshSessionSubagents(targetSessionId).catch(() => null);
+        return sessionDetail;
+      });
     },
     async loadOlderHistory(sessionId, options: { limit?: number; beforeId?: number } = {}) {
       const targetId = resolveSessionKey(sessionId || this.activeSessionId);
@@ -985,8 +1048,8 @@ export const chatSessionOpenLoadActions = {
           const sessionMessagesRef = resolveSessionMessageArray(this, targetId, this.messages);
           const nextMessages = [...deduped, ...sessionMessagesRef];
           const nextLimit = Math.min(
-            Number(state.windowLimit || MESSAGE_WINDOW_LIMIT) + deduped.length,
-            MESSAGE_WINDOW_MAX
+            Number(state.windowLimit || resolveSessionDetailMessageLimit(isDesktopModeEnabled())) + deduped.length,
+            resolveMessageWindowMax(isDesktopModeEnabled())
           );
           state.windowLimit = nextLimit;
           if (resolveSessionKey(this.activeSessionId) === targetId) {

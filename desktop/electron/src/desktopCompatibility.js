@@ -40,6 +40,7 @@ const shouldDisableElectronHardwareAcceleration = ({
   release = ''
 } = {}) =>
   isEnvEnabled(env, 'WUNDER_DISABLE_GPU') ||
+  isEnvEnabled(env, 'WUNDER_DESKTOP_RENDERER_COMPAT_MODE') ||
   isWindows7OrOlder({ platform, release })
 
 module.exports = {

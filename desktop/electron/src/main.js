@@ -79,6 +79,22 @@ const resolveUpdaterDisableMarker = () => {
   return ''
 }
 
+const resolveDesktopSafeModeMarker = () => {
+  const candidates = []
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'safe-mode.flag'))
+    candidates.push(path.join(process.resourcesPath, 'win7-safe-mode.flag'))
+  }
+  candidates.push(path.join(__dirname, '..', 'resources', 'safe-mode.flag'))
+  candidates.push(path.join(__dirname, '..', 'resources', 'win7-safe-mode.flag'))
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return ''
+}
+
 const detectWin7PackageFlavor = () => {
   if (process.platform !== 'win32') {
     return false
@@ -94,6 +110,7 @@ const detectWin7PackageFlavor = () => {
 registerRuntimeModuleRoots()
 
 const updaterDisableMarker = resolveUpdaterDisableMarker()
+const desktopSafeModeMarker = resolveDesktopSafeModeMarker()
 const runningInAppImage =
   process.platform === 'linux' && Boolean(String(process.env.APPIMAGE || '').trim())
 const runningWin7PackageFlavor = detectWin7PackageFlavor()
@@ -105,6 +122,15 @@ const updaterDisabledReason = updaterDisableMarker
       ? 'win7-package'
       : ''
 const updaterDisabledByBuild = Boolean(updaterDisabledReason)
+const desktopSafeModeEnabled =
+  Boolean(desktopSafeModeMarker) || String(process.env.WUNDER_DESKTOP_SAFE_MODE || '').trim() === '1'
+if (desktopSafeModeEnabled) {
+  process.env.WUNDER_DESKTOP_SAFE_MODE = '1'
+  app.disableHardwareAcceleration()
+  console.info(
+    `[desktop-debug][electron] safe mode enabled by ${desktopSafeModeMarker || 'env'}`
+  )
+}
 let autoUpdater = null
 if (!updaterDisabledByBuild) {
   try {
@@ -145,6 +171,66 @@ const parseEnvNonNegativeNumber = (raw, fallbackValue) => {
     return parsed
   }
   return fallbackValue
+}
+const sanitizeRendererStagePayload = (payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  const output = {}
+  for (const [key, value] of Object.entries(source)) {
+    const normalizedKey = String(key || '').trim().slice(0, 48)
+    if (!normalizedKey) {
+      continue
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      output[normalizedKey] = value
+      continue
+    }
+    if (value === null) {
+      output[normalizedKey] = null
+      continue
+    }
+    output[normalizedKey] = String(value ?? '').slice(0, 160)
+  }
+  return output
+}
+const resolveRendererCrashStatePath = () =>
+  path.join(app.getPath('userData'), 'desktop-renderer-crash-state.json')
+const readRendererCrashState = () => {
+  try {
+    const statePath = resolveRendererCrashStatePath()
+    if (!fs.existsSync(statePath)) {
+      return {}
+    }
+    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'))
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+const writeRendererCrashState = (patch = {}) => {
+  try {
+    const statePath = resolveRendererCrashStatePath()
+    const current = readRendererCrashState()
+    const next = {
+      ...current,
+      ...patch,
+      updatedAt: Date.now()
+    }
+    fs.mkdirSync(path.dirname(statePath), { recursive: true })
+    const tempPath = `${statePath}.${process.pid}.${Date.now()}.tmp`
+    fs.writeFileSync(tempPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    fs.renameSync(tempPath, statePath)
+  } catch {
+    // Ignore renderer crash-state persistence failures.
+  }
+}
+const desktopRendererCrashState = readRendererCrashState()
+const rendererCompatibilityModeEnabled =
+  String(process.env.WUNDER_DESKTOP_RENDERER_COMPAT_MODE || '').trim() === '1' ||
+  desktopRendererCrashState.compatibleGraphics === true ||
+  runningWin7PackageFlavor
+if (rendererCompatibilityModeEnabled) {
+  process.env.WUNDER_DISABLE_GPU = '1'
+  console.info('[desktop-debug][electron] renderer compatibility mode enabled')
 }
 const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTTLING === '1'
 const suppressGpuWarnings = process.env.WUNDER_SUPPRESS_GPU_WARNINGS !== '0'
@@ -2094,6 +2180,10 @@ const endCompanionDrag = (payload = {}, event = null) => {
 
 const chromiumLogLevel = process.env.WUNDER_CHROMIUM_LOG_LEVEL || (suppressGpuWarnings ? '3' : '2')
 app.commandLine.appendSwitch('log-level', chromiumLogLevel)
+if (rendererCompatibilityModeEnabled) {
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
+}
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('class', 'wunder-desktop')
   if (suppressGpuWarnings) {
@@ -4966,6 +5056,61 @@ const createLoadingHtml = () => `<!doctype html>
 </body>
 </html>`
 
+const createSafeModeHtml = () => `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wunder Desktop Safe Mode</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      display: grid;
+      place-items: center;
+      height: 100vh;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .shell {
+      width: min(720px, calc(100vw - 32px));
+      padding: 24px;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+    }
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .desc {
+      font-size: 14px;
+      line-height: 1.7;
+      color: #334155;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .meta {
+      margin-top: 14px;
+      font-size: 12px;
+      color: #64748b;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="title">Wunder Desktop safe mode</div>
+    <div class="desc">The renderer is loading a minimal diagnostic page.<br />Bridge and frontend bundle are disabled here.</div>
+    <div class="meta">If this stays stable, the crash is in the normal desktop UI path.</div>
+  </div>
+</body>
+</html>`
+
 const createWindow = async () => {
   const createWindowNs = process.hrtime.bigint()
   logStartupPoint('electron', 'create_window_begin')
@@ -4977,14 +5122,15 @@ const createWindow = async () => {
     minHeight: 620,
     title: 'Wunder Desktop',
     icon: resolveWindowIcon(),
-    frame: false,
+    frame: desktopSafeModeEnabled ? true : false,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden' } : {}),
+    ...(process.platform === 'darwin' && !desktopSafeModeEnabled ? { titleBarStyle: 'hidden' } : {}),
+    ...(desktopSafeModeEnabled ? { backgroundColor: '#f8fafc' } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, 'preload.js'),
+      ...(desktopSafeModeEnabled ? {} : { preload: path.join(__dirname, 'preload.js') }),
       sandbox: true,
       spellcheck: false,
       // Keep throttling enabled by default. Disabling it can cause hidden frameless
@@ -5055,9 +5201,95 @@ const createWindow = async () => {
     }
     if (!currentUrl.startsWith('data:text/html')) {
       mainWindowSendReady = true
+      writeRendererCrashState({
+        lastLoadedAt: Date.now(),
+        lastReason: '',
+        lastExitCode: 0
+      })
       flushMainWindowMessages()
     }
   })
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    const reason = String(details?.reason || '').trim()
+    const oomLike =
+      reason === 'oom' ||
+      Number(details?.exitCode) === -536870904 ||
+      Number(details?.exitCode) === -1073741819
+    writeRendererCrashState({
+      compatibleGraphics: oomLike ? true : rendererCompatibilityModeEnabled,
+      lastReason: reason,
+      lastExitCode: Number(details?.exitCode) || 0,
+      lastGoneAt: Date.now()
+    })
+    console.error('[desktop-debug][electron] render-process-gone', {
+      reason,
+      exitCode: details?.exitCode,
+      killed: details?.killed === true,
+      crashed: details?.reason === 'crashed',
+      compatibilityModeNextStart: oomLike || rendererCompatibilityModeEnabled
+    })
+  })
+  mainWindow.webContents.on('child-process-gone', (_event, details) => {
+    console.error('[desktop-debug][electron] child-process-gone', {
+      type: details?.type || '',
+      reason: details?.reason || '',
+      exitCode: details?.exitCode
+    })
+  })
+  const reportMainWindowMemory = async () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+      return
+    }
+    try {
+      const rendererPid =
+        typeof mainWindow.webContents.getOSProcessId === 'function'
+          ? mainWindow.webContents.getOSProcessId()
+          : 0
+      if (rendererPid) {
+        const metrics = typeof app.getAppMetrics === 'function' ? app.getAppMetrics() : []
+        const rendererMetric = metrics.find((item) => Number(item?.pid || 0) === Number(rendererPid))
+        const rendererMemory = rendererMetric?.memory
+        if (rendererMemory) {
+          console.info('[desktop-debug][electron] renderer-memory', {
+            pid: rendererPid,
+            type: rendererMetric.type || '',
+            resident: rendererMemory.residentSet || 0,
+            private: rendererMemory.private || 0,
+            shared: rendererMemory.shared || 0
+          })
+        }
+      }
+      if (typeof process.getProcessMemoryInfo === 'function') {
+        const mainMemory = await process.getProcessMemoryInfo()
+        console.info('[desktop-debug][electron] main-process-memory', {
+          private: mainMemory.private || 0,
+          shared: mainMemory.shared || 0,
+          resident: mainMemory.residentSet || 0
+        })
+      }
+    } catch (error) {
+      console.warn('[desktop-debug][electron] memory sampling failed', error?.message || error)
+    }
+  }
+  const mainWindowMemoryTimer = setInterval(reportMainWindowMemory, 10000)
+  mainWindow.once('closed', () => {
+    clearInterval(mainWindowMemoryTimer)
+  })
+  if (desktopSafeModeEnabled) {
+    const safeModeHtml = createSafeModeHtml()
+    const loadSafeModeNs = process.hrtime.bigint()
+    await mainWindow
+      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(safeModeHtml)}`)
+      .catch(() => {})
+    logStartupPoint('electron', 'safe_mode_shell_loaded', {
+      url: 'data:text/html;charset=utf-8'
+    })
+    logStartupSegment('electron', 'create_window_bootstrap_scheduled', loadSafeModeNs, {
+      safe_mode: 1
+    })
+    return
+  }
+
   const loadingHtml = createLoadingHtml()
   const bridgeReadyPromise = startBridge()
   let shellLoadStarted = false
@@ -5194,6 +5426,18 @@ if (!gotLock) {
         return setLaunchAtLoginState(enabled)
       })
       ipcMain.handle('wunder:python-runtime-info', () => resolveDesktopPythonRuntimeInfo())
+      ipcMain.handle('wunder:renderer-stage', (_event, payload) => {
+        const source = payload && typeof payload === 'object' ? payload : {}
+        const stage = String(source.stage || '').trim().slice(0, 96)
+        if (!stage) {
+          return false
+        }
+        console.info('[desktop-debug][renderer-stage]', {
+          stage,
+          ...sanitizeRendererStagePayload(source.payload)
+        })
+        return true
+      })
       ipcMain.handle('wunder:bridge-restart', () => restartBridge())
       ipcMain.handle('wunder:supplement-import', () => importSupplementPackage())
       ipcMain.handle('wunder:open-path-default-app', (_event, payload) => {

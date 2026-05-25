@@ -3825,6 +3825,38 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
+    fn load_recent_stream_events(&self, _session_id: &str, _limit: i64) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = _session_id.trim();
+        if cleaned_session.is_empty() || _limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT event_id, payload FROM stream_events WHERE session_id = $1 ORDER BY event_id DESC LIMIT $2",
+            &[&cleaned_session, &_limit],
+        )?;
+        let mut rows = rows;
+        rows.reverse();
+        let mut records = Vec::new();
+        for row in rows {
+            let event_id: i64 = row.get(0);
+            let payload: String = row.get(1);
+            if let Some(mut value) = Self::json_from_str(&payload) {
+                if let Value::Object(ref mut map) = value {
+                    map.insert("event_id".to_string(), json!(event_id));
+                    map.insert("event_seq".to_string(), json!(event_id));
+                    records.push(value);
+                } else {
+                    records.push(
+                        json!({ "event_id": event_id, "event_seq": event_id, "data": value }),
+                    );
+                }
+            }
+        }
+        Ok(records)
+    }
+
     fn delete_stream_events_before(&self, _before_time: f64) -> Result<i64> {
         self.ensure_initialized()?;
         if _before_time <= 0.0 {

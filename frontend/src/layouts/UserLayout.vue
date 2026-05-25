@@ -4,16 +4,18 @@
       <component :is="Component" />
     </KeepAlive>
   </router-view>
-  <CompanionFloatingLayer />
+  <CompanionFloatingLayer v-if="!desktopModeEnabled" />
 </template>
 
 <script setup lang="ts">
 import { KeepAlive, onMounted, watch } from 'vue';
 
 import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useAuthStore } from '@/stores/auth';
 
 const authStore = useAuthStore();
+const desktopModeEnabled = isDesktopModeEnabled();
 
 const refreshProfile = () => {
   void authStore.loadProfile().catch(() => undefined);

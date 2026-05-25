@@ -1,5 +1,6 @@
 import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 
+import { isDesktopSafeModeEnabled } from '@/config/desktop';
 import { chatDebugLog } from '@/utils/chatDebug';
 
 type MessengerRealtimeRecoveryContext = {
@@ -36,6 +37,13 @@ const shouldRecoverActiveChat = (ctx: MessengerRealtimeRecoveryContext): boolean
 export const installActiveChatRealtimeRecovery = (
   ctx: MessengerRealtimeRecoveryContext
 ): void => {
+  if (isDesktopSafeModeEnabled() || Boolean((ctx as { desktopMode?: { value?: boolean } }).desktopMode?.value)) {
+    chatDebugLog('messenger.conversation', 'active-realtime-recovery-disabled', {
+      desktopMode: Boolean((ctx as { desktopMode?: { value?: boolean } }).desktopMode?.value),
+      safeMode: isDesktopSafeModeEnabled()
+    });
+    return;
+  }
   let recoveryTimer: number | null = null;
 
   const clearRecoveryTimer = () => {

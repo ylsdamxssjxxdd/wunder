@@ -182,6 +182,7 @@ import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from 
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { registerCompanionOpenHandler } from '@/views/messenger/companionOpenBridge';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
+import { isDesktopSafeModeEnabled, reportDesktopRendererStage } from '@/config/desktop';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -414,6 +415,14 @@ type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerControllerContext): void {
   installActiveChatRealtimeRecovery(ctx);
+  let desktopRealtimePulseStartTimer: number | null = null;
+  const clearDesktopRealtimePulseStartTimer = () => {
+      if (typeof window === 'undefined' || desktopRealtimePulseStartTimer === null) {
+          return;
+      }
+      window.clearTimeout(desktopRealtimePulseStartTimer);
+      desktopRealtimePulseStartTimer = null;
+  };
 
   watch(() => String(ctx.chatStore.activeSessionId || '').trim(), (sessionId) => {
       if (!sessionId) {
@@ -590,6 +599,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.sessionHub.setKeyword('');
       }
       if (section === 'swarms') {
+          clearDesktopRealtimePulseStartTimer();
           ctx.stopRealtimePulse?.();
           ctx.beeroomGroupsLastRefreshAt = 0;
           ctx.startBeeroomRealtimeSync?.();
@@ -597,8 +607,20 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
       else {
           ctx.stopBeeroomRealtimeSync?.();
-          ctx.startRealtimePulse?.();
-          ctx.triggerRealtimePulseRefresh?.(`enter-${section}`);
+          if (ctx.desktopMode.value) {
+              clearDesktopRealtimePulseStartTimer();
+              if (!isDesktopSafeModeEnabled() && typeof window !== 'undefined') {
+                  desktopRealtimePulseStartTimer = window.setTimeout(() => {
+                      desktopRealtimePulseStartTimer = null;
+                      ctx.startRealtimePulse?.();
+                      ctx.triggerRealtimePulseRefresh?.(`enter-${section}`);
+                  }, 2500);
+              }
+          }
+          else {
+              ctx.startRealtimePulse?.();
+              ctx.triggerRealtimePulseRefresh?.(`enter-${section}`);
+          }
           if (section === 'messages') {
               if (isChatDebugEnabled()) {
                   chatDebugLog('messenger.enter', 'messages-section', ctx.buildMessageVirtualDebugSnapshot?.());
@@ -615,10 +637,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
                       await ctx.scrollMessagesToBottom(true);
                   }
               });
-              void ctx.chatStore.ensureActiveSessionRealtime?.({
-                  reason: 'enter-messages-section',
-                  hydrateIfCold: true
-              });
+              return;
           }
       }
       if (section === 'tools' &&
@@ -649,7 +668,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
               .then(() => ctx.ensureSectionSelection())
               .catch(() => null);
       }
-      if (section === 'more') {
+      if (section === 'more' && !ctx.desktopMode.value) {
           void preloadMessengerSettingsPanels({ desktopMode: ctx.desktopMode.value });
       }
       if (section === 'users' && !ctx.userWorldPermissionDenied.value) {
@@ -909,6 +928,9 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       if (section !== 'messages' || !key) {
           return;
       }
+      if (ctx.desktopMode.value) {
+          return;
+      }
       ctx.filteredMixedConversations.value
           .filter((item) => item.kind === 'agent')
           .slice(0, 4)
@@ -1142,7 +1164,15 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.initDesktopLaunchBehavior();
       ctx.applyUiFontSize(ctx.uiFontSize.value);
       ctx.unregisterCompanionOpenHandler = registerCompanionOpenHandler((agentId) => ctx.openAgentById(agentId));
+      reportDesktopRendererStage('messenger-bootstrap-start', {
+          section: ctx.sessionHub.activeSection
+      });
       await ctx.bootstrap();
+      reportDesktopRendererStage('messenger-bootstrap-finish', {
+          section: ctx.sessionHub.activeSection,
+          sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0,
+          activeSessionId: String(ctx.chatStore.activeSessionId || '').trim()
+      });
       ctx.refreshAudioRecordingSupport();
       ctx.scheduleMessageViewportRefresh({
           updateScrollState: true,
@@ -1181,6 +1211,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           refreshChannelBoundAgentIds: ctx.loadChannelBoundAgentIds,
           refreshChatSessions: ctx.refreshRealtimeChatSessions,
           refreshContacts: ctx.refreshRealtimeContacts,
+          runSequentially: ctx.desktopMode.value,
           isHotState: () => ctx.hasHotRuntimeState.value,
           shouldRefreshCron: () => !ctx.cronPermissionDenied.value,
           shouldRefreshChannelBoundAgentIds: ctx.shouldRefreshAgentMeta,
@@ -1201,16 +1232,37 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.startBeeroomRealtimeSync = () => beeroomRealtimeSync.start();
       ctx.stopBeeroomRealtimeSync = () => beeroomRealtimeSync.stop();
       ctx.triggerBeeroomRealtimeSyncRefresh = (reason = '') => beeroomRealtimeSync.trigger(reason);
-      if (ctx.sessionHub.activeSection === 'swarms' || ctx.sessionHub.activeSection === 'orchestrations') {
+      if (isDesktopSafeModeEnabled()) {
+          // Safety mode disables all background pulse work to isolate render stability issues.
+      }
+      else if (ctx.sessionHub.activeSection === 'swarms' || ctx.sessionHub.activeSection === 'orchestrations') {
           beeroomRealtimeSync.start();
       }
+      else if (ctx.desktopMode.value && typeof window !== 'undefined') {
+          clearDesktopRealtimePulseStartTimer();
+          desktopRealtimePulseStartTimer = window.setTimeout(() => {
+              desktopRealtimePulseStartTimer = null;
+              reportDesktopRendererStage('messenger-realtime-pulse-start', {
+                  section: ctx.sessionHub.activeSection,
+                  delayed: true
+              });
+              realtimePulse.start();
+              realtimePulse.trigger('desktop-mounted');
+          }, 2500);
+      }
       else {
+          reportDesktopRendererStage('messenger-realtime-pulse-start', {
+              section: ctx.sessionHub.activeSection,
+              delayed: false
+          });
           realtimePulse.start();
+          realtimePulse.trigger('mounted');
       }
   });
 
   onBeforeUnmount(() => {
       ctx.sectionRouteSyncToken += 1;
+      clearDesktopRealtimePulseStartTimer();
       if (typeof window !== 'undefined') {
           if (ctx.messengerOrderSaveTimer.value !== null) {
               window.clearTimeout(ctx.messengerOrderSaveTimer.value);

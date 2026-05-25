@@ -549,6 +549,11 @@ export const HISTORY_PAGE_MAX = 200;
 export const MESSAGE_WINDOW_LIMIT = 400;
 export const MESSAGE_WINDOW_THRESHOLD = 600;
 export const MESSAGE_WINDOW_MAX = 2000;
+export const DESKTOP_MESSAGE_WINDOW_LIMIT = 160;
+export const DESKTOP_MESSAGE_WINDOW_THRESHOLD = 220;
+export const DESKTOP_MESSAGE_WINDOW_MAX = 640;
+export const SESSION_DETAIL_MESSAGE_LIMIT = 500;
+export const DESKTOP_SESSION_DETAIL_MESSAGE_LIMIT = DESKTOP_MESSAGE_WINDOW_LIMIT;
 export const WINDOWING_ENABLED_KEY = 'wunder_chat_windowing';
 
 export const resolveStreamFlushMs = (messageCount, override) => {
@@ -566,6 +571,18 @@ export const normalizeHistoryPageLimit = (value) => {
   if (!Number.isFinite(parsed) || parsed <= 0) return HISTORY_PAGE_LIMIT;
   return Math.min(parsed, HISTORY_PAGE_MAX);
 };
+
+export const resolveSessionDetailMessageLimit = (desktopMode = false) =>
+  desktopMode ? DESKTOP_SESSION_DETAIL_MESSAGE_LIMIT : SESSION_DETAIL_MESSAGE_LIMIT;
+
+export const resolveMessageWindowLimit = (desktopMode = false) =>
+  desktopMode ? DESKTOP_MESSAGE_WINDOW_LIMIT : MESSAGE_WINDOW_LIMIT;
+
+export const resolveMessageWindowThreshold = (desktopMode = false) =>
+  desktopMode ? DESKTOP_MESSAGE_WINDOW_THRESHOLD : MESSAGE_WINDOW_THRESHOLD;
+
+export const resolveMessageWindowMax = (desktopMode = false) =>
+  desktopMode ? DESKTOP_MESSAGE_WINDOW_MAX : MESSAGE_WINDOW_MAX;
 
 export const isWindowingEnabled = () => {
   try {

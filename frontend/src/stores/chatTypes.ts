@@ -185,6 +185,7 @@ export type CreateSessionOptions = {
 
 export type SessionEventsSnapshotCacheEntry = {
   cachedAt: number;
+  limit: number | null;
   running: boolean;
   lastEventId: number | null;
   payload: Record<string, unknown> | null;
@@ -307,6 +308,7 @@ export type OpenDraftSessionOptions = {
 export type LoadSessionDetailOptions = {
   preserveWatcher?: boolean;
   forceHydrateForeground?: boolean;
+  startWatcherAfterHydration?: boolean;
 };
 
 export type SendMessageOptions = {

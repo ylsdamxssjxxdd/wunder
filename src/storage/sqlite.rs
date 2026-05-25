@@ -3318,6 +3318,39 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
+    fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT event_id, payload FROM stream_events WHERE session_id = ? ORDER BY event_id DESC LIMIT ?",
+        )?;
+        let mut rows = stmt
+            .query_map(params![cleaned_session, limit], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+        rows.reverse();
+        let mut records = Vec::new();
+        for (event_id, payload) in rows {
+            if let Some(mut value) = Self::json_from_str(&payload) {
+                if let Value::Object(ref mut map) = value {
+                    map.insert("event_id".to_string(), json!(event_id));
+                    map.insert("event_seq".to_string(), json!(event_id));
+                    records.push(value);
+                } else {
+                    records.push(
+                        json!({ "event_id": event_id, "event_seq": event_id, "data": value }),
+                    );
+                }
+            }
+        }
+        Ok(records)
+    }
+
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64> {
         self.ensure_initialized()?;
         if before_time <= 0.0 {

@@ -97,7 +97,7 @@ import {
   resolveFileContainerLifecycleText,
   resolveFileWorkspaceEmptyText
 } from '@/views/messenger/fileWorkspacePresentation';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { isDesktopModeEnabled, isDesktopSafeModeEnabled } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -439,13 +439,17 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
   });
 
   ctx.showAgentRightDock = computed(() => {
+      if (isDesktopSafeModeEnabled()) {
+          return false;
+      }
       if (ctx.sessionHub.activeSection === 'agents') {
           return !ctx.showAgentGridOverview.value && !ctx.shouldHideAgentSettingsRightDock.value;
       }
       return ctx.sessionHub.activeSection === 'messages' && ctx.isAgentConversationActive.value;
   });
 
-  ctx.showGroupRightDock = computed(() => ctx.sessionHub.activeSection === 'messages' &&
+  ctx.showGroupRightDock = computed(() => !isDesktopSafeModeEnabled() &&
+      ctx.sessionHub.activeSection === 'messages' &&
       ctx.isWorldConversationActive.value &&
       Boolean(ctx.activeWorldGroupId.value));
 

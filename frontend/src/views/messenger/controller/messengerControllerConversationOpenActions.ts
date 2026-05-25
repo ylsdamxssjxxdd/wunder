@@ -98,7 +98,7 @@ import {
   resolveFileContainerLifecycleText,
   resolveFileWorkspaceEmptyText
 } from '@/views/messenger/fileWorkspacePresentation';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { isDesktopModeEnabled, reportDesktopRendererStage } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -1258,6 +1258,10 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           return;
       }
       const perfTrace = ctx.startMessengerPerfTrace('openAgentSession', { sessionId: normalizedSessionId, agentId });
+      reportDesktopRendererStage('messenger-open-agent-session-start', {
+          sessionId: normalizedSessionId,
+          agentId: fallbackAgentId || DEFAULT_AGENT_KEY
+      });
       ctx.clearMiddlePaneOverlayHide();
       ctx.middlePaneOverlayVisible.value = false;
       ctx.clearAgentConversationDismissed(fallbackAgentId);
@@ -1284,6 +1288,10 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       const isForegroundSession = () => String(ctx.chatStore.activeSessionId || '').trim() === normalizedSessionId;
       try {
           ctx.markMessengerPerfTrace(perfTrace, 'beforeLoadSessionDetail');
+          reportDesktopRendererStage('messenger-load-session-detail-start', {
+              sessionId: normalizedSessionId,
+              agentId: fallbackAgentId || DEFAULT_AGENT_KEY
+          });
           let sessionDetail = null;
           let sessionDetailError: unknown = null;
           const sessionDetailTask = ctx.chatStore.loadSessionDetail(normalizedSessionId)
@@ -1301,6 +1309,11 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               throw sessionDetailError;
           }
           ctx.markMessengerPerfTrace(perfTrace, 'afterLoadSessionDetail');
+          reportDesktopRendererStage('messenger-load-session-detail-finish', {
+              sessionId: normalizedSessionId,
+              agentId: fallbackAgentId || DEFAULT_AGENT_KEY,
+              hasSessionDetail: Boolean(sessionDetail)
+          });
           if (!isForegroundSession()) {
               ctx.finishMessengerPerfTrace(perfTrace, 'ok', { stale: true });
               return;

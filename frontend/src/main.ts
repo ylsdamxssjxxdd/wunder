@@ -11,7 +11,7 @@ import router from './router';
 import { useThemeStore } from '@/stores/theme';
 import { initI18n } from '@/i18n';
 import { loadRuntimeConfig } from '@/config/runtime';
-import { initDesktopRuntime } from '@/config/desktop';
+import { initDesktopRuntime, reportDesktopRendererStage } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
 import {
   clearAsyncComponentReloadMarker,
@@ -82,10 +82,15 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
 }
 
 const bootstrap = async () => {
+  reportDesktopRendererStage('bootstrap-start');
   await initDesktopRuntime();
+  reportDesktopRendererStage('desktop-runtime-ready');
   await loadRuntimeConfig();
+  reportDesktopRendererStage('runtime-config-ready');
   await initI18n();
+  reportDesktopRendererStage('i18n-ready');
   app.mount('#app');
+  reportDesktopRendererStage('app-mounted');
   clearAsyncComponentReloadMarker();
 };
 

@@ -589,6 +589,7 @@ const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
 const preserveDockLayout = computed(() => props.preserveDockLayout);
 const sidebarVisible = computed(() => props.sidebarVisible);
+const shouldRunWorkspaceBackgroundWork = computed(() => sidebarVisible.value !== false);
 const desktopLocalMode = computed(() => isDesktopLocalModeEnabled());
 const getDesktopBridge = (): {
   openPathWithDefaultApp?: (targetPath: string) => Promise<boolean> | boolean;
@@ -2194,6 +2195,9 @@ const scheduleWorkspaceSettleRefresh = ({ previewPath = '' } = {}) => {
 };
 
 const scheduleWorkspaceAutoRefresh = () => {
+  if (!shouldRunWorkspaceBackgroundWork.value) {
+    return;
+  }
   autoRefreshPending = true;
   if (autoRefreshTimer) return;
   autoRefreshTimer = setTimeout(async () => {
@@ -3741,6 +3745,9 @@ const handleGlobalClick = (event) => {
 };
 
 const handleDocumentVisibilityChange = () => {
+  if (!shouldRunWorkspaceBackgroundWork.value) {
+    return;
+  }
   if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
     return;
   }
@@ -3750,10 +3757,15 @@ const handleDocumentVisibilityChange = () => {
 };
 
 onMounted(async () => {
-  scheduleWorkspaceThemeIconWarmup();
-  await loadWorkspace();
-  await revealWorkspacePath(props.initialFocusPath);
+  if (shouldRunWorkspaceBackgroundWork.value) {
+    scheduleWorkspaceThemeIconWarmup();
+    await loadWorkspace();
+    await revealWorkspacePath(props.initialFocusPath);
+  }
   stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
+    if (!shouldRunWorkspaceBackgroundWork.value) {
+      return;
+    }
     const detail =
       event?.detail && typeof event.detail === 'object'
         ? (event.detail as Record<string, unknown>)
@@ -3781,9 +3793,26 @@ onMounted(async () => {
 });
 
 watch(
+  shouldRunWorkspaceBackgroundWork,
+  async (visible, wasVisible) => {
+    if (visible === wasVisible) return;
+    if (!visible) {
+      return;
+    }
+    scheduleWorkspaceThemeIconWarmup();
+    if (!state.entries.length) {
+      await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+    }
+    await revealWorkspacePath(props.initialFocusPath);
+  },
+  { immediate: false }
+);
+
+watch(
   () => normalizedAgentId.value,
   async (value, oldValue) => {
     if (value === oldValue) return;
+    if (!shouldRunWorkspaceBackgroundWork.value) return;
     state.path = '';
     state.parent = null;
     state.expanded = new Set();
@@ -3796,6 +3825,7 @@ watch(
   () => normalizedContainerId.value,
   async (value, oldValue) => {
     if (value === oldValue) return;
+    if (!shouldRunWorkspaceBackgroundWork.value) return;
     state.path = '';
     state.parent = null;
     state.expanded = new Set();
@@ -3808,6 +3838,7 @@ watch(
   () => String(props.initialFocusPath || '').trim(),
   async (value, oldValue) => {
     if (!value || value === oldValue) return;
+    if (!shouldRunWorkspaceBackgroundWork.value) return;
     await revealWorkspacePath(value);
   }
 );

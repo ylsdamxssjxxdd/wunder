@@ -97,7 +97,7 @@ import {
   resolveFileContainerLifecycleText,
   resolveFileWorkspaceEmptyText
 } from '@/views/messenger/fileWorkspacePresentation';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { isDesktopModeEnabled, isDesktopSafeModeEnabled } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -526,6 +526,10 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
       ctx.clearMessagePanelWhenConversationEmpty();
   };
   ctx.restoreConversationFromRoute = async () => {
+      if (isDesktopSafeModeEnabled()) {
+          ctx.clearMessagePanelWhenConversationEmpty();
+          return;
+      }
       const signature = buildRouteRestoreSignature();
       if (routeRestorePromise && routeRestoreSignature === signature) {
           return routeRestorePromise;
@@ -582,12 +586,17 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           },
           {
               sections: ['messages'],
-              run: () => ctx.chatStore.loadSessions({
-                  preferCache: true,
-                  backgroundRefresh: true,
-                  maxCacheAgeMs: 5 * 60 * 1000,
-                  traceSource: 'bootstrap'
-              })
+              run: () => {
+                  if (isDesktopSafeModeEnabled()) {
+                      return Promise.resolve();
+                  }
+                  return ctx.chatStore.loadSessions({
+                      preferCache: true,
+                      backgroundRefresh: true,
+                      maxCacheAgeMs: 5 * 60 * 1000,
+                      traceSource: 'bootstrap'
+                  });
+              }
           },
           {
               sections: shouldPrioritizeWorldBootstrap ? ['messages', 'users', 'groups'] : ['users', 'groups'],
@@ -607,7 +616,9 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
       await settleMessengerBootstrapTasks(critical);
       ctx.ensureSectionSelection();
       ctx.bootLoading.value = false;
-      void ctx.restoreConversationFromRoute();
+      if (!isDesktopSafeModeEnabled()) {
+          void ctx.restoreConversationFromRoute();
+      }
       scheduleMessengerBootstrapBackgroundTasks(background);
   };
 
@@ -674,6 +685,11 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
       }
       if (ctx.desktopMode.value && !ctx.desktopInitialSectionPinned.value) {
           ctx.desktopInitialSectionPinned.value = true;
+          if (isDesktopSafeModeEnabled() && !ctx.isEmbeddedChatRoute.value) {
+              ctx.sessionHub.setSection('more');
+              ctx.settingsPanelMode.value = 'profile';
+              return;
+          }
           ctx.sessionHub.setSection(ctx.isEmbeddedChatRoute.value ? resolveSectionFromRoute(ctx.route.path, ctx.route.query.section) : 'messages');
           return;
       }
@@ -697,6 +713,9 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           ctx.route.query.entry
       ] as const,
       () => {
+          if (isDesktopSafeModeEnabled()) {
+              return;
+          }
           if (ctx.bootLoading.value || !String(ctx.route.path || '').includes('/chat')) {
               return;
           }

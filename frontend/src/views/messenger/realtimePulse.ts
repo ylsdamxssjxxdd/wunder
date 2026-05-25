@@ -1,3 +1,5 @@
+import { isDesktopModeEnabled, reportDesktopRendererStage } from '@/config/desktop';
+
 type AsyncTask = () => Promise<unknown> | unknown;
 
 type MessengerRealtimePulseOptions = {
@@ -6,6 +8,7 @@ type MessengerRealtimePulseOptions = {
   refreshChannelBoundAgentIds: AsyncTask;
   refreshChatSessions?: AsyncTask;
   refreshContacts?: AsyncTask;
+  runSequentially?: boolean;
   shouldRefreshCron?: () => boolean;
   shouldRefreshChannelBoundAgentIds?: () => boolean;
   shouldRefreshChatSessions?: () => boolean;
@@ -25,6 +28,7 @@ const IDLE_REFRESH_MS = 8000;
 const HIDDEN_REFRESH_MS = 30000;
 const ERROR_RETRY_MS = 5000;
 const TRIGGER_DELAY_MS = 120;
+const DESKTOP_META_REFRESH_MIN_MS = 30000;
 
 const isPageVisible = (): boolean => {
   if (typeof document === 'undefined') return true;
@@ -40,6 +44,7 @@ export const createMessengerRealtimePulse = (
   let running = false;
   let started = false;
   let pendingTrigger = false;
+  let lastDesktopMetaRefreshAt = 0;
 
   const clearTimer = () => {
     if (typeof window === 'undefined') return;
@@ -74,6 +79,50 @@ export const createMessengerRealtimePulse = (
     return true;
   };
 
+  const shouldRefreshDesktopMeta = (): boolean => {
+    if (!isDesktopModeEnabled()) {
+      return true;
+    }
+    const now = Date.now();
+    if (lastDesktopMetaRefreshAt > 0 && now - lastDesktopMetaRefreshAt < DESKTOP_META_REFRESH_MIN_MS) {
+      return false;
+    }
+    lastDesktopMetaRefreshAt = now;
+    return true;
+  };
+
+  const runTasksSequentially = async (
+    tasks: Array<() => Promise<unknown>>
+  ): Promise<PromiseSettledResult<unknown>[]> => {
+    const results: PromiseSettledResult<unknown>[] = [];
+    for (const task of tasks) {
+      try {
+        results.push({ status: 'fulfilled', value: await task() });
+      } catch (error) {
+        results.push({ status: 'rejected', reason: error });
+      }
+    }
+    return results;
+  };
+
+  const runTrackedTask = async (name: string, task: AsyncTask): Promise<unknown> => {
+    if (isDesktopModeEnabled()) {
+      reportDesktopRendererStage('messenger-realtime-pulse-task-start', { task: name });
+    }
+    try {
+      const result = await scheduleTask(task);
+      if (isDesktopModeEnabled()) {
+        reportDesktopRendererStage('messenger-realtime-pulse-task-finish', { task: name });
+      }
+      return result;
+    } catch (error) {
+      if (isDesktopModeEnabled()) {
+        reportDesktopRendererStage('messenger-realtime-pulse-task-error', { task: name });
+      }
+      throw error;
+    }
+  };
+
   const runTick = async () => {
     if (!started) return;
     if (running) {
@@ -82,21 +131,27 @@ export const createMessengerRealtimePulse = (
     }
     // Keep one in-flight tick at a time to avoid overlapping requests and stale writes.
     running = true;
-    const tasks: Promise<unknown>[] = [scheduleTask(options.refreshRunningAgents)];
-    if (options.shouldRefreshChannelBoundAgentIds?.() !== false) {
-      tasks.push(scheduleTask(options.refreshChannelBoundAgentIds));
+    const desktopMode = isDesktopModeEnabled();
+    const shouldRefreshMeta = shouldRefreshDesktopMeta();
+    const tasks: Array<() => Promise<unknown>> = [
+      () => runTrackedTask('running-agents', options.refreshRunningAgents)
+    ];
+    if (shouldRefreshMeta && options.shouldRefreshChannelBoundAgentIds?.() !== false) {
+      tasks.push(() => runTrackedTask('channel-bound-agent-ids', options.refreshChannelBoundAgentIds));
     }
-    if (options.shouldRefreshCron?.() !== false) {
-      tasks.push(scheduleTask(options.refreshCronAgentIds));
+    if (shouldRefreshMeta && options.shouldRefreshCron?.() !== false) {
+      tasks.push(() => runTrackedTask('cron-agent-ids', options.refreshCronAgentIds));
     }
     if (options.refreshChatSessions && options.shouldRefreshChatSessions?.() !== false) {
-      tasks.push(scheduleTask(options.refreshChatSessions));
+      tasks.push(() => runTrackedTask('chat-sessions', options.refreshChatSessions));
     }
-    if (options.refreshContacts && options.shouldRefreshContacts?.() !== false) {
-      tasks.push(scheduleTask(options.refreshContacts));
+    if (!desktopMode && options.refreshContacts && options.shouldRefreshContacts?.() !== false) {
+      tasks.push(() => runTrackedTask('contacts', options.refreshContacts));
     }
     try {
-      const results = await Promise.allSettled(tasks);
+      const results = options.runSequentially === true
+        ? await runTasksSequentially(tasks)
+        : await Promise.allSettled(tasks.map((task) => task()));
       if (handleFailures(results)) {
         scheduleNext(ERROR_RETRY_MS);
         return;

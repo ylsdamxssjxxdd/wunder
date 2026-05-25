@@ -42,6 +42,8 @@ use uuid::Uuid;
 
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
+const SESSION_DETAIL_MAX_LIMIT: i64 = 500;
+const SESSION_EVENTS_MAX_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 const MAX_MEDIA_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
@@ -239,6 +241,12 @@ struct SystemPromptRequest {
 
 #[derive(Debug, Deserialize)]
 struct SessionDetailQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionEventsQuery {
     #[serde(default)]
     limit: Option<i64>,
 }
@@ -541,9 +549,10 @@ async fn get_session(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    let limit = query
-        .limit
-        .unwrap_or(if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT });
+    let limit = normalize_session_detail_limit(
+        query.limit,
+        if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT },
+    );
     let mut history_incomplete = false;
     let (history, history_has_more, history_before_id) = if limit <= 0 {
         let items = match state
@@ -742,6 +751,7 @@ async fn get_session_events(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<SessionEventsQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let session_id = session_id.trim().to_string();
@@ -756,7 +766,8 @@ async fn get_session_events(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let stream_events = load_all_session_stream_events(&state, &session_id).await;
+    let requested_limit = normalize_session_events_limit(query.limit);
+    let stream_events = load_session_stream_events(&state, &session_id, requested_limit).await;
     let rounds = if stream_events.is_empty() {
         load_session_event_rounds(&state, &session_id).await
     } else {
@@ -800,6 +811,8 @@ async fn get_session_events(
             "id": session_id,
             "events": stream_events,
             "rounds": rounds,
+            "limit": requested_limit,
+            "events_limited": requested_limit > 0,
             "running": running,
             "last_event_id": last_event_id,
             "goal": goal.as_ref().map(crate::services::goal::goal_payload),
@@ -810,7 +823,7 @@ async fn get_session_events(
 }
 
 async fn load_session_event_rounds(state: &Arc<AppState>, session_id: &str) -> Vec<Value> {
-    let stream_events = load_all_session_stream_events(state, session_id).await;
+    let stream_events = load_session_stream_events(state, session_id, 0).await;
     if !stream_events.is_empty() {
         return collect_session_event_rounds(&json!({ "events": stream_events }));
     }
@@ -821,42 +834,68 @@ async fn load_session_event_rounds(state: &Arc<AppState>, session_id: &str) -> V
         .unwrap_or_default()
 }
 
-async fn load_all_session_stream_events(state: &Arc<AppState>, session_id: &str) -> Vec<Value> {
+async fn load_session_stream_events(
+    state: &Arc<AppState>,
+    session_id: &str,
+    limit: i64,
+) -> Vec<Value> {
     let cleaned_session_id = session_id.trim().to_string();
     if cleaned_session_id.is_empty() {
         return Vec::new();
     }
     let workspace = state.workspace.clone();
+    let normalized_limit = normalize_session_events_limit(Some(limit));
     tokio::task::spawn_blocking(move || {
-        let mut after_event_id = 0;
-        let mut records = Vec::new();
-        let batch_limit = STREAM_EVENT_FETCH_LIMIT.max(1);
-        loop {
-            let batch =
-                workspace.load_stream_events(&cleaned_session_id, after_event_id, batch_limit);
-            if batch.is_empty() {
-                break;
-            }
-            let batch_len = batch.len();
-            let mut last_event_id = after_event_id;
-            for record in &batch {
-                if let Some(event_id) = record.get("event_id").and_then(Value::as_i64) {
-                    last_event_id = last_event_id.max(event_id);
+        if normalized_limit <= 0 {
+            let mut after_event_id = 0;
+            let mut records = Vec::new();
+            let batch_limit = STREAM_EVENT_FETCH_LIMIT.max(1);
+            loop {
+                let batch =
+                    workspace.load_stream_events(&cleaned_session_id, after_event_id, batch_limit);
+                if batch.is_empty() {
+                    break;
+                }
+                let batch_len = batch.len();
+                let mut last_event_id = after_event_id;
+                for record in &batch {
+                    if let Some(event_id) = record.get("event_id").and_then(Value::as_i64) {
+                        last_event_id = last_event_id.max(event_id);
+                    }
+                }
+                records.extend(batch);
+                if last_event_id <= after_event_id {
+                    break;
+                }
+                after_event_id = last_event_id;
+                if batch_len < batch_limit as usize {
+                    break;
                 }
             }
-            records.extend(batch);
-            if last_event_id <= after_event_id {
-                break;
-            }
-            after_event_id = last_event_id;
-            if batch_len < batch_limit as usize {
-                break;
-            }
+            return records;
         }
-        records
+        workspace.load_recent_stream_events(&cleaned_session_id, normalized_limit)
     })
     .await
     .unwrap_or_default()
+}
+
+fn normalize_session_detail_limit(raw: Option<i64>, fallback: i64) -> i64 {
+    let value = raw.unwrap_or(fallback);
+    if value <= 0 {
+        0
+    } else {
+        value.min(SESSION_DETAIL_MAX_LIMIT)
+    }
+}
+
+fn normalize_session_events_limit(raw: Option<i64>) -> i64 {
+    let value = raw.unwrap_or(0);
+    if value <= 0 {
+        0
+    } else {
+        value.min(SESSION_EVENTS_MAX_LIMIT)
+    }
 }
 
 async fn list_session_command_sessions(

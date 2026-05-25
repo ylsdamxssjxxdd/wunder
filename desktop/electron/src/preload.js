@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('wunderDesktop', {
+  reportRendererStage: (stage, payload) =>
+    ipcRenderer.invoke('wunder:renderer-stage', { stage, payload: payload || {} }),
   toggleDevTools: () => ipcRenderer.invoke('wunder:toggle-devtools'),
   minimizeWindow: () => ipcRenderer.invoke('wunder:window-minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('wunder:window-toggle-maximize'),

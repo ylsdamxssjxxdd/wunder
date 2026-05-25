@@ -1821,8 +1821,11 @@ defineOptions({
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
 import { ref as vueRef } from 'vue';
+import { reportDesktopRendererStage } from '@/config/desktop';
 
+reportDesktopRendererStage('messenger-view-setup-start');
 const controller = useMessengerViewController();
+reportDesktopRendererStage('messenger-controller-ready');
 const desktopModelRows = vueRef<Array<Record<string, unknown>>>([]);
 const handleDesktopModelRowsChange = (rows: Array<Record<string, unknown>> = []) => {
   desktopModelRows.value = Array.isArray(rows) ? rows : [];

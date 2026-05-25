@@ -68,8 +68,18 @@ export const createSession = (payload: unknown) => api.post('/chat/sessions', pa
 export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
 export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}`, options);
+export const getSessionWithParams = (
+  id: string,
+  params: QueryParams = {},
+  options: { signal?: AbortSignal } = {}
+) => api.get(`/chat/sessions/${id}`, { params, ...options });
 export const getSessionEvents = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/events`, options);
+export const getSessionEventsWithParams = (
+  id: string,
+  params: QueryParams = {},
+  options: { signal?: AbortSignal } = {}
+) => api.get(`/chat/sessions/${id}/events`, { params, ...options });
 export const getSessionGoal = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/goal`, options);
 export const setSessionGoal = (id: string, payload: unknown) =>

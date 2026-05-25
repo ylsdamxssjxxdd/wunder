@@ -97,7 +97,7 @@ import {
   resolveFileContainerLifecycleText,
   resolveFileWorkspaceEmptyText
 } from '@/views/messenger/fileWorkspacePresentation';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { isDesktopModeEnabled, isDesktopSafeModeEnabled } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -769,6 +769,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.hydrateWorkspaceResources = () => {
+      if (isDesktopSafeModeEnabled()) {
+          return;
+      }
       const container = ctx.messageListRef.value;
       if (!container)
           return;
@@ -800,6 +803,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.scheduleWorkspaceResourceHydration = (reason = '') => {
+      if (isDesktopSafeModeEnabled()) {
+          return;
+      }
       if (ctx.sessionHub.activeSection !== 'messages') {
           return;
       }

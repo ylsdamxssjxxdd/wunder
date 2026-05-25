@@ -37,6 +37,7 @@ pub struct DesktopRuntimeInfo {
     pub mode: &'static str,
     pub runtime_profile: AppRuntimeProfile,
     pub runtime_capabilities: AppRuntimeCapabilities,
+    pub safe_mode: bool,
     pub bind_addr: String,
     pub web_base: String,
     pub api_base: String,
@@ -210,10 +211,14 @@ fn build_runtime_info(
     api_base: &str,
     ws_base: &str,
 ) -> DesktopRuntimeInfo {
+    let safe_mode = std::env::var("WUNDER_DESKTOP_SAFE_MODE")
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false);
     DesktopRuntimeInfo {
         mode: "desktop",
         runtime_profile: runtime.state.runtime_profile,
         runtime_capabilities: runtime.state.runtime_capabilities.clone(),
+        safe_mode,
         bind_addr: bind_addr.to_string(),
         web_base: web_base.to_string(),
         api_base: api_base.to_string(),
@@ -257,15 +262,99 @@ fn load_index_with_runtime(
     frontend_root: &Path,
     runtime_info: &DesktopRuntimeInfo,
 ) -> Result<String> {
+    if runtime_info.safe_mode {
+        return Ok(create_safe_mode_index_html(runtime_info));
+    }
     let index_path = frontend_root.join("index.html");
     let template = std::fs::read_to_string(&index_path)
         .with_context(|| format!("read frontend index failed: {}", index_path.display()))?;
     let runtime_json =
         serde_json::to_string(runtime_info).context("serialize desktop runtime payload failed")?;
     let script = format!(
-        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);localStorage.setItem('access_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}localStorage.removeItem('wunder_desktop_remote_api_base');}}catch(_e){{}}}})();</script>"
+        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);localStorage.setItem('access_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}localStorage.removeItem('wunder_desktop_remote_api_base');if(cfg.safe_mode){{localStorage.setItem('wunder_desktop_safe_mode','1');}}else{{localStorage.removeItem('wunder_desktop_safe_mode');}}}}catch(_e){{}}}})();</script>"
     );
     Ok(inject_script_before_head_end(&template, &script))
+}
+
+fn create_safe_mode_index_html(runtime_info: &DesktopRuntimeInfo) -> String {
+    let runtime_json = serde_json::to_string(runtime_info).unwrap_or_else(|_| "{}".to_string());
+    let template = r#"<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wunder Desktop Safe Mode</title>
+  <style>
+    :root {{ color-scheme: light dark; }}
+    body {{
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      display: grid;
+      place-items: center;
+      height: 100vh;
+      background: #f8fafc;
+      color: #0f172a;
+    }}
+    .shell {{
+      width: min(640px, calc(100vw - 32px));
+      padding: 24px;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+    }}
+    .title {{
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }}
+    .desc {{
+      font-size: 14px;
+      line-height: 1.7;
+      color: #334155;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }}
+    .meta {{
+      margin-top: 16px;
+      font-size: 12px;
+      color: #64748b;
+      word-break: break-word;
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="title">Wunder Desktop safe mode</div>
+    <div class="desc">The renderer is running in a minimal diagnostic shell.<br />If this page stays stable, the crash is in the full chat UI path.</div>
+    <div class="meta" id="meta"></div>
+  </div>
+  <script>
+    (function() {
+      const cfg = __WUNDER_RUNTIME_JSON__;
+      try {
+        window.__WUNDER_DESKTOP_RUNTIME__ = cfg;
+        if (cfg.desktop_token || cfg.token) {
+          const token = cfg.desktop_token || cfg.token || '';
+          localStorage.setItem('wunder_desktop_local_token', token);
+          localStorage.setItem('access_token', token);
+        }
+        if (cfg.user_id) {
+          localStorage.setItem('wunder_desktop_user_id', cfg.user_id);
+        }
+        localStorage.setItem('wunder_desktop_safe_mode', '1');
+      } catch (_e) {}
+      const meta = document.getElementById('meta');
+      if (meta) {
+        meta.textContent = `runtime=${cfg.mode || 'desktop'}; safe_mode=${cfg.safe_mode ? '1' : '0'}; web_base=${cfg.web_base || ''}`;
+      }
+    })();
+  </script>
+</body>
+</html>"#
+    .replace("__WUNDER_RUNTIME_JSON__", &runtime_json);
+    template
 }
 
 fn inject_script_before_head_end(template: &str, script: &str) -> String {

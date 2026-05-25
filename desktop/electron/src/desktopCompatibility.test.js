@@ -77,6 +77,14 @@ test('hardware acceleration stays enabled on modern Windows unless explicitly di
   )
   assert.equal(
     shouldDisableElectronHardwareAcceleration({
+      env: { WUNDER_DESKTOP_RENDERER_COMPAT_MODE: '1' },
+      platform: 'win32',
+      release: '10.0.22631'
+    }),
+    true
+  )
+  assert.equal(
+    shouldDisableElectronHardwareAcceleration({
       env: { WUNDER_SIDECAR_RUNTIME: '1' },
       platform: 'win32',
       release: '10.0.22631'
