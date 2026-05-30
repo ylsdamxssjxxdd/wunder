@@ -34,7 +34,7 @@ use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{routing::get, routing::post, routing::put, Json, Router};
 use bytes::Bytes;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,9 @@ use tracing::info;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+#[path = "skill_fs.rs"]
+mod skill_fs;
+
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_SKILL_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
@@ -64,7 +67,7 @@ struct BuiltinSkillCatalog {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum UserSkillSourceKind {
+pub(crate) enum UserSkillSourceKind {
     Builtin,
     Custom,
     Global,
@@ -88,10 +91,10 @@ impl UserSkillSourceKind {
     }
 }
 
-struct ResolvedUserSkill {
-    spec: SkillSpec,
-    root: PathBuf,
-    source: UserSkillSourceKind,
+pub(crate) struct ResolvedUserSkill {
+    pub(crate) spec: SkillSpec,
+    pub(crate) root: PathBuf,
+    pub(crate) source: UserSkillSourceKind,
 }
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -110,16 +113,50 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/user_tools/skills/files", get(user_skills_files))
         .route(
             "/wunder/user_tools/skills/file",
-            get(user_skills_file).put(user_skills_file_update),
+            get(user_skills_file)
+                .put(user_skills_file_update)
+                .delete(skill_fs::user_skills_entry_delete),
+        )
+        .route("/wunder/user_tools/skills/fs", get(skill_fs::user_skills_fs_content))
+        .route(
+            "/wunder/user_tools/skills/fs/search",
+            get(skill_fs::user_skills_fs_search),
+        )
+        .route(
+            "/wunder/user_tools/skills/fs/file",
+            put(skill_fs::user_skills_fs_file_update),
+        )
+        .route(
+            "/wunder/user_tools/skills/dir",
+            post(skill_fs::user_skills_dir_create),
+        )
+        .route(
+            "/wunder/user_tools/skills/move",
+            post(skill_fs::user_skills_entry_move),
+        )
+        .route(
+            "/wunder/user_tools/skills/copy",
+            post(skill_fs::user_skills_entry_copy),
+        )
+        .route(
+            "/wunder/user_tools/skills/batch",
+            post(skill_fs::user_skills_batch),
         )
         .route(
             "/wunder/user_tools/skills/content",
             get(user_skills_content),
         )
         .route("/wunder/user_tools/skills/export", get(user_skills_export))
+        .route("/wunder/user_tools/skills/archive", get(skill_fs::user_skills_archive))
+        .route("/wunder/user_tools/skills/download", get(skill_fs::user_skills_download))
         .route(
             "/wunder/user_tools/skills/upload",
             post(user_skills_upload).layer(DefaultBodyLimit::max(MAX_SKILL_UPLOAD_BYTES)),
+        )
+        .route(
+            "/wunder/user_tools/skills/fs/upload",
+            post(skill_fs::user_skills_fs_upload)
+                .layer(DefaultBodyLimit::max(skill_fs::MAX_SKILL_FS_UPLOAD_BYTES)),
         )
         .route(
             "/wunder/user_tools/knowledge",
@@ -155,6 +192,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/user_tools/knowledge/chunk/delete",
             post(user_knowledge_chunk_delete),
+        )
+        .route(
+            "/wunder/user_tools/knowledge/chunk/update",
+            post(user_knowledge_chunk_update),
         )
         .route(
             "/wunder/user_tools/knowledge/test",
@@ -418,7 +459,7 @@ fn resolve_user_skill_spec(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))
 }
 
-fn resolve_skill_file_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
+pub(crate) fn resolve_skill_file_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
     let rel = Path::new(relative_path);
     if rel.is_absolute() {
         return Err(error_response(
@@ -690,7 +731,7 @@ fn resolve_user_skill_source(
     UserSkillSourceKind::Custom
 }
 
-fn normalize_public_path_text(raw: &str) -> String {
+pub(crate) fn normalize_public_path_text(raw: &str) -> String {
     let mut path = raw.to_string();
     if cfg!(windows) {
         if let Some(stripped) = path.strip_prefix("\\\\?\\") {
@@ -703,7 +744,7 @@ fn normalize_public_path_text(raw: &str) -> String {
     path.replace('\\', "/")
 }
 
-fn normalize_public_path(path: &Path) -> String {
+pub(crate) fn normalize_public_path(path: &Path) -> String {
     normalize_public_path_text(&path.to_string_lossy())
 }
 
@@ -782,7 +823,7 @@ fn resolve_user_skill_root_for_source(
     Ok(root)
 }
 
-fn resolve_visible_user_skill(
+pub(crate) fn resolve_visible_user_skill(
     config: &Config,
     skill_root: &Path,
     name: &str,
@@ -1153,7 +1194,7 @@ async fn user_skills_file_update(
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let resolved_skill = resolve_visible_user_skill(&config, &skill_root, name)?;
-    if matches!(resolved_skill.source, UserSkillSourceKind::Builtin) {
+    if resolved_skill.source.is_readonly() {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             i18n::t("error.skill_builtin_readonly"),
@@ -1161,11 +1202,18 @@ async fn user_skills_file_update(
     }
     let root = resolved_skill.root;
     let target = resolve_skill_file_path(&root, relative_path)?;
-    if !target.exists() || !target.is_file() {
+    if target.exists() && !target.is_file() {
         return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.skill_file_not_found"),
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.target_not_file"),
         ));
+    }
+    if !target.exists() {
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
     }
     tokio::fs::write(&target, payload.content.as_bytes())
         .await
@@ -1206,7 +1254,7 @@ async fn user_skills_delete(
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let resolved_skill = resolve_visible_user_skill(&config, &skill_root, name)?;
-    if matches!(resolved_skill.source, UserSkillSourceKind::Builtin) {
+    if resolved_skill.source.is_readonly() {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             i18n::t("error.skill_builtin_readonly"),
@@ -1385,14 +1433,6 @@ async fn user_knowledge_update(
         .into_iter()
         .map(UserKnowledgeBase::from)
         .collect::<Vec<_>>();
-    let config = state.config_store.get().await;
-    for base in &bases {
-        if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Vector {
-            let model = base.embedding_model.as_deref().unwrap_or("");
-            vector_knowledge::resolve_embedding_model(&config, model)
-                .map_err(vector_error_response)?;
-        }
-    }
     let removed_vector_bases = collect_removed_vector_bases(&current.knowledge_bases, &bases);
     let updated = state
         .user_tool_store
@@ -1629,8 +1669,7 @@ async fn user_knowledge_upload(
     let base_config = resolve_user_knowledge_base(&user_payload, &base)?;
     let base_type = normalize_knowledge_base_type(base_config.base_type.as_deref());
     if base_type == KnowledgeBaseType::Vector {
-        let config = state.config_store.get().await;
-        ensure_user_vector_base(&config, &base_config)?;
+        ensure_user_vector_base(&base_config)?;
         let root = state
             .user_tool_store
             .resolve_knowledge_base_root_with_type(&user_id, &base_config.name, base_type, true)
@@ -1664,19 +1703,40 @@ async fn user_knowledge_upload(
             .ok();
         }
         let knowledge_config = build_user_knowledge_config(&base_config, &root);
-        let meta = vector_knowledge::index_document(
+        let config = state.config_store.get().await;
+        let meta = if vector_knowledge::resolve_embedding_model(
             &config,
-            &knowledge_config,
-            Some(&user_id),
-            storage.as_ref(),
-            &root,
-            &doc_name,
-            doc_id.as_deref(),
-            &content,
-            previous_meta.as_ref(),
+            base_config.embedding_model.as_deref().unwrap_or(""),
         )
-        .await
-        .map_err(vector_error_response)?;
+        .is_ok()
+        {
+            vector_knowledge::index_document(
+                &config,
+                &knowledge_config,
+                Some(&user_id),
+                storage.as_ref(),
+                &root,
+                &doc_name,
+                doc_id.as_deref(),
+                &content,
+                previous_meta.as_ref(),
+            )
+            .await
+            .map_err(vector_error_response)?
+        } else {
+            vector_knowledge::prepare_document(
+                &knowledge_config,
+                Some(&user_id),
+                storage.as_ref(),
+                &root,
+                &doc_name,
+                doc_id.as_deref(),
+                &content,
+                previous_meta.as_ref(),
+            )
+            .await
+            .map_err(vector_error_response)?
+        };
         return Ok(Json(json!({
             "data": {
                 "ok": true,
@@ -1829,13 +1889,24 @@ async fn user_knowledge_doc_delete(
             )
             .await
             .map_err(vector_error_response)?;
-            let client = vector_knowledge::resolve_weaviate_client(&config)
-                .map_err(vector_error_response)?;
-            let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
-            let deleted = client
-                .delete_doc_chunks_all(&owner_key, &base_name, &meta.embedding_model, &meta.doc_id)
-                .await
-                .map_err(vector_error_response)?;
+            let deleted = if !meta.embedding_model.trim().is_empty() {
+                if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
+                    let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
+                    client
+                        .delete_doc_chunks_all(
+                            &owner_key,
+                            &base_name,
+                            &meta.embedding_model,
+                            &meta.doc_id,
+                        )
+                        .await
+                        .unwrap_or(0)
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
             vector_knowledge::delete_vector_document_files(
                 storage.as_ref(),
                 Some(&user_id),
@@ -1931,7 +2002,7 @@ async fn user_knowledge_chunk_embed(
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
     let config = state.config_store.get().await;
-    ensure_user_vector_base(&config, &base)?;
+    ensure_user_vector_base(&base)?;
     let root = state
         .user_tool_store
         .resolve_knowledge_base_root_with_type(
@@ -2075,7 +2146,7 @@ async fn user_knowledge_chunk_delete(
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
     let config = state.config_store.get().await;
-    ensure_user_vector_base(&config, &base)?;
+    ensure_user_vector_base(&base)?;
     let root = state
         .user_tool_store
         .resolve_knowledge_base_root_with_type(
@@ -2126,11 +2197,13 @@ async fn user_knowledge_chunk_delete(
             if chunk.status.as_deref() == Some("deleted") {
                 return Ok(meta);
             }
-            let client = vector_knowledge::resolve_weaviate_client(&config)
-                .map_err(vector_error_response)?;
-            let _ = client
-                .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
-                .await;
+            if !meta.embedding_model.trim().is_empty() {
+                if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
+                    let _ = client
+                        .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
+                        .await;
+                }
+            }
             chunk.status = Some("deleted".to_string());
             vector_knowledge::refresh_document_meta(&mut meta);
             vector_knowledge::write_vector_document(
@@ -2139,6 +2212,110 @@ async fn user_knowledge_chunk_delete(
                 &base_name,
                 &meta,
                 &content,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            Ok(meta)
+        }
+    })
+    .await?;
+    Ok(Json(json!({ "data": { "ok": true, "doc": meta } })))
+}
+
+async fn user_knowledge_chunk_update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UserKnowledgeChunkUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id;
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let doc_id = payload.doc_id.trim();
+    if doc_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_document_not_found"),
+        ));
+    }
+    if payload.content.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let user_payload = state.user_tool_store.load_user_tools(&user_id);
+    let base = resolve_user_knowledge_base(&user_payload, base_name)?;
+    ensure_user_vector_base(&base)?;
+    let root = state
+        .user_tool_store
+        .resolve_knowledge_base_root_with_type(
+            &user_id,
+            &base.name,
+            KnowledgeBaseType::Vector,
+            false,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let root_for_lock = root.clone();
+    let doc_id = doc_id.to_string();
+    let base_name = base.name.clone();
+    let storage = state.storage.clone();
+    let updated_content = payload.content.clone();
+    let meta = vector_knowledge::with_document_lock(&root_for_lock, &doc_id, || {
+        let storage = storage.clone();
+        let base_name = base_name.clone();
+        let root = root.clone();
+        let doc_id = doc_id.clone();
+        let updated_content = updated_content.clone();
+        async move {
+            let mut meta = vector_knowledge::read_vector_document_meta(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let full_content = vector_knowledge::read_vector_document_content(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &root,
+                &doc_id,
+            )
+            .await
+            .map_err(vector_error_response)?;
+            let chunk = meta
+                .chunks
+                .iter_mut()
+                .find(|chunk| chunk.index == payload.chunk_index)
+                .ok_or_else(|| {
+                    error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.knowledge_chunk_not_found"),
+                    )
+                })?;
+            if chunk.status.as_deref() == Some("deleted") {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.knowledge_chunk_deleted"),
+                ));
+            }
+            chunk.content = Some(updated_content);
+            chunk.status = Some("pending".to_string());
+            vector_knowledge::refresh_document_meta(&mut meta);
+            vector_knowledge::write_vector_document(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &meta,
+                &full_content,
             )
             .await
             .map_err(vector_error_response)?;
@@ -2180,39 +2357,68 @@ async fn user_knowledge_test(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let knowledge_config = build_user_knowledge_config(&base, &root);
     if base_type == KnowledgeBaseType::Vector {
-        ensure_user_vector_base(&config, &base)?;
         let embedding_name = base
             .embedding_model
             .as_deref()
             .unwrap_or("")
             .trim()
             .to_string();
-        let embed_config = vector_knowledge::resolve_embedding_model(&config, &embedding_name)
-            .map_err(vector_error_response)?;
-        let timeout_s = embed_config.timeout_s.unwrap_or(120);
-        let vectors = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s)
-            .await
-            .map_err(vector_error_response)?;
-        let vector = vectors.first().ok_or_else(|| {
-            error_response(StatusCode::BAD_REQUEST, i18n::t("error.llm_request_failed"))
-        })?;
         let top_k = payload
             .top_k
             .filter(|value| *value > 0)
             .unwrap_or_else(|| vector_knowledge::resolve_top_k(&knowledge_config));
-        let client =
-            vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-        let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
-        let mut hits = client
-            .query_chunks(&owner_key, &base.name, &embedding_name, vector, top_k)
-            .await
-            .map_err(vector_error_response)?;
-        if let Some(threshold) = base.score_threshold {
-            hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
-        }
-        if hits.len() > top_k {
-            hits.truncate(top_k);
-        }
+        let vector_hits = if let Ok(embed_config) =
+            vector_knowledge::resolve_embedding_model(&config, &embedding_name)
+        {
+            let timeout_s = embed_config.timeout_s.unwrap_or(120);
+            if let Ok(vectors) = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s).await
+            {
+                if let Some(vector) = vectors.first() {
+                    if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
+                        let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
+                        if let Ok(mut hits) = client
+                            .query_chunks(&owner_key, &base.name, &embedding_name, vector, top_k)
+                            .await
+                        {
+                            if let Some(threshold) = base.score_threshold {
+                                hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+                            }
+                            if hits.len() > top_k {
+                                hits.truncate(top_k);
+                            }
+                            Some(hits)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let (hits, fallback_mode) = if let Some(hits) = vector_hits {
+            (hits, false)
+        } else {
+            (
+                vector_knowledge::query_chunks_by_text(
+                    state.storage.as_ref(),
+                    Some(&user_id),
+                    &knowledge_config,
+                    &root,
+                    query,
+                    top_k,
+                )
+                .await
+                .map_err(vector_error_response)?,
+                true,
+            )
+        };
         let items = hits
             .into_iter()
             .map(|hit| {
@@ -2234,7 +2440,8 @@ async fn user_knowledge_test(
                 "query": query,
                 "embedding_model": embedding_name,
                 "top_k": top_k,
-                "hits": items
+                "hits": items,
+                "fallback_mode": fallback_mode
             }
         })))
     } else {
@@ -2873,19 +3080,13 @@ fn build_user_knowledge_config(base: &UserKnowledgeBase, root: &Path) -> Knowled
     }
 }
 
-fn ensure_user_vector_base(config: &Config, base: &UserKnowledgeBase) -> Result<(), Response> {
+fn ensure_user_vector_base(base: &UserKnowledgeBase) -> Result<(), Response> {
     if normalize_knowledge_base_type(base.base_type.as_deref()) != KnowledgeBaseType::Vector {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.vector_knowledge_required"),
         ));
     }
-    let model = base
-        .embedding_model
-        .as_deref()
-        .map(|value| value.trim())
-        .unwrap_or("");
-    vector_knowledge::resolve_embedding_model(config, model).map_err(vector_error_response)?;
     Ok(())
 }
 
@@ -3422,6 +3623,16 @@ struct UserKnowledgeChunkActionRequest {
     base: String,
     doc_id: String,
     chunk_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserKnowledgeChunkUpdateRequest {
+    #[serde(default)]
+    user_id: Option<String>,
+    base: String,
+    doc_id: String,
+    chunk_index: usize,
+    content: String,
 }
 
 #[derive(Debug, Deserialize)]

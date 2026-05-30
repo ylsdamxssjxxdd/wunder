@@ -1,5 +1,5 @@
 <template>
-  <div class="user-tools-pane">
+  <div class="user-tools-pane skill-workspace-shell">
     <div class="list-header">
       <label>{{ t('userTools.skills.title') }}</label>
       <div class="header-actions">
@@ -69,92 +69,47 @@
         </div>
       </div>
 
-      <div class="management-detail skill-detail">
-        <div class="skill-detail-pane">
-          <div class="detail-header">
-            <div>
-              <div class="detail-title">{{ detailTitle }}</div>
-              <div class="muted skill-path-line" :title="detailMeta || undefined">{{ detailMeta }}</div>
-            </div>
-          </div>
-          <div class="skills-section-title">{{ t('userTools.skills.detail.structure') }}</div>
-          <div class="skill-file-tree">
-            <div v-if="fileTreeMessage" class="empty-text">{{ fileTreeMessage }}</div>
-            <template v-else>
-              <div
-                v-for="entry in fileEntries"
-                :key="entry.path"
-                class="skill-tree-item"
-                :class="{
-                  'is-dir': entry.kind === 'dir',
-                  'is-file': entry.kind !== 'dir',
-                  'is-active': entry.kind !== 'dir' && entry.path === activeFile
-                }"
-                :style="{ paddingLeft: `${8 + entry.depth * 14}px` }"
-                :title="entry.path"
-                @click="entry.kind !== 'dir' && selectSkillFile(entry.path)"
-              >
-                <i
-                  class="fa-solid"
-                  :class="entry.kind === 'dir' ? 'fa-folder' : 'fa-file-lines'"
-                  aria-hidden="true"
-                ></i>
-                <span class="skill-tree-name">{{ entry.name }}</span>
-              </div>
-            </template>
-          </div>
+      <div v-if="activeSkill" class="management-detail skill-detail skill-workspace-wrap">
+        <div class="skill-workspace-shell chat-shell">
+          <WorkspacePanel
+            ref="workspacePanelRef"
+            class="skill-workspace-panel"
+            :title="detailTitle"
+            :show-container-id="false"
+            :empty-text="workspaceEmptyText"
+            :file-system="activeSkillFileSystem"
+            :disable-workspace-editors="true"
+            @quote-path="handleQuotePath"
+            @open-workspace-binding="handleOpenWorkspaceBinding"
+          />
         </div>
-        <div class="skill-detail-pane">
-          <div class="detail-header">
-            <div>
-              <div class="detail-title">{{ t('userTools.skills.editor.title') }}</div>
-              <div class="muted skill-path-line" :title="activeFile || undefined">
-                {{ activeFile || t('userTools.skills.file.unselected') }}
-              </div>
-              <div v-if="activeSkillReadonly" class="muted">{{ t('userTools.skills.readonlyHint') }}</div>
-            </div>
-            <div class="detail-actions">
-              <button
-                class="user-tools-btn btn-with-icon btn-compact icon-only"
-                type="button"
-                :disabled="editorDisabled"
-                :title="t('common.save')"
-                :aria-label="t('common.save')"
-                @click="saveSkillFile"
-              >
-                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
-              </button>
-            </div>
-          </div>
-          <div class="skill-editor-body" :class="{ 'is-disabled': editorDisabled }">
-            <textarea
-              v-model="fileContent"
-              class="skill-editor-text"
-              :placeholder="t('userTools.skills.file.placeholder')"
-              :disabled="editorDisabled"
-              spellcheck="false"
-              autocorrect="off"
-              autocomplete="off"
-              autocapitalize="off"
-            ></textarea>
-          </div>
-        </div>
+      </div>
+      <div v-else class="management-detail skill-detail skill-empty-detail">
+        <div class="empty-text">{{ t('userTools.skills.files.unselected') }}</div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import type { AxiosProgressEvent } from 'axios';
 
+import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import {
+  batchUserSkillAction,
+  createUserSkillDir,
   deleteUserSkill,
+  downloadUserSkillArchive,
+  downloadUserSkillFile,
   exportUserSkillArchive,
-  fetchUserSkillFile,
-  fetchUserSkillFiles,
+  fetchUserSkillFsContent,
   fetchUserSkills,
-  saveUserSkillFile,
+  moveUserSkillEntry,
+  saveUserSkillFsFile,
+  searchUserSkillFs,
+  uploadUserSkillFsFiles,
   uploadUserSkillZip
 } from '@/api/userTools';
 import { showApiError } from '@/utils/apiError';
@@ -192,28 +147,19 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['loading-change']);
+const emit = defineEmits(['loading-change', 'quote-path']);
 
 const { t } = useI18n();
 
-const skills = ref([]);
+const skills = ref<any[]>([]);
 const selectedIndex = ref(-1);
 const loaded = ref(false);
 const loading = ref(false);
 const deleteLoading = ref(false);
+const uploadInputRef = ref<HTMLInputElement | null>(null);
+const workspacePanelRef = ref<InstanceType<typeof WorkspacePanel> | null>(null);
 
-const fileEntries = ref([]);
-const activeFile = ref('');
-const fileContent = ref('');
-const fileTreeMessage = ref('');
-const editorLocked = ref(true);
-
-const uploadInputRef = ref(null);
-
-let detailVersion = 0;
-let fileVersion = 0;
-
-const emitLoadingChange = (value) => {
+const emitLoadingChange = (value: boolean) => {
   emit('loading-change', value === true);
 };
 
@@ -222,11 +168,9 @@ const syncUserSkillsCatalog = (action: string) => {
   emitUserToolsUpdated({ scope: 'skills', action });
 };
 
-const normalizeSkillDisplayPath = (value) => {
+const normalizeSkillDisplayPath = (value: unknown) => {
   let normalized = String(value || '').trim();
-  if (!normalized) {
-    return '';
-  }
+  if (!normalized) return '';
   normalized = normalized.replace(/^\\\\\?\\UNC\\/i, '\\\\');
   normalized = normalized.replace(/^\\\\\?\\/, '');
   normalized = normalized.replace(/^\/\/\?\//, '');
@@ -239,9 +183,7 @@ const normalizeSkillDisplayPath = (value) => {
 };
 
 const activeSkill = computed(() => {
-  if (!Number.isInteger(selectedIndex.value)) {
-    return null;
-  }
+  if (!Number.isInteger(selectedIndex.value)) return null;
   return skills.value[selectedIndex.value] || null;
 });
 
@@ -255,21 +197,42 @@ const detailMeta = computed(() => {
   return normalizeSkillDisplayPath(skill.path);
 });
 
-const resolveSkillSource = (skill) => {
+const resolveSkillSource = (skill: any) => {
   if (skill?.source === 'builtin' || skill?.builtin === true || skill?.readonly === true) {
     return 'builtin';
   }
   return 'custom';
 };
 
-const isSkillReadonly = (skill) => resolveSkillSource(skill) === 'builtin';
+const isSkillReadonly = (skill: any) => resolveSkillSource(skill) === 'builtin';
 
 const activeSkillReadonly = computed(() => isSkillReadonly(activeSkill.value));
-const editorDisabled = computed(
-  () => editorLocked.value || !activeFile.value || activeSkillReadonly.value
+const workspaceEmptyText = computed(() =>
+  activeSkill.value ? t('userTools.skills.files.empty') : t('userTools.skills.files.unselected')
 );
 
-const buildSkillDesc = (skill) => {
+const activeSkillName = computed(() => String(activeSkill.value?.name || '').trim());
+const activeSkillFileSystem = computed(() => ({
+  key: `skill:${activeSkillName.value || 'none'}`,
+  readonly: activeSkillReadonly.value,
+  supportsWorkspaceEditors: false,
+  withParams: (params: Record<string, unknown> = {}) => ({ ...params, name: activeSkillName.value }),
+  appendFormData: (formData: FormData) => {
+    formData.append('name', activeSkillName.value);
+  },
+  listContent: (params: Record<string, unknown>) => fetchUserSkillFsContent({ ...params, name: activeSkillName.value }),
+  search: (params: Record<string, unknown>) => searchUserSkillFs({ ...params, name: activeSkillName.value }),
+  upload: (formData: FormData, config: { onUploadProgress?: (event: AxiosProgressEvent) => void } = {}) =>
+    uploadUserSkillFsFiles(formData, config),
+  createDir: (payload: Record<string, unknown>) => createUserSkillDir({ ...payload, name: activeSkillName.value }),
+  moveEntry: (payload: Record<string, unknown>) => moveUserSkillEntry({ ...payload, name: activeSkillName.value }),
+  batchAction: (payload: Record<string, unknown>) => batchUserSkillAction({ ...payload, name: activeSkillName.value }),
+  saveFile: (payload: Record<string, unknown>) => saveUserSkillFsFile({ ...payload, name: activeSkillName.value }),
+  downloadFile: (params: Record<string, unknown>) => downloadUserSkillFile(activeSkillName.value, String(params?.path || '')),
+  downloadArchive: (params: Record<string, unknown>) => downloadUserSkillArchive(activeSkillName.value, String(params?.path || ''))
+}));
+
+const buildSkillDesc = (skill: any) => {
   const parts = [];
   if (skill.description) {
     parts.push(skill.description);
@@ -278,138 +241,16 @@ const buildSkillDesc = (skill) => {
   if (displayPath) {
     parts.push(displayPath);
   }
-  return parts.join(' · ') || t('common.noDescription');
+  return parts.join(' / ') || t('common.noDescription');
 };
 
-const buildSkillSourceLabel = (skill) =>
+const buildSkillSourceLabel = (skill: any) =>
   resolveSkillSource(skill) === 'builtin'
     ? t('userTools.skills.source.builtin')
     : t('userTools.skills.source.custom');
 
-const normalizeSkillPath = (path) => String(path || '').replace(/\\/g, '/');
-
-const resolveDefaultSkillFile = (entries) => {
-  if (!Array.isArray(entries)) {
-    return '';
-  }
-  let fallback = '';
-  for (const entry of entries) {
-    if (!entry || entry.kind === 'dir') {
-      continue;
-    }
-    const path = String(entry.path || '');
-    if (!path) {
-      continue;
-    }
-    const normalized = normalizeSkillPath(path).toLowerCase();
-    if (normalized === 'skill.md') {
-      return path;
-    }
-    if (!fallback && normalized.endsWith('/skill.md')) {
-      fallback = path;
-    }
-  }
-  return fallback;
-};
-
-const setEditorDisabled = (disabled) => {
-  editorLocked.value = disabled;
-};
-
-const showEditorMessage = (message) => {
-  fileContent.value = message || '';
-  setEditorDisabled(true);
-};
-
-const resolveErrorMessage = (error, fallback) => {
-  const detail = error?.response?.data?.detail;
-  if (typeof detail === 'string') {
-    return detail;
-  }
-  if (detail && typeof detail.message === 'string') {
-    return detail.message;
-  }
-  if (typeof error?.message === 'string' && error.message.trim()) {
-    return error.message;
-  }
-  return fallback;
-};
-
-const refreshFileTreeMessage = () => {
-  if (!activeSkill.value) {
-    fileTreeMessage.value = t('userTools.skills.files.unselected');
-    return;
-  }
-  if (!fileEntries.value.length) {
-    fileTreeMessage.value = t('userTools.skills.files.empty');
-    return;
-  }
-  fileTreeMessage.value = '';
-};
-
-const resetSkillDetailState = () => {
-  detailVersion += 1;
-  fileVersion += 1;
-  fileEntries.value = [];
-  activeFile.value = '';
-  showEditorMessage('');
-};
-
-const clearSkillSelection = () => {
-  selectedIndex.value = -1;
-  resetSkillDetailState();
-  refreshFileTreeMessage();
-};
-
-type LoadSkillsOptions = {
-  refreshDetail?: boolean;
-};
-
-const buildFileEntries = (entries) =>
-  entries
-    .map((entry) => {
-      const path = String(entry?.path || '');
-      if (!path) return null;
-      const segments = path.split('/');
-      return {
-        path,
-        kind: entry?.kind === 'dir' ? 'dir' : 'file',
-        depth: Math.max(0, segments.length - 1),
-        name: segments[segments.length - 1] || path
-      };
-    })
-    .filter(Boolean);
-
-const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
-  if (loading.value) return;
-  loading.value = true;
-  emitLoadingChange(true);
-  try {
-    const { data } = await fetchUserSkills();
-    const payload = data?.data || {};
-    const list = Array.isArray(payload.skills) ? payload.skills : [];
-    const activeName = activeSkill.value?.name || '';
-    skills.value = list;
-    loaded.value = true;
-    if (activeName) {
-      const index = list.findIndex((item) => item.name === activeName);
-      if (index >= 0) {
-        selectedIndex.value = index;
-        if (refreshDetail) {
-          await selectSkill(list[index], index);
-        } else {
-          refreshFileTreeMessage();
-        }
-        return;
-      }
-    }
-    clearSkillSelection();
-  } catch (error) {
-    showApiError(error, t('userTools.skills.loadFailed'));
-  } finally {
-    loading.value = false;
-    emitLoadingChange(false);
-  }
+const emitWorkspaceLoading = (value: boolean) => {
+  emitLoadingChange(value);
 };
 
 const triggerUpload = () => {
@@ -466,129 +307,85 @@ const reloadSkills = async () => {
   }
 };
 
-const selectSkill = async (skill, index) => {
+const refreshSkillWorkspace = async () => {
+  await nextTick();
+  await workspacePanelRef.value?.refreshView?.({ background: false });
+};
+
+const selectSkill = async (skill: any, index: number) => {
   if (!skill) {
-    clearSkillSelection();
+    selectedIndex.value = -1;
     return;
   }
   selectedIndex.value = index;
-  resetSkillDetailState();
-  fileTreeMessage.value = t('common.loading');
-  const currentVersion = detailVersion;
+  await refreshSkillWorkspace();
+};
+
+const loadSkills = async ({ refreshDetail }: { refreshDetail?: boolean } = {}) => {
+  if (loading.value) return;
+  loading.value = true;
+  emitWorkspaceLoading(true);
   try {
-    const { data } = await fetchUserSkillFiles(skill.name);
-    if (currentVersion !== detailVersion) {
-      return;
-    }
+    const { data } = await fetchUserSkills();
     const payload = data?.data || {};
-    const entries = Array.isArray(payload.entries) ? payload.entries : [];
-    fileEntries.value = buildFileEntries(entries);
-    refreshFileTreeMessage();
-    const defaultFile = resolveDefaultSkillFile(entries);
-    if (defaultFile) {
-      await selectSkillFile(defaultFile);
+    const list = Array.isArray(payload.skills) ? payload.skills : [];
+    const activeName = activeSkill.value?.name || '';
+    skills.value = list;
+    loaded.value = true;
+    if (activeName) {
+      const index = list.findIndex((item: any) => item.name === activeName);
+      if (index >= 0) {
+        selectedIndex.value = index;
+        if (refreshDetail) {
+          await selectSkill(list[index], index);
+        }
+        return;
+      }
+    }
+    selectedIndex.value = list.length ? 0 : -1;
+    if (selectedIndex.value >= 0 && refreshDetail) {
+      await selectSkill(list[selectedIndex.value], selectedIndex.value);
     }
   } catch (error) {
-    if (currentVersion !== detailVersion) {
-      return;
-    }
-    fileTreeMessage.value = t('userTools.skills.files.loadFailed', {
-      message: resolveErrorMessage(error, t('common.requestFailed'))
-    });
+    showApiError(error, t('userTools.skills.loadFailed'));
+  } finally {
+    loading.value = false;
+    emitWorkspaceLoading(false);
   }
 };
 
-const selectSkillFile = async (filePath) => {
-  const skill = activeSkill.value;
-  if (!skill) {
-    ElMessage.warning(t('userTools.skills.file.selectSkillRequired'));
-    return;
-  }
-  if (!filePath) {
-    ElMessage.warning(t('userTools.skills.file.selectRequired'));
-    return;
-  }
-  activeFile.value = filePath;
-  showEditorMessage(t('common.loading'));
-  const currentVersion = ++fileVersion;
-  try {
-    const { data } = await fetchUserSkillFile(skill.name, filePath);
-    const payload = data?.data || {};
-    if (currentVersion !== fileVersion) {
-      return;
-    }
-    fileContent.value = payload.content || '';
-    setEditorDisabled(false);
-  } catch (error) {
-    if (currentVersion !== fileVersion) {
-      return;
-    }
-    showEditorMessage(
-      t('userTools.skills.file.readFailed', {
-        message: resolveErrorMessage(error, t('common.requestFailed'))
-      })
-    );
-  }
+const handleQuotePath = (payload: { paths?: string[] } = {}) => {
+  const paths = Array.isArray(payload.paths)
+    ? payload.paths.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (!paths.length) return;
+  emit('quote-path', { paths });
 };
 
-const saveSkillFile = async () => {
-  const skill = activeSkill.value;
-  if (!skill) {
-    ElMessage.warning(t('userTools.skills.file.selectSkillRequired'));
-    return;
-  }
-  if (isSkillReadonly(skill)) {
-    ElMessage.warning(t('userTools.skills.file.readonly'));
-    return;
-  }
-  if (!activeFile.value) {
-    ElMessage.warning(t('userTools.skills.file.selectRequired'));
-    return;
-  }
-  try {
-    const { data } = await saveUserSkillFile({
-      name: skill.name,
-      path: activeFile.value,
-      content: fileContent.value
-    });
-    const payload = data?.data || {};
-    if (payload.reloaded) {
-      await loadSkills({ refreshDetail: true });
-      syncUserSkillsCatalog('save');
-    }
-    ElMessage.success(t('userTools.skills.file.saveSuccess'));
-  } catch (error) {
-    ElMessage.error(
-      t('userTools.skills.file.saveFailed', {
-        message: resolveErrorMessage(error, t('common.requestFailed'))
-      })
-    );
-  }
+const handleOpenWorkspaceBinding = () => {
+  // Skills do not use workspace binding.
 };
 
-const removeSkillFromList = async (skillName) => {
+const removeSkillFromList = async (skillName: string) => {
   const removedIndex = skills.value.findIndex((item) => item?.name === skillName);
-  if (removedIndex < 0) {
-    return;
-  }
+  if (removedIndex < 0) return;
   const deletingActive = removedIndex === selectedIndex.value;
   skills.value = skills.value.filter((_, index) => index !== removedIndex);
   if (!skills.value.length) {
-    clearSkillSelection();
+    selectedIndex.value = -1;
     return;
   }
   if (deletingActive) {
     const nextIndex = Math.min(removedIndex, skills.value.length - 1);
-    await selectSkill(skills.value[nextIndex], nextIndex);
+    selectedIndex.value = nextIndex;
     return;
   }
   if (selectedIndex.value > removedIndex) {
     selectedIndex.value -= 1;
   }
-  refreshFileTreeMessage();
 };
 
-const deleteSkill = async (skill) => {
+const deleteSkill = async (skill: any) => {
   if (!skill?.name) return;
   if (isSkillReadonly(skill)) {
     ElMessage.warning(t('userTools.skills.deleteBuiltinDenied'));
@@ -604,7 +401,7 @@ const deleteSkill = async (skill) => {
         type: 'warning'
       }
     );
-  } catch (error) {
+  } catch {
     return;
   }
   deleteLoading.value = true;
@@ -616,7 +413,7 @@ const deleteSkill = async (skill) => {
   } catch (error) {
     ElMessage.error(
       t('userTools.skills.deleteFailed', {
-        message: resolveErrorMessage(error, t('common.requestFailed'))
+        message: (error as Error)?.message || t('common.requestFailed')
       })
     );
   } finally {

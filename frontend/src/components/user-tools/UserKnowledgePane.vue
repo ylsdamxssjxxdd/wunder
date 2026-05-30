@@ -34,14 +34,7 @@
               @click="selectBase(index)"
             >
               <div>{{ base.name || t('knowledge.name.unnamed') }}</div>
-              <small>
-                {{ base.root || t('userTools.knowledge.root.uncreated') }} ·
-                {{
-                  normalizeBaseType(base.base_type) === 'vector'
-                    ? t('knowledge.type.vector')
-                    : t('knowledge.type.literal')
-                }}
-              </small>
+              <small>{{ buildBaseListMeta(base) }}</small>
             </button>
           </template>
           <div v-else class="empty-text">{{ t('userTools.knowledge.list.empty') }}</div>
@@ -50,8 +43,9 @@
 
       <div class="management-detail knowledge-detail">
         <div class="detail-header">
-          <div>
+          <div class="knowledge-detail-summary">
             <div class="detail-title">{{ detailTitle }}</div>
+            <div class="muted">{{ detailModeHint }}</div>
             <div class="muted">{{ detailMeta }}</div>
             <div class="muted">{{ detailDesc }}</div>
           </div>
@@ -61,8 +55,8 @@
               class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
               type="button"
               :disabled="!activeBase || uploadLoading"
-              :title="t('common.upload')"
-              :aria-label="t('common.upload')"
+              :title="t('knowledge.action.uploadFile')"
+              :aria-label="t('knowledge.action.uploadFile')"
               :class="{ 'is-loading': uploadLoading }"
               @click="triggerUpload"
             >
@@ -95,8 +89,8 @@
               class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
               type="button"
               :disabled="!activeBase || uploadLoading"
-              :title="t('common.upload')"
-              :aria-label="t('common.upload')"
+              :title="t('knowledge.action.uploadDoc')"
+              :aria-label="t('knowledge.action.uploadDoc')"
               :class="{ 'is-loading': uploadLoading }"
               @click="triggerUpload"
             >
@@ -106,22 +100,12 @@
               v-if="isVectorBase"
               class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
               type="button"
-              :disabled="!activeBase"
+              :disabled="!activeBase || !canUseVectorSearch"
               :title="t('knowledge.action.reindex')"
               :aria-label="t('knowledge.action.reindex')"
               @click="reindexDocs()"
             >
               <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('knowledge.action.test')"
-              :aria-label="t('knowledge.action.test')"
-              @click="openTestModal"
-            >
-              <i class="fa-solid fa-vial" aria-hidden="true"></i>
             </button>
             <button
               class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
@@ -161,6 +145,15 @@
                       @click="selectFile(filePath)"
                     >
                       <span class="knowledge-file-name">{{ filePath }}</span>
+                      <button
+                        class="knowledge-file-delete-btn"
+                        type="button"
+                        :title="t('common.delete')"
+                        :aria-label="t('common.delete')"
+                        @click.stop="deleteFile(filePath)"
+                      >
+                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -181,6 +174,9 @@
               </div>
               <div v-else class="knowledge-vector-layout">
                 <div class="knowledge-vector-pane">
+                  <div class="knowledge-doc-section-title">
+                    {{ t('knowledge.doc.section.docs') }}
+                  </div>
                   <div class="knowledge-doc-list">
                     <div v-if="!vectorDocs.length" class="empty-text">
                       {{ t('knowledge.doc.list.empty') }}
@@ -192,7 +188,18 @@
                       :class="{ active: doc.doc_id === activeDocId }"
                       @click="selectDoc(doc.doc_id)"
                     >
-                      <div class="knowledge-doc-title">{{ doc.name || doc.doc_id }}</div>
+                      <div class="knowledge-doc-item-header">
+                        <div class="knowledge-doc-title">{{ doc.name || doc.doc_id }}</div>
+                        <button
+                          class="knowledge-doc-delete-btn"
+                          type="button"
+                          :title="t('common.delete')"
+                          :aria-label="t('common.delete')"
+                          @click.stop="deleteDoc(doc)"
+                        >
+                          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                        </button>
+                      </div>
                       <div class="knowledge-doc-meta">{{ buildDocMetaText(doc) }}</div>
                     </div>
                   </div>
@@ -240,7 +247,7 @@
                   <div class="knowledge-vector-content">
                     <div class="knowledge-doc-chunks-pane">
                       <div class="knowledge-doc-section-title">
-                        {{ t('knowledge.doc.section.chunks') }}
+                        {{ t('knowledge.doc.section.chunkList') }}
                       </div>
                       <div class="knowledge-doc-chunk-list">
                         <div v-if="!docChunks.length" class="empty-text">
@@ -254,11 +261,16 @@
                             selected: isChunkSelected(chunk.index),
                             embedding: isChunkEmbedding(chunk.index)
                           }"
-                          @click="toggleChunkSelection(chunk.index)"
+                          @click="openChunkEditor(chunk)"
                         >
                           <div class="knowledge-doc-chunk-title-row">
                             <div class="knowledge-doc-chunk-title">
-                              <span class="knowledge-doc-chunk-select"></span>
+                              <button
+                                class="knowledge-doc-chunk-select"
+                                type="button"
+                                :aria-label="isChunkSelected(chunk.index) ? t('knowledge.chunk.action.clearSelection') : t('knowledge.chunk.action.select')"
+                                @click.stop="toggleChunkSelection(chunk.index)"
+                              ></button>
                               <span>#{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}</span>
                             </div>
                             <span
@@ -307,67 +319,6 @@
           <el-input v-model="knowledgeForm.name" :placeholder="t('knowledge.modal.placeholder.name')" />
         </div>
         <div class="form-row">
-          <label>{{ t('knowledge.modal.field.type') }}</label>
-          <el-select
-            v-model="knowledgeForm.base_type"
-            :placeholder="t('knowledge.modal.placeholder.type')"
-          >
-            <el-option :label="t('knowledge.type.literal')" value="literal" />
-            <el-option :label="t('knowledge.type.vector')" value="vector" />
-          </el-select>
-        </div>
-        <div v-if="knowledgeForm.base_type === 'vector'" class="form-row">
-          <label>{{ t('knowledge.modal.field.embeddingModel') }}</label>
-          <el-select
-            v-model="knowledgeForm.embedding_model"
-            filterable
-            allow-create
-            default-first-option
-            :placeholder="t('knowledge.modal.placeholder.embeddingModel')"
-          >
-            <el-option v-for="model in embeddingModels" :key="model" :label="model" :value="model" />
-          </el-select>
-          <div v-if="!embeddingModels.length" class="muted">
-            {{ t('knowledge.embedding.empty') }}
-          </div>
-        </div>
-        <div v-if="knowledgeForm.base_type === 'vector'" class="grid">
-          <div class="form-row">
-            <label>{{ t('knowledge.modal.field.chunkSize') }}</label>
-            <el-input
-              v-model="knowledgeForm.chunk_size"
-              type="number"
-              :placeholder="t('knowledge.modal.placeholder.chunkSize')"
-            />
-          </div>
-          <div class="form-row">
-            <label>{{ t('knowledge.modal.field.chunkOverlap') }}</label>
-            <el-input
-              v-model="knowledgeForm.chunk_overlap"
-              type="number"
-              :placeholder="t('knowledge.modal.placeholder.chunkOverlap')"
-            />
-          </div>
-        </div>
-        <div v-if="knowledgeForm.base_type === 'vector'" class="grid">
-          <div class="form-row">
-            <label>{{ t('knowledge.modal.field.topK') }}</label>
-            <el-input
-              v-model="knowledgeForm.top_k"
-              type="number"
-              :placeholder="t('knowledge.modal.placeholder.topK')"
-            />
-          </div>
-          <div class="form-row">
-            <label>{{ t('knowledge.modal.field.scoreThreshold') }}</label>
-            <el-input
-              v-model="knowledgeForm.score_threshold"
-              type="number"
-              :placeholder="t('knowledge.modal.placeholder.scoreThreshold')"
-            />
-          </div>
-        </div>
-        <div class="form-row">
           <label>{{ t('knowledge.modal.field.description') }}</label>
           <el-input
             v-model="knowledgeForm.description"
@@ -376,18 +327,80 @@
             :placeholder="t('knowledge.modal.placeholder.description')"
           />
         </div>
-        <div v-if="!isLocalMode" class="form-row">
-          <label class="checkbox-row">
-            <input type="checkbox" v-model="knowledgeForm.shared" />
-            <span>{{ t('common.share') }}</span>
-          </label>
-        </div>
-        <div v-if="knowledgeForm.base_type === 'vector'" class="muted">
-          {{ t('knowledge.modal.tip.vectorRoot') }}
-        </div>
-        <div v-else class="muted">
-          {{ t('userTools.knowledge.modal.tip') }}
-        </div>
+        <details class="knowledge-advanced" :open="knowledgeAdvancedOpen">
+          <summary>{{ t('knowledge.modal.advanced.toggle') }}</summary>
+          <div class="knowledge-advanced-body">
+            <button
+              class="user-tools-btn secondary btn-with-icon"
+              type="button"
+              :disabled="!activeBase"
+              @click="openTestModal"
+            >
+              <i class="fa-solid fa-vial" aria-hidden="true"></i>
+              <span>{{ t('knowledge.action.test') }}</span>
+            </button>
+            <div class="form-row">
+              <label>{{ t('knowledge.modal.field.embeddingModel') }}</label>
+              <el-select
+                v-model="knowledgeForm.embedding_model"
+                filterable
+                clearable
+                :placeholder="t('knowledge.modal.placeholder.embeddingModel')"
+              >
+                <el-option
+                  v-for="model in embeddingModels"
+                  :key="model"
+                  :label="model"
+                  :value="model"
+                />
+              </el-select>
+              <div class="muted">
+                {{
+                  embeddingModels.length
+                    ? t('userTools.knowledge.modal.embeddingTip')
+                    : t('userTools.knowledge.modal.fallbackTip')
+                }}
+              </div>
+            </div>
+            <div class="grid">
+              <div class="form-row">
+                <label>{{ t('knowledge.modal.field.chunkSize') }}</label>
+                <el-input
+                  v-model="knowledgeForm.chunk_size"
+                  type="number"
+                  :placeholder="t('knowledge.modal.placeholder.chunkSize')"
+                />
+              </div>
+              <div class="form-row">
+                <label>{{ t('knowledge.modal.field.chunkOverlap') }}</label>
+                <el-input
+                  v-model="knowledgeForm.chunk_overlap"
+                  type="number"
+                  :placeholder="t('knowledge.modal.placeholder.chunkOverlap')"
+                />
+              </div>
+            </div>
+            <div class="grid">
+              <div class="form-row">
+                <label>{{ t('knowledge.modal.field.topK') }}</label>
+                <el-input
+                  v-model="knowledgeForm.top_k"
+                  type="number"
+                  :placeholder="t('knowledge.modal.placeholder.topK')"
+                />
+              </div>
+              <div class="form-row">
+                <label>{{ t('knowledge.modal.field.scoreThreshold') }}</label>
+                <el-input
+                  v-model="knowledgeForm.score_threshold"
+                  type="number"
+                  :placeholder="t('knowledge.modal.placeholder.scoreThreshold')"
+                />
+              </div>
+            </div>
+            <div class="muted">{{ t('knowledge.modal.tip.vectorRoot') }}</div>
+          </div>
+        </details>
       </div>
 
       <template #footer>
@@ -436,6 +449,9 @@
               <span>{{ knowledgeTestRunLabel }}</span>
             </button>
             <div class="muted">{{ knowledgeTestStatus }}</div>
+          </div>
+          <div v-if="knowledgeTestFallbackMode" class="muted">
+            {{ t('knowledge.test.fallbackMode') }}
           </div>
         </div>
         <div class="knowledge-test-results">
@@ -487,6 +503,71 @@
         </button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="chunkEditorVisible"
+      class="workspace-dialog workspace-dialog--file-editor knowledge-chunk-editor-dialog"
+      width="860px"
+      top="clamp(10px, 4vh, 36px)"
+      :show-close="false"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <template #header>
+        <div class="workspace-editor-header">
+          <div class="workspace-editor-header-left">
+            <div class="workspace-editor-header-title">{{ chunkEditorTitle }}</div>
+          </div>
+          <div class="workspace-editor-head-actions">
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn"
+              type="button"
+              :disabled="chunkEditorSaving"
+              :title="t('common.save')"
+              :aria-label="t('common.save')"
+              @click="saveChunkEditor"
+            >
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            </button>
+            <button
+              class="workspace-btn secondary workspace-editor-icon-btn workspace-editor-close-btn"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="closeChunkEditor"
+            >
+              <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+      </template>
+      <div class="workspace-editor-body knowledge-chunk-editor-body">
+        <div class="workspace-editor-code knowledge-chunk-editor-code">
+          <CodeMirrorEditor
+            v-model="chunkEditorContent"
+            :source-path="chunkEditorSourcePath"
+            :readonly="chunkEditorSaving"
+            :placeholder="t('knowledge.chunk.editor.placeholder')"
+            light-surface
+          />
+        </div>
+        <div class="muted">{{ t('knowledge.chunk.editor.hint') }}</div>
+      </div>
+      <template #footer>
+        <button class="workspace-btn secondary" type="button" @click="closeChunkEditor">
+          {{ t('common.cancel') }}
+        </button>
+        <button
+          class="workspace-btn workspace-btn--primary"
+          type="button"
+          :disabled="chunkEditorSaving"
+          :class="{ 'is-loading': chunkEditorSaving }"
+          @click="saveChunkEditor"
+        >
+          {{ t('common.save') }}
+        </button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -501,13 +582,17 @@ import {
   fetchUserKnowledgeFile,
   fetchUserKnowledgeFiles,
   embedUserKnowledgeChunk,
+  deleteUserKnowledgeFile,
+  deleteUserKnowledgeDoc,
   deleteUserKnowledgeChunk,
   reindexUserKnowledge,
   saveUserKnowledgeConfig,
   saveUserKnowledgeFile,
   testUserKnowledge,
+  updateUserKnowledgeChunk,
   uploadUserKnowledgeFile
 } from '@/api/userTools';
+import CodeMirrorEditor from '@/components/common/CodeMirrorEditor.vue';
 import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
@@ -619,11 +704,17 @@ const knowledgeTestText = ref('');
 const knowledgeTestReasoning = ref('');
 const knowledgeTestCompleted = ref(false);
 const knowledgeTestLoading = ref(false);
+const knowledgeTestFallbackMode = ref(false);
+const knowledgeAdvancedOpen = ref(false);
+const chunkEditorVisible = ref(false);
+const chunkEditorSaving = ref(false);
+const chunkEditorContent = ref('');
+const chunkEditorIndex = ref<number | null>(null);
+const chunkEditorSourcePath = computed(() => 'chunk.md');
 const knowledgeForm = reactive({
   name: '',
   description: '',
-  shared: false,
-  base_type: 'literal',
+  base_type: 'vector',
   embedding_model: '',
   chunk_size: '',
   chunk_overlap: '',
@@ -705,11 +796,28 @@ const formatChunkStatus = (chunk) => {
 const isChunkSelected = (index) => selectedChunkIndices.value.has(index);
 const isChunkEmbedding = (index) => embeddingChunkIndices.value.has(index);
 const getSelectedChunkIndices = () => Array.from(selectedChunkIndices.value);
+const buildBaseListMeta = (base) => {
+  const parts = [base.root || t('userTools.knowledge.root.uncreated')];
+  if (normalizeBaseType(base.base_type) === 'vector') {
+    parts.push(
+      base.embedding_model?.trim()
+        ? t('userTools.knowledge.mode.vector')
+        : t('userTools.knowledge.mode.fallback')
+    );
+  } else {
+    parts.push(t('userTools.knowledge.mode.literal'));
+  }
+  return parts.join(' 路 ');
+};
+
+const resolveDocName = (doc) =>
+  doc?.name || doc?.doc_name || doc?.doc_id || t('knowledge.doc.unnamed');
 
 const activeBase = computed(() => bases.value[selectedIndex.value] || null);
 const isVectorBase = computed(
   () => normalizeBaseType(activeBase.value?.base_type) === 'vector'
 );
+const canUseVectorSearch = computed(() => Boolean(activeBase.value?.embedding_model?.trim()));
 const detailTitle = computed(() => activeBase.value?.name || t('knowledge.detail.empty'));
 const detailMeta = computed(() => {
   if (!activeBase.value) {
@@ -717,7 +825,6 @@ const detailMeta = computed(() => {
   }
   const root = activeBase.value.root || t('userTools.knowledge.root.uncreated');
   const parts = [root];
-  parts.push(isVectorBase.value ? t('knowledge.type.vector') : t('knowledge.type.literal'));
   if (isVectorBase.value && activeBase.value.embedding_model) {
     parts.push(
       t('knowledge.doc.meta.embedding', { name: activeBase.value.embedding_model })
@@ -728,9 +835,25 @@ const detailMeta = computed(() => {
   }
   return parts.join(' · ');
 });
+const detailModeHint = computed(() => {
+  if (!activeBase.value) {
+    return '';
+  }
+  if (!isVectorBase.value) {
+    return t('userTools.knowledge.mode.literal');
+  }
+  return canUseVectorSearch.value
+    ? t('userTools.knowledge.mode.vector')
+    : t('userTools.knowledge.mode.fallback');
+});
 const detailDesc = computed(() => activeBase.value?.description || '');
 const knowledgeModalTitle = computed(() =>
   knowledgeEditingIndex.value >= 0 ? t('knowledge.modal.editTitle') : t('knowledge.modal.addTitle')
+);
+const chunkEditorTitle = computed(() =>
+  chunkEditorIndex.value === null
+    ? t('knowledge.chunk.editor.title')
+    : t('knowledge.chunk.editor.titleWithIndex', { index: chunkEditorIndex.value })
 );
 const activeDocTitle = computed(
   () => docMeta.value?.name || activeDocId.value || t('knowledge.doc.none')
@@ -833,11 +956,6 @@ const validateConfigPayload = (payload) => {
   const invalid = payload.bases.filter((base) => !base.name);
   if (invalid.length) {
     return t('knowledge.payload.invalid');
-  }
-  for (const base of payload.bases) {
-    if (normalizeBaseType(base.base_type) === 'vector' && !base.embedding_model) {
-      return t('knowledge.embedding.required');
-    }
   }
   const nameSet = new Set();
   for (const base of payload.bases) {
@@ -974,8 +1092,7 @@ const selectBase = async (index) => {
 const resetKnowledgeForm = () => {
   knowledgeForm.name = '';
   knowledgeForm.description = '';
-  knowledgeForm.shared = false;
-  knowledgeForm.base_type = 'literal';
+  knowledgeForm.base_type = 'vector';
   knowledgeForm.embedding_model = '';
   knowledgeForm.chunk_size = '';
   knowledgeForm.chunk_overlap = '';
@@ -988,8 +1105,7 @@ const openKnowledgeModal = (base = null, index = -1) => {
   knowledgeEditingIndex.value = Number.isInteger(index) ? index : -1;
   knowledgeForm.name = base?.name || '';
   knowledgeForm.description = base?.description || '';
-  knowledgeForm.shared = !isLocalMode.value && base?.shared === true;
-  knowledgeForm.base_type = normalizeBaseType(base?.base_type);
+  knowledgeForm.base_type = 'vector';
   knowledgeForm.embedding_model = base?.embedding_model || '';
   knowledgeForm.chunk_size =
     base?.chunk_size !== null && base?.chunk_size !== undefined ? base.chunk_size : '';
@@ -1001,6 +1117,7 @@ const openKnowledgeModal = (base = null, index = -1) => {
     base?.score_threshold !== null && base?.score_threshold !== undefined
       ? base.score_threshold
       : '';
+  knowledgeAdvancedOpen.value = false;
   knowledgeModalVisible.value = true;
 };
 
@@ -1008,15 +1125,13 @@ const openKnowledgeModal = (base = null, index = -1) => {
 const closeKnowledgeModal = () => {
   knowledgeModalVisible.value = false;
   knowledgeEditingIndex.value = -1;
+  knowledgeAdvancedOpen.value = false;
   resetKnowledgeForm();
 };
 
 const validateKnowledgeBase = (payload, index) => {
   if (!payload.name) {
     return t('knowledge.name.required');
-  }
-  if (normalizeBaseType(payload.base_type) === 'vector' && !payload.embedding_model) {
-    return t('knowledge.embedding.required');
   }
   for (let i = 0; i < bases.value.length; i += 1) {
     if (i === index) {
@@ -1030,18 +1145,16 @@ const validateKnowledgeBase = (payload, index) => {
 };
 
 const getKnowledgeFormPayload = () => {
-  const baseType = normalizeBaseType(knowledgeForm.base_type);
-  const isVector = baseType === 'vector';
   return {
     name: knowledgeForm.name.trim(),
     description: knowledgeForm.description.trim(),
-    shared: !isLocalMode.value && knowledgeForm.shared === true,
-    base_type: baseType,
-    embedding_model: isVector ? knowledgeForm.embedding_model.trim() : '',
-    chunk_size: isVector ? parseOptionalInt(knowledgeForm.chunk_size) : null,
-    chunk_overlap: isVector ? parseOptionalInt(knowledgeForm.chunk_overlap) : null,
-    top_k: isVector ? parseOptionalInt(knowledgeForm.top_k) : null,
-    score_threshold: isVector ? parseOptionalFloat(knowledgeForm.score_threshold) : null
+    shared: false,
+    base_type: 'vector',
+    embedding_model: knowledgeForm.embedding_model.trim(),
+    chunk_size: parseOptionalInt(knowledgeForm.chunk_size),
+    chunk_overlap: parseOptionalInt(knowledgeForm.chunk_overlap),
+    top_k: parseOptionalInt(knowledgeForm.top_k),
+    score_threshold: parseOptionalFloat(knowledgeForm.score_threshold)
   };
 };
 
@@ -1223,6 +1336,48 @@ const loadVectorDocs = async () => {
   }
 };
 
+const deleteDoc = async (doc) => {
+  const base = activeBase.value;
+  if (!base || !base.name) {
+    ElMessage.warning(t('knowledge.base.selectRequired'));
+    return;
+  }
+  if (!doc?.doc_id) {
+    ElMessage.warning(t('knowledge.doc.selectRequired'));
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      t('knowledge.doc.deleteConfirm', { name: resolveDocName(doc) }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    );
+  } catch (error) {
+    return;
+  }
+  try {
+    await deleteUserKnowledgeDoc(base.name, doc.doc_id);
+    if (activeDocId.value === doc.doc_id) {
+      activeDocId.value = '';
+      docMeta.value = null;
+      docChunks.value = [];
+      selectedChunkIndices.value = new Set();
+      embeddingChunkIndices.value = new Set();
+    }
+    await loadVectorDocs();
+    ElMessage.success(t('knowledge.doc.deleted'));
+  } catch (error) {
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.doc.deleteFailed', { message: error.message || t('common.requestFailed') })
+    );
+  }
+};
+
 const selectDoc = async (docId, options: SelectDocOptions = {}) => {
   const base = activeBase.value;
   if (!base || !base.name) {
@@ -1306,6 +1461,62 @@ const toggleChunkSelection = (index) => {
     next.add(index);
   }
   selectedChunkIndices.value = next;
+};
+
+const openChunkEditor = (chunk) => {
+  chunkEditorIndex.value = chunk?.index ?? null;
+  chunkEditorContent.value = chunk?.content || chunk?.preview || '';
+  chunkEditorSaving.value = false;
+  chunkEditorVisible.value = true;
+};
+
+const closeChunkEditor = () => {
+  chunkEditorVisible.value = false;
+  chunkEditorSaving.value = false;
+  chunkEditorIndex.value = null;
+  chunkEditorContent.value = '';
+};
+
+const saveChunkEditor = async () => {
+  const base = activeBase.value;
+  if (!base || !base.name) {
+    ElMessage.warning(t('knowledge.base.selectRequired'));
+    return;
+  }
+  if (!activeDocId.value) {
+    ElMessage.warning(t('knowledge.doc.selectRequired'));
+    return;
+  }
+  if (!Number.isInteger(chunkEditorIndex.value)) {
+    ElMessage.warning(t('knowledge.chunk.selectRequired'));
+    return;
+  }
+  const content = chunkEditorContent.value;
+  if (!content.trim()) {
+    ElMessage.warning(t('knowledge.chunk.editor.empty'));
+    return;
+  }
+  chunkEditorSaving.value = true;
+  try {
+    await updateUserKnowledgeChunk({
+      base: base.name,
+      doc_id: activeDocId.value,
+      chunk_index: chunkEditorIndex.value,
+      content
+    });
+    await refreshActiveDoc();
+    closeChunkEditor();
+    ElMessage.success(t('knowledge.chunk.editor.saved'));
+  } catch (error) {
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.chunk.editor.saveFailed', {
+          message: error.message || t('common.requestFailed')
+        })
+    );
+  } finally {
+    chunkEditorSaving.value = false;
+  }
 };
 
 const toggleSelectAllChunks = () => {
@@ -1446,6 +1657,7 @@ const openTestModal = () => {
   knowledgeTestText.value = '';
   knowledgeTestReasoning.value = '';
   knowledgeTestCompleted.value = false;
+  knowledgeTestFallbackMode.value = false;
   knowledgeTestVisible.value = true;
 };
 
@@ -1457,6 +1669,7 @@ const closeTestModal = () => {
   knowledgeTestText.value = '';
   knowledgeTestReasoning.value = '';
   knowledgeTestCompleted.value = false;
+  knowledgeTestFallbackMode.value = false;
 };
 
 const formatTestScore = (score) => {
@@ -1483,6 +1696,7 @@ const runKnowledgeTest = async () => {
   knowledgeTestText.value = '';
   knowledgeTestReasoning.value = '';
   knowledgeTestCompleted.value = false;
+  knowledgeTestFallbackMode.value = false;
   try {
     const { data } = await testUserKnowledge({ base: base.name, query });
     const payload = data?.data || {};
@@ -1490,6 +1704,7 @@ const runKnowledgeTest = async () => {
     knowledgeTestResults.value = hits;
     knowledgeTestText.value = payload.text || '';
     knowledgeTestReasoning.value = payload.reasoning || '';
+    knowledgeTestFallbackMode.value = payload.fallback_mode === true;
     knowledgeTestCompleted.value = true;
     knowledgeTestStatus.value = t('knowledge.test.done');
   } catch (error) {
@@ -1552,6 +1767,49 @@ const saveFile = async () => {
     ElMessage.error(
       error.response?.data?.detail ||
         t('knowledge.file.saveFailed', { message: error.message || t('common.requestFailed') })
+    );
+  }
+};
+
+const deleteFile = async (filePath) => {
+  const base = activeBase.value;
+  if (!base || !base.name) {
+    ElMessage.warning(t('knowledge.base.selectRequired'));
+    return;
+  }
+  if (normalizeBaseType(base.base_type) === 'vector') {
+    ElMessage.warning(t('knowledge.vector.readonly'));
+    return;
+  }
+  if (!filePath) {
+    ElMessage.warning(t('knowledge.file.saveRequired'));
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      t('knowledge.file.deleteConfirm', { name: filePath }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    );
+  } catch (error) {
+    return;
+  }
+  try {
+    await deleteUserKnowledgeFile(base.name, filePath);
+    if (activeFile.value === filePath) {
+      activeFile.value = '';
+      fileContent.value = '';
+    }
+    await loadFiles();
+    ElMessage.success(t('knowledge.file.deleted'));
+  } catch (error) {
+    ElMessage.error(
+      error.response?.data?.detail ||
+        t('knowledge.file.deleteFailed', { message: error.message || t('common.requestFailed') })
     );
   }
 };
@@ -1716,12 +1974,7 @@ watch(
 
 watch(
   () => knowledgeForm.base_type,
-  (value) => {
-    const type = normalizeBaseType(value);
-    if (type !== 'vector') {
-      knowledgeForm.embedding_model = '';
-      return;
-    }
+  () => {
     if (!knowledgeForm.embedding_model && embeddingModels.value.length) {
       knowledgeForm.embedding_model = embeddingModels.value[0];
     }
@@ -1729,3 +1982,37 @@ watch(
 );
 
 </script>
+
+<style scoped>
+.knowledge-advanced {
+  border: 1px solid var(--user-tools-border, rgba(148, 163, 184, 0.2));
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.knowledge-advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--user-tools-text, #111827);
+}
+
+.knowledge-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.knowledge-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.knowledge-chunk-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+</style>

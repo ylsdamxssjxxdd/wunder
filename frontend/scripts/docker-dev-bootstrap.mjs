@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +9,16 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 const frontendRoot = path.resolve(__dirname, '..');
 const distRoot = path.join(frontendRoot, 'dist');
 const tempDistRoot = path.join(frontendRoot, 'dist.__docker_tmp');
+const dependencyFingerprintPath = path.join(
+  repoRoot,
+  'node_modules',
+  '.wunder-frontend-deps-fingerprint'
+);
+const dependencyFingerprintSourcePaths = [
+  path.join(repoRoot, 'package.json'),
+  path.join(repoRoot, 'package-lock.json'),
+  path.join(frontendRoot, 'package.json')
+];
 const viteCacheRoots = [
   path.join(repoRoot, 'node_modules', '.vite'),
   path.join(frontendRoot, 'node_modules', '.vite')
@@ -35,6 +46,15 @@ const hasPath = async (targetPath) => {
   }
 };
 
+const hasExecutablePath = async (targetPath) => {
+  try {
+    await fs.access(targetPath, fsConstants.X_OK);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+};
+
 const findFirstExistingPath = async (candidates) => {
   for (const candidate of candidates) {
     if (await hasPath(candidate)) {
@@ -42,6 +62,61 @@ const findFirstExistingPath = async (candidates) => {
     }
   }
   return '';
+};
+
+const findFirstExecutablePath = async (candidates) => {
+  for (const candidate of candidates) {
+    if (await hasExecutablePath(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
+};
+
+const buildDependencyFingerprint = async () => {
+  const hash = createHash('sha256');
+  for (const sourcePath of dependencyFingerprintSourcePaths) {
+    hash.update(sourcePath);
+    hash.update('\0');
+    hash.update(await fs.readFile(sourcePath));
+    hash.update('\0');
+  }
+  hash.update(`platform=${process.platform};arch=${process.arch}`);
+  return hash.digest('hex');
+};
+
+const hasCurrentDependencyFingerprint = async () => {
+  const existingFingerprint = (await fs.readFile(dependencyFingerprintPath, 'utf8').catch(() => '')).trim();
+  if (!existingFingerprint) {
+    return false;
+  }
+  return existingFingerprint === (await buildDependencyFingerprint());
+};
+
+const writeCurrentDependencyFingerprint = async () => {
+  await fs.mkdir(path.dirname(dependencyFingerprintPath), { recursive: true });
+  await fs.writeFile(dependencyFingerprintPath, `${await buildDependencyFingerprint()}\n`, 'utf8');
+};
+
+const readJsonFile = async (targetPath) => {
+  try {
+    return JSON.parse(await fs.readFile(targetPath, 'utf8'));
+  } catch (_error) {
+    return null;
+  }
+};
+
+const hasCurrentPackageLockSnapshot = async () => {
+  const frontendPackage = await readJsonFile(path.join(frontendRoot, 'package.json'));
+  const lockfile = await readJsonFile(path.join(repoRoot, 'node_modules', '.package-lock.json'));
+  if (!frontendPackage?.version || !lockfile?.packages?.['']) {
+    return false;
+  }
+  const frontendWorkspace = lockfile.packages.frontend;
+  if (!frontendWorkspace) {
+    return false;
+  }
+  return frontendWorkspace.version === frontendPackage.version;
 };
 
 const run = (command, args, options = {}) =>
@@ -111,7 +186,11 @@ const resolveLinuxEsbuildNativePackageName = () => {
   return '';
 };
 
-const hasLinuxNativeDependency = async (packageName, markerRelativePaths = ['package.json']) => {
+const hasLinuxNativeDependency = async (
+  packageName,
+  markerRelativePaths = ['package.json'],
+  { executable = false } = {}
+) => {
   if (!packageName) {
     return true;
   }
@@ -124,7 +203,8 @@ const hasLinuxNativeDependency = async (packageName, markerRelativePaths = ['pac
       );
     }
   }
-  return Boolean(await findFirstExistingPath(candidates));
+  const finder = executable ? findFirstExecutablePath : findFirstExistingPath;
+  return Boolean(await finder(candidates));
 };
 
 const hasLinuxRollupNativeDependency = async () =>
@@ -132,6 +212,15 @@ const hasLinuxRollupNativeDependency = async () =>
     'package.json',
     `rollup.${process.platform}-${process.arch}${process.arch === 'arm64' ? '-gnu' : ''}.node`
   ]);
+
+const hasLinuxEsbuildNativeDependency = async () => {
+  const nativePackageName = resolveLinuxEsbuildNativePackageName();
+  return (
+    (await hasLinuxNativeDependency(nativePackageName, ['package.json'])) &&
+    (await hasLinuxNativeDependency(nativePackageName, ['bin/esbuild'], { executable: true })) &&
+    (await hasLinuxNativeDependency('esbuild', ['bin/esbuild'], { executable: true }))
+  );
+};
 
 const resolveViteEntry = async () =>
   findFirstExistingPath([
@@ -159,12 +248,20 @@ const ensureDependencies = async () => {
   const viteEntry = await resolveViteEntry();
   const viteReady = Boolean(viteEntry);
   const rollupNativeReady = await hasLinuxRollupNativeDependency();
-  const esbuildNativeReady = await hasLinuxNativeDependency(
-    resolveLinuxEsbuildNativePackageName(),
-    ['package.json', 'bin/esbuild']
-  );
+  const esbuildNativeReady = await hasLinuxEsbuildNativeDependency();
   const vueCompilerReady = await hasVueCompilerDependency();
-  if (viteReady && rollupNativeReady && esbuildNativeReady && vueCompilerReady) {
+  const dependencySnapshotReady =
+    (await hasCurrentDependencyFingerprint()) || (await hasCurrentPackageLockSnapshot());
+  if (
+    viteReady &&
+    rollupNativeReady &&
+    esbuildNativeReady &&
+    vueCompilerReady &&
+    dependencySnapshotReady
+  ) {
+    if (!(await hasCurrentDependencyFingerprint())) {
+      await writeCurrentDependencyFingerprint();
+    }
     return viteEntry;
   }
 
@@ -172,6 +269,8 @@ const ensureDependencies = async () => {
     log('vite package is missing, reinstalling workspace dependencies');
   } else if (!vueCompilerReady) {
     log('vue compiler dependency is incomplete, reinstalling workspace dependencies');
+  } else if (!dependencySnapshotReady) {
+    log('frontend dependency profile is stale, reinstalling workspace dependencies');
   } else {
     log('linux native frontend dependency is missing, reinstalling workspace dependencies');
   }
@@ -206,9 +305,9 @@ const ensureDependencies = async () => {
       'rollup native dependency is unavailable after npm ci; check npm optional dependency settings'
     );
   }
-  if (!(await hasLinuxNativeDependency(resolveLinuxEsbuildNativePackageName()))) {
+  if (!(await hasLinuxEsbuildNativeDependency())) {
     throw new Error(
-      'esbuild native dependency is unavailable after npm ci; check npm optional dependency settings'
+      'esbuild native dependency is unavailable or not executable after npm ci; check npm optional dependency settings and mounted node_modules permissions'
     );
   }
   if (!(await hasVueCompilerDependency())) {
@@ -216,6 +315,7 @@ const ensureDependencies = async () => {
       'vue compiler dependency is unavailable after npm ci; check whether vue/package.json and vue/compiler-sfc were preserved in node_modules'
     );
   }
+  await writeCurrentDependencyFingerprint();
   return resolvedViteEntry;
 };
 

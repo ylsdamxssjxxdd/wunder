@@ -717,6 +717,33 @@
   padding-right: 2px;
 }
 
+.user-tools-dialog .skill-workspace-wrap {
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.user-tools-dialog .skill-workspace-shell.chat-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  color: var(--user-tools-text);
+}
+
+.user-tools-dialog .skill-workspace-panel {
+  min-height: 0;
+  height: 100%;
+}
+
+.user-tools-dialog .skill-empty-detail {
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(77, 216, 255, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.35);
+}
+
 .user-tools-dialog .skill-detail-pane:first-child {
   flex: 0 0 auto;
 }
@@ -888,6 +915,9 @@
 .user-tools-dialog .knowledge-content .knowledge-files-card {
   flex: 1 1 auto;
   min-height: 0;
+  padding: 8px;
+  gap: 8px;
+  box-shadow: none;
 }
 
 .user-tools-dialog .knowledge-file-layout {
@@ -960,23 +990,28 @@
   display: none;
   align-items: center;
   justify-content: center;
-  padding: 2px 6px;
-  border-radius: 4px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: #fca5a5;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(248, 113, 113, 0.18);
+  background: rgba(248, 113, 113, 0.08);
+  color: #f87171;
   font-size: 12px;
-  line-height: 1.2;
+  line-height: 1;
   cursor: pointer;
+  flex: 0 0 auto;
 }
 
-.user-tools-dialog .knowledge-file-item:hover .knowledge-file-delete-btn {
+.user-tools-dialog .knowledge-file-item:hover .knowledge-file-delete-btn,
+.user-tools-dialog .knowledge-file-item.active .knowledge-file-delete-btn,
+.user-tools-dialog .knowledge-file-delete-btn:focus-visible {
   display: inline-flex;
 }
 
 .user-tools-dialog .knowledge-file-delete-btn:hover {
-  background: rgba(239, 68, 68, 0.18);
-  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.32);
   color: #fecaca;
 }
 
@@ -1064,14 +1099,17 @@
 .user-tools-dialog .knowledge-doc-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 3px;
+  padding: 8px 10px 7px;
   border-radius: 8px;
   border: 1px solid transparent;
   cursor: pointer;
   font-size: 13px;
   color: var(--user-tools-text);
   transition: border-color 0.2s ease, background 0.2s ease;
+  min-height: 92px;
+  max-height: 92px;
+  justify-content: flex-start;
 }
 
 .user-tools-dialog .knowledge-doc-item:hover {
@@ -1084,13 +1122,54 @@
   border-color: rgba(77, 216, 255, 0.5);
 }
 
+.user-tools-dialog .knowledge-doc-item-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .user-tools-dialog .knowledge-doc-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
+}
+
+.user-tools-dialog .knowledge-doc-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.08);
+  color: #f87171;
+  opacity: 0;
+  pointer-events: none;
+  flex: 0 0 auto;
+  transition: opacity 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+.user-tools-dialog .knowledge-doc-item:hover .knowledge-doc-delete-btn,
+.user-tools-dialog .knowledge-doc-item.active .knowledge-doc-delete-btn,
+.user-tools-dialog .knowledge-doc-delete-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.user-tools-dialog .knowledge-doc-delete-btn:hover {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.35);
 }
 
 .user-tools-dialog .knowledge-doc-meta {
   font-size: 12px;
   color: rgba(226, 232, 240, 0.75);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .user-tools-dialog .knowledge-vector-detail {
@@ -1105,12 +1184,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .user-tools-dialog .knowledge-doc-header .knowledge-doc-actions {
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .user-tools-dialog .knowledge-vector-content {
@@ -1121,10 +1204,22 @@
   flex: 1 1 auto;
 }
 
+.user-tools-dialog .knowledge-detail-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
 .user-tools-dialog .knowledge-doc-section-title {
   font-size: 12px;
   font-weight: 600;
-  color: rgba(226, 232, 240, 0.75);
+  color: var(--user-tools-text);
+}
+
+.user-tools-dialog .knowledge-doc-section-title + .knowledge-doc-list,
+.user-tools-dialog .knowledge-doc-section-title + .knowledge-doc-chunk-list {
+  margin-top: 2px;
 }
 
 .user-tools-dialog .knowledge-doc-content-pane,
@@ -1301,6 +1396,20 @@
 .user-tools-dialog .knowledge-doc-chunk-preview {
   color: rgba(226, 232, 240, 0.7);
   word-break: break-word;
+}
+
+.user-tools-dialog .knowledge-chunk-editor-dialog .workspace-editor-body {
+  gap: 10px;
+}
+
+.user-tools-dialog .knowledge-chunk-editor-dialog .knowledge-chunk-editor-code {
+  min-height: 0;
+}
+
+.user-tools-dialog .knowledge-chunk-editor-dialog .knowledge-chunk-editor-code .code-mirror-editor-host,
+.user-tools-dialog .knowledge-chunk-editor-dialog .knowledge-chunk-editor-code .cm-editor,
+.user-tools-dialog .knowledge-chunk-editor-dialog .knowledge-chunk-editor-code .cm-scroller {
+  min-height: 360px;
 }
 
 .user-tools-dialog .knowledge-test-layout {

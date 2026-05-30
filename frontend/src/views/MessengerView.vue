@@ -818,6 +818,7 @@
               :selected-tool-category="selectedToolCategory"
               :admin-tool-groups="adminToolGroups"
               :resolve-admin-tool-detail="resolveAdminToolDetail"
+              @request-quote-path="handleWorkspaceQuotePath"
             />
 
             <template v-else-if="sessionHub.activeSection === 'files'">

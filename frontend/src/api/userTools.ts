@@ -1,6 +1,12 @@
 import api from './http';
 
+import type { AxiosProgressEvent } from 'axios';
 import type { ApiPayload } from './types';
+
+type UploadRequestConfig = {
+  headers?: Record<string, string>;
+  onUploadProgress?: (event: AxiosProgressEvent) => void;
+};
 
 export const fetchUserMcpServers = () => api.get('/user_tools/mcp');
 export const saveUserMcpServers = (payload: ApiPayload) => api.post('/user_tools/mcp', payload);
@@ -17,6 +23,27 @@ export const fetchUserSkillFiles = (name: string) =>
 export const fetchUserSkillFile = (name: string, path: string) =>
   api.get('/user_tools/skills/file', { params: { name, path } });
 export const saveUserSkillFile = (payload: ApiPayload) => api.put('/user_tools/skills/file', payload);
+export const fetchUserSkillFsContent = (params: ApiPayload) =>
+  api.get('/user_tools/skills/fs', { params });
+export const searchUserSkillFs = (params: ApiPayload) =>
+  api.get('/user_tools/skills/fs/search', { params });
+export const saveUserSkillFsFile = (payload: ApiPayload) =>
+  api.put('/user_tools/skills/fs/file', payload);
+export const uploadUserSkillFsFiles = (formData: FormData, config: UploadRequestConfig = {}) =>
+  api.post('/user_tools/skills/fs/upload', formData, {
+    ...config,
+    headers: { 'Content-Type': 'multipart/form-data', ...(config.headers || {}) }
+  });
+export const createUserSkillDir = (payload: ApiPayload) => api.post('/user_tools/skills/dir', payload);
+export const moveUserSkillEntry = (payload: ApiPayload) => api.post('/user_tools/skills/move', payload);
+export const copyUserSkillEntry = (payload: ApiPayload) => api.post('/user_tools/skills/copy', payload);
+export const batchUserSkillAction = (payload: ApiPayload) => api.post('/user_tools/skills/batch', payload);
+export const deleteUserSkillEntry = (name: string, path: string) =>
+  api.delete('/user_tools/skills/file', { params: { name, path } });
+export const downloadUserSkillFile = (name: string, path: string) =>
+  api.get('/user_tools/skills/download', { params: { name, path }, responseType: 'blob' });
+export const downloadUserSkillArchive = (name: string, path?: string) =>
+  api.get('/user_tools/skills/archive', { params: path ? { name, path } : { name }, responseType: 'blob' });
 export const deleteUserSkill = (name: string) => api.delete('/user_tools/skills', { params: { name } });
 export const uploadUserSkillZip = (file: Blob | File) => {
   const form = new FormData();
@@ -45,6 +72,8 @@ export const embedUserKnowledgeChunk = (payload: ApiPayload) =>
   api.post('/user_tools/knowledge/chunk/embed', payload);
 export const deleteUserKnowledgeChunk = (payload: ApiPayload) =>
   api.post('/user_tools/knowledge/chunk/delete', payload);
+export const updateUserKnowledgeChunk = (payload: ApiPayload) =>
+  api.post('/user_tools/knowledge/chunk/update', payload);
 export const testUserKnowledge = (payload: ApiPayload) =>
   api.post('/user_tools/knowledge/test', payload);
 export const deleteUserKnowledgeDoc = (base: string, doc_id: string) =>

@@ -63,6 +63,7 @@
             :status="toolPaneStatus"
             @status="handleToolPaneStatus"
             @loading-change="handleToolPaneLoadingChange"
+            @quote-path="handleToolPaneQuotePath"
           />
         </KeepAlive>
       </div>
@@ -107,6 +108,9 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+const emit = defineEmits<{
+  (event: 'request-quote-path', payload: { paths: string[] }): void;
+}>();
 
 const toolPaneStatus = ref('');
 const toolPaneLoading = ref(false);
@@ -149,6 +153,14 @@ const handleToolPaneStatus = (value: unknown) => {
 
 const handleToolPaneLoadingChange = (value: unknown) => {
   toolPaneLoading.value = value === true;
+};
+
+const handleToolPaneQuotePath = (payload: { paths?: string[] } = {}) => {
+  const paths = Array.isArray(payload.paths)
+    ? payload.paths.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  if (!paths.length) return;
+  emit('request-quote-path', { paths });
 };
 
 const resolveAdminToolDisplayName = (item: ToolEntry): string => {

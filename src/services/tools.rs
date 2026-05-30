@@ -6117,45 +6117,107 @@ async fn execute_vector_knowledge(
     } else {
         return Err(anyhow!(i18n::t("error.knowledge_query_required")));
     };
-    vector_knowledge::ensure_vector_base_config(base)?;
-    let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
-    let embed_config = vector_knowledge::resolve_embedding_model(context.config, embedding_name)?;
-    let timeout_s = embed_config.timeout_s.unwrap_or(120);
-    let vectors = embed_texts(&embed_config, &queries, timeout_s).await?;
-    if vectors.len() != queries.len() {
-        return Err(anyhow!("embedding response size mismatch"));
-    }
-    let client = vector_knowledge::resolve_weaviate_client(context.config)?;
+    vector_knowledge::ensure_vector_base_type(base)?;
+    let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim().to_string();
     let owner_key = vector_knowledge::resolve_owner_key(owner_id);
     let top_k = extract_limit(args).unwrap_or_else(|| vector_knowledge::resolve_top_k(base));
     let base_name = base.name.clone();
-    let embedding_name = embedding_name.to_string();
-    let query_results =
-        futures::future::join_all(vectors.into_iter().enumerate().map(|(index, vector)| {
-            let client = client.clone();
-            let owner_key = owner_key.clone();
-            let base_name = base_name.clone();
-            let embedding_name = embedding_name.clone();
-            let keyword = queries.get(index).cloned().unwrap_or_default();
-            async move {
-                let mut hits = client
-                    .query_chunks(&owner_key, &base_name, &embedding_name, &vector, top_k)
+    let root = std::path::PathBuf::from(&base.root);
+    let aggregated = if let Ok(embed_config) =
+        vector_knowledge::resolve_embedding_model(context.config, &embedding_name)
+    {
+        let timeout_s = embed_config.timeout_s.unwrap_or(120);
+        match embed_texts(&embed_config, &queries, timeout_s).await {
+            Ok(vectors) if vectors.len() == queries.len() => {
+                if let Ok(client) = vector_knowledge::resolve_weaviate_client(context.config) {
+                    let query_results = futures::future::join_all(
+                        vectors.into_iter().enumerate().map(|(index, vector)| {
+                            let client = client.clone();
+                            let owner_key = owner_key.clone();
+                            let base_name = base_name.clone();
+                            let embedding_name = embedding_name.clone();
+                            let keyword = queries.get(index).cloned().unwrap_or_default();
+                            let score_threshold = base.score_threshold;
+                            async move {
+                                let mut hits = client
+                                    .query_chunks(&owner_key, &base_name, &embedding_name, &vector, top_k)
+                                    .await?;
+                                if let Some(threshold) = score_threshold {
+                                    hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+                                }
+                                if hits.len() > top_k {
+                                    hits.truncate(top_k);
+                                }
+                                Ok::<_, anyhow::Error>((index, keyword, hits))
+                            }
+                        }),
+                    )
+                    .await;
+                    let mut aggregated = Vec::new();
+                    let mut failed = false;
+                    for result in query_results {
+                        match result {
+                            Ok(item) => aggregated.push(item),
+                            Err(_) => {
+                                failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !failed {
+                        aggregated.sort_by_key(|(index, _, _)| *index);
+                        (aggregated, false)
+                    } else {
+                        let fallback = build_vector_literal_fallback_results(
+                            context,
+                            base,
+                            owner_id,
+                            &queries,
+                            top_k,
+                            &root,
+                        )
+                        .await?;
+                        (fallback, true)
+                    }
+                } else {
+                    let fallback = build_vector_literal_fallback_results(
+                        context,
+                        base,
+                        owner_id,
+                        &queries,
+                        top_k,
+                        &root,
+                    )
                     .await?;
-                if let Some(threshold) = base.score_threshold {
-                    hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+                    (fallback, true)
                 }
-                if hits.len() > top_k {
-                    hits.truncate(top_k);
-                }
-                Ok::<_, anyhow::Error>((index, keyword, hits))
             }
-        }))
-        .await;
-    let mut aggregated = Vec::new();
-    for result in query_results {
-        aggregated.push(result?);
-    }
-    aggregated.sort_by_key(|(index, _, _)| *index);
+            _ => {
+                let fallback = build_vector_literal_fallback_results(
+                    context,
+                    base,
+                    owner_id,
+                    &queries,
+                    top_k,
+                    &root,
+                )
+                .await?;
+                (fallback, true)
+            }
+        }
+    } else {
+        let fallback = build_vector_literal_fallback_results(
+            context,
+            base,
+            owner_id,
+            &queries,
+            top_k,
+            &root,
+        )
+        .await?;
+        (fallback, true)
+    };
+    let (aggregated, fallback_mode) = aggregated;
     if let Some(emitter) = context.event_emitter.as_ref() {
         let mut payload = json!({
             "knowledge_base": base.name,
@@ -6163,7 +6225,8 @@ async fn execute_vector_knowledge(
             "embedding_model": embedding_name.clone(),
             "owner_id": owner_key,
             "limit": top_k,
-            "score_threshold": base.score_threshold
+            "score_threshold": base.score_threshold,
+            "fallback_mode": fallback_mode
         });
         if queries.len() == 1 {
             payload["query"] = json!(queries[0].clone());
@@ -6234,6 +6297,30 @@ async fn execute_vector_knowledge(
         documents,
         (queries.len() > 1).then_some(grouped_results),
     ))
+}
+
+async fn build_vector_literal_fallback_results(
+    context: &ToolContext<'_>,
+    base: &KnowledgeBaseConfig,
+    owner_id: Option<&str>,
+    queries: &[String],
+    top_k: usize,
+    root: &std::path::Path,
+) -> Result<Vec<(usize, String, Vec<vector_knowledge::VectorSearchHit>)>> {
+    let mut aggregated = Vec::with_capacity(queries.len());
+    for (index, keyword) in queries.iter().enumerate() {
+        let hits = vector_knowledge::query_chunks_by_text(
+            context.storage.as_ref(),
+            owner_id,
+            base,
+            root,
+            keyword,
+            top_k,
+        )
+        .await?;
+        aggregated.push((index, keyword.clone(), hits));
+    }
+    Ok(aggregated)
 }
 
 fn split_mcp_target(target: &str) -> Option<(&str, &str)> {

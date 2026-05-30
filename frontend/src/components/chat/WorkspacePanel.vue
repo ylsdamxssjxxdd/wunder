@@ -15,7 +15,7 @@
             type="button"
             :title="t('common.upload')"
             :aria-label="t('common.upload')"
-            :disabled="loading"
+            :disabled="loading || isReadonlyFileSystem"
             @click="triggerUpload"
           >
             <i class="fa-solid fa-upload workspace-icon" aria-hidden="true"></i>
@@ -31,6 +31,7 @@
             <i class="fa-solid fa-rotate-right workspace-icon" aria-hidden="true"></i>
           </button>
           <button
+            v-if="isWorkspaceFileSystem"
             class="workspace-icon-btn"
             type="button"
             :title="t('workspace.binding.title')"
@@ -45,7 +46,7 @@
             type="button"
             :title="t('workspace.panel.clear')"
             :aria-label="t('workspace.panel.clear')"
-            :disabled="loading"
+            :disabled="loading || isReadonlyFileSystem"
             @click="clearWorkspaceCurrent"
           >
             <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
@@ -113,7 +114,7 @@
           ]"
           :style="{ '--workspace-indent': `${item.depth * 16}px` }"
           :data-workspace-path="item.entry.path"
-          :draggable="state.renamingPath === item.entry.path ? 'false' : 'true'"
+          :draggable="state.renamingPath === item.entry.path || isReadonlyFileSystem ? 'false' : 'true'"
           @click="handleWorkspaceItemClick($event, item.entry)"
           @dblclick="handleWorkspaceItemDoubleClick(item.entry)"
           @contextmenu.prevent.stop="openContextMenu($event, item.entry)"
@@ -185,7 +186,7 @@
         :style="menuStyle"
         @contextmenu.prevent
       >
-        <button class="workspace-menu-btn" @click="handleNewFile">
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFile">
           {{ t('workspace.menu.newFile') }}
         </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuHasSelection" @click="handleQuotePath">
@@ -194,16 +195,16 @@
         <button class="workspace-menu-btn" :disabled="!contextMenuCanEdit" @click="handleEdit">
           {{ contextMenuEditLabel }}
         </button>
-        <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleRename">
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem || !contextMenuSingleEntry" @click="handleRename">
           {{ t('workspace.menu.rename') }}
         </button>
-        <button class="workspace-menu-btn" @click="handleNewFolder">
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFolder">
           {{ t('workspace.menu.newFolder') }}
         </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleDownload">
           {{ resourceActionLabel }}
         </button>
-        <button class="workspace-menu-btn danger" :disabled="!contextMenuHasSelection" @click="handleDelete">
+        <button class="workspace-menu-btn danger" :disabled="isReadonlyFileSystem || !contextMenuHasSelection" @click="handleDelete">
           {{ t('common.delete') }}
         </button>
       </div>
@@ -299,7 +300,7 @@
                 <button
                   class="workspace-btn secondary workspace-editor-icon-btn"
                   type="button"
-                  :disabled="editor.loading"
+                  :disabled="editor.loading || isReadonlyFileSystem"
                   :title="t('common.save')"
                   :aria-label="t('common.save')"
                   @click="saveEditor"
@@ -362,7 +363,7 @@
               <CodeMirrorEditor
                 v-model="editor.content"
                 :source-path="editor.entry?.path || editor.entry?.name || ''"
-                :readonly="editor.loading"
+                :readonly="editor.loading || isReadonlyFileSystem"
                 :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
                 light-surface
               />
@@ -392,7 +393,7 @@
             <button
               class="workspace-btn secondary workspace-editor-icon-btn"
               type="button"
-              :disabled="editor.loading"
+              :disabled="editor.loading || isReadonlyFileSystem"
               :title="t('common.save')"
               :aria-label="t('common.save')"
               @click="saveEditor"
@@ -455,7 +456,7 @@
           <CodeMirrorEditor
             v-model="editor.content"
             :source-path="editor.entry?.path || editor.entry?.name || ''"
-            :readonly="editor.loading"
+            :readonly="editor.loading || isReadonlyFileSystem"
             :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
             light-surface
           />
@@ -495,6 +496,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
+import type { AxiosProgressEvent } from 'axios';
 import type { WorkspaceThemeIconResolver } from './workspaceIcons';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
@@ -575,6 +577,14 @@ const props = defineProps({
   emptyText: {
     type: String,
     default: ''
+  },
+  fileSystem: {
+    type: Object,
+    default: null
+  },
+  disableWorkspaceEditors: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -928,7 +938,7 @@ const WORKSPACE_DIAGRAM_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.p
 const WORKSPACE_DRAWIO_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.png`;
 const WORKSPACE_ICON_IDLE_TIMEOUT = 1200;
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
-// 沙盒容器上传总大小上限（对齐 Wunder 配置）
+// Align the client-side guard with Wunder's workspace upload limit.
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
@@ -952,6 +962,25 @@ type PromptInputOptions = {
 type WorkspaceUploadOptions = {
   refreshTree?: boolean;
   relativePaths?: string[];
+};
+
+type WorkspacePanelFileSystem = {
+  key?: string;
+  readonly?: boolean;
+  supportsWorkspaceEditors?: boolean;
+  withParams?: (params?: Record<string, unknown>) => Record<string, unknown>;
+  appendFormData?: (formData: FormData) => void;
+  listContent: (params: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
+  search: (params: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
+  upload: (formData: FormData, config?: {
+    onUploadProgress?: (event: AxiosProgressEvent) => void;
+  }) => Promise<unknown>;
+  createDir: (payload: Record<string, unknown>) => Promise<unknown>;
+  moveEntry: (payload: Record<string, unknown>) => Promise<unknown>;
+  batchAction: (payload: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
+  saveFile: (payload: Record<string, unknown>) => Promise<unknown>;
+  downloadFile: (params: Record<string, unknown>) => Promise<{ data: Blob; headers?: Record<string, string> }>;
+  downloadArchive: (params: Record<string, unknown>) => Promise<{ data: Blob; headers?: Record<string, string> }>;
 };
 
 type DirectoryReaderLike = {
@@ -1001,11 +1030,53 @@ const appendAgentId = (formData) => {
   formData.append('container_id', String(normalizedContainerId.value));
 };
 
+const defaultWorkspaceFileSystem = computed<WorkspacePanelFileSystem>(() => ({
+  key: `workspace:${normalizedAgentId.value}:${normalizedContainerId.value}`,
+  readonly: false,
+  supportsWorkspaceEditors: true,
+  withParams: withAgentParams,
+  appendFormData: appendAgentId,
+  listContent: fetchWunderWorkspaceContent,
+  search: searchWunderWorkspace,
+  upload: uploadWunderWorkspace,
+  createDir: createWunderWorkspaceDir,
+  moveEntry: moveWunderWorkspaceEntry,
+  batchAction: batchWunderWorkspaceAction,
+  saveFile: saveWunderWorkspaceFile,
+  downloadFile: downloadWunderWorkspaceFile,
+  downloadArchive: downloadWunderWorkspaceArchive
+}) as WorkspacePanelFileSystem);
+
+const activeFileSystem = computed<WorkspacePanelFileSystem>(() => {
+  const configured = props.fileSystem && typeof props.fileSystem === 'object'
+    ? props.fileSystem as WorkspacePanelFileSystem
+    : null;
+  if (!configured) {
+    return defaultWorkspaceFileSystem.value;
+  }
+  return {
+    ...defaultWorkspaceFileSystem.value,
+    ...configured,
+    supportsWorkspaceEditors:
+      configured.supportsWorkspaceEditors === true && props.disableWorkspaceEditors !== true,
+    readonly: configured.readonly === true
+  };
+});
+
+const withFsParams = (params = {}) => activeFileSystem.value.withParams?.(params) || params;
+const appendFsFormData = (formData) => activeFileSystem.value.appendFormData?.(formData);
+const activeFileSystemKey = computed(() => activeFileSystem.value.key || defaultWorkspaceFileSystem.value.key || 'workspace');
+const isWorkspaceFileSystem = computed(() => !props.fileSystem);
+const isReadonlyFileSystem = computed(() => activeFileSystem.value.readonly === true);
+const supportsWorkspaceEditors = computed(
+  () => activeFileSystem.value.supportsWorkspaceEditors === true && props.disableWorkspaceEditors !== true
+);
+
 const listRef = ref(null);
 const uploadInputRef = ref(null);
 const menuRef = ref(null);
 const listScrollTop = ref(0);
-// 上传进度条状态
+// 涓婁紶杩涘害鏉＄姸鎬?
 const uploadProgress = reactive({
   active: false,
   indeterminate: false,
@@ -1293,7 +1364,7 @@ const revealWorkspacePath = async (rawPath, options: { scroll?: boolean } = {}) 
     }
     if (entry.childrenLoaded) continue;
     try {
-      const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+      const { data } = await activeFileSystem.value.listContent(withFsParams({
         path: dirPath,
         include_content: true,
         depth: 1,
@@ -1317,7 +1388,7 @@ const revealWorkspacePath = async (rawPath, options: { scroll?: boolean } = {}) 
     }
     if (!targetEntry.childrenLoaded) {
       try {
-        const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+        const { data } = await activeFileSystem.value.listContent(withFsParams({
           path: targetPath,
           include_content: true,
           depth: 1,
@@ -1426,7 +1497,7 @@ const previewMeta = computed(() => {
       parts.push(updated.toLocaleString());
     }
   }
-  return parts.join(' · ');
+  return parts.join(' 路 ');
 });
 
 let searchTimer = null;
@@ -1557,6 +1628,12 @@ const isValidWorkspacePath = (value) => {
   return normalized.split('/').filter(Boolean).every(isValidWorkspaceName);
 };
 
+const ensureWritableFileSystem = () => {
+  if (!isReadonlyFileSystem.value) return true;
+  ElMessage.warning(t('userTools.skills.file.readonly'));
+  return false;
+};
+
 const isWorkspaceTextEditable = (entry) => {
   if (!entry || entry.type !== 'file') return false;
   const extension = getWorkspaceExtension(entry);
@@ -1566,11 +1643,13 @@ const isWorkspaceTextEditable = (entry) => {
 };
 
 const isWorkspaceOfficeEditable = (entry) => {
+  if (!supportsWorkspaceEditors.value) return false;
   if (!entry || entry.type !== 'file') return false;
   return ONLYOFFICE_DOCUMENT_EXTENSIONS.has(getWorkspaceExtension(entry));
 };
 
 const isWorkspaceDrawioEditable = (entry) => {
+  if (!supportsWorkspaceEditors.value) return false;
   if (!entry || entry.type !== 'file') return false;
   const extension = getWorkspaceExtension(entry);
   return DRAWIO_EXTENSIONS.has(extension) || extension === 'drawio.xml';
@@ -1716,7 +1795,7 @@ const getEntryMeta = (entry) => {
   if (state.searchMode && entry.path) {
     parts.push(entry.path);
   }
-  return parts.join(' · ');
+  return parts.join(' 路 ');
 };
 
 const formatBytes = (size) => {
@@ -1761,7 +1840,7 @@ const emitWorkspaceStats = (entries = state.entries) => {
   emit('stats', collectWorkspaceStats(entries));
 };
 
-// 统一管理上传进度条展示，避免并发上传导致状态错乱
+// 缁熶竴绠＄悊涓婁紶杩涘害鏉″睍绀猴紝閬垮厤骞跺彂涓婁紶瀵艰嚧鐘舵€侀敊涔?
 const setUploadProgress = (options: UploadProgressOptions = {}) => {
   const { percent = 0, loaded = 0, total = 0, indeterminate = false } = options;
   uploadProgress.active = true;
@@ -1935,7 +2014,7 @@ const loadWorkspace = async ({
   const preserveInteraction = background;
   const currentPath = normalizeWorkspacePath(path);
   const cacheKey = buildWorkspaceTreeCacheKey(
-    normalizedAgentId.value,
+    activeFileSystemKey.value,
     currentPath,
     state.sortBy,
     state.sortOrder
@@ -1964,7 +2043,7 @@ const loadWorkspace = async ({
     resetWorkspaceSelection();
   }
   try {
-    const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+    const { data } = await activeFileSystem.value.listContent(withFsParams({
       path: currentPath,
       include_content: true,
       depth: 1,
@@ -2033,8 +2112,7 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
     resetWorkspaceSelection();
   }
   try {
-    const { data } = await searchWunderWorkspace(
-      withAgentParams({ keyword, offset: 0, limit: 200 })
+    const { data } = await activeFileSystem.value.search(withFsParams({ keyword, offset: 0, limit: 200 })
     );
     const payload = data || {};
     commitWorkspaceTreeVersion(normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion));
@@ -2072,7 +2150,7 @@ const reloadWorkspaceView = async ({ background = false } = {}) => {
 
 const fetchWorkspaceDirectorySnapshot = async (path) => {
   const targetPath = normalizeWorkspacePath(path);
-  const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+  const { data } = await activeFileSystem.value.listContent(withFsParams({
     path: targetPath,
     include_content: true,
     depth: 1,
@@ -2105,7 +2183,7 @@ const reloadWorkspaceDirectoryPath = async (path) => {
     commitWorkspaceTreeVersion(snapshot.treeVersion);
     writeWorkspaceTreeCache(
       buildWorkspaceTreeCacheKey(
-        normalizedAgentId.value,
+        activeFileSystemKey.value,
         targetPath,
         state.sortBy,
         state.sortOrder
@@ -2313,7 +2391,7 @@ const hydrateExpandedEntries = async () => {
       continue;
     }
     try {
-      const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+      const { data } = await activeFileSystem.value.listContent(withFsParams({
         path,
         include_content: true,
         depth: 1,
@@ -2340,7 +2418,7 @@ const toggleWorkspaceDirectory = async (entry) => {
   state.expanded = new Set(state.expanded);
   if (entry.childrenLoaded) return;
   try {
-    const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+    const { data } = await activeFileSystem.value.listContent(withFsParams({
       path: entry.path,
       include_content: true,
       depth: 1,
@@ -2366,6 +2444,7 @@ const refreshWorkspace = async () => {
 };
 
 const clearWorkspaceCurrent = async () => {
+  if (!ensureWritableFileSystem()) return;
   const display = displayPath.value;
   try {
     await ElMessageBox.confirm(
@@ -2381,7 +2460,7 @@ const clearWorkspaceCurrent = async () => {
     return;
   }
   try {
-    const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+    const { data } = await activeFileSystem.value.listContent(withFsParams({
       path: state.path,
       include_content: true,
       depth: 1,
@@ -2393,20 +2472,22 @@ const clearWorkspaceCurrent = async () => {
       ElMessage.info(t('workspace.clear.empty'));
       return;
     }
-    const response = await batchWunderWorkspaceAction(withAgentParams({
+    const response = await activeFileSystem.value.batchAction(withFsParams({
       action: 'delete',
       paths: entries.map((entry) => entry.path)
     }));
     notifyBatchResult(response.data, t('workspace.action.clear'));
     await reloadWorkspaceView();
-    emitWorkspaceRefresh({
-      reason: 'workspace-clear',
-      sourceId: workspacePanelRefreshSourceId,
-      agentId: normalizedAgentId.value,
-      containerId: normalizedContainerId.value,
-      path: state.path,
-      paths: [state.path]
-    });
+    if (isWorkspaceFileSystem.value) {
+      emitWorkspaceRefresh({
+        reason: 'workspace-clear',
+        sourceId: workspacePanelRefreshSourceId,
+        agentId: normalizedAgentId.value,
+        containerId: normalizedContainerId.value,
+        path: state.path,
+        paths: [state.path]
+      });
+    }
   } catch (error) {
     showApiError(error, t('workspace.clear.failed'));
   }
@@ -2440,6 +2521,7 @@ const handleSearchKeydown = (event) => {
 };
 
 const triggerUpload = () => {
+  if (!ensureWritableFileSystem()) return;
   if (!uploadInputRef.value) return;
   uploadInputRef.value.value = '';
   uploadInputRef.value.click();
@@ -2451,10 +2533,11 @@ const uploadWorkspaceFiles = async (
   options: WorkspaceUploadOptions = {}
 ) => {
   if (!files || !files.length) return;
+  if (!ensureWritableFileSystem()) return;
   const { refreshTree = true, relativePaths = [] } = options;
   const fileList = Array.from(files);
   const totalBytes = fileList.reduce((sum: number, file) => sum + (Number(file?.size) || 0), 0);
-  // 对齐 Wunder 上传限制：单次上传总大小不超过 200MB
+  // 瀵归綈 Wunder 涓婁紶闄愬埗锛氬崟娆′笂浼犳€诲ぇ灏忎笉瓒呰繃 200MB
   if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
     throw new Error(
       t('workspace.upload.tooLarge', { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) })
@@ -2462,7 +2545,7 @@ const uploadWorkspaceFiles = async (
   }
   const formData = new FormData();
   formData.append('path', normalizeWorkspacePath(targetPath));
-  appendAgentId(formData);
+  appendFsFormData(formData);
   fileList.forEach((file, index) => {
     formData.append('files', file as Blob);
     if (relativePaths.length) {
@@ -2471,7 +2554,7 @@ const uploadWorkspaceFiles = async (
   });
   beginUploadProgress();
   try {
-    await uploadWunderWorkspace(formData, {
+    await activeFileSystem.value.upload(formData, {
       onUploadProgress: (event) => {
         const loaded = Number(event.loaded) || 0;
         const total = Number.isFinite(event.total) ? event.total : 0;
@@ -2604,6 +2687,7 @@ const handleEdit = () => {
 };
 
 const handleRename = () => {
+  if (!ensureWritableFileSystem()) return;
   const targetEntry = contextMenuSingleEntry.value;
   closeContextMenu();
   if (!targetEntry) return;
@@ -2611,11 +2695,13 @@ const handleRename = () => {
 };
 
 const handleNewFile = async () => {
+  if (!ensureWritableFileSystem()) return;
   closeContextMenu();
   await createWorkspaceFile();
 };
 
 const handleNewFolder = async () => {
+  if (!ensureWritableFileSystem()) return;
   closeContextMenu();
   await createWorkspaceFolder();
 };
@@ -2635,11 +2721,13 @@ const handleDownload = async () => {
 };
 
 const handleDelete = async () => {
+  if (!ensureWritableFileSystem()) return;
   closeContextMenu();
   await deleteWorkspaceSelection();
 };
 
 const startWorkspaceRename = async (entry) => {
+  if (!ensureWritableFileSystem()) return;
   state.renamingPath = entry.path;
   state.renamingValue = entry.name || '';
   await nextTick();
@@ -2658,6 +2746,10 @@ const cancelWorkspaceRename = () => {
 const finishWorkspaceRename = async (entry, nextName) => {
   if (!entry || state.renamingPath !== entry.path) return;
   state.renamingPath = '';
+  if (!ensureWritableFileSystem()) {
+    state.renamingValue = '';
+    return;
+  }
   const trimmed = String(nextName || '').trim();
     if (!trimmed || !isValidWorkspaceName(trimmed)) {
       ElMessage.warning(t('workspace.name.invalid'));
@@ -2671,7 +2763,7 @@ const finishWorkspaceRename = async (entry, nextName) => {
   const parentPath = getWorkspaceParentPath(entry.path);
   const destination = joinWorkspacePath(parentPath, trimmed);
   try {
-    await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
+    await activeFileSystem.value.moveEntry(withFsParams({ source: entry.path, destination }));
       await refreshWorkspacePathWithFallback(parentPath);
       ElMessage.success(t('workspace.rename.success'));
     } catch (error) {
@@ -2711,6 +2803,7 @@ const getActionSelectionPaths = () => {
 };
 
 const deleteWorkspaceSelection = async () => {
+  if (!ensureWritableFileSystem()) return;
   const selectedPaths = getActionSelectionPaths();
   if (!selectedPaths.length) return;
   const singleName =
@@ -2722,24 +2815,25 @@ const deleteWorkspaceSelection = async () => {
   );
   if (!confirmed) return;
   try {
-    const response = await batchWunderWorkspaceAction(
-      withAgentParams({ action: 'delete', paths: selectedPaths })
-    );
+    const response = await activeFileSystem.value.batchAction(withFsParams({ action: 'delete', paths: selectedPaths }));
     notifyBatchResult(response.data, t('common.delete'));
     await reloadWorkspaceView();
-    emitWorkspaceRefresh({
-      reason: 'workspace-delete',
-      sourceId: workspacePanelRefreshSourceId,
-      agentId: normalizedAgentId.value,
-      containerId: normalizedContainerId.value,
-      paths: selectedPaths
-    });
+    if (isWorkspaceFileSystem.value) {
+      emitWorkspaceRefresh({
+        reason: 'workspace-delete',
+        sourceId: workspacePanelRefreshSourceId,
+        agentId: normalizedAgentId.value,
+        containerId: normalizedContainerId.value,
+        paths: selectedPaths
+      });
+    }
   } catch (error) {
     showApiError(error, t('workspace.delete.failed'));
   }
 };
 
   const moveWorkspaceSelectionToDirectory = async () => {
+    if (!ensureWritableFileSystem()) return;
     const selectedPaths = getWorkspaceSelectionPaths();
     if (!selectedPaths.length) {
       ElMessage.info(t('workspace.selection.empty'));
@@ -2756,7 +2850,7 @@ const deleteWorkspaceSelection = async () => {
       return;
     }
     try {
-      const response = await batchWunderWorkspaceAction(withAgentParams({
+      const response = await activeFileSystem.value.batchAction(withFsParams({
         action: 'move',
         paths: selectedPaths,
         destination: targetDir
@@ -2769,6 +2863,7 @@ const deleteWorkspaceSelection = async () => {
   };
 
   const copyWorkspaceSelectionToDirectory = async () => {
+    if (!ensureWritableFileSystem()) return;
     const selectedPaths = getWorkspaceSelectionPaths();
     if (!selectedPaths.length) {
       ElMessage.info(t('workspace.selection.empty'));
@@ -2785,7 +2880,7 @@ const deleteWorkspaceSelection = async () => {
       return;
     }
     try {
-      const response = await batchWunderWorkspaceAction(withAgentParams({
+      const response = await activeFileSystem.value.batchAction(withFsParams({
         action: 'copy',
         paths: selectedPaths,
         destination: targetDir
@@ -2798,6 +2893,7 @@ const deleteWorkspaceSelection = async () => {
   };
 
 const moveWorkspaceEntryToDirectory = async (entry) => {
+  if (!ensureWritableFileSystem()) return;
   if (!entry) return;
   const targetDirInput = await promptInput(t('workspace.move.prompt'), {
     placeholder: t('workspace.move.placeholder'),
@@ -2820,7 +2916,7 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
     return;
   }
   try {
-    await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
+    await activeFileSystem.value.moveEntry(withFsParams({ source: entry.path, destination }));
     await reloadWorkspaceView();
     ElMessage.success(t('workspace.move.success', { target: targetDir || '/' }));
   } catch (error) {
@@ -2840,6 +2936,7 @@ const resolveWorkspaceCreationDirectoryPath = () => {
 };
 
 const createWorkspaceFile = async () => {
+  if (!ensureWritableFileSystem()) return;
   state.newFileDialog.visible = true;
 };
 
@@ -2848,6 +2945,7 @@ const handleWorkspaceNewFileConfirm = async (payload: {
   content: string;
   typeId: string;
 }) => {
+  if (!ensureWritableFileSystem()) return;
   const trimmed = String(payload.name || '').trim();
   if (!isValidWorkspaceName(trimmed)) {
     ElMessage.warning(t('workspace.name.invalid'));
@@ -2856,8 +2954,7 @@ const handleWorkspaceNewFileConfirm = async (payload: {
   const targetDir = resolveWorkspaceCreationDirectoryPath();
   const targetPath = joinWorkspacePath(targetDir, trimmed);
   try {
-    await saveWunderWorkspaceFile(
-      withAgentParams({ path: targetPath, content: payload.content || '', create_if_missing: true })
+    await activeFileSystem.value.saveFile(withFsParams({ path: targetPath, content: payload.content || '', create_if_missing: true })
     );
     state.newFileDialog.visible = false;
     await refreshWorkspacePathWithFallback(targetDir);
@@ -2868,6 +2965,7 @@ const handleWorkspaceNewFileConfirm = async (payload: {
 };
 
 const createWorkspaceFolder = async () => {
+  if (!ensureWritableFileSystem()) return;
   const folderName = await promptInput(t('workspace.createFolder.prompt'), {
     placeholder: t('workspace.createFolder.placeholder')
   });
@@ -2880,7 +2978,7 @@ const createWorkspaceFolder = async () => {
   const targetDir = resolveWorkspaceCreationDirectoryPath();
   const targetPath = joinWorkspacePath(targetDir, trimmed);
   try {
-    await createWunderWorkspaceDir(withAgentParams({ path: targetPath }));
+    await activeFileSystem.value.createDir(withFsParams({ path: targetPath }));
     await refreshWorkspacePathWithFallback(targetDir);
     ElMessage.success(t('workspace.createFolder.success'));
   } catch (error) {
@@ -2913,7 +3011,7 @@ const saveBlob = (blob, filename) => {
 const downloadEntry = async (entry) => {
   try {
     if (entry.type === 'dir') {
-      const response = await downloadWunderWorkspaceArchive(withAgentParams({ path: entry.path }));
+      const response = await activeFileSystem.value.downloadArchive(withFsParams({ path: entry.path }));
       const filename = getFilenameFromHeaders(
         response.headers,
         `${entry.name || t('workspace.download.folder')}.zip`
@@ -2921,7 +3019,7 @@ const downloadEntry = async (entry) => {
       saveBlob(response.data, filename);
       return;
     }
-    const response = await downloadWunderWorkspaceFile(withAgentParams({ path: entry.path }));
+    const response = await activeFileSystem.value.downloadFile(withFsParams({ path: entry.path }));
     const filename = getFilenameFromHeaders(
       response.headers,
       entry.name || t('workspace.download.defaultName')
@@ -2934,7 +3032,7 @@ const downloadEntry = async (entry) => {
 
 const downloadArchive = async () => {
   try {
-    const response = await downloadWunderWorkspaceArchive(withAgentParams({}));
+    const response = await activeFileSystem.value.downloadArchive(withFsParams({}));
     const filename = getFilenameFromHeaders(response.headers, 'workspace.zip');
     saveBlob(response.data, filename);
     ElMessage.success(resolveWorkspaceArchiveSuccessText());
@@ -3031,6 +3129,7 @@ const resolveExternalDropBasePath = (entry) => {
 };
 
 const handleListDragEnter = (event) => {
+  if (isReadonlyFileSystem.value) return;
   event.preventDefault();
   state.draggingOver = true;
 };
@@ -3040,6 +3139,7 @@ const handleListScroll = (event) => {
 };
 
 const handleListDragOver = (event) => {
+  if (isReadonlyFileSystem.value) return;
   event.preventDefault();
   state.draggingOver = true;
   if (event.dataTransfer) {
@@ -3056,19 +3156,21 @@ const handleListDragLeave = (event) => {
 const handleListDrop = async (event) => {
   event.preventDefault();
   state.draggingOver = false;
+  if (!ensureWritableFileSystem()) {
+    clearWorkspaceDragPaths();
+    return;
+  }
   const internalPaths = readWorkspaceDragPaths(event.dataTransfer);
   if (internalPaths.length) {
     const targetDir = normalizeWorkspacePath(state.path);
     const filtered = filterMoveTargets(internalPaths, targetDir);
     if (!filtered.length) return;
     try {
-      const response = await batchWunderWorkspaceAction(
-        withAgentParams({
-          action: 'move',
-          paths: filtered,
-          destination: targetDir
-        })
-      );
+      const response = await activeFileSystem.value.batchAction(withFsParams({
+        action: 'move',
+        paths: filtered,
+        destination: targetDir
+      }));
       notifyBatchResult(response.data, t('workspace.action.move'));
       await reloadWorkspaceView();
     } catch (error) {
@@ -3090,7 +3192,7 @@ const handleListDrop = async (event) => {
 };
 
 const handleItemDragStart = (event, entry) => {
-  if (state.renamingPath === entry?.path) {
+  if (state.renamingPath === entry?.path || isReadonlyFileSystem.value) {
     event.preventDefault();
     return;
   }
@@ -3112,6 +3214,7 @@ const handleItemDragEnd = (event) => {
 };
 
 const handleItemDragEnter = (event, entry) => {
+  if (isReadonlyFileSystem.value) return;
   const internalDrag = hasWorkspaceDragPaths(event.dataTransfer);
   const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
   if (!internalDrag && !externalFileDrag) return;
@@ -3124,6 +3227,7 @@ const handleItemDragEnter = (event, entry) => {
 };
 
 const handleItemDragOver = (event, entry) => {
+  if (isReadonlyFileSystem.value) return;
   const internalDrag = hasWorkspaceDragPaths(event.dataTransfer);
   const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
   if (!internalDrag && !externalFileDrag) return;
@@ -3168,6 +3272,10 @@ const handleItemDrop = async (event, entry) => {
   event.stopPropagation();
   event.currentTarget?.classList?.remove('drop-target');
   state.draggingOver = false;
+  if (!ensureWritableFileSystem()) {
+    clearWorkspaceDragPaths();
+    return;
+  }
   const internalPaths = readWorkspaceDragPaths(event.dataTransfer);
   if (internalPaths.length) {
     if (!entry || entry.type !== 'dir') return;
@@ -3175,13 +3283,11 @@ const handleItemDrop = async (event, entry) => {
     const filtered = filterMoveTargets(internalPaths, targetDir);
     if (!filtered.length) return;
     try {
-      const response = await batchWunderWorkspaceAction(
-        withAgentParams({
-          action: 'move',
-          paths: filtered,
-          destination: targetDir
-        })
-      );
+      const response = await activeFileSystem.value.batchAction(withFsParams({
+        action: 'move',
+        paths: filtered,
+        destination: targetDir
+      }));
       notifyBatchResult(response.data, t('workspace.move.toFolder', { name: entry.name || t('workspace.meta.folder') }));
       await reloadWorkspaceView();
     } catch (error) {
@@ -3205,6 +3311,7 @@ const handleItemDrop = async (event, entry) => {
 };
 
 const handleUpDragOver = (event) => {
+  if (isReadonlyFileSystem.value) return;
   if (!hasWorkspaceDragPaths(event.dataTransfer)) return;
   if (!state.path) return;
   event.preventDefault();
@@ -3224,17 +3331,19 @@ const handleUpDrop = async (event) => {
   if (!state.path) return;
   event.preventDefault();
   event.currentTarget?.classList?.remove('dragover');
+  if (!ensureWritableFileSystem()) {
+    clearWorkspaceDragPaths();
+    return;
+  }
   const sourcePaths = readWorkspaceDragPaths(event.dataTransfer);
   if (!sourcePaths.length) return;
   const parentPath = getWorkspaceParentPath(state.path);
   try {
-    const response = await batchWunderWorkspaceAction(
-      withAgentParams({
-        action: 'move',
-        paths: sourcePaths,
-        destination: parentPath
-      })
-    );
+    const response = await activeFileSystem.value.batchAction(withFsParams({
+      action: 'move',
+      paths: sourcePaths,
+      destination: parentPath
+    }));
     notifyBatchResult(response.data, t('workspace.action.moveToParent'));
     await reloadWorkspaceView();
   } catch (error) {
@@ -3299,13 +3408,11 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
       return;
     }
     try {
-      const response = await fetchWunderWorkspaceContent(
-        withAgentParams({
-          path: entry.path,
-          include_content: true,
-          max_bytes: MAX_TEXT_PREVIEW_SIZE
-        })
-      );
+      const response = await activeFileSystem.value.listContent(withFsParams({
+        path: entry.path,
+        include_content: true,
+        max_bytes: MAX_TEXT_PREVIEW_SIZE
+      }));
       const payload = response.data || {};
       if (payload.truncated) {
         state.preview.hint = t('workspace.preview.truncatedHint');
@@ -3343,13 +3450,11 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
   try {
     if (extension === 'svg') {
       try {
-        const response = await fetchWunderWorkspaceContent(
-          withAgentParams({
-            path: entry.path,
-            include_content: true,
-            max_bytes: MAX_TEXT_PREVIEW_SIZE
-          })
-        );
+        const response = await activeFileSystem.value.listContent(withFsParams({
+          path: entry.path,
+          include_content: true,
+          max_bytes: MAX_TEXT_PREVIEW_SIZE
+        }));
         const payload = response.data || {};
         if (payload.truncated) {
           state.preview.hint = t('workspace.preview.truncatedHint');
@@ -3374,7 +3479,7 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
       AUDIO_EXTENSIONS.has(extension) ||
       VIDEO_EXTENSIONS.has(extension)
     ) {
-      const response = await downloadWunderWorkspaceFile(withAgentParams({ path: entry.path }));
+      const response = await activeFileSystem.value.downloadFile(withFsParams({ path: entry.path }));
       let blob = response.data;
       if (IMAGE_EXTENSIONS.has(extension)) {
         const expectedMime = IMAGE_MIME_TYPES[extension] || '';
@@ -3416,13 +3521,11 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
       }
       return;
     }
-    const response = await fetchWunderWorkspaceContent(
-      withAgentParams({
-        path: entry.path,
-        include_content: true,
-        max_bytes: MAX_TEXT_PREVIEW_SIZE
-      })
-    );
+    const response = await activeFileSystem.value.listContent(withFsParams({
+      path: entry.path,
+      include_content: true,
+      max_bytes: MAX_TEXT_PREVIEW_SIZE
+    }));
     const payload = response.data || {};
     if (payload.truncated) {
       state.preview.hint = t('workspace.preview.truncatedHint');
@@ -3550,14 +3653,16 @@ const handleDrawioSaved = async (payload: { path?: string } = {}) => {
   const changedPath = normalizeWorkspacePath(payload.path || state.drawio.entry?.path || '');
   if (!changedPath) return;
   await refreshWorkspacePathWithFallback(getWorkspaceParentPath(changedPath));
-  emitWorkspaceRefresh({
-    reason: 'workspace-drawio-save',
-    sourceId: workspacePanelRefreshSourceId,
-    agentId: normalizedAgentId.value,
-    containerId: normalizedContainerId.value,
-    path: changedPath,
-    paths: [changedPath]
-  });
+  if (isWorkspaceFileSystem.value) {
+    emitWorkspaceRefresh({
+      reason: 'workspace-drawio-save',
+      sourceId: workspacePanelRefreshSourceId,
+      agentId: normalizedAgentId.value,
+      containerId: normalizedContainerId.value,
+      path: changedPath,
+      paths: [changedPath]
+    });
+  }
 };
 
 const handleOnlyOfficeFallback = async (payload: { path?: string; message?: string } = {}) => {
@@ -3593,14 +3698,16 @@ const handleOnlyOfficeSaved = async (payload: { path?: string } = {}) => {
   const changedPath = normalizeWorkspacePath(payload.path || state.onlyOffice.entry?.path || '');
   if (!changedPath) return;
   await refreshWorkspacePathWithFallback(getWorkspaceParentPath(changedPath));
-  emitWorkspaceRefresh({
-    reason: 'workspace-onlyoffice-save',
-    sourceId: workspacePanelRefreshSourceId,
-    agentId: normalizedAgentId.value,
-    containerId: normalizedContainerId.value,
-    path: changedPath,
-    paths: [changedPath]
-  });
+  if (isWorkspaceFileSystem.value) {
+    emitWorkspaceRefresh({
+      reason: 'workspace-onlyoffice-save',
+      sourceId: workspacePanelRefreshSourceId,
+      agentId: normalizedAgentId.value,
+      containerId: normalizedContainerId.value,
+      path: changedPath,
+      paths: [changedPath]
+    });
+  }
 };
 
 const closePreview = () => {
@@ -3629,13 +3736,11 @@ const openEditor = async (entry) => {
   state.editor.content = '';
   state.editor.loading = true;
   try {
-    const response = await fetchWunderWorkspaceContent(
-      withAgentParams({
-        path: entry.path,
-        include_content: true,
-        max_bytes: MAX_TEXT_PREVIEW_SIZE
-      })
-    );
+    const response = await activeFileSystem.value.listContent(withFsParams({
+      path: entry.path,
+      include_content: true,
+      max_bytes: MAX_TEXT_PREVIEW_SIZE
+    }));
     const payload = response.data || {};
     if (payload.truncated) {
       ElMessage.warning(t('workspace.editor.tooLarge'));
@@ -3663,9 +3768,7 @@ const revokeEditorHtmlPreviewUrls = () => {
 };
 
 const createWorkspaceHtmlPreviewResourceFetcher = () => async (relativePath: string) => {
-  const response = await downloadWunderWorkspaceFile(
-    withAgentParams({ path: normalizeWorkspacePath(relativePath) })
-  );
+  const response = await activeFileSystem.value.downloadFile(withFsParams({ path: normalizeWorkspacePath(relativePath) }));
   const blob = response.data;
   return blob instanceof Blob ? blob : new Blob([blob]);
 };
@@ -3723,10 +3826,10 @@ const toggleEditorFullscreen = () => {
 
 const saveEditor = async () => {
   if (!state.editor.entry) return;
+  if (!ensureWritableFileSystem()) return;
   const parentPath = getWorkspaceParentPath(state.editor.entry.path);
   try {
-    await saveWunderWorkspaceFile(
-      withAgentParams({
+    await activeFileSystem.value.saveFile(withFsParams({
         path: state.editor.entry.path,
         content: state.editor.content
       })
@@ -3762,31 +3865,33 @@ onMounted(async () => {
     await loadWorkspace();
     await revealWorkspacePath(props.initialFocusPath);
   }
-  stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
-    if (!shouldRunWorkspaceBackgroundWork.value) {
-      return;
-    }
-    const detail =
-      event?.detail && typeof event.detail === 'object'
-        ? (event.detail as Record<string, unknown>)
-        : {};
-    if (String(detail.sourceId || '').trim() === workspacePanelRefreshSourceId) return;
-    const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
-    const eventContainerRaw = detail.containerId ?? detail.container_id;
-    const eventContainerId = Number.parseInt(String(eventContainerRaw ?? ''), 10);
-    const currentAgentId = normalizedAgentId.value;
-    if (eventAgentId && eventAgentId !== currentAgentId) return;
-    if (Number.isFinite(eventContainerId) && eventContainerId !== normalizedContainerId.value) return;
-    const changedPaths = normalizeWorkspaceEventPaths(detail);
-    const previewPath =
-      state.preview.visible && shouldWorkspacePreviewReload(state.preview.entry?.path || '', changedPaths)
-        ? String(state.preview.entry?.path || '').trim()
-        : '';
-    const scheduled = scheduleWorkspaceAutoRefreshByDetail(detail);
-    if (scheduled) {
-      scheduleWorkspaceSettleRefresh({ previewPath });
-    }
-  });
+  if (isWorkspaceFileSystem.value) {
+    stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
+      if (!shouldRunWorkspaceBackgroundWork.value) {
+        return;
+      }
+      const detail =
+        event?.detail && typeof event.detail === 'object'
+          ? (event.detail as Record<string, unknown>)
+          : {};
+      if (String(detail.sourceId || '').trim() === workspacePanelRefreshSourceId) return;
+      const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
+      const eventContainerRaw = detail.containerId ?? detail.container_id;
+      const eventContainerId = Number.parseInt(String(eventContainerRaw ?? ''), 10);
+      const currentAgentId = normalizedAgentId.value;
+      if (eventAgentId && eventAgentId !== currentAgentId) return;
+      if (Number.isFinite(eventContainerId) && eventContainerId !== normalizedContainerId.value) return;
+      const changedPaths = normalizeWorkspaceEventPaths(detail);
+      const previewPath =
+        state.preview.visible && shouldWorkspacePreviewReload(state.preview.entry?.path || '', changedPaths)
+          ? String(state.preview.entry?.path || '').trim()
+          : '';
+      const scheduled = scheduleWorkspaceAutoRefreshByDetail(detail);
+      if (scheduled) {
+        scheduleWorkspaceSettleRefresh({ previewPath });
+      }
+    });
+  }
   document.addEventListener('click', handleGlobalClick);
   document.addEventListener('visibilitychange', handleDocumentVisibilityChange);
   window.addEventListener('resize', closeContextMenu);
@@ -3809,26 +3914,17 @@ watch(
 );
 
 watch(
-  () => normalizedAgentId.value,
+  () => activeFileSystemKey.value,
   async (value, oldValue) => {
     if (value === oldValue) return;
     if (!shouldRunWorkspaceBackgroundWork.value) return;
     state.path = '';
     state.parent = null;
     state.expanded = new Set();
-    await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
-    await revealWorkspacePath(props.initialFocusPath);
-  }
-);
-
-watch(
-  () => normalizedContainerId.value,
-  async (value, oldValue) => {
-    if (value === oldValue) return;
-    if (!shouldRunWorkspaceBackgroundWork.value) return;
-    state.path = '';
-    state.parent = null;
-    state.expanded = new Set();
+    state.searchMode = false;
+    state.searchKeyword = '';
+    closePreview();
+    closeEditor();
     await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
     await revealWorkspacePath(props.initialFocusPath);
   }

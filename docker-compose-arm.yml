@@ -1,20 +1,13 @@
-x-rust-build: &rust-build
-  context: .
-  dockerfile: Dockerfile
-  args:
-    RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
-    INSTALL_PLAYWRIGHT_BROWSERS: ${INSTALL_PLAYWRIGHT_BROWSERS:-1}
+version: "2.4"
 
 services:
   wunder-server:
     container_name: wunder-server
-    build: *rust-build
     shm_size: "2gb"
     privileged: true
     security_opt:
       - seccomp:unconfined
     image: wunder-arm
-    pull_policy: never
     platform: linux/arm64
     working_dir: /app
     ports:
@@ -125,13 +118,11 @@ services:
 
   wunder-sandbox:
     container_name: wunder-sandbox
-    build: *rust-build
     shm_size: "2gb"
     privileged: true
     security_opt:
       - seccomp:unconfined
     image: wunder-arm
-    pull_policy: never
     platform: linux/arm64
     working_dir: /tmp
     read_only: ${WUNDER_SANDBOX_DOCKER_READ_ONLY:-false}
@@ -178,9 +169,7 @@ services:
 
   extra-mcp:
     container_name: extra-mcp
-    build: *rust-build
     image: wunder-arm
-    pull_policy: never
     platform: linux/arm64
     privileged: true
     security_opt:

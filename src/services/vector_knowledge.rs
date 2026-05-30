@@ -26,6 +26,7 @@ const VECTOR_SHARED_DIR: &str = "shared";
 const VECTOR_USERS_DIR: &str = "users";
 const VECTOR_DOCS_DIR: &str = "documents";
 const VECTOR_DOC_EXT: &str = ".md";
+const VECTOR_LITERAL_FALLBACK_CANDIDATE_LIMIT: usize = 200;
 const VECTOR_META_EXT: &str = ".json";
 
 const DEFAULT_CHUNK_SIZE: usize = 800;
@@ -114,10 +115,15 @@ pub struct VectorSearchHit {
     pub score: Option<f64>,
 }
 
-pub fn ensure_vector_base_config(base: &KnowledgeBaseConfig) -> Result<()> {
+pub fn ensure_vector_base_type(base: &KnowledgeBaseConfig) -> Result<()> {
     if base.base_type() != KnowledgeBaseType::Vector {
-        return Ok(());
+        return Err(anyhow!(i18n::t("error.vector_knowledge_required")));
     }
+    Ok(())
+}
+
+pub fn ensure_vector_base_config(base: &KnowledgeBaseConfig) -> Result<()> {
+    ensure_vector_base_type(base)?;
     if base
         .embedding_model
         .as_deref()
@@ -625,6 +631,152 @@ pub async fn build_chunk_previews(
             })
         })
         .collect()
+}
+
+pub async fn query_chunks_by_text(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base: &KnowledgeBaseConfig,
+    root: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<VectorSearchHit>> {
+    ensure_vector_base_type(base)?;
+    ensure_vector_documents_migrated(storage, owner_id, &base.name, root).await?;
+    let cleaned_query = query.trim();
+    if cleaned_query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let owner_key = resolve_owner_key(owner_id);
+    let summaries = storage.list_vector_document_summaries(&owner_key, &base.name)?;
+    let tokens = extract_text_query_tokens(cleaned_query);
+    let normalized_query = cleaned_query.to_lowercase();
+    let limit = limit.max(1);
+    let mut scored = Vec::new();
+    for summary in summaries {
+        let Some(record) = storage.get_vector_document(&owner_key, &base.name, &summary.doc_id)?
+        else {
+            continue;
+        };
+        let chunks = serde_json::from_str::<Vec<VectorChunkMeta>>(&record.chunks_json)
+            .unwrap_or_default();
+        let meta = VectorDocumentMeta {
+            doc_id: record.doc_id.clone(),
+            name: record.doc_name.clone(),
+            embedding_model: record.embedding_model.clone(),
+            chunk_size: usize::try_from(record.chunk_size).unwrap_or_default(),
+            chunk_overlap: usize::try_from(record.chunk_overlap).unwrap_or_default(),
+            chunk_count: usize::try_from(record.chunk_count).unwrap_or_default(),
+            status: record.status.clone(),
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            chunks,
+        };
+        let content_chars: Vec<char> = record.content.chars().collect();
+        for chunk in &meta.chunks {
+            let status = resolve_chunk_status(&meta, chunk);
+            if status == "deleted" {
+                continue;
+            }
+            let chunk_content = resolve_chunk_content(&content_chars, chunk);
+            if chunk_content.trim().is_empty() {
+                continue;
+            }
+            let score = score_text_chunk(
+                &record.doc_name,
+                &chunk_content,
+                &normalized_query,
+                &tokens,
+            );
+            if score <= 0 {
+                continue;
+            }
+            scored.push((
+                score,
+                VectorSearchHit {
+                    doc_id: record.doc_id.clone(),
+                    doc_name: record.doc_name.clone(),
+                    chunk_index: chunk.index,
+                    start: chunk.start,
+                    end: chunk.end,
+                    content: chunk_content,
+                    embedding_model: record.embedding_model.clone(),
+                    score: Some(score as f64),
+                },
+            ));
+            if scored.len() >= VECTOR_LITERAL_FALLBACK_CANDIDATE_LIMIT {
+                break;
+            }
+        }
+        if scored.len() >= VECTOR_LITERAL_FALLBACK_CANDIDATE_LIMIT {
+            break;
+        }
+    }
+    scored.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.doc_name.cmp(&right.1.doc_name))
+            .then_with(|| left.1.chunk_index.cmp(&right.1.chunk_index))
+    });
+    scored.truncate(limit);
+    Ok(scored.into_iter().map(|(_, hit)| hit).collect())
+}
+
+fn extract_text_query_tokens(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in query.chars() {
+        if ch.is_ascii_alphanumeric() {
+            current.push(ch.to_ascii_lowercase());
+            continue;
+        }
+        if current.len() >= 2 {
+            tokens.push(current.clone());
+        }
+        current.clear();
+        if ('\u{4e00}'..='\u{9fff}').contains(&ch) {
+            tokens.push(ch.to_string());
+        }
+    }
+    if current.len() >= 2 {
+        tokens.push(current);
+    }
+    let mut seen = HashSet::new();
+    tokens
+        .into_iter()
+        .filter(|token| seen.insert(token.clone()))
+        .take(32)
+        .collect()
+}
+
+fn score_text_chunk(
+    doc_name: &str,
+    content: &str,
+    normalized_query: &str,
+    tokens: &[String],
+) -> i32 {
+    let text = format!("{doc_name}\n{content}").to_lowercase();
+    let mut score = 0;
+    if !normalized_query.is_empty() && text.contains(normalized_query) {
+        score += 16;
+    }
+    for token in tokens {
+        if token.is_empty() {
+            continue;
+        }
+        let mut start = 0usize;
+        let mut count = 0;
+        while let Some(offset) = text[start..].find(token) {
+            count += 1;
+            start += offset + token.len();
+            if count >= 4 {
+                break;
+            }
+        }
+        score += count;
+    }
+    score
 }
 
 fn build_preview(text: &str, limit: usize) -> String {
@@ -1501,7 +1653,7 @@ pub async fn prepare_document(
     content: &str,
     previous_meta: Option<&VectorDocumentMeta>,
 ) -> Result<VectorDocumentMeta> {
-    ensure_vector_base_config(base)?;
+    ensure_vector_base_type(base)?;
     ensure_vector_documents_migrated(storage, owner_id, &base.name, root).await?;
     let chunk_size = resolve_chunk_size(base);
     let chunk_overlap = resolve_chunk_overlap(base);

@@ -15,7 +15,7 @@
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query_*` 工具；最细粒度 `knowledge.targets[*].name` 用作对外展示名和工具名后缀，未配置时默认使用目标 `key`。向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
 - docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。`docker-compose-win.yml` 额外用 `wunder_win_data` 兜底整个 `/app/config/data`，并对 `workspaces/browser/user_tools/vector_knowledge/temp_dir` 等热点目录继续做子卷覆盖。
-- 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。
+- 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。`wunder-frontend` 启动时还会比对当前 `package-lock.json` 与已挂载依赖树的指纹，若发现 ARM profile 过旧或跨平台污染，会自动重装对应 workspace 依赖。
 - `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址；compose 下 `wunder-sandbox` 默认不再启用容器级只读根文件系统，确需恢复 Docker `read_only` 时设置 `WUNDER_SANDBOX_DOCKER_READ_ONLY=true`。
@@ -24,8 +24,8 @@
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
 - 配置加载：运行时只读取单一配置文件 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会直接写回当前生效的配置文件，不再额外维护独立覆盖层。
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
-- compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
-- ARM compose 防漂移：`docker-compose-arm.yml` 的 Rust 构建链路显式声明 `build.platforms=linux/arm64`，并在 `wunder-server`/`wunder-sandbox`/`extra-mcp`/`wunder-frontend`/`wunder-nginx` 启动时执行架构自检；若运行时非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
+- compose 镜像策略：`docker-compose-x86.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 仍使用本地镜像并保留 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。`docker-compose-arm.yml` 改为直接引用现成的 `wunder-arm` 镜像，不再声明 `build:` / `pull_policy:`，以兼容较老的 docker-compose 解析器和 ARM 服务器上的预置镜像启动方式。
+- ARM compose 防漂移：`docker-compose-arm.yml` 仍保留 `platform: linux/arm64` 与启动期架构校验，`wunder-server` / `wunder-sandbox` / `extra-mcp` / `wunder-frontend` / `wunder-nginx` 运行时若非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Docker compose 默认公开入口：`wunder-nginx` 发布 `18001`，`extra-mcp` 额外发布 `${MCP_PORT}`；`wunder-postgres` 与 `wunder-weaviate` 仍默认绑定 `127.0.0.1`。如需将 `extra-mcp` 收回仅本机访问，可设置 `MCP_BIND_HOST=127.0.0.1`。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当前也支持 `/login?user_id=<id>[&agent_name=<name>]` 无 token 直登。外链登录成功后统一进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）嵌入壳，并隐藏侧边栏与中栏；当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，前端进入嵌入态消息页并使用默认智能体 `agent_id=__default__` / `entry=default`；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入同一嵌入壳并聚焦该智能体。嵌入壳内消息页与智能体页都可访问，但左/中栏保持隐藏。`POST /wunder/auth/login`、`/wunder/auth/register`、`/wunder/auth/demo` 以及会直接签发用户 token 的 `/wunder/auth/external/*` 登录接口支持可选请求头 `X-Wunder-Session-Scope`；同一用户仅在同一 `session_scope` 内执行“新登录顶旧登录”，不同 scope（如 `user_web` 与 `admin_web`）互不影响。
@@ -657,7 +657,7 @@
   - `user_id`：用户唯一标识
   - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 返回：同 `GET`
-- 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `config/data/vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
+- 说明：`base_type` 为空默认字面知识库；用户侧当前统一按 `base_type=vector` 管理知识库，`embedding_model` 可为空。存在可用嵌入模型时优先使用向量检索；未配置模型、嵌入调用失败或向量库不可用时，自动回退到文本匹配。向量知识库 root 自动指向 `config/data/vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
 
 ### 4.1.2.10 `/wunder/user_tools/knowledge/files`
 
@@ -789,7 +789,21 @@
   - `doc`：更新后的文档元数据
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.18 `/wunder/user_tools/knowledge/test`
+### 4.1.2.18 `/wunder/user_tools/knowledge/chunk/update`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `user_id`：用户唯一标识
+  - `base`：知识库名称
+  - `doc_id`：文档 id
+  - `chunk_index`：切片序号
+  - `content`：更新后的切片内容
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `doc`：更新后的文档元数据
+- 说明：仅适用于向量知识库。更新后对应切片会被标记为待重新嵌入。
+
+### 4.1.2.19 `/wunder/user_tools/knowledge/test`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -803,11 +817,12 @@
   - `embedding_model`：嵌入模型（向量知识库）
   - `top_k`：召回数量（向量知识库）
   - `hits`：召回列表（doc_id/document/chunk_index/start/end/content/embedding_model/score）
+  - `fallback_mode`：是否回退为文本匹配结果（仅向量知识库）
   - `text`：字面知识库结果文本
   - `reasoning`：字面知识库测试时模型返回的思考过程文本
-- 说明：支持向量/字面知识库。
+- 说明：支持向量/字面知识库。向量知识库在嵌入模型不可用或向量检索链路失败时会自动回退为文本匹配。
 
-### 4.1.2.19 `/wunder/user_tools/knowledge/reindex`
+### 4.1.2.20 `/wunder/user_tools/knowledge/reindex`
 
 - 方法：`POST`
 - 入参（JSON）：
@@ -820,7 +835,7 @@
   - `failed`：失败项列表（doc_id/error）
 - 说明：仅适用于向量知识库。
 
-### 4.1.2.20 `/wunder/user_tools/tools`
+### 4.1.2.21 `/wunder/user_tools/tools`
 
 - 方法：`GET`
 - 返回（JSON）：
