@@ -2,33 +2,46 @@
   <div class="user-tools-pane">
     <div class="list-header">
       <label>{{ t('userTools.mcp.title') }}</label>
-      <div class="header-actions">
-        <button
-          class="user-tools-btn secondary compact btn-with-icon"
-          type="button"
-          :disabled="!hasConnected || refreshingAll || isActiveServerConnecting"
-          @click="refreshAll"
-        >
-          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-          <span>{{ refreshingAll ? t('userTools.mcp.action.connecting') : t('userTools.mcp.action.refreshAll') }}</span>
-        </button>
-        <button class="user-tools-btn secondary compact" type="button" @click="openImportModal">
-          {{ t('userTools.mcp.action.import') }}
-        </button>
-        <button class="user-tools-btn compact" type="button" @click="addServer">
-          {{ t('userTools.mcp.action.add') }}
-        </button>
-        <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
-      </div>
+      <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
     </div>
     <div class="tips">
       {{ t('userTools.mcp.tip') }}
     </div>
 
-    <div class="management-layout">
+    <div class="management-layout mcp-layout">
       <div class="management-list">
         <div class="list-header">
           <label>{{ t('userTools.mcp.list.title') }}</label>
+          <div class="header-actions">
+            <button
+              class="user-tools-btn secondary compact btn-with-icon icon-only"
+              type="button"
+              :disabled="!hasConnected || refreshingAll || isActiveServerConnecting"
+              :title="t('userTools.mcp.action.refreshAll')"
+              :aria-label="t('userTools.mcp.action.refreshAll')"
+              @click="refreshAll"
+            >
+              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary compact btn-with-icon icon-only"
+              type="button"
+              :title="t('userTools.mcp.action.import')"
+              :aria-label="t('userTools.mcp.action.import')"
+              @click="openImportModal"
+            >
+              <i class="fa-solid fa-file-import" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn compact btn-with-icon icon-only"
+              type="button"
+              :title="t('userTools.mcp.action.add')"
+              :aria-label="t('userTools.mcp.action.add')"
+              @click="addServer"
+            >
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
         <div class="list-body">
           <template v-if="servers.length">
@@ -61,10 +74,7 @@
               <span>{{ t('userTools.mcp.action.connecting') }}</span>
             </div>
           </div>
-        </div>
-
-        <div class="detail-actions">
-          <div class="actions">
+          <div class="detail-actions mcp-detail-actions">
             <button
               class="user-tools-btn btn-with-icon"
               type="button"
@@ -74,8 +84,6 @@
               <i class="fa-solid fa-plug" aria-hidden="true"></i>
               <span>{{ connectLabel }}</span>
             </button>
-          </div>
-          <div class="actions">
             <button
               class="user-tools-btn secondary"
               type="button"
@@ -138,7 +146,7 @@
       <template #header>
         <div class="user-tools-header">
           <div class="user-tools-title">{{ mcpModalTitle }}</div>
-          <button class="icon-btn" type="button" @click="closeMcpModal">×</button>
+          <button class="icon-btn" type="button" @click="closeMcpModal">&times;</button>
         </div>
       </template>
       <div v-if="activeServer" class="user-tools-form">
@@ -216,7 +224,7 @@
       <template #header>
         <div class="user-tools-header">
           <div class="user-tools-title">{{ t('userTools.mcp.import.title') }}</div>
-          <button class="icon-btn" type="button" @click="closeImportModal">×</button>
+          <button class="icon-btn" type="button" @click="closeImportModal">&times;</button>
         </div>
       </template>
       <div class="user-tools-form">
@@ -252,7 +260,7 @@
           <div class="user-tools-title">
             {{ toolDetail?.title || t('userTools.mcp.tool.detailTitle') }}
           </div>
-          <button class="icon-btn" type="button" @click="toolDetailVisible = false">×</button>
+          <button class="icon-btn" type="button" @click="toolDetailVisible = false">&times;</button>
         </div>
       </template>
       <div class="user-tools-detail">
@@ -277,7 +285,6 @@
     </el-dialog>
   </div>
 </template>
-
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -595,7 +602,7 @@ const saveServers = async () => {
   }
 };
 
-// 输入即保存，节流避免频繁写入
+// Save on input with debounce to avoid frequent writes.
 const scheduleSave = () => {
   if (saveTimer.value) {
     clearTimeout(saveTimer.value);
@@ -885,7 +892,6 @@ const openToolDetail = (tool) => {
     schema: formatToolSchema(getToolInputSchema(tool))
   };
   toolDetail.value.meta = metaParts.join(' · ');
-  toolDetail.value.meta = metaParts.join(' \u00b7 ');
   toolDetailVisible.value = true;
 };
 

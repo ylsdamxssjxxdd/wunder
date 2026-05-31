@@ -2,26 +2,7 @@
   <div class="user-tools-pane skill-workspace-shell">
     <div class="list-header">
       <label>{{ t('userTools.skills.title') }}</label>
-      <div class="header-actions">
-        <button class="user-tools-btn secondary btn-with-icon" type="button" @click="triggerUpload">
-          <i class="fa-solid fa-plus" aria-hidden="true"></i>
-          <span>{{ t('userTools.skills.action.upload') }}</span>
-        </button>
-        <button
-          class="user-tools-btn secondary btn-with-icon"
-          type="button"
-          :disabled="!activeSkill"
-          @click="exportSkill"
-        >
-          <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
-          <span>{{ t('userTools.skills.action.export') }}</span>
-        </button>
-        <button class="user-tools-btn secondary btn-with-icon" type="button" @click="reloadSkills">
-          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-          <span>{{ t('common.refresh') }}</span>
-        </button>
-        <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
-      </div>
+      <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
     </div>
     <div class="tips">{{ t('userTools.skills.tip') }}</div>
     <input
@@ -36,6 +17,36 @@
       <div class="management-list skill-sidebar">
         <div class="list-header">
           <label>{{ t('userTools.skills.list.title') }}</label>
+          <div class="header-actions">
+            <button
+              class="user-tools-btn secondary btn-with-icon icon-only"
+              type="button"
+              :title="t('userTools.skills.action.upload')"
+              :aria-label="t('userTools.skills.action.upload')"
+              @click="triggerUpload"
+            >
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary btn-with-icon icon-only"
+              type="button"
+              :disabled="!activeSkill"
+              :title="t('userTools.skills.action.export')"
+              :aria-label="t('userTools.skills.action.export')"
+              @click="exportSkill"
+            >
+              <i class="fa-solid fa-file-zipper" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary btn-with-icon icon-only"
+              type="button"
+              :title="t('common.refresh')"
+              :aria-label="t('common.refresh')"
+              @click="reloadSkills"
+            >
+              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
         <div class="skills-list">
           <div v-if="!skills.length" class="empty-text">{{ t('userTools.skills.list.empty') }}</div>

@@ -2,26 +2,56 @@
   <div class="user-tools-pane">
     <div class="list-header">
       <label>{{ t('userTools.knowledge.title') }}</label>
-      <div class="header-actions">
-        <button class="user-tools-btn secondary btn-with-icon" type="button" @click="addBase">
-          <i class="fa-solid fa-plus" aria-hidden="true"></i>
-          <span>{{ t('knowledge.action.add') }}</span>
-        </button>
-        <button class="user-tools-btn secondary btn-with-icon" type="button" @click="refreshConfig">
-          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-          <span>{{ t('knowledge.action.refresh') }}</span>
-        </button>
-        <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
-      </div>
+      <div v-if="status" class="user-tools-status list-status">{{ status }}</div>
     </div>
     <div class="tips">
       {{ t('userTools.knowledge.tip') }}
     </div>
 
     <div class="management-layout knowledge-layout">
-      <div class="management-list">
+      <div class="management-list knowledge-base-column">
         <div class="list-header">
           <label>{{ t('knowledge.list.title') }}</label>
+          <div class="header-actions knowledge-column-actions">
+            <button
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :title="t('knowledge.action.add')"
+              :aria-label="t('knowledge.action.add')"
+              @click="addBase"
+            >
+              <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :title="t('knowledge.action.refresh')"
+              :aria-label="t('knowledge.action.refresh')"
+              @click="refreshConfig"
+            >
+              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('common.edit')"
+              :aria-label="t('common.edit')"
+              @click="editBase"
+            >
+              <i class="fa-solid fa-pen" aria-hidden="true"></i>
+            </button>
+            <button
+              class="user-tools-btn danger btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('knowledge.action.delete')"
+              :aria-label="t('knowledge.action.delete')"
+              @click="deleteBase"
+            >
+              <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
         <div class="list-body">
           <template v-if="bases.length">
@@ -41,15 +71,10 @@
         </div>
       </div>
 
-      <div class="management-detail knowledge-detail">
-        <div class="detail-header">
-          <div class="knowledge-detail-summary">
-            <div class="detail-title">{{ detailTitle }}</div>
-            <div class="muted">{{ detailModeHint }}</div>
-            <div class="muted">{{ detailMeta }}</div>
-            <div class="muted">{{ detailDesc }}</div>
-          </div>
-          <div class="detail-actions knowledge-detail-actions">
+      <div class="management-list knowledge-doc-column">
+        <div class="list-header">
+          <label>{{ isVectorBase ? t('knowledge.doc.section.docs') : t('fileList.title') }}</label>
+          <div class="header-actions knowledge-column-actions">
             <button
               v-if="!isVectorBase"
               class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
@@ -74,17 +99,6 @@
               <i class="fa-solid fa-plus" aria-hidden="true"></i>
             </button>
             <button
-              v-if="!isVectorBase"
-              class="user-tools-btn btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('common.save')"
-              :aria-label="t('common.save')"
-              @click="saveFile"
-            >
-              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
-            </button>
-            <button
               v-if="isVectorBase"
               class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
               type="button"
@@ -107,190 +121,162 @@
             >
               <i class="fa-solid fa-rotate" aria-hidden="true"></i>
             </button>
+          </div>
+        </div>
+        <div v-if="isVectorBase" class="knowledge-doc-list">
+          <div v-if="!vectorDocs.length" class="empty-text">
+            {{ activeBase ? t('knowledge.doc.list.empty') : t('knowledge.detail.empty') }}
+          </div>
+          <div
+            v-for="doc in vectorDocs"
+            :key="doc.doc_id"
+            class="knowledge-doc-item"
+            :class="{ active: doc.doc_id === activeDocId }"
+            @click="selectDoc(doc.doc_id)"
+          >
+            <div class="knowledge-doc-item-header">
+              <div class="knowledge-doc-title">{{ doc.name || doc.doc_id }}</div>
+              <button
+                class="knowledge-doc-delete-btn"
+                type="button"
+                :title="t('common.delete')"
+                :aria-label="t('common.delete')"
+                @click.stop="deleteDoc(doc)"
+              >
+                <i class="fa-solid fa-trash" aria-hidden="true"></i>
+              </button>
+            </div>
+            <div class="knowledge-doc-meta">{{ buildDocMetaText(doc) }}</div>
+          </div>
+        </div>
+        <div v-else class="knowledge-file-list">
+          <div v-if="!files.length" class="empty-text">
+            {{ activeBase ? t('knowledge.file.empty') : t('knowledge.detail.empty') }}
+          </div>
+          <div
+            v-for="filePath in files"
+            :key="filePath"
+            class="knowledge-file-item"
+            :class="{ active: filePath === activeFile }"
+            @click="selectFile(filePath)"
+          >
+            <span class="knowledge-file-name">{{ filePath }}</span>
             <button
-              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              class="knowledge-file-delete-btn"
               type="button"
-              :disabled="!activeBase"
-              :title="t('common.edit')"
-              :aria-label="t('common.edit')"
-              @click="editBase"
-            >
-              <i class="fa-solid fa-pen" aria-hidden="true"></i>
-            </button>
-            <button
-              class="user-tools-btn danger btn-with-icon btn-compact icon-only"
-              type="button"
-              :disabled="!activeBase"
-              :title="t('knowledge.action.delete')"
-              :aria-label="t('knowledge.action.delete')"
-              @click="deleteBase"
+              :title="t('common.delete')"
+              :aria-label="t('common.delete')"
+              @click.stop="deleteFile(filePath)"
             >
               <i class="fa-solid fa-trash" aria-hidden="true"></i>
             </button>
           </div>
         </div>
+      </div>
 
-        <div class="knowledge-section form-section">
-          <div class="knowledge-content">
-            <div class="user-tools-card knowledge-files-card">
-              <div v-if="!isVectorBase" class="knowledge-file-layout">
-                <div class="knowledge-file-pane">
-                  <div class="knowledge-file-list">
-                    <div v-if="!files.length" class="empty-text">{{ t('knowledge.file.empty') }}</div>
-                    <div
-                      v-for="filePath in files"
-                      :key="filePath"
-                      class="knowledge-file-item"
-                      :class="{ active: filePath === activeFile }"
-                      @click="selectFile(filePath)"
-                    >
-                      <span class="knowledge-file-name">{{ filePath }}</span>
-                      <button
-                        class="knowledge-file-delete-btn"
-                        type="button"
-                        :title="t('common.delete')"
-                        :aria-label="t('common.delete')"
-                        @click.stop="deleteFile(filePath)"
-                      >
-                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div class="knowledge-file-editor">
-                  <div class="muted">{{ activeFile || t('knowledge.file.none') }}</div>
-                  <div class="knowledge-editor-wrapper">
-                    <textarea
-                      v-model="fileContent"
-                      class="knowledge-editor-textarea"
-                      :placeholder="t('knowledge.file.none')"
-                      spellcheck="false"
-                      autocorrect="off"
-                      autocomplete="off"
-                      autocapitalize="off"
-                    ></textarea>
-                  </div>
-                </div>
+      <div class="management-detail knowledge-detail knowledge-content-column">
+        <div class="list-header knowledge-content-header">
+          <div class="knowledge-content-title">
+            <label>
+              {{ isVectorBase ? t('knowledge.doc.section.chunkList') : (activeFile || t('knowledge.file.none')) }}
+            </label>
+            <div v-if="isVectorBase" class="muted">{{ activeDocTitle }}</div>
+            <div v-if="isVectorBase" class="muted">{{ activeDocMeta }}</div>
+          </div>
+          <div class="header-actions knowledge-column-actions">
+            <button
+              v-if="!isVectorBase"
+              class="user-tools-btn btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!activeBase"
+              :title="t('common.save')"
+              :aria-label="t('common.save')"
+              @click="saveFile"
+            >
+              <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="isVectorBase"
+              class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!canSelectChunks"
+              :title="selectAllLabel"
+              :aria-label="selectAllLabel"
+              @click="toggleSelectAllChunks"
+            >
+              <i class="fa-solid" :class="selectAllIcon" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="isVectorBase"
+              class="user-tools-btn btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!canBatchEmbed"
+              :title="embedActionLabel"
+              :aria-label="embedActionLabel"
+              :class="{ 'is-loading': embeddingActive }"
+              @click="embedSelectedChunks"
+            >
+              <i class="fa-solid" :class="embedActionIcon" aria-hidden="true"></i>
+            </button>
+            <button
+              v-if="isVectorBase"
+              class="user-tools-btn danger btn-with-icon btn-compact icon-only"
+              type="button"
+              :disabled="!canBatchDelete"
+              :title="t('knowledge.doc.action.deleteChunks')"
+              :aria-label="t('knowledge.doc.action.deleteChunks')"
+              @click="deleteSelectedChunks"
+            >
+              <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
+        <div v-if="isVectorBase" class="knowledge-doc-chunk-list">
+          <div v-if="!docChunks.length" class="empty-text">
+            {{ t('knowledge.chunk.empty') }}
+          </div>
+          <div
+            v-for="chunk in docChunks"
+            :key="chunk.index"
+            class="knowledge-doc-chunk-item"
+            :class="{
+              selected: isChunkSelected(chunk.index),
+              embedding: isChunkEmbedding(chunk.index)
+            }"
+            @click="openChunkEditor(chunk)"
+          >
+            <div class="knowledge-doc-chunk-title-row">
+              <div class="knowledge-doc-chunk-title">
+                <button
+                  class="knowledge-doc-chunk-select"
+                  type="button"
+                  :aria-label="isChunkSelected(chunk.index) ? t('knowledge.chunk.action.clearSelection') : t('knowledge.chunk.action.select')"
+                  @click.stop="toggleChunkSelection(chunk.index)"
+                ></button>
+                <span>#{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}</span>
               </div>
-              <div v-else class="knowledge-vector-layout">
-                <div class="knowledge-vector-pane">
-                  <div class="knowledge-doc-section-title">
-                    {{ t('knowledge.doc.section.docs') }}
-                  </div>
-                  <div class="knowledge-doc-list">
-                    <div v-if="!vectorDocs.length" class="empty-text">
-                      {{ t('knowledge.doc.list.empty') }}
-                    </div>
-                    <div
-                      v-for="doc in vectorDocs"
-                      :key="doc.doc_id"
-                      class="knowledge-doc-item"
-                      :class="{ active: doc.doc_id === activeDocId }"
-                      @click="selectDoc(doc.doc_id)"
-                    >
-                      <div class="knowledge-doc-item-header">
-                        <div class="knowledge-doc-title">{{ doc.name || doc.doc_id }}</div>
-                        <button
-                          class="knowledge-doc-delete-btn"
-                          type="button"
-                          :title="t('common.delete')"
-                          :aria-label="t('common.delete')"
-                          @click.stop="deleteDoc(doc)"
-                        >
-                          <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                        </button>
-                      </div>
-                      <div class="knowledge-doc-meta">{{ buildDocMetaText(doc) }}</div>
-                    </div>
-                  </div>
-                </div>
-                <div class="knowledge-vector-detail">
-                  <div class="knowledge-doc-header">
-                    <div>
-                      <div class="detail-title">{{ activeDocTitle }}</div>
-                      <div class="muted">{{ activeDocMeta }}</div>
-                    </div>
-                    <div class="detail-actions knowledge-doc-actions">
-                      <button
-                        class="user-tools-btn secondary btn-with-icon btn-compact icon-only"
-                        type="button"
-                        :disabled="!canSelectChunks"
-                        :title="selectAllLabel"
-                        :aria-label="selectAllLabel"
-                        @click="toggleSelectAllChunks"
-                      >
-                        <i class="fa-solid" :class="selectAllIcon" aria-hidden="true"></i>
-                      </button>
-                      <button
-                        class="user-tools-btn btn-with-icon btn-compact icon-only"
-                        type="button"
-                        :disabled="!canBatchEmbed"
-                        :title="embedActionLabel"
-                        :aria-label="embedActionLabel"
-                        :class="{ 'is-loading': embeddingActive }"
-                        @click="embedSelectedChunks"
-                      >
-                        <i class="fa-solid" :class="embedActionIcon" aria-hidden="true"></i>
-                      </button>
-                      <button
-                        class="user-tools-btn danger btn-with-icon btn-compact icon-only"
-                        type="button"
-                        :disabled="!canBatchDelete"
-                        :title="t('knowledge.doc.action.deleteChunks')"
-                        :aria-label="t('knowledge.doc.action.deleteChunks')"
-                        @click="deleteSelectedChunks"
-                      >
-                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                      </button>
-                    </div>
-                  </div>
-                  <div class="knowledge-vector-content">
-                    <div class="knowledge-doc-chunks-pane">
-                      <div class="knowledge-doc-section-title">
-                        {{ t('knowledge.doc.section.chunkList') }}
-                      </div>
-                      <div class="knowledge-doc-chunk-list">
-                        <div v-if="!docChunks.length" class="empty-text">
-                          {{ t('knowledge.chunk.empty') }}
-                        </div>
-                        <div
-                          v-for="chunk in docChunks"
-                          :key="chunk.index"
-                          class="knowledge-doc-chunk-item"
-                          :class="{
-                            selected: isChunkSelected(chunk.index),
-                            embedding: isChunkEmbedding(chunk.index)
-                          }"
-                          @click="openChunkEditor(chunk)"
-                        >
-                          <div class="knowledge-doc-chunk-title-row">
-                            <div class="knowledge-doc-chunk-title">
-                              <button
-                                class="knowledge-doc-chunk-select"
-                                type="button"
-                                :aria-label="isChunkSelected(chunk.index) ? t('knowledge.chunk.action.clearSelection') : t('knowledge.chunk.action.select')"
-                                @click.stop="toggleChunkSelection(chunk.index)"
-                              ></button>
-                              <span>#{{ chunk.index }} {{ chunk.start }}-{{ chunk.end }}</span>
-                            </div>
-                            <span
-                              class="knowledge-doc-chunk-status"
-                              :class="`status-${resolveChunkStatus(chunk)}`"
-                            >
-                              {{ formatChunkStatus(chunk) }}
-                            </span>
-                          </div>
-                          <div class="knowledge-doc-chunk-preview">
-                            {{ chunk.preview || chunk.content }}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <span
+                class="knowledge-doc-chunk-status"
+                :class="`status-${resolveChunkStatus(chunk)}`"
+              >
+                {{ formatChunkStatus(chunk) }}
+              </span>
+            </div>
+            <div class="knowledge-doc-chunk-preview">
+              {{ chunk.preview || chunk.content }}
             </div>
           </div>
+        </div>
+        <div v-else class="knowledge-editor-wrapper">
+          <textarea
+            v-model="fileContent"
+            class="knowledge-editor-textarea"
+            :placeholder="t('knowledge.file.none')"
+            spellcheck="false"
+            autocorrect="off"
+            autocomplete="off"
+            autocapitalize="off"
+          ></textarea>
         </div>
       </div>
     </div>
