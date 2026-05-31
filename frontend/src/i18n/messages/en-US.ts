@@ -2328,6 +2328,8 @@ export default {
   'workspace.clear.failed': 'Clear failed',
   'workspace.clear.title': 'Clear Agent Workspace',
   'workspace.copy.failed': 'Copy failed',
+  'workspace.copy.noop': 'Nothing to copy',
+  'workspace.copy.success': 'Created {count} copy/copies in the same folder',
   'workspace.createFile.failed': 'Create file failed',
   'workspace.createFile.dialogTitle': 'New File',
   'workspace.createFile.nameLabel': 'File name',

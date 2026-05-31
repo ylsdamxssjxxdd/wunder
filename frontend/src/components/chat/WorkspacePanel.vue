@@ -189,6 +189,9 @@
         <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFile">
           {{ t('workspace.menu.newFile') }}
         </button>
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFolder">
+          {{ t('workspace.menu.newFolder') }}
+        </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuHasSelection" @click="handleQuotePath">
           {{ t('workspace.menu.quotePath') }}
         </button>
@@ -198,8 +201,8 @@
         <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem || !contextMenuSingleEntry" @click="handleRename">
           {{ t('workspace.menu.rename') }}
         </button>
-        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem" @click="handleNewFolder">
-          {{ t('workspace.menu.newFolder') }}
+        <button class="workspace-menu-btn" :disabled="isReadonlyFileSystem || !contextMenuHasSelection" @click="handleCopy">
+          {{ t('workspace.menu.copy') }}
         </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleDownload">
           {{ resourceActionLabel }}
@@ -502,6 +505,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   batchWunderWorkspaceAction,
+  copyWunderWorkspaceEntry,
   createWunderWorkspaceDir,
   downloadWunderWorkspaceArchive,
   downloadWunderWorkspaceFile,
@@ -945,6 +949,7 @@ const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
 const WORKSPACE_SETTLE_REFRESH_DELAY_MS = 1400;
 const WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS = 6;
 const WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH = 3;
+const WORKSPACE_COPY_MAX_RENAME_ATTEMPTS = 1000;
 
 type UploadProgressOptions = {
   percent?: number;
@@ -977,6 +982,7 @@ type WorkspacePanelFileSystem = {
   }) => Promise<unknown>;
   createDir: (payload: Record<string, unknown>) => Promise<unknown>;
   moveEntry: (payload: Record<string, unknown>) => Promise<unknown>;
+  copyEntry: (payload: Record<string, unknown>) => Promise<unknown>;
   batchAction: (payload: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
   saveFile: (payload: Record<string, unknown>) => Promise<unknown>;
   downloadFile: (params: Record<string, unknown>) => Promise<{ data: Blob; headers?: Record<string, string> }>;
@@ -1041,6 +1047,7 @@ const defaultWorkspaceFileSystem = computed<WorkspacePanelFileSystem>(() => ({
   upload: uploadWunderWorkspace,
   createDir: createWunderWorkspaceDir,
   moveEntry: moveWunderWorkspaceEntry,
+  copyEntry: copyWunderWorkspaceEntry,
   batchAction: batchWunderWorkspaceAction,
   saveFile: saveWunderWorkspaceFile,
   downloadFile: downloadWunderWorkspaceFile,
@@ -1519,6 +1526,105 @@ let workspaceThemeIconWarmupUsesIdleCallback = false;
 const joinWorkspacePath = (basePath, name) =>
   normalizeWorkspacePath([basePath, name].filter(Boolean).join('/'));
 
+const splitWorkspaceEntryName = (name: string) => {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return { base: '', extension: '' };
+  if (trimmed.toLowerCase().endsWith('.drawio.xml')) {
+    return { base: trimmed.slice(0, -'.drawio.xml'.length), extension: '.drawio.xml' };
+  }
+  const dotIndex = trimmed.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex === trimmed.length - 1) {
+    return { base: trimmed, extension: '' };
+  }
+  return {
+    base: trimmed.slice(0, dotIndex),
+    extension: trimmed.slice(dotIndex)
+  };
+};
+
+const buildWorkspaceCopyName = (name: string, suffixIndex: number) => {
+  const trimmed = String(name || '').trim() || 'item';
+  if (suffixIndex <= 0) return trimmed;
+  const { base, extension } = splitWorkspaceEntryName(trimmed);
+  return `${base}（${suffixIndex}）${extension}`;
+};
+
+const buildWorkspaceCopyDestination = (
+  targetDir: string,
+  entry: { name?: string; path?: string },
+  suffixIndex: number
+) => {
+  const entryName = String(entry?.name || entry?.path || 'item').trim() || 'item';
+  const nextName = buildWorkspaceCopyName(entryName, suffixIndex);
+  return joinWorkspacePath(targetDir, nextName);
+};
+
+const getWorkspaceVisibleEntryPaths = () => {
+  const paths = new Set<string>();
+  const visit = (entries: unknown[]) => {
+    if (!Array.isArray(entries)) return;
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const source = entry as Record<string, unknown>;
+      const path = normalizeWorkspacePath(source.path);
+      if (path) paths.add(path);
+      if (Array.isArray(source.children)) {
+        visit(source.children);
+      }
+    });
+  };
+  visit(state.entries);
+  return paths;
+};
+
+const resolveWorkspaceCopyExistingPaths = async (
+  targetDir: string,
+  cache: Map<string, Set<string>>
+) => {
+  const normalizedTargetDir = normalizeWorkspacePath(targetDir);
+  const cached = cache.get(normalizedTargetDir);
+  if (cached) return cached;
+  const visiblePaths = getWorkspaceVisibleEntryPaths();
+  const existingPaths = new Set<string>(visiblePaths);
+  try {
+    const snapshot = await fetchWorkspaceDirectorySnapshot(normalizedTargetDir);
+    const snapshotEntries = Array.isArray(snapshot?.entries) ? snapshot.entries : [];
+    snapshotEntries.forEach((item) => {
+      const path = normalizeWorkspacePath((item as Record<string, unknown>)?.path);
+      if (path) existingPaths.add(path);
+    });
+  } catch (error) {
+    // Visible entries still prevent most collisions; backend validation remains authoritative.
+  }
+  cache.set(normalizedTargetDir, existingPaths);
+  return existingPaths;
+};
+
+const resolveWorkspaceCopyDestination = async (
+  targetDir: string,
+  entry: { name?: string; path?: string },
+  options: { reservedPaths?: Set<string>; existingPathCache?: Map<string, Set<string>> } = {}
+) => {
+  const reservedPaths = options.reservedPaths ?? new Set<string>();
+  const existingPathCache = options.existingPathCache ?? new Map<string, Set<string>>();
+  const existingPaths = await resolveWorkspaceCopyExistingPaths(targetDir, existingPathCache);
+  for (let index = 1; index < WORKSPACE_COPY_MAX_RENAME_ATTEMPTS; index += 1) {
+    const destination = buildWorkspaceCopyDestination(targetDir, entry, index);
+    if (!destination || reservedPaths.has(destination) || existingPaths.has(destination)) {
+      continue;
+    }
+    reservedPaths.add(destination);
+    existingPaths.add(destination);
+    return destination;
+  }
+  return buildWorkspaceCopyDestination(targetDir, entry, WORKSPACE_COPY_MAX_RENAME_ATTEMPTS);
+};
+
+const getWorkspaceSelectionEntries = () =>
+  getActionSelectionPaths()
+    .map((path) => findWorkspaceEntryByPath(state.entries, path))
+    .filter((entry): entry is { path: string; name?: string; type?: string } => Boolean(entry?.path));
+
 const normalizeWorkspaceEntryText = (value) => {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -1916,7 +2022,10 @@ const toggleWorkspaceSelection = (path) => {
   }
 };
 
-const getWorkspaceSelectionPaths = () => Array.from(state.selectedPaths);
+const getWorkspaceSelectionPaths = (): string[] =>
+  Array.from(state.selectedPaths)
+    .map((path) => String(path || '').trim())
+    .filter(Boolean);
 
 const reconcileWorkspaceSelection = () => {
   if (!state.selectedPaths.size) {
@@ -2586,7 +2695,21 @@ const handleUploadInput = async (event: Event) => {
   }
 };
 
+const focusWorkspaceList = () => {
+  const activeElement = document.activeElement;
+  if (
+    activeElement instanceof HTMLInputElement ||
+    activeElement instanceof HTMLTextAreaElement ||
+    activeElement instanceof HTMLSelectElement ||
+    activeElement?.getAttribute?.('contenteditable') === 'true'
+  ) {
+    return;
+  }
+  listRef.value?.focus?.({ preventScroll: true });
+};
+
 const handleWorkspaceItemClick = (event, entry) => {
+  focusWorkspaceList();
   if (!entry || state.renamingPath) return;
   const path = entry.path;
   if (!path) return;
@@ -2650,9 +2773,6 @@ const openContextMenu = async (event, entry) => {
     : [];
   if (entry?.path && !state.selectedPaths.has(entry.path)) {
     setWorkspaceSelection([entry.path], entry.path);
-  }
-  if (!entry?.path) {
-    resetWorkspaceSelection();
   }
   if (entry?.path) {
     state.selected = entry;
@@ -2726,6 +2846,12 @@ const handleDelete = async () => {
   await deleteWorkspaceSelection();
 };
 
+const handleCopy = async () => {
+  if (!ensureWritableFileSystem()) return;
+  closeContextMenu();
+  await copyWorkspaceSelectionInPlace();
+};
+
 const startWorkspaceRename = async (entry) => {
   if (!ensureWritableFileSystem()) return;
   state.renamingPath = entry.path;
@@ -2751,11 +2877,11 @@ const finishWorkspaceRename = async (entry, nextName) => {
     return;
   }
   const trimmed = String(nextName || '').trim();
-    if (!trimmed || !isValidWorkspaceName(trimmed)) {
-      ElMessage.warning(t('workspace.name.invalid'));
-      state.renamingValue = '';
-      return;
-    }
+  if (!trimmed || !isValidWorkspaceName(trimmed)) {
+    ElMessage.warning(t('workspace.name.invalid'));
+    state.renamingValue = '';
+    return;
+  }
   if (trimmed === entry.name) {
     state.renamingValue = '';
     return;
@@ -2764,31 +2890,31 @@ const finishWorkspaceRename = async (entry, nextName) => {
   const destination = joinWorkspacePath(parentPath, trimmed);
   try {
     await activeFileSystem.value.moveEntry(withFsParams({ source: entry.path, destination }));
-      await refreshWorkspacePathWithFallback(parentPath);
-      ElMessage.success(t('workspace.rename.success'));
-    } catch (error) {
-      showApiError(error, t('workspace.rename.failed'));
-    } finally {
-      state.renamingValue = '';
-    }
+    await refreshWorkspacePathWithFallback(parentPath);
+    ElMessage.success(t('workspace.rename.success'));
+  } catch (error) {
+    showApiError(error, t('workspace.rename.failed'));
+  } finally {
+    state.renamingValue = '';
+  }
 };
 
 const notifyBatchResult = (payload, actionLabel) => {
   const data = payload?.data || {};
   const failed = Array.isArray(data.failed) ? data.failed : [];
   const succeeded = Array.isArray(data.succeeded) ? data.succeeded : [];
-    if (failed.length) {
-      ElMessage.warning(
-        t('workspace.batch.partial', {
-          action: actionLabel,
-          success: succeeded.length,
-          failed: failed.length
-        })
-      );
-    } else {
-      ElMessage.success(t('workspace.batch.success', { action: actionLabel }));
-    }
-  };
+  if (failed.length) {
+    ElMessage.warning(
+      t('workspace.batch.partial', {
+        action: actionLabel,
+        success: succeeded.length,
+        failed: failed.length
+      })
+    );
+  } else {
+    ElMessage.success(t('workspace.batch.success', { action: actionLabel }));
+  }
+};
 
 const getActionSelectionPaths = () => {
   const selectedPaths = getWorkspaceSelectionPaths();
@@ -2832,65 +2958,83 @@ const deleteWorkspaceSelection = async () => {
   }
 };
 
-  const moveWorkspaceSelectionToDirectory = async () => {
-    if (!ensureWritableFileSystem()) return;
-    const selectedPaths = getWorkspaceSelectionPaths();
-    if (!selectedPaths.length) {
-      ElMessage.info(t('workspace.selection.empty'));
-      return;
-    }
-    const targetDirInput = await promptInput(t('workspace.move.prompt'), {
-      placeholder: t('workspace.move.placeholder'),
-      defaultValue: ''
-    });
-    if (targetDirInput === null) return;
-    const targetDir = normalizeWorkspacePath(targetDirInput.trim());
-    if (!isValidWorkspacePath(targetDir)) {
-      ElMessage.warning(t('workspace.path.invalid'));
-      return;
-    }
-    try {
-      const response = await activeFileSystem.value.batchAction(withFsParams({
-        action: 'move',
-        paths: selectedPaths,
-        destination: targetDir
-      }));
-      notifyBatchResult(response.data, t('workspace.action.move'));
-      await reloadWorkspaceView();
-    } catch (error) {
-      showApiError(error, t('workspace.move.failed'));
-    }
-  };
+const moveWorkspaceSelectionToDirectory = async () => {
+  if (!ensureWritableFileSystem()) return;
+  const selectedPaths = getWorkspaceSelectionPaths();
+  if (!selectedPaths.length) {
+    ElMessage.info(t('workspace.selection.empty'));
+    return;
+  }
+  const targetDirInput = await promptInput(t('workspace.move.prompt'), {
+    placeholder: t('workspace.move.placeholder'),
+    defaultValue: ''
+  });
+  if (targetDirInput === null) return;
+  const targetDir = normalizeWorkspacePath(targetDirInput.trim());
+  if (!isValidWorkspacePath(targetDir)) {
+    ElMessage.warning(t('workspace.path.invalid'));
+    return;
+  }
+  try {
+    const response = await activeFileSystem.value.batchAction(withFsParams({
+      action: 'move',
+      paths: selectedPaths,
+      destination: targetDir
+    }));
+    notifyBatchResult(response.data, t('workspace.action.move'));
+    await reloadWorkspaceView();
+  } catch (error) {
+    showApiError(error, t('workspace.move.failed'));
+  }
+};
 
-  const copyWorkspaceSelectionToDirectory = async () => {
-    if (!ensureWritableFileSystem()) return;
-    const selectedPaths = getWorkspaceSelectionPaths();
-    if (!selectedPaths.length) {
-      ElMessage.info(t('workspace.selection.empty'));
-      return;
-    }
-    const targetDirInput = await promptInput(t('workspace.move.prompt'), {
-      placeholder: t('workspace.move.placeholder'),
-      defaultValue: ''
-    });
-    if (targetDirInput === null) return;
-    const targetDir = normalizeWorkspacePath(targetDirInput.trim());
-    if (!isValidWorkspacePath(targetDir)) {
-      ElMessage.warning(t('workspace.path.invalid'));
-      return;
-    }
-    try {
-      const response = await activeFileSystem.value.batchAction(withFsParams({
-        action: 'copy',
-        paths: selectedPaths,
-        destination: targetDir
+const copyWorkspaceSelectionInPlace = async () => {
+  if (!ensureWritableFileSystem()) return;
+  const entries = getWorkspaceSelectionEntries()
+    .map((entry) => ({
+      path: normalizeWorkspacePath(String(entry.path || '')),
+      name: String(entry.name || entry.path || '').trim() || 'item'
+    }))
+    .filter((entry) => Boolean(entry.path));
+  if (!entries.length) {
+    ElMessage.info(t('workspace.selection.empty'));
+    return;
+  }
+  const reservedPaths = new Set<string>();
+  const existingPathCache = new Map<string, Set<string>>();
+  const changedDirs = new Set<string>();
+  let copiedCount = 0;
+  try {
+    for (const entry of entries) {
+      const targetDir = normalizeWorkspacePath(getWorkspaceParentPath(entry.path));
+      const destination = await resolveWorkspaceCopyDestination(targetDir, entry, {
+        reservedPaths,
+        existingPathCache
+      });
+      if (destination === entry.path) {
+        continue;
+      }
+      await activeFileSystem.value.copyEntry(withFsParams({
+        source: entry.path,
+        destination
       }));
-      notifyBatchResult(response.data, t('workspace.action.copy'));
-      await reloadWorkspaceView();
-    } catch (error) {
-      showApiError(error, t('workspace.copy.failed'));
+      changedDirs.add(targetDir);
+      copiedCount += 1;
     }
-  };
+    if (!copiedCount) {
+      ElMessage.info(t('workspace.copy.noop'));
+      return;
+    }
+    if (changedDirs.size === 1) {
+      await refreshWorkspacePathWithFallback(Array.from(changedDirs)[0] || '');
+    } else {
+      await reloadWorkspaceView();
+    }
+    ElMessage.success(t('workspace.copy.success', { count: copiedCount }));
+  } catch (error) {
+    showApiError(error, t('workspace.copy.failed'));
+  }
+};
 
 const moveWorkspaceEntryToDirectory = async (entry) => {
   if (!ensureWritableFileSystem()) return;

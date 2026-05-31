@@ -110,6 +110,7 @@ import type { AxiosProgressEvent } from 'axios';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import {
   batchUserSkillAction,
+  copyUserSkillEntry,
   createUserSkillDir,
   deleteUserSkill,
   downloadUserSkillArchive,
@@ -237,6 +238,7 @@ const activeSkillFileSystem = computed(() => ({
     uploadUserSkillFsFiles(formData, config),
   createDir: (payload: Record<string, unknown>) => createUserSkillDir({ ...payload, name: activeSkillName.value }),
   moveEntry: (payload: Record<string, unknown>) => moveUserSkillEntry({ ...payload, name: activeSkillName.value }),
+  copyEntry: (payload: Record<string, unknown>) => copyUserSkillEntry({ ...payload, name: activeSkillName.value }),
   batchAction: (payload: Record<string, unknown>) => batchUserSkillAction({ ...payload, name: activeSkillName.value }),
   saveFile: (payload: Record<string, unknown>) => saveUserSkillFsFile({ ...payload, name: activeSkillName.value }),
   downloadFile: (params: Record<string, unknown>) => downloadUserSkillFile(activeSkillName.value, String(params?.path || '')),

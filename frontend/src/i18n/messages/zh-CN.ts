@@ -2290,6 +2290,8 @@ export default {
   'workspace.clear.failed': '清空失败',
   'workspace.clear.title': '清空工作目录',
   'workspace.copy.failed': '复制失败',
+  'workspace.copy.noop': '没有需要复制的项目',
+  'workspace.copy.success': '已在同目录创建 {count} 个副本',
   'workspace.createFile.failed': '创建文件失败',
   'workspace.createFile.dialogTitle': '新建文件',
   'workspace.createFile.nameLabel': '文件名',
