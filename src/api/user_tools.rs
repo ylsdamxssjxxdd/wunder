@@ -11,6 +11,7 @@ use crate::llm;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
+use crate::ragflow_knowledge;
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
 use crate::services::abilities::populate_ability_items;
 use crate::services::default_tool_profile::curated_default_tool_candidates;
@@ -19,7 +20,7 @@ use crate::services::skill_archive::{
 };
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::state::AppState;
-use crate::storage::StorageBackend;
+use crate::storage::{StorageBackend, UserAccountRecord};
 use crate::tools::{
     a2a_service_schema, build_mcp_tool_alias_entries_for_names, builtin_tool_specs,
     mcp_pack_spec_for_server, resolve_tool_name,
@@ -117,7 +118,10 @@ pub fn router() -> Router<Arc<AppState>> {
                 .put(user_skills_file_update)
                 .delete(skill_fs::user_skills_entry_delete),
         )
-        .route("/wunder/user_tools/skills/fs", get(skill_fs::user_skills_fs_content))
+        .route(
+            "/wunder/user_tools/skills/fs",
+            get(skill_fs::user_skills_fs_content),
+        )
         .route(
             "/wunder/user_tools/skills/fs/search",
             get(skill_fs::user_skills_fs_search),
@@ -147,8 +151,14 @@ pub fn router() -> Router<Arc<AppState>> {
             get(user_skills_content),
         )
         .route("/wunder/user_tools/skills/export", get(user_skills_export))
-        .route("/wunder/user_tools/skills/archive", get(skill_fs::user_skills_archive))
-        .route("/wunder/user_tools/skills/download", get(skill_fs::user_skills_download))
+        .route(
+            "/wunder/user_tools/skills/archive",
+            get(skill_fs::user_skills_archive),
+        )
+        .route(
+            "/wunder/user_tools/skills/download",
+            get(skill_fs::user_skills_download),
+        )
         .route(
             "/wunder/user_tools/skills/upload",
             post(user_skills_upload).layer(DefaultBodyLimit::max(MAX_SKILL_UPLOAD_BYTES)),
@@ -459,7 +469,10 @@ fn resolve_user_skill_spec(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))
 }
 
-pub(crate) fn resolve_skill_file_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
+pub(crate) fn resolve_skill_file_path(
+    root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, Response> {
     let rel = Path::new(relative_path);
     if rel.is_absolute() {
         return Err(error_response(
@@ -1425,7 +1438,8 @@ async fn user_knowledge_update(
     Json(payload): Json<UserKnowledgeUpdate>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
-    let user_id = resolved.user.user_id;
+    let user = resolved.user;
+    let user_id = user.user_id.clone();
     let current = state.user_tool_store.load_user_tools(&user_id);
     let bases = payload
         .knowledge
@@ -1433,12 +1447,24 @@ async fn user_knowledge_update(
         .into_iter()
         .map(UserKnowledgeBase::from)
         .collect::<Vec<_>>();
+    let config = state.config_store.get().await;
+    let bases = prepare_user_ragflow_bases(&config, &user, bases)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let removed_vector_bases = collect_removed_vector_bases(&current.knowledge_bases, &bases);
+    let removed_ragflow_dataset_ids =
+        collect_removed_ragflow_dataset_ids(&current.knowledge_bases, &bases);
+    let changed_ragflow_parser_configs =
+        collect_changed_ragflow_parser_configs(&current.knowledge_bases, &bases);
+    sync_changed_ragflow_parser_configs(&config, changed_ragflow_parser_configs)
+        .await
+        .map_err(vector_error_response)?;
     let updated = state
         .user_tool_store
         .update_knowledge_bases(&user_id, bases)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     cleanup_removed_user_vector_docs(state.storage.clone(), &user_id, removed_vector_bases).await;
+    cleanup_removed_ragflow_datasets(&config, removed_ragflow_dataset_ids).await;
     let bases = build_user_knowledge_payload(&state, &user_id, &updated.knowledge_bases, true);
     Ok(Json(json!({ "data": { "knowledge": { "bases": bases } } })))
 }
@@ -1668,6 +1694,34 @@ async fn user_knowledge_upload(
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base_config = resolve_user_knowledge_base(&user_payload, &base)?;
     let base_type = normalize_knowledge_base_type(base_config.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base_config);
+        let temp_dir = upload.temp_dir.clone();
+        let result = ragflow_knowledge::upload_document(
+            &config,
+            &knowledge_config,
+            ragflow_knowledge::RagflowUpload {
+                filename: upload.filename.clone(),
+                input_path: upload.input_path.clone(),
+            },
+        )
+        .await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let doc = result.map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "data": {
+                "ok": true,
+                "message": i18n::t("message.upload_converted"),
+                "doc_id": doc.doc_id,
+                "doc_name": doc.name,
+                "chunk_count": doc.chunk_count,
+                "embedding_model": doc.embedding_model,
+                "converter": "ragflow",
+                "warnings": []
+            }
+        })));
+    }
     if base_type == KnowledgeBaseType::Vector {
         ensure_user_vector_base(&base_config)?;
         let root = state
@@ -1783,6 +1837,16 @@ async fn user_knowledge_docs(
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&payload, &query.base)?;
     let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        let docs = ragflow_knowledge::list_documents(&config, &knowledge_config)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(
+            json!({ "data": { "base": query.base, "docs": docs } }),
+        ));
+    }
     if base_type != KnowledgeBaseType::Vector {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -1816,6 +1880,20 @@ async fn user_knowledge_doc(
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&payload, &query.base)?;
     let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        let meta = ragflow_knowledge::read_document_meta(&config, &knowledge_config, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        let content =
+            ragflow_knowledge::download_document_content(&config, &knowledge_config, &query.doc_id)
+                .await
+                .unwrap_or_default();
+        return Ok(Json(json!({
+            "data": { "base": query.base, "doc": meta, "content": content }
+        })));
+    }
     if base_type != KnowledgeBaseType::Vector {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -1859,6 +1937,24 @@ async fn user_knowledge_doc_delete(
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&payload, &query.base)?;
     let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        let meta = ragflow_knowledge::read_document_meta(&config, &knowledge_config, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        ragflow_knowledge::delete_document(&config, &knowledge_config, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "data": {
+                "ok": true,
+                "deleted": 0,
+                "doc_id": meta.doc_id,
+                "doc_name": meta.name
+            }
+        })));
+    }
     if base_type != KnowledgeBaseType::Vector {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -1940,6 +2036,20 @@ async fn user_knowledge_chunks(
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&payload, &query.base)?;
     let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        let chunks = ragflow_knowledge::list_chunks(&config, &knowledge_config, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "data": {
+                "base": query.base,
+                "doc_id": query.doc_id,
+                "chunks": chunks
+            }
+        })));
+    }
     if base_type != KnowledgeBaseType::Vector {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -2002,6 +2112,22 @@ async fn user_knowledge_chunk_embed(
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
     let config = state.config_store.get().await;
+    if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Ragflow {
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        ragflow_knowledge::set_chunk_available(
+            &config,
+            &knowledge_config,
+            doc_id,
+            payload.chunk_index,
+            true,
+        )
+        .await
+        .map_err(vector_error_response)?;
+        let meta = ragflow_knowledge::read_document_meta(&config, &knowledge_config, doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "data": { "ok": true, "doc": meta } })));
+    }
     ensure_user_vector_base(&base)?;
     let root = state
         .user_tool_store
@@ -2146,6 +2272,16 @@ async fn user_knowledge_chunk_delete(
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
     let config = state.config_store.get().await;
+    if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Ragflow {
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        ragflow_knowledge::delete_chunk(&config, &knowledge_config, doc_id, payload.chunk_index)
+            .await
+            .map_err(vector_error_response)?;
+        let meta = ragflow_knowledge::read_document_meta(&config, &knowledge_config, doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "data": { "ok": true, "doc": meta } })));
+    }
     ensure_user_vector_base(&base)?;
     let root = state
         .user_tool_store
@@ -2251,6 +2387,23 @@ async fn user_knowledge_chunk_update(
     }
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
+    if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        ragflow_knowledge::update_chunk(
+            &config,
+            &knowledge_config,
+            doc_id,
+            payload.chunk_index,
+            &payload.content,
+        )
+        .await
+        .map_err(vector_error_response)?;
+        let meta = ragflow_knowledge::read_document_meta(&config, &knowledge_config, doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "data": { "ok": true, "doc": meta } })));
+    }
     ensure_user_vector_base(&base)?;
     let root = state
         .user_tool_store
@@ -2351,6 +2504,26 @@ async fn user_knowledge_test(
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
     let config = state.config_store.get().await;
     let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        let top_k = payload
+            .top_k
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| ragflow_knowledge::resolve_top_k(&knowledge_config));
+        let hits = ragflow_knowledge::retrieve(&config, &knowledge_config, query, top_k)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "data": {
+                "base": base.name,
+                "query": query,
+                "embedding_model": "ragflow",
+                "top_k": top_k,
+                "hits": build_ragflow_knowledge_test_hits(hits),
+                "fallback_mode": false
+            }
+        })));
+    }
     let root = state
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
@@ -2371,7 +2544,8 @@ async fn user_knowledge_test(
             vector_knowledge::resolve_embedding_model(&config, &embedding_name)
         {
             let timeout_s = embed_config.timeout_s.unwrap_or(120);
-            if let Ok(vectors) = llm::embed_texts(&embed_config, &[query.to_string()], timeout_s).await
+            if let Ok(vectors) =
+                llm::embed_texts(&embed_config, &[query.to_string()], timeout_s).await
             {
                 if let Some(vector) = vectors.first() {
                     if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
@@ -2483,6 +2657,33 @@ async fn user_knowledge_reindex(
     let user_payload = state.user_tool_store.load_user_tools(&user_id);
     let base = resolve_user_knowledge_base(&user_payload, base_name)?;
     let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
+    if base_type == KnowledgeBaseType::Ragflow {
+        let config = state.config_store.get().await;
+        let knowledge_config = build_user_ragflow_knowledge_config(&base);
+        let mut targets = Vec::new();
+        if let Some(doc_id) = payload.doc_id.as_deref() {
+            let cleaned = doc_id.trim();
+            if !cleaned.is_empty() {
+                targets.push(cleaned.to_string());
+            }
+        }
+        if targets.is_empty() {
+            let docs = ragflow_knowledge::list_documents(&config, &knowledge_config)
+                .await
+                .map_err(vector_error_response)?;
+            targets = docs.into_iter().map(|doc| doc.doc_id).collect();
+        }
+        ragflow_knowledge::reparse_documents(&config, &knowledge_config, &targets)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "data": {
+                "ok": true,
+                "reindexed": targets,
+                "failed": []
+            }
+        })));
+    }
     if base_type != KnowledgeBaseType::Vector {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -2956,7 +3157,11 @@ fn build_user_knowledge_payload(
             let mut root = String::new();
             if !base.name.trim().is_empty() {
                 let base_type = normalize_knowledge_base_type(base.base_type.as_deref());
-                if let Ok(path) = state
+                if base_type == KnowledgeBaseType::Ragflow {
+                    root = ragflow_knowledge::synthetic_root(
+                        base.ragflow_dataset_id.as_deref().unwrap_or(""),
+                    );
+                } else if let Ok(path) = state
                     .user_tool_store
                     .resolve_knowledge_base_root_with_type(user_id, &base.name, base_type, create)
                 {
@@ -3009,6 +3214,99 @@ fn collect_removed_vector_bases(
         .collect()
 }
 
+fn collect_removed_ragflow_dataset_ids(
+    current: &[UserKnowledgeBase],
+    next: &[UserKnowledgeBase],
+) -> Vec<String> {
+    let mut next_dataset_ids = HashSet::new();
+    for base in next {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Ragflow {
+            if let Some(dataset_id) =
+                ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+            {
+                next_dataset_ids.insert(dataset_id);
+            }
+        }
+    }
+    let mut removed = Vec::new();
+    for base in current {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) != KnowledgeBaseType::Ragflow {
+            continue;
+        }
+        let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        else {
+            continue;
+        };
+        if !next_dataset_ids.contains(&dataset_id) {
+            removed.push(dataset_id);
+        }
+    }
+    removed.sort();
+    removed.dedup();
+    removed
+}
+
+fn collect_changed_ragflow_parser_configs(
+    current: &[UserKnowledgeBase],
+    next: &[UserKnowledgeBase],
+) -> Vec<KnowledgeBaseConfig> {
+    let mut current_by_dataset = HashMap::new();
+    for base in current {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) != KnowledgeBaseType::Ragflow {
+            continue;
+        }
+        if let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        {
+            current_by_dataset.insert(dataset_id, build_user_ragflow_knowledge_config(base));
+        }
+    }
+    let mut changed = Vec::new();
+    let mut seen = HashSet::new();
+    for base in next {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) != KnowledgeBaseType::Ragflow {
+            continue;
+        }
+        let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        else {
+            continue;
+        };
+        if !seen.insert(dataset_id.clone()) {
+            continue;
+        }
+        let Some(current_base) = current_by_dataset.get(&dataset_id) else {
+            continue;
+        };
+        let next_base = build_user_ragflow_knowledge_config(base);
+        if ragflow_parser_config_changed(current_base, &next_base) {
+            changed.push(next_base);
+        }
+    }
+    changed
+}
+
+fn ragflow_parser_config_changed(
+    current: &KnowledgeBaseConfig,
+    next: &KnowledgeBaseConfig,
+) -> bool {
+    ragflow_knowledge::resolve_chunk_method(current)
+        != ragflow_knowledge::resolve_chunk_method(next)
+        || ragflow_knowledge::build_dataset_parser_config(current)
+            != ragflow_knowledge::build_dataset_parser_config(next)
+}
+
+async fn sync_changed_ragflow_parser_configs(
+    config: &Config,
+    bases: Vec<KnowledgeBaseConfig>,
+) -> anyhow::Result<()> {
+    for base in bases {
+        ragflow_knowledge::sync_parser_config_and_reparse_documents(config, &base).await?;
+    }
+    Ok(())
+}
+
 async fn cleanup_removed_user_vector_docs(
     storage: Arc<dyn StorageBackend>,
     user_id: &str,
@@ -3023,6 +3321,90 @@ async fn cleanup_removed_user_vector_docs(
     }
 }
 
+async fn cleanup_removed_ragflow_datasets(config: &Config, dataset_ids: Vec<String>) {
+    if dataset_ids.is_empty() {
+        return;
+    }
+    if let Err(err) = ragflow_knowledge::delete_datasets(config, &dataset_ids).await {
+        tracing::info!("failed to remove RAGFlow datasets: {err}");
+    }
+}
+
+async fn prepare_user_ragflow_bases(
+    config: &Config,
+    user: &UserAccountRecord,
+    bases: Vec<UserKnowledgeBase>,
+) -> anyhow::Result<Vec<UserKnowledgeBase>> {
+    let mut output = Vec::with_capacity(bases.len());
+    for mut base in bases {
+        if normalize_knowledge_base_type(base.base_type.as_deref()) == KnowledgeBaseType::Ragflow {
+            base.base_type = Some("ragflow".to_string());
+            base.embedding_model = None;
+            base.chunk_method =
+                ragflow_knowledge::normalize_chunk_method(base.chunk_method.as_deref());
+            base.chunk_delimiter =
+                ragflow_knowledge::normalize_chunk_delimiter(base.chunk_delimiter.as_deref());
+            base.layout_recognize =
+                ragflow_knowledge::normalize_layout_recognize(base.layout_recognize.as_deref());
+            base.auto_keywords = base.auto_keywords.map(|value| value.min(32));
+            base.auto_questions = base.auto_questions.map(|value| value.min(10));
+            if base
+                .ragflow_dataset_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                let knowledge_base = KnowledgeBaseConfig {
+                    name: base.name.clone(),
+                    description: base.description.clone(),
+                    root: String::new(),
+                    enabled: base.enabled,
+                    shared: Some(base.shared),
+                    base_type: Some("ragflow".to_string()),
+                    embedding_model: None,
+                    ragflow_dataset_id: None,
+                    chunk_method: base.chunk_method.clone(),
+                    chunk_delimiter: base.chunk_delimiter.clone(),
+                    layout_recognize: base.layout_recognize.clone(),
+                    auto_keywords: base.auto_keywords,
+                    auto_questions: base.auto_questions,
+                    html4excel: base.html4excel,
+                    chunk_size: base.chunk_size,
+                    chunk_overlap: base.chunk_overlap,
+                    top_k: base.top_k,
+                    score_threshold: base.score_threshold,
+                };
+                let mut knowledge_base = knowledge_base;
+                knowledge_base.name = build_user_ragflow_dataset_name(user, &base.name);
+                base.ragflow_dataset_id =
+                    Some(ragflow_knowledge::create_dataset(config, &knowledge_base).await?);
+            }
+        }
+        output.push(base);
+    }
+    Ok(output)
+}
+
+fn build_user_ragflow_dataset_name(user: &UserAccountRecord, base_name: &str) -> String {
+    let prefix = normalize_ragflow_dataset_name_part(if user.username.trim().is_empty() {
+        &user.user_id
+    } else {
+        &user.username
+    });
+    let name = normalize_ragflow_dataset_name_part(base_name);
+    format!("[{prefix}] {name}")
+}
+
+fn normalize_ragflow_dataset_name_part(value: &str) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        return "user".to_string();
+    }
+    normalized.chars().take(48).collect()
+}
+
 async fn refresh_user_knowledge_cache(base: &str, root: &Path) {
     let config = KnowledgeBaseConfig {
         name: base.to_string(),
@@ -3032,6 +3414,13 @@ async fn refresh_user_knowledge_cache(base: &str, root: &Path) {
         shared: None,
         base_type: None,
         embedding_model: None,
+        ragflow_dataset_id: None,
+        chunk_method: None,
+        chunk_delimiter: None,
+        layout_recognize: None,
+        auto_keywords: None,
+        auto_questions: None,
+        html4excel: None,
         chunk_size: None,
         chunk_overlap: None,
         top_k: None,
@@ -3073,11 +3462,60 @@ fn build_user_knowledge_config(base: &UserKnowledgeBase, root: &Path) -> Knowled
         shared: Some(base.shared),
         base_type: base.base_type.clone(),
         embedding_model: base.embedding_model.clone(),
+        ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+        chunk_method: base.chunk_method.clone(),
+        chunk_delimiter: base.chunk_delimiter.clone(),
+        layout_recognize: base.layout_recognize.clone(),
+        auto_keywords: base.auto_keywords,
+        auto_questions: base.auto_questions,
+        html4excel: base.html4excel,
         chunk_size: base.chunk_size,
         chunk_overlap: base.chunk_overlap,
         top_k: base.top_k,
         score_threshold: base.score_threshold,
     }
+}
+
+fn build_user_ragflow_knowledge_config(base: &UserKnowledgeBase) -> KnowledgeBaseConfig {
+    let dataset_id = base.ragflow_dataset_id.as_deref().unwrap_or("");
+    KnowledgeBaseConfig {
+        name: base.name.clone(),
+        description: base.description.clone(),
+        root: ragflow_knowledge::synthetic_root(dataset_id),
+        enabled: base.enabled,
+        shared: Some(base.shared),
+        base_type: Some("ragflow".to_string()),
+        embedding_model: None,
+        ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+        chunk_method: base.chunk_method.clone(),
+        chunk_delimiter: base.chunk_delimiter.clone(),
+        layout_recognize: base.layout_recognize.clone(),
+        auto_keywords: base.auto_keywords,
+        auto_questions: base.auto_questions,
+        html4excel: base.html4excel,
+        chunk_size: base.chunk_size,
+        chunk_overlap: base.chunk_overlap,
+        top_k: base.top_k,
+        score_threshold: base.score_threshold,
+    }
+}
+
+fn build_ragflow_knowledge_test_hits(hits: Vec<ragflow_knowledge::RagflowSearchHit>) -> Vec<Value> {
+    hits.into_iter()
+        .map(|hit| {
+            json!({
+                "doc_id": hit.doc_id,
+                "document": hit.doc_name,
+                "chunk_id": hit.chunk_id,
+                "chunk_index": hit.chunk_index,
+                "start": hit.start,
+                "end": hit.end,
+                "content": hit.content,
+                "embedding_model": "ragflow",
+                "score": hit.score
+            })
+        })
+        .collect()
 }
 
 fn ensure_user_vector_base(base: &UserKnowledgeBase) -> Result<(), Response> {
@@ -3750,6 +4188,20 @@ struct UserKnowledgeBasePayload {
     #[serde(default)]
     embedding_model: Option<String>,
     #[serde(default)]
+    ragflow_dataset_id: Option<String>,
+    #[serde(default)]
+    chunk_method: Option<String>,
+    #[serde(default)]
+    chunk_delimiter: Option<String>,
+    #[serde(default)]
+    layout_recognize: Option<String>,
+    #[serde(default)]
+    auto_keywords: Option<usize>,
+    #[serde(default)]
+    auto_questions: Option<usize>,
+    #[serde(default)]
+    html4excel: Option<bool>,
+    #[serde(default)]
     chunk_size: Option<usize>,
     #[serde(default)]
     chunk_overlap: Option<usize>,
@@ -3761,12 +4213,11 @@ struct UserKnowledgeBasePayload {
 
 impl UserKnowledgeBasePayload {
     fn from_with_root(base: &UserKnowledgeBase, root: String) -> Self {
-        let base_type = if normalize_knowledge_base_type(base.base_type.as_deref())
-            == KnowledgeBaseType::Vector
-        {
-            Some("vector".to_string())
-        } else {
-            Some("literal".to_string())
+        let normalized_type = normalize_knowledge_base_type(base.base_type.as_deref());
+        let base_type = match normalized_type {
+            KnowledgeBaseType::Vector => Some("vector".to_string()),
+            KnowledgeBaseType::Ragflow => Some("ragflow".to_string()),
+            KnowledgeBaseType::Literal => Some("literal".to_string()),
         };
         Self {
             name: base.name.clone(),
@@ -3776,6 +4227,13 @@ impl UserKnowledgeBasePayload {
             shared: base.shared,
             base_type,
             embedding_model: base.embedding_model.clone(),
+            ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+            chunk_method: base.chunk_method.clone(),
+            chunk_delimiter: base.chunk_delimiter.clone(),
+            layout_recognize: base.layout_recognize.clone(),
+            auto_keywords: base.auto_keywords,
+            auto_questions: base.auto_questions,
+            html4excel: base.html4excel,
             chunk_size: base.chunk_size,
             chunk_overlap: base.chunk_overlap,
             top_k: base.top_k,
@@ -3787,10 +4245,10 @@ impl UserKnowledgeBasePayload {
 impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
     fn from(payload: UserKnowledgeBasePayload) -> Self {
         let base_type = normalize_knowledge_base_type(payload.base_type.as_deref());
-        let base_type_value = if base_type == KnowledgeBaseType::Vector {
-            Some("vector".to_string())
-        } else {
-            None
+        let base_type_value = match base_type {
+            KnowledgeBaseType::Vector => Some("vector".to_string()),
+            KnowledgeBaseType::Ragflow => Some("ragflow".to_string()),
+            KnowledgeBaseType::Literal => None,
         };
         Self {
             name: payload.name,
@@ -3807,6 +4265,44 @@ impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
             } else {
                 None
             },
+            ragflow_dataset_id: if base_type == KnowledgeBaseType::Ragflow {
+                ragflow_knowledge::normalize_dataset_id(payload.ragflow_dataset_id.as_deref())
+                    .or_else(|| {
+                        ragflow_knowledge::normalize_synthetic_root_dataset_id(&payload.root)
+                    })
+            } else {
+                None
+            },
+            chunk_method: if base_type == KnowledgeBaseType::Ragflow {
+                ragflow_knowledge::normalize_chunk_method(payload.chunk_method.as_deref())
+            } else {
+                None
+            },
+            chunk_delimiter: if base_type == KnowledgeBaseType::Ragflow {
+                ragflow_knowledge::normalize_chunk_delimiter(payload.chunk_delimiter.as_deref())
+            } else {
+                None
+            },
+            layout_recognize: if base_type == KnowledgeBaseType::Ragflow {
+                ragflow_knowledge::normalize_layout_recognize(payload.layout_recognize.as_deref())
+            } else {
+                None
+            },
+            auto_keywords: if base_type == KnowledgeBaseType::Ragflow {
+                payload.auto_keywords.map(|value| value.min(32))
+            } else {
+                None
+            },
+            auto_questions: if base_type == KnowledgeBaseType::Ragflow {
+                payload.auto_questions.map(|value| value.min(10))
+            } else {
+                None
+            },
+            html4excel: if base_type == KnowledgeBaseType::Ragflow {
+                payload.html4excel
+            } else {
+                None
+            },
             chunk_size: payload.chunk_size,
             chunk_overlap: payload.chunk_overlap,
             top_k: payload.top_k,
@@ -3818,8 +4314,10 @@ impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_user_tools_summary, build_visible_user_skills_payload, resolve_visible_user_skill,
-        UserSkillSourceKind, BUILTIN_SKILLS_ROOT_ENV,
+        build_user_ragflow_dataset_name, build_user_tools_summary,
+        build_visible_user_skills_payload, collect_removed_ragflow_dataset_ids,
+        resolve_visible_user_skill, UserKnowledgeBasePayload, UserSkillSourceKind,
+        BUILTIN_SKILLS_ROOT_ENV,
     };
     use crate::config::Config;
     use crate::core::schemas::ToolSpec;
@@ -3827,8 +4325,8 @@ mod tests {
     use crate::services::user_access::UserToolContext;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::{load_skills, SkillRegistry, SkillSpec};
-    use crate::storage::{SqliteStorage, StorageBackend};
-    use crate::user_tools::UserToolsPayload;
+    use crate::storage::{SqliteStorage, StorageBackend, UserAccountRecord};
+    use crate::user_tools::{UserKnowledgeBase, UserToolsPayload};
     use serde_json::json;
     use std::collections::HashSet;
     use std::fs;
@@ -3851,6 +4349,119 @@ mod tests {
             format!("---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"),
         )
         .expect("write skill file");
+    }
+
+    #[test]
+    fn user_knowledge_payload_preserves_ragflow_dataset_id() {
+        let payload = UserKnowledgeBasePayload {
+            name: "base".to_string(),
+            root: "config/knowledge/base".to_string(),
+            base_type: Some("ragflow".to_string()),
+            embedding_model: Some("ignored".to_string()),
+            ragflow_dataset_id: Some("dataset_id".to_string()),
+            chunk_method: Some("Q&A".to_string()),
+            chunk_delimiter: Some("\\n##".to_string()),
+            layout_recognize: Some("plain text".to_string()),
+            auto_keywords: Some(99),
+            auto_questions: Some(42),
+            html4excel: Some(true),
+            ..Default::default()
+        };
+
+        let base = crate::services::user_tools::UserKnowledgeBase::from(payload);
+
+        assert_eq!(base.base_type, Some("ragflow".to_string()));
+        assert_eq!(base.embedding_model, None);
+        assert_eq!(base.ragflow_dataset_id, Some("dataset_id".to_string()));
+        assert_eq!(base.chunk_method, Some("qa".to_string()));
+        assert_eq!(base.chunk_delimiter, Some("\n##".to_string()));
+        assert_eq!(base.layout_recognize, Some("Plain Text".to_string()));
+        assert_eq!(base.auto_keywords, Some(32));
+        assert_eq!(base.auto_questions, Some(10));
+        assert_eq!(base.html4excel, Some(true));
+
+        let roundtrip =
+            UserKnowledgeBasePayload::from_with_root(&base, "ragflow:dataset_id".to_string());
+        assert_eq!(roundtrip.base_type, Some("ragflow".to_string()));
+        assert_eq!(roundtrip.ragflow_dataset_id, Some("dataset_id".to_string()));
+        assert_eq!(roundtrip.chunk_method, Some("qa".to_string()));
+        assert_eq!(roundtrip.chunk_delimiter, Some("\n##".to_string()));
+        assert_eq!(roundtrip.layout_recognize, Some("Plain Text".to_string()));
+        assert_eq!(roundtrip.auto_keywords, Some(32));
+        assert_eq!(roundtrip.auto_questions, Some(10));
+        assert_eq!(roundtrip.html4excel, Some(true));
+    }
+
+    #[test]
+    fn user_knowledge_payload_does_not_use_plain_root_as_ragflow_dataset_id() {
+        let payload = UserKnowledgeBasePayload {
+            name: "base".to_string(),
+            root: "config/knowledge/base".to_string(),
+            base_type: Some("ragflow".to_string()),
+            ..Default::default()
+        };
+
+        let base = crate::services::user_tools::UserKnowledgeBase::from(payload);
+
+        assert_eq!(base.base_type, Some("ragflow".to_string()));
+        assert_eq!(base.ragflow_dataset_id, None);
+    }
+
+    #[test]
+    fn user_ragflow_dataset_name_uses_username_prefix() {
+        let user = UserAccountRecord {
+            user_id: "user-id".to_string(),
+            username: "alice".to_string(),
+            email: None,
+            password_hash: String::new(),
+            roles: Vec::new(),
+            status: "active".to_string(),
+            access_level: "user".to_string(),
+            unit_id: None,
+            token_balance: 0,
+            token_granted_total: 0,
+            token_used_total: 0,
+            last_token_grant_date: None,
+            experience_total: 0,
+            is_demo: false,
+            created_at: 0.0,
+            updated_at: 0.0,
+            last_login_at: None,
+        };
+
+        assert_eq!(
+            build_user_ragflow_dataset_name(&user, " product docs "),
+            "[alice] product docs"
+        );
+    }
+
+    #[test]
+    fn removed_ragflow_dataset_ids_detects_deleted_bases() {
+        let current = vec![
+            UserKnowledgeBase {
+                name: "keep".to_string(),
+                base_type: Some("ragflow".to_string()),
+                ragflow_dataset_id: Some("dataset_keep".to_string()),
+                ..Default::default()
+            },
+            UserKnowledgeBase {
+                name: "remove".to_string(),
+                base_type: Some("ragflow".to_string()),
+                ragflow_dataset_id: Some("dataset_remove".to_string()),
+                ..Default::default()
+            },
+        ];
+        let next = vec![UserKnowledgeBase {
+            name: "keep".to_string(),
+            base_type: Some("ragflow".to_string()),
+            ragflow_dataset_id: Some("dataset_keep".to_string()),
+            ..Default::default()
+        }];
+
+        assert_eq!(
+            collect_removed_ragflow_dataset_ids(&current, &next),
+            vec!["dataset_remove".to_string()]
+        );
     }
 
     fn normalize_test_path(path: &Path) -> String {

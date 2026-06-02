@@ -313,6 +313,8 @@ export const elements = {
   settingsDrawioEnabled: document.getElementById("settingsDrawioEnabled"),
   settingsDrawioEditorUrl: document.getElementById("settingsDrawioEditorUrl"),
   settingsDrawioMaxFileBytes: document.getElementById("settingsDrawioMaxFileBytes"),
+  settingsRagflowBaseUrl: document.getElementById("settingsRagflowBaseUrl"),
+  settingsRagflowApiKey: document.getElementById("settingsRagflowApiKey"),
   settingsFirecrawlProvider: document.getElementById("settingsFirecrawlProvider"),
   settingsFirecrawlBaseUrl: document.getElementById("settingsFirecrawlBaseUrl"),
   settingsFirecrawlApiKey: document.getElementById("settingsFirecrawlApiKey"),

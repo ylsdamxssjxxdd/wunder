@@ -36,6 +36,7 @@ use crate::services::default_agent_sync::{
 };
 use crate::services::inner_visible::build_worker_card;
 use crate::services::preset_worker_cards;
+use crate::services::ragflow_knowledge;
 use crate::services::skill_archive::{import_skill_archive, is_supported_skill_archive_filename};
 use crate::services::user_agent_presets::{
     self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
@@ -1747,8 +1748,15 @@ async fn admin_knowledge_update(
     Json(payload): Json<KnowledgeUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
-    let normalized = normalize_admin_knowledge_bases(&config, payload.knowledge.bases)?;
+    let normalized = normalize_admin_knowledge_bases(&config, payload.knowledge.bases).await?;
     let removed_vector_bases = collect_removed_vector_bases(&config.knowledge.bases, &normalized);
+    let removed_ragflow_dataset_ids =
+        collect_removed_ragflow_dataset_ids(&config.knowledge.bases, &normalized);
+    let changed_ragflow_parser_configs =
+        collect_changed_ragflow_parser_configs(&config.knowledge.bases, &normalized);
+    sync_changed_ragflow_parser_configs(&config, changed_ragflow_parser_configs)
+        .await
+        .map_err(vector_error_response)?;
     let removed_literal_bases = collect_removed_literal_bases(&config.knowledge.bases, &normalized);
     let updated = state
         .config_store
@@ -1758,6 +1766,7 @@ async fn admin_knowledge_update(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     cleanup_removed_vector_roots(state.storage.clone(), removed_vector_bases).await;
+    cleanup_removed_ragflow_datasets(&config, removed_ragflow_dataset_ids).await;
     cleanup_removed_literal_roots(removed_literal_bases, &normalized).await;
     Ok(Json(
         json!({ "knowledge": { "bases": updated.knowledge.bases } }),
@@ -1782,6 +1791,99 @@ fn collect_removed_vector_bases(
         .collect()
 }
 
+fn collect_removed_ragflow_dataset_ids(
+    current: &[KnowledgeBaseConfig],
+    next: &[KnowledgeBaseConfig],
+) -> Vec<String> {
+    let mut next_dataset_ids = HashSet::new();
+    for base in next {
+        if !base.is_ragflow() {
+            continue;
+        }
+        if let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        {
+            next_dataset_ids.insert(dataset_id);
+        }
+    }
+    let mut removed = Vec::new();
+    for base in current {
+        if !base.is_ragflow() {
+            continue;
+        }
+        let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        else {
+            continue;
+        };
+        if !next_dataset_ids.contains(&dataset_id) {
+            removed.push(dataset_id);
+        }
+    }
+    removed.sort();
+    removed.dedup();
+    removed
+}
+
+fn collect_changed_ragflow_parser_configs(
+    current: &[KnowledgeBaseConfig],
+    next: &[KnowledgeBaseConfig],
+) -> Vec<KnowledgeBaseConfig> {
+    let mut current_by_dataset = HashMap::new();
+    for base in current {
+        if !base.is_ragflow() {
+            continue;
+        }
+        if let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        {
+            current_by_dataset.insert(dataset_id, base.clone());
+        }
+    }
+    let mut changed = Vec::new();
+    let mut seen = HashSet::new();
+    for base in next {
+        if !base.is_ragflow() {
+            continue;
+        }
+        let Some(dataset_id) =
+            ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+        else {
+            continue;
+        };
+        if !seen.insert(dataset_id.clone()) {
+            continue;
+        }
+        let Some(current_base) = current_by_dataset.get(&dataset_id) else {
+            continue;
+        };
+        if ragflow_parser_config_changed(current_base, base) {
+            changed.push(base.clone());
+        }
+    }
+    changed
+}
+
+fn ragflow_parser_config_changed(
+    current: &KnowledgeBaseConfig,
+    next: &KnowledgeBaseConfig,
+) -> bool {
+    ragflow_knowledge::resolve_chunk_method(current)
+        != ragflow_knowledge::resolve_chunk_method(next)
+        || ragflow_knowledge::build_dataset_parser_config(current)
+            != ragflow_knowledge::build_dataset_parser_config(next)
+}
+
+async fn sync_changed_ragflow_parser_configs(
+    config: &Config,
+    bases: Vec<KnowledgeBaseConfig>,
+) -> anyhow::Result<()> {
+    for base in bases {
+        ragflow_knowledge::sync_parser_config_and_reparse_documents(config, &base).await?;
+    }
+    Ok(())
+}
+
 fn collect_removed_literal_bases(
     current: &[KnowledgeBaseConfig],
     next: &[KnowledgeBaseConfig],
@@ -1792,10 +1894,19 @@ fn collect_removed_literal_bases(
     }
     current
         .iter()
-        .filter(|base| !base.is_vector())
+        .filter(|base| !base.is_vector() && !base.is_ragflow())
         .filter(|base| !next_names.contains(&base.name))
         .map(|base| (base.name.clone(), base.root.clone()))
         .collect()
+}
+
+async fn cleanup_removed_ragflow_datasets(config: &Config, dataset_ids: Vec<String>) {
+    if dataset_ids.is_empty() {
+        return;
+    }
+    if let Err(err) = ragflow_knowledge::delete_datasets(config, &dataset_ids).await {
+        info!("Failed to remove RAGFlow datasets: {err}");
+    }
 }
 
 async fn cleanup_removed_vector_roots(storage: Arc<dyn StorageBackend>, bases: Vec<String>) {
@@ -1837,7 +1948,7 @@ async fn cleanup_removed_literal_roots(bases: Vec<(String, String)>, next: &[Kno
     // If a base is renamed but keeps the same root, never delete the folder.
     let mut next_root_keys = HashSet::new();
     for base in next {
-        if base.is_vector() {
+        if base.is_vector() || base.is_ragflow() {
             continue;
         }
         let root = base.root.trim();
@@ -1908,7 +2019,7 @@ async fn admin_knowledge_files(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
-    if base.is_vector() {
+    if base.is_vector() || base.is_ragflow() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.vector_knowledge_not_file_based"),
@@ -1925,7 +2036,7 @@ async fn admin_knowledge_file(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
-    if base.is_vector() {
+    if base.is_vector() || base.is_ragflow() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.vector_knowledge_not_file_based"),
@@ -1966,7 +2077,7 @@ async fn admin_knowledge_file_update(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &payload.base)?;
-    if base.is_vector() {
+    if base.is_vector() || base.is_ragflow() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.vector_knowledge_not_file_based"),
@@ -1999,6 +2110,13 @@ async fn admin_knowledge_file_update(
         shared: base.shared,
         base_type: base.base_type.clone(),
         embedding_model: base.embedding_model.clone(),
+        ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+        chunk_method: base.chunk_method.clone(),
+        chunk_delimiter: base.chunk_delimiter.clone(),
+        layout_recognize: base.layout_recognize.clone(),
+        auto_keywords: base.auto_keywords,
+        auto_questions: base.auto_questions,
+        html4excel: base.html4excel,
         chunk_size: base.chunk_size,
         chunk_overlap: base.chunk_overlap,
         top_k: base.top_k,
@@ -2016,7 +2134,7 @@ async fn admin_knowledge_file_delete(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
-    if base.is_vector() {
+    if base.is_vector() || base.is_ragflow() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.vector_knowledge_not_file_based"),
@@ -2047,6 +2165,13 @@ async fn admin_knowledge_file_delete(
             shared: base.shared,
             base_type: base.base_type.clone(),
             embedding_model: base.embedding_model.clone(),
+            ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+            chunk_method: base.chunk_method.clone(),
+            chunk_delimiter: base.chunk_delimiter.clone(),
+            layout_recognize: base.layout_recognize.clone(),
+            auto_keywords: base.auto_keywords,
+            auto_questions: base.auto_questions,
+            html4excel: base.html4excel,
             chunk_size: base.chunk_size,
             chunk_overlap: base.chunk_overlap,
             top_k: base.top_k,
@@ -2065,6 +2190,12 @@ async fn admin_knowledge_docs(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_ragflow() {
+        let docs = ragflow_knowledge::list_documents(&config, &base)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "base": query.base, "docs": docs })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let docs =
@@ -2080,6 +2211,17 @@ async fn admin_knowledge_doc(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_ragflow() {
+        let meta = ragflow_knowledge::read_document_meta(&config, &base, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        let content = ragflow_knowledge::download_document_content(&config, &base, &query.doc_id)
+            .await
+            .unwrap_or_default();
+        return Ok(Json(
+            json!({ "base": query.base, "doc": meta, "content": content }),
+        ));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let meta = vector_knowledge::read_vector_document_meta(
@@ -2111,6 +2253,20 @@ async fn admin_knowledge_doc_delete(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_ragflow() {
+        let meta = ragflow_knowledge::read_document_meta(&config, &base, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        ragflow_knowledge::delete_document(&config, &base, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "ok": true,
+            "deleted": 0,
+            "doc_id": meta.doc_id,
+            "doc_name": meta.name
+        })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let root_for_lock = root.clone();
@@ -2166,6 +2322,16 @@ async fn admin_knowledge_chunks(
 ) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, &query.base)?;
+    if base.is_ragflow() {
+        let chunks = ragflow_knowledge::list_chunks(&config, &base, &query.doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "base": query.base,
+            "doc_id": query.doc_id,
+            "chunks": chunks
+        })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let meta = vector_knowledge::read_vector_document_meta(
@@ -2217,6 +2383,26 @@ fn build_admin_vector_knowledge_test_hits(
                 "end": hit.end,
                 "content": hit.content,
                 "embedding_model": hit.embedding_model,
+                "score": hit.score
+            })
+        })
+        .collect()
+}
+
+fn build_admin_ragflow_knowledge_test_hits(
+    hits: Vec<ragflow_knowledge::RagflowSearchHit>,
+) -> Vec<Value> {
+    hits.into_iter()
+        .map(|hit| {
+            json!({
+                "doc_id": hit.doc_id,
+                "document": hit.doc_name,
+                "chunk_id": hit.chunk_id,
+                "chunk_index": hit.chunk_index,
+                "start": hit.start,
+                "end": hit.end,
+                "content": hit.content,
+                "embedding_model": "ragflow",
                 "score": hit.score
             })
         })
@@ -2319,6 +2505,36 @@ async fn admin_knowledge_test_stream(
                         "embedding_model": embedding_name,
                         "top_k": effective_top_k,
                         "hits": build_admin_vector_knowledge_test_hits(hits),
+                    }),
+                );
+                return Ok::<(), anyhow::Error>(());
+            }
+            if base.is_ragflow() {
+                let effective_top_k = top_k
+                    .filter(|value| *value > 0)
+                    .unwrap_or_else(|| ragflow_knowledge::resolve_top_k(&base));
+                send_admin_knowledge_test_event(
+                    &event_tx,
+                    "request",
+                    json!({
+                        "knowledge_base": base.name,
+                        "base_type": "ragflow",
+                        "query": query,
+                        "embedding_model": "ragflow",
+                        "top_k": effective_top_k,
+                    }),
+                );
+                let hits =
+                    ragflow_knowledge::retrieve(&config, &base, &query, effective_top_k).await?;
+                send_admin_knowledge_test_event(
+                    &event_tx,
+                    "complete",
+                    json!({
+                        "base": base.name,
+                        "query": query,
+                        "embedding_model": "ragflow",
+                        "top_k": effective_top_k,
+                        "hits": build_admin_ragflow_knowledge_test_hits(hits),
                     }),
                 );
                 return Ok::<(), anyhow::Error>(());
@@ -2453,6 +2669,29 @@ async fn admin_knowledge_test(
             "request": request,
             "hits": build_admin_vector_knowledge_test_hits(hits)
         })))
+    } else if base.is_ragflow() {
+        let top_k = payload
+            .top_k
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| ragflow_knowledge::resolve_top_k(&base));
+        let hits = ragflow_knowledge::retrieve(&config, &base, query, top_k)
+            .await
+            .map_err(vector_error_response)?;
+        let request = json!({
+            "knowledge_base": base.name,
+            "base_type": "ragflow",
+            "query": query,
+            "embedding_model": "ragflow",
+            "top_k": top_k,
+        });
+        Ok(Json(json!({
+            "base": base.name,
+            "query": query,
+            "embedding_model": "ragflow",
+            "top_k": top_k,
+            "request": request,
+            "hits": build_admin_ragflow_knowledge_test_hits(hits)
+        })))
     } else {
         let _ = resolve_knowledge_root(&base, false)?;
         let llm_config = knowledge::resolve_llm_config(&config, None);
@@ -2512,6 +2751,21 @@ async fn admin_knowledge_chunk_update(
     }
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, base_name)?;
+    if base.is_ragflow() {
+        ragflow_knowledge::update_chunk(
+            &config,
+            &base,
+            doc_id,
+            payload.chunk_index,
+            &payload.content,
+        )
+        .await
+        .map_err(vector_error_response)?;
+        let meta = ragflow_knowledge::read_document_meta(&config, &base, doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "ok": true, "doc": meta })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let root_for_lock = root.clone();
@@ -2597,6 +2851,15 @@ async fn admin_knowledge_chunk_embed(
     }
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, base_name)?;
+    if base.is_ragflow() {
+        ragflow_knowledge::set_chunk_available(&config, &base, doc_id, payload.chunk_index, true)
+            .await
+            .map_err(vector_error_response)?;
+        let meta = ragflow_knowledge::read_document_meta(&config, &base, doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "ok": true, "doc": meta })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let root_for_lock = root.clone();
@@ -2728,6 +2991,15 @@ async fn admin_knowledge_chunk_delete(
     }
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, base_name)?;
+    if base.is_ragflow() {
+        ragflow_knowledge::delete_chunk(&config, &base, doc_id, payload.chunk_index)
+            .await
+            .map_err(vector_error_response)?;
+        let meta = ragflow_knowledge::read_document_meta(&config, &base, doc_id)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({ "ok": true, "doc": meta })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, false)?;
     let root_for_lock = root.clone();
@@ -2807,6 +3079,29 @@ async fn admin_knowledge_reindex(
     }
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, base_name)?;
+    if base.is_ragflow() {
+        let mut targets = Vec::new();
+        if let Some(doc_id) = payload.doc_id.as_deref() {
+            let cleaned = doc_id.trim();
+            if !cleaned.is_empty() {
+                targets.push(cleaned.to_string());
+            }
+        }
+        if targets.is_empty() {
+            let docs = ragflow_knowledge::list_documents(&config, &base)
+                .await
+                .map_err(vector_error_response)?;
+            targets = docs.into_iter().map(|doc| doc.doc_id).collect();
+        }
+        ragflow_knowledge::reparse_documents(&config, &base, &targets)
+            .await
+            .map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "ok": true,
+            "reindexed": targets,
+            "failed": []
+        })));
+    }
     ensure_vector_base(&base)?;
     let root = resolve_vector_root_for_admin(&base, true)?;
     let base_name = base.name.clone();
@@ -2927,6 +3222,30 @@ async fn admin_knowledge_upload(
     };
     let config = state.config_store.get().await;
     let base_config = resolve_knowledge_base(&config, &base)?;
+    if base_config.is_ragflow() {
+        let temp_dir = upload.temp_dir.clone();
+        let result = ragflow_knowledge::upload_document(
+            &config,
+            &base_config,
+            ragflow_knowledge::RagflowUpload {
+                filename: upload.filename.clone(),
+                input_path: upload.input_path.clone(),
+            },
+        )
+        .await;
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        let doc = result.map_err(vector_error_response)?;
+        return Ok(Json(json!({
+            "ok": true,
+            "message": i18n::t("message.upload_converted"),
+            "doc_id": doc.doc_id,
+            "doc_name": doc.name,
+            "chunk_count": doc.chunk_count,
+            "embedding_model": doc.embedding_model,
+            "converter": "ragflow",
+            "warnings": []
+        })));
+    }
     if base_config.is_vector() {
         let root = resolve_vector_root_for_admin(&base_config, true)?;
         let storage = state.storage.clone();
@@ -2997,6 +3316,13 @@ async fn admin_knowledge_upload(
         shared: base_config.shared,
         base_type: base_config.base_type.clone(),
         embedding_model: base_config.embedding_model.clone(),
+        ragflow_dataset_id: base_config.ragflow_dataset_id.clone(),
+        chunk_method: base_config.chunk_method.clone(),
+        chunk_delimiter: base_config.chunk_delimiter.clone(),
+        layout_recognize: base_config.layout_recognize.clone(),
+        auto_keywords: base_config.auto_keywords,
+        auto_questions: base_config.auto_questions,
+        html4excel: base_config.html4excel,
         chunk_size: base_config.chunk_size,
         chunk_overlap: base_config.chunk_overlap,
         top_k: base_config.top_k,
@@ -3025,7 +3351,7 @@ async fn admin_knowledge_refresh(
     }
     let config = state.config_store.get().await;
     let base_config = resolve_knowledge_base(&config, base)?;
-    if base_config.is_vector() {
+    if base_config.is_vector() || base_config.is_ragflow() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.vector_knowledge_requires_reindex"),
@@ -3040,6 +3366,13 @@ async fn admin_knowledge_refresh(
         shared: base_config.shared,
         base_type: base_config.base_type.clone(),
         embedding_model: base_config.embedding_model.clone(),
+        ragflow_dataset_id: base_config.ragflow_dataset_id.clone(),
+        chunk_method: base_config.chunk_method.clone(),
+        chunk_delimiter: base_config.chunk_delimiter.clone(),
+        layout_recognize: base_config.layout_recognize.clone(),
+        auto_keywords: base_config.auto_keywords,
+        auto_questions: base_config.auto_questions,
+        html4excel: base_config.html4excel,
         chunk_size: base_config.chunk_size,
         chunk_overlap: base_config.chunk_overlap,
         top_k: base_config.top_k,
@@ -3224,6 +3557,11 @@ fn build_system_settings_payload(config: &Config) -> Value {
             "editor_url": config.drawio.editor_url.clone().unwrap_or_default(),
             "max_file_bytes": config.drawio.max_file_bytes,
         },
+        "ragflow": {
+            "base_url": config.ragflow.base_url.clone(),
+            "api_key": config.ragflow.api_key.clone().unwrap_or_default(),
+            "timeout_s": config.ragflow.timeout_s,
+        },
         "firecrawl": {
             "provider": config.tools.web.fetch.provider(),
             "api_key": config.tools.web.fetch.firecrawl.api_key().unwrap_or_default(),
@@ -3252,6 +3590,7 @@ async fn admin_system_update(
         || payload.cors.is_some()
         || payload.onlyoffice.is_some()
         || payload.drawio.is_some()
+        || payload.ragflow.is_some()
         || payload.firecrawl.is_some();
     if !has_updates {
         return Err(error_response(
@@ -3430,6 +3769,18 @@ async fn admin_system_update(
                 }
                 if let Some(max_file_bytes) = drawio.max_file_bytes {
                     config.drawio.max_file_bytes = max_file_bytes.clamp(1024, 200 * 1024 * 1024);
+                }
+            }
+            if let Some(ragflow) = payload.ragflow {
+                if let Some(base_url) = ragflow.base_url {
+                    let cleaned = base_url.trim();
+                    config.ragflow.base_url = cleaned.trim_end_matches('/').to_string();
+                }
+                if let Some(api_key) = ragflow.api_key {
+                    config.ragflow.api_key = normalize_optional_config_string(api_key);
+                }
+                if let Some(timeout_s) = ragflow.timeout_s {
+                    config.ragflow.timeout_s = timeout_s.clamp(1, 600);
                 }
             }
             if let Some(firecrawl) = payload.firecrawl {
@@ -5369,10 +5720,10 @@ async fn admin_user_accounts_create(
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if let Err(err) =
-        crate::services::user_agent_presets::ensure_user_preset_agents(&state, &record).await
+        crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &record).await
     {
         tracing::warn!(
-            "failed to sync preset agents after admin user create for {}: {err}",
+            "failed to bootstrap user agents after admin user create for {}: {err}",
             record.user_id
         );
     }
@@ -7378,7 +7729,7 @@ fn resolve_knowledge_path(root: &Path, relative_path: &str) -> Result<PathBuf, R
     Ok(resolved)
 }
 
-fn normalize_admin_knowledge_bases(
+async fn normalize_admin_knowledge_bases(
     config: &Config,
     bases: Vec<KnowledgeBaseConfig>,
 ) -> Result<Vec<KnowledgeBaseConfig>, Response> {
@@ -7411,6 +7762,35 @@ fn normalize_admin_knowledge_bases(
             base.root = root.to_string_lossy().to_string();
             base.base_type = Some("vector".to_string());
             base.embedding_model = Some(embedding_model);
+            base.ragflow_dataset_id = None;
+            base.chunk_method = None;
+            base.chunk_delimiter = None;
+            base.layout_recognize = None;
+            base.auto_keywords = None;
+            base.auto_questions = None;
+            base.html4excel = None;
+        } else if base_type == KnowledgeBaseType::Ragflow {
+            base.base_type = Some("ragflow".to_string());
+            base.embedding_model = None;
+            base.chunk_method =
+                ragflow_knowledge::normalize_chunk_method(base.chunk_method.as_deref());
+            base.chunk_delimiter =
+                ragflow_knowledge::normalize_chunk_delimiter(base.chunk_delimiter.as_deref());
+            base.layout_recognize =
+                ragflow_knowledge::normalize_layout_recognize(base.layout_recognize.as_deref());
+            base.auto_keywords = base.auto_keywords.map(|value| value.min(32));
+            base.auto_questions = base.auto_questions.map(|value| value.min(10));
+            base.ragflow_dataset_id =
+                ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
+                    .or_else(|| ragflow_knowledge::normalize_synthetic_root_dataset_id(&base.root));
+            if base.ragflow_dataset_id.is_none() {
+                let dataset_id = ragflow_knowledge::create_dataset(config, &base)
+                    .await
+                    .map_err(vector_error_response)?;
+                base.ragflow_dataset_id = Some(dataset_id);
+            }
+            base.root =
+                ragflow_knowledge::synthetic_root(base.ragflow_dataset_id.as_deref().unwrap_or(""));
         } else {
             if base.root.trim().is_empty() {
                 base.root = repo_assets::default_literal_knowledge_root(&base.name);
@@ -7419,6 +7799,13 @@ fn normalize_admin_knowledge_bases(
             }
             base.base_type = None;
             base.embedding_model = None;
+            base.ragflow_dataset_id = None;
+            base.chunk_method = None;
+            base.chunk_delimiter = None;
+            base.layout_recognize = None;
+            base.auto_keywords = None;
+            base.auto_questions = None;
+            base.html4excel = None;
         }
         output.push(base);
     }
@@ -8244,6 +8631,8 @@ struct SystemUpdateRequest {
     #[serde(default)]
     drawio: Option<SystemDrawioUpdateRequest>,
     #[serde(default)]
+    ragflow: Option<SystemRagflowUpdateRequest>,
+    #[serde(default)]
     firecrawl: Option<SystemFirecrawlUpdateRequest>,
 }
 
@@ -8333,6 +8722,16 @@ struct SystemDrawioUpdateRequest {
     editor_url: Option<String>,
     #[serde(default)]
     max_file_bytes: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemRagflowUpdateRequest {
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    timeout_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

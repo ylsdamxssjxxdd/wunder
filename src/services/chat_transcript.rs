@@ -34,7 +34,9 @@ pub fn build_chat_transcript(
     let mut cursor = TranscriptCursor::default();
     let mut transcript = Vec::new();
     for item in history {
-        if let Some(message) = map_transcript_message(session_id, item, message_feedback, &mut cursor) {
+        if let Some(message) =
+            map_transcript_message(session_id, item, message_feedback, &mut cursor)
+        {
             transcript.push(message);
         }
     }
@@ -62,7 +64,9 @@ fn map_transcript_message(
     } else {
         ""
     };
-    if role == "assistant" && should_hide_assistant_history_item(&item, &raw_content, &content, reasoning) {
+    if role == "assistant"
+        && should_hide_assistant_history_item(&item, &raw_content, &content, reasoning)
+    {
         return None;
     }
 
@@ -72,7 +76,8 @@ fn map_transcript_message(
         .and_then(Value::as_str)
         .map(format_ts_text)
         .unwrap_or_default();
-    let raw_user_round = positive_i64(item.get("user_round")).or_else(|| positive_i64(item.get("round")));
+    let raw_user_round =
+        positive_i64(item.get("user_round")).or_else(|| positive_i64(item.get("round")));
     let raw_model_round = positive_i64(item.get("model_round"));
     let (user_turn_index, model_turn_index) = if role == "user" {
         cursor.user_turn_index = cursor.user_turn_index.saturating_add(1);
@@ -281,9 +286,11 @@ fn is_hidden_internal_history_message(item: &Value) -> bool {
 
 fn positive_i64(value: Option<&Value>) -> Option<i64> {
     let parsed = value.and_then(|value| {
-        value
-            .as_i64()
-            .or_else(|| value.as_str().and_then(|text| text.trim().parse::<i64>().ok()))
+        value.as_i64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<i64>().ok())
+        })
     })?;
     (parsed > 0).then_some(parsed)
 }
@@ -315,7 +322,12 @@ mod tests {
         let transcript = build_chat_transcript("sess", history, &HashMap::new());
         let ids = transcript
             .iter()
-            .map(|item| item.get("model_turn_id").and_then(Value::as_str).unwrap_or("").to_string())
+            .map(|item| {
+                item.get("model_turn_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(transcript.len(), 5);

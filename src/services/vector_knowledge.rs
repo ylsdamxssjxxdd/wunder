@@ -89,6 +89,8 @@ pub struct VectorChunkPreview {
     pub index: usize,
     pub start: usize,
     pub end: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_id: Option<String>,
     pub preview: String,
     pub content: String,
     pub status: String,
@@ -625,6 +627,7 @@ pub async fn build_chunk_previews(
                 index: chunk.index,
                 start: chunk.start,
                 end: chunk.end,
+                chunk_id: None,
                 preview,
                 content: slice,
                 status,
@@ -658,8 +661,8 @@ pub async fn query_chunks_by_text(
         else {
             continue;
         };
-        let chunks = serde_json::from_str::<Vec<VectorChunkMeta>>(&record.chunks_json)
-            .unwrap_or_default();
+        let chunks =
+            serde_json::from_str::<Vec<VectorChunkMeta>>(&record.chunks_json).unwrap_or_default();
         let meta = VectorDocumentMeta {
             doc_id: record.doc_id.clone(),
             name: record.doc_name.clone(),
@@ -682,12 +685,8 @@ pub async fn query_chunks_by_text(
             if chunk_content.trim().is_empty() {
                 continue;
             }
-            let score = score_text_chunk(
-                &record.doc_name,
-                &chunk_content,
-                &normalized_query,
-                &tokens,
-            );
+            let score =
+                score_text_chunk(&record.doc_name, &chunk_content, &normalized_query, &tokens);
             if score <= 0 {
                 continue;
             }

@@ -1,10 +1,10 @@
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20260602-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { buildHeadingHighlightHtml, escapeHtml, formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20260602-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 
 const knowledgeModal = document.getElementById("knowledgeModal");
@@ -14,6 +14,23 @@ const knowledgeModalTypeRow = document.getElementById("knowledgeModalTypeRow");
 const knowledgeModalType = document.getElementById("knowledgeModalType");
 const knowledgeModalEmbeddingRow = document.getElementById("knowledgeModalEmbeddingRow");
 const knowledgeModalEmbeddingModel = document.getElementById("knowledgeModalEmbeddingModel");
+const knowledgeModalChunkMethodRow = document.getElementById("knowledgeModalChunkMethodRow");
+const knowledgeModalChunkMethod = document.getElementById("knowledgeModalChunkMethod");
+const knowledgeModalChunkMethodDesc = document.getElementById("knowledgeModalChunkMethodDesc");
+const knowledgeModalRagflowNoOptions = document.getElementById("knowledgeModalRagflowNoOptions");
+const knowledgeModalRagflowParserRow = document.getElementById("knowledgeModalRagflowParserRow");
+const knowledgeModalRagflowLayoutRow = document.getElementById("knowledgeModalRagflowLayoutRow");
+const knowledgeModalRagflowLayout = document.getElementById("knowledgeModalRagflowLayout");
+const knowledgeModalRagflowChunkSizeRow = document.getElementById("knowledgeModalRagflowChunkSizeRow");
+const knowledgeModalRagflowChunkSize = document.getElementById("knowledgeModalRagflowChunkSize");
+const knowledgeModalRagflowDelimiterRow = document.getElementById("knowledgeModalRagflowDelimiterRow");
+const knowledgeModalRagflowDelimiter = document.getElementById("knowledgeModalRagflowDelimiter");
+const knowledgeModalRagflowAutoKeywordsRow = document.getElementById("knowledgeModalRagflowAutoKeywordsRow");
+const knowledgeModalRagflowAutoKeywords = document.getElementById("knowledgeModalRagflowAutoKeywords");
+const knowledgeModalRagflowAutoQuestionsRow = document.getElementById("knowledgeModalRagflowAutoQuestionsRow");
+const knowledgeModalRagflowAutoQuestions = document.getElementById("knowledgeModalRagflowAutoQuestions");
+const knowledgeModalRagflowHtml4ExcelRow = document.getElementById("knowledgeModalRagflowHtml4ExcelRow");
+const knowledgeModalRagflowHtml4Excel = document.getElementById("knowledgeModalRagflowHtml4Excel");
 const knowledgeModalChunkRow = document.getElementById("knowledgeModalChunkRow");
 const knowledgeModalChunkSize = document.getElementById("knowledgeModalChunkSize");
 const knowledgeModalChunkOverlap = document.getElementById("knowledgeModalChunkOverlap");
@@ -193,6 +210,55 @@ const SUPPORTED_UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
 const DEFAULT_ROOT_PLACEHOLDER =
   knowledgeModalRoot?.getAttribute("placeholder") || "可留空，自动创建 ./config/knowledge/<名称>";
 
+const RAGFLOW_CHUNK_METHODS = new Set([
+  "naive",
+  "qa",
+  "resume",
+  "manual",
+  "table",
+  "paper",
+  "book",
+  "laws",
+  "presentation",
+  "picture",
+  "one",
+  "email",
+  "tag",
+]);
+const RAGFLOW_CHUNK_METHOD_INFO = {
+  naive: "knowledge.chunkMethodDesc.naive",
+  qa: "knowledge.chunkMethodDesc.qa",
+  resume: "knowledge.chunkMethodDesc.resume",
+  manual: "knowledge.chunkMethodDesc.manual",
+  table: "knowledge.chunkMethodDesc.table",
+  paper: "knowledge.chunkMethodDesc.paper",
+  book: "knowledge.chunkMethodDesc.book",
+  laws: "knowledge.chunkMethodDesc.laws",
+  presentation: "knowledge.chunkMethodDesc.presentation",
+  picture: "knowledge.chunkMethodDesc.picture",
+  one: "knowledge.chunkMethodDesc.one",
+  email: "knowledge.chunkMethodDesc.email",
+  tag: "knowledge.chunkMethodDesc.tag",
+};
+const RAGFLOW_LAYOUT_OPTIONS = [
+  "DeepDOC",
+  "Plain Text",
+  "Docling",
+  "OpenDataLoader",
+  "TCADP Parser",
+];
+const RAGFLOW_METHOD_FEATURES = {
+  naive: { layout: true, chunkSize: true, delimiter: true, auto: true, html4excel: true },
+  manual: { layout: true, auto: true },
+  paper: { layout: true, auto: true },
+  book: { layout: true, auto: true },
+  laws: { layout: true, auto: true },
+  presentation: { layout: true, auto: true },
+  one: { layout: true, auto: true },
+  email: { auto: true },
+  picture: { auto: true },
+};
+
 const normalizeBaseType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) {
@@ -201,8 +267,33 @@ const normalizeBaseType = (value) => {
   if (raw === "vector" || raw === "embedding") {
     return "vector";
   }
+  if (raw === "ragflow" || raw === "rag_flow") {
+    return "ragflow";
+  }
   return "literal";
 };
+
+const normalizeRagflowChunkMethod = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "general") {
+    return "naive";
+  }
+  if (raw === "q&a" || raw === "qna") {
+    return "qa";
+  }
+  return RAGFLOW_CHUNK_METHODS.has(raw) ? raw : "naive";
+};
+
+const normalizeRagflowLayout = (value) => {
+  const raw = String(value || "").trim();
+  const matched = RAGFLOW_LAYOUT_OPTIONS.find(
+    (option) => option.toLowerCase() === raw.toLowerCase()
+  );
+  return matched || "DeepDOC";
+};
+
+const resolveRagflowMethodFeatures = (method) =>
+  RAGFLOW_METHOD_FEATURES[normalizeRagflowChunkMethod(method)] || {};
 
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
@@ -216,6 +307,19 @@ const normalizeModelType = (value) => {
 };
 
 const isVectorBase = (base) => normalizeBaseType(base?.base_type) === "vector";
+const isRagflowBase = (base) => normalizeBaseType(base?.base_type) === "ragflow";
+const isIndexedBase = (base) => {
+  const type = normalizeBaseType(base?.base_type);
+  return type === "vector" || type === "ragflow";
+};
+
+const formatBaseTypeLabel = (base) => {
+  const type = normalizeBaseType(base?.base_type);
+  if (type === "ragflow") {
+    return t("knowledge.type.ragflow");
+  }
+  return type === "vector" ? t("knowledge.type.vector") : t("knowledge.type.literal");
+};
 
 const parseOptionalInt = (value) => {
   if (value === null || value === undefined || value === "") {
@@ -233,6 +337,29 @@ const parseOptionalFloat = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const clampOptionalInt = (value, min, max) => {
+  const parsed = parseOptionalInt(value);
+  if (parsed === null) {
+    return null;
+  }
+  return Math.min(Math.max(parsed, min), max);
+};
+
+const buildRagflowParserPayload = (source) => {
+  const chunkMethod = normalizeRagflowChunkMethod(source?.chunk_method);
+  const features = resolveRagflowMethodFeatures(chunkMethod);
+  return {
+    chunk_method: chunkMethod,
+    chunk_delimiter: features.delimiter ? source?.chunk_delimiter || "" : "",
+    layout_recognize: features.layout ? normalizeRagflowLayout(source?.layout_recognize) : "",
+    auto_keywords: features.auto ? clampOptionalInt(source?.auto_keywords, 0, 32) : null,
+    auto_questions: features.auto ? clampOptionalInt(source?.auto_questions, 0, 10) : null,
+    html4excel: features.html4excel ? source?.html4excel === true : null,
+    chunk_size: features.chunkSize ? clampOptionalInt(source?.chunk_size, 1, 2048) : null,
+    chunk_overlap: null,
+  };
+};
+
 // 规范化知识库配置，确保字段齐全
 const normalizeKnowledgeConfig = (raw) => {
   const config = raw || {};
@@ -245,6 +372,19 @@ const normalizeKnowledgeConfig = (raw) => {
           enabled: base.enabled !== false,
           base_type: normalizeBaseType(base.base_type),
           embedding_model: base.embedding_model || "",
+          ragflow_dataset_id: base.ragflow_dataset_id || "",
+          chunk_method:
+            normalizeBaseType(base.base_type) === "ragflow"
+              ? normalizeRagflowChunkMethod(base.chunk_method)
+              : "",
+          chunk_delimiter: base.chunk_delimiter || "",
+          layout_recognize:
+            normalizeBaseType(base.base_type) === "ragflow"
+              ? normalizeRagflowLayout(base.layout_recognize)
+              : "",
+          auto_keywords: parseOptionalInt(base.auto_keywords),
+          auto_questions: parseOptionalInt(base.auto_questions),
+          html4excel: base.html4excel === true,
           chunk_size: parseOptionalInt(base.chunk_size),
           chunk_overlap: parseOptionalInt(base.chunk_overlap),
           top_k: parseOptionalInt(base.top_k),
@@ -299,6 +439,8 @@ const buildDocMetaText = (meta) => {
 const applyKnowledgeModalType = (baseType) => {
   const type = normalizeBaseType(baseType);
   const isVector = type === "vector";
+  const isRagflow = type === "ragflow";
+  const indexedMode = isVector || isRagflow;
   const toggleRow = (element, visible, displayStyle = "") => {
     if (!element) {
       return;
@@ -316,22 +458,94 @@ const applyKnowledgeModalType = (baseType) => {
     knowledgeModalType.value = type;
   }
   toggleRow(knowledgeModalEmbeddingRow, isVector, "");
+  toggleRow(knowledgeModalChunkMethodRow, isRagflow, "");
   toggleRow(knowledgeModalChunkRow, isVector, "grid");
-  toggleRow(knowledgeModalSearchRow, isVector, "grid");
+  toggleRow(knowledgeModalSearchRow, indexedMode, "grid");
   setInputEnabled(knowledgeModalEmbeddingModel, isVector);
+  setInputEnabled(knowledgeModalChunkMethod, isRagflow);
   setInputEnabled(knowledgeModalChunkSize, isVector);
   setInputEnabled(knowledgeModalChunkOverlap, isVector);
-  setInputEnabled(knowledgeModalTopK, isVector);
-  setInputEnabled(knowledgeModalScoreThreshold, isVector);
+  setInputEnabled(knowledgeModalTopK, indexedMode);
+  setInputEnabled(knowledgeModalScoreThreshold, indexedMode);
+  if (knowledgeModalChunkMethod) {
+    knowledgeModalChunkMethod.value = isRagflow
+      ? normalizeRagflowChunkMethod(knowledgeModalChunkMethod.value)
+      : "naive";
+  }
+  applyRagflowParserVisibility(isRagflow);
   if (knowledgeModalRoot) {
-    knowledgeModalRoot.disabled = isVector;
-    knowledgeModalRoot.placeholder = isVector
-      ? t("knowledge.modal.placeholder.vectorRoot")
-      : DEFAULT_ROOT_PLACEHOLDER;
+    knowledgeModalRoot.disabled = indexedMode;
+    knowledgeModalRoot.placeholder = isRagflow
+      ? t("knowledge.modal.placeholder.ragflowRoot")
+      : indexedMode
+        ? t("knowledge.modal.placeholder.vectorRoot")
+        : DEFAULT_ROOT_PLACEHOLDER;
   }
   if (knowledgeModalRootHint) {
-    knowledgeModalRootHint.hidden = !isVector;
-    knowledgeModalRootHint.style.display = isVector ? "" : "none";
+    knowledgeModalRootHint.hidden = !indexedMode;
+    knowledgeModalRootHint.style.display = indexedMode ? "" : "none";
+    knowledgeModalRootHint.textContent = isRagflow
+      ? t("knowledge.modal.tip.ragflowRoot")
+      : t("knowledge.modal.tip.vectorRoot");
+  }
+};
+
+const applyRagflowParserVisibility = (isRagflow = true) => {
+  const method = normalizeRagflowChunkMethod(knowledgeModalChunkMethod?.value);
+  const features = isRagflow ? resolveRagflowMethodFeatures(method) : {};
+  const hasOptions =
+    Boolean(features.layout) ||
+    Boolean(features.chunkSize) ||
+    Boolean(features.delimiter) ||
+    Boolean(features.auto) ||
+    Boolean(features.html4excel);
+  const toggleRow = (element, visible, displayStyle = "") => {
+    if (!element) {
+      return;
+    }
+    element.hidden = !visible;
+    element.style.display = visible ? displayStyle : "none";
+  };
+  toggleRow(knowledgeModalChunkMethodDesc, isRagflow, "");
+  if (knowledgeModalChunkMethodDesc) {
+    knowledgeModalChunkMethodDesc.textContent = isRagflow
+      ? t(RAGFLOW_CHUNK_METHOD_INFO[method] || "knowledge.chunkMethodDesc.naive")
+      : "";
+  }
+  toggleRow(knowledgeModalRagflowParserRow, isRagflow && hasOptions, "grid");
+  toggleRow(knowledgeModalRagflowNoOptions, isRagflow && !hasOptions, "");
+  if (knowledgeModalRagflowNoOptions) {
+    knowledgeModalRagflowNoOptions.textContent = t("knowledge.modal.tip.ragflowNoExtraSettings");
+  }
+  toggleRow(knowledgeModalRagflowLayoutRow, isRagflow && Boolean(features.layout), "");
+  toggleRow(knowledgeModalRagflowChunkSizeRow, isRagflow && Boolean(features.chunkSize), "");
+  toggleRow(knowledgeModalRagflowDelimiterRow, isRagflow && Boolean(features.delimiter), "");
+  toggleRow(knowledgeModalRagflowAutoKeywordsRow, isRagflow && Boolean(features.auto), "");
+  toggleRow(knowledgeModalRagflowAutoQuestionsRow, isRagflow && Boolean(features.auto), "");
+  toggleRow(knowledgeModalRagflowHtml4ExcelRow, isRagflow && Boolean(features.html4excel), "");
+};
+
+const normalizeRagflowModalHiddenValues = () => {
+  const features = resolveRagflowMethodFeatures(knowledgeModalChunkMethod?.value);
+  if (!features.layout && knowledgeModalRagflowLayout) {
+    knowledgeModalRagflowLayout.value = "DeepDOC";
+  }
+  if (!features.chunkSize && knowledgeModalRagflowChunkSize) {
+    knowledgeModalRagflowChunkSize.value = "";
+  }
+  if (!features.delimiter && knowledgeModalRagflowDelimiter) {
+    knowledgeModalRagflowDelimiter.value = "";
+  }
+  if (!features.auto) {
+    if (knowledgeModalRagflowAutoKeywords) {
+      knowledgeModalRagflowAutoKeywords.value = "";
+    }
+    if (knowledgeModalRagflowAutoQuestions) {
+      knowledgeModalRagflowAutoQuestions.value = "";
+    }
+  }
+  if (!features.html4excel && knowledgeModalRagflowHtml4Excel) {
+    knowledgeModalRagflowHtml4Excel.checked = false;
   }
 };
 
@@ -397,8 +611,15 @@ const openKnowledgeModal = (base = null, index = -1) => {
     description: "",
     root: "",
     enabled: true,
-    base_type: "literal",
+    base_type: "ragflow",
     embedding_model: "",
+    ragflow_dataset_id: "",
+    chunk_method: "naive",
+    chunk_delimiter: "",
+    layout_recognize: "DeepDOC",
+    auto_keywords: null,
+    auto_questions: null,
+    html4excel: false,
     chunk_size: null,
     chunk_overlap: null,
     top_k: null,
@@ -418,18 +639,50 @@ const openKnowledgeModal = (base = null, index = -1) => {
   if (knowledgeModalEmbeddingModel) {
     knowledgeModalEmbeddingModel.value = payload.embedding_model || "";
   }
+  if (knowledgeModalChunkMethod) {
+    knowledgeModalChunkMethod.value =
+      baseType === "ragflow" ? normalizeRagflowChunkMethod(payload.chunk_method) : "naive";
+  }
+  if (knowledgeModalRagflowLayout) {
+    knowledgeModalRagflowLayout.value = normalizeRagflowLayout(payload.layout_recognize);
+  }
+  if (knowledgeModalRagflowChunkSize) {
+    knowledgeModalRagflowChunkSize.value =
+      baseType === "ragflow" && payload.chunk_size !== null && payload.chunk_size !== undefined
+        ? payload.chunk_size
+        : "";
+  }
+  if (knowledgeModalRagflowDelimiter) {
+    knowledgeModalRagflowDelimiter.value = payload.chunk_delimiter || "";
+  }
+  if (knowledgeModalRagflowAutoKeywords) {
+    knowledgeModalRagflowAutoKeywords.value =
+      payload.auto_keywords !== null && payload.auto_keywords !== undefined
+        ? payload.auto_keywords
+        : "";
+  }
+  if (knowledgeModalRagflowAutoQuestions) {
+    knowledgeModalRagflowAutoQuestions.value =
+      payload.auto_questions !== null && payload.auto_questions !== undefined
+        ? payload.auto_questions
+        : "";
+  }
+  if (knowledgeModalRagflowHtml4Excel) {
+    knowledgeModalRagflowHtml4Excel.checked = payload.html4excel === true;
+  }
   if (knowledgeModalChunkSize) {
     knowledgeModalChunkSize.value =
-      payload.chunk_size !== null && payload.chunk_size !== undefined
+      baseType === "vector" && payload.chunk_size !== null && payload.chunk_size !== undefined
         ? payload.chunk_size
         : "";
   }
   if (knowledgeModalChunkOverlap) {
     knowledgeModalChunkOverlap.value =
-      payload.chunk_overlap !== null && payload.chunk_overlap !== undefined
+      baseType === "vector" && payload.chunk_overlap !== null && payload.chunk_overlap !== undefined
         ? payload.chunk_overlap
         : "";
   }
+  applyRagflowParserVisibility(baseType === "ragflow");
   if (knowledgeModalTopK) {
     knowledgeModalTopK.value =
       payload.top_k !== null && payload.top_k !== undefined ? payload.top_k : "";
@@ -459,8 +712,10 @@ const openKnowledgeModal = (base = null, index = -1) => {
         notify(t("knowledge.embedding.empty"), "warn");
         console.warn(error);
       });
-  } else {
-    renderEmbeddingModelOptions(payload.embedding_model || "");
+  } else if (knowledgeModalEmbeddingModel) {
+    knowledgeModalEmbeddingModel.textContent = "";
+    knowledgeModalEmbeddingModel.value = "";
+    knowledgeModalEmbeddingModel.disabled = true;
   }
   knowledgeModalName?.focus();
 };
@@ -478,17 +733,45 @@ const closeKnowledgeModal = () => {
 const getKnowledgeModalPayload = () => {
   const baseType = normalizeBaseType(knowledgeModalType?.value);
   const isVector = baseType === "vector";
+  const isRagflow = baseType === "ragflow";
+  const indexedMode = isVector || baseType === "ragflow";
+  const existing =
+    knowledgeEditingIndex >= 0 ? state.knowledge.bases[knowledgeEditingIndex] || null : null;
+  const existingType = normalizeBaseType(existing?.base_type);
+  const rootValue = knowledgeModalRoot?.value?.trim() || "";
+  const ragflowParser = isRagflow
+    ? buildRagflowParserPayload({
+        chunk_method: knowledgeModalChunkMethod?.value,
+        chunk_delimiter: knowledgeModalRagflowDelimiter?.value,
+        layout_recognize: knowledgeModalRagflowLayout?.value,
+        auto_keywords: knowledgeModalRagflowAutoKeywords?.value,
+        auto_questions: knowledgeModalRagflowAutoQuestions?.value,
+        html4excel: knowledgeModalRagflowHtml4Excel?.checked === true,
+        chunk_size: knowledgeModalRagflowChunkSize?.value,
+      })
+    : {};
   return {
     name: knowledgeModalName?.value?.trim() || "",
     description: knowledgeModalDesc?.value?.trim() || "",
-    root: knowledgeModalRoot?.value?.trim() || "",
+    root: baseType === "ragflow" && existingType !== "ragflow" ? "" : rootValue,
     enabled: knowledgeModalEnabled ? knowledgeModalEnabled.checked : true,
     base_type: baseType,
     embedding_model: isVector ? knowledgeModalEmbeddingModel?.value?.trim() || "" : "",
-    chunk_size: isVector ? parseOptionalInt(knowledgeModalChunkSize?.value) : null,
+    ragflow_dataset_id: isRagflow ? existing?.ragflow_dataset_id || "" : "",
+    chunk_method: isRagflow ? ragflowParser.chunk_method : "",
+    chunk_delimiter: isRagflow ? ragflowParser.chunk_delimiter : "",
+    layout_recognize: isRagflow ? ragflowParser.layout_recognize : "",
+    auto_keywords: isRagflow ? ragflowParser.auto_keywords : null,
+    auto_questions: isRagflow ? ragflowParser.auto_questions : null,
+    html4excel: isRagflow ? ragflowParser.html4excel : null,
+    chunk_size: isRagflow
+      ? ragflowParser.chunk_size
+      : isVector
+        ? parseOptionalInt(knowledgeModalChunkSize?.value)
+        : null,
     chunk_overlap: isVector ? parseOptionalInt(knowledgeModalChunkOverlap?.value) : null,
-    top_k: isVector ? parseOptionalInt(knowledgeModalTopK?.value) : null,
-    score_threshold: isVector ? parseOptionalFloat(knowledgeModalScoreThreshold?.value) : null,
+    top_k: indexedMode ? parseOptionalInt(knowledgeModalTopK?.value) : null,
+    score_threshold: indexedMode ? parseOptionalFloat(knowledgeModalScoreThreshold?.value) : null,
   };
 };
 
@@ -528,8 +811,8 @@ const renderKnowledgeBaseList = () => {
     const meta = [];
     meta.push(base.root || t("knowledge.root.unset"));
     const isVector = isVectorBase(base);
-    const typeLabel = isVector ? t("knowledge.type.vector") : t("knowledge.type.literal");
-    meta.push(typeLabel);
+    const isRagflow = isRagflowBase(base);
+    meta.push(formatBaseTypeLabel(base));
     if (isVector && base.embedding_model) {
       meta.push(base.embedding_model);
     }
@@ -538,8 +821,10 @@ const renderKnowledgeBaseList = () => {
     titleWrap.className = "knowledge-list-item-title";
     const icon = document.createElement("i");
     icon.className = `fa-solid ${
-      isVector ? "fa-diagram-project" : "fa-file-lines"
-    } knowledge-type-icon ${isVector ? "is-vector" : "is-literal"}`;
+      isRagflow ? "fa-database" : isVector ? "fa-diagram-project" : "fa-file-lines"
+    } knowledge-type-icon ${
+      isRagflow ? "is-ragflow" : isVector ? "is-vector" : "is-literal"
+    }`;
     const titleText = document.createElement("span");
     titleText.className = "knowledge-list-item-name";
     titleText.textContent = title;
@@ -582,7 +867,7 @@ const renderKnowledgeDetailHeader = () => {
   elements.knowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
   const metaParts = [base.root || t("knowledge.root.unset")];
   metaParts.push(base.enabled !== false ? t("knowledge.status.enabled") : t("knowledge.status.disabled"));
-  metaParts.push(isVectorBase(base) ? t("knowledge.type.vector") : t("knowledge.type.literal"));
+  metaParts.push(formatBaseTypeLabel(base));
   if (isVectorBase(base) && base.embedding_model) {
     metaParts.push(base.embedding_model);
   }
@@ -604,7 +889,7 @@ const renderKnowledgeDetailHeader = () => {
 const renderKnowledgeDetail = () => {
   renderKnowledgeDetailHeader();
   const base = getActiveBase();
-  const vectorMode = base && isVectorBase(base);
+  const indexedMode = base && isIndexedBase(base);
   const toggleLayout = (element, visible, displayStyle) => {
     if (!element) {
       return;
@@ -612,8 +897,8 @@ const renderKnowledgeDetail = () => {
     element.hidden = !visible;
     element.style.display = visible ? displayStyle : "none";
   };
-  toggleLayout(elements.knowledgeFileLayout, !vectorMode, "grid");
-  toggleLayout(elements.knowledgeVectorLayout, vectorMode, "grid");
+  toggleLayout(elements.knowledgeFileLayout, !indexedMode, "grid");
+  toggleLayout(elements.knowledgeVectorLayout, indexedMode, "grid");
   const toggleButton = (element, visible) => {
     if (!element) {
       return;
@@ -621,14 +906,14 @@ const renderKnowledgeDetail = () => {
     element.disabled = !visible;
     element.style.display = visible ? "" : "none";
   };
-  const showLiteralActions = Boolean(base && !vectorMode);
-  const showVectorActions = Boolean(base && vectorMode);
+  const showLiteralActions = Boolean(base && !indexedMode);
+  const showVectorActions = Boolean(base && indexedMode);
   toggleButton(knowledgeFileUploadBtn, showLiteralActions);
   toggleButton(elements.knowledgeFileNewBtn, showLiteralActions);
   toggleButton(elements.knowledgeFileSaveBtn, showLiteralActions);
   toggleButton(elements.knowledgeDocUploadBtn, showVectorActions);
   toggleButton(elements.knowledgeDocRebuildAllBtn, showVectorActions);
-  if (vectorMode) {
+  if (indexedMode) {
     renderVectorDocList();
     renderVectorDocDetail();
   } else {
@@ -1564,7 +1849,7 @@ const createKnowledgeTestBlocks = (base) => {
     output: null,
     reasoning: null,
   };
-  if (!isVectorBase(base)) {
+  if (!isIndexedBase(base)) {
     blocks.output = appendKnowledgeTestBlock(
       "knowledge.test.output.title",
       "",
@@ -1795,18 +2080,35 @@ const runKnowledgeTest = async () => {
 };
 
 const buildKnowledgePayload = () => ({
-  bases: state.knowledge.bases.map((base) => ({
-    name: base.name.trim(),
-    description: base.description || "",
-    root: base.root.trim(),
-    enabled: base.enabled !== false,
-    base_type: normalizeBaseType(base.base_type),
-    embedding_model: base.embedding_model || "",
-    chunk_size: base.chunk_size ?? null,
-    chunk_overlap: base.chunk_overlap ?? null,
-    top_k: base.top_k ?? null,
-    score_threshold: base.score_threshold ?? null,
-  })),
+  bases: state.knowledge.bases.map((base) => {
+    const baseType = normalizeBaseType(base.base_type);
+    const ragflowParser = baseType === "ragflow" ? buildRagflowParserPayload(base) : {};
+    return {
+      name: base.name.trim(),
+      description: base.description || "",
+      root: base.root.trim(),
+      enabled: base.enabled !== false,
+      base_type: baseType,
+      embedding_model: baseType === "vector" ? base.embedding_model || "" : "",
+      ragflow_dataset_id: baseType === "ragflow" ? base.ragflow_dataset_id || "" : "",
+      chunk_method: baseType === "ragflow" ? ragflowParser.chunk_method : "",
+      chunk_delimiter: baseType === "ragflow" ? ragflowParser.chunk_delimiter : "",
+      layout_recognize: baseType === "ragflow" ? ragflowParser.layout_recognize : "",
+      auto_keywords: baseType === "ragflow" ? ragflowParser.auto_keywords : null,
+      auto_questions: baseType === "ragflow" ? ragflowParser.auto_questions : null,
+      html4excel: baseType === "ragflow" ? ragflowParser.html4excel : null,
+      chunk_size:
+        baseType === "ragflow"
+          ? ragflowParser.chunk_size
+          : baseType === "vector"
+            ? base.chunk_size ?? null
+            : null,
+      chunk_overlap: baseType === "vector" ? base.chunk_overlap ?? null : null,
+      top_k: baseType === "vector" || baseType === "ragflow" ? base.top_k ?? null : null,
+      score_threshold:
+        baseType === "vector" || baseType === "ragflow" ? base.score_threshold ?? null : null,
+    };
+  }),
 });
 
 const validateKnowledgePayload = (payload) => {
@@ -1901,7 +2203,7 @@ const uploadKnowledgeFile = async (file) => {
   if (!file) {
     return;
   }
-  const vectorMode = isVectorBase(base);
+  const indexedMode = isIndexedBase(base);
   const extension = normalizeUploadExtension(file.name);
   if (!extension) {
     notify(t("knowledge.file.extensionMissing"), "warn");
@@ -1916,7 +2218,7 @@ const uploadKnowledgeFile = async (file) => {
   const formData = new FormData();
   formData.append("base", base.name);
   formData.append("file", file, file.name);
-  setUploadButtonLoading(vectorMode, true);
+  setUploadButtonLoading(indexedMode, true);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -1927,7 +2229,7 @@ const uploadKnowledgeFile = async (file) => {
       throw new Error(detail || String(response.status));
     }
     const result = await response.json();
-    if (vectorMode) {
+    if (indexedMode) {
       await loadVectorDocs();
       if (result?.doc_id) {
         await selectVectorDoc(result.doc_id);
@@ -1945,7 +2247,7 @@ const uploadKnowledgeFile = async (file) => {
       notify(t("knowledge.file.warnings", { message: warnings.join(" | ") }), "warn");
     }
   } finally {
-    setUploadButtonLoading(vectorMode, false);
+    setUploadButtonLoading(indexedMode, false);
   }
 };
 
@@ -1958,7 +2260,7 @@ const loadKnowledgeFiles = async () => {
     renderKnowledgeFiles();
     return;
   }
-  if (isVectorBase(base)) {
+  if (isIndexedBase(base)) {
     state.knowledge.files = [];
     state.knowledge.activeFile = "";
     state.knowledge.fileContent = "";
@@ -1998,7 +2300,7 @@ const selectKnowledgeFile = async (filePath) => {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
-  if (isVectorBase(base)) {
+  if (isIndexedBase(base)) {
     notify(t("knowledge.vector.readonly"), "warn");
     return;
   }
@@ -2024,7 +2326,7 @@ const saveKnowledgeFile = async () => {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
-  if (isVectorBase(base)) {
+  if (isIndexedBase(base)) {
     notify(t("knowledge.vector.readonly"), "warn");
     return;
   }
@@ -2058,7 +2360,7 @@ const createKnowledgeFile = async () => {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
-  if (isVectorBase(base)) {
+  if (isIndexedBase(base)) {
     notify(t("knowledge.vector.readonly"), "warn");
     return;
   }
@@ -2084,7 +2386,7 @@ const deleteKnowledgeFile = async (targetPath = "") => {
     notify(t("knowledge.base.selectRequired"), "warn");
     return;
   }
-  if (isVectorBase(base)) {
+  if (isIndexedBase(base)) {
     notify(t("knowledge.vector.readonly"), "warn");
     return;
   }
@@ -2327,6 +2629,12 @@ export const initKnowledgePanel = () => {
   knowledgeModalType?.addEventListener("change", () => {
     const type = normalizeBaseType(knowledgeModalType.value);
     applyKnowledgeModalType(type);
+    if (type === "ragflow") {
+      normalizeRagflowModalHiddenValues();
+      applyRagflowParserVisibility(true);
+    } else {
+      applyRagflowParserVisibility(false);
+    }
     if (type === "vector") {
       loadEmbeddingModels(true)
         .then(() => {
@@ -2334,9 +2642,16 @@ export const initKnowledgePanel = () => {
         })
         .catch((error) => {
           notify(t("knowledge.embedding.empty"), "warn");
-          console.warn(error);
+      console.warn(error);
         });
     }
+  });
+  knowledgeModalChunkMethod?.addEventListener("change", () => {
+    if (knowledgeModalChunkMethod) {
+      knowledgeModalChunkMethod.value = normalizeRagflowChunkMethod(knowledgeModalChunkMethod.value);
+    }
+    normalizeRagflowModalHiddenValues();
+    applyRagflowParserVisibility(normalizeBaseType(knowledgeModalType?.value) === "ragflow");
   });
   knowledgeModal?.addEventListener("click", (event) => {
     if (event.target === knowledgeModal) {

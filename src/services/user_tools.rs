@@ -3,6 +3,7 @@ use crate::config::{Config, KnowledgeBaseType, McpServerConfig, McpToolSpec};
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
+use crate::ragflow_knowledge;
 use crate::schemas::ToolSpec;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
@@ -67,6 +68,20 @@ pub struct UserKnowledgeBase {
     pub base_type: Option<String>,
     #[serde(default)]
     pub embedding_model: Option<String>,
+    #[serde(default)]
+    pub ragflow_dataset_id: Option<String>,
+    #[serde(default)]
+    pub chunk_method: Option<String>,
+    #[serde(default)]
+    pub chunk_delimiter: Option<String>,
+    #[serde(default)]
+    pub layout_recognize: Option<String>,
+    #[serde(default)]
+    pub auto_keywords: Option<usize>,
+    #[serde(default)]
+    pub auto_questions: Option<usize>,
+    #[serde(default)]
+    pub html4excel: Option<bool>,
     #[serde(default)]
     pub chunk_size: Option<usize>,
     #[serde(default)]
@@ -401,6 +416,10 @@ impl UserToolStore {
     ) -> Result<PathBuf> {
         if base_type == KnowledgeBaseType::Vector {
             return vector_knowledge::resolve_vector_root(Some(user_id), base_name, create);
+        }
+        if base_type == KnowledgeBaseType::Ragflow {
+            let _ = create;
+            return Ok(PathBuf::from(ragflow_knowledge::synthetic_root(base_name)));
         }
         self.resolve_knowledge_base_root(user_id, base_name, create)
     }
@@ -1248,6 +1267,30 @@ fn parse_user_knowledge_base(value: &Value) -> Option<UserKnowledgeBase> {
             .and_then(Value::as_str)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
+        ragflow_dataset_id: obj
+            .get("ragflow_dataset_id")
+            .or_else(|| obj.get("dataset_id"))
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        chunk_method: obj
+            .get("chunk_method")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        chunk_delimiter: obj
+            .get("chunk_delimiter")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .filter(|value| !value.is_empty()),
+        layout_recognize: obj
+            .get("layout_recognize")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        auto_keywords: parse_optional_usize(obj.get("auto_keywords")),
+        auto_questions: parse_optional_usize(obj.get("auto_questions")),
+        html4excel: parse_optional_bool(obj.get("html4excel")),
         chunk_size: parse_optional_usize(obj.get("chunk_size")),
         chunk_overlap: parse_optional_usize(obj.get("chunk_overlap")),
         top_k: parse_optional_usize(obj.get("top_k")),
@@ -1376,6 +1419,13 @@ fn user_knowledge_base_to_value(base: &UserKnowledgeBase) -> Value {
         "shared": base.shared,
         "base_type": base.base_type,
         "embedding_model": base.embedding_model,
+        "ragflow_dataset_id": base.ragflow_dataset_id,
+        "chunk_method": base.chunk_method,
+        "chunk_delimiter": base.chunk_delimiter,
+        "layout_recognize": base.layout_recognize,
+        "auto_keywords": base.auto_keywords,
+        "auto_questions": base.auto_questions,
+        "html4excel": base.html4excel,
         "chunk_size": base.chunk_size,
         "chunk_overlap": base.chunk_overlap,
         "top_k": base.top_k,
@@ -1396,6 +1446,22 @@ fn parse_optional_f32(value: Option<&Value>) -> Option<f32> {
     match value {
         Some(Value::Number(num)) => num.as_f64().map(|value| value as f32),
         Some(Value::String(text)) => text.trim().parse::<f32>().ok(),
+        _ => None,
+    }
+}
+
+fn parse_optional_bool(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::Number(num)) => num.as_u64().map(|value| value != 0),
+        Some(Value::String(text)) => {
+            let raw = text.trim().to_ascii_lowercase();
+            match raw.as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }

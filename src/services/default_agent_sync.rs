@@ -205,6 +205,41 @@ pub async fn load_effective_default_agent_record(
     Ok(record_from_config(&owner.user_id, &config))
 }
 
+fn record_from_target_snapshot(
+    user: &UserAccountRecord,
+    template: &DefaultAgentConfig,
+    target: &UserAgentPresetSnapshot,
+    now: f64,
+) -> UserAgentRecord {
+    UserAgentRecord {
+        agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+        user_id: user.user_id.trim().to_string(),
+        hive_id: DEFAULT_HIVE_ID.to_string(),
+        name: target.name.clone(),
+        description: target.description.clone(),
+        system_prompt: target.system_prompt.clone(),
+        preview_skill: target.preview_skill,
+        model_name: None,
+        ability_items: target.ability_items.clone(),
+        tool_names: target.tool_names.clone(),
+        declared_tool_names: target.declared_tool_names.clone(),
+        declared_skill_names: target.declared_skill_names.clone(),
+        visible_unit_ids: target.visible_unit_ids.clone(),
+        preset_questions: target.preset_questions.clone(),
+        access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
+        approval_mode: target.approval_mode.clone(),
+        is_shared: false,
+        status: target.status.clone(),
+        icon: target.icon.clone(),
+        sandbox_container_id: target.sandbox_container_id,
+        created_at: now,
+        updated_at: now,
+        preset_binding: None,
+        silent: template.silent,
+        prefer_mother: template.prefer_mother,
+    }
+}
+
 fn snapshot_from_default_record(
     record: &UserAgentRecord,
     skill_name_keys: &HashSet<String>,
@@ -414,6 +449,45 @@ async fn persist_default_agent_state(
         state.user_store.upsert_user_agent(&legacy)?;
     }
     Ok(())
+}
+
+pub async fn ensure_user_default_agent_from_template(
+    state: &AppState,
+    user: &UserAccountRecord,
+) -> Result<bool> {
+    let user_id = user.user_id.trim();
+    if user_id.is_empty() || user_id == PRESET_TEMPLATE_USER_ID {
+        return Ok(false);
+    }
+    if !has_explicit_default_agent_state(state, PRESET_TEMPLATE_USER_ID)?
+        || has_explicit_default_agent_state(state, user_id)?
+    {
+        return Ok(false);
+    }
+
+    state.user_store.ensure_default_hive(user_id)?;
+    let template_record =
+        load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID).await?;
+    let template_skill_name_keys =
+        collect_user_skill_name_keys(state, PRESET_TEMPLATE_USER_ID).await;
+    let template_config = config_from_record(&template_record, &template_skill_name_keys);
+    let target = build_target_snapshot(state, user, &template_config).await;
+    let record = record_from_target_snapshot(user, &template_config, &target, now_ts());
+
+    persist_default_agent_state(state, user_id, &record, true).await?;
+    save_sync_binding(
+        state,
+        user_id,
+        &UserAgentPresetBinding {
+            preset_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+            preset_revision: 1,
+            last_applied: target,
+        },
+    )?;
+    if let Err(err) = state.inner_visible.sync_user_state(user_id).await {
+        tracing::warn!("failed to sync inner-visible default-agent state for {user_id}: {err}");
+    }
+    Ok(true)
 }
 
 pub async fn sync_default_agent_across_users(

@@ -90,6 +90,7 @@ use crate::orchestrator_constants::truncate_tool_result_text;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
+use crate::ragflow_knowledge;
 use crate::sandbox;
 use crate::schemas::WunderRequest;
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
@@ -5983,16 +5984,30 @@ async fn execute_user_knowledge(
     let base = KnowledgeBaseConfig {
         name: base_info.name.clone(),
         description: base_info.description.clone(),
-        root: root.to_string_lossy().to_string(),
+        root: if base_type == KnowledgeBaseType::Ragflow {
+            ragflow_knowledge::synthetic_root(base_info.ragflow_dataset_id.as_deref().unwrap_or(""))
+        } else {
+            root.to_string_lossy().to_string()
+        },
         enabled: base_info.enabled,
         shared: Some(base_info.shared),
         base_type: base_info.base_type.clone(),
         embedding_model: base_info.embedding_model.clone(),
+        ragflow_dataset_id: base_info.ragflow_dataset_id.clone(),
+        chunk_method: base_info.chunk_method.clone(),
+        chunk_delimiter: base_info.chunk_delimiter.clone(),
+        layout_recognize: base_info.layout_recognize.clone(),
+        auto_keywords: base_info.auto_keywords,
+        auto_questions: base_info.auto_questions,
+        html4excel: base_info.html4excel,
         chunk_size: base_info.chunk_size,
         chunk_overlap: base_info.chunk_overlap,
         top_k: base_info.top_k,
         score_threshold: base_info.score_threshold,
     };
+    if base_type == KnowledgeBaseType::Ragflow {
+        return execute_ragflow_knowledge(context, &base, args).await;
+    }
     if base_type == KnowledgeBaseType::Vector {
         return execute_vector_knowledge(context, &base, Some(&alias.owner_id), args).await;
     }
@@ -6051,6 +6066,9 @@ async fn execute_knowledge_tool(
     if base.is_vector() {
         return execute_vector_knowledge(context, base, None, args).await;
     }
+    if base.is_ragflow() {
+        return execute_ragflow_knowledge(context, base, args).await;
+    }
     let _ =
         knowledge::resolve_knowledge_root(base, false).map_err(|err| anyhow!(err.to_string()))?;
     let llm_config = knowledge::resolve_llm_config(context.config, None);
@@ -6097,6 +6115,109 @@ async fn execute_knowledge_tool(
     ))
 }
 
+async fn execute_ragflow_knowledge(
+    context: &ToolContext<'_>,
+    base: &KnowledgeBaseConfig,
+    args: &Value,
+) -> Result<Value> {
+    let keywords = extract_keywords(args);
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let queries = if !keywords.is_empty() {
+        keywords
+    } else if !query.is_empty() {
+        vec![query.clone()]
+    } else {
+        return Err(anyhow!(i18n::t("error.knowledge_query_required")));
+    };
+    ragflow_knowledge::ensure_ragflow_base_config(base)?;
+    let top_k = extract_limit(args).unwrap_or_else(|| ragflow_knowledge::resolve_top_k(base));
+    let mut grouped_results = Vec::new();
+    let mut flat_documents = Vec::new();
+    let multi_query = queries.len() > 1;
+    let mut seen_chunks = HashSet::new();
+    for keyword in &queries {
+        let hits = ragflow_knowledge::retrieve(context.config, base, keyword, top_k).await?;
+        let documents = hits
+            .into_iter()
+            .filter_map(|hit| {
+                if multi_query {
+                    let key = format!("{}::{}", hit.doc_id, hit.chunk_id);
+                    if !seen_chunks.insert(key) {
+                        return None;
+                    }
+                }
+                let mut doc = json!({
+                    "doc_id": hit.doc_id,
+                    "document": hit.doc_name,
+                    "name": hit.doc_name,
+                    "chunk_id": hit.chunk_id,
+                    "chunk_index": hit.chunk_index,
+                    "start": hit.start,
+                    "end": hit.end,
+                    "content": hit.content,
+                    "embedding_model": "ragflow",
+                    "score": hit.score
+                });
+                if multi_query {
+                    doc["keyword"] = json!(keyword);
+                }
+                Some(doc)
+            })
+            .collect::<Vec<_>>();
+        if multi_query {
+            flat_documents.extend(documents.clone());
+        }
+        grouped_results.push(json!({
+            "keyword": keyword,
+            "documents": documents
+        }));
+    }
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        let mut payload = json!({
+            "knowledge_base": base.name,
+            "vector": true,
+            "engine": "ragflow",
+            "embedding_model": "ragflow",
+            "limit": top_k,
+            "score_threshold": base.score_threshold,
+        });
+        if queries.len() == 1 {
+            payload["query"] = json!(queries[0].clone());
+        } else {
+            payload["keywords"] = json!(queries.clone());
+        }
+        emitter.emit("knowledge_request", payload);
+    }
+    let documents = if queries.len() == 1 {
+        grouped_results
+            .first()
+            .and_then(|value| value.get("documents"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        flat_documents
+    };
+    Ok(build_knowledge_tool_success(
+        &base.name,
+        if query.is_empty() {
+            None
+        } else {
+            Some(query.as_str())
+        },
+        &queries,
+        Some("ragflow"),
+        true,
+        documents,
+        (queries.len() > 1).then_some(grouped_results),
+    ))
+}
+
 async fn execute_vector_knowledge(
     context: &ToolContext<'_>,
     base: &KnowledgeBaseConfig,
@@ -6118,7 +6239,12 @@ async fn execute_vector_knowledge(
         return Err(anyhow!(i18n::t("error.knowledge_query_required")));
     };
     vector_knowledge::ensure_vector_base_type(base)?;
-    let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim().to_string();
+    let embedding_name = base
+        .embedding_model
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let owner_key = vector_knowledge::resolve_owner_key(owner_id);
     let top_k = extract_limit(args).unwrap_or_else(|| vector_knowledge::resolve_top_k(base));
     let base_name = base.name.clone();
@@ -6140,10 +6266,18 @@ async fn execute_vector_knowledge(
                             let score_threshold = base.score_threshold;
                             async move {
                                 let mut hits = client
-                                    .query_chunks(&owner_key, &base_name, &embedding_name, &vector, top_k)
+                                    .query_chunks(
+                                        &owner_key,
+                                        &base_name,
+                                        &embedding_name,
+                                        &vector,
+                                        top_k,
+                                    )
                                     .await?;
                                 if let Some(threshold) = score_threshold {
-                                    hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+                                    hits.retain(|hit| {
+                                        hit.score.unwrap_or(0.0) >= f64::from(threshold)
+                                    });
                                 }
                                 if hits.len() > top_k {
                                     hits.truncate(top_k);
@@ -6169,24 +6303,14 @@ async fn execute_vector_knowledge(
                         (aggregated, false)
                     } else {
                         let fallback = build_vector_literal_fallback_results(
-                            context,
-                            base,
-                            owner_id,
-                            &queries,
-                            top_k,
-                            &root,
+                            context, base, owner_id, &queries, top_k, &root,
                         )
                         .await?;
                         (fallback, true)
                     }
                 } else {
                     let fallback = build_vector_literal_fallback_results(
-                        context,
-                        base,
-                        owner_id,
-                        &queries,
-                        top_k,
-                        &root,
+                        context, base, owner_id, &queries, top_k, &root,
                     )
                     .await?;
                     (fallback, true)
@@ -6194,27 +6318,16 @@ async fn execute_vector_knowledge(
             }
             _ => {
                 let fallback = build_vector_literal_fallback_results(
-                    context,
-                    base,
-                    owner_id,
-                    &queries,
-                    top_k,
-                    &root,
+                    context, base, owner_id, &queries, top_k, &root,
                 )
                 .await?;
                 (fallback, true)
             }
         }
     } else {
-        let fallback = build_vector_literal_fallback_results(
-            context,
-            base,
-            owner_id,
-            &queries,
-            top_k,
-            &root,
-        )
-        .await?;
+        let fallback =
+            build_vector_literal_fallback_results(context, base, owner_id, &queries, top_k, &root)
+                .await?;
         (fallback, true)
     };
     let (aggregated, fallback_mode) = aggregated;

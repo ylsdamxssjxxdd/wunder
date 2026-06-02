@@ -2263,6 +2263,48 @@
                 </div>
               </div>
             </div>
+            <div class="settings-card settings-card-ragflow">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-database"></i>
+                <span data-i18n="settings.card.ragflow">RAGFlow</span>
+                <div class="settings-card-badges">
+                  <span class="settings-badge settings-badge--runtime" data-i18n="settings.badge.runtime">Live</span>
+                </div>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-grid settings-grid--auto">
+                  <div class="form-row form-row-span">
+                    <label for="settingsRagflowBaseUrl" data-i18n="settings.label.ragflowBaseUrl">
+                      RAGFlow address
+                    </label>
+                    <input
+                      id="settingsRagflowBaseUrl"
+                      type="url"
+                      placeholder="http://127.0.0.1:9380"
+                      data-i18n-placeholder="settings.placeholder.ragflowBaseUrl"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.ragflowBaseUrl">
+                      RAGFlow API address reachable by the Wunder backend.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="settingsRagflowApiKey" data-i18n="settings.label.ragflowApiKey">
+                      RAGFlow API key
+                    </label>
+                    <input
+                      id="settingsRagflowApiKey"
+                      type="password"
+                      autocomplete="off"
+                      placeholder="Optional for self-hosted"
+                      data-i18n-placeholder="settings.placeholder.ragflowApiKey"
+                    />
+                  </div>
+                </div>
+                <div class="settings-hint" data-i18n="settings.hint.ragflow">
+                  These settings only configure Wunder's RAGFlow connection.
+                </div>
+              </div>
+            </div>
             <div class="settings-card settings-card-firecrawl">
               <div class="settings-card-title">
                 <i class="fa-solid fa-fire"></i>
@@ -4730,13 +4772,98 @@
           <div id="knowledgeModalTypeRow" class="form-row">
             <label for="knowledgeModalType" data-i18n="knowledge.modal.field.type">类型</label>
             <select id="knowledgeModalType">
-              <option value="literal" data-i18n="knowledge.type.literal">字面知识库</option>
+              <option value="ragflow" data-i18n="knowledge.type.ragflow">RAGFlow</option>
               <option value="vector" data-i18n="knowledge.type.vector">向量知识库</option>
+              <option value="literal" data-i18n="knowledge.type.literal" hidden disabled>字面知识库</option>
             </select>
           </div>
           <div id="knowledgeModalEmbeddingRow" class="form-row" hidden>
             <label for="knowledgeModalEmbeddingModel" data-i18n="knowledge.modal.field.embeddingModel">嵌入模型</label>
             <select id="knowledgeModalEmbeddingModel"></select>
+          </div>
+          <div id="knowledgeModalChunkMethodRow" class="form-row" hidden>
+            <label for="knowledgeModalChunkMethod" data-i18n="knowledge.modal.field.chunkMethod">切片方式</label>
+            <select id="knowledgeModalChunkMethod">
+              <option value="naive" data-i18n="knowledge.chunkMethod.naive">通用</option>
+              <option value="qa" data-i18n="knowledge.chunkMethod.qa">问答</option>
+              <option value="resume" data-i18n="knowledge.chunkMethod.resume">简历</option>
+              <option value="manual" data-i18n="knowledge.chunkMethod.manual">手册</option>
+              <option value="table" data-i18n="knowledge.chunkMethod.table">表格</option>
+              <option value="paper" data-i18n="knowledge.chunkMethod.paper">论文</option>
+              <option value="book" data-i18n="knowledge.chunkMethod.book">书籍</option>
+              <option value="laws" data-i18n="knowledge.chunkMethod.laws">法律</option>
+              <option value="presentation" data-i18n="knowledge.chunkMethod.presentation">演示文稿</option>
+              <option value="picture" data-i18n="knowledge.chunkMethod.picture">图片</option>
+              <option value="one" data-i18n="knowledge.chunkMethod.one">单块</option>
+              <option value="email" data-i18n="knowledge.chunkMethod.email">邮件</option>
+              <option value="tag" data-i18n="knowledge.chunkMethod.tag">标签</option>
+            </select>
+            <div id="knowledgeModalChunkMethodDesc" class="muted" hidden></div>
+          </div>
+          <div id="knowledgeModalRagflowNoOptions" class="muted" hidden></div>
+          <div id="knowledgeModalRagflowParserRow" class="grid knowledge-modal-grid" hidden>
+            <div id="knowledgeModalRagflowLayoutRow" class="form-row" hidden>
+              <label for="knowledgeModalRagflowLayout" data-i18n="knowledge.modal.field.layoutRecognize">Layout parser</label>
+              <select id="knowledgeModalRagflowLayout">
+                <option value="DeepDOC" data-i18n="knowledge.layoutRecognize.deepdoc">DeepDOC</option>
+                <option value="Plain Text" data-i18n="knowledge.layoutRecognize.plainText">Plain Text</option>
+                <option value="Docling" data-i18n="knowledge.layoutRecognize.docling">Docling</option>
+                <option value="OpenDataLoader" data-i18n="knowledge.layoutRecognize.openDataLoader">OpenDataLoader</option>
+                <option value="TCADP Parser" data-i18n="knowledge.layoutRecognize.tcadpParser">TCADP Parser</option>
+              </select>
+            </div>
+            <div id="knowledgeModalRagflowChunkSizeRow" class="form-row" hidden>
+              <label for="knowledgeModalRagflowChunkSize" data-i18n="knowledge.modal.field.chunkSize">Chunk size</label>
+              <input
+                id="knowledgeModalRagflowChunkSize"
+                type="number"
+                min="1"
+                max="2048"
+                step="1"
+                placeholder="512"
+                data-i18n-placeholder="knowledge.modal.placeholder.ragflowChunkSize"
+              />
+            </div>
+            <div id="knowledgeModalRagflowDelimiterRow" class="form-row" hidden>
+              <label for="knowledgeModalRagflowDelimiter" data-i18n="knowledge.modal.field.chunkDelimiter">Delimiter</label>
+              <input
+                id="knowledgeModalRagflowDelimiter"
+                type="text"
+                placeholder="\n"
+                data-i18n-placeholder="knowledge.modal.placeholder.chunkDelimiter"
+              />
+            </div>
+            <div id="knowledgeModalRagflowAutoKeywordsRow" class="form-row" hidden>
+              <label for="knowledgeModalRagflowAutoKeywords" data-i18n="knowledge.modal.field.autoKeywords">Auto keywords</label>
+              <input
+                id="knowledgeModalRagflowAutoKeywords"
+                type="number"
+                min="0"
+                max="32"
+                step="1"
+                placeholder="0"
+                data-i18n-placeholder="knowledge.modal.placeholder.autoKeywords"
+              />
+            </div>
+            <div id="knowledgeModalRagflowAutoQuestionsRow" class="form-row" hidden>
+              <label for="knowledgeModalRagflowAutoQuestions" data-i18n="knowledge.modal.field.autoQuestions">Auto questions</label>
+              <input
+                id="knowledgeModalRagflowAutoQuestions"
+                type="number"
+                min="0"
+                max="10"
+                step="1"
+                placeholder="0"
+                data-i18n-placeholder="knowledge.modal.placeholder.autoQuestions"
+              />
+            </div>
+            <div id="knowledgeModalRagflowHtml4ExcelRow" class="form-row" hidden>
+              <label for="knowledgeModalRagflowHtml4Excel" data-i18n="knowledge.modal.field.html4excel">Excel to HTML</label>
+              <label class="checkbox-line">
+                <input id="knowledgeModalRagflowHtml4Excel" type="checkbox" />
+                <span data-i18n="knowledge.modal.tip.html4excel">Parse spreadsheets as HTML tables</span>
+              </label>
+            </div>
           </div>
           <div id="knowledgeModalChunkRow" class="grid knowledge-modal-grid" hidden>
             <div class="form-row">

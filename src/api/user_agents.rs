@@ -96,12 +96,12 @@ async fn list_agents(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
-    sync_inner_visible_before_user_read(&state, &user_id).await?;
     state
         .user_store
         .ensure_default_hive(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     ensure_preset_agents(&state, &resolved.user).await?;
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
     let agents = state
         .user_store
         .list_user_agents(&user_id)
@@ -2069,7 +2069,7 @@ async fn ensure_preset_agents(
     state: &AppState,
     user: &crate::storage::UserAccountRecord,
 ) -> Result<(), Response> {
-    crate::services::user_agent_presets::ensure_user_preset_agents(state, user)
+    crate::services::user_agent_presets::ensure_user_agent_bootstrap(state, user)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(())

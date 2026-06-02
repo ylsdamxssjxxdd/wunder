@@ -487,6 +487,17 @@ pub async fn ensure_user_preset_agents(state: &AppState, user: &UserAccountRecor
     Ok(changed)
 }
 
+pub async fn ensure_user_agent_bootstrap(
+    state: &AppState,
+    user: &UserAccountRecord,
+) -> Result<bool> {
+    let default_changed =
+        crate::services::default_agent_sync::ensure_user_default_agent_from_template(state, user)
+            .await?;
+    let preset_changed = ensure_user_preset_agents(state, user).await?;
+    Ok(default_changed || preset_changed)
+}
+
 fn baseline_snapshot(
     record: &UserAgentRecord,
     preset: &PresetAgent,

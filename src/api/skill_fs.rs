@@ -230,7 +230,8 @@ pub(crate) async fn user_skills_fs_content(
     headers: HeaderMap,
     Query(query): Query<UserSkillFsQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    let resolved =
+        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
     let normalized = normalize_relative_path(&query.path);
     let target = resolve_skill_target_path(
         &resolved.root,
@@ -257,7 +258,11 @@ pub(crate) async fn user_skills_fs_content(
         let (entries, total, current_path, parent) = list_skill_entries(
             &resolved.root,
             &normalized,
-            if keyword.is_empty() { None } else { Some(keyword) },
+            if keyword.is_empty() {
+                None
+            } else {
+                Some(keyword)
+            },
             safe_offset,
             safe_limit,
             query.sort_by.trim(),
@@ -347,7 +352,8 @@ pub(crate) async fn user_skills_fs_search(
     headers: HeaderMap,
     Query(query): Query<UserSkillFsSearchQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    let resolved =
+        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
     let offset = query.offset.max(0) as u64;
     let limit = query.limit.max(0) as u64;
     let (entries, total) = search_skill_entries(
@@ -376,13 +382,9 @@ pub(crate) async fn user_skills_fs_file_update(
     headers: HeaderMap,
     Json(payload): Json<UserSkillFileUpdate>,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
-    let resolved = resolve_skill_fs_writable(
-        &state,
-        &headers,
-        payload.user_id.as_deref(),
-        &payload.name,
-    )
-    .await?;
+    let resolved =
+        resolve_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
+            .await?;
     let normalized = normalize_relative_path(&payload.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -482,9 +484,10 @@ pub(crate) async fn user_skills_fs_upload(
             "files" => {
                 let filename = field.file_name().unwrap_or("upload").to_string();
                 if temp_dir.is_none() {
-                    temp_dir = Some(create_temp_upload_dir().map_err(|err| {
-                        error_response(StatusCode::BAD_REQUEST, err.to_string())
-                    })?);
+                    temp_dir =
+                        Some(create_temp_upload_dir().map_err(|err| {
+                            error_response(StatusCode::BAD_REQUEST, err.to_string())
+                        })?);
                 }
                 let Some(temp_dir_ref) = temp_dir.as_ref() else {
                     return Err(error_response(
@@ -538,10 +541,12 @@ pub(crate) async fn user_skills_fs_upload(
             i18n::t("workspace.error.target_not_dir"),
         ));
     }
-    tokio::fs::create_dir_all(&target_dir).await.map_err(|err| {
-        cleanup_temp_files(&pending_files, temp_dir.as_ref());
-        error_response(StatusCode::BAD_REQUEST, err.to_string())
-    })?;
+    tokio::fs::create_dir_all(&target_dir)
+        .await
+        .map_err(|err| {
+            cleanup_temp_files(&pending_files, temp_dir.as_ref());
+            error_response(StatusCode::BAD_REQUEST, err.to_string())
+        })?;
 
     let mut uploaded = Vec::new();
     for (index, file) in pending_files.iter().enumerate() {
@@ -584,10 +589,12 @@ pub(crate) async fn user_skills_fs_upload(
             let _ = tokio::fs::remove_file(&dest).await;
         }
         if tokio::fs::rename(&file.temp_path, &dest).await.is_err() {
-            tokio::fs::copy(&file.temp_path, &dest).await.map_err(|err| {
-                cleanup_temp_files(&pending_files, temp_dir.as_ref());
-                error_response(StatusCode::BAD_REQUEST, err.to_string())
-            })?;
+            tokio::fs::copy(&file.temp_path, &dest)
+                .await
+                .map_err(|err| {
+                    cleanup_temp_files(&pending_files, temp_dir.as_ref());
+                    error_response(StatusCode::BAD_REQUEST, err.to_string())
+                })?;
             let _ = tokio::fs::remove_file(&file.temp_path).await;
         }
         uploaded.push(to_relative_path(&resolved.root, &dest));
@@ -595,7 +602,9 @@ pub(crate) async fn user_skills_fs_upload(
 
     cleanup_temp_files(&pending_files, temp_dir.as_ref());
     if uploaded.iter().any(|path| should_clear_skill_cache(path)) {
-        state.user_tool_manager.clear_skill_cache(Some(&resolved.user_id));
+        state
+            .user_tool_manager
+            .clear_skill_cache(Some(&resolved.user_id));
     }
     Ok(Json(SkillFsActionResponse {
         ok: true,
@@ -777,7 +786,9 @@ pub(crate) async fn user_skills_batch(
     }
 
     if action == "delete" || action == "move" || action == "copy" {
-        state.user_tool_manager.clear_skill_cache(Some(&resolved.user_id));
+        state
+            .user_tool_manager
+            .clear_skill_cache(Some(&resolved.user_id));
     }
     let ok = failed.is_empty();
     Ok(Json(SkillFsBatchResponse {
@@ -798,7 +809,8 @@ pub(crate) async fn user_skills_archive(
     headers: HeaderMap,
     Query(query): Query<UserSkillArchiveQuery>,
 ) -> Result<Response, Response> {
-    let resolved = resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    let resolved =
+        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
     let normalized = normalize_relative_path(query.path.as_deref().unwrap_or(""));
     let (target, base_root, filename_prefix) = if normalized.is_empty() {
         (
@@ -834,13 +846,15 @@ pub(crate) async fn user_skills_archive(
     let archive_path_clone = archive_path.clone();
     let target_clone = target.clone();
     let base_clone = base_root.clone();
-    tokio::task::spawn_blocking(move || build_archive(&archive_path_clone, &target_clone, &base_clone))
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .map_err(|err| {
-            let _ = std::fs::remove_file(&archive_path);
-            error_response(StatusCode::BAD_REQUEST, err.to_string())
-        })?;
+    tokio::task::spawn_blocking(move || {
+        build_archive(&archive_path_clone, &target_clone, &base_clone)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| {
+        let _ = std::fs::remove_file(&archive_path);
+        error_response(StatusCode::BAD_REQUEST, err.to_string())
+    })?;
     let filename = if filename_prefix.to_lowercase().ends_with(".zip") {
         filename_prefix
     } else {
@@ -858,7 +872,8 @@ pub(crate) async fn user_skills_download(
     headers: HeaderMap,
     Query(query): Query<UserSkillFileQuery>,
 ) -> Result<Response, Response> {
-    let resolved = resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    let resolved =
+        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
     let normalized = normalize_relative_path(&query.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -970,9 +985,7 @@ fn normalize_relative_path(value: &str) -> String {
     let normalized = Path::new(trimmed)
         .components()
         .filter_map(|component| match component {
-            std::path::Component::Normal(value) => {
-                Some(value.to_string_lossy().trim().to_string())
-            }
+            std::path::Component::Normal(value) => Some(value.to_string_lossy().trim().to_string()),
             _ => None,
         })
         .filter(|part| !part.is_empty())
@@ -1016,7 +1029,8 @@ fn list_skill_entries(
     for entry in std::fs::read_dir(&target)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     {
-        let entry = entry.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let entry =
+            entry.map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         let name = entry.file_name().to_string_lossy().to_string();
         if !keyword.is_empty() && !name.to_lowercase().contains(&keyword) {
             continue;
@@ -1024,14 +1038,21 @@ fn list_skill_entries(
         let metadata = entry
             .metadata()
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        entries.push((entry_from_path(root, &entry.path(), &metadata), modified_ts(&metadata)));
+        entries.push((
+            entry_from_path(root, &entry.path(), &metadata),
+            modified_ts(&metadata),
+        ));
     }
     sort_entries(&mut entries, sort_by, order);
     let total = entries.len() as u64;
     let safe_offset = offset as usize;
     let safe_limit = limit as usize;
     let entries = if safe_limit == 0 {
-        entries.into_iter().skip(safe_offset).map(|(entry, _)| entry).collect()
+        entries
+            .into_iter()
+            .skip(safe_offset)
+            .map(|(entry, _)| entry)
+            .collect()
     } else {
         entries
             .into_iter()
@@ -1040,7 +1061,12 @@ fn list_skill_entries(
             .map(|(entry, _)| entry)
             .collect()
     };
-    Ok((entries, total, normalized.clone(), get_parent_path(&normalized)))
+    Ok((
+        entries,
+        total,
+        normalized.clone(),
+        get_parent_path(&normalized),
+    ))
 }
 
 fn search_skill_entries(
@@ -1069,14 +1095,21 @@ fn search_skill_entries(
         let metadata = entry
             .metadata()
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        entries.push((entry_from_path(root, entry.path(), &metadata), modified_ts(&metadata)));
+        entries.push((
+            entry_from_path(root, entry.path(), &metadata),
+            modified_ts(&metadata),
+        ));
     }
     sort_entries(&mut entries, "name", "asc");
     let total = entries.len() as u64;
     let safe_offset = offset as usize;
     let safe_limit = limit as usize;
     let entries = if safe_limit == 0 {
-        entries.into_iter().skip(safe_offset).map(|(entry, _)| entry).collect()
+        entries
+            .into_iter()
+            .skip(safe_offset)
+            .map(|(entry, _)| entry)
+            .collect()
     } else {
         entries
             .into_iter()
@@ -1102,7 +1135,8 @@ fn attach_children(
         if entry.entry_type != "dir" {
             continue;
         }
-        let (children, _, _, _) = list_skill_entries(root, &entry.path, None, 0, 0, sort_by, order)?;
+        let (children, _, _, _) =
+            list_skill_entries(root, &entry.path, None, 0, 0, sort_by, order)?;
         let mut converted = children
             .into_iter()
             .map(SkillFsContentEntry::from)
@@ -1290,7 +1324,9 @@ fn clear_skill_cache_if_needed(state: &AppState, user_id: &str, path: &str) {
 }
 
 fn should_clear_skill_cache(path: &str) -> bool {
-    path.split('/').last().is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+    path.split('/')
+        .last()
+        .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
 }
 
 fn skill_tree_version(root: &Path) -> u64 {

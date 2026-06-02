@@ -6,7 +6,7 @@ use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::default_agent_protocol::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::external::provision_external_launch_session;
 use crate::services::stream_events::StreamEventService;
-use crate::services::user_agent_presets::ensure_user_preset_agents;
+use crate::services::user_agent_presets::ensure_user_agent_bootstrap;
 use crate::state::AppState;
 use crate::storage::{
     SessionRunRecord, UpdateAgentTaskStatusParams, UserAccountRecord, UserAgentRecord,
@@ -758,9 +758,9 @@ async fn resolve_target_user(
                     err.to_string(),
                 )
             })?;
-            if let Err(err) = ensure_user_preset_agents(state, &user).await {
+            if let Err(err) = ensure_user_agent_bootstrap(state, &user).await {
                 warn!(
-                    "failed to sync preset agents for external workflow user {}: {err}",
+                    "failed to bootstrap user agents for external workflow user {}: {err}",
                     user.user_id
                 );
             }

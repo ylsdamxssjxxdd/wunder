@@ -47,6 +47,8 @@ pub struct Config {
     #[serde(default)]
     pub knowledge: KnowledgeConfig,
     #[serde(default)]
+    pub ragflow: RagflowConfig,
+    #[serde(default)]
     pub vector_store: VectorStoreConfig,
     #[serde(default)]
     pub observability: ObservabilityConfig,
@@ -1361,6 +1363,20 @@ pub struct KnowledgeBaseConfig {
     pub base_type: Option<String>,
     #[serde(default)]
     pub embedding_model: Option<String>,
+    #[serde(default)]
+    pub ragflow_dataset_id: Option<String>,
+    #[serde(default)]
+    pub chunk_method: Option<String>,
+    #[serde(default)]
+    pub chunk_delimiter: Option<String>,
+    #[serde(default)]
+    pub layout_recognize: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
+    pub auto_keywords: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
+    pub auto_questions: Option<usize>,
+    #[serde(default)]
+    pub html4excel: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
     pub chunk_size: Option<usize>,
     #[serde(default, deserialize_with = "deserialize_optional_usize_from_any")]
@@ -1375,6 +1391,7 @@ pub struct KnowledgeBaseConfig {
 pub enum KnowledgeBaseType {
     Literal,
     Vector,
+    Ragflow,
 }
 
 pub fn normalize_knowledge_base_type(value: Option<&str>) -> KnowledgeBaseType {
@@ -1384,6 +1401,7 @@ pub fn normalize_knowledge_base_type(value: Option<&str>) -> KnowledgeBaseType {
     }
     match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "vector" | "embedding" => KnowledgeBaseType::Vector,
+        "ragflow" | "rag_flow" => KnowledgeBaseType::Ragflow,
         _ => KnowledgeBaseType::Literal,
     }
 }
@@ -1396,6 +1414,37 @@ impl KnowledgeBaseConfig {
     pub fn is_vector(&self) -> bool {
         self.base_type() == KnowledgeBaseType::Vector
     }
+
+    pub fn is_ragflow(&self) -> bool {
+        self.base_type() == KnowledgeBaseType::Ragflow
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagflowConfig {
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(
+        default = "default_ragflow_timeout_s",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub timeout_s: u64,
+}
+
+impl Default for RagflowConfig {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            api_key: None,
+            timeout_s: default_ragflow_timeout_s(),
+        }
+    }
+}
+
+fn default_ragflow_timeout_s() -> u64 {
+    120
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2286,6 +2335,26 @@ mod tests {
         let config = Config::default();
         assert!(config.user_agents.presets.is_empty());
         assert!(config.user_agents.worker_cards_root.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_knowledge_base_type_supports_ragflow() {
+        assert_eq!(
+            normalize_knowledge_base_type(Some("ragflow")),
+            KnowledgeBaseType::Ragflow
+        );
+        assert_eq!(
+            normalize_knowledge_base_type(Some("rag flow")),
+            KnowledgeBaseType::Ragflow
+        );
+        assert_eq!(
+            normalize_knowledge_base_type(Some("embedding")),
+            KnowledgeBaseType::Vector
+        );
+        assert_eq!(
+            normalize_knowledge_base_type(None),
+            KnowledgeBaseType::Literal
+        );
     }
 
     #[test]

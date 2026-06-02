@@ -5,7 +5,7 @@ import {
   updateDefaultConfig,
   updateStoredConfig,
 } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260512-02";
+import { elements } from "./elements.js?v=20260602-01";
 import { state } from "./state.js";
 import { toggleMonitorPolling } from "./monitor.js?v=20260113-01";
 import { notify } from "./notify.js";
@@ -15,7 +15,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260512-02";
+} from "./i18n.js?v=20260602-01";
 import { getWunderBase } from "./api.js";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
@@ -65,6 +65,10 @@ const drawioSettings = {
   enabled: false,
   editorUrl: "",
   maxFileBytes: 52428800,
+};
+const ragflowSettings = {
+  baseUrl: "",
+  apiKey: "",
 };
 const firecrawlSettings = {
   provider: "direct",
@@ -351,6 +355,15 @@ const applyDrawioSettings = (options = {}) => {
   }
 };
 
+const applyRagflowSettings = (options = {}) => {
+  if (elements.settingsRagflowBaseUrl) {
+    elements.settingsRagflowBaseUrl.value = options.baseUrl || "";
+  }
+  if (elements.settingsRagflowApiKey) {
+    elements.settingsRagflowApiKey.value = options.apiKey || "";
+  }
+};
+
 const applyFirecrawlSettings = (options = {}) => {
   if (elements.settingsFirecrawlProvider) {
     const provider = String(options.provider || "direct").toLowerCase();
@@ -555,6 +568,13 @@ const applySystemSettings = (payload = {}) => {
     ? drawio.max_file_bytes
     : 52428800;
   applyDrawioSettings(drawioSettings);
+
+  const ragflow = payload.ragflow || {};
+  ragflowSettings.baseUrl =
+    typeof ragflow.base_url === "string" ? ragflow.base_url.trim() : "";
+  ragflowSettings.apiKey =
+    typeof ragflow.api_key === "string" ? ragflow.api_key.trim() : "";
+  applyRagflowSettings(ragflowSettings);
 
   const firecrawl = payload.firecrawl || {};
   firecrawlSettings.provider =
@@ -893,6 +913,19 @@ const buildSystemUpdatePayload = () => {
     }
     if (Object.keys(drawio).length) {
       payload.drawio = drawio;
+    }
+  }
+
+  if (elements.settingsRagflowBaseUrl || elements.settingsRagflowApiKey) {
+    const ragflow = {};
+    if (elements.settingsRagflowBaseUrl) {
+      ragflow.base_url = String(elements.settingsRagflowBaseUrl.value || "").trim();
+    }
+    if (elements.settingsRagflowApiKey) {
+      ragflow.api_key = String(elements.settingsRagflowApiKey.value || "").trim();
+    }
+    if (Object.keys(ragflow).length) {
+      payload.ragflow = ragflow;
     }
   }
 

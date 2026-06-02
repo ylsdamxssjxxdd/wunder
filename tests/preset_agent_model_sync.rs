@@ -718,6 +718,79 @@ async fn admin_default_agent_sync_safe_and_force_respects_user_override() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn register_creates_default_agent_from_admin_template() {
+    let context = build_test_context_with_config("default_template_seed_user", |_| {}).await;
+    context
+        .state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let admin_token = context
+        .state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+
+    update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+        json!({
+            "name": "Template Default Agent",
+            "description": "template-register-description",
+            "system_prompt": "template-register-system-prompt",
+            "tool_names": [],
+            "preset_questions": ["What should I do next?"],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 6
+        }),
+    )
+    .await;
+
+    let (status, payload) = send_json(
+        &context.app,
+        None,
+        Method::POST,
+        "/wunder/auth/register",
+        Some(json!({
+            "username": "default_template_register_user",
+            "email": "default_template_register_user@example.test",
+            "password": "password-123"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+
+    let token = payload["data"]["access_token"]
+        .as_str()
+        .expect("register token");
+    let created_user = context
+        .state
+        .user_store
+        .get_user_by_username("default_template_register_user")
+        .expect("load user")
+        .expect("user should exist");
+
+    let default_agent = get_default_agent(&context.app, Some(token), &created_user.user_id).await;
+    assert_eq!(default_agent["name"], json!("Template Default Agent"));
+    assert_eq!(
+        default_agent["description"],
+        json!("template-register-description")
+    );
+    assert_eq!(
+        default_agent["system_prompt"],
+        json!("template-register-system-prompt")
+    );
+    assert_eq!(
+        default_agent["preset_questions"],
+        json!(["What should I do next?"])
+    );
+    assert_eq!(default_agent["sandbox_container_id"], json!(6));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admin_default_agent_sync_force_updates_tools_and_skills() {
     let context = build_test_context_with_config("default_sync_tools_user_a", |config| {
         config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
@@ -1982,6 +2055,7 @@ async fn admin_preset_sync_ignores_conflicting_template_agent_state() {
             tool_names: vec![tool_b.clone()],
             declared_tool_names: vec![tool_b.clone()],
             declared_skill_names: Vec::new(),
+            visible_unit_ids: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "A".to_string(),
             approval_mode: "full_auto".to_string(),

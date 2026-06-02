@@ -103,7 +103,9 @@ async fn cancel_desktop_agent_tasks(
         if thread_id.trim().is_empty() {
             continue;
         }
-        let tasks = thread_runtime.list_thread_tasks(&thread_id, None, 256).await?;
+        let tasks = thread_runtime
+            .list_thread_tasks(&thread_id, None, 256)
+            .await?;
         for task in tasks {
             if !is_resettable_agent_task_status(&task.status) {
                 continue;
@@ -134,10 +136,7 @@ fn cancel_desktop_monitor_sessions(
             .unwrap_or("")
             .trim()
             .to_ascii_lowercase();
-        if !matches!(
-            status.as_str(),
-            "running" | "waiting" | "cancelling"
-        ) {
+        if !matches!(status.as_str(), "running" | "waiting" | "cancelling") {
             continue;
         }
         if let Value::Object(ref mut map) = record {

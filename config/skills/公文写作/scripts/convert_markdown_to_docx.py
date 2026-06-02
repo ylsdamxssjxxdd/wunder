@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Optional
+from typing import List, Optional, Set, Tuple
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
@@ -220,7 +220,7 @@ def resolve_pandoc_path(explicit: str) -> Optional[Path]:
     return path
 
 
-def split_link_target(raw: str) -> tuple[str, str]:
+def split_link_target(raw: str) -> Tuple[str, str]:
     raw = raw.strip()
     if not raw:
         return "", ""
@@ -287,7 +287,7 @@ def read_png_width(path: Path) -> Optional[int]:
         return None
 
 
-def find_svg_converter() -> tuple[str, Optional[str]]:
+def find_svg_converter() -> Tuple[str, Optional[str]]:
     try:
         import cairosvg  # noqa: F401
 
@@ -383,11 +383,11 @@ def build_temp_markdown(
     image_width: str,
     svg_dpi: int,
     svg_width_px: int,
-    resource_roots: list[Path],
+    resource_roots: List[Path],
     allow_missing_images: bool,
-) -> tuple[str, list[Path]]:
-    missing: list[str] = []
-    resource_dirs: list[Path] = []
+) -> Tuple[str, List[Path]]:
+    missing: List[str] = []
+    resource_dirs: List[Path] = []
 
     def add_resource_dir(path: Path) -> None:
         if path not in resource_dirs:
@@ -752,7 +752,7 @@ def has_numbering(level: int, title: str) -> bool:
     return False
 
 
-def strip_heading_number_prefix(title: str) -> tuple[str, bool]:
+def strip_heading_number_prefix(title: str) -> Tuple[str, bool]:
     for pattern in HEADING_NUMBER_PREFIXES:
         if pattern.match(title):
             return pattern.sub("", title, count=1).lstrip(), True
@@ -763,7 +763,7 @@ def normalize_heading_title(
     level: int,
     title: str,
     force_heading_numbering: bool,
-) -> tuple[str, bool]:
+) -> Tuple[str, bool]:
     title = title.strip()
     if level > 1 and has_numbering(level, title):
         return title, True
@@ -787,7 +787,7 @@ def should_promote_ordered_list(heading_level: int, heading_title: str) -> bool:
 
 def promote_ordered_list_headings(md_text: str) -> str:
     lines = md_text.splitlines()
-    output: list[str] = []
+    output: List[str] = []
     in_code_block = False
     heading_re = re.compile(r"^(#{1,5})\s+(.*)$")
     ordered_re = re.compile(r"^(\d+[.)、])\s*(.*)$")
@@ -830,7 +830,7 @@ def promote_ordered_list_headings(md_text: str) -> str:
 
 def normalize_reference_entries(md_text: str) -> str:
     lines = md_text.splitlines()
-    output: list[str] = []
+    output: List[str] = []
     in_refs = False
 
     for idx, line in enumerate(lines):
@@ -859,7 +859,7 @@ def normalize_reference_entries(md_text: str) -> str:
 
 def normalize_title_and_field_blocks(md_text: str) -> str:
     lines = md_text.splitlines()
-    output: list[str] = []
+    output: List[str] = []
     in_code_block = False
 
     for index, raw in enumerate(lines):
@@ -906,7 +906,7 @@ def promote_document_title(md_text: str) -> str:
     else:
         title_text = strip_emphasis_markers(first_non_empty_text)
 
-    output: list[str] = []
+    output: List[str] = []
     in_code_block = False
     title_emitted = False
 
@@ -943,7 +943,7 @@ def normalize_markdown_layout(md_text: str) -> str:
     text = md_text.replace("\r\n", "\n").replace("\r", "\n")
     text = INLINE_HEADING_SPLIT_RE.sub(r"\1\n\n\2", text)
     lines = text.splitlines()
-    output: list[str] = []
+    output: List[str] = []
     in_code_block = False
 
     def append_blank_line() -> None:
@@ -1303,7 +1303,7 @@ def add_text_with_breaks(
             run.add_break()
 
 
-def add_code_block(doc: Document, lines: list[str], args: argparse.Namespace) -> None:
+def add_code_block(doc: Document, lines: List[str], args: argparse.Namespace) -> None:
     if not lines:
         return
     paragraph = doc.add_paragraph()
@@ -1348,7 +1348,7 @@ def needs_space(prev: str, next_text: str) -> bool:
     return False
 
 
-def extract_manual_break(raw_line: str) -> tuple[str, bool]:
+def extract_manual_break(raw_line: str) -> Tuple[str, bool]:
     if raw_line.endswith("  "):
         return raw_line.rstrip(), True
     stripped = raw_line.rstrip()
@@ -1358,7 +1358,7 @@ def extract_manual_break(raw_line: str) -> tuple[str, bool]:
     return stripped, False
 
 
-def split_table_row(line: str) -> list[str]:
+def split_table_row(line: str) -> List[str]:
     text = line.strip()
     if text.startswith("|"):
         text = text[1:]
@@ -1374,7 +1374,7 @@ def is_table_row(line: str) -> bool:
     return len(cells) >= 2
 
 
-def looks_like_table_block(lines: list[str], index: int) -> bool:
+def looks_like_table_block(lines: List[str], index: int) -> bool:
     if index + 1 >= len(lines):
         return False
     current = lines[index].strip()
@@ -1391,8 +1391,8 @@ def is_table_separator_line(line: str) -> bool:
     return all(TABLE_SEPARATOR_CELL_RE.match(cell.strip()) for cell in cells)
 
 
-def collect_table_block(lines: list[str], index: int) -> tuple[list[str], int]:
-    block: list[str] = []
+def collect_table_block(lines: List[str], index: int) -> Tuple[List[str], int]:
+    block: List[str] = []
     if not looks_like_table_block(lines, index):
         return block, index
     cursor = index
@@ -1419,8 +1419,8 @@ def is_markdown_thematic_break(line: str) -> bool:
     )
 
 
-def parse_table_alignments(line: str) -> list[WD_ALIGN_PARAGRAPH]:
-    alignments: list[WD_ALIGN_PARAGRAPH] = []
+def parse_table_alignments(line: str) -> List[WD_ALIGN_PARAGRAPH]:
+    alignments: List[WD_ALIGN_PARAGRAPH] = []
     cells = split_table_row(line)
     for cell in cells:
         cell_text = cell.strip()
@@ -1523,8 +1523,8 @@ def normalize_field_line(line: str) -> str:
     return f"{label}：{value}" if value else f"{label}："
 
 
-def split_inline_breaks(raw_line: str) -> list[tuple[str, bool]]:
-    segments: list[tuple[str, bool]] = []
+def split_inline_breaks(raw_line: str) -> List[Tuple[str, bool]]:
+    segments: List[Tuple[str, bool]] = []
     last_index = 0
     for match in BR_TAG_RE.finditer(raw_line):
         segment = raw_line[last_index:match.start()]
@@ -1553,9 +1553,9 @@ class InlineRun:
     code: bool = False
 
 
-def parse_inline_markdown(text: str, base_style: Optional[InlineStyle] = None) -> list[InlineRun]:
-    runs: list[InlineRun] = []
-    buffer: list[str] = []
+def parse_inline_markdown(text: str, base_style: Optional[InlineStyle] = None) -> List[InlineRun]:
+    runs: List[InlineRun] = []
+    buffer: List[str] = []
     state = base_style.copy() if base_style else InlineStyle()
 
     def flush_buffer() -> None:
@@ -1707,7 +1707,7 @@ def normalize_markdown_link_url(raw_url: str) -> str:
     return url.split()[0]
 
 
-def parse_markdown_link(text: str, start: int) -> Optional[tuple[str, str, int]]:
+def parse_markdown_link(text: str, start: int) -> Optional[Tuple[str, str, int]]:
     if start >= len(text) or text[start] != "[":
         return None
     end_label = find_matching_bracket(text, start, "[", "]")
@@ -1723,7 +1723,7 @@ def parse_markdown_link(text: str, start: int) -> Optional[tuple[str, str, int]]
     return label, url, end_url + 1
 
 
-def parse_autolink(text: str, start: int) -> Optional[tuple[str, int]]:
+def parse_autolink(text: str, start: int) -> Optional[Tuple[str, int]]:
     if text[start] != "<":
         return None
     end = text.find(">", start + 1)
@@ -1787,9 +1787,9 @@ def set_table_layout_fixed(table) -> None:
 
 def add_table(
     doc: Document,
-    header: list[str],
-    rows: list[list[str]],
-    alignments: list[WD_ALIGN_PARAGRAPH],
+    header: List[str],
+    rows: List[List[str]],
+    alignments: List[WD_ALIGN_PARAGRAPH],
     args: argparse.Namespace,
 ) -> None:
     col_count = max([len(header)] + [len(row) for row in rows] + [0])
@@ -1812,7 +1812,7 @@ def add_table(
     set_table_cell_margins(table, top_cm=0.1, bottom_cm=0.1, left_cm=0.2, right_cm=0.2)
     table_font_size = max(8.0, args.font_size - 2.0)
 
-    def fill_row(row_index: int, data: list[str], bold: bool) -> None:
+    def fill_row(row_index: int, data: List[str], bold: bool) -> None:
         for col_index in range(col_count):
             text = data[col_index] if col_index < len(data) else ""
             cell = table.cell(row_index, col_index)
@@ -1846,7 +1846,7 @@ def add_table(
 
 def resolve_heading_run_style(
     level: int, args: argparse.Namespace
-) -> tuple[str, Optional[float]]:
+) -> Tuple[str, Optional[float]]:
     if level <= 1:
         return args.heading1_font, args.heading_size
     if level == 2:
@@ -1870,7 +1870,7 @@ def add_document_title(doc: Document, title: str, args: argparse.Namespace) -> N
     )
 
 
-def extract_document_title(lines: list[str]) -> tuple[str, int]:
+def extract_document_title(lines: List[str]) -> Tuple[str, int]:
     for index, raw in enumerate(lines):
         stripped = raw.strip()
         if not stripped:
@@ -1910,8 +1910,8 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
     separator_inserted = False
     signature_mode = False
     in_code_block = False
-    code_block_lines: list[str] = []
-    paragraph_buffer: list[tuple[str, bool]] = []
+    code_block_lines: List[str] = []
+    paragraph_buffer: List[Tuple[str, bool]] = []
 
     def flush_paragraph() -> None:
         if not paragraph_buffer:
@@ -2043,7 +2043,7 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             flush_paragraph()
             header = split_table_row(stripped)
             alignments = parse_table_alignments(lines[i + 1].strip())
-            rows: list[list[str]] = []
+            rows: List[List[str]] = []
             i += 2
             while i < len(lines):
                 row_line = lines[i].strip()
@@ -2361,7 +2361,7 @@ def superscript_citations_in_paragraph(paragraph) -> None:
 
     segment_index = 0
 
-    def advance_segment(pos: int) -> tuple[Optional[object], int]:
+    def advance_segment(pos: int) -> Tuple[Optional[object], int]:
         nonlocal segment_index
         while segment_index < len(segments) and pos >= segments[segment_index][2]:
             segment_index += 1
@@ -2447,9 +2447,9 @@ def postprocess_docx(path: Path, args: argparse.Namespace, space_pt: float) -> N
     doc.save(path)
 
 
-def collect_docx_markdown_residue(path: Path) -> list[str]:
+def collect_docx_markdown_residue(path: Path) -> List[str]:
     doc = Document(path)
-    issues: list[str] = []
+    issues: List[str] = []
     for idx, paragraph in enumerate(doc.paragraphs, start=1):
         text = paragraph.text.strip()
         if not text:
@@ -2555,8 +2555,8 @@ def main() -> int:
                     build_reference_docx(reference_doc, args)
 
                 resource_dirs.insert(0, base_dir)
-                deduped_dirs: list[Path] = []
-                seen_dirs: set[Path] = set()
+                deduped_dirs: List[Path] = []
+                seen_dirs: Set[Path] = set()
                 for item in resource_dirs:
                     if item in seen_dirs:
                         continue

@@ -22,8 +22,9 @@ pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
     a2a_store, admin_skills, attachment, cron, doc2md, drawio, history, knowledge, llm, mcp,
-    memory, multimodal_models, onlyoffice, org_units, prompting, sim_lab, skills, swarm, tools,
-    user_access, user_store, user_tools, user_world, vector_knowledge, workspace,
+    memory, multimodal_models, onlyoffice, org_units, prompting, ragflow_knowledge, sim_lab,
+    skills, swarm, tools, user_access, user_store, user_tools, user_world, vector_knowledge,
+    workspace,
 };
 
 use crate::core::logging;

@@ -14,6 +14,7 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query_*` 工具；最细粒度 `knowledge.targets[*].name` 用作对外展示名和工具名后缀，未配置时默认使用目标 `key`。向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
+- RAGFlow 知识库通过 `ragflow.*` 接入，知识库可按 `literal/vector/ragflow` 运行；RAGFlow 文档管理与检索由后端直连远端 Dataset。
 - docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。`docker-compose-win.yml` 额外用 `wunder_win_data` 兜底整个 `/app/config/data`，并对 `workspaces/browser/user_tools/vector_knowledge/temp_dir` 等热点目录继续做子卷覆盖。
 - 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。`wunder-frontend` 启动时还会比对当前 `package-lock.json` 与已挂载依赖树的指纹，若发现 ARM profile 过旧或跨平台污染，会自动重装对应 workspace 依赖。
 - `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
@@ -649,15 +650,15 @@
 - `GET` 入参（Query）：
   - `user_id`：用户唯一标识
 - `GET` 返回（JSON）：
-  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/ragflow_dataset_id/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
   - `embedding_models`：可用嵌入模型名称列表（仅包含 model_type=embedding）
   - `tts_models`：可用文转声模型名称列表（仅包含 model_type=tts）
   - `image_models`：可用图像生成模型名称列表（仅包含 model_type=image）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
-  - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/ragflow_dataset_id/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 返回：同 `GET`
-- 说明：`base_type` 为空默认字面知识库；用户侧当前统一按 `base_type=vector` 管理知识库，`embedding_model` 可为空。存在可用嵌入模型时优先使用向量检索；未配置模型、嵌入调用失败或向量库不可用时，自动回退到文本匹配。向量知识库 root 自动指向 `config/data/vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
+- 说明：`base_type` 为空默认字面知识库，`base_type` 还可为 `vector` 或 `ragflow`。`vector` 知识库使用本地向量库与 `embedding_model`；`ragflow` 知识库通过 `ragflow.*` 连接远端 Dataset，`ragflow_dataset_id` 会在保存后自动创建或绑定，`chunk_method` 可设置 RAGFlow 切片方式（默认 `naive`，支持 `naive/qa/resume/manual/table/paper/book/laws/presentation/picture/one/email/tag`），`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 会按切片方式过滤后映射到 RAGFlow `parser_config`。其中 `naive` 支持切片长度、分隔符、版面解析、自动关键词/问题和 Excel 转 HTML；`manual/paper/book/laws/presentation/one` 支持版面解析和自动关键词/问题；`email/picture` 支持自动关键词/问题；`qa/resume/table/tag` 暂无额外解析参数。自动创建的 Dataset 在 RAGFlow 侧使用 `[用户名] 知识库名称` 命名，`root` 使用 `ragflow:<dataset_id>` 作为逻辑标识。从列表移除 RAGFlow 知识库时会同步删除对应远端 Dataset。存在可用嵌入模型时优先使用向量检索；未配置模型、嵌入调用失败或向量库不可用时，自动回退到文本匹配。
 
 ### 4.1.2.10 `/wunder/user_tools/knowledge/files`
 
@@ -668,7 +669,7 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `files`：Markdown 文件相对路径列表
-- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/docs` 等接口。
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/user_tools/knowledge/docs` 等接口。
 
 ### 4.1.2.11 `/wunder/user_tools/knowledge/file`
 
@@ -696,7 +697,7 @@
 - `DELETE` 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
-- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/user_tools/knowledge/doc` 等接口。
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/user_tools/knowledge/doc` 等接口。
 
 ### 4.1.2.12 `/wunder/user_tools/knowledge/upload`
 
@@ -715,7 +716,7 @@
   - `embedding_model`：嵌入模型（向量知识库）
   - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
   - `warnings`：转换警告列表
-- 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传仅解析并切片，需通过 `/wunder/user_tools/knowledge/reindex` 生成向量。
+- 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量和 RAGFlow 知识库上传会同步到各自引擎并建立文档/切片关系，向量知识库需通过 `/wunder/user_tools/knowledge/reindex` 生成向量。
 
 ### 4.1.2.13 `/wunder/user_tools/knowledge/docs`
 
@@ -726,7 +727,7 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.2.14 `/wunder/user_tools/knowledge/doc`
 
@@ -748,7 +749,7 @@
   - `deleted`：删除的向量条目数量
   - `doc_id`：文档 id
   - `doc_name`：文档名称
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.2.15 `/wunder/user_tools/knowledge/chunks`
 
@@ -761,7 +762,7 @@
   - `base`：知识库名称
   - `doc_id`：文档 id
   - `chunks`：切片列表（index/start/end/preview/content/status）
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.2.16 `/wunder/user_tools/knowledge/chunk/embed`
 
@@ -774,7 +775,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `doc`：更新后的文档元数据
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.2.17 `/wunder/user_tools/knowledge/chunk/delete`
 
@@ -787,7 +788,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `doc`：更新后的文档元数据
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.2.18 `/wunder/user_tools/knowledge/chunk/update`
 
@@ -801,7 +802,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `doc`：更新后的文档元数据
-- 说明：仅适用于向量知识库。更新后对应切片会被标记为待重新嵌入。
+- 说明：仅适用于向量和 RAGFlow 知识库。更新后对应切片会被标记为待重新嵌入。
 
 ### 4.1.2.19 `/wunder/user_tools/knowledge/test`
 
@@ -820,7 +821,7 @@
   - `fallback_mode`：是否回退为文本匹配结果（仅向量知识库）
   - `text`：字面知识库结果文本
   - `reasoning`：字面知识库测试时模型返回的思考过程文本
-- 说明：支持向量/字面知识库。向量知识库在嵌入模型不可用或向量检索链路失败时会自动回退为文本匹配。
+- 说明：支持向量、RAGFlow 与字面知识库。向量知识库在嵌入模型不可用或向量检索链路失败时会自动回退为文本匹配；RAGFlow 知识库直接返回远端 Dataset 命中结果。
 
 ### 4.1.2.20 `/wunder/user_tools/knowledge/reindex`
 
@@ -833,7 +834,7 @@
   - `ok`：是否成功
   - `reindexed`：已重建的 doc_id 列表
   - `failed`：失败项列表（doc_id/error）
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.2.21 `/wunder/user_tools/tools`
 
@@ -1467,6 +1468,9 @@
   - `drawio.enabled`：是否启用用户侧工作区 draw.io 图表在线编辑
   - `drawio.editor_url`：浏览器访问 diagrams.net/draw.io 编辑器的地址
   - `drawio.max_file_bytes`：可在线编辑的图表文件大小上限
+  - `ragflow.base_url`：RAGFlow API 地址
+  - `ragflow.api_key`：RAGFlow API 密钥
+  - `ragflow.timeout_s`：Wunder 访问 RAGFlow 的超时时间（秒）
 - `POST` 入参：以上字段均可选，支持分组更新
 - `POST` 返回：同 `GET`
 
@@ -2274,10 +2278,10 @@
 
 - 方法：`GET/POST`
 - `GET` 返回：
-  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/ragflow_dataset_id/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 入参：
   - `knowledge`：完整知识库配置，用于保存与下发
-- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `config/data/vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`
+- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `config/data/vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`；RAGFlow 知识库 root 使用 `ragflow:<dataset_id>` 作为逻辑标识，`chunk_method` 映射到 RAGFlow Dataset 的切片方式，`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 按切片方式映射到 RAGFlow `parser_config`，文档上传、分块、检索和重解析由 RAGFlow Dataset 执行。
 
 ### 4.1.27 `/wunder/admin/knowledge/files`
 
@@ -2287,7 +2291,7 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `files`：Markdown 文件相对路径列表
-- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/admin/knowledge/docs` 等接口。
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/admin/knowledge/docs` 等接口。
 
 ### 4.1.28 `/wunder/admin/knowledge/file`
 
@@ -2302,7 +2306,7 @@
 - `DELETE` 入参（Query）：
   - `base`：知识库名称
   - `path`：相对知识库根目录的文件路径
-- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/admin/knowledge/doc` 等接口。
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/admin/knowledge/doc` 等接口。
 
 ### 4.1.29 `/wunder/admin/knowledge/upload`
 
@@ -2314,13 +2318,13 @@
     - `ok`：是否成功
     - `message`：提示信息
     - `path`：转换后的 Markdown 相对路径（字面知识库）
-    - `doc_id`：向量文档 id（向量知识库）
-    - `doc_name`：向量文档名称（向量知识库）
-    - `chunk_count`：切片数量（向量知识库）
-    - `embedding_model`：嵌入模型（向量知识库）
+    - `doc_id`：文档 id（向量或 RAGFlow 知识库）
+    - `doc_name`：文档名称（向量或 RAGFlow 知识库）
+    - `chunk_count`：切片数量（向量或 RAGFlow 知识库）
+    - `embedding_model`：嵌入模型或 `ragflow` 标识
     - `converter`：使用的转换器（doc2md/text/html/code/pdf/raw）
     - `warnings`：转换警告列表
-  - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传仅解析并切片，需通过 `/wunder/admin/knowledge/reindex` 或 `/wunder/admin/knowledge/chunk/*` 生成向量。
+  - 说明：该接口支持 doc2md 可解析的格式，上传后自动转换为 Markdown 保存，原始非 md 文件不会落库并会清理；向量知识库上传会解析并切片，需通过 `/wunder/admin/knowledge/reindex` 或 `/wunder/admin/knowledge/chunk/*` 生成向量；RAGFlow 知识库上传直接转交远端 Dataset 解析、嵌入与管理。
 
 ### 4.1.30 `/wunder/admin/knowledge/refresh`
 
@@ -2330,7 +2334,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
-- 说明：仅适用于字面知识库，向量知识库请使用 `/wunder/admin/knowledge/reindex`。
+- 说明：仅适用于字面知识库；向量和 RAGFlow 知识库请使用 `/wunder/admin/knowledge/reindex`。
 
 ### 4.1.30.1 `/wunder/admin/knowledge/docs`
 
@@ -2339,8 +2343,8 @@
   - `base`：知识库名称
 - 返回（JSON）：
   - `base`：知识库名称
-  - `docs`：向量文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
-- 说明：仅适用于向量知识库。
+  - `docs`：文档列表（doc_id/name/status/chunk_count/embedding_model/updated_at）
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.30.2 `/wunder/admin/knowledge/doc`
 
@@ -2357,10 +2361,10 @@
   - `doc_id`：文档 id
 - `DELETE` 返回（JSON）：
   - `ok`：是否成功
-  - `deleted`：删除的向量条目数量
+  - `deleted`：删除的向量条目数量；RAGFlow 知识库固定返回 `0`
   - `doc_id`：文档 id
   - `doc_name`：文档名称
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库；RAGFlow 知识库的文档内容从远端下载，删除也同步删除远端 Dataset 文档。
 
 ### 4.1.30.3 `/wunder/admin/knowledge/chunks`
 
@@ -2372,7 +2376,7 @@
   - `base`：知识库名称
   - `doc_id`：文档 id
   - `chunks`：切片列表（index/start/end/preview/content/status）
-- 说明：仅适用于向量知识库。
+- 说明：仅适用于向量和 RAGFlow 知识库。
 
 ### 4.1.30.4 `/wunder/admin/knowledge/chunk/update`
 
@@ -2385,7 +2389,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `doc`：更新后的文档元数据
-- 说明：仅适用于向量知识库，更新内容后切片状态变为 `pending`。
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库更新内容后切片状态变为 `pending`，RAGFlow 知识库会调用远端切片更新接口。
 
 ### 4.1.30.5 `/wunder/admin/knowledge/chunk/embed`
 
@@ -2397,7 +2401,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `doc`：更新后的文档元数据
-- 说明：仅适用于向量知识库，执行单片嵌入并写入向量库，切片状态更新为 `embedded`。
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库执行单片嵌入并写入向量库，RAGFlow 知识库会将切片设为可用。
 
 ### 4.1.30.6 `/wunder/admin/knowledge/chunk/delete`
 
@@ -2409,7 +2413,7 @@
 - 返回（JSON）：
   - `ok`：是否成功
   - `doc`：更新后的文档元数据
-- 说明：仅适用于向量知识库，删除切片向量并标记为 `deleted`。
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库删除切片向量并标记为 `deleted`，RAGFlow 知识库会调用远端切片删除接口。
 
 ### 4.1.30.7 `/wunder/admin/knowledge/test`
 
@@ -2421,8 +2425,9 @@
 - 返回（JSON）：
   - `base`：知识库名称
   - `query`：测试问题
-  - 向量知识库：
-    - `embedding_model`：嵌入模型
+  - 向量或 RAGFlow 知识库：
+    - `base_type`：`vector` 或 `ragflow`
+    - `embedding_model`：嵌入模型或 `ragflow` 标识
     - `top_k`：召回数量
     - `hits`：召回结果列表
       - `doc_id`：文档 id
@@ -2442,7 +2447,7 @@
       - `score`：相关度分数（可选）
       - `section_path`：章节路径
       - `reason`：命中原因（可选）
-- 说明：字面知识库会调用大模型生成原始输出，并附带命中文档内容；向量知识库保持召回结果。
+- 说明：字面知识库会调用大模型生成原始输出，并附带命中文档内容；向量和 RAGFlow 知识库保持召回结果。
 
 ### 4.1.30.7.1 `/wunder/admin/knowledge/test/stream`
 
@@ -2454,13 +2459,13 @@
 - 返回：`text/event-stream`
   - `event: request`
     - 字面知识库：完整 LLM 请求体，包含 `payload`、`base_url`、候选片段数量等调试信息
-    - 向量知识库：当前检索请求摘要，包含 `embedding_model`、`top_k` 等参数
+    - 向量或 RAGFlow 知识库：当前检索请求摘要，包含 `base_type`、`embedding_model`、`top_k` 等参数
   - `event: reasoning`
     - `delta`：模型思考增量，仅字面知识库返回
   - `event: output`
     - `delta`：模型正式输出增量，仅字面知识库返回
   - `event: complete`
-    - 向量知识库：`base`、`query`、`embedding_model`、`top_k`、`hits`
+    - 向量或 RAGFlow 知识库：`base`、`query`、`base_type`、`embedding_model`、`top_k`、`hits`
     - 字面知识库：`base`、`query`、`text`、`reasoning`、`hits`
   - `event: error`
     - `message`：错误信息
@@ -2476,7 +2481,7 @@
   - `ok`：是否成功
   - `reindexed`：已重建的 doc_id 列表
   - `failed`：失败项列表（doc_id/error）
-- 说明：仅适用于向量知识库，执行重建嵌入。
+- 说明：仅适用于向量和 RAGFlow 知识库；向量知识库执行重建嵌入，RAGFlow 知识库触发远端文档重新解析。
 
 ### 4.1.31 `/wunder/admin/users`
 

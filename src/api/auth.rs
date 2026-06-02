@@ -266,10 +266,11 @@ async fn register(
         })?;
     }
     if let Err(err) =
-        crate::services::user_agent_presets::ensure_user_preset_agents(&state, &created_user).await
+        crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &created_user)
+            .await
     {
         tracing::warn!(
-            "failed to sync preset agents after register for {}: {err}",
+            "failed to bootstrap user agents after register for {}: {err}",
             created_user.user_id
         );
     }
@@ -466,11 +467,11 @@ async fn external_login(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
-            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+            crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)
                 .await
         {
             tracing::warn!(
-                "failed to sync preset agents after external login provision for {}: {err}",
+                "failed to bootstrap user agents after external login provision for {}: {err}",
                 session.user.user_id
             );
         }
@@ -532,11 +533,11 @@ async fn external_issue_code(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
-            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+            crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)
                 .await
         {
             tracing::warn!(
-                "failed to sync preset agents after external code provision for {}: {err}",
+                "failed to bootstrap user agents after external code provision for {}: {err}",
                 session.user.user_id
             );
         }
@@ -635,11 +636,11 @@ async fn external_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
-            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+            crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)
                 .await
         {
             tracing::warn!(
-                "failed to sync preset agents after external launch provision for {}: {err}",
+                "failed to bootstrap user agents after external launch provision for {}: {err}",
                 session.user.user_id
             );
         }
@@ -723,11 +724,11 @@ async fn external_token_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
-            crate::services::user_agent_presets::ensure_user_preset_agents(&state, &session.user)
+            crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)
                 .await
         {
             tracing::warn!(
-                "failed to sync preset agents after external token launch provision for {}: {err}",
+                "failed to bootstrap user agents after external token launch provision for {}: {err}",
                 session.user.user_id
             );
         }
