@@ -5994,6 +5994,7 @@ async fn execute_user_knowledge(
         base_type: base_info.base_type.clone(),
         embedding_model: base_info.embedding_model.clone(),
         ragflow_dataset_id: base_info.ragflow_dataset_id.clone(),
+        ragflow_dataset_managed: base_info.ragflow_dataset_managed,
         chunk_method: base_info.chunk_method.clone(),
         chunk_delimiter: base_info.chunk_delimiter.clone(),
         layout_recognize: base_info.layout_recognize.clone(),

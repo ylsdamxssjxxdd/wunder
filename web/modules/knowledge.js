@@ -4,7 +4,7 @@ import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { buildHeadingHighlightHtml, escapeHtml, formatTimestamp } from "./utils.js?v=20251229-02";
-import { t } from "./i18n.js?v=20260602-01";
+import { t } from "./i18n.js?v=20260603-02";
 import { resolveApiErrorMessage } from "./api-error.js";
 
 const knowledgeModal = document.getElementById("knowledgeModal");
@@ -12,8 +12,11 @@ const knowledgeModalTitle = document.getElementById("knowledgeModalTitle");
 const knowledgeModalName = document.getElementById("knowledgeModalName");
 const knowledgeModalTypeRow = document.getElementById("knowledgeModalTypeRow");
 const knowledgeModalType = document.getElementById("knowledgeModalType");
+const knowledgeModalAdvanced = document.getElementById("knowledgeModalAdvanced");
 const knowledgeModalEmbeddingRow = document.getElementById("knowledgeModalEmbeddingRow");
 const knowledgeModalEmbeddingModel = document.getElementById("knowledgeModalEmbeddingModel");
+const knowledgeModalRagflowDatasetRow = document.getElementById("knowledgeModalRagflowDatasetRow");
+const knowledgeModalRagflowDatasetId = document.getElementById("knowledgeModalRagflowDatasetId");
 const knowledgeModalChunkMethodRow = document.getElementById("knowledgeModalChunkMethodRow");
 const knowledgeModalChunkMethod = document.getElementById("knowledgeModalChunkMethod");
 const knowledgeModalChunkMethodDesc = document.getElementById("knowledgeModalChunkMethodDesc");
@@ -373,6 +376,10 @@ const normalizeKnowledgeConfig = (raw) => {
           base_type: normalizeBaseType(base.base_type),
           embedding_model: base.embedding_model || "",
           ragflow_dataset_id: base.ragflow_dataset_id || "",
+          ragflow_dataset_managed:
+            normalizeBaseType(base.base_type) === "ragflow"
+              ? base.ragflow_dataset_managed !== false
+              : null,
           chunk_method:
             normalizeBaseType(base.base_type) === "ragflow"
               ? normalizeRagflowChunkMethod(base.chunk_method)
@@ -458,10 +465,12 @@ const applyKnowledgeModalType = (baseType) => {
     knowledgeModalType.value = type;
   }
   toggleRow(knowledgeModalEmbeddingRow, isVector, "");
+  toggleRow(knowledgeModalRagflowDatasetRow, isRagflow, "");
   toggleRow(knowledgeModalChunkMethodRow, isRagflow, "");
   toggleRow(knowledgeModalChunkRow, isVector, "grid");
   toggleRow(knowledgeModalSearchRow, indexedMode, "grid");
   setInputEnabled(knowledgeModalEmbeddingModel, isVector);
+  setInputEnabled(knowledgeModalRagflowDatasetId, isRagflow);
   setInputEnabled(knowledgeModalChunkMethod, isRagflow);
   setInputEnabled(knowledgeModalChunkSize, isVector);
   setInputEnabled(knowledgeModalChunkOverlap, isVector);
@@ -614,6 +623,7 @@ const openKnowledgeModal = (base = null, index = -1) => {
     base_type: "ragflow",
     embedding_model: "",
     ragflow_dataset_id: "",
+    ragflow_dataset_managed: true,
     chunk_method: "naive",
     chunk_delimiter: "",
     layout_recognize: "DeepDOC",
@@ -638,6 +648,9 @@ const openKnowledgeModal = (base = null, index = -1) => {
   applyKnowledgeModalType(baseType);
   if (knowledgeModalEmbeddingModel) {
     knowledgeModalEmbeddingModel.value = payload.embedding_model || "";
+  }
+  if (knowledgeModalRagflowDatasetId) {
+    knowledgeModalRagflowDatasetId.value = payload.ragflow_dataset_id || "";
   }
   if (knowledgeModalChunkMethod) {
     knowledgeModalChunkMethod.value =
@@ -702,6 +715,9 @@ const openKnowledgeModal = (base = null, index = -1) => {
   if (knowledgeModalEnabled) {
     knowledgeModalEnabled.checked = payload.enabled !== false;
   }
+  if (knowledgeModalAdvanced) {
+    knowledgeModalAdvanced.open = false;
+  }
   knowledgeModal.classList.add("active");
   if (baseType === "vector") {
     loadEmbeddingModels(true)
@@ -727,6 +743,9 @@ const closeKnowledgeModal = () => {
   }
   knowledgeModal.classList.remove("active");
   knowledgeEditingIndex = -1;
+  if (knowledgeModalAdvanced) {
+    knowledgeModalAdvanced.open = false;
+  }
 };
 
 // 从弹窗中读取配置内容
@@ -739,6 +758,17 @@ const getKnowledgeModalPayload = () => {
     knowledgeEditingIndex >= 0 ? state.knowledge.bases[knowledgeEditingIndex] || null : null;
   const existingType = normalizeBaseType(existing?.base_type);
   const rootValue = knowledgeModalRoot?.value?.trim() || "";
+  const existingDatasetId = String(existing?.ragflow_dataset_id || "").trim();
+  const formDatasetId = String(knowledgeModalRagflowDatasetId?.value || "").trim();
+  const sameDataset =
+    isRagflow && formDatasetId && existingDatasetId && formDatasetId === existingDatasetId;
+  const ragflowDatasetManaged = isRagflow
+    ? formDatasetId
+      ? sameDataset
+        ? existing?.ragflow_dataset_managed !== false
+        : false
+      : true
+    : null;
   const ragflowParser = isRagflow
     ? buildRagflowParserPayload({
         chunk_method: knowledgeModalChunkMethod?.value,
@@ -757,7 +787,8 @@ const getKnowledgeModalPayload = () => {
     enabled: knowledgeModalEnabled ? knowledgeModalEnabled.checked : true,
     base_type: baseType,
     embedding_model: isVector ? knowledgeModalEmbeddingModel?.value?.trim() || "" : "",
-    ragflow_dataset_id: isRagflow ? existing?.ragflow_dataset_id || "" : "",
+    ragflow_dataset_id: isRagflow ? formDatasetId : "",
+    ragflow_dataset_managed: ragflowDatasetManaged,
     chunk_method: isRagflow ? ragflowParser.chunk_method : "",
     chunk_delimiter: isRagflow ? ragflowParser.chunk_delimiter : "",
     layout_recognize: isRagflow ? ragflowParser.layout_recognize : "",
@@ -2091,6 +2122,8 @@ const buildKnowledgePayload = () => ({
       base_type: baseType,
       embedding_model: baseType === "vector" ? base.embedding_model || "" : "",
       ragflow_dataset_id: baseType === "ragflow" ? base.ragflow_dataset_id || "" : "",
+      ragflow_dataset_managed:
+        baseType === "ragflow" ? base.ragflow_dataset_managed !== false : null,
       chunk_method: baseType === "ragflow" ? ragflowParser.chunk_method : "",
       chunk_delimiter: baseType === "ragflow" ? ragflowParser.chunk_delimiter : "",
       layout_recognize: baseType === "ragflow" ? ragflowParser.layout_recognize : "",
@@ -2449,7 +2482,28 @@ const applyKnowledgeModal = async () => {
     embeddingChunkIndices: [...(state.knowledge.embeddingChunkIndices || [])],
   };
   if (knowledgeEditingIndex >= 0) {
-    state.knowledge.bases[knowledgeEditingIndex] = { ...payload };
+    const current = state.knowledge.bases[knowledgeEditingIndex] || {};
+    const currentType = normalizeBaseType(current.base_type);
+    const nextType = normalizeBaseType(payload.base_type);
+    const sameBinding = current.name === payload.name && currentType === nextType;
+    const nextDatasetId =
+      nextType === "ragflow"
+        ? payload.ragflow_dataset_id || (sameBinding ? current.ragflow_dataset_id || "" : "")
+        : "";
+    const nextDatasetManaged =
+      nextType === "ragflow"
+        ? payload.ragflow_dataset_id
+          ? payload.ragflow_dataset_managed
+          : sameBinding
+            ? current.ragflow_dataset_managed !== false
+            : payload.ragflow_dataset_managed
+        : null;
+    state.knowledge.bases[knowledgeEditingIndex] = {
+      ...current,
+      ...payload,
+      ragflow_dataset_id: nextDatasetId,
+      ragflow_dataset_managed: nextDatasetManaged,
+    };
     state.knowledge.selectedIndex = knowledgeEditingIndex;
   } else {
     state.knowledge.bases.push({ ...payload });

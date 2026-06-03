@@ -363,6 +363,17 @@
             </div>
             <div v-if="isKnowledgeFormRagflow" class="grid">
               <div class="form-row">
+                <label>{{ t('knowledge.modal.field.ragflowDatasetId') }}</label>
+                <el-input
+                  v-model="knowledgeForm.ragflow_dataset_id"
+                  clearable
+                  :placeholder="t('knowledge.modal.placeholder.ragflowDatasetId')"
+                />
+                <div class="muted">
+                  {{ t('knowledge.modal.tip.ragflowDatasetId') }}
+                </div>
+              </div>
+              <div class="form-row">
                 <label>{{ t('knowledge.modal.field.chunkMethod') }}</label>
                 <el-select
                   v-model="knowledgeForm.chunk_method"
@@ -1181,6 +1192,10 @@ const normalizeKnowledgeConfig = (raw) => {
             base_type: normalizeBaseType(base.base_type),
             embedding_model: base.embedding_model || '',
             ragflow_dataset_id: base.ragflow_dataset_id || '',
+            ragflow_dataset_managed:
+              normalizeBaseType(base.base_type) === 'ragflow'
+                ? base.ragflow_dataset_managed !== false
+                : null,
             chunk_method:
               normalizeBaseType(base.base_type) === 'ragflow'
                 ? normalizeRagflowChunkMethod(base.chunk_method)
@@ -1215,6 +1230,8 @@ const buildConfigPayload = () => ({
         base_type: baseType,
         embedding_model: baseType === 'vector' ? base.embedding_model || '' : '',
         ragflow_dataset_id: baseType === 'ragflow' ? base.ragflow_dataset_id || '' : '',
+        ragflow_dataset_managed:
+          baseType === 'ragflow' ? base.ragflow_dataset_managed !== false : null,
         chunk_method: baseType === 'ragflow' ? ragflowParser.chunk_method : '',
         chunk_delimiter: baseType === 'ragflow' ? ragflowParser.chunk_delimiter : '',
         layout_recognize: baseType === 'ragflow' ? ragflowParser.layout_recognize : '',
@@ -1454,6 +1471,20 @@ const validateKnowledgeBase = (payload, index) => {
 const getKnowledgeFormPayload = () => {
   const baseType = normalizeBaseType(knowledgeForm.base_type);
   const indexed = baseType === 'vector' || baseType === 'ragflow';
+  const current =
+    knowledgeEditingIndex.value >= 0 ? bases.value[knowledgeEditingIndex.value] || null : null;
+  const currentDatasetId = String(current?.ragflow_dataset_id || '').trim();
+  const formDatasetId = String(knowledgeForm.ragflow_dataset_id || '').trim();
+  const sameDataset =
+    baseType === 'ragflow' && formDatasetId && currentDatasetId && formDatasetId === currentDatasetId;
+  const ragflowDatasetManaged =
+    baseType === 'ragflow'
+      ? formDatasetId
+        ? sameDataset
+          ? current?.ragflow_dataset_managed !== false
+          : false
+        : true
+      : null;
   const ragflowParser =
     baseType === 'ragflow'
       ? buildRagflowParserPayload(knowledgeForm)
@@ -1464,7 +1495,8 @@ const getKnowledgeFormPayload = () => {
     shared: false,
     base_type: baseType,
     embedding_model: baseType === 'vector' ? knowledgeForm.embedding_model.trim() : '',
-    ragflow_dataset_id: baseType === 'ragflow' ? knowledgeForm.ragflow_dataset_id || '' : '',
+    ragflow_dataset_id: baseType === 'ragflow' ? formDatasetId : '',
+    ragflow_dataset_managed: ragflowDatasetManaged,
     chunk_method: baseType === 'ragflow' ? ragflowParser.chunk_method : '',
     chunk_delimiter: baseType === 'ragflow' ? ragflowParser.chunk_delimiter : '',
     layout_recognize: baseType === 'ragflow' ? ragflowParser.layout_recognize : '',
@@ -1500,14 +1532,23 @@ const applyKnowledgeModal = async () => {
     const sameBinding = current.name === payload.name && currentType === nextType;
     const nextRoot = sameBinding ? current.root || '' : '';
     const nextDatasetId =
-      sameBinding && nextType === 'ragflow'
-        ? current.ragflow_dataset_id || payload.ragflow_dataset_id || ''
-        : payload.ragflow_dataset_id || '';
+      nextType === 'ragflow'
+        ? payload.ragflow_dataset_id || (sameBinding ? current.ragflow_dataset_id || '' : '')
+        : '';
+    const nextDatasetManaged =
+      nextType === 'ragflow'
+        ? payload.ragflow_dataset_id
+          ? payload.ragflow_dataset_managed
+          : sameBinding
+            ? current.ragflow_dataset_managed !== false
+            : payload.ragflow_dataset_managed
+        : null;
     bases.value[editing] = {
       ...current,
       ...payload,
       root: nextRoot,
-      ragflow_dataset_id: nextType === 'ragflow' ? nextDatasetId : ''
+      ragflow_dataset_id: nextDatasetId,
+      ragflow_dataset_managed: nextDatasetManaged
     };
     selectedIndex.value = editing;
   } else {

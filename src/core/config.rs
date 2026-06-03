@@ -1366,6 +1366,8 @@ pub struct KnowledgeBaseConfig {
     #[serde(default)]
     pub ragflow_dataset_id: Option<String>,
     #[serde(default)]
+    pub ragflow_dataset_managed: Option<bool>,
+    #[serde(default)]
     pub chunk_method: Option<String>,
     #[serde(default)]
     pub chunk_delimiter: Option<String>,

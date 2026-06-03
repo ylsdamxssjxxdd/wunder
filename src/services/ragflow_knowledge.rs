@@ -437,9 +437,26 @@ pub fn normalize_synthetic_root_dataset_id(root: &str) -> Option<String> {
     normalize_dataset_id(Some(value))
 }
 
+pub fn normalize_dataset_name_part(value: &str, fallback: &str) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        return fallback.to_string();
+    }
+    normalized.chars().take(48).collect()
+}
+
 pub async fn create_dataset(config: &Config, base: &KnowledgeBaseConfig) -> Result<String> {
+    create_dataset_with_name(config, base, &base.name).await
+}
+
+pub async fn create_dataset_with_name(
+    config: &Config,
+    base: &KnowledgeBaseConfig,
+    remote_name: &str,
+) -> Result<String> {
     let client = RagflowClient::from_config(config)?;
-    let name = base.name.trim();
+    let name = remote_name.trim();
     if name.is_empty() {
         return Err(anyhow!(i18n::t("error.knowledge_base_name_required")));
     }
@@ -968,7 +985,8 @@ fn sanitize_upload_filename(filename: &str, path: &Path) -> String {
 mod tests {
     use super::{
         build_dataset_parser_config, normalize_chunk_method, normalize_dataset_id,
-        normalize_synthetic_root_dataset_id, resolve_chunk_method, resolve_chunk_token_num,
+        normalize_dataset_name_part, normalize_synthetic_root_dataset_id, resolve_chunk_method,
+        resolve_chunk_token_num,
     };
     use crate::config::KnowledgeBaseConfig;
 
@@ -983,6 +1001,19 @@ mod tests {
             Some("dataset_id".to_string())
         );
         assert_eq!(normalize_dataset_id(Some("   ")), None);
+    }
+
+    #[test]
+    fn normalizes_dataset_name_parts() {
+        assert_eq!(
+            normalize_dataset_name_part("  user   name  ", "fallback"),
+            "user name"
+        );
+        assert_eq!(normalize_dataset_name_part("   ", "fallback"), "fallback");
+        assert_eq!(
+            normalize_dataset_name_part(&"a".repeat(80), "fallback").len(),
+            48
+        );
     }
 
     #[test]

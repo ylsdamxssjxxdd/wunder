@@ -71,6 +71,8 @@ pub struct UserKnowledgeBase {
     #[serde(default)]
     pub ragflow_dataset_id: Option<String>,
     #[serde(default)]
+    pub ragflow_dataset_managed: Option<bool>,
+    #[serde(default)]
     pub chunk_method: Option<String>,
     #[serde(default)]
     pub chunk_delimiter: Option<String>,
@@ -1273,6 +1275,9 @@ fn parse_user_knowledge_base(value: &Value) -> Option<UserKnowledgeBase> {
             .and_then(Value::as_str)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
+        ragflow_dataset_managed: obj
+            .get("ragflow_dataset_managed")
+            .and_then(|value| parse_optional_bool(Some(value))),
         chunk_method: obj
             .get("chunk_method")
             .and_then(Value::as_str)
@@ -1420,6 +1425,7 @@ fn user_knowledge_base_to_value(base: &UserKnowledgeBase) -> Value {
         "base_type": base.base_type,
         "embedding_model": base.embedding_model,
         "ragflow_dataset_id": base.ragflow_dataset_id,
+        "ragflow_dataset_managed": base.ragflow_dataset_managed,
         "chunk_method": base.chunk_method,
         "chunk_delimiter": base.chunk_delimiter,
         "layout_recognize": base.layout_recognize,

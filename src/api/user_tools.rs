@@ -3233,6 +3233,9 @@ fn collect_removed_ragflow_dataset_ids(
         if normalize_knowledge_base_type(base.base_type.as_deref()) != KnowledgeBaseType::Ragflow {
             continue;
         }
+        if base.ragflow_dataset_managed == Some(false) {
+            continue;
+        }
         let Some(dataset_id) =
             ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
         else {
@@ -3364,6 +3367,7 @@ async fn prepare_user_ragflow_bases(
                     base_type: Some("ragflow".to_string()),
                     embedding_model: None,
                     ragflow_dataset_id: None,
+                    ragflow_dataset_managed: Some(true),
                     chunk_method: base.chunk_method.clone(),
                     chunk_delimiter: base.chunk_delimiter.clone(),
                     layout_recognize: base.layout_recognize.clone(),
@@ -3379,6 +3383,9 @@ async fn prepare_user_ragflow_bases(
                 knowledge_base.name = build_user_ragflow_dataset_name(user, &base.name);
                 base.ragflow_dataset_id =
                     Some(ragflow_knowledge::create_dataset(config, &knowledge_base).await?);
+                base.ragflow_dataset_managed = Some(true);
+            } else if base.ragflow_dataset_managed.is_none() {
+                base.ragflow_dataset_managed = Some(false);
             }
         }
         output.push(base);
@@ -3387,22 +3394,16 @@ async fn prepare_user_ragflow_bases(
 }
 
 fn build_user_ragflow_dataset_name(user: &UserAccountRecord, base_name: &str) -> String {
-    let prefix = normalize_ragflow_dataset_name_part(if user.username.trim().is_empty() {
-        &user.user_id
-    } else {
-        &user.username
-    });
-    let name = normalize_ragflow_dataset_name_part(base_name);
+    let prefix = ragflow_knowledge::normalize_dataset_name_part(
+        if user.username.trim().is_empty() {
+            &user.user_id
+        } else {
+            &user.username
+        },
+        "user",
+    );
+    let name = ragflow_knowledge::normalize_dataset_name_part(base_name, "knowledge");
     format!("[{prefix}] {name}")
-}
-
-fn normalize_ragflow_dataset_name_part(value: &str) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let normalized = normalized.trim();
-    if normalized.is_empty() {
-        return "user".to_string();
-    }
-    normalized.chars().take(48).collect()
 }
 
 async fn refresh_user_knowledge_cache(base: &str, root: &Path) {
@@ -3415,6 +3416,7 @@ async fn refresh_user_knowledge_cache(base: &str, root: &Path) {
         base_type: None,
         embedding_model: None,
         ragflow_dataset_id: None,
+        ragflow_dataset_managed: None,
         chunk_method: None,
         chunk_delimiter: None,
         layout_recognize: None,
@@ -3463,6 +3465,7 @@ fn build_user_knowledge_config(base: &UserKnowledgeBase, root: &Path) -> Knowled
         base_type: base.base_type.clone(),
         embedding_model: base.embedding_model.clone(),
         ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+        ragflow_dataset_managed: base.ragflow_dataset_managed,
         chunk_method: base.chunk_method.clone(),
         chunk_delimiter: base.chunk_delimiter.clone(),
         layout_recognize: base.layout_recognize.clone(),
@@ -3487,6 +3490,7 @@ fn build_user_ragflow_knowledge_config(base: &UserKnowledgeBase) -> KnowledgeBas
         base_type: Some("ragflow".to_string()),
         embedding_model: None,
         ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+        ragflow_dataset_managed: base.ragflow_dataset_managed,
         chunk_method: base.chunk_method.clone(),
         chunk_delimiter: base.chunk_delimiter.clone(),
         layout_recognize: base.layout_recognize.clone(),
@@ -4190,6 +4194,8 @@ struct UserKnowledgeBasePayload {
     #[serde(default)]
     ragflow_dataset_id: Option<String>,
     #[serde(default)]
+    ragflow_dataset_managed: Option<bool>,
+    #[serde(default)]
     chunk_method: Option<String>,
     #[serde(default)]
     chunk_delimiter: Option<String>,
@@ -4228,6 +4234,9 @@ impl UserKnowledgeBasePayload {
             base_type,
             embedding_model: base.embedding_model.clone(),
             ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+            ragflow_dataset_managed: base
+                .ragflow_dataset_managed
+                .or_else(|| (normalized_type == KnowledgeBaseType::Ragflow).then_some(true)),
             chunk_method: base.chunk_method.clone(),
             chunk_delimiter: base.chunk_delimiter.clone(),
             layout_recognize: base.layout_recognize.clone(),
@@ -4270,6 +4279,11 @@ impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
                     .or_else(|| {
                         ragflow_knowledge::normalize_synthetic_root_dataset_id(&payload.root)
                     })
+            } else {
+                None
+            },
+            ragflow_dataset_managed: if base_type == KnowledgeBaseType::Ragflow {
+                payload.ragflow_dataset_managed
             } else {
                 None
             },
@@ -4359,6 +4373,7 @@ mod tests {
             base_type: Some("ragflow".to_string()),
             embedding_model: Some("ignored".to_string()),
             ragflow_dataset_id: Some("dataset_id".to_string()),
+            ragflow_dataset_managed: Some(false),
             chunk_method: Some("Q&A".to_string()),
             chunk_delimiter: Some("\\n##".to_string()),
             layout_recognize: Some("plain text".to_string()),
@@ -4373,6 +4388,7 @@ mod tests {
         assert_eq!(base.base_type, Some("ragflow".to_string()));
         assert_eq!(base.embedding_model, None);
         assert_eq!(base.ragflow_dataset_id, Some("dataset_id".to_string()));
+        assert_eq!(base.ragflow_dataset_managed, Some(false));
         assert_eq!(base.chunk_method, Some("qa".to_string()));
         assert_eq!(base.chunk_delimiter, Some("\n##".to_string()));
         assert_eq!(base.layout_recognize, Some("Plain Text".to_string()));
@@ -4384,6 +4400,7 @@ mod tests {
             UserKnowledgeBasePayload::from_with_root(&base, "ragflow:dataset_id".to_string());
         assert_eq!(roundtrip.base_type, Some("ragflow".to_string()));
         assert_eq!(roundtrip.ragflow_dataset_id, Some("dataset_id".to_string()));
+        assert_eq!(roundtrip.ragflow_dataset_managed, Some(false));
         assert_eq!(roundtrip.chunk_method, Some("qa".to_string()));
         assert_eq!(roundtrip.chunk_delimiter, Some("\n##".to_string()));
         assert_eq!(roundtrip.layout_recognize, Some("Plain Text".to_string()));
@@ -4442,12 +4459,21 @@ mod tests {
                 name: "keep".to_string(),
                 base_type: Some("ragflow".to_string()),
                 ragflow_dataset_id: Some("dataset_keep".to_string()),
+                ragflow_dataset_managed: Some(true),
                 ..Default::default()
             },
             UserKnowledgeBase {
                 name: "remove".to_string(),
                 base_type: Some("ragflow".to_string()),
                 ragflow_dataset_id: Some("dataset_remove".to_string()),
+                ragflow_dataset_managed: Some(true),
+                ..Default::default()
+            },
+            UserKnowledgeBase {
+                name: "external".to_string(),
+                base_type: Some("ragflow".to_string()),
+                ragflow_dataset_id: Some("dataset_external".to_string()),
+                ragflow_dataset_managed: Some(false),
                 ..Default::default()
             },
         ];

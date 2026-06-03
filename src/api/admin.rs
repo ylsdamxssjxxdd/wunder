@@ -1811,6 +1811,9 @@ fn collect_removed_ragflow_dataset_ids(
         if !base.is_ragflow() {
             continue;
         }
+        if base.ragflow_dataset_managed == Some(false) {
+            continue;
+        }
         let Some(dataset_id) =
             ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
         else {
@@ -2111,6 +2114,7 @@ async fn admin_knowledge_file_update(
         base_type: base.base_type.clone(),
         embedding_model: base.embedding_model.clone(),
         ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+        ragflow_dataset_managed: base.ragflow_dataset_managed,
         chunk_method: base.chunk_method.clone(),
         chunk_delimiter: base.chunk_delimiter.clone(),
         layout_recognize: base.layout_recognize.clone(),
@@ -2166,6 +2170,7 @@ async fn admin_knowledge_file_delete(
             base_type: base.base_type.clone(),
             embedding_model: base.embedding_model.clone(),
             ragflow_dataset_id: base.ragflow_dataset_id.clone(),
+            ragflow_dataset_managed: base.ragflow_dataset_managed,
             chunk_method: base.chunk_method.clone(),
             chunk_delimiter: base.chunk_delimiter.clone(),
             layout_recognize: base.layout_recognize.clone(),
@@ -3317,6 +3322,7 @@ async fn admin_knowledge_upload(
         base_type: base_config.base_type.clone(),
         embedding_model: base_config.embedding_model.clone(),
         ragflow_dataset_id: base_config.ragflow_dataset_id.clone(),
+        ragflow_dataset_managed: base_config.ragflow_dataset_managed,
         chunk_method: base_config.chunk_method.clone(),
         chunk_delimiter: base_config.chunk_delimiter.clone(),
         layout_recognize: base_config.layout_recognize.clone(),
@@ -3367,6 +3373,7 @@ async fn admin_knowledge_refresh(
         base_type: base_config.base_type.clone(),
         embedding_model: base_config.embedding_model.clone(),
         ragflow_dataset_id: base_config.ragflow_dataset_id.clone(),
+        ragflow_dataset_managed: base_config.ragflow_dataset_managed,
         chunk_method: base_config.chunk_method.clone(),
         chunk_delimiter: base_config.chunk_delimiter.clone(),
         layout_recognize: base_config.layout_recognize.clone(),
@@ -7763,6 +7770,7 @@ async fn normalize_admin_knowledge_bases(
             base.base_type = Some("vector".to_string());
             base.embedding_model = Some(embedding_model);
             base.ragflow_dataset_id = None;
+            base.ragflow_dataset_managed = None;
             base.chunk_method = None;
             base.chunk_delimiter = None;
             base.layout_recognize = None;
@@ -7784,10 +7792,15 @@ async fn normalize_admin_knowledge_bases(
                 ragflow_knowledge::normalize_dataset_id(base.ragflow_dataset_id.as_deref())
                     .or_else(|| ragflow_knowledge::normalize_synthetic_root_dataset_id(&base.root));
             if base.ragflow_dataset_id.is_none() {
-                let dataset_id = ragflow_knowledge::create_dataset(config, &base)
-                    .await
-                    .map_err(vector_error_response)?;
+                let remote_name = build_admin_ragflow_dataset_name(&base.name);
+                let dataset_id =
+                    ragflow_knowledge::create_dataset_with_name(config, &base, &remote_name)
+                        .await
+                        .map_err(vector_error_response)?;
                 base.ragflow_dataset_id = Some(dataset_id);
+                base.ragflow_dataset_managed = Some(true);
+            } else if base.ragflow_dataset_managed.is_none() {
+                base.ragflow_dataset_managed = Some(false);
             }
             base.root =
                 ragflow_knowledge::synthetic_root(base.ragflow_dataset_id.as_deref().unwrap_or(""));
@@ -7800,6 +7813,7 @@ async fn normalize_admin_knowledge_bases(
             base.base_type = None;
             base.embedding_model = None;
             base.ragflow_dataset_id = None;
+            base.ragflow_dataset_managed = None;
             base.chunk_method = None;
             base.chunk_delimiter = None;
             base.layout_recognize = None;
@@ -7810,6 +7824,11 @@ async fn normalize_admin_knowledge_bases(
         output.push(base);
     }
     Ok(output)
+}
+
+fn build_admin_ragflow_dataset_name(base_name: &str) -> String {
+    let name = ragflow_knowledge::normalize_dataset_name_part(base_name, "knowledge");
+    format!("[Wunder Admin] {name}")
 }
 
 fn resolve_vector_root_for_admin(
@@ -7962,10 +7981,11 @@ fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_browser_tool_name, apply_builtin_tools_update, build_builtin_tools_payload,
+        admin_browser_tool_name, apply_builtin_tools_update, build_admin_ragflow_dataset_name,
+        build_builtin_tools_payload, collect_removed_ragflow_dataset_ids,
         normalize_optional_tool_access_list,
     };
-    use crate::config::Config;
+    use crate::config::{Config, KnowledgeBaseConfig};
     use crate::tools::resolve_tool_name;
     use serde_json::Value;
 
@@ -8030,6 +8050,39 @@ mod tests {
                 " read_file ".to_string(),
             ])),
             Some(vec!["read_file".to_string()])
+        );
+    }
+
+    #[test]
+    fn admin_ragflow_dataset_name_uses_management_prefix() {
+        assert_eq!(
+            build_admin_ragflow_dataset_name("  shared   docs  "),
+            "[Wunder Admin] shared docs"
+        );
+    }
+
+    #[test]
+    fn removed_ragflow_dataset_ids_skip_unmanaged_datasets() {
+        let current = vec![
+            KnowledgeBaseConfig {
+                name: "managed".to_string(),
+                base_type: Some("ragflow".to_string()),
+                ragflow_dataset_id: Some("dataset_managed".to_string()),
+                ragflow_dataset_managed: Some(true),
+                ..Default::default()
+            },
+            KnowledgeBaseConfig {
+                name: "external".to_string(),
+                base_type: Some("ragflow".to_string()),
+                ragflow_dataset_id: Some("dataset_external".to_string()),
+                ragflow_dataset_managed: Some(false),
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            collect_removed_ragflow_dataset_ids(&current, &[]),
+            vec!["dataset_managed".to_string()]
         );
     }
 }

@@ -650,15 +650,15 @@
 - `GET` 入参（Query）：
   - `user_id`：用户唯一标识
 - `GET` 返回（JSON）：
-  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/ragflow_dataset_id/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `knowledge.bases`：知识库列表（name/description/root/enabled/shared/base_type/embedding_model/ragflow_dataset_id/ragflow_dataset_managed/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
   - `embedding_models`：可用嵌入模型名称列表（仅包含 model_type=embedding）
   - `tts_models`：可用文转声模型名称列表（仅包含 model_type=tts）
   - `image_models`：可用图像生成模型名称列表（仅包含 model_type=image）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
-  - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/ragflow_dataset_id/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/ragflow_dataset_id/ragflow_dataset_managed/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 返回：同 `GET`
-- 说明：`base_type` 为空默认字面知识库，`base_type` 还可为 `vector` 或 `ragflow`。`vector` 知识库使用本地向量库与 `embedding_model`；`ragflow` 知识库通过 `ragflow.*` 连接远端 Dataset，`ragflow_dataset_id` 会在保存后自动创建或绑定，`chunk_method` 可设置 RAGFlow 切片方式（默认 `naive`，支持 `naive/qa/resume/manual/table/paper/book/laws/presentation/picture/one/email/tag`），`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 会按切片方式过滤后映射到 RAGFlow `parser_config`。其中 `naive` 支持切片长度、分隔符、版面解析、自动关键词/问题和 Excel 转 HTML；`manual/paper/book/laws/presentation/one` 支持版面解析和自动关键词/问题；`email/picture` 支持自动关键词/问题；`qa/resume/table/tag` 暂无额外解析参数。自动创建的 Dataset 在 RAGFlow 侧使用 `[用户名] 知识库名称` 命名，`root` 使用 `ragflow:<dataset_id>` 作为逻辑标识。从列表移除 RAGFlow 知识库时会同步删除对应远端 Dataset。存在可用嵌入模型时优先使用向量检索；未配置模型、嵌入调用失败或向量库不可用时，自动回退到文本匹配。
+- 说明：`base_type` 为空默认字面知识库，`base_type` 还可为 `vector` 或 `ragflow`。`vector` 知识库使用本地向量库与 `embedding_model`；`ragflow` 知识库通过 `ragflow.*` 连接远端 Dataset，`ragflow_dataset_id` 留空时会在保存后自动创建，填写已有 RAGFlow Dataset ID 时会直接绑定；`ragflow_dataset_managed=false` 表示非托管外部 Dataset，移除 Wunder 知识库时不会删除远端 Dataset。`chunk_method` 可设置 RAGFlow 切片方式（默认 `naive`，支持 `naive/qa/resume/manual/table/paper/book/laws/presentation/picture/one/email/tag`），`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 会按切片方式过滤后映射到 RAGFlow `parser_config`。其中 `naive` 支持切片长度、分隔符、版面解析、自动关键词/问题和 Excel 转 HTML；`manual/paper/book/laws/presentation/one` 支持版面解析和自动关键词/问题；`email/picture` 支持自动关键词/问题；`qa/resume/table/tag` 暂无额外解析参数。自动创建的 Dataset 在 RAGFlow 侧使用 `[用户名] 知识库名称` 命名，`root` 使用 `ragflow:<dataset_id>` 作为逻辑标识。从列表移除托管的 RAGFlow 知识库时会同步删除对应远端 Dataset。存在可用嵌入模型时优先使用向量检索；未配置模型、嵌入调用失败或向量库不可用时，自动回退到文本匹配。
 
 ### 4.1.2.10 `/wunder/user_tools/knowledge/files`
 
@@ -2278,10 +2278,10 @@
 
 - 方法：`GET/POST`
 - `GET` 返回：
-  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/ragflow_dataset_id/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
+  - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/ragflow_dataset_id/ragflow_dataset_managed/chunk_method/chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 入参：
   - `knowledge`：完整知识库配置，用于保存与下发
-- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `config/data/vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`；RAGFlow 知识库 root 使用 `ragflow:<dataset_id>` 作为逻辑标识，`chunk_method` 映射到 RAGFlow Dataset 的切片方式，`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 按切片方式映射到 RAGFlow `parser_config`，文档上传、分块、检索和重解析由 RAGFlow Dataset 执行。
+- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `config/data/vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`；RAGFlow 知识库 root 使用 `ragflow:<dataset_id>` 作为逻辑标识，`ragflow_dataset_id` 留空时自动创建 Dataset，填写已有 RAGFlow Dataset ID 时直接绑定；`ragflow_dataset_managed=false` 表示非托管外部 Dataset，移除 Wunder 知识库时不会删除远端 Dataset。`chunk_method` 映射到 RAGFlow Dataset 的切片方式，`chunk_delimiter/layout_recognize/auto_keywords/auto_questions/html4excel/chunk_size` 按切片方式映射到 RAGFlow `parser_config`，文档上传、分块、检索和重解析由 RAGFlow Dataset 执行。管理员侧自动创建的 RAGFlow Dataset 在远端使用 `[Wunder Admin] 知识库名称` 命名，便于与用户侧 `[用户名] 知识库名称` 区分。
 
 ### 4.1.27 `/wunder/admin/knowledge/files`
 

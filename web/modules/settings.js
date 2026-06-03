@@ -15,7 +15,7 @@ import {
   normalizeLanguage,
   setLanguage,
   t,
-} from "./i18n.js?v=20260602-01";
+} from "./i18n.js?v=20260603-02";
 import { getWunderBase } from "./api.js";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 

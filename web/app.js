@@ -16,7 +16,7 @@ import { state } from "./modules/state.js";
 
 
 import { appendLog } from "./modules/log.js?v=20260215-01";
-import { loadI18nConfig } from "./modules/i18n-config.js";
+import { loadI18nConfig } from "./modules/i18n-config.js?v=20260603-02";
 
 import { initToolDetailModal } from "./modules/tool-detail.js?v=20260215-01";
 
@@ -65,7 +65,7 @@ import {
   initToolVisibilityPanel,
   loadToolVisibilityPanel,
 } from "./modules/tool-visibility.js?v=20260518-01";
-import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260602-01";
+import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?v=20260603-02";
 
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260215-01";
 import { initUserTools, resetUserToolsState } from "./modules/user-tools.js?v=20260215-01";
@@ -84,7 +84,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20260508-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260602-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260603-02";
 
 
 

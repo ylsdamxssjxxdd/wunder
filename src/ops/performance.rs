@@ -654,6 +654,7 @@ fn build_vector_perf_base(base_name: &str, root: &std::path::Path) -> KnowledgeB
         base_type: Some("vector".to_string()),
         embedding_model: Some("perf".to_string()),
         ragflow_dataset_id: None,
+        ragflow_dataset_managed: None,
         chunk_method: None,
         chunk_delimiter: None,
         layout_recognize: None,

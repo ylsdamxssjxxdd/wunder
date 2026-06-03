@@ -4769,6 +4769,14 @@
               data-i18n-placeholder="knowledge.modal.placeholder.name"
             />
           </div>
+          <div class="form-row">
+            <label for="knowledgeModalDesc" data-i18n="knowledge.modal.field.description">描述</label>
+            <textarea
+              id="knowledgeModalDesc"
+              placeholder="知识库用途说明"
+              data-i18n-placeholder="knowledge.modal.placeholder.description"
+            ></textarea>
+          </div>
           <div id="knowledgeModalTypeRow" class="form-row">
             <label for="knowledgeModalType" data-i18n="knowledge.modal.field.type">类型</label>
             <select id="knowledgeModalType">
@@ -4777,9 +4785,24 @@
               <option value="literal" data-i18n="knowledge.type.literal" hidden disabled>字面知识库</option>
             </select>
           </div>
+          <details id="knowledgeModalAdvanced" class="knowledge-advanced">
+            <summary data-i18n="knowledge.modal.advanced.toggle">高级选项</summary>
+            <div class="knowledge-advanced-body">
           <div id="knowledgeModalEmbeddingRow" class="form-row" hidden>
             <label for="knowledgeModalEmbeddingModel" data-i18n="knowledge.modal.field.embeddingModel">嵌入模型</label>
             <select id="knowledgeModalEmbeddingModel"></select>
+          </div>
+          <div id="knowledgeModalRagflowDatasetRow" class="form-row" hidden>
+            <label for="knowledgeModalRagflowDatasetId" data-i18n="knowledge.modal.field.ragflowDatasetId">RAGFlow Dataset ID</label>
+            <input
+              id="knowledgeModalRagflowDatasetId"
+              type="text"
+              placeholder="留空则自动创建"
+              data-i18n-placeholder="knowledge.modal.placeholder.ragflowDatasetId"
+            />
+            <div class="muted" data-i18n="knowledge.modal.tip.ragflowDatasetId">
+              填写已有 RAGFlow Dataset ID 将直接绑定，删除 Wunder 知识库时不会删除远端 Dataset。
+            </div>
           </div>
           <div id="knowledgeModalChunkMethodRow" class="form-row" hidden>
             <label for="knowledgeModalChunkMethod" data-i18n="knowledge.modal.field.chunkMethod">切片方式</label>
@@ -4931,14 +4954,8 @@
               向量知识库目录由系统自动生成
             </div>
           </div>
-          <div class="form-row">
-            <label for="knowledgeModalDesc" data-i18n="knowledge.modal.field.description">描述</label>
-            <textarea
-              id="knowledgeModalDesc"
-              placeholder="知识库用途说明"
-              data-i18n-placeholder="knowledge.modal.placeholder.description"
-            ></textarea>
-          </div>
+            </div>
+          </details>
           <div class="form-row">
             <label class="checkbox-row">
               <input id="knowledgeModalEnabled" type="checkbox" checked />
@@ -6100,7 +6117,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260518-01"></script>
+    <script type="module" src="./app.js?v=20260603-02"></script>
 </body>
 </html>
 
