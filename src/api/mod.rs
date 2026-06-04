@@ -30,6 +30,7 @@ pub mod external_links;
 pub mod external_workflows;
 pub mod gateway_ws;
 pub mod onlyoffice;
+pub(crate) mod skill_fs;
 pub mod team_runs;
 pub mod temp_dir;
 pub mod user_agents;

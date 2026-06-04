@@ -1,4 +1,5 @@
 // 用户自建工具 API：MCP、技能、知识库与额外提示词管理。
+use crate::api::skill_fs;
 use crate::api::user_context::resolve_user;
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::config::{
@@ -52,9 +53,6 @@ use tracing::info;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-#[path = "skill_fs.rs"]
-mod skill_fs;
-
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_SKILL_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
@@ -79,7 +77,7 @@ impl UserSkillSourceKind {
         matches!(self, Self::Builtin)
     }
 
-    fn is_readonly(self) -> bool {
+    pub(crate) fn is_readonly(self) -> bool {
         !matches!(self, Self::Custom)
     }
 
@@ -3804,7 +3802,7 @@ fn list_markdown_files(root: &Path) -> Vec<String> {
     files
 }
 
-fn error_response(status: StatusCode, message: String) -> Response {
+pub(crate) fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
 

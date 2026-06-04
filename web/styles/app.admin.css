@@ -3321,51 +3321,6 @@
   align-items: flex-start;
 }
 
-.skill-tree-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 13px;
-  line-height: 1.4;
-  transition: background 0.15s ease, box-shadow 0.15s ease;
-}
-
-.skill-tree-item.is-file {
-  cursor: pointer;
-}
-
-.skill-tree-item.is-file:hover {
-  background: #e0edff;
-  box-shadow: inset 0 0 0 1px #bfdbfe;
-}
-
-.skill-tree-item.is-active {
-  background: #dbeafe;
-  box-shadow: inset 0 0 0 1px #93c5fd;
-}
-
-.skill-tree-item.is-dir {
-  color: #475569;
-}
-
-.skill-tree-item.is-dir i {
-  color: #6366f1;
-}
-
-.skill-tree-item.is-file i {
-  color: #0ea5e9;
-}
-
-.skill-tree-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .skill-editor-body {
   position: relative;
   flex: 1 1 auto;
@@ -3481,6 +3436,274 @@
 #skillsPanel .skill-item.is-active {
   background: #e0edff;
   box-shadow: inset 0 0 0 1px #93c5fd;
+}
+
+#skillsPanel .skills-workspace-layout {
+  grid-template-columns: minmax(230px, 320px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+#skillsPanel .skills-sidebar,
+#skillsPanel .admin-workspace-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+#skillsPanel .skills-sidebar {
+  padding: 10px;
+  box-shadow: none;
+}
+
+#skillsPanel .skills-sidebar .skills-list {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+#skillsPanel .skills-column-header,
+#knowledgePanel .knowledge-column-header {
+  align-items: center;
+  min-height: 30px;
+}
+
+#skillsPanel .skills-column-actions,
+#knowledgePanel .knowledge-column-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#skillsPanel .skills-section-title {
+  color: #334155;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+#skillsPanel .admin-workspace-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
+}
+
+#skillsPanel #skillWorkspaceBlock {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#skillsPanel #skillWorkspaceBlock .admin-workspace-title-row {
+  min-height: 28px;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-actions {
+  justify-content: flex-end;
+  margin-left: 0;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-toolbar {
+  margin: 0;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-search {
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-list {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  border-color: #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 4px;
+  gap: 1px;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item {
+  min-height: 28px;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item-main {
+  display: grid;
+  grid-template-columns: 16px 22px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 4px;
+  padding-left: var(--workspace-indent, 0px);
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px #e2e8f0;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item-icon.icon-folder {
+  color: #d97706;
+  background: #fff7ed;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item-icon.icon-code {
+  color: #0f766e;
+  background: #f0fdfa;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item-icon.icon-image {
+  color: #0284c7;
+  background: #f0f9ff;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item-icon.icon-pdf {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item:hover {
+  background: #f1f5f9;
+}
+
+#skillsPanel #skillWorkspaceBlock .workspace-item.active,
+#skillsPanel #skillWorkspaceBlock .workspace-item.is-selected {
+  background: #e8f0ff;
+}
+
+.admin-workspace-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-workspace-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.admin-workspace-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-workspace-title-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: #eef2ff;
+  color: #475569;
+  box-shadow: inset 0 0 0 1px #e2e8f0;
+}
+
+.admin-workspace-title-icon i {
+  font-size: 12px;
+}
+
+.admin-workspace-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.admin-workspace-meta {
+  max-width: min(720px, 52vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.admin-workspace-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.admin-workspace-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.admin-workspace-search:focus-within {
+  border-color: #93c5fd;
+  box-shadow: inset 0 0 0 1px rgba(147, 197, 253, 0.35);
+}
+
+.admin-workspace-search i {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.admin-workspace-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: #0f172a;
+  font-size: 12px;
+  outline: none;
+}
+
+#skillsPanel .skill-editor-body {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+#skillEditorModal {
+  z-index: 230;
+}
+
+#skillEditorModal .skill-editor-modal-card {
+  width: min(980px, 96vw);
+  height: min(720px, 90vh);
+}
+
+#skillEditorModal .skill-editor-modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+#skillEditorModal .skill-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .knowledge-section {
@@ -4146,6 +4369,276 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#knowledgePanel .knowledge-layout {
+  grid-template-columns: minmax(220px, 280px) minmax(240px, 320px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+#knowledgePanel .knowledge-file-layout:not([hidden]),
+#knowledgePanel .knowledge-vector-layout:not([hidden]) {
+  display: contents;
+}
+
+#knowledgePanel .knowledge-file-layout[hidden],
+#knowledgePanel .knowledge-vector-layout[hidden] {
+  display: none !important;
+}
+
+#knowledgePanel .knowledge-base-column,
+#knowledgePanel .knowledge-doc-column,
+#knowledgePanel .knowledge-content-column {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+#knowledgePanel .knowledge-base-column,
+#knowledgePanel .knowledge-doc-column,
+#knowledgePanel .knowledge-content-column,
+#knowledgePanel .knowledge-file-pane,
+#knowledgePanel .knowledge-vector-pane,
+#knowledgePanel .knowledge-file-editor,
+#knowledgePanel .knowledge-vector-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#knowledgePanel .knowledge-content-header {
+  align-items: flex-start;
+}
+
+#knowledgePanel .knowledge-content-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#knowledgePanel .knowledge-content-title .detail-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#knowledgePanel .list-body,
+#knowledgePanel .knowledge-file-list,
+#knowledgePanel .knowledge-doc-list,
+#knowledgePanel .knowledge-doc-chunk-list,
+#knowledgePanel .knowledge-editor-wrapper {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#knowledgePanel .knowledge-file-list,
+#knowledgePanel .knowledge-doc-list,
+#knowledgePanel .knowledge-doc-chunk-list {
+  border-color: #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 6px;
+}
+
+#knowledgePanel .knowledge-file-item,
+#knowledgePanel .knowledge-doc-item,
+#knowledgePanel .knowledge-doc-chunk-item {
+  border-radius: 7px;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#knowledgePanel .knowledge-file-item:hover,
+#knowledgePanel .knowledge-doc-item:hover,
+#knowledgePanel .knowledge-doc-chunk-item:hover {
+  background: #f1f5f9;
+  box-shadow: inset 0 0 0 1px #e2e8f0;
+}
+
+#knowledgePanel .knowledge-file-item.active,
+#knowledgePanel .knowledge-doc-item.active,
+#knowledgePanel .knowledge-doc-chunk-item.selected {
+  background: #e8f0ff;
+  border-color: #bfdbfe;
+}
+
+#knowledgePanel .knowledge-editor-wrapper {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+#knowledgePanel .knowledge-file-editor textarea {
+  border: none;
+  padding: 10px 12px;
+  color: #0f172a;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  outline: none;
+  box-shadow: none;
+}
+
+#knowledgePanel .knowledge-file-editor textarea:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(147, 197, 253, 0.45);
+}
+
+#knowledgePanel .knowledge-vector-content,
+#knowledgePanel .knowledge-doc-chunks-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#knowledgePanel .knowledge-doc-section-title {
+  color: #334155;
+  font-weight: 700;
+}
+
+#knowledgePanel .knowledge-type-icon.is-ragflow {
+  color: #2563eb;
+}
+
+#workspaceSharedBlock {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+#workspaceSharedBlock .workspace-header {
+  align-items: center;
+}
+
+#workspaceSharedBlock .workspace-actions {
+  gap: 6px;
+}
+
+#workspaceSharedBlock .workspace-toolbar {
+  gap: 8px;
+}
+
+#workspaceSharedBlock .workspace-search {
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+#workspaceSharedBlock .workspace-list {
+  border-color: #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 4px;
+  gap: 1px;
+}
+
+#workspaceSharedBlock .workspace-item {
+  min-height: 28px;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+#workspaceSharedBlock .workspace-item-main {
+  display: grid;
+  grid-template-columns: 16px 22px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 4px;
+  padding-left: var(--workspace-indent, 0px);
+}
+
+#workspaceSharedBlock .workspace-item-caret {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 10px;
+  transition: transform 0.16s ease;
+}
+
+#workspaceSharedBlock .workspace-item-caret.expanded {
+  transform: rotate(90deg);
+}
+
+#workspaceSharedBlock .workspace-item-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px #e2e8f0;
+}
+
+#workspaceSharedBlock .workspace-item-icon.icon-folder {
+  color: #d97706;
+  background: #fff7ed;
+}
+
+#workspaceSharedBlock .workspace-item-icon.icon-code {
+  color: #0f766e;
+  background: #f0fdfa;
+}
+
+#workspaceSharedBlock .workspace-item-icon.icon-image {
+  color: #0284c7;
+  background: #f0f9ff;
+}
+
+#workspaceSharedBlock .workspace-item-icon.icon-pdf {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+#workspaceSharedBlock .workspace-item-name {
+  min-width: 0;
+  font-size: 13px;
+}
+
+#workspaceSharedBlock .workspace-item:hover {
+  background: #f1f5f9;
+}
+
+#workspaceSharedBlock .workspace-item.active,
+#workspaceSharedBlock .workspace-item.is-selected {
+  background: #e8f0ff;
+}
+
+@media (max-width: 1180px) {
+  #knowledgePanel .knowledge-layout {
+    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  }
+
+  #knowledgePanel .knowledge-content-column {
+    grid-column: 1 / -1;
+    min-height: 360px;
+  }
+}
+
+@media (max-width: 980px) {
+  #skillsPanel .skills-workspace-layout,
+  #knowledgePanel .knowledge-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #knowledgePanel .knowledge-content-column {
+    grid-column: auto;
+  }
+
+  .admin-workspace-meta {
+    max-width: 100%;
+  }
 }
 
 /* 模型配置卡片样式 */

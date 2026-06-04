@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C01 钩状回波与中气旋示意图</title>
+  <desc id="desc">雷达反射率平面图中，强单体右后侧出现钩状回波，并配有径向速度偶极示意。</desc>
+  <defs>
+    <radialGradient id="cell" cx="50%" cy="50%" r="60%">
+      <stop offset="0" stop-color="#7f1d1d"/>
+      <stop offset="0.32" stop-color="#dc2626"/>
+      <stop offset="0.62" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#fde68a"/>
+    </radialGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="36" y="50" width="620" height="430" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <g fill="none" stroke="#cbd5e1" stroke-width="1">
+    <circle cx="346" cy="265" r="80"/>
+    <circle cx="346" cy="265" r="160"/>
+    <circle cx="346" cy="265" r="240"/>
+    <line x1="36" y1="265" x2="656" y2="265"/>
+    <line x1="346" y1="50" x2="346" y2="480"/>
+  </g>
+  <path d="M250 165 C330 118 455 145 505 225 C548 294 504 365 418 383 C330 401 252 356 233 286 C218 231 226 187 250 165 Z" fill="url(#cell)" opacity="0.94"/>
+  <path d="M292 346 C250 376 212 372 190 345 C220 353 253 337 280 304 C306 273 331 270 356 292 C329 298 311 324 292 346 Z" fill="#f59e0b" opacity="0.95"/>
+  <path d="M215 350 C254 356 291 330 312 298" fill="none" stroke="#7f1d1d" stroke-width="11" stroke-linecap="round"/>
+  <path d="M246 349 C282 337 303 315 320 295" fill="none" stroke="#fde68a" stroke-width="5" stroke-linecap="round"/>
+  <text x="58" y="84" fill="#0f172a" font-size="22" font-weight="700">反射率结构</text>
+  <text x="178" y="410" fill="#7f1d1d" font-size="18" font-weight="700">钩状回波</text>
+  <line x1="250" y1="392" x2="282" y2="341" stroke="#7f1d1d" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="412" y="125" fill="#334155" font-size="17">主强回波核</text>
+  <line x1="442" y1="137" x2="432" y2="190" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="700" y="78" width="220" height="180" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="720" y="110" fill="#0f172a" font-size="20" font-weight="700">速度偶极</text>
+  <ellipse cx="780" cy="176" rx="48" ry="64" fill="#2563eb" opacity="0.82"/>
+  <ellipse cx="840" cy="176" rx="48" ry="64" fill="#ef4444" opacity="0.82"/>
+  <line x1="812" y1="110" x2="812" y2="238" stroke="#111827" stroke-width="2" stroke-dasharray="6 6"/>
+  <text x="734" y="244" fill="#2563eb" font-size="15">入流</text>
+  <text x="842" y="244" fill="#ef4444" font-size="15">出流</text>
+  <rect x="700" y="296" width="220" height="118" rx="8" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="720" y="328" fill="#9a3412" font-size="18" font-weight="700">判读要点</text>
+  <text x="720" y="358" fill="#334155" font-size="15">1. 低层钩状结构</text>
+  <text x="720" y="382" fill="#334155" font-size="15">2. 持续速度偶极</text>
+  <text x="720" y="406" fill="#334155" font-size="15">3. 地面实况核验</text>
+  <text x="36" y="514" fill="#64748b" font-size="14">示意图仅用于案例判读训练，不能替代实时雷达和官方预警结论。</text>
+</svg>
+

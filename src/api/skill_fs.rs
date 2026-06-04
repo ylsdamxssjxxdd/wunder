@@ -1,8 +1,9 @@
-use super::{
-    error_response, normalize_public_path, resolve_skill_file_path, resolve_visible_user_skill,
-    UserSkillFileQuery,
+use crate::api::admin::{
+    ensure_admin_skill_editable, is_admin_skill_editable, resolve_admin_skill_root,
+    resolve_admin_skill_spec,
 };
 use crate::api::user_context::resolve_user;
+use crate::api::user_tools::{error_response, resolve_visible_user_skill};
 use crate::i18n;
 use crate::path_utils::{is_within_root, normalize_target_path, strip_windows_verbatim_prefix};
 use crate::state::AppState;
@@ -119,6 +120,14 @@ pub(crate) struct UserSkillArchiveQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct UserSkillFileQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct UserSkillFileUpdate {
     #[serde(default)]
     user_id: Option<String>,
@@ -180,16 +189,38 @@ pub(crate) struct SkillFsBatchFailure {
     message: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SkillFsScope {
+    User,
+    Admin,
+}
+
 struct ResolvedSkillFs {
     user_id: String,
     root: PathBuf,
     readonly: bool,
     skill_name: String,
+    scope: SkillFsScope,
 }
 
 struct PendingUpload {
     temp_path: PathBuf,
     filename: String,
+}
+
+struct ParsedSkillFsUpload {
+    raw_user_id: String,
+    skill_name: String,
+    base_path: String,
+    relative_paths: Vec<String>,
+    pending_files: Vec<PendingUpload>,
+    temp_dir: Option<PathBuf>,
+}
+
+impl ParsedSkillFsUpload {
+    fn cleanup(&self) {
+        cleanup_temp_files(&self.pending_files, self.temp_dir.as_ref());
+    }
 }
 
 struct TempFileStream {
@@ -231,7 +262,22 @@ pub(crate) async fn user_skills_fs_content(
     Query(query): Query<UserSkillFsQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved =
-        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+        resolve_user_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    skill_fs_content_response(&resolved, &query).await
+}
+
+pub(crate) async fn admin_skills_fs_content(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UserSkillFsQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_admin_skill_fs(&state, &query.name).await?;
+    skill_fs_content_response(&resolved, &query).await
+}
+
+async fn skill_fs_content_response(
+    resolved: &ResolvedSkillFs,
+    query: &UserSkillFsQuery,
+) -> Result<Json<Value>, Response> {
     let normalized = normalize_relative_path(&query.path);
     let target = resolve_skill_target_path(
         &resolved.root,
@@ -353,7 +399,22 @@ pub(crate) async fn user_skills_fs_search(
     Query(query): Query<UserSkillFsSearchQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved =
-        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+        resolve_user_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    skill_fs_search_response(&resolved, &query)
+}
+
+pub(crate) async fn admin_skills_fs_search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UserSkillFsSearchQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_admin_skill_fs(&state, &query.name).await?;
+    skill_fs_search_response(&resolved, &query)
+}
+
+fn skill_fs_search_response(
+    resolved: &ResolvedSkillFs,
+    query: &UserSkillFsSearchQuery,
+) -> Result<Json<Value>, Response> {
     let offset = query.offset.max(0) as u64;
     let limit = query.limit.max(0) as u64;
     let (entries, total) = search_skill_entries(
@@ -383,8 +444,24 @@ pub(crate) async fn user_skills_fs_file_update(
     Json(payload): Json<UserSkillFileUpdate>,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
     let resolved =
-        resolve_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
+        resolve_user_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
             .await?;
+    skill_fs_file_update_response(&state, &resolved, &payload).await
+}
+
+pub(crate) async fn admin_skills_fs_file_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserSkillFileUpdate>,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let resolved = resolve_admin_skill_fs_writable(&state, &payload.name).await?;
+    skill_fs_file_update_response(&state, &resolved, &payload).await
+}
+
+async fn skill_fs_file_update_response(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    payload: &UserSkillFileUpdate,
+) -> Result<Json<SkillFsActionResponse>, Response> {
     let normalized = normalize_relative_path(&payload.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -413,7 +490,7 @@ pub(crate) async fn user_skills_fs_file_update(
     tokio::fs::write(&target, payload.content.as_bytes())
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    clear_skill_cache_if_needed(&state, &resolved.user_id, &normalized);
+    refresh_skill_runtime_after_change(state, resolved, &[normalized.clone()], false).await;
     Ok(Json(SkillFsActionResponse {
         ok: true,
         message: i18n::t("workspace.message.file_saved"),
@@ -425,8 +502,46 @@ pub(crate) async fn user_skills_fs_file_update(
 pub(crate) async fn user_skills_fs_upload(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
+    let upload = parse_skill_fs_upload(&headers, multipart).await?;
+    let resolved = resolve_user_skill_fs_writable(
+        &state,
+        &headers,
+        if upload.raw_user_id.is_empty() {
+            None
+        } else {
+            Some(upload.raw_user_id.as_str())
+        },
+        &upload.skill_name,
+    )
+    .await
+    .map_err(|err| {
+        upload.cleanup();
+        err
+    })?;
+    persist_skill_fs_uploads(&state, &resolved, upload).await
+}
+
+pub(crate) async fn admin_skills_fs_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let upload = parse_skill_fs_upload(&headers, multipart).await?;
+    let resolved = resolve_admin_skill_fs_writable(&state, &upload.skill_name)
+        .await
+        .map_err(|err| {
+            upload.cleanup();
+            err
+        })?;
+    persist_skill_fs_uploads(&state, &resolved, upload).await
+}
+
+async fn parse_skill_fs_upload(
+    headers: &HeaderMap,
+    mut multipart: Multipart,
+) -> Result<ParsedSkillFsUpload, Response> {
     if let Some(length) = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
@@ -506,22 +621,22 @@ pub(crate) async fn user_skills_fs_upload(
         }
     }
 
-    let resolved = resolve_skill_fs_writable(
-        &state,
-        &headers,
-        if raw_user_id.is_empty() {
-            None
-        } else {
-            Some(raw_user_id.as_str())
-        },
-        &skill_name,
-    )
-    .await
-    .map_err(|err| {
-        cleanup_temp_files(&pending_files, temp_dir.as_ref());
-        err
-    })?;
-    let normalized_base = normalize_relative_path(&base_path);
+    Ok(ParsedSkillFsUpload {
+        raw_user_id,
+        skill_name,
+        base_path,
+        relative_paths,
+        pending_files,
+        temp_dir,
+    })
+}
+
+async fn persist_skill_fs_uploads(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    upload: ParsedSkillFsUpload,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let normalized_base = normalize_relative_path(&upload.base_path);
     let target_dir = resolve_skill_target_path(
         &resolved.root,
         if normalized_base.is_empty() {
@@ -531,11 +646,11 @@ pub(crate) async fn user_skills_fs_upload(
         },
     )
     .map_err(|err| {
-        cleanup_temp_files(&pending_files, temp_dir.as_ref());
+        upload.cleanup();
         err
     })?;
     if target_dir.exists() && !target_dir.is_dir() {
-        cleanup_temp_files(&pending_files, temp_dir.as_ref());
+        upload.cleanup();
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("workspace.error.target_not_dir"),
@@ -544,13 +659,14 @@ pub(crate) async fn user_skills_fs_upload(
     tokio::fs::create_dir_all(&target_dir)
         .await
         .map_err(|err| {
-            cleanup_temp_files(&pending_files, temp_dir.as_ref());
+            upload.cleanup();
             error_response(StatusCode::BAD_REQUEST, err.to_string())
         })?;
 
     let mut uploaded = Vec::new();
-    for (index, file) in pending_files.iter().enumerate() {
-        let raw_path = relative_paths
+    for (index, file) in upload.pending_files.iter().enumerate() {
+        let raw_path = upload
+            .relative_paths
             .get(index)
             .filter(|value| !value.trim().is_empty())
             .cloned()
@@ -569,17 +685,17 @@ pub(crate) async fn user_skills_fs_upload(
             )
         };
         let dest = resolve_skill_target_path(&resolved.root, &joined).map_err(|err| {
-            cleanup_temp_files(&pending_files, temp_dir.as_ref());
+            upload.cleanup();
             err
         })?;
         if let Some(parent) = dest.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|err| {
-                cleanup_temp_files(&pending_files, temp_dir.as_ref());
+                upload.cleanup();
                 error_response(StatusCode::BAD_REQUEST, err.to_string())
             })?;
         }
         if dest.exists() && dest.is_dir() {
-            cleanup_temp_files(&pending_files, temp_dir.as_ref());
+            upload.cleanup();
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
                 i18n::t("workspace.error.target_not_file"),
@@ -592,7 +708,7 @@ pub(crate) async fn user_skills_fs_upload(
             tokio::fs::copy(&file.temp_path, &dest)
                 .await
                 .map_err(|err| {
-                    cleanup_temp_files(&pending_files, temp_dir.as_ref());
+                    upload.cleanup();
                     error_response(StatusCode::BAD_REQUEST, err.to_string())
                 })?;
             let _ = tokio::fs::remove_file(&file.temp_path).await;
@@ -600,12 +716,8 @@ pub(crate) async fn user_skills_fs_upload(
         uploaded.push(to_relative_path(&resolved.root, &dest));
     }
 
-    cleanup_temp_files(&pending_files, temp_dir.as_ref());
-    if uploaded.iter().any(|path| should_clear_skill_cache(path)) {
-        state
-            .user_tool_manager
-            .clear_skill_cache(Some(&resolved.user_id));
-    }
+    upload.cleanup();
+    refresh_skill_runtime_after_change(state, resolved, &uploaded, false).await;
     Ok(Json(SkillFsActionResponse {
         ok: true,
         message: i18n::t("message.upload_success"),
@@ -620,8 +732,24 @@ pub(crate) async fn user_skills_dir_create(
     Json(payload): Json<UserSkillDirCreate>,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
     let resolved =
-        resolve_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
+        resolve_user_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
             .await?;
+    skill_fs_dir_create_response(&state, &resolved, &payload).await
+}
+
+pub(crate) async fn admin_skills_dir_create(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserSkillDirCreate>,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let resolved = resolve_admin_skill_fs_writable(&state, &payload.name).await?;
+    skill_fs_dir_create_response(&state, &resolved, &payload).await
+}
+
+async fn skill_fs_dir_create_response(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    payload: &UserSkillDirCreate,
+) -> Result<Json<SkillFsActionResponse>, Response> {
     let normalized = normalize_relative_path(&payload.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -639,11 +767,14 @@ pub(crate) async fn user_skills_dir_create(
     tokio::fs::create_dir_all(&target)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let created = to_relative_path(&resolved.root, &target);
+    refresh_skill_runtime_after_change(state, resolved, std::slice::from_ref(&created), false)
+        .await;
     Ok(Json(SkillFsActionResponse {
         ok: true,
         message: i18n::t("workspace.message.dir_created"),
         tree_version: skill_tree_version(&resolved.root),
-        files: vec![to_relative_path(&resolved.root, &target)],
+        files: vec![created],
     }))
 }
 
@@ -653,8 +784,25 @@ pub(crate) async fn user_skills_entry_delete(
     Query(query): Query<UserSkillFileQuery>,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
     let resolved =
-        resolve_skill_fs_writable(&state, &headers, query.user_id.as_deref(), &query.name).await?;
-    let normalized = normalize_relative_path(&query.path);
+        resolve_user_skill_fs_writable(&state, &headers, query.user_id.as_deref(), &query.name)
+            .await?;
+    skill_fs_entry_delete_response(&state, &resolved, &query.path).await
+}
+
+pub(crate) async fn admin_skills_entry_delete(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UserSkillFileQuery>,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let resolved = resolve_admin_skill_fs_writable(&state, &query.name).await?;
+    skill_fs_entry_delete_response(&state, &resolved, &query.path).await
+}
+
+async fn skill_fs_entry_delete_response(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    path: &str,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let normalized = normalize_relative_path(path);
     if normalized.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -662,7 +810,7 @@ pub(crate) async fn user_skills_entry_delete(
         ));
     }
     remove_skill_entry(&resolved.root, &normalized).await?;
-    clear_skill_cache_if_needed(&state, &resolved.user_id, &normalized);
+    refresh_skill_runtime_after_change(state, resolved, &[normalized], true).await;
     Ok(Json(SkillFsActionResponse {
         ok: true,
         message: i18n::t("message.deleted"),
@@ -677,13 +825,29 @@ pub(crate) async fn user_skills_entry_move(
     Json(payload): Json<UserSkillEntryMove>,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
     let resolved =
-        resolve_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
+        resolve_user_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
             .await?;
-    let source = normalize_relative_path(&payload.source);
-    let destination = normalize_relative_path(&payload.destination);
+    skill_fs_entry_move_response(&state, &resolved, &payload.source, &payload.destination).await
+}
+
+pub(crate) async fn admin_skills_entry_move(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserSkillEntryMove>,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let resolved = resolve_admin_skill_fs_writable(&state, &payload.name).await?;
+    skill_fs_entry_move_response(&state, &resolved, &payload.source, &payload.destination).await
+}
+
+async fn skill_fs_entry_move_response(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    source: &str,
+    destination: &str,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let source = normalize_relative_path(source);
+    let destination = normalize_relative_path(destination);
     move_skill_entry(&resolved.root, &source, &destination).await?;
-    clear_skill_cache_if_needed(&state, &resolved.user_id, &source);
-    clear_skill_cache_if_needed(&state, &resolved.user_id, &destination);
+    refresh_skill_runtime_after_change(state, resolved, &[source, destination.clone()], true).await;
     Ok(Json(SkillFsActionResponse {
         ok: true,
         message: i18n::t("workspace.message.moved"),
@@ -698,12 +862,30 @@ pub(crate) async fn user_skills_entry_copy(
     Json(payload): Json<UserSkillEntryCopy>,
 ) -> Result<Json<SkillFsActionResponse>, Response> {
     let resolved =
-        resolve_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
+        resolve_user_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
             .await?;
-    let source = normalize_relative_path(&payload.source);
-    let destination = normalize_relative_path(&payload.destination);
+    skill_fs_entry_copy_response(&state, &resolved, &payload.source, &payload.destination).await
+}
+
+pub(crate) async fn admin_skills_entry_copy(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserSkillEntryCopy>,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let resolved = resolve_admin_skill_fs_writable(&state, &payload.name).await?;
+    skill_fs_entry_copy_response(&state, &resolved, &payload.source, &payload.destination).await
+}
+
+async fn skill_fs_entry_copy_response(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    source: &str,
+    destination: &str,
+) -> Result<Json<SkillFsActionResponse>, Response> {
+    let source = normalize_relative_path(source);
+    let destination = normalize_relative_path(destination);
     copy_skill_entry(&resolved.root, &source, &destination).await?;
-    clear_skill_cache_if_needed(&state, &resolved.user_id, &destination);
+    refresh_skill_runtime_after_change(state, resolved, std::slice::from_ref(&destination), true)
+        .await;
     Ok(Json(SkillFsActionResponse {
         ok: true,
         message: i18n::t("workspace.message.copied"),
@@ -724,8 +906,30 @@ pub(crate) async fn user_skills_batch(
         ));
     }
     let resolved =
-        resolve_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
+        resolve_user_skill_fs_writable(&state, &headers, payload.user_id.as_deref(), &payload.name)
             .await?;
+    skill_fs_batch_response(&state, &resolved, &payload).await
+}
+
+pub(crate) async fn admin_skills_batch(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserSkillBatchRequest>,
+) -> Result<Json<SkillFsBatchResponse>, Response> {
+    if payload.paths.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("workspace.error.batch_paths_missing"),
+        ));
+    }
+    let resolved = resolve_admin_skill_fs_writable(&state, &payload.name).await?;
+    skill_fs_batch_response(&state, &resolved, &payload).await
+}
+
+async fn skill_fs_batch_response(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    payload: &UserSkillBatchRequest,
+) -> Result<Json<SkillFsBatchResponse>, Response> {
     let action = payload.action.trim().to_string();
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
@@ -786,9 +990,7 @@ pub(crate) async fn user_skills_batch(
     }
 
     if action == "delete" || action == "move" || action == "copy" {
-        state
-            .user_tool_manager
-            .clear_skill_cache(Some(&resolved.user_id));
+        refresh_skill_runtime_after_change(state, resolved, &succeeded, true).await;
     }
     let ok = failed.is_empty();
     Ok(Json(SkillFsBatchResponse {
@@ -810,8 +1012,23 @@ pub(crate) async fn user_skills_archive(
     Query(query): Query<UserSkillArchiveQuery>,
 ) -> Result<Response, Response> {
     let resolved =
-        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
-    let normalized = normalize_relative_path(query.path.as_deref().unwrap_or(""));
+        resolve_user_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    skill_fs_archive_response(&resolved, query.path.as_deref()).await
+}
+
+pub(crate) async fn admin_skills_archive(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UserSkillArchiveQuery>,
+) -> Result<Response, Response> {
+    let resolved = resolve_admin_skill_fs(&state, &query.name).await?;
+    skill_fs_archive_response(&resolved, query.path.as_deref()).await
+}
+
+async fn skill_fs_archive_response(
+    resolved: &ResolvedSkillFs,
+    raw_path: Option<&str>,
+) -> Result<Response, Response> {
+    let normalized = normalize_relative_path(raw_path.unwrap_or(""));
     let (target, base_root, filename_prefix) = if normalized.is_empty() {
         (
             resolved.root.clone(),
@@ -873,8 +1090,23 @@ pub(crate) async fn user_skills_download(
     Query(query): Query<UserSkillFileQuery>,
 ) -> Result<Response, Response> {
     let resolved =
-        resolve_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
-    let normalized = normalize_relative_path(&query.path);
+        resolve_user_skill_fs(&state, &headers, query.user_id.as_deref(), &query.name).await?;
+    skill_fs_download_response(&resolved, &query.path).await
+}
+
+pub(crate) async fn admin_skills_download(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UserSkillFileQuery>,
+) -> Result<Response, Response> {
+    let resolved = resolve_admin_skill_fs(&state, &query.name).await?;
+    skill_fs_download_response(&resolved, &query.path).await
+}
+
+async fn skill_fs_download_response(
+    resolved: &ResolvedSkillFs,
+    path: &str,
+) -> Result<Response, Response> {
+    let normalized = normalize_relative_path(path);
     if normalized.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -902,7 +1134,7 @@ pub(crate) async fn user_skills_download(
     ))
 }
 
-async fn resolve_skill_fs(
+async fn resolve_user_skill_fs(
     state: &AppState,
     headers: &HeaderMap,
     user_id: Option<&str>,
@@ -925,16 +1157,17 @@ async fn resolve_skill_fs(
         root: resolved_skill.root,
         readonly: resolved_skill.source.is_readonly(),
         skill_name: resolved_skill.spec.name,
+        scope: SkillFsScope::User,
     })
 }
 
-async fn resolve_skill_fs_writable(
+async fn resolve_user_skill_fs_writable(
     state: &AppState,
     headers: &HeaderMap,
     user_id: Option<&str>,
     name: &str,
 ) -> Result<ResolvedSkillFs, Response> {
-    let resolved = resolve_skill_fs(state, headers, user_id, name).await?;
+    let resolved = resolve_user_skill_fs(state, headers, user_id, name).await?;
     if resolved.readonly {
         return Err(error_response(
             StatusCode::FORBIDDEN,
@@ -942,6 +1175,49 @@ async fn resolve_skill_fs_writable(
         ));
     }
     Ok(resolved)
+}
+
+async fn resolve_admin_skill_fs(state: &AppState, name: &str) -> Result<ResolvedSkillFs, Response> {
+    let skill_name = name.trim();
+    if skill_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let spec = resolve_admin_skill_spec(&config, skill_name)?;
+    let root = resolve_admin_skill_root(&spec)?;
+    Ok(ResolvedSkillFs {
+        user_id: "admin".to_string(),
+        root,
+        readonly: !is_admin_skill_editable(&spec),
+        skill_name: spec.name,
+        scope: SkillFsScope::Admin,
+    })
+}
+
+async fn resolve_admin_skill_fs_writable(
+    state: &AppState,
+    name: &str,
+) -> Result<ResolvedSkillFs, Response> {
+    let skill_name = name.trim();
+    if skill_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_name_required"),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let spec = resolve_admin_skill_spec(&config, skill_name)?;
+    let root = ensure_admin_skill_editable(&spec)?;
+    Ok(ResolvedSkillFs {
+        user_id: "admin".to_string(),
+        root,
+        readonly: false,
+        skill_name: spec.name,
+        scope: SkillFsScope::Admin,
+    })
 }
 
 fn resolve_skill_target_path(root: &Path, relative_path: &str) -> Result<PathBuf, Response> {
@@ -1317,9 +1593,24 @@ fn validate_source_destination(source: &Path, destination: &Path) -> Result<(), 
     Ok(())
 }
 
-fn clear_skill_cache_if_needed(state: &AppState, user_id: &str, path: &str) {
-    if should_clear_skill_cache(path) {
-        state.user_tool_manager.clear_skill_cache(Some(user_id));
+async fn refresh_skill_runtime_after_change(
+    state: &AppState,
+    resolved: &ResolvedSkillFs,
+    paths: &[String],
+    force: bool,
+) {
+    match resolved.scope {
+        SkillFsScope::User => {
+            if force || paths.iter().any(|path| should_clear_skill_cache(path)) {
+                state
+                    .user_tool_manager
+                    .clear_skill_cache(Some(&resolved.user_id));
+            }
+        }
+        SkillFsScope::Admin => {
+            let config = state.config_store.get().await;
+            state.reload_skills(&config).await;
+        }
     }
 }
 
@@ -1574,14 +1865,4 @@ fn default_order() -> String {
 
 fn default_search_limit() -> i64 {
     100
-}
-
-#[allow(dead_code)]
-fn _ensure_existing_resolver_is_used(root: &Path, path: &str) -> Result<PathBuf, Response> {
-    resolve_skill_file_path(root, path)
-}
-
-#[allow(dead_code)]
-fn _normalize_public_path_for_debug(path: &Path) -> String {
-    normalize_public_path(path)
 }

@@ -1,4 +1,5 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
+use crate::api::skill_fs;
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::auth;
 use crate::channels::feishu;
@@ -69,7 +70,9 @@ use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State}
 use axum::http::{HeaderMap as AxumHeaderMap, HeaderValue as AxumHeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
+use axum::{
+    routing::delete, routing::get, routing::patch, routing::post, routing::put, Json, Router,
+};
 use chrono::{Local, TimeZone, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
@@ -114,6 +117,10 @@ impl AdminSkillSourceKind {
     fn builtin(self) -> bool {
         matches!(self, Self::Builtin)
     }
+
+    fn editable(self) -> bool {
+        true
+    }
 }
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -144,13 +151,56 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/admin/skills/files", get(admin_skills_files))
         .route(
             "/wunder/admin/skills/file",
-            get(admin_skills_file).put(admin_skills_file_update),
+            get(admin_skills_file)
+                .put(admin_skills_file_update)
+                .delete(skill_fs::admin_skills_entry_delete),
+        )
+        .route(
+            "/wunder/admin/skills/fs",
+            get(skill_fs::admin_skills_fs_content),
+        )
+        .route(
+            "/wunder/admin/skills/fs/search",
+            get(skill_fs::admin_skills_fs_search),
+        )
+        .route(
+            "/wunder/admin/skills/fs/file",
+            put(skill_fs::admin_skills_fs_file_update),
+        )
+        .route(
+            "/wunder/admin/skills/dir",
+            post(skill_fs::admin_skills_dir_create),
+        )
+        .route(
+            "/wunder/admin/skills/move",
+            post(skill_fs::admin_skills_entry_move),
+        )
+        .route(
+            "/wunder/admin/skills/copy",
+            post(skill_fs::admin_skills_entry_copy),
+        )
+        .route(
+            "/wunder/admin/skills/batch",
+            post(skill_fs::admin_skills_batch),
         )
         .route(
             "/wunder/admin/skills/upload",
             post(admin_skills_upload).layer(DefaultBodyLimit::max(MAX_SKILL_UPLOAD_BYTES)),
         )
         .route("/wunder/admin/skills/export", get(admin_skills_export))
+        .route(
+            "/wunder/admin/skills/archive",
+            get(skill_fs::admin_skills_archive),
+        )
+        .route(
+            "/wunder/admin/skills/download",
+            get(skill_fs::admin_skills_download),
+        )
+        .route(
+            "/wunder/admin/skills/fs/upload",
+            post(skill_fs::admin_skills_fs_upload)
+                .layer(DefaultBodyLimit::max(skill_fs::MAX_SKILL_FS_UPLOAD_BYTES)),
+        )
         .route(
             "/wunder/admin/tools",
             get(admin_tools_list).post(admin_tools_update),
@@ -1121,6 +1171,7 @@ fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value
     let path = normalize_admin_public_path_text(&spec.path);
     let input_schema = spec.input_schema;
     let enabled = enabled_set.contains(&name);
+    let editable = source.editable();
     json!({
         "name": name,
         "description": description,
@@ -1129,17 +1180,35 @@ fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value
         "enabled": enabled,
         "builtin": source.builtin(),
         "source": source.as_str(),
-        "readonly": false,
-        "editable": true,
+        "readonly": !editable,
+        "editable": editable,
     })
 }
 
-fn ensure_admin_skill_editable(spec: &SkillSpec) -> Result<PathBuf, Response> {
+pub(crate) fn resolve_admin_skill_root(spec: &SkillSpec) -> Result<PathBuf, Response> {
     let root = normalize_existing_path(&spec.root);
     if !root.is_dir() {
         return Err(error_response(
             StatusCode::NOT_FOUND,
             i18n::t("error.skill_not_found"),
+        ));
+    }
+    Ok(root)
+}
+
+pub(crate) fn is_admin_skill_editable(spec: &SkillSpec) -> bool {
+    let builtin_root = resolve_builtin_skills_root();
+    let custom_root = resolve_admin_custom_skills_root()
+        .unwrap_or_else(|| resolve_admin_uploaded_skills_root(true));
+    resolve_admin_skill_source(spec, builtin_root.as_deref(), &custom_root).editable()
+}
+
+pub(crate) fn ensure_admin_skill_editable(spec: &SkillSpec) -> Result<PathBuf, Response> {
+    let root = resolve_admin_skill_root(spec)?;
+    if !is_admin_skill_editable(spec) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
         ));
     }
     Ok(root)
@@ -1172,7 +1241,7 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
     })))
 }
 
-fn resolve_admin_skill_spec(config: &Config, name: &str) -> Result<SkillSpec, Response> {
+pub(crate) fn resolve_admin_skill_spec(config: &Config, name: &str) -> Result<SkillSpec, Response> {
     let mut scan_config = config.clone();
     scan_config.skills.paths = build_admin_skill_scan_paths(config, true);
     scan_config.skills.enabled = Vec::new();

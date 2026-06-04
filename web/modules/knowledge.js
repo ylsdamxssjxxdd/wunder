@@ -880,8 +880,12 @@ const renderKnowledgeBaseList = () => {
 const renderKnowledgeDetailHeader = () => {
   const base = getActiveBase();
   if (!base) {
-    elements.knowledgeDetailTitle.textContent = t("knowledge.detail.empty");
-    elements.knowledgeDetailMeta.textContent = "";
+    if (elements.knowledgeDetailTitle) {
+      elements.knowledgeDetailTitle.textContent = t("knowledge.detail.empty");
+    }
+    if (elements.knowledgeDetailMeta) {
+      elements.knowledgeDetailMeta.textContent = "";
+    }
     if (knowledgeDetailDesc) {
       knowledgeDetailDesc.textContent = "";
     }
@@ -895,14 +899,18 @@ const renderKnowledgeDetailHeader = () => {
     elements.knowledgeDeleteBtn.disabled = true;
     return;
   }
-  elements.knowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
+  if (elements.knowledgeDetailTitle) {
+    elements.knowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
+  }
   const metaParts = [base.root || t("knowledge.root.unset")];
   metaParts.push(base.enabled !== false ? t("knowledge.status.enabled") : t("knowledge.status.disabled"));
   metaParts.push(formatBaseTypeLabel(base));
   if (isVectorBase(base) && base.embedding_model) {
     metaParts.push(base.embedding_model);
   }
-  elements.knowledgeDetailMeta.textContent = metaParts.join(" · ");
+  if (elements.knowledgeDetailMeta) {
+    elements.knowledgeDetailMeta.textContent = metaParts.join(" · ");
+  }
   if (knowledgeDetailDesc) {
     knowledgeDetailDesc.textContent = base.description || "";
   }
@@ -928,8 +936,8 @@ const renderKnowledgeDetail = () => {
     element.hidden = !visible;
     element.style.display = visible ? displayStyle : "none";
   };
-  toggleLayout(elements.knowledgeFileLayout, !indexedMode, "grid");
-  toggleLayout(elements.knowledgeVectorLayout, indexedMode, "grid");
+  toggleLayout(elements.knowledgeFileLayout, !indexedMode, "contents");
+  toggleLayout(elements.knowledgeVectorLayout, indexedMode, "contents");
   const toggleButton = (element, visible) => {
     if (!element) {
       return;

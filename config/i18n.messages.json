@@ -2576,8 +2576,8 @@
     "zh-CN": "推荐的 rg 风格输入。仅传 `pattern` 且未显式设置 `query_mode` 或 `-F` 时，会像 ripgrep 一样默认按 regex 处理；若要固定字符串匹配，请使用 `-F` 或 `query_mode=literal`。"
   },
   "tool.spec.search.args.query": {
-    "en-US": "Primary text query input for local filesystem text files. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Use pattern when you want rg-style regex wording.",
-    "zh-CN": "面向本地文件系统纯文本文件的主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。需要 rg 风格正则表达时优先使用 `pattern`。"
+    "en-US": "Primary text query input for local filesystem text files. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Do not write boolean words like `OR` in query expecting them to act as operators. For alternatives, use pattern/query_mode=regex with `foo|bar`, or run multiple literal searches.",
+    "zh-CN": "面向本地文件系统纯文本文件的主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。不要在 `query` 里写 `OR` 并期待它成为布尔运算符。多个备选词请使用 `pattern`/`query_mode=regex` 的 `foo|bar`，或分多次 literal 检索。"
   },
   "tool.spec.search.args.glob": {
     "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
@@ -2588,8 +2588,8 @@
     "zh-CN": "可选，rg 风格的语言/文件类型快捷写法。例如 rust、rs、ts、tsx、js、py、md、toml、json。"
   },
   "tool.spec.search.args.query_mode": {
-    "en-US": "Optional. Query mode: literal or regex. If omitted, query defaults to literal while pattern defaults to regex; use regex for rg-style alternation like foo|bar|baz.",
-    "zh-CN": "可选。查询模式：`literal` 或 `regex`。省略时，`query` 默认按 literal，`pattern` 默认按 regex；需要 rg 风格并列写法如 `foo|bar|baz` 时请使用 regex。"
+    "en-US": "Optional. Query mode: literal or regex. If omitted, query defaults to literal while pattern defaults to regex; use regex for rg-style alternation like `foo|bar|baz`. Do not use `foo OR bar` as an alternation expression.",
+    "zh-CN": "可选。查询模式：`literal` 或 `regex`。省略时，`query` 默认按 literal，`pattern` 默认按 regex；需要 rg 风格并列写法如 `foo|bar|baz` 时请使用 regex。不要用 `foo OR bar` 表示并列检索。"
   },
   "tool.spec.search.args.regex": {
     "en-US": "Optional alias. true means query_mode=regex.",
@@ -2636,8 +2636,8 @@
     "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search local filesystem text files only, never the web. Prefer query with path/glob to narrow the scope; switch to query_mode=regex only when needed; prefer context_before/context_after for surrounding lines.",
-    "zh-CN": "搜索本地文件系统纯文本文件，不联网。优先使用 query + path/glob 缩小范围；只有需要正则时才改用 query_mode=regex；上下文请优先使用 context_before/context_after。"
+    "en-US": "Search local filesystem text files only, never the web. Prefer query with path/glob to narrow the scope. For alternatives, use pattern/query_mode=regex with `foo|bar`, not `foo OR bar` in a literal query. Prefer context_before/context_after for surrounding lines.",
+    "zh-CN": "搜索本地文件系统纯文本文件，不联网。优先使用 query + path/glob 缩小范围。多个备选词请使用 `pattern`/`query_mode=regex` 的 `foo|bar`，不要在 literal query 中写 `foo OR bar`。上下文请优先使用 context_before/context_after。"
   },
   "tool.spec.write.args.content": {
     "en-US": "File content.",

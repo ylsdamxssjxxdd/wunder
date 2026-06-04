@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C08 非气象回波与异常传播示意图</title>
+  <desc id="desc">低仰角雷达图中出现固定地物回波和异常传播回波，与卫星云图和地面降水实况不匹配。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="42" y="52" width="650" height="428" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <g fill="none" stroke="#cbd5e1" stroke-width="1">
+    <circle cx="364" cy="266" r="80"/>
+    <circle cx="364" cy="266" r="160"/>
+    <circle cx="364" cy="266" r="240"/>
+    <line x1="42" y1="266" x2="692" y2="266"/>
+    <line x1="364" y1="52" x2="364" y2="480"/>
+  </g>
+  <circle cx="364" cy="266" r="12" fill="#0284c7"/>
+  <path d="M188 166 C250 126 360 136 420 190 C360 202 282 200 210 214 Z" fill="#84cc16" opacity="0.7"/>
+  <path d="M496 330 C560 304 622 318 654 362 C594 376 530 374 472 350 Z" fill="#f59e0b" opacity="0.64"/>
+  <g fill="#7c3aed" opacity="0.74">
+    <ellipse cx="292" cy="286" rx="18" ry="12"/>
+    <ellipse cx="314" cy="306" rx="14" ry="10"/>
+    <ellipse cx="410" cy="228" rx="16" ry="12"/>
+    <ellipse cx="448" cy="252" rx="13" ry="9"/>
+  </g>
+  <text x="72" y="88" fill="#0f172a" font-size="22" font-weight="700">非气象回波</text>
+  <text x="178" y="148" fill="#3f6212" font-size="17" font-weight="700">异常传播</text>
+  <line x1="250" y1="150" x2="280" y2="178" stroke="#3f6212" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="276" y="340" fill="#6d28d9" font-size="17" font-weight="700">固定地物/生物回波</text>
+  <line x1="362" y1="326" x2="322" y2="304" stroke="#6d28d9" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="725" y="86" width="198" height="154" rx="8" fill="#f5f3ff" stroke="#ddd6fe"/>
+  <text x="745" y="120" fill="#6d28d9" font-size="18" font-weight="700">识别线索</text>
+  <text x="745" y="150" fill="#334155" font-size="15">低仰角明显</text>
+  <text x="745" y="176" fill="#334155" font-size="15">位置相对固定</text>
+  <text x="745" y="202" fill="#334155" font-size="15">与实况不匹配</text>
+  <rect x="725" y="278" width="198" height="126" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="745" y="312" fill="#0f172a" font-size="18" font-weight="700">先核验</text>
+  <text x="745" y="342" fill="#334155" font-size="15">高仰角产品</text>
+  <text x="745" y="368" fill="#334155" font-size="15">卫星/自动站</text>
+  <text x="42" y="514" fill="#64748b" font-size="14">非气象回波案例用于质控提醒，不能直接判定为降水或强对流。</text>
+</svg>
+

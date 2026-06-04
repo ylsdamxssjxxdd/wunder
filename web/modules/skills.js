@@ -3,10 +3,15 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { notify } from "./notify.js";
-import { escapeHtml } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260518-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { getAllOrgUnitItems } from "./org-units.js?v=20260518-01";
+import {
+  initAdminSkillWorkspace,
+  loadAdminSkillWorkspace,
+  refreshAdminSkillWorkspaceHeader,
+  resetAdminSkillWorkspace,
+} from "./admin-skill-workspace.js?v=20260604-01";
 
 const skillsList = document.getElementById("skillsList");
 const refreshSkillsBtn = document.getElementById("refreshSkillsBtn");
@@ -30,23 +35,13 @@ const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
 const skillDetailTitle = document.getElementById("skillDetailTitle");
 const skillDetailMeta = document.getElementById("skillDetailMeta");
 const skillFileTree = document.getElementById("skillFileTree");
-const skillEditorPath = document.getElementById("skillEditorPath");
-const skillFileSaveBtn = document.getElementById("skillFileSaveBtn");
-const skillFileContent = document.getElementById("skillFileContent");
-const skillEditorBody = document.getElementById("skillEditorBody");
-const skillFileHighlight = document.getElementById("skillFileHighlight");
+const skillFileSearchInput = document.getElementById("skillFileSearchInput");
 
 const viewState = {
   selectedIndex: -1,
-  files: [],
-  root: "",
-  activeFile: "",
-  fileContent: "",
+  fileSearch: "",
   detailVersion: 0,
-  fileVersion: 0,
 };
-
-const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\\/g, "/");
 
 const normalizeSkillDisplayPath = (rawPath) => {
   let normalized = String(rawPath || "").trim();
@@ -64,140 +59,11 @@ const normalizeSkillDisplayPath = (rawPath) => {
   return normalized;
 };
 
-const resolveDefaultSkillFile = (entries) => {
-  if (!Array.isArray(entries)) {
-    return "";
+const resetSkillFileSearch = () => {
+  viewState.fileSearch = "";
+  if (skillFileSearchInput) {
+    skillFileSearchInput.value = "";
   }
-  let fallback = "";
-  for (const entry of entries) {
-    if (!entry || entry.kind === "dir") {
-      continue;
-    }
-    const path = String(entry.path || "");
-    if (!path) {
-      continue;
-    }
-    const normalized = normalizeSkillPath(path).toLowerCase();
-    if (normalized === "skill.md") {
-      return path;
-    }
-    if (!fallback && normalized.endsWith("/skill.md")) {
-      fallback = path;
-    }
-  }
-  return fallback;
-};
-
-const HIGHLIGHT_KEYWORDS = new Set([
-  "await",
-  "break",
-  "case",
-  "catch",
-  "class",
-  "const",
-  "continue",
-  "default",
-  "do",
-  "else",
-  "enum",
-  "export",
-  "extends",
-  "finally",
-  "for",
-  "fn",
-  "function",
-  "if",
-  "impl",
-  "import",
-  "in",
-  "interface",
-  "let",
-  "match",
-  "new",
-  "pub",
-  "return",
-  "self",
-  "static",
-  "struct",
-  "switch",
-  "throw",
-  "try",
-  "type",
-  "use",
-  "var",
-  "while",
-  "yield",
-]);
-
-const HIGHLIGHT_TOKEN_REGEX =
-  /(\"(?:\\.|[^\"\\])*\"|\'(?:\\.|[^'\\])*\'|`(?:\\.|[^`\\])*`|\/\/.*?$|\/\*[\s\S]*?\*\/|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)/gm;
-
-let skillHighlightTimer = 0;
-
-const highlightInlineCode = (text) => {
-  const raw = String(text ?? "");
-  if (!raw) {
-    return "&nbsp;";
-  }
-  let result = "";
-  let lastIndex = 0;
-  for (const match of raw.matchAll(HIGHLIGHT_TOKEN_REGEX)) {
-    const token = match[0];
-    const index = match.index ?? 0;
-    if (index > lastIndex) {
-      result += escapeHtml(raw.slice(lastIndex, index));
-    }
-    let className = "";
-    if (token.startsWith("//") || token.startsWith("/*")) {
-      className = "code-token-comment";
-    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
-      className = "code-token-string";
-    } else if (/^\d/.test(token)) {
-      className = "code-token-number";
-    } else if (HIGHLIGHT_KEYWORDS.has(token)) {
-      className = "code-token-keyword";
-    }
-    if (className) {
-      result += `<span class="${className}">${escapeHtml(token)}</span>`;
-    } else {
-      result += escapeHtml(token);
-    }
-    lastIndex = index + token.length;
-  }
-  if (lastIndex < raw.length) {
-    result += escapeHtml(raw.slice(lastIndex));
-  }
-  return result || "&nbsp;";
-};
-
-const updateSkillEditorHighlight = () => {
-  if (!skillFileHighlight || !skillFileContent) {
-    return;
-  }
-  skillFileHighlight.innerHTML = highlightInlineCode(skillFileContent.value);
-  skillFileHighlight.scrollTop = skillFileContent.scrollTop;
-  skillFileHighlight.scrollLeft = skillFileContent.scrollLeft;
-};
-
-const scheduleSkillEditorHighlight = () => {
-  if (!skillFileHighlight) {
-    return;
-  }
-  if (skillHighlightTimer) {
-    cancelAnimationFrame(skillHighlightTimer);
-  }
-  skillHighlightTimer = requestAnimationFrame(() => {
-    skillHighlightTimer = 0;
-    updateSkillEditorHighlight();
-  });
-};
-
-const syncSkillEditorScroll = () => {
-  if (!skillFileHighlight || !skillFileContent) {
-    return;
-  }
-  skillFileHighlight.scrollTop = skillFileContent.scrollTop;
-  skillFileHighlight.scrollLeft = skillFileContent.scrollLeft;
 };
 
 const getActiveSkill = () =>
@@ -334,7 +200,7 @@ const renderSkillDetailHeader = (skill) => {
     return;
   }
   skillDetailTitle.textContent = skill.name || t("skills.detail.title");
-  const displayPath = normalizeSkillDisplayPath(skill.path || viewState.root);
+  const displayPath = normalizeSkillDisplayPath(skill.path);
   const metaParts = [];
   if (!isSkillEditable(skill)) {
     metaParts.push(t("skills.readonly.hint"));
@@ -346,146 +212,10 @@ const renderSkillDetailHeader = (skill) => {
   skillDetailMeta.title = displayPath;
 };
 
-const setSkillEditorDisabled = (disabled) => {
-  if (skillEditorBody) {
-    skillEditorBody.classList.toggle("is-disabled", disabled);
-  }
-  if (skillFileContent) {
-    skillFileContent.disabled = disabled;
-  }
-  if (skillFileSaveBtn) {
-    skillFileSaveBtn.disabled = disabled;
-  }
-};
-
-const renderSkillEditor = () => {
-  if (skillEditorPath) {
-    skillEditorPath.textContent = viewState.activeFile || t("skills.file.unselected");
-  }
-  if (skillFileContent) {
-    skillFileContent.value = viewState.fileContent || "";
-  }
-  setSkillEditorDisabled(!viewState.activeFile || !isSkillEditable(getActiveSkill()));
-  scheduleSkillEditorHighlight();
-};
-
-const showSkillEditorMessage = (message) => {
-  if (skillFileContent) {
-    skillFileContent.value = message;
-  }
-  setSkillEditorDisabled(true);
-  scheduleSkillEditorHighlight();
-};
-
-const renderSkillFileTree = () => {
-  if (!skillFileTree) {
-    return;
-  }
-  skillFileTree.textContent = "";
-  const skill = getActiveSkill();
-  if (!skill) {
-    skillFileTree.textContent = t("skills.files.unselected");
-    return;
-  }
-  if (!Array.isArray(viewState.files) || viewState.files.length === 0) {
-    skillFileTree.textContent = t("skills.files.empty");
-    return;
-  }
-  viewState.files.forEach((entry) => {
-    const path = String(entry?.path || "");
-    if (!path) {
-      return;
-    }
-    const kind = entry?.kind === "dir" ? "dir" : "file";
-    const item = document.createElement("div");
-    item.className = `skill-tree-item is-${kind}`;
-    if (kind === "file" && path === viewState.activeFile) {
-      item.classList.add("is-active");
-    }
-    const depth = Math.max(0, path.split("/").length - 1);
-    item.style.paddingLeft = `${8 + depth * 14}px`;
-    item.title = path;
-    const icon = document.createElement("i");
-    icon.className = kind === "dir" ? "fa-solid fa-folder" : "fa-regular fa-file-lines";
-    const name = document.createElement("span");
-    name.className = "skill-tree-name";
-    name.textContent = path.split("/").pop() || path;
-    item.append(icon, name);
-    if (kind === "file") {
-      item.addEventListener("click", () => {
-        selectSkillFile(path);
-      });
-    }
-    skillFileTree.appendChild(item);
-  });
-};
-
 const clearSkillDetail = () => {
   viewState.selectedIndex = -1;
-  viewState.files = [];
-  viewState.root = "";
-  viewState.activeFile = "";
-  viewState.fileContent = "";
-  renderSkillDetailHeader(null);
-  renderSkillFileTree();
-  renderSkillEditor();
-};
-
-const loadSkillFiles = async (skillName) => {
-  if (!skillName) {
-    throw new Error(t("skills.nameRequired"));
-  }
-  const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/skills/files?name=${encodeURIComponent(skillName)}`;
-  const response = await fetch(endpoint);
-  if (!response.ok) {
-    const detail = await extractErrorMessage(response);
-    throw new Error(detail || t("common.requestFailed", { status: response.status }));
-  }
-  return response.json();
-};
-
-const loadSkillFileContent = async (skillName, filePath) => {
-  if (!skillName) {
-    throw new Error(t("skills.nameRequired"));
-  }
-  if (!filePath) {
-    throw new Error(t("skills.file.selectRequired"));
-  }
-  const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/skills/file?name=${encodeURIComponent(
-    skillName
-  )}&path=${encodeURIComponent(filePath)}`;
-  const response = await fetch(endpoint);
-  if (!response.ok) {
-    const detail = await extractErrorMessage(response);
-    throw new Error(detail || t("common.requestFailed", { status: response.status }));
-  }
-  const result = await response.json();
-  return String(result.content || "");
-};
-
-const saveSkillFileContent = async (skillName, filePath, content) => {
-  if (!skillName) {
-    throw new Error(t("skills.nameRequired"));
-  }
-  if (!filePath) {
-    throw new Error(t("skills.file.selectRequired"));
-  }
-  const wunderBase = getWunderBase();
-  const endpoint = `${wunderBase}/admin/skills/file`;
-  const response = await fetch(endpoint, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name: skillName, path: filePath, content }),
-  });
-  if (!response.ok) {
-    const detail = await extractErrorMessage(response);
-    throw new Error(detail || t("common.requestFailed", { status: response.status }));
-  }
-  return response.json();
+  resetSkillFileSearch();
+  resetAdminSkillWorkspace();
 };
 
 const selectSkill = async (skill, index) => {
@@ -495,30 +225,16 @@ const selectSkill = async (skill, index) => {
     return;
   }
   viewState.selectedIndex = index;
-  viewState.files = [];
-  viewState.root = "";
-  viewState.activeFile = "";
-  viewState.fileContent = "";
+  resetSkillFileSearch();
   renderSkills();
   renderSkillDetailHeader(skill);
-  renderSkillEditor();
-  if (skillFileTree) {
-    skillFileTree.textContent = t("common.loading");
-  }
   const currentVersion = ++viewState.detailVersion;
   try {
-    const payload = await loadSkillFiles(skill.name);
+    await loadAdminSkillWorkspace(skill, { resetSearch: true });
     if (currentVersion !== viewState.detailVersion) {
       return;
     }
-    viewState.files = Array.isArray(payload.entries) ? payload.entries : [];
-    viewState.root = payload.root || "";
-    renderSkillDetailHeader(skill);
-    renderSkillFileTree();
-    const defaultFile = resolveDefaultSkillFile(viewState.files);
-    if (defaultFile) {
-      void selectSkillFile(defaultFile);
-    }
+    refreshAdminSkillWorkspaceHeader();
   } catch (error) {
     if (currentVersion !== viewState.detailVersion) {
       return;
@@ -526,41 +242,6 @@ const selectSkill = async (skill, index) => {
     if (skillFileTree) {
       skillFileTree.textContent = t("skills.files.loadFailed", { message: error.message });
     }
-  }
-};
-
-const selectSkillFile = async (filePath) => {
-  const skill = getActiveSkill();
-  if (!skill) {
-    notify(t("skills.file.selectSkillRequired"), "warn");
-    return;
-  }
-  const normalized = String(filePath || "");
-  if (!normalized) {
-    notify(t("skills.file.selectRequired"), "warn");
-    return;
-  }
-  viewState.activeFile = normalized;
-  viewState.fileContent = "";
-  renderSkillFileTree();
-  if (skillEditorPath) {
-    skillEditorPath.textContent = normalized;
-  }
-  showSkillEditorMessage(t("common.loading"));
-  const currentVersion = ++viewState.fileVersion;
-  try {
-    const content = await loadSkillFileContent(skill.name, normalized);
-    if (currentVersion !== viewState.fileVersion) {
-      return;
-    }
-    viewState.fileContent = content;
-    renderSkillEditor();
-  } catch (error) {
-    if (currentVersion !== viewState.fileVersion) {
-      return;
-    }
-    showSkillEditorMessage(t("skills.file.readFailed", { message: error.message }));
-    notify(t("skills.file.readFailed", { message: error.message }), "error");
   }
 };
 
@@ -737,32 +418,8 @@ const uploadSkillZip = async (file) => {
   return result;
 };
 
-const saveSkillFile = async () => {
-  const skill = getActiveSkill();
-  if (!skill) {
-    notify(t("skills.file.selectSkillRequired"), "warn");
-    return;
-  }
-  if (!viewState.activeFile) {
-    notify(t("skills.file.selectRequired"), "warn");
-    return;
-  }
-  try {
-    const content = skillFileContent ? skillFileContent.value : viewState.fileContent;
-    const result = await saveSkillFileContent(skill.name, viewState.activeFile, content);
-    viewState.fileContent = content;
-    appendLog(t("skills.file.saveSuccess"));
-    notify(t("skills.file.saveSuccess"), "success");
-    if (result?.reloaded) {
-      await loadSkills();
-    }
-  } catch (error) {
-    notify(t("skills.file.saveFailed", { message: error.message }), "error");
-  }
-};
-
 // Pull skills list and render left sidebar.
-export const loadSkills = async () => {
+export const loadSkills = async (options = {}) => {
   const wunderBase = getWunderBase();
   const endpoint = `${wunderBase}/admin/skills`;
   const response = await fetch(endpoint);
@@ -782,8 +439,11 @@ export const loadSkills = async () => {
     clearSkillDetail();
   } else {
     renderSkillDetailHeader(getActiveSkill());
-    renderSkillFileTree();
-    renderSkillEditor();
+    if (!options.skipWorkspaceReload) {
+      await loadAdminSkillWorkspace(getActiveSkill(), { preservePath: true });
+    } else {
+      refreshAdminSkillWorkspaceHeader();
+    }
   }
 };
 
@@ -852,13 +512,9 @@ export const initSkillsPanel = () => {
       notify(t("skills.saveFailed", { message: error.message }), "error");
     }
   });
-  skillFileSaveBtn?.addEventListener("click", saveSkillFile);
-  skillFileContent?.addEventListener("input", () => {
-    viewState.fileContent = skillFileContent.value;
-    scheduleSkillEditorHighlight();
+  initAdminSkillWorkspace({
+    isSkillEditable,
+    onSkillMetadataChanged: () => loadSkills({ skipWorkspaceReload: true }),
   });
-  skillFileContent?.addEventListener("scroll", syncSkillEditorScroll);
-  renderSkillDetailHeader(getActiveSkill());
-  renderSkillFileTree();
-  renderSkillEditor();
+  refreshAdminSkillWorkspaceHeader();
 };

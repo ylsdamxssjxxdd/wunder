@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C07 层状降水亮带示意图</title>
+  <desc id="desc">雷达垂直剖面中融化层附近出现反射率增强亮带，地面雨强不一定同步增强。</desc>
+  <defs>
+    <linearGradient id="rain" y1="0" y2="1">
+      <stop offset="0" stop-color="#bfdbfe"/>
+      <stop offset="0.5" stop-color="#93c5fd"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="52" y="54" width="620" height="424" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <g stroke="#cbd5e1" stroke-width="1">
+    <line x1="92" y1="416" x2="632" y2="416"/>
+    <line x1="92" y1="336" x2="632" y2="336"/>
+    <line x1="92" y1="256" x2="632" y2="256"/>
+    <line x1="92" y1="176" x2="632" y2="176"/>
+    <line x1="92" y1="96" x2="632" y2="96"/>
+  </g>
+  <path d="M110 116 C250 94 460 102 610 126 L610 416 L110 416 Z" fill="url(#rain)" opacity="0.55"/>
+  <path d="M112 274 C250 248 466 254 612 280" fill="none" stroke="#f97316" stroke-width="28" stroke-linecap="round" opacity="0.86"/>
+  <path d="M112 274 C250 248 466 254 612 280" fill="none" stroke="#fde68a" stroke-width="10" stroke-linecap="round" opacity="0.9"/>
+  <text x="70" y="90" fill="#0f172a" font-size="22" font-weight="700">层状降水垂直剖面</text>
+  <text x="116" y="258" fill="#9a3412" font-size="17" font-weight="700">亮带/融化层</text>
+  <text x="106" y="434" fill="#64748b" font-size="14">地面</text>
+  <text x="106" y="340" fill="#64748b" font-size="14">0°C层附近</text>
+  <rect x="720" y="86" width="200" height="144" rx="8" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="740" y="120" fill="#9a3412" font-size="18" font-weight="700">误判风险</text>
+  <text x="740" y="150" fill="#334155" font-size="15">反射率增强</text>
+  <text x="740" y="176" fill="#334155" font-size="15">不等于近地面</text>
+  <text x="740" y="202" fill="#334155" font-size="15">强对流增强</text>
+  <rect x="720" y="268" width="200" height="126" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="740" y="302" fill="#0f172a" font-size="18" font-weight="700">核验资料</text>
+  <text x="740" y="332" fill="#334155" font-size="15">温度廓线</text>
+  <text x="740" y="358" fill="#334155" font-size="15">自动站雨量</text>
+  <text x="52" y="514" fill="#64748b" font-size="14">亮带常导致雷达估测降水偏差，需要地面雨量和垂直结构校验。</text>
+</svg>
+

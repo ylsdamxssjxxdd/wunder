@@ -3065,58 +3065,160 @@
         <section id="skillsPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="skills.title">技能管理</h1>
-            <div class="header-actions">
-              <button id="addSkillBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-plus"></i><span data-i18n="skills.action.add">添加技能</span>
-              </button>
-              <button id="exportSkillBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-download"></i><span data-i18n="skills.action.export">导出技能</span>
-              </button>
-              <button id="refreshSkillsBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="skills.action.refresh">刷新技能</span>
-              </button>
-            </div>
           </div>
           <div class="tips" data-i18n="skills.tip">从技能目录读取可用技能，勾选后会注入系统提示词。</div>
-          <div class="skills-layout">
+          <div class="skills-layout skills-workspace-layout">
             <div class="skills-sidebar">
-              <div class="skills-section-title" data-i18n="skills.list.title">技能列表</div>
+              <div class="list-header skills-column-header">
+                <label class="skills-section-title" data-i18n="skills.list.title">技能列表</label>
+                <div class="header-actions skills-column-actions">
+                  <button
+                    id="addSkillBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="skills.action.add"
+                    data-i18n-aria-label="skills.action.add"
+                  >
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                  <button
+                    id="exportSkillBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="skills.action.export"
+                    data-i18n-aria-label="skills.action.export"
+                  >
+                    <i class="fa-solid fa-file-zipper"></i>
+                  </button>
+                  <button
+                    id="refreshSkillsBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="skills.action.refresh"
+                    data-i18n-aria-label="skills.action.refresh"
+                  >
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                  </button>
+                </div>
+              </div>
               <div id="skillsList" class="skills-list"></div>
             </div>
-            <div class="skills-detail">
-              <div class="skills-detail-pane">
-                <div class="detail-header">
-                  <div>
-                    <div
-                      id="skillDetailTitle"
-                      class="detail-title"
-                      data-i18n="skills.detail.unselected"
-                    >
-                      未选择技能
+            <div class="skills-detail admin-workspace-panel skill-workspace-panel">
+              <div id="skillWorkspaceBlock" class="skill-workspace-block">
+                <div class="workspace-header admin-workspace-title-row">
+                  <div class="admin-workspace-title-group">
+                    <span class="admin-workspace-title-icon" aria-hidden="true">
+                      <i class="fa-solid fa-folder-tree"></i>
+                    </span>
+                    <div>
+                      <div
+                        id="skillDetailTitle"
+                        class="admin-workspace-title"
+                        data-i18n="skills.detail.unselected"
+                      >
+                        未选择技能
+                      </div>
+                      <div id="skillDetailMeta" class="admin-workspace-meta"></div>
                     </div>
-                    <div id="skillDetailMeta" class="muted skill-detail-meta-line"></div>
                   </div>
+                <div class="workspace-actions">
+                  <button
+                    id="skillWorkspaceUpBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    type="button"
+                    data-i18n-title="workspace.action.up"
+                    data-i18n-aria-label="workspace.action.up"
+                  >
+                    <i class="fa-solid fa-arrow-up"></i>
+                  </button>
+                  <button
+                    id="skillWorkspaceRefreshBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    type="button"
+                    data-i18n-title="common.refresh"
+                    data-i18n-aria-label="common.refresh"
+                  >
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                  </button>
+                  <button
+                    id="skillWorkspaceUploadBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    type="button"
+                    data-i18n-title="workspace.action.upload"
+                    data-i18n-aria-label="workspace.action.upload"
+                  >
+                    <i class="fa-solid fa-upload"></i>
+                  </button>
+                  <button
+                    id="skillWorkspaceDownloadAllBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    type="button"
+                    data-i18n-title="workspace.action.downloadAll"
+                    data-i18n-aria-label="workspace.action.downloadAll"
+                  >
+                    <i class="fa-solid fa-file-zipper"></i>
+                  </button>
                 </div>
-                <div class="skills-section-title" data-i18n="skills.detail.structure">
-                  技能目录结构
                 </div>
-                <div id="skillFileTree" class="skill-file-tree"></div>
+                <div id="skillWorkspacePath" class="workspace-path">/</div>
+                <div class="workspace-toolbar">
+                  <div class="workspace-search">
+                  <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                  <input
+                    id="skillFileSearchInput"
+                    type="search"
+                    data-i18n-placeholder="workspace.search.placeholder"
+                    placeholder="搜索工作区（名称）"
+                  />
+                  </div>
+                  <div id="skillWorkspaceSelectionMeta" class="workspace-selection-meta muted"></div>
+                </div>
+                <div id="skillWorkspaceUploadProgress" class="workspace-upload-progress" aria-live="polite">
+                  <div class="workspace-upload-bar">
+                    <div id="skillWorkspaceUploadProgressBar" class="workspace-upload-bar-fill"></div>
+                  </div>
+                  <div id="skillWorkspaceUploadProgressText" class="workspace-upload-text"></div>
+                </div>
+                <div id="skillFileTree" class="skill-file-tree workspace-list"></div>
               </div>
-              <div class="skills-detail-pane">
-                <div class="detail-header">
-                  <div>
-                    <div class="detail-title" data-i18n="skills.editor.title">文件修改区</div>
-                    <div id="skillEditorPath" class="muted" data-i18n="skills.file.unselected">
-                      未选择文件
-                    </div>
-                  </div>
-                  <div class="detail-actions">
-                    <button id="skillFileSaveBtn" class="btn-with-icon btn-compact">
-                      <i class="fa-solid fa-floppy-disk"></i>
-                      <span data-i18n="common.save">保存</span>
-                    </button>
+            </div>
+          </div>
+          <input id="skillWorkspaceUploadInput" type="file" style="display: none" multiple />
+          <div id="skillWorkspaceMenu" class="context-menu">
+            <button id="skillWorkspaceNewFileBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-file-circle-plus"></i><span data-i18n="workspace.action.newFile">新建文件</span>
+            </button>
+            <button id="skillWorkspaceEditBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-pen-to-square"></i><span data-i18n="common.edit">编辑</span>
+            </button>
+            <button id="skillWorkspaceRenameBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-i-cursor"></i><span data-i18n="workspace.action.rename">重命名</span>
+            </button>
+            <button id="skillWorkspaceMoveBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-arrow-right-arrow-left"></i><span data-i18n="workspace.action.move">移动</span>
+            </button>
+            <button id="skillWorkspaceCopyBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-copy"></i><span data-i18n="workspace.action.copy">复制</span>
+            </button>
+            <button id="skillWorkspaceNewFolderBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-folder-plus"></i><span data-i18n="workspace.action.newFolder">新建文件夹</span>
+            </button>
+            <button id="skillWorkspaceDownloadBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-download"></i><span data-i18n="workspace.action.download">下载</span>
+            </button>
+            <button id="skillWorkspaceDeleteBtn" class="danger btn-with-icon" type="button">
+              <i class="fa-solid fa-trash"></i><span data-i18n="workspace.action.delete">删除</span>
+            </button>
+          </div>
+          <div id="skillEditorModal" class="modal">
+            <div class="modal-card skill-editor-modal-card">
+              <div class="modal-header">
+                <div>
+                  <div class="detail-title" data-i18n="skills.editor.title">文件修改区</div>
+                  <div id="skillEditorPath" class="muted" data-i18n="skills.file.unselected">
+                    未选择文件
                   </div>
                 </div>
+                <button id="skillEditorModalClose" class="icon-btn" type="button">×</button>
+              </div>
+              <div class="modal-body skill-editor-modal-body">
                 <div id="skillEditorBody" class="skill-editor-body">
                   <pre id="skillFileHighlight" class="skill-editor-highlight"></pre>
                   <textarea
@@ -3130,6 +3232,16 @@
                     autocapitalize="off"
                   ></textarea>
                 </div>
+              </div>
+              <div class="modal-actions">
+                <button id="skillEditorModalCloseBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-xmark"></i>
+                  <span data-i18n="common.cancel">取消</span>
+                </button>
+                <button id="skillFileSaveBtn" class="btn-with-icon" type="button">
+                  <i class="fa-solid fa-floppy-disk"></i>
+                  <span data-i18n="common.save">保存</span>
+                </button>
               </div>
             </div>
           </div>
@@ -3171,33 +3283,64 @@
         <section id="knowledgePanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="knowledge.title">知识库</h1>
-            <div class="header-actions">
-              <button id="knowledgeAddBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-plus"></i><span data-i18n="knowledge.action.add">新增</span>
-              </button>
-              <button id="knowledgeRefreshBtn" class="secondary btn-with-icon">
-                <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="knowledge.action.refresh">刷新</span>
-              </button>
-            </div>
           </div>
           <div class="tips" data-i18n="knowledge.tip">
             配置不同知识库目录并提供检索工具，新增或编辑时在弹窗中完成。
           </div>
           <div class="management-layout knowledge-layout">
-            <div class="management-list">
-              <div class="list-header">
+            <div class="management-list knowledge-base-column">
+              <div class="list-header knowledge-column-header">
                 <label data-i18n="knowledge.list.title">知识库列表</label>
+                <div class="header-actions knowledge-column-actions">
+                  <button
+                    id="knowledgeAddBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="knowledge.action.add"
+                    data-i18n-aria-label="knowledge.action.add"
+                  >
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                  <button
+                    id="knowledgeRefreshBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="knowledge.action.refresh"
+                    data-i18n-aria-label="knowledge.action.refresh"
+                  >
+                    <i class="fa-solid fa-arrows-rotate"></i>
+                  </button>
+                  <button
+                    id="knowledgeTestBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="knowledge.action.test"
+                    data-i18n-aria-label="knowledge.action.test"
+                  >
+                    <i class="fa-solid fa-vial"></i>
+                  </button>
+                  <button
+                    id="knowledgeEditBtn"
+                    class="secondary btn-with-icon btn-compact icon-only"
+                    data-i18n-title="common.edit"
+                    data-i18n-aria-label="common.edit"
+                  >
+                    <i class="fa-solid fa-pen"></i>
+                  </button>
+                  <button
+                    id="knowledgeDeleteBtn"
+                    class="danger btn-with-icon btn-compact icon-only"
+                    data-i18n-title="knowledge.action.delete"
+                    data-i18n-aria-label="knowledge.action.delete"
+                  >
+                    <i class="fa-solid fa-trash"></i>
+                  </button>
+                </div>
               </div>
               <div id="knowledgeBaseList" class="list-body"></div>
             </div>
-            <div class="management-detail knowledge-detail">
-                <div class="detail-header">
-                  <div>
-                    <div id="knowledgeDetailTitle" class="detail-title" data-i18n="knowledge.detail.empty">未选择知识库</div>
-                    <div id="knowledgeDetailMeta" class="muted"></div>
-                    <div id="knowledgeDetailDesc" class="muted"></div>
-                  </div>
-                  <div class="detail-actions">
+            <div id="knowledgeFileLayout" class="knowledge-file-layout">
+              <div class="management-list knowledge-doc-column knowledge-file-pane">
+                <div class="list-header knowledge-column-header">
+                  <label data-i18n="fileList.title">文件列表</label>
+                  <div class="header-actions knowledge-column-actions">
                     <button
                       id="knowledgeFileUploadBtn"
                       class="secondary btn-with-icon btn-compact icon-only"
@@ -3214,6 +3357,22 @@
                     >
                       <i class="fa-solid fa-plus"></i>
                     </button>
+                  </div>
+                </div>
+                <input
+                  id="knowledgeFileUploadInput"
+                  type="file"
+                  multiple
+                  hidden
+                />
+                <div id="knowledgeFileList" class="knowledge-file-list"></div>
+              </div>
+              <div class="management-detail knowledge-detail knowledge-content-column knowledge-file-editor">
+                <div class="list-header knowledge-content-header">
+                  <div class="knowledge-content-title">
+                    <label id="knowledgeFileName" class="detail-title" data-i18n="knowledge.file.none">未选择文档</label>
+                  </div>
+                  <div class="header-actions knowledge-column-actions">
                     <button
                       id="knowledgeFileSaveBtn"
                       class="btn-with-icon btn-compact icon-only"
@@ -3222,6 +3381,27 @@
                     >
                       <i class="fa-solid fa-floppy-disk"></i>
                     </button>
+                  </div>
+                </div>
+                <div class="knowledge-editor-wrapper">
+                  <div
+                    id="knowledgeFileHighlight"
+                    class="knowledge-editor-highlight"
+                    aria-hidden="true"
+                  ></div>
+                  <textarea
+                    id="knowledgeFileContent"
+                    placeholder="在此编辑 Markdown 内容"
+                    data-i18n-placeholder="knowledge.file.placeholder"
+                  ></textarea>
+                </div>
+              </div>
+            </div>
+            <div id="knowledgeVectorLayout" class="knowledge-vector-layout" hidden>
+              <div class="management-list knowledge-doc-column knowledge-vector-pane">
+                <div class="list-header knowledge-column-header">
+                  <label data-i18n="knowledge.doc.section.docs">文档列表</label>
+                  <div class="header-actions knowledge-column-actions">
                     <button
                       id="knowledgeDocUploadBtn"
                       class="secondary btn-with-icon btn-compact icon-only"
@@ -3238,122 +3418,63 @@
                     >
                       <i class="fa-solid fa-rotate"></i>
                     </button>
+                  </div>
+                </div>
+                <div id="knowledgeDocList" class="knowledge-doc-list"></div>
+              </div>
+              <div class="management-detail knowledge-detail knowledge-content-column knowledge-vector-detail">
+                <div class="list-header knowledge-content-header">
+                  <div class="knowledge-content-title">
+                    <label id="knowledgeDocTitle" class="detail-title" data-i18n="knowledge.doc.none">
+                      未选择文档
+                    </label>
+                    <div id="knowledgeDocMeta" class="muted"></div>
+                  </div>
+                  <div class="header-actions knowledge-column-actions">
                     <button
-                      id="knowledgeTestBtn"
+                      id="knowledgeDocToggleBtn"
                       class="secondary btn-with-icon btn-compact icon-only"
-                      data-i18n-title="knowledge.action.test"
-                      data-i18n-aria-label="knowledge.action.test"
+                      data-i18n-title="knowledge.doc.action.show"
+                      data-i18n-aria-label="knowledge.doc.action.show"
+                      type="button"
                     >
-                      <i class="fa-solid fa-vial"></i>
+                      <i class="fa-solid fa-file-lines"></i>
                     </button>
                     <button
-                      id="knowledgeEditBtn"
+                      id="knowledgeDocChunkSelectAllBtn"
                       class="secondary btn-with-icon btn-compact icon-only"
-                      data-i18n-title="common.edit"
-                      data-i18n-aria-label="common.edit"
+                      data-i18n-title="knowledge.chunk.action.selectAll"
+                      data-i18n-aria-label="knowledge.chunk.action.selectAll"
+                      type="button"
                     >
-                      <i class="fa-solid fa-pen"></i>
+                      <i class="fa-solid fa-square-check"></i>
                     </button>
                     <button
-                      id="knowledgeDeleteBtn"
+                      id="knowledgeDocEmbedBtn"
+                      class="btn-with-icon btn-compact icon-only"
+                      data-i18n-title="knowledge.doc.action.embed"
+                      data-i18n-aria-label="knowledge.doc.action.embed"
+                      type="button"
+                    >
+                      <i class="fa-solid fa-cube"></i>
+                    </button>
+                    <button
+                      id="knowledgeDocChunkDeleteBtn"
                       class="danger btn-with-icon btn-compact icon-only"
-                      data-i18n-title="knowledge.action.delete"
-                      data-i18n-aria-label="knowledge.action.delete"
+                      data-i18n-title="knowledge.doc.action.deleteChunks"
+                      data-i18n-aria-label="knowledge.doc.action.deleteChunks"
+                      type="button"
                     >
                       <i class="fa-solid fa-trash"></i>
                     </button>
+                  </div>
                 </div>
-              </div>
-              <div class="knowledge-section form-section">
-                <div class="knowledge-content">
-                  <div class="llm-card knowledge-files-card">
-                    <div id="knowledgeFileLayout" class="knowledge-file-layout">
-                        <div class="knowledge-file-pane">
-                        <input
-                          id="knowledgeFileUploadInput"
-                          type="file"
-                          multiple
-                          hidden
-                        />
-                        <div id="knowledgeFileList" class="knowledge-file-list"></div>
-                      </div>
-                        <div class="knowledge-file-editor">
-                          <div id="knowledgeFileName" class="muted" data-i18n="knowledge.file.none">未选择文档</div>
-                          <div class="knowledge-editor-wrapper">
-                            <div
-                              id="knowledgeFileHighlight"
-                              class="knowledge-editor-highlight"
-                              aria-hidden="true"
-                            ></div>
-                            <textarea
-                              id="knowledgeFileContent"
-                              placeholder="在此编辑 Markdown 内容"
-                              data-i18n-placeholder="knowledge.file.placeholder"
-                            ></textarea>
-                          </div>
-                        </div>
+                <div class="knowledge-vector-content">
+                  <div class="knowledge-doc-chunks-pane">
+                    <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
+                      切片列表
                     </div>
-                    <div id="knowledgeVectorLayout" class="knowledge-vector-layout" hidden>
-                      <div class="knowledge-vector-pane">
-                        <div id="knowledgeDocList" class="knowledge-doc-list"></div>
-                      </div>
-                      <div class="knowledge-vector-detail">
-                        <div class="knowledge-doc-header">
-                          <div>
-                            <div id="knowledgeDocTitle" class="detail-title" data-i18n="knowledge.doc.none">
-                              未选择文档
-                            </div>
-                            <div id="knowledgeDocMeta" class="muted"></div>
-                          </div>
-                          <div class="detail-actions">
-                            <button
-                              id="knowledgeDocToggleBtn"
-                              class="secondary btn-with-icon btn-compact icon-only"
-                              data-i18n-title="knowledge.doc.action.show"
-                              data-i18n-aria-label="knowledge.doc.action.show"
-                              type="button"
-                            >
-                              <i class="fa-solid fa-file-lines"></i>
-                            </button>
-                            <button
-                              id="knowledgeDocChunkSelectAllBtn"
-                              class="secondary btn-with-icon btn-compact icon-only"
-                              data-i18n-title="knowledge.chunk.action.selectAll"
-                              data-i18n-aria-label="knowledge.chunk.action.selectAll"
-                              type="button"
-                            >
-                              <i class="fa-solid fa-square-check"></i>
-                            </button>
-                            <button
-                              id="knowledgeDocEmbedBtn"
-                              class="btn-with-icon btn-compact icon-only"
-                              data-i18n-title="knowledge.doc.action.embed"
-                              data-i18n-aria-label="knowledge.doc.action.embed"
-                              type="button"
-                            >
-                              <i class="fa-solid fa-cube"></i>
-                            </button>
-                            <button
-                              id="knowledgeDocChunkDeleteBtn"
-                              class="danger btn-with-icon btn-compact icon-only"
-                              data-i18n-title="knowledge.doc.action.deleteChunks"
-                              data-i18n-aria-label="knowledge.doc.action.deleteChunks"
-                              type="button"
-                            >
-                              <i class="fa-solid fa-trash"></i>
-                            </button>
-                          </div>
-                        </div>
-                        <div class="knowledge-vector-content">
-                          <div class="knowledge-doc-chunks-pane">
-                            <div class="knowledge-doc-section-title" data-i18n="knowledge.doc.section.chunks">
-                              切片列表
-                            </div>
-                            <div id="knowledgeDocChunks" class="knowledge-doc-chunk-list"></div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                    <div id="knowledgeDocChunks" class="knowledge-doc-chunk-list"></div>
                   </div>
                 </div>
               </div>

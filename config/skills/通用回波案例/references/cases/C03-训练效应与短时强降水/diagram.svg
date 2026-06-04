@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">C03 训练效应与短时强降水示意图</title>
+  <desc id="desc">多个对流单体沿同一路径连续经过同一区域，造成累计雨量快速增加。</desc>
+  <defs>
+    <radialGradient id="storm" cx="45%" cy="45%" r="60%">
+      <stop offset="0" stop-color="#7f1d1d"/>
+      <stop offset="0.45" stop-color="#dc2626"/>
+      <stop offset="0.75" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#fde68a"/>
+    </radialGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <rect x="42" y="52" width="650" height="428" rx="8" fill="#ecfeff" stroke="#94a3b8"/>
+  <path d="M110 360 C250 250 394 184 626 104" fill="none" stroke="#0f172a" stroke-width="3" stroke-dasharray="9 8" marker-end="url(#arrow)"/>
+  <g opacity="0.96">
+    <ellipse cx="162" cy="330" rx="62" ry="42" fill="url(#storm)" transform="rotate(-28 162 330)"/>
+    <ellipse cx="268" cy="276" rx="70" ry="44" fill="url(#storm)" transform="rotate(-28 268 276)"/>
+    <ellipse cx="380" cy="222" rx="68" ry="43" fill="url(#storm)" transform="rotate(-28 380 222)"/>
+    <ellipse cx="492" cy="166" rx="64" ry="41" fill="url(#storm)" transform="rotate(-28 492 166)"/>
+  </g>
+  <rect x="288" y="300" width="150" height="92" rx="8" fill="none" stroke="#2563eb" stroke-width="4" stroke-dasharray="8 6"/>
+  <text x="292" y="417" fill="#2563eb" font-size="17" font-weight="700">反复影响区</text>
+  <text x="72" y="88" fill="#0f172a" font-size="22" font-weight="700">回波列车</text>
+  <text x="434" y="96" fill="#334155" font-size="17">单体沿同一路径移动</text>
+  <rect x="725" y="86" width="195" height="126" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="745" y="120" fill="#1d4ed8" font-size="18" font-weight="700">风险放大点</text>
+  <text x="745" y="150" fill="#334155" font-size="15">单体不一定最强</text>
+  <text x="745" y="176" fill="#334155" font-size="15">但累计时间很长</text>
+  <rect x="725" y="250" width="195" height="146" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+  <text x="745" y="284" fill="#0f172a" font-size="18" font-weight="700">核验资料</text>
+  <text x="745" y="314" fill="#334155" font-size="15">连续体扫</text>
+  <text x="745" y="340" fill="#334155" font-size="15">自动站雨量</text>
+  <text x="745" y="366" fill="#334155" font-size="15">上游新生回波</text>
+  <text x="42" y="514" fill="#64748b" font-size="14">训练效应重点在持续叠加，必须看连续演变和累计雨量。</text>
+</svg>
+
