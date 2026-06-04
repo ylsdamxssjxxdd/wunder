@@ -850,7 +850,10 @@
 }
 
 .chat-shell .workspace-list.virtual .workspace-item {
+  height: 28px;
+  min-height: 28px;
   margin-bottom: 0;
+  overflow: hidden;
 }
 
 .chat-shell .workspace-list.virtual .workspace-spacer {

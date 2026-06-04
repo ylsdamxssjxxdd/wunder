@@ -55,6 +55,78 @@ export const findWorkspaceEntryByPath = (
   return null;
 };
 
+const cloneWorkspaceRefreshEntries = (
+  entries: WorkspaceRefreshEntryLike[] = []
+): WorkspaceRefreshEntryLike[] =>
+  entries.map((entry) => {
+    const cloned = {
+      ...entry,
+      children: Array.isArray(entry.children)
+        ? cloneWorkspaceRefreshEntries(entry.children)
+        : entry.children
+    };
+    if (cloned.type === 'dir') {
+      cloned.childrenLoaded = false;
+    }
+    return cloned;
+  });
+
+const collectWorkspaceEntriesByPath = (
+  entries: WorkspaceRefreshEntryLike[] = [],
+  output = new Map<string, WorkspaceRefreshEntryLike>()
+): Map<string, WorkspaceRefreshEntryLike> => {
+  if (!Array.isArray(entries)) return output;
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const path = normalizeWorkspaceRefreshPath(entry.path);
+    if (path) {
+      output.set(path, entry);
+    }
+    if (Array.isArray(entry.children) && entry.children.length) {
+      collectWorkspaceEntriesByPath(entry.children, output);
+    }
+  });
+  return output;
+};
+
+export const preserveWorkspaceExpandedChildren = ({
+  nextEntries = [],
+  previousEntries = [],
+  expandedPaths = []
+}: {
+  nextEntries?: WorkspaceRefreshEntryLike[];
+  previousEntries?: WorkspaceRefreshEntryLike[];
+  expandedPaths?: Iterable<string>;
+}): WorkspaceRefreshEntryLike[] => {
+  const expanded = new Set(
+    Array.from(expandedPaths)
+      .map((path) => normalizeWorkspaceRefreshPath(path))
+      .filter(Boolean)
+  );
+  if (!expanded.size || !Array.isArray(nextEntries) || !nextEntries.length) {
+    return nextEntries;
+  }
+  const previousByPath = collectWorkspaceEntriesByPath(previousEntries);
+  const merge = (entries: WorkspaceRefreshEntryLike[]) => {
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const path = normalizeWorkspaceRefreshPath(entry.path);
+      if (entry.type === 'dir' && path && expanded.has(path)) {
+        const previous = previousByPath.get(path);
+        if (previous?.childrenLoaded && Array.isArray(previous.children)) {
+          entry.children = cloneWorkspaceRefreshEntries(previous.children);
+          entry.childrenLoaded = false;
+        }
+      }
+      if (Array.isArray(entry.children) && entry.children.length) {
+        merge(entry.children);
+      }
+    });
+  };
+  merge(nextEntries);
+  return nextEntries;
+};
+
 export const getWorkspaceParentPath = (path: string): string => {
   const normalized = normalizeWorkspacePath(path);
   if (!normalized) return '';

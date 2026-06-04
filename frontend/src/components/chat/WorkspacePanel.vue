@@ -529,6 +529,7 @@ import {
   collectWorkspaceRefreshTargets,
   findWorkspaceEntryByPath,
   getWorkspaceParentPath,
+  preserveWorkspaceExpandedChildren,
   shouldAcceptWorkspaceTreeVersion,
   shouldWorkspacePreviewReload
 } from './workspacePanelRefreshPlanner';
@@ -1268,7 +1269,7 @@ const displayEntries = computed(() => {
   }
   return result;
 });
-const WORKSPACE_ROW_HEIGHT = 24;
+const WORKSPACE_ROW_HEIGHT = 28;
 const WORKSPACE_OVERSCAN = 8;
 const workspaceVirtual = computed(() => displayEntries.value.length > 120);
 const workspaceViewportHeight = computed(() => listRef.value?.clientHeight || 0);
@@ -2130,7 +2131,9 @@ const loadWorkspace = async ({
   );
   const cachedTree = readWorkspaceTreeCache(cacheKey);
   const hasCachedEntries = Boolean(cachedTree && Array.isArray(cachedTree.entries) && cachedTree.entries.length > 0);
-  if (cachedTree) {
+  const hasFallbackEntries = hasCachedEntries || (preserveInteraction && state.entries.length > 0);
+  const shouldApplyCachedTree = !preserveInteraction || state.entries.length === 0;
+  if (shouldApplyCachedTree && cachedTree) {
     state.path = normalizeWorkspacePath(cachedTree.path);
     state.parent = cachedTree.parent ? normalizeWorkspacePath(cachedTree.parent) : null;
     state.entries = cloneWorkspaceEntries(cachedTree.entries);
@@ -2165,7 +2168,15 @@ const loadWorkspace = async ({
     state.path = normalizedPath;
     const parentPath = getWorkspaceParentPath(normalizedPath);
     state.parent = parentPath ? parentPath : null;
-    state.entries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
+    const nextEntries = normalizeWorkspaceEntries(Array.isArray(payload.entries) ? payload.entries : []);
+    if (preserveInteraction && state.expanded.size) {
+      preserveWorkspaceExpandedChildren({
+        nextEntries,
+        previousEntries: state.entries,
+        expandedPaths: state.expanded as Iterable<string>
+      });
+    }
+    state.entries = nextEntries;
     emitWorkspaceStats(state.entries);
     writeWorkspaceTreeCache(cacheKey, {
       path: normalizedPath,
@@ -2189,7 +2200,7 @@ const loadWorkspace = async ({
     return true;
   } catch (error) {
     showApiError(error, t('workspace.loadFailed'));
-    if (!hasCachedEntries) {
+    if (!hasFallbackEntries) {
       state.entries = [];
       emitWorkspaceStats(state.entries);
     }
@@ -2287,7 +2298,12 @@ const reloadWorkspaceDirectoryPath = async (path) => {
   if (targetPath === state.path) {
     state.path = targetPath;
     state.parent = getWorkspaceParentPath(targetPath) || null;
-    state.entries = snapshot.entries;
+    const nextEntries = preserveWorkspaceExpandedChildren({
+      nextEntries: snapshot.entries,
+      previousEntries: state.entries,
+      expandedPaths: state.expanded as Iterable<string>
+    });
+    state.entries = nextEntries;
     emitWorkspaceStats(state.entries);
     commitWorkspaceTreeVersion(snapshot.treeVersion);
     writeWorkspaceTreeCache(
@@ -2310,14 +2326,28 @@ const reloadWorkspaceDirectoryPath = async (path) => {
     return true;
   }
   const sourcePath = normalizeWorkspacePath(path);
+  const directTarget = findWorkspaceEntryByPath(state.entries, targetPath);
+  const fallbackTarget = sourcePath !== targetPath ? findWorkspaceEntryByPath(state.entries, sourcePath) : null;
+  const previousChildren = Array.isArray(directTarget?.children)
+    ? directTarget.children
+    : Array.isArray(fallbackTarget?.children)
+      ? fallbackTarget.children
+      : [];
+  const nextChildren = preserveWorkspaceExpandedChildren({
+    nextEntries: snapshot.entries,
+    previousEntries: previousChildren,
+    expandedPaths: state.expanded as Iterable<string>
+  });
   const attached =
-    attachWorkspaceChildren(state.entries, targetPath, snapshot.entries) ||
-    (sourcePath !== targetPath && attachWorkspaceChildren(state.entries, sourcePath, snapshot.entries));
+    attachWorkspaceChildren(state.entries, targetPath, nextChildren) ||
+    (sourcePath !== targetPath && attachWorkspaceChildren(state.entries, sourcePath, nextChildren));
   if (!attached) return false;
   commitWorkspaceTreeVersion(snapshot.treeVersion);
   emitWorkspaceStats(state.entries);
   reconcileWorkspaceSelection();
+  await hydrateExpandedEntries();
   syncWorkspacePreviewEntry();
+  await syncWorkspaceListViewport();
   return true;
 };
 
@@ -4031,7 +4061,7 @@ onMounted(async () => {
           ? String(state.preview.entry?.path || '').trim()
           : '';
       const scheduled = scheduleWorkspaceAutoRefreshByDetail(detail);
-      if (scheduled) {
+      if (scheduled && previewPath) {
         scheduleWorkspaceSettleRefresh({ previewPath });
       }
     });

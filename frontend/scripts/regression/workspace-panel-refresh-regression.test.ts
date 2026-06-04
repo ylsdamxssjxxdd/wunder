@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   collectWorkspaceRefreshTargets,
+  preserveWorkspaceExpandedChildren,
   shouldAcceptWorkspaceTreeVersion,
   shouldWorkspacePreviewReload,
   type WorkspaceRefreshEntryLike
@@ -55,6 +56,70 @@ test('workspace refresh planner falls back to full reload when targets fan out t
       forceFullReload: true
     }
   );
+});
+
+test('workspace background refresh preserves stale children for expanded directories', () => {
+  const previousEntries: WorkspaceRefreshEntryLike[] = [
+    {
+      path: 'docs',
+      type: 'dir',
+      childrenLoaded: true,
+      children: [
+        {
+          path: 'docs/report.md',
+          type: 'file',
+          name: 'report.md'
+        },
+        {
+          path: 'docs/nested',
+          type: 'dir',
+          childrenLoaded: true,
+          children: [
+            {
+              path: 'docs/nested/item.txt',
+              type: 'file',
+              name: 'item.txt'
+            }
+          ]
+        }
+      ]
+    }
+  ];
+  const nextEntries: WorkspaceRefreshEntryLike[] = [
+    {
+      path: 'docs',
+      type: 'dir',
+      childrenLoaded: false,
+      children: []
+    }
+  ];
+
+  const merged = preserveWorkspaceExpandedChildren({
+    nextEntries,
+    previousEntries,
+    expandedPaths: ['docs', 'docs/nested']
+  });
+
+  assert.equal(merged[0].childrenLoaded, false);
+  assert.deepEqual(
+    merged[0].children?.map((entry) => entry.path),
+    ['docs/report.md', 'docs/nested']
+  );
+  const nested = merged[0].children?.[1];
+  assert.equal(nested?.childrenLoaded, false);
+  assert.deepEqual(
+    nested?.children?.map((entry) => entry.path),
+    ['docs/nested/item.txt']
+  );
+  assert.notEqual(merged[0].children, previousEntries[0].children);
+
+  const emptyMerged = preserveWorkspaceExpandedChildren({
+    nextEntries: [{ path: 'empty', type: 'dir', childrenLoaded: false }],
+    previousEntries: [{ path: 'empty', type: 'dir', childrenLoaded: true, children: [] }],
+    expandedPaths: ['empty']
+  });
+  assert.equal(emptyMerged[0].childrenLoaded, false);
+  assert.deepEqual(emptyMerged[0].children, []);
 });
 
 test('workspace preview reload detection treats empty path hints as affected', () => {
