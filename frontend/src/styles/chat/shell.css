@@ -842,14 +842,17 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .chat-shell .workspace-list.virtual {
+  display: block;
   gap: 0;
 }
 
 .chat-shell .workspace-list.virtual .workspace-item {
+  flex: none;
   height: 28px;
   min-height: 28px;
   margin-bottom: 0;
@@ -857,6 +860,10 @@
 }
 
 .chat-shell .workspace-list.virtual .workspace-spacer {
+  display: block;
+  flex: none;
+  width: 100%;
+  min-height: 0;
   margin-bottom: 0;
   pointer-events: none;
 }

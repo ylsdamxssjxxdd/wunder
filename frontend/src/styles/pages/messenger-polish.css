@@ -680,7 +680,9 @@
 }
 
 .messenger-view .chat-shell .workspace-list.virtual {
+  display: block;
   gap: 0;
+  overflow-x: hidden;
 }
 
 .messenger-view .chat-shell .workspace-list.dragover {
@@ -719,6 +721,7 @@
 }
 
 .messenger-view .chat-shell .workspace-list.virtual .workspace-item {
+  flex: none;
   min-height: 28px;
   overflow: hidden;
 }
