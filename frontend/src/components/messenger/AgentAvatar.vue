@@ -62,7 +62,7 @@ const props = withDefaults(
 const sizeClass = computed(() => `size-${props.size}`);
 const stateClass = computed(() => `state-${props.state}`);
 const motionClass = computed(() => (props.animated ? 'is-motion-enabled' : 'is-motion-static'));
-const showRunningSpinner = computed(() => props.state === 'running' && props.animated);
+const showRunningSpinner = computed(() => props.state === 'running');
 const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
 const companionStore = useCompanionStore();
 void companionStore.hydrate().catch(() => undefined);
@@ -103,8 +103,6 @@ const avatarFaceStyle = computed(() => ({
 }));
 const statusIconClass = computed(() => {
   switch (props.state) {
-    case 'running':
-      return 'fa-solid fa-circle';
     case 'done':
       return 'fa-solid fa-check';
     case 'pending':

@@ -4,18 +4,25 @@
       <component :is="Component" />
     </KeepAlive>
   </router-view>
-  <CompanionFloatingLayer v-if="!desktopModeEnabled" />
+  <CompanionFloatingLayer v-if="showGlobalCompanionLayer" />
 </template>
 
 <script setup lang="ts">
-import { KeepAlive, onMounted, watch } from 'vue';
+import { KeepAlive, computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
 
 import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
-import { isDesktopModeEnabled } from '@/config/desktop';
 import { useAuthStore } from '@/stores/auth';
 
 const authStore = useAuthStore();
-const desktopModeEnabled = isDesktopModeEnabled();
+const route = useRoute();
+const isEmbeddedChatRoute = computed(() => /\/(?:app|desktop|demo)\/embed\/chat(?:\/|$)/.test(route.path));
+const isMessengerViewRoute = computed(() =>
+  /\/(?:app|desktop|demo)\/(?:home|tools|cron|channels|chat|beeroom|orchestration|plaza|user-world|workspace|settings|profile)(?:\/|$)/.test(
+    route.path
+  )
+);
+const showGlobalCompanionLayer = computed(() => !isEmbeddedChatRoute.value && !isMessengerViewRoute.value);
 
 const refreshProfile = () => {
   void authStore.loadProfile().catch(() => undefined);

@@ -384,8 +384,7 @@ const MAIN_WINDOW_MESSAGE_MAX_RETRIES = 6
 const COMPANION_NON_PERSISTENT_STATES = new Set([
   'running-left',
   'running-right',
-  'waving',
-  'waiting'
+  'waving'
 ])
 
 const normalizeCompanionBaseState = (state) => {
@@ -453,6 +452,20 @@ const normalizeCompanionWindowKey = (value = {}) => {
     ''
   ).trim()
   return key || '__default__'
+}
+
+const normalizeCompanionKeepKeys = (value) => {
+  const keys = new Set()
+  if (!Array.isArray(value)) {
+    return keys
+  }
+  value.forEach((item) => {
+    const key = String(item || '').trim()
+    if (key) {
+      keys.add(key)
+    }
+  })
+  return keys
 }
 
 const getCompanionRuntime = (value = {}) => {
@@ -2002,6 +2015,24 @@ const showCompanion = (payload) => {
 const updateCompanion = (payload) => showCompanion(payload)
 
 const hideCompanion = (payload = {}) => {
+  const keepKeys = normalizeCompanionKeepKeys(payload?.keepKeys || payload?.keep_keys)
+  if (keepKeys.size) {
+    Array.from(companionRuntimes.values())
+      .filter((runtime) => !keepKeys.has(runtime.key))
+      .forEach((runtime) => {
+        clearRuntimeTransientState(runtime)
+        resetCompanionWindowInput(runtime)
+        runtime.state = normalizeCompanionState({ ...runtime.state, enabled: false })
+        if (runtime.window && !runtime.window.isDestroyed()) {
+          runtime.window.hide()
+        }
+        syncLegacyCompanionGlobals(runtime)
+      })
+    if (payload?.persistEnabled === true || payload?.persistState === true) {
+      writeJsonFile(resolveCompanionStatePath(), serializeCompanionStateFile())
+    }
+    return true
+  }
   const shouldHideAll = !hasCompanionRuntimeIdentity(payload)
   const runtimes = shouldHideAll
     ? Array.from(companionRuntimes.values())
@@ -2161,7 +2192,7 @@ const endCompanionDrag = (payload = {}, event = null) => {
     ...runtime.state,
     x: windowLayout.point.x,
     y: windowLayout.point.y,
-    state: normalizeCompanionBaseState(runtime.state.state)
+    state: runtime.state.state === 'jumping' ? 'waiting' : normalizeCompanionBaseState(runtime.state.state)
   })
   clearRuntimeTransientState(runtime)
   saveCompanionState({
@@ -2171,10 +2202,15 @@ const endCompanionDrag = (payload = {}, event = null) => {
     enabled: runtime.state.enabled,
     x: windowLayout.point.x,
     y: windowLayout.point.y,
-    state: normalizeCompanionBaseState(runtime.state.state)
+    state: runtime.state.state
   })
   syncLegacyCompanionGlobals(runtime)
   renderCompanionWindow(runtime)
+  sendMainWindowMessage('wunder:companion-state-changed', {
+    ...runtime.state,
+    key: runtime.key,
+    dragEnded: true
+  })
   return true
 }
 

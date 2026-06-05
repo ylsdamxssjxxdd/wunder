@@ -133,18 +133,25 @@ const DEFAULT_AGENT_KEY = '__default__';
 const DESKTOP_TRANSIENT_SPRITE_STATES = new Set<CompanionSpriteStateId>([
   'running-left',
   'running-right',
-  'waving',
-  'waiting'
+  'waving'
 ]);
 
 const props = withDefaults(
   defineProps<{
     desktopMode?: boolean;
+    activeOnly?: boolean;
+    focusAgentId?: string;
+    acknowledgedDoneAgentId?: string;
+    acknowledgedDoneAt?: number;
     resolveAgentRuntimeState?: ((agentId: string) => AgentRuntimeState) | undefined;
     openAgentById?: ((agentId: string) => Promise<void> | void) | undefined;
   }>(),
   {
-    desktopMode: false
+    desktopMode: false,
+    activeOnly: false,
+    focusAgentId: '',
+    acknowledgedDoneAgentId: '',
+    acknowledgedDoneAt: 0
   }
 );
 
@@ -156,6 +163,8 @@ const { t } = useI18n();
 const now = ref(Date.now());
 const draggingKey = ref('');
 const spriteStateByKey = reactive<Record<string, CompanionSpriteStateId>>({});
+const runtimeStateByKey = reactive<Record<string, AgentRuntimeState>>({});
+const doneSettledByKey = reactive<Record<string, boolean>>({});
 const seenAssistantBubbleSignatureByConversationKey = reactive<Record<string, string>>({});
 const spriteStateTimeoutByKey = new Map<string, number>();
 const positions = ref<Record<string, CompanionPosition>>(loadPositions());
@@ -305,7 +314,7 @@ const latestActiveAssistantBubble = computed<Record<string, unknown> | null>(() 
   return null;
 });
 
-const visibleEntries = computed<FloatingEntry[]>(() => {
+const allVisibleEntries = computed<FloatingEntry[]>(() => {
   const items: Array<FloatingEntry | null> = allAgents.value
     .map((agent, index) => {
       const config = parseAgentAvatarIconConfig(agent.icon);
@@ -353,6 +362,20 @@ const visibleEntries = computed<FloatingEntry[]>(() => {
       } satisfies FloatingEntry;
     })
   return items.filter((item): item is FloatingEntry => Boolean(item));
+});
+
+const focusedAgentKey = computed(() => resolveAgentKey(props.focusAgentId || activeSessionAgentId.value));
+const visibleEntries = computed<FloatingEntry[]>(() => {
+  const entries = allVisibleEntries.value;
+  if (!props.activeOnly) {
+    return entries;
+  }
+  const targetAgentId = focusedAgentKey.value;
+  if (!targetAgentId) {
+    return [];
+  }
+  const matched = entries.find((entry) => resolveAgentKey(entry.agentId) === targetAgentId);
+  return matched ? [matched] : [];
 });
 
 const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
@@ -431,12 +454,15 @@ function clampPosition(x: number, y: number, scale: number): CompanionPosition {
   };
 }
 
-function resolveRuntimeSpriteState(agentId: string): CompanionSpriteStateId {
+function resolveRuntimeState(agentId: string): AgentRuntimeState {
   const state = typeof props.resolveAgentRuntimeState === 'function'
     ? props.resolveAgentRuntimeState(String(agentId || '').trim())
     : 'idle';
-  const runtimeState = normalizeAgentRuntimeState(state);
-  return resolveCompanionSpriteStateForRuntime(runtimeState, {
+  return normalizeAgentRuntimeState(state);
+}
+
+function resolveRuntimeSpriteState(agentId: string): CompanionSpriteStateId {
+  return resolveCompanionSpriteStateForRuntime(resolveRuntimeState(agentId), {
     pendingState: 'review'
   });
 }
@@ -446,6 +472,9 @@ function resolveEntrySpriteState(entry: FloatingEntry): CompanionSpriteStateId {
   if (override) {
     return override;
   }
+  if (runtimeStateByKey[entry.key] === 'done' && doneSettledByKey[entry.key]) {
+    return 'waiting';
+  }
   const runtimeState = resolveRuntimeSpriteState(entry.agentId);
   return runtimeState === 'waiting' ? 'idle' : runtimeState;
 }
@@ -453,6 +482,26 @@ function resolveEntrySpriteState(entry: FloatingEntry): CompanionSpriteStateId {
 function resolveDesktopBaseSpriteState(entry: FloatingEntry): CompanionSpriteStateId {
   const runtimeState = resolveEntrySpriteState(entry);
   return DESKTOP_TRANSIENT_SPRITE_STATES.has(runtimeState) ? 'idle' : runtimeState;
+}
+
+function markDoneSettledByKey(key: string): void {
+  if (!key || runtimeStateByKey[key] !== 'done') {
+    return;
+  }
+  doneSettledByKey[key] = true;
+  clearSpriteStateOverride(key);
+}
+
+function markDoneSettledByAgentId(agentId: unknown): void {
+  const targetAgentId = resolveAgentKey(agentId);
+  if (!targetAgentId) {
+    return;
+  }
+  visibleEntries.value.forEach((entry) => {
+    if (resolveAgentKey(entry.agentId) === targetAgentId) {
+      markDoneSettledByKey(entry.key);
+    }
+  });
 }
 
 function clearSpriteStateOverride(key: string): void {
@@ -505,6 +554,12 @@ async function syncDesktopOverlay(): Promise<void> {
     return;
   }
   const nextKeys = new Set(visibleEntries.value.map((entry) => entry.key));
+  if (nextKeys.size && typeof bridge.hideCompanion === 'function') {
+    await Promise.resolve(bridge.hideCompanion({
+      keepKeys: Array.from(nextKeys),
+      persistEnabled: false
+    }));
+  }
   const staleKeys = Array.from(desktopOverlayActiveKeys).filter((key) => !nextKeys.has(key));
   if (typeof bridge.hideCompanion === 'function') {
     await Promise.all(staleKeys.map((key) => Promise.resolve(bridge.hideCompanion?.({
@@ -611,6 +666,9 @@ function applyDesktopStatePosition(payload: unknown): void {
   const entry = visibleEntries.value.find((item) => item.key === key);
   if (!entry) {
     return;
+  }
+  if (source.dragEnded === true || source.drag_ended === true) {
+    markDoneSettledByKey(entry.key);
   }
   setPosition(key, {
     x: Math.max(0, Math.round(x)),
@@ -755,6 +813,7 @@ function handlePointerDown(event: PointerEvent, entry: FloatingEntry): void {
   if (event.button !== 0) return;
   const target = event.currentTarget as HTMLElement | null;
   const position = positions.value[entry.key] || defaultPosition(0);
+  markDoneSettledByKey(entry.key);
   setSpriteState(entry.key, 'waiting');
   pointerState = {
     pointerId: event.pointerId,
@@ -792,7 +851,7 @@ function stopDrag(): void {
   if (draggingKey.value) {
     clickSuppressUntil = Date.now() + 250;
   }
-  setSpriteState(pointerState.key, 'idle', 900);
+  setSpriteState(pointerState.key, 'waiting', 900);
   pointerState = null;
   draggingKey.value = '';
 }
@@ -870,6 +929,43 @@ watch(
     });
   },
   { immediate: true }
+);
+
+watch(
+  () => visibleEntries.value.map((entry) => `${entry.key}:${resolveRuntimeState(entry.agentId)}`).join('|'),
+  () => {
+    const liveKeys = new Set(visibleEntries.value.map((entry) => entry.key));
+    Object.keys(runtimeStateByKey).forEach((key) => {
+      if (!liveKeys.has(key)) {
+        delete runtimeStateByKey[key];
+        delete doneSettledByKey[key];
+      }
+    });
+    visibleEntries.value.forEach((entry) => {
+      const nextState = resolveRuntimeState(entry.agentId);
+      const previousState = runtimeStateByKey[entry.key];
+      if (previousState === nextState) {
+        return;
+      }
+      runtimeStateByKey[entry.key] = nextState;
+      if (nextState === 'done') {
+        doneSettledByKey[entry.key] = false;
+        return;
+      }
+      delete doneSettledByKey[entry.key];
+    });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [props.acknowledgedDoneAgentId, props.acknowledgedDoneAt] as const,
+  ([agentId, acknowledgedAt]) => {
+    if (!Number(acknowledgedAt || 0)) {
+      return;
+    }
+    markDoneSettledByAgentId(agentId);
+  }
 );
 
 onBeforeUnmount(() => {

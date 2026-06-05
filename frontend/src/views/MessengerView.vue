@@ -160,6 +160,7 @@
           :open-mixed-conversation="openMixedConversation"
           :preload-mixed-conversation="preloadMixedConversation"
           :resolve-agent-runtime-state="resolveAgentRuntimeState"
+          :acknowledge-agent-runtime-done="acknowledgeCompanionAgentDone"
           :avatar-label="avatarLabel"
           :format-time="formatTime"
           :can-delete-mixed-conversation="canDeleteMixedConversation"
@@ -1817,7 +1818,11 @@
     />
     <CompanionFloatingLayer
       v-if="!isEmbeddedChatRoute"
+      :active-only="sessionHub.activeSection === 'messages'"
       :desktop-mode="desktopMode"
+      :focus-agent-id="sessionHub.activeSection === 'messages' ? activeAgentId : ''"
+      :acknowledged-done-agent-id="companionAcknowledgedDoneAgentId"
+      :acknowledged-done-at="companionAcknowledgedDoneAt"
       :resolve-agent-runtime-state="resolveAgentRuntimeState"
       :open-agent-by-id="openAgentById"
     />
@@ -1841,6 +1846,13 @@ reportDesktopRendererStage('messenger-controller-ready');
 const CompanionFloatingLayer = defineRecoverableAsyncComponent(
   () => import('@/components/companions/CompanionFloatingLayer.vue')
 );
+const companionAcknowledgedDoneAgentId = vueRef('');
+const companionAcknowledgedDoneAt = vueRef(0);
+const acknowledgeCompanionAgentDone = (agentId: unknown) => {
+  const normalizedId = String(agentId || '').trim() || '__default__';
+  companionAcknowledgedDoneAgentId.value = normalizedId;
+  companionAcknowledgedDoneAt.value = Date.now();
+};
 const desktopModelRows = vueRef<Array<Record<string, unknown>>>([]);
 const handleDesktopModelRowsChange = (rows: Array<Record<string, unknown>> = []) => {
   desktopModelRows.value = Array.isArray(rows) ? rows : [];

@@ -1077,6 +1077,7 @@ const {
   openMixedConversation,
   preloadMixedConversation,
   resolveAgentRuntimeState,
+  acknowledgeAgentRuntimeDone,
   avatarLabel,
   formatTime,
   canDeleteMixedConversation,
@@ -1171,6 +1172,7 @@ const {
   openMixedConversation: (item: any) => void | Promise<void>;
   preloadMixedConversation: (item: any) => void;
   resolveAgentRuntimeState: (agentId: any) => any;
+  acknowledgeAgentRuntimeDone?: (agentId: any) => void;
   avatarLabel: (value: unknown) => string;
   formatTime: (value: unknown) => string;
   canDeleteMixedConversation: (item: any) => boolean;
@@ -1859,6 +1861,14 @@ function toggleAgentSelection(targetId: string) {
   applyAgentSelection([...selectedAgentIds.value, targetId], targetId);
 }
 
+function acknowledgeDoneAgentIfNeeded(agentId: unknown) {
+  const normalizedId = normalizeAgentId(agentId);
+  if (!normalizedId || resolveAgentRuntimeState(normalizedId) !== 'done') {
+    return;
+  }
+  acknowledgeAgentRuntimeDone?.(normalizedId);
+}
+
 async function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {
   if (!(await confirmUnsavedChangesBeforeAction())) {
     return;
@@ -1866,6 +1876,7 @@ async function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {
   const normalizedId = normalizeAgentId(agentId);
   if (!normalizedId) return;
   closeAgentContextMenu();
+  acknowledgeDoneAgentIfNeeded(normalizedId);
   if (event.shiftKey) {
     extendAgentSelection(normalizedId);
   } else if (event.ctrlKey || event.metaKey) {
@@ -1897,6 +1908,7 @@ async function handleAgentOpenById(agentId: unknown) {
   if (!(await confirmUnsavedChangesBeforeAction())) {
     return;
   }
+  acknowledgeDoneAgentIfNeeded(agentId);
   await Promise.resolve(openAgentById(agentId));
 }
 
@@ -1904,6 +1916,9 @@ async function openConversationFromList(item: Record<string, unknown>) {
   if (isGuidedDefaultConversation(item)) {
     await handleAgentOpenById(defaultAgentKey);
     return;
+  }
+  if (String(item?.kind || '') === 'agent') {
+    acknowledgeDoneAgentIfNeeded(item?.agentId || item?.id || defaultAgentKey);
   }
   await Promise.resolve(openMixedConversation(item));
 }
