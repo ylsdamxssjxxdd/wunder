@@ -590,7 +590,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": t("tool.spec.read_image.args.path")},
-                    "prompt": {"type": "string", "description": t("tool.spec.read_image.args.prompt")},
                     "frame_rate": {"type": "number", "description": t("tool.spec.read_image.args.frame_rate")},
                     "frame_step": {"type": "integer", "description": t("tool.spec.read_image.args.frame_step")}
                 },
@@ -2847,6 +2846,10 @@ mod tests {
             .find(|spec| spec.name == super::read_image_tool::TOOL_READ_IMAGE)
             .expect("read image spec");
         assert!(read_image_spec.description.contains("本地图片"));
+        assert!(read_image_spec.input_schema["properties"]["path"].is_object());
+        assert!(read_image_spec.input_schema["properties"]["frame_rate"].is_object());
+        assert!(read_image_spec.input_schema["properties"]["frame_step"].is_object());
+        assert!(read_image_spec.input_schema["properties"]["prompt"].is_null());
         assert_eq!(
             read_image_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -2908,6 +2911,25 @@ mod tests {
         assert!(apply_patch_input_description.contains("@@"));
         assert_eq!(
             apply_patch_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn read_image_schema_exposes_no_prompt_parameter() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == super::read_image_tool::TOOL_READ_IMAGE)
+            .expect("read image spec");
+
+        assert!(spec.description.contains("本地图片"));
+        assert!(spec.input_schema["properties"]["path"].is_object());
+        assert!(spec.input_schema["properties"]["frame_rate"].is_object());
+        assert!(spec.input_schema["properties"]["frame_step"].is_object());
+        assert!(spec.input_schema["properties"]["prompt"].is_null());
+        assert_eq!(spec.input_schema["required"][0], "path");
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
         );
     }

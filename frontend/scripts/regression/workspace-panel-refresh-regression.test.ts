@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   collectWorkspaceRefreshTargets,
+  hasLoadedWorkspaceDirectoryChildren,
   preserveWorkspaceExpandedChildren,
   shouldAcceptWorkspaceTreeVersion,
   shouldWorkspacePreviewReload,
@@ -120,6 +121,35 @@ test('workspace background refresh preserves stale children for expanded directo
   });
   assert.equal(emptyMerged[0].childrenLoaded, false);
   assert.deepEqual(emptyMerged[0].children, []);
+});
+
+test('workspace loaded directory check requires a real children array', () => {
+  assert.equal(
+    hasLoadedWorkspaceDirectoryChildren({
+      path: 'dir',
+      type: 'dir',
+      childrenLoaded: true
+    }),
+    false
+  );
+  assert.equal(
+    hasLoadedWorkspaceDirectoryChildren({
+      path: 'dir',
+      type: 'dir',
+      childrenLoaded: true,
+      children: []
+    }),
+    true
+  );
+  assert.equal(
+    hasLoadedWorkspaceDirectoryChildren({
+      path: 'dir',
+      type: 'dir',
+      childrenLoaded: false,
+      children: [{ path: 'dir/file.txt', type: 'file' }]
+    }),
+    false
+  );
 });
 
 test('workspace preview reload detection treats empty path hints as affected', () => {

@@ -928,9 +928,13 @@ const composerContextTotalTokensRaw = computed(() => {
 const contextDisplayAssistantSignature = computed(() => {
   return composerContextUsageSource.value.assistantSignature;
 });
+const contextDisplayResetSignature = computed(() => {
+  return composerContextUsageSource.value.contextResetSignature;
+});
 const contextDisplaySessionId = computed(() => String(chatStore.activeSessionId || '').trim());
 const lastContextDisplaySessionId = ref<string>(contextDisplaySessionId.value);
 const lastContextDisplayAssistantSignature = ref<string>(contextDisplayAssistantSignature.value);
+const lastContextDisplayResetSignature = ref<string>(contextDisplayResetSignature.value);
 const composerContextUsedTokensStable = ref<number | null>(null);
 const composerContextTotalTokensStable = ref<number | null>(null);
 const composerContextAssistantBaseTokens = ref<number | null>(null);
@@ -940,17 +944,21 @@ watch(
   [
     contextDisplaySessionId,
     contextDisplayAssistantSignature,
+    contextDisplayResetSignature,
     () => Boolean(props.loading),
     composerContextUsedTokensRaw,
     composerContextTotalTokensRaw
   ],
-  ([sessionId, assistantSignature, loading, rawUsed, rawTotal]) => {
+  ([sessionId, assistantSignature, resetSignature, loading, rawUsed, rawTotal]) => {
     const switchedSession = sessionId !== lastContextDisplaySessionId.value;
     const switchedAssistant =
       assistantSignature !== lastContextDisplayAssistantSignature.value;
+    const switchedContextReset =
+      Boolean(resetSignature) && resetSignature !== lastContextDisplayResetSignature.value;
     lastContextDisplaySessionId.value = sessionId;
     lastContextDisplayAssistantSignature.value = assistantSignature;
-    if (switchedSession || !loading) {
+    lastContextDisplayResetSignature.value = resetSignature;
+    if (switchedSession || switchedContextReset || !loading) {
       const nextPair = resolveStableComposerContextPair(rawUsed, rawTotal);
       composerContextUsedTokensStable.value = nextPair.used;
       composerContextTotalTokensStable.value = nextPair.total;

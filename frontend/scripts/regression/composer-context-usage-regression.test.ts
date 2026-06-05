@@ -483,6 +483,98 @@ test('composer context usage keeps assistant contextTokens ahead of session occu
   assert.equal(source.contextTotalTokens, 128000);
 });
 
+test('composer context usage lets completed compaction reset a stale assistant occupancy', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        stream_incomplete: false,
+        workflowStreaming: false,
+        stats: {
+          contextTokens: 129500,
+          contextTotalTokens: 128000
+        }
+      },
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:40.000Z',
+        manual_compaction_marker: true,
+        workflowItems: [
+          {
+            eventType: 'compaction',
+            status: 'completed',
+            toolName: 'context_compaction',
+            toolCallId: 'compaction:manual:reset',
+            detail: JSON.stringify({
+              status: 'done',
+              trigger_mode: 'manual',
+              final_context_tokens: 0,
+              context_usage_source: 'unobserved_after_manual_compaction'
+            })
+          }
+        ]
+      }
+    ],
+    {
+      context_occupancy_tokens: 0,
+      context_max_tokens: 128000
+    },
+    false
+  );
+
+  assert.equal(source.contextTokens, 0);
+  assert.equal(source.contextTotalTokens, 128000);
+  assert.notEqual(source.contextResetSignature, '');
+  assert.deepEqual(resolveStableComposerContextPair(source.contextTokens, source.contextTotalTokens), {
+    used: 0,
+    total: 128000
+  });
+});
+
+test('composer context usage exposes in-turn compaction reset while assistant keeps running', () => {
+  const source = resolveComposerContextUsageSource(
+    [
+      {
+        role: 'assistant',
+        created_at: '2026-05-06T07:03:38.627Z',
+        content: 'partial',
+        stream_incomplete: true,
+        workflowStreaming: true,
+        stats: {
+          contextTokens: 131000,
+          contextTotalTokens: 128000
+        },
+        workflowItems: [
+          {
+            eventType: 'compaction',
+            status: 'completed',
+            toolName: 'context_compaction',
+            toolCallId: 'compaction:auto:reset',
+            detail: JSON.stringify({
+              status: 'done',
+              reason: 'overflow_recovery',
+              context_tokens_after: 0,
+              context_usage_source: 'unobserved_after_compaction'
+            })
+          }
+        ]
+      }
+    ],
+    {
+      context_occupancy_tokens: 0,
+      context_max_tokens: 128000
+    },
+    true
+  );
+
+  assert.equal(source.runningAssistant, true);
+  assert.equal(source.contextTokens, 0);
+  assert.equal(source.runningContextTokens, 0);
+  assert.equal(source.contextTotalTokens, 128000);
+  assert.notEqual(source.contextResetSignature, '');
+});
+
 test('composer context usage uses preview only when no observed context exists', () => {
   const source = resolveComposerContextUsageSource(
     [

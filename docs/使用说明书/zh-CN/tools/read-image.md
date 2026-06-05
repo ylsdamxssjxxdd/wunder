@@ -5,13 +5,13 @@ read_when:
   - 你要把本地视觉媒体送入当前模型上下文
 source_docs:
   - src/services/tools/read_image_tool.rs
-updated_at: 2026-04-29
+updated_at: 2026-06-05
 ---
 
 # 读图工具
 
 `read_image` 现在不只读静态图片。  
-它会把本地视觉媒体预处理好，并提示系统在后续上下文里附上可供模型继续分析的视觉消息。
+它会把本地视觉媒体预处理好，并在后续模型上下文里附上可供模型继续分析的视觉消息。
 
 当前支持：
 
@@ -58,7 +58,6 @@ GIF 示例：
     "resolved_path": "C:/.../screenshots/demo.png",
     "media_kind": "image",
     "size_bytes": 182233,
-    "prompt": "Inspect the attached image carefully...",
     "result": {
       "kind": "image"
     }
@@ -69,6 +68,7 @@ GIF 示例：
 ## 重点
 
 - 静态图片会直接作为图片输入进入上下文。
+- 工具只需要 `path`；当前对话本身提供具体查看意图。
 - GIF 不会再原样送模型。
   默认只取首帧。
   如果提供 `frame_step`，则按间隔取帧。

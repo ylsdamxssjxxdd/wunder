@@ -51,6 +51,37 @@ const findEntryValue = (
   return matched ? String(matched.value || '') : null;
 };
 
+const ensureBrowserRuntimeStub = (): void => {
+  const root = globalThis as typeof globalThis & {
+    window?: { location?: { origin?: string } };
+    localStorage?: {
+      getItem: (key: string) => string | null;
+      setItem: (key: string, value: string) => void;
+      removeItem: (key: string) => void;
+    };
+  };
+  if (!root.window) {
+    root.window = { location: { origin: 'http://localhost' } };
+  } else if (!root.window.location) {
+    root.window.location = { origin: 'http://localhost' };
+  }
+  if (!root.window.location.origin) {
+    root.window.location.origin = 'http://localhost';
+  }
+  if (!root.localStorage) {
+    const values = new Map<string, string>();
+    root.localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      }
+    };
+  }
+};
+
 test('message stats use backend-provided user-round average decode speed', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
@@ -897,6 +928,50 @@ test('message stats keeps compaction status scoped to the assistant bubble that 
 
   assert.equal(entries[0]?.value, 'Requesting');
   assert.equal(compactionEntries[0]?.value, 'Compacting');
+});
+
+test('message stats keeps orphan subagent ownership away from a stopped assistant bubble', async () => {
+  ensureBrowserRuntimeStub();
+  const { attachSubagentsToMessages } = await import('../../src/stores/chatStats');
+  const previousAssistant = {
+    role: 'assistant',
+    stream_round: 1,
+    subagents: [
+      {
+        session_id: 'session-prev',
+        run_id: 'run-prev',
+        title: 'Previous child',
+        status: 'completed'
+      }
+    ]
+  };
+  const stoppedAssistant = {
+    role: 'assistant',
+    stream_round: 2,
+    status: 'cancelled',
+    cancelled: true,
+    stop_reason: 'user_stop',
+    subagents: []
+  };
+  const messages = [
+    { role: 'user', content: 'first' },
+    previousAssistant,
+    { role: 'user', content: 'second' },
+    stoppedAssistant
+  ];
+
+  attachSubagentsToMessages(messages, [
+    {
+      session_id: 'session-prev',
+      run_id: 'run-prev',
+      title: 'Previous child',
+      status: 'failed'
+    }
+  ]);
+
+  assert.equal(previousAssistant.subagents.length, 1);
+  assert.equal(previousAssistant.subagents[0]?.status, 'failed');
+  assert.equal(stoppedAssistant.subagents.length, 0);
 });
 
 test('message stats keeps waiting-input status ahead of stale running flags', () => {

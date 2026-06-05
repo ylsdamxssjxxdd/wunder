@@ -55,6 +55,16 @@ export const findWorkspaceEntryByPath = (
   return null;
 };
 
+export const hasLoadedWorkspaceDirectoryChildren = (
+  entry: WorkspaceRefreshEntryLike | null | undefined
+): boolean =>
+  Boolean(
+    entry &&
+      entry.type === 'dir' &&
+      entry.childrenLoaded === true &&
+      Array.isArray(entry.children)
+  );
+
 const cloneWorkspaceRefreshEntries = (
   entries: WorkspaceRefreshEntryLike[] = []
 ): WorkspaceRefreshEntryLike[] =>

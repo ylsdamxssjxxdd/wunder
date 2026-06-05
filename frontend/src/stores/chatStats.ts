@@ -922,6 +922,28 @@ export const attachSubagentsToMessages = (messages, subagents) => {
     return messages;
   }
   const normalized = normalizeMessageSubagents(subagents);
+  const previousOwnerByKey = new Map<string, Record<string, unknown>>();
+  const assistantMessages = messages.filter((message) => message?.role === 'assistant');
+  assistantMessages.forEach((message) => {
+    normalizeMessageSubagents(message.subagents).forEach((item) => {
+      previousOwnerByKey.set(item.key, message);
+    });
+  });
+  const fallbackTarget =
+    [...assistantMessages]
+      .reverse()
+      .find((message) => {
+        const status = String(message?.status || '').trim().toLowerCase();
+        const stopReason = String(message?.stop_reason ?? message?.stopReason ?? '').trim().toLowerCase();
+        return !(
+          message?.cancelled === true ||
+          status === 'cancelled' ||
+          status === 'canceled' ||
+          stopReason === 'user_stop'
+        );
+      }) ||
+    [...assistantMessages].reverse()[0] ||
+    null;
   messages.forEach((message) => {
     if (!message || message.role !== 'assistant') return;
     message.subagents = [];
@@ -934,7 +956,8 @@ export const attachSubagentsToMessages = (messages, subagents) => {
       (item.parent_model_round
         ? findAssistantMessageByRound(messages, item.parent_model_round)
         : null) ||
-      [...messages].reverse().find((message) => message?.role === 'assistant');
+      previousOwnerByKey.get(item.key) ||
+      fallbackTarget;
     if (!target) return;
     upsertMessageSubagent(target, item);
   });

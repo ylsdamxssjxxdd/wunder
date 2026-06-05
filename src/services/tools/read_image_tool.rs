@@ -19,8 +19,6 @@ pub const TOOL_VIEW_IMAGE_ALIAS: &str = "view_image";
 struct ReadImageArgs {
     path: String,
     #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
     frame_rate: Option<f64>,
     #[serde(default)]
     frame_step: Option<usize>,
@@ -85,7 +83,6 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
             "resolved_path": resolved.to_string_lossy().to_string(),
             "media_kind": media_kind,
             "size_bytes": metadata.len(),
-            "prompt": normalize_optional_prompt(payload.prompt.as_deref()),
             "result": result,
         }),
     ))
@@ -98,10 +95,7 @@ pub async fn build_followup_user_message(
     let Some(result) = parse_result_payload(result_data) else {
         return Ok(None);
     };
-    let prompt = result
-        .prompt
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| crate::i18n::t("tool.read_image.followup_prompt"));
+    let prompt = crate::i18n::t("tool.read_image.followup_prompt");
     let attachments = result
         .result
         .get("attachments")
@@ -190,15 +184,7 @@ async fn read_visual_media_sample(path: &Path, max_bytes: usize) -> Result<Vec<u
     Ok(buffer)
 }
 
-fn normalize_optional_prompt(prompt: Option<&str>) -> Option<String> {
-    prompt
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
 struct ReadImageResultPayload {
-    prompt: Option<String>,
     resolved_path: PathBuf,
     media_kind: String,
     result: Value,
@@ -212,7 +198,6 @@ fn parse_result_payload(data: &Value) -> Option<ReadImageResultPayload> {
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     Some(ReadImageResultPayload {
-        prompt: normalize_optional_prompt(obj.get("prompt").and_then(Value::as_str)),
         resolved_path: PathBuf::from(resolved_path),
         media_kind: obj
             .get("media_kind")
@@ -226,6 +211,16 @@ fn parse_result_payload(data: &Value) -> Option<ReadImageResultPayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::a2a_store::A2aStore;
+    use crate::config::Config;
+    use crate::lsp::LspManager;
+    use crate::skills::SkillRegistry;
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use crate::workspace::WorkspaceManager;
+    use image::{DynamicImage, ImageBuffer, Rgba};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn read_image_tool_name_supports_aliases() {
@@ -233,5 +228,105 @@ mod tests {
         assert!(is_read_image_tool_name(TOOL_READ_IMAGE_ALIAS));
         assert!(is_read_image_tool_name(TOOL_VIEW_IMAGE_ALIAS));
         assert!(!is_read_image_tool_name("read_file"));
+    }
+
+    #[tokio::test]
+    async fn followup_user_message_uses_default_text_without_prompt_arg() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-image-tool.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace = Arc::new(WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "user",
+            session_id: "session",
+            workspace_id: "user",
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage,
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+        let image = ImageBuffer::<Rgba<u8>, _>::from_pixel(2, 2, Rgba([255, 0, 0, 255]));
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgba8(image)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        let resolved_path = dir.path().join("unused.png");
+        std::fs::write(&resolved_path, &bytes).expect("write test image");
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)
+        );
+        let payload = json!({
+            "resolved_path": resolved_path.to_string_lossy().to_string(),
+            "media_kind": "image",
+            "result": {
+                "attachments": [
+                    {
+                        "name": "image.png",
+                        "content": data_url,
+                        "content_type": "image/png"
+                    }
+                ]
+            }
+        });
+
+        let message = build_followup_user_message(&context, &payload)
+            .await
+            .expect("build followup")
+            .expect("message");
+        let content = message
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("content array");
+
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0].get("type").and_then(Value::as_str), Some("text"));
+        let expected_prompt = crate::i18n::t("tool.read_image.followup_prompt");
+        assert_eq!(
+            content[0].get("text").and_then(Value::as_str),
+            Some(expected_prompt.as_str())
+        );
+        assert!(content[1]
+            .get("image_url")
+            .and_then(Value::as_object)
+            .and_then(|obj| obj.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .starts_with("data:image/png;base64,"));
     }
 }

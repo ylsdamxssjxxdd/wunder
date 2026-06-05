@@ -529,6 +529,7 @@ import {
   collectWorkspaceRefreshTargets,
   findWorkspaceEntryByPath,
   getWorkspaceParentPath,
+  hasLoadedWorkspaceDirectoryChildren,
   preserveWorkspaceExpandedChildren,
   shouldAcceptWorkspaceTreeVersion,
   shouldWorkspacePreviewReload
@@ -1370,7 +1371,7 @@ const revealWorkspacePath = async (rawPath, options: { scroll?: boolean } = {}) 
       state.expanded.add(dirPath);
       state.expanded = new Set(state.expanded);
     }
-    if (entry.childrenLoaded) continue;
+    if (hasLoadedWorkspaceDirectoryChildren(entry)) continue;
     try {
       const { data } = await activeFileSystem.value.listContent(withFsParams({
         path: dirPath,
@@ -1394,7 +1395,7 @@ const revealWorkspacePath = async (rawPath, options: { scroll?: boolean } = {}) 
       state.expanded.add(targetPath);
       state.expanded = new Set(state.expanded);
     }
-    if (!targetEntry.childrenLoaded) {
+    if (!hasLoadedWorkspaceDirectoryChildren(targetEntry)) {
       try {
         const { data } = await activeFileSystem.value.listContent(withFsParams({
           path: targetPath,
@@ -2526,7 +2527,7 @@ const hydrateExpandedEntries = async () => {
   for (const rawPath of expandedPaths) {
     const path = String(rawPath || '').trim();
     const entry = findWorkspaceEntryByPath(state.entries, path);
-    if (!entry || entry.type !== 'dir' || entry.childrenLoaded) {
+    if (!entry || entry.type !== 'dir' || hasLoadedWorkspaceDirectoryChildren(entry)) {
       continue;
     }
     try {
@@ -2548,26 +2549,29 @@ const hydrateExpandedEntries = async () => {
 
 const toggleWorkspaceDirectory = async (entry) => {
   if (!entry || entry.type !== 'dir' || state.searchMode) return;
-  if (state.expanded.has(entry.path)) {
-    state.expanded.delete(entry.path);
+  const entryPath = normalizeWorkspacePath(entry.path);
+  if (!entryPath) return;
+  if (state.expanded.has(entryPath)) {
+    state.expanded.delete(entryPath);
     state.expanded = new Set(state.expanded);
     return;
   }
-  state.expanded.add(entry.path);
+  state.expanded.add(entryPath);
   state.expanded = new Set(state.expanded);
-  if (entry.childrenLoaded) return;
+  const currentEntry = findWorkspaceEntryByPath(state.entries, entryPath) || entry;
+  if (hasLoadedWorkspaceDirectoryChildren(currentEntry)) return;
   try {
     const { data } = await activeFileSystem.value.listContent(withFsParams({
-      path: entry.path,
+      path: entryPath,
       include_content: true,
       depth: 1,
       sort_by: state.sortBy,
       order: state.sortOrder
     }));
-    attachWorkspaceChildren(state.entries, entry.path, data.entries || []);
+    attachWorkspaceChildren(state.entries, entryPath, data.entries || []);
     emitWorkspaceStats(state.entries);
   } catch (error) {
-    state.expanded.delete(entry.path);
+    state.expanded.delete(entryPath);
     state.expanded = new Set(state.expanded);
     showApiError(error, t('workspace.expandFailed'));
   }

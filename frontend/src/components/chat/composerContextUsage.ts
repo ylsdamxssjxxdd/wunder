@@ -8,6 +8,7 @@ export type ComposerContextUsageSource = {
   assistantSignature: string;
   runningAssistant: boolean;
   runningContextTokens: number | null;
+  contextResetSignature: string;
 };
 
 export type ComposerRunningContextDisplayInput = {
@@ -53,6 +54,170 @@ const resolveContextUsageRecord = (source: Record<string, unknown>): Record<stri
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+};
+
+type ComposerCompactionContextReset = {
+  signature: string;
+  afterTokens: number | null;
+};
+
+const asObjectRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const normalizeText = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+
+const parseDetailRecord = (value: unknown): Record<string, unknown> | null => {
+  const direct = asObjectRecord(value);
+  if (direct) return direct;
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  try {
+    return asObjectRecord(JSON.parse(text));
+  } catch {
+    return null;
+  }
+};
+
+const isComposerCompactionWorkflowItem = (value: unknown): boolean => {
+  const record = asObjectRecord(value);
+  if (!record) return false;
+  const eventType = normalizeText(record.eventType || record.event);
+  const toolName = normalizeText(record.toolName || record.tool || record.name);
+  const toolCallId = normalizeText(record.toolCallId || record.tool_call_id);
+  if (
+    eventType === 'compaction' ||
+    eventType === 'compaction_progress' ||
+    eventType === 'compaction_notice'
+  ) {
+    return true;
+  }
+  if (
+    toolName === 'context_compaction' ||
+    toolName === 'context_compact' ||
+    toolName === 'compaction'
+  ) {
+    return true;
+  }
+  return toolCallId.startsWith('compaction:');
+};
+
+const isCompletedCompactionResetItem = (
+  item: Record<string, unknown>,
+  detail: Record<string, unknown> | null
+): boolean => {
+  const detailStatus = normalizeText(detail?.status);
+  const itemStatus = normalizeText(item.status);
+  const result = normalizeText(detail?.result ?? detail?.compaction_result);
+  const negative = new Set([
+    'failed',
+    'error',
+    'cancelled',
+    'canceled',
+    'aborted',
+    'skip',
+    'skipped',
+    'not_needed',
+    'not-needed',
+    'unchanged'
+  ]);
+  if (negative.has(detailStatus) || negative.has(itemStatus) || negative.has(result)) {
+    return false;
+  }
+  const positive = new Set(['done', 'completed', 'complete', 'success', 'succeeded', 'ok']);
+  if (positive.has(detailStatus) || positive.has(itemStatus) || positive.has(result)) {
+    return true;
+  }
+  return itemStatus === 'completed';
+};
+
+const firstTokenCount = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    const normalized = normalizeTokenCount(value);
+    if (normalized !== null) return normalized;
+  }
+  return null;
+};
+
+const resolveCompactionAfterTokens = (detail: Record<string, unknown> | null): number | null => {
+  if (!detail) return null;
+  return firstTokenCount(
+    detail.final_context_tokens,
+    detail.observed_context_tokens_after,
+    detail.context_tokens_after,
+    detail.context_guard_tokens_after
+  );
+};
+
+const resolveMessageCompletedCompactionReset = (
+  message: Record<string, unknown>,
+  messageIndex: number
+): ComposerCompactionContextReset | null => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+    const item = asObjectRecord(items[cursor]);
+    if (!item || !isComposerCompactionWorkflowItem(item)) continue;
+    const eventType = normalizeText(item.eventType || item.event);
+    if (eventType === 'compaction_notice') continue;
+    const detail = parseDetailRecord(item.detail ?? item.data ?? item.payload);
+    if (!isCompletedCompactionResetItem(item, detail)) continue;
+    const afterTokens = resolveCompactionAfterTokens(detail);
+    const workflowRef = normalizeText(
+      item.toolCallId ??
+        item.tool_call_id ??
+        item.callId ??
+        item.call_id ??
+        detail?.compaction_id ??
+        detail?.compactionId
+    );
+    const status = normalizeText(detail?.status ?? item.status);
+    const source = normalizeText(
+      detail?.context_usage_source_after ??
+        detail?.contextUsageSourceAfter ??
+        detail?.context_usage_source ??
+        detail?.contextUsageSource
+    );
+    return {
+      afterTokens,
+      signature: [messageIndex, cursor, workflowRef, status, source, afterTokens ?? '']
+        .map((part) => String(part))
+        .join(':')
+    };
+  }
+  return null;
+};
+
+const resolveCompactionContextTokens = (
+  reset: ComposerCompactionContextReset | null,
+  sessionTokens: number | null,
+  assistantTokens: number | null
+): number | null => {
+  if (!reset) return null;
+  if (
+    sessionTokens !== null &&
+    (assistantTokens === null ||
+      sessionTokens <= assistantTokens ||
+      reset.afterTokens === null ||
+      sessionTokens <= reset.afterTokens)
+  ) {
+    return sessionTokens;
+  }
+  if (
+    reset.afterTokens !== null &&
+    (assistantTokens === null || reset.afterTokens <= assistantTokens)
+  ) {
+    return reset.afterTokens;
+  }
+  return null;
+};
+
+const buildContextResetSignature = (
+  reset: ComposerCompactionContextReset | null,
+  contextTokens: number | null
+): string => {
+  if (!reset) return '';
+  return [reset.signature, contextTokens ?? reset.afterTokens ?? ''].join('@');
 };
 
 const resolveExplicitAssistantContextTokens = (stats: ComposerContextStatsSource): number | null => {
@@ -197,6 +362,25 @@ export const resolveSessionContextTokens = (session: ComposerContextSessionSourc
   );
 };
 
+const resolveSessionContextTokensIncludingZero = (
+  session: ComposerContextSessionSource
+): number | null => {
+  if (!session) {
+    return null;
+  }
+  const contextUsage = resolveContextUsageRecord(session);
+  return normalizeTokenCount(
+    session.context_occupancy_tokens ??
+      session.contextOccupancyTokens ??
+      contextUsage?.context_occupancy_tokens ??
+      contextUsage?.contextOccupancyTokens ??
+      session.contextTokens ??
+      session.context_tokens ??
+      contextUsage?.contextTokens ??
+      contextUsage?.context_tokens
+  );
+};
+
 export const resolveSessionContextTotalTokens = (session: ComposerContextSessionSource): number | null => {
   if (!session) {
     return null;
@@ -233,22 +417,7 @@ const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
   if (!Array.isArray(items) || items.length === 0) return false;
   let hasCompaction = false;
   for (const item of items) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      return false;
-    }
-    const record = item as Record<string, unknown>;
-    const eventType = String(record.eventType || record.event || '').trim().toLowerCase();
-    const toolName = String(record.toolName || record.tool || record.name || '').trim().toLowerCase();
-    const toolCallId = String(record.toolCallId || record.tool_call_id || '').trim().toLowerCase();
-    const isCompaction =
-      eventType === 'compaction' ||
-      eventType === 'compaction_progress' ||
-      eventType === 'compaction_notice' ||
-      toolName === 'context_compaction' ||
-      toolName === 'context_compact' ||
-      toolName === 'compaction' ||
-      toolCallId.startsWith('compaction:');
-    if (!isCompaction) {
+    if (!isComposerCompactionWorkflowItem(item)) {
       return false;
     }
     hasCompaction = true;
@@ -304,6 +473,7 @@ export const resolveComposerContextUsageSource = (
   loading: boolean
 ): ComposerContextUsageSource => {
   const list = Array.isArray(messages) ? messages : [];
+  let trailingCompactionReset: ComposerCompactionContextReset | null = null;
   for (let cursor = list.length - 1; cursor >= 0; cursor -= 1) {
     const current =
       list[cursor] && typeof list[cursor] === 'object'
@@ -311,7 +481,13 @@ export const resolveComposerContextUsageSource = (
         : null;
     if (!current) continue;
     if (String(current.role || '').trim().toLowerCase() !== 'assistant') continue;
-    if (shouldSkipComposerContextAssistant(current)) continue;
+    const ownCompactionReset = resolveMessageCompletedCompactionReset(current, cursor);
+    if (shouldSkipComposerContextAssistant(current)) {
+      if (ownCompactionReset) {
+        trailingCompactionReset = ownCompactionReset;
+      }
+      continue;
+    }
     const stats =
       current.stats && typeof current.stats === 'object'
         ? (current.stats as Record<string, unknown>)
@@ -324,22 +500,37 @@ export const resolveComposerContextUsageSource = (
       assistantContextTokens === null ? resolveAssistantContextPreviewTokens(stats) : null;
     const assistantTotalTokens = resolveAssistantContextTotalTokens(stats);
     const sessionContextTokens = resolveSessionContextTokens(session);
+    const sessionContextTokensAfterCompaction = resolveSessionContextTokensIncludingZero(session);
     const sessionTotalTokens = resolveSessionContextTotalTokens(session);
-    const fallbackContextTokens = sessionContextTokens ?? assistantPreviewTokens;
+    const compactionReset = ownCompactionReset ?? trailingCompactionReset;
+    const compactionContextTokens = resolveCompactionContextTokens(
+      compactionReset,
+      sessionContextTokensAfterCompaction,
+      assistantContextTokens
+    );
+    const contextResetSignature = buildContextResetSignature(
+      compactionReset,
+      compactionContextTokens
+    );
+    const fallbackContextTokens =
+      compactionContextTokens ?? sessionContextTokens ?? assistantPreviewTokens;
     const source = {
-      contextTokens: assistantContextTokens,
+      contextTokens: compactionContextTokens ?? assistantContextTokens,
       contextTotalTokens: assistantTotalTokens,
       assistantSignature: [
         cursor,
         String(current.created_at ?? current.createdAt ?? '')
       ].join(':'),
       runningAssistant,
-      runningContextTokens: runningAssistant ? assistantContextTokens : null
+      runningContextTokens: runningAssistant
+        ? compactionContextTokens ?? assistantContextTokens
+        : null,
+      contextResetSignature
     };
     if (runningAssistant) {
       return {
         ...source,
-        contextTokens: assistantContextTokens ?? fallbackContextTokens,
+        contextTokens: compactionContextTokens ?? assistantContextTokens ?? fallbackContextTokens,
         contextTotalTokens:
           assistantTotalTokens !== null && sessionTotalTokens !== null
             ? Math.max(assistantTotalTokens, sessionTotalTokens)
@@ -349,20 +540,32 @@ export const resolveComposerContextUsageSource = (
     return {
       ...source,
       contextTokens:
-        assistantContextTokens !== null && sessionContextTokens !== null
+        compactionContextTokens ??
+        (assistantContextTokens !== null && sessionContextTokens !== null
           ? Math.max(assistantContextTokens, sessionContextTokens)
-          : assistantContextTokens ?? fallbackContextTokens,
+          : assistantContextTokens ?? fallbackContextTokens),
       contextTotalTokens:
         assistantTotalTokens !== null && sessionTotalTokens !== null
           ? Math.max(assistantTotalTokens, sessionTotalTokens)
           : assistantTotalTokens ?? sessionTotalTokens
     };
   }
+  const sessionContextTokens = resolveSessionContextTokens(session);
+  const sessionContextTokensAfterCompaction = resolveSessionContextTokensIncludingZero(session);
+  const compactionContextTokens = resolveCompactionContextTokens(
+    trailingCompactionReset,
+    sessionContextTokensAfterCompaction,
+    null
+  );
   return {
-    contextTokens: resolveSessionContextTokens(session),
+    contextTokens: compactionContextTokens ?? sessionContextTokens,
     contextTotalTokens: resolveSessionContextTotalTokens(session),
     assistantSignature: '',
     runningAssistant: false,
-    runningContextTokens: null
+    runningContextTokens: null,
+    contextResetSignature: buildContextResetSignature(
+      trailingCompactionReset,
+      compactionContextTokens
+    )
   };
 };

@@ -352,7 +352,7 @@
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
 - `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。
 - 新增内置工具 `休眠等待`（英文别名 `sleep`/`sleep_wait`/`pause`），参数 `seconds` 必填；用于主动等待（如 `300` 秒），并自动适配工具超时。
-- 新增内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填、`prompt` 可选；支持本地图片、GIF、视频，并可通过 `frame_step` / `frame_rate` 控制 GIF / 视频取帧；执行成功后会在下一轮自动附加视觉消息供模型分析。
+- 内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填，可通过 `frame_step` / `frame_rate` 控制 GIF / 视频取帧；工具会直接把本地图片、GIF 或视频预处理后的视觉内容送入模型上下文，具体查看意图来自当前对话，不再暴露 `prompt` 入参。
 - `读图工具` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中，非视觉模型会自动隐藏并拒绝调用。
 - `桌面控制器/桌面监视器` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。

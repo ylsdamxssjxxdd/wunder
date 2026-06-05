@@ -2303,13 +2303,9 @@
     "en-US": "Local visual media path, relative to workspace or an allowed absolute path.",
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
-  "tool.spec.read_image.args.prompt": {
-    "en-US": "Optional follow-up instruction for visual media analysis.",
-    "zh-CN": "可选，附加给模型的视觉媒体分析说明。"
-  },
   "tool.spec.read_image.description": {
-    "en-US": "Read local visual media and extract the needed information. Supports images, GIFs, and videos from local paths; prompt only explains what to inspect, and this is not a web image-search tool.",
-    "zh-CN": "读取本地视觉媒体并提取所需信息。支持本地图片、GIF 和视频；必须提供本地 path，prompt 仅用于说明你想看什么，不是联网看图工具。"
+    "en-US": "Read local visual media and send it into the current model context for inspection. Supports images, GIFs, and videos from local paths; use only the path and optional frame extraction parameters. This is not a web image-search tool.",
+    "zh-CN": "读取本地视觉媒体并送入当前模型上下文供模型查看。支持本地图片、GIF 和视频；只需要提供 path，可按需提供抽帧参数。不是联网看图工具。"
   },
   "tool.spec.read_image.args.frame_rate": {
     "en-US": "Optional frame extraction rate for video files (FPS).",

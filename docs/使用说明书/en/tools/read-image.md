@@ -5,12 +5,12 @@ read_when:
   - You need to send a local image into the current model context
 source_docs:
   - src/services/tools/read_image_tool.rs
-updated_at: 2026-04-10
+updated_at: 2026-06-05
 ---
 
 # Read Image
 
-`read_image` prepares local visual media and prompts the system to append the derived visual context into the upcoming conversation as an additional message.
+`read_image` prepares local visual media and appends the derived visual context into the upcoming model conversation as an additional message.
 
 It now supports:
 
@@ -57,7 +57,6 @@ Video example:
     "resolved_path": "C:/.../screenshots/demo.png",
     "media_kind": "image",
     "size_bytes": 182233,
-    "prompt": "Inspect the attached image carefully...",
     "result": {
       "kind": "image"
     }
@@ -68,6 +67,7 @@ Video example:
 ## Key point
 
 - Static images are forwarded as image input.
+- The tool only needs `path`; the current conversation supplies the inspection intent.
 - GIFs are normalized before entering the model context.
   Default behavior is first frame only.
   Set `frame_step` to sample frames by interval.
