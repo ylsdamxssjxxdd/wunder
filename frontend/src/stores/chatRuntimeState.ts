@@ -404,6 +404,13 @@ export const applyMessageWindow = (store, sessionId, messages, options: { force?
   const overflow = messages.length - limit;
   if (overflow <= 0) return;
   messages.splice(0, overflow);
+  const visibleBeforeId = findOldestHistoryId(messages);
+  if (visibleBeforeId) {
+    updateHistoryState(key, {
+      beforeId: visibleBeforeId,
+      hasMore: true
+    });
+  }
 };
 
 export const applyHistoryMeta = (sessionId, detail, messages) => {

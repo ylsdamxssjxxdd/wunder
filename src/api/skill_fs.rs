@@ -1602,6 +1602,15 @@ async fn refresh_skill_runtime_after_change(
     match resolved.scope {
         SkillFsScope::User => {
             if force || paths.iter().any(|path| should_clear_skill_cache(path)) {
+                if let Err(err) = state
+                    .user_tool_store
+                    .sync_skills_from_disk(&resolved.user_id)
+                {
+                    tracing::warn!(
+                        "failed to sync user skill config after workspace change for {}: {err}",
+                        resolved.user_id
+                    );
+                }
                 state
                     .user_tool_manager
                     .clear_skill_cache(Some(&resolved.user_id));

@@ -1040,6 +1040,10 @@
                   class="messenger-message-avatar--clickable"
                   size="sm"
                   :state="resolveMessageAgentAvatarState(item.message)"
+                  :animated="
+                    latestVisibleAgentAssistantMessage === item.message &&
+                    resolveMessageAgentAvatarState(item.message) === 'running'
+                  "
                   :icon="activeAgentIcon"
                   :name="activeAgentName"
                   :title="activeAgentName"
@@ -1811,6 +1815,12 @@
       :current="workerCardImportOverlayCurrent"
       :total="workerCardImportOverlayTotal"
     />
+    <CompanionFloatingLayer
+      v-if="!isEmbeddedChatRoute"
+      :desktop-mode="desktopMode"
+      :resolve-agent-runtime-state="resolveAgentRuntimeState"
+      :open-agent-by-id="openAgentById"
+    />
   </div>
 </template>
 
@@ -1823,10 +1833,14 @@ import { useMessengerViewController } from '@/views/messenger/useMessengerViewCo
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
 import { ref as vueRef } from 'vue';
 import { reportDesktopRendererStage } from '@/config/desktop';
+import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
 reportDesktopRendererStage('messenger-view-setup-start');
 const controller = useMessengerViewController();
 reportDesktopRendererStage('messenger-controller-ready');
+const CompanionFloatingLayer = defineRecoverableAsyncComponent(
+  () => import('@/components/companions/CompanionFloatingLayer.vue')
+);
 const desktopModelRows = vueRef<Array<Record<string, unknown>>>([]);
 const handleDesktopModelRowsChange = (rows: Array<Record<string, unknown>> = []) => {
   desktopModelRows.value = Array.isArray(rows) ? rows : [];

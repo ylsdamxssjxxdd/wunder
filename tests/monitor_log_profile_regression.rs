@@ -1,10 +1,12 @@
 use serde_json::{json, Value};
 use std::sync::Arc;
-use wunder_server::config::{ObservabilityConfig, SandboxConfig};
+use std::thread;
+use std::time::{Duration, Instant};
+use wunder_server::config::ObservabilityConfig;
 use wunder_server::monitor::MonitorState;
 use wunder_server::storage::{SqliteStorage, StorageBackend};
 
-fn build_monitor(payload_limit: i64) -> MonitorState {
+fn build_monitor_with_storage(payload_limit: i64) -> (MonitorState, Arc<dyn StorageBackend>) {
     let db_path = std::env::temp_dir().join(format!(
         "wunder_monitor_profile_it_{}.db",
         uuid::Uuid::new_v4().simple()
@@ -22,12 +24,16 @@ fn build_monitor(payload_limit: i64) -> MonitorState {
         monitor_drop_event_types: Vec::new(),
         ..ObservabilityConfig::default()
     };
-    MonitorState::new(
-        storage,
+    let monitor = MonitorState::new(
+        storage.clone(),
         observability,
-        SandboxConfig::default(),
         workspace_root.to_string_lossy().to_string(),
-    )
+    );
+    (monitor, storage)
+}
+
+fn build_monitor(payload_limit: i64) -> MonitorState {
+    build_monitor_with_storage(payload_limit).0
 }
 
 fn event_types(detail: &Value) -> Vec<String> {
@@ -50,6 +56,23 @@ fn find_event<'a>(detail: &'a Value, event_type: &str) -> Option<&'a Value> {
             .iter()
             .find(|event| event["type"].as_str() == Some(event_type))
     })
+}
+
+fn wait_for_storage_record(storage: &Arc<dyn StorageBackend>, session_id: &str) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(record) = storage
+            .get_monitor_record(session_id)
+            .expect("load monitor record")
+            .filter(|record| record["status"].as_str() == Some("finished"))
+        {
+            return record;
+        }
+        if Instant::now() >= deadline {
+            panic!("monitor record was not persisted");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -210,6 +233,51 @@ fn admin_debug_profile_keeps_delta_and_summarizes_llm_request() {
         request_event["data"]["payload_summary"]["tools"]["preview"][0]["function"]["name"],
         json!("apply_patch")
     );
+}
+
+#[test]
+fn admin_debug_profile_persists_compact_record() {
+    let (monitor, storage) = build_monitor_with_storage(12);
+    let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
+    let long_text = "abcdefghijklmnopqrstuvwxyz";
+
+    monitor.register(&session_id, "admin_user", "", "hello", true, true);
+    monitor.record_event(
+        &session_id,
+        "llm_output_delta",
+        &json!({ "delta": long_text }),
+    );
+    monitor.record_event(
+        &session_id,
+        "llm_request",
+        &json!({
+            "provider": "openai",
+            "payload": {
+                "messages": [
+                    { "role": "system", "content": long_text },
+                    { "role": "user", "content": "hello" }
+                ]
+            }
+        }),
+    );
+
+    let detail = monitor
+        .get_detail(&session_id)
+        .expect("detail should exist");
+    assert!(find_event(&detail, "llm_output_delta").is_some());
+
+    monitor.mark_finished(&session_id);
+    let record = wait_for_storage_record(&storage, &session_id);
+    let events = record["events"].as_array().expect("events should persist");
+    assert!(!events
+        .iter()
+        .any(|event| event["type"].as_str() == Some("llm_output_delta")));
+    let request = events
+        .iter()
+        .find(|event| event["type"].as_str() == Some("llm_request"))
+        .expect("llm_request should persist");
+    assert!(request["data"].get("payload").is_none());
+    assert_eq!(request["data"]["message_count"], json!(2));
 }
 
 #[test]

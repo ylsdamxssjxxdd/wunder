@@ -68,6 +68,7 @@
     <div
       :class="[
         'workspace-upload-progress',
+        `is-${uploadProgress.mode}`,
         { active: uploadProgress.active, indeterminate: uploadProgress.indeterminate }
       ]"
       aria-live="polite"
@@ -954,6 +955,7 @@ const WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH = 3;
 const WORKSPACE_COPY_MAX_RENAME_ATTEMPTS = 1000;
 
 type UploadProgressOptions = {
+  mode?: 'upload' | 'download';
   percent?: number;
   loaded?: number;
   total?: number;
@@ -987,8 +989,12 @@ type WorkspacePanelFileSystem = {
   copyEntry: (payload: Record<string, unknown>) => Promise<unknown>;
   batchAction: (payload: Record<string, unknown>) => Promise<{ data?: Record<string, unknown> }>;
   saveFile: (payload: Record<string, unknown>) => Promise<unknown>;
-  downloadFile: (params: Record<string, unknown>) => Promise<{ data: Blob; headers?: Record<string, string> }>;
-  downloadArchive: (params: Record<string, unknown>) => Promise<{ data: Blob; headers?: Record<string, string> }>;
+  downloadFile: (params: Record<string, unknown>, config?: {
+    onDownloadProgress?: (event: AxiosProgressEvent) => void;
+  }) => Promise<{ data: Blob; headers?: Record<string, string> }>;
+  downloadArchive: (params: Record<string, unknown>, config?: {
+    onDownloadProgress?: (event: AxiosProgressEvent) => void;
+  }) => Promise<{ data: Blob; headers?: Record<string, string> }>;
 };
 
 type DirectoryReaderLike = {
@@ -1085,15 +1091,17 @@ const listRef = ref(null);
 const uploadInputRef = ref(null);
 const menuRef = ref(null);
 const listScrollTop = ref(0);
-// 涓婁紶杩涘害鏉＄姸鎬?
+// Shared transfer progress state for workspace uploads and downloads.
 const uploadProgress = reactive({
   active: false,
+  mode: 'upload' as 'upload' | 'download',
   indeterminate: false,
   percent: 0,
   loaded: 0,
   total: 0
 });
 let uploadProgressCount = 0;
+let downloadProgressCount = 0;
 
 const state = reactive({
   path: '',
@@ -1460,15 +1468,20 @@ const contextMenuEditLabel = computed(() =>
 const menuStyle = computed(() => ({ left: `${state.contextMenu.x}px`, top: `${state.contextMenu.y}px` }));
 const uploadProgressText = computed(() => {
   if (!uploadProgress.active) return '';
-  const baseLabel = t('common.upload');
+  const baseLabel =
+    uploadProgress.mode === 'download'
+      ? resourceActionLabel.value
+      : t('common.upload');
   const hasTotal = Number.isFinite(uploadProgress.total) && uploadProgress.total > 0;
   const hasLoaded = Number.isFinite(uploadProgress.loaded) && uploadProgress.loaded > 0;
+  const keyPrefix =
+    uploadProgress.mode === 'download' ? 'workspace.download.progress' : 'workspace.upload.progress';
   if (hasTotal) {
     const safePercent = Math.max(
       0,
       Math.min(100, Math.round((uploadProgress.loaded / uploadProgress.total) * 100))
     );
-    return t('workspace.upload.progress.full', {
+    return t(`${keyPrefix}.full`, {
       label: baseLabel,
       percent: safePercent,
       loaded: formatBytes(uploadProgress.loaded),
@@ -1476,12 +1489,12 @@ const uploadProgressText = computed(() => {
     });
   }
   if (hasLoaded) {
-    return t('workspace.upload.progress.partial', {
+    return t(`${keyPrefix}.partial`, {
       label: baseLabel,
       loaded: formatBytes(uploadProgress.loaded)
     });
   }
-  return t('workspace.upload.progress.loading', { label: baseLabel });
+  return t(`${keyPrefix}.loading`, { label: baseLabel });
 });
 const uploadProgressBarStyle = computed(() => {
   if (!uploadProgress.active) {
@@ -1948,10 +1961,17 @@ const emitWorkspaceStats = (entries = state.entries) => {
   emit('stats', collectWorkspaceStats(entries));
 };
 
-// 缁熶竴绠＄悊涓婁紶杩涘害鏉″睍绀猴紝閬垮厤骞跺彂涓婁紶瀵艰嚧鐘舵€侀敊涔?
+// Keep the shared transfer indicator stable across concurrent upload/download requests.
 const setUploadProgress = (options: UploadProgressOptions = {}) => {
-  const { percent = 0, loaded = 0, total = 0, indeterminate = false } = options;
+  const {
+    mode = uploadProgress.mode || 'upload',
+    percent = 0,
+    loaded = 0,
+    total = 0,
+    indeterminate = false
+  } = options;
   uploadProgress.active = true;
+  uploadProgress.mode = mode;
   uploadProgress.indeterminate = indeterminate;
   uploadProgress.percent = percent;
   uploadProgress.loaded = loaded;
@@ -1960,6 +1980,7 @@ const setUploadProgress = (options: UploadProgressOptions = {}) => {
 
 const resetUploadProgress = () => {
   uploadProgress.active = false;
+  uploadProgress.mode = 'upload';
   uploadProgress.indeterminate = false;
   uploadProgress.percent = 0;
   uploadProgress.loaded = 0;
@@ -1968,14 +1989,40 @@ const resetUploadProgress = () => {
 
 const beginUploadProgress = () => {
   uploadProgressCount += 1;
-  setUploadProgress({ percent: 0, loaded: 0, total: 0, indeterminate: true });
+  setUploadProgress({ mode: 'upload', percent: 0, loaded: 0, total: 0, indeterminate: true });
 };
 
 const endUploadProgress = () => {
   uploadProgressCount = Math.max(0, uploadProgressCount - 1);
-  if (uploadProgressCount === 0) {
+  if (uploadProgressCount === 0 && downloadProgressCount === 0) {
     resetUploadProgress();
   }
+};
+
+const beginDownloadProgress = () => {
+  downloadProgressCount += 1;
+  setUploadProgress({ mode: 'download', percent: 0, loaded: 0, total: 0, indeterminate: true });
+};
+
+const endDownloadProgress = () => {
+  downloadProgressCount = Math.max(0, downloadProgressCount - 1);
+  if (uploadProgressCount === 0 && downloadProgressCount === 0) {
+    resetUploadProgress();
+  }
+};
+
+const updateTransferProgress = (
+  mode: 'upload' | 'download',
+  event: AxiosProgressEvent
+) => {
+  const loaded = Number(event.loaded) || 0;
+  const total = Number.isFinite(event.total) ? Number(event.total) : 0;
+  if (total > 0) {
+    const percent = (loaded / total) * 100;
+    setUploadProgress({ mode, percent, loaded, total, indeterminate: false });
+    return;
+  }
+  setUploadProgress({ mode, loaded, total: 0, indeterminate: true });
 };
 
 const resolveWorkspaceEntryName = (path) => {
@@ -2699,14 +2746,7 @@ const uploadWorkspaceFiles = async (
   try {
     await activeFileSystem.value.upload(formData, {
       onUploadProgress: (event) => {
-        const loaded = Number(event.loaded) || 0;
-        const total = Number.isFinite(event.total) ? event.total : 0;
-        if (total > 0) {
-          const percent = (loaded / total) * 100;
-          setUploadProgress({ percent, loaded, total, indeterminate: false });
-        } else {
-          setUploadProgress({ loaded, total: 0, indeterminate: true });
-        }
+        updateTransferProgress('upload', event);
       }
     });
   } finally {
@@ -3187,35 +3227,58 @@ const saveBlob = (blob, filename) => {
 };
 
 const downloadEntry = async (entry) => {
+  beginDownloadProgress();
   try {
     if (entry.type === 'dir') {
-      const response = await activeFileSystem.value.downloadArchive(withFsParams({ path: entry.path }));
+      ElMessage.info(t('workspace.download.archivePreparing', {
+        name: entry.name || t('workspace.download.folder')
+      }));
+      const response = await activeFileSystem.value.downloadArchive(withFsParams({ path: entry.path }), {
+        onDownloadProgress: (event) => updateTransferProgress('download', event)
+      });
       const filename = getFilenameFromHeaders(
         response.headers,
         `${entry.name || t('workspace.download.folder')}.zip`
       );
       saveBlob(response.data, filename);
+      ElMessage.success(resolveWorkspaceArchiveSuccessText());
       return;
     }
-    const response = await activeFileSystem.value.downloadFile(withFsParams({ path: entry.path }));
+    ElMessage.info(t('workspace.download.preparing', {
+      name: entry.name || t('workspace.download.defaultName')
+    }));
+    const response = await activeFileSystem.value.downloadFile(withFsParams({ path: entry.path }), {
+      onDownloadProgress: (event) => updateTransferProgress('download', event)
+    });
     const filename = getFilenameFromHeaders(
       response.headers,
       entry.name || t('workspace.download.defaultName')
     );
     saveBlob(response.data, filename);
+    ElMessage.success(t('workspace.download.success'));
   } catch (error) {
     ElMessage.error(resolveWorkspaceTransferFailedText());
+  } finally {
+    endDownloadProgress();
   }
 };
 
 const downloadArchive = async () => {
+  beginDownloadProgress();
   try {
-    const response = await activeFileSystem.value.downloadArchive(withFsParams({}));
+    ElMessage.info(t('workspace.download.archivePreparing', {
+      name: t('workspace.download.defaultName')
+    }));
+    const response = await activeFileSystem.value.downloadArchive(withFsParams({}), {
+      onDownloadProgress: (event) => updateTransferProgress('download', event)
+    });
     const filename = getFilenameFromHeaders(response.headers, 'workspace.zip');
     saveBlob(response.data, filename);
     ElMessage.success(resolveWorkspaceArchiveSuccessText());
   } catch (error) {
     ElMessage.error(resolveWorkspaceArchiveFailedText());
+  } finally {
+    endDownloadProgress();
   }
 };
 

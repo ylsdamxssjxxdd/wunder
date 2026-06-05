@@ -85,8 +85,7 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['网页抓取'], icon: 'fa-globe', tone: 'search' },
   { keywords: ['list_files', 'list_file', 'list files'], icon: 'fa-folder-open', tone: 'file' },
   { keywords: ['列出文件'], icon: 'fa-folder-open', tone: 'file' },
-  { keywords: ['search_content', 'search content'], icon: 'fa-magnifying-glass', tone: 'search' },
-  { keywords: ['搜索内容', '搜索', '检索'], icon: 'fa-magnifying-glass', tone: 'search' },
+  { keywords: ['搜索内容', 'search_content', 'search content'], icon: 'fa-magnifying-glass', tone: 'search' },
   { keywords: ['read_file', 'read file'], icon: 'fa-file-lines', tone: 'file' },
   { keywords: ['读取文件'], icon: 'fa-file-lines', tone: 'file' },
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
@@ -105,7 +104,6 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['知识'], icon: 'fa-database', tone: 'knowledge' },
   { keywords: ['mcp', 'connector', 'integration', 'endpoint'], icon: 'fa-plug', tone: 'mcp' },
   { keywords: ['shared', 'share'], icon: 'fa-wrench', tone: 'shared' },
-  { keywords: ['search', 'query', 'retrieve'], icon: 'fa-magnifying-glass', tone: 'search' },
   {
     keywords: [
       'shell',

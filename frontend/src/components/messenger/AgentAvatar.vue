@@ -1,21 +1,21 @@
 <template>
-  <span class="messenger-agent-avatar" :class="[sizeClass, stateClass]" :title="title">
+  <span class="messenger-agent-avatar" :class="[sizeClass, stateClass, motionClass]" :title="title">
     <span class="messenger-agent-avatar-image-shell" :style="avatarFaceStyle" aria-hidden="true">
       <CompanionSprite
         v-if="companionSpriteUrl"
         class="messenger-agent-avatar-sprite"
         :source="companionSpriteUrl"
-        state="idle"
+        :state="companionSpriteState"
         :scale="companionSpriteScale"
         fit
-        paused
+        :paused="!shouldAnimateCompanionSprite"
       />
       <img v-else-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
       <span v-else class="messenger-agent-avatar-initial">{{ avatarInitial }}</span>
     </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
       <span
-        v-if="isRunning"
+        v-if="showRunningSpinner"
         class="messenger-agent-avatar-status-dot-spinner messenger-agent-avatar-status-icon--spinning"
       ></span>
       <i v-else :class="statusIconClass"></i>
@@ -28,11 +28,13 @@ import { computed, watchEffect } from 'vue';
 
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import { useCompanionStore } from '@/stores/companions';
+import type { CompanionSpriteStateId } from '@/stores/companions';
 import {
   parseAgentAvatarIconConfig,
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
 } from '@/utils/agentAvatar';
+import { resolveCompanionSpriteStateForRuntime } from '@/utils/companionRuntimeState';
 
 type AgentAvatarSize = 'sm' | 'md' | 'lg';
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
@@ -45,19 +47,22 @@ const props = withDefaults(
     icon?: unknown;
     imageUrl?: string;
     name?: string;
+    animated?: boolean;
   }>(),
   {
     size: 'md',
     state: 'idle',
     title: '',
     imageUrl: '',
-    name: ''
+    name: '',
+    animated: false
   }
 );
 
 const sizeClass = computed(() => `size-${props.size}`);
 const stateClass = computed(() => `state-${props.state}`);
-const isRunning = computed(() => props.state === 'running');
+const motionClass = computed(() => (props.animated ? 'is-motion-enabled' : 'is-motion-static'));
+const showRunningSpinner = computed(() => props.state === 'running' && props.animated);
 const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
 const companionStore = useCompanionStore();
 void companionStore.hydrate().catch(() => undefined);
@@ -78,6 +83,12 @@ const companionRecord = computed(() =>
     : null
 );
 const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || companionRecord.value?.spritesheetUrl || '');
+const companionSpriteState = computed<CompanionSpriteStateId>(() =>
+  resolveCompanionSpriteStateForRuntime(props.state, {
+    pendingState: 'review'
+  })
+);
+const shouldAnimateCompanionSprite = computed(() => props.animated && companionSpriteState.value !== 'idle');
 // The companion display scale is only for the floating character layer.
 // Agent avatars should stay visually stable inside message/list UI.
 const companionSpriteScale = computed(() => 1);
@@ -92,6 +103,8 @@ const avatarFaceStyle = computed(() => ({
 }));
 const statusIconClass = computed(() => {
   switch (props.state) {
+    case 'running':
+      return 'fa-solid fa-circle';
     case 'done':
       return 'fa-solid fa-check';
     case 'pending':
@@ -275,5 +288,82 @@ const statusIconClass = computed(() => {
   --agent-avatar-status-bg: #cd4a60;
   --agent-avatar-status-color: #ffffff;
   --agent-avatar-status-ring: rgba(193, 64, 83, 0.45);
+}
+
+.messenger-agent-avatar.is-motion-enabled.state-running .messenger-agent-avatar-image-shell {
+  animation: messenger-agent-avatar-work 1.42s ease-in-out infinite;
+}
+
+.messenger-agent-avatar.is-motion-enabled.state-pending .messenger-agent-avatar-image-shell {
+  animation: messenger-agent-avatar-review 1.58s ease-in-out infinite;
+}
+
+.messenger-agent-avatar.is-motion-enabled.state-done .messenger-agent-avatar-image-shell {
+  animation: messenger-agent-avatar-done 760ms cubic-bezier(0.2, 0.9, 0.24, 1.16) both;
+}
+
+.messenger-agent-avatar.is-motion-enabled.state-error .messenger-agent-avatar-image-shell {
+  animation: messenger-agent-avatar-error 620ms cubic-bezier(0.36, 0, 0.66, -0.56) both;
+}
+
+@keyframes messenger-agent-avatar-work {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    transform: translateY(-1px) scale(1.035);
+  }
+}
+
+@keyframes messenger-agent-avatar-review {
+  0%,
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+  40% {
+    transform: rotate(-2deg) scale(1.02);
+  }
+  70% {
+    transform: rotate(2deg) scale(1.02);
+  }
+}
+
+@keyframes messenger-agent-avatar-done {
+  0% {
+    transform: translateY(0) scale(0.98);
+  }
+  48% {
+    transform: translateY(-2px) scale(1.08);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes messenger-agent-avatar-error {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-1.5px);
+  }
+  50% {
+    transform: translateX(1.5px);
+  }
+  75% {
+    transform: translateX(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .messenger-agent-avatar.is-motion-enabled.state-running .messenger-agent-avatar-image-shell,
+  .messenger-agent-avatar.is-motion-enabled.state-pending .messenger-agent-avatar-image-shell,
+  .messenger-agent-avatar.is-motion-enabled.state-done .messenger-agent-avatar-image-shell,
+  .messenger-agent-avatar.is-motion-enabled.state-error .messenger-agent-avatar-image-shell,
+  .messenger-agent-avatar-status .messenger-agent-avatar-status-icon--spinning {
+    animation: none;
+  }
 }
 </style>

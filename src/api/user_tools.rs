@@ -49,7 +49,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::ReaderStream;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -310,7 +310,21 @@ async fn user_skills_get(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
-    let payload = state.user_tool_store.load_user_tools(&user_id);
+    let previous = state.user_tool_store.load_user_tools(&user_id);
+    let payload = match state.user_tool_store.sync_skills_from_disk(&user_id) {
+        Ok(payload) => {
+            if payload.skills.enabled != previous.skills.enabled
+                || payload.skills.shared != previous.skills.shared
+            {
+                state.user_tool_manager.clear_skill_cache(Some(&user_id));
+            }
+            payload
+        }
+        Err(err) => {
+            warn!("failed to sync user skill config from disk for {user_id}: {err}");
+            previous
+        }
+    };
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let (skills, enabled, shared) =
@@ -458,12 +472,24 @@ fn resolve_user_skill_spec(
     skill_root: &Path,
     name: &str,
 ) -> Result<SkillSpec, Response> {
+    let cleaned = name.trim();
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     registry
-        .get(name)
+        .get(cleaned)
+        .or_else(|| {
+            registry.list_specs().into_iter().find(|spec| {
+                resolve_skill_top_dir(skill_root, &spec.root).is_some_and(|top_dir| {
+                    if cfg!(windows) {
+                        top_dir.eq_ignore_ascii_case(cleaned)
+                    } else {
+                        top_dir == cleaned
+                    }
+                })
+            })
+        })
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))
 }
 
@@ -1235,6 +1261,9 @@ async fn user_skills_file_update(
         .map(|name| name.eq_ignore_ascii_case("SKILL.md"))
         .unwrap_or(false);
     if should_reload {
+        if let Err(err) = state.user_tool_store.sync_skills_from_disk(&user_id) {
+            warn!("failed to sync user skill config after SKILL.md update for {user_id}: {err}");
+        }
         state.user_tool_manager.clear_skill_cache(Some(&user_id));
     }
     let rel = target.strip_prefix(&root).unwrap_or(&target);
@@ -1379,12 +1408,7 @@ async fn user_skills_upload(
         error_response(status, message)
     })?;
     if import_result.extracted > 0 {
-        let payload = state.user_tool_store.load_user_tools(&user_id);
-        if let Err(err) = state.user_tool_store.update_skills(
-            &user_id,
-            payload.skills.enabled.clone(),
-            payload.skills.shared.clone(),
-        ) {
+        if let Err(err) = state.user_tool_store.sync_skills_from_disk(&user_id) {
             tracing::warn!("failed to sync user skill config after upload for {user_id}: {err}");
         }
     }
@@ -4919,6 +4943,29 @@ mod tests {
         } else {
             std::env::remove_var(BUILTIN_SKILLS_ROOT_ENV);
         }
+    }
+
+    #[test]
+    fn resolve_visible_user_skill_accepts_user_skill_directory_alias() {
+        let user_root = tempdir().expect("user root");
+        let skill_dir = user_root.path().join("original_skill");
+        fs::create_dir_all(&skill_dir).expect("create skill dir");
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: renamed_skill\ndescription: renamed skill\n---\n",
+        )
+        .expect("write skill file");
+
+        let resolved =
+            resolve_visible_user_skill(&Config::default(), user_root.path(), "original_skill")
+                .expect("resolve skill by directory alias");
+
+        assert!(matches!(resolved.source, UserSkillSourceKind::Custom));
+        assert_eq!(resolved.spec.name, "renamed_skill");
+        assert_eq!(
+            normalize_test_path(&resolved.root),
+            normalize_test_path(&skill_dir)
+        );
     }
 
     #[test]

@@ -83,6 +83,10 @@ import {
   type CompanionSpriteStateId
 } from '@/stores/companions';
 import { parseAgentAvatarIconConfig, type AgentAvatarIconConfig } from '@/utils/agentAvatar';
+import {
+  normalizeAgentRuntimeState,
+  resolveCompanionSpriteStateForRuntime
+} from '@/utils/companionRuntimeState';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { openCompanionAgent } from '@/views/messenger/companionOpenBridge';
 
@@ -427,37 +431,14 @@ function clampPosition(x: number, y: number, scale: number): CompanionPosition {
   };
 }
 
-function normalizeAgentRuntimeState(value: unknown): AgentRuntimeState {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'running') return 'running';
-  if (normalized === 'pending') return 'pending';
-  if (normalized === 'done') return 'done';
-  if (normalized === 'error') return 'error';
-  return 'idle';
-}
-
 function resolveRuntimeSpriteState(agentId: string): CompanionSpriteStateId {
   const state = typeof props.resolveAgentRuntimeState === 'function'
     ? props.resolveAgentRuntimeState(String(agentId || '').trim())
     : 'idle';
-  const activeAgentId = String(activeSessionAgentId.value || '').trim();
-  const reviewingCurrentAgent =
-    normalizeAgentRuntimeState(state) === 'pending' &&
-    activeAgentId === String(agentId || '').trim() &&
-    currentMessage.value?.visibleUntil &&
-    currentMessage.value.visibleUntil > now.value;
-  switch (normalizeAgentRuntimeState(state)) {
-    case 'running':
-      return 'running';
-    case 'pending':
-      return reviewingCurrentAgent ? 'review' : 'idle';
-    case 'done':
-      return 'jumping';
-    case 'error':
-      return 'failed';
-    default:
-      return 'idle';
-  }
+  const runtimeState = normalizeAgentRuntimeState(state);
+  return resolveCompanionSpriteStateForRuntime(runtimeState, {
+    pendingState: 'review'
+  });
 }
 
 function resolveEntrySpriteState(entry: FloatingEntry): CompanionSpriteStateId {

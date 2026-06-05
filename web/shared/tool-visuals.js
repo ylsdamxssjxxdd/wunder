@@ -35,7 +35,7 @@ const TOOL_ICON_RULES = [
   { keywords: ["执行命令", "运行命令", "run command", "execute command", "execute_command", "shell"], icon: "fa-terminal" },
   { keywords: ["ptc", "programmatic_tool_call"], icon: "fa-code" },
   { keywords: ["定时任务", "计划任务", "cron", "schedule", "scheduled", "timer", "schedule_task"], icon: "fa-clock" },
-  { keywords: ["搜索", "检索", "search", "query", "retrieve", "search_content"], icon: "fa-magnifying-glass" },
+  { keywords: ["搜索内容", "search_content", "search content"], icon: "fa-magnifying-glass" },
   { keywords: ["知识", "knowledge", "rag", "vector", "embedding", "document", "kb"], icon: "fa-database" },
   { keywords: ["mcp", "connector", "integration", "endpoint"], icon: "fa-plug" },
   { keywords: ["shared", "share"], icon: "fa-wrench" },

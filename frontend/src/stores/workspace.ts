@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import type { AxiosProgressEvent } from 'axios';
 
 import {
   createWunderWorkspaceDir,
@@ -185,11 +186,17 @@ export const useWorkspaceStore = defineStore('workspace', {
       await this.loadFolders();
       return data;
     },
-    async uploadFile(file: File, targetPath: string | null = null) {
+    async uploadFile(
+      file: File,
+      targetPath: string | null = null,
+      options: { onUploadProgress?: (event: AxiosProgressEvent) => void } = {}
+    ) {
       const formData = new FormData();
       formData.append('path', normalizeWorkspacePath(targetPath ?? this.activePath));
       formData.append('files', file, file.name);
-      const { data } = await uploadWunderWorkspace(formData);
+      const { data } = await uploadWunderWorkspace(formData, {
+        onUploadProgress: options.onUploadProgress
+      });
       await this.loadFiles(targetPath ?? this.activePath);
       return data;
     },

@@ -31,6 +31,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
+const DEFAULT_PERSISTED_EVENT_LIMIT: usize = 500;
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
@@ -2355,11 +2356,11 @@ impl MonitorState {
         data: &Value,
         log_profile: MonitorLogProfile,
     ) -> Value {
-        if log_profile.keeps_full_payload() {
-            return data.clone();
-        }
         if event_type == "llm_request" {
             return summarize_llm_request_event(data, self.payload_limit);
+        }
+        if log_profile.keeps_full_payload() {
+            return data.clone();
         }
         if !data.is_object() {
             return data.clone();
@@ -2406,8 +2407,33 @@ impl MonitorState {
     }
 
     fn save_record(&self, record: &SessionRecord) {
-        let payload = record.to_storage();
+        let payload = self.build_persisted_record_payload(record);
         self.write_queue.enqueue(MonitorWriteTask::Upsert(payload));
+    }
+
+    fn build_persisted_record_payload(&self, record: &SessionRecord) -> Value {
+        let mut compacted = record.clone();
+        let limit = self.event_limit.unwrap_or(DEFAULT_PERSISTED_EVENT_LIMIT);
+        let mut events = compacted
+            .events
+            .iter()
+            .rev()
+            .filter(|event| !is_high_volume_monitor_event(&event.event_type))
+            .take(limit)
+            .map(|event| MonitorEvent {
+                event_id: event.event_id,
+                timestamp: event.timestamp,
+                event_type: event.event_type.clone(),
+                data: sanitize_persisted_event_data(
+                    &event.event_type,
+                    &event.data,
+                    self.payload_limit,
+                ),
+            })
+            .collect::<Vec<_>>();
+        events.reverse();
+        compacted.events = events.into();
+        compacted.to_storage()
     }
 }
 
@@ -2513,10 +2539,36 @@ fn should_skip_event_for_profile(log_profile: MonitorLogProfile, event_type: &st
     if log_profile.should_keep_high_volume_events() {
         return false;
     }
+    is_high_volume_monitor_event(event_type)
+}
+
+fn is_high_volume_monitor_event(event_type: &str) -> bool {
     matches!(
         event_type,
         "llm_output_delta" | "tool_output_delta" | "command_session_delta"
     )
+}
+
+fn sanitize_persisted_event_data(event_type: &str, data: &Value, limit: Option<usize>) -> Value {
+    if event_type == "llm_request" {
+        return summarize_llm_request_event(data, limit);
+    }
+    if event_type == "llm_output" {
+        let mut trimmed = trim_string_fields(data, limit);
+        if let Value::Object(ref mut map) = trimmed {
+            if let Some(Value::String(text)) = map.get("content") {
+                map.insert("content".to_string(), Value::String(trim_text(text, limit)));
+            }
+            if let Some(Value::String(text)) = map.get("reasoning") {
+                map.insert(
+                    "reasoning".to_string(),
+                    Value::String(trim_text(text, limit)),
+                );
+            }
+        }
+        return trimmed;
+    }
+    trim_string_fields(data, limit)
 }
 
 fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &Value) -> bool {

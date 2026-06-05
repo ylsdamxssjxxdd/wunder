@@ -7,6 +7,7 @@ type RequestConfig = {
   headers?: Record<string, string>;
   responseType?: 'blob' | 'json' | 'text';
   onUploadProgress?: (event: AxiosProgressEvent) => void;
+  onDownloadProgress?: (event: AxiosProgressEvent) => void;
 };
 
 const uploadWorkspaceFiles = (formData: FormData, config: RequestConfig = {}) => {
@@ -25,10 +26,10 @@ export const copyWorkspaceEntry = (payload: ApiPayload) => api.post('/workspace/
 export const batchWorkspaceAction = (payload: ApiPayload) => api.post('/workspace/batch', payload);
 export const saveWorkspaceFile = (payload: ApiPayload) => api.post('/workspace/file', payload);
 export const deleteWorkspaceEntry = (params: QueryParams) => api.delete('/workspace', { params });
-export const downloadWorkspaceFile = (params: QueryParams) =>
-  api.get('/workspace/download', { params, responseType: 'blob' });
-export const downloadWorkspaceArchive = (params: QueryParams) =>
-  api.get('/workspace/archive', { params, responseType: 'blob' });
+export const downloadWorkspaceFile = (params: QueryParams, config: RequestConfig = {}) =>
+  api.get('/workspace/download', { ...config, params, responseType: 'blob' });
+export const downloadWorkspaceArchive = (params: QueryParams, config: RequestConfig = {}) =>
+  api.get('/workspace/archive', { ...config, params, responseType: 'blob' });
 export const fetchWorkspaceOnlyOfficeConfig = (params: QueryParams) =>
   api.get('/workspace/onlyoffice/config', { params });
 export const fetchWorkspaceDrawioConfig = (params: QueryParams) =>
@@ -46,8 +47,10 @@ export const copyWunderWorkspaceEntry = (payload: ApiPayload) => copyWorkspaceEn
 export const batchWunderWorkspaceAction = (payload: ApiPayload) => batchWorkspaceAction(payload);
 export const saveWunderWorkspaceFile = (payload: ApiPayload) => saveWorkspaceFile(payload);
 export const deleteWunderWorkspaceEntry = (params: QueryParams) => deleteWorkspaceEntry(params);
-export const downloadWunderWorkspaceFile = (params: QueryParams) => downloadWorkspaceFile(params);
-export const downloadWunderWorkspaceArchive = (params: QueryParams) => downloadWorkspaceArchive(params);
+export const downloadWunderWorkspaceFile = (params: QueryParams, config: RequestConfig = {}) =>
+  downloadWorkspaceFile(params, config);
+export const downloadWunderWorkspaceArchive = (params: QueryParams, config: RequestConfig = {}) =>
+  downloadWorkspaceArchive(params, config);
 export const fetchWunderWorkspaceOnlyOfficeConfig = (params: QueryParams) =>
   fetchWorkspaceOnlyOfficeConfig(params);
 export const fetchWunderWorkspaceDrawioConfig = (params: QueryParams) =>

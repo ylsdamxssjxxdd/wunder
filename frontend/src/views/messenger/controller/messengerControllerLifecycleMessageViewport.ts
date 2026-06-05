@@ -538,6 +538,16 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       messageVirtualScrollTop: ctx.messageVirtualScrollTop,
       messageVirtualViewportHeight: ctx.messageVirtualViewportHeight,
       estimateVirtualOffsetTop: ctx.estimateVirtualOffsetTop,
-      resolveVirtualMessageHeight: ctx.resolveVirtualMessageHeight
+      resolveVirtualMessageHeight: ctx.resolveVirtualMessageHeight,
+      loadOlderHistory: async () => {
+          if (!ctx.isAgentConversationActive.value) {
+              return [];
+          }
+          const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+          if (!sessionId) {
+              return [];
+          }
+          return ctx.chatStore.loadOlderHistory(sessionId);
+      }
   });
 }

@@ -8,6 +8,11 @@ type UploadRequestConfig = {
   onUploadProgress?: (event: AxiosProgressEvent) => void;
 };
 
+type DownloadRequestConfig = {
+  headers?: Record<string, string>;
+  onDownloadProgress?: (event: AxiosProgressEvent) => void;
+};
+
 export const fetchUserMcpServers = () => api.get('/user_tools/mcp');
 export const saveUserMcpServers = (payload: ApiPayload) => api.post('/user_tools/mcp', payload);
 export const fetchUserMcpTools = (payload: ApiPayload) => api.post('/user_tools/mcp/tools', payload);
@@ -16,8 +21,8 @@ export const fetchUserSkills = () => api.get('/user_tools/skills');
 export const saveUserSkills = (payload: ApiPayload) => api.post('/user_tools/skills', payload);
 export const fetchUserSkillContent = (name: string) =>
   api.get('/user_tools/skills/content', { params: { name } });
-export const exportUserSkillArchive = (name: string) =>
-  api.get('/user_tools/skills/export', { params: { name }, responseType: 'blob' });
+export const exportUserSkillArchive = (name: string, config: DownloadRequestConfig = {}) =>
+  api.get('/user_tools/skills/export', { ...config, params: { name }, responseType: 'blob' });
 export const fetchUserSkillFiles = (name: string) =>
   api.get('/user_tools/skills/files', { params: { name } });
 export const fetchUserSkillFile = (name: string, path: string) =>
@@ -40,15 +45,18 @@ export const copyUserSkillEntry = (payload: ApiPayload) => api.post('/user_tools
 export const batchUserSkillAction = (payload: ApiPayload) => api.post('/user_tools/skills/batch', payload);
 export const deleteUserSkillEntry = (name: string, path: string) =>
   api.delete('/user_tools/skills/file', { params: { name, path } });
-export const downloadUserSkillFile = (name: string, path: string) =>
-  api.get('/user_tools/skills/download', { params: { name, path }, responseType: 'blob' });
-export const downloadUserSkillArchive = (name: string, path?: string) =>
-  api.get('/user_tools/skills/archive', { params: path ? { name, path } : { name }, responseType: 'blob' });
+export const downloadUserSkillFile = (name: string, path: string, config: DownloadRequestConfig = {}) =>
+  api.get('/user_tools/skills/download', { ...config, params: { name, path }, responseType: 'blob' });
+export const downloadUserSkillArchive = (name: string, path?: string, config: DownloadRequestConfig = {}) =>
+  api.get('/user_tools/skills/archive', { ...config, params: path ? { name, path } : { name }, responseType: 'blob' });
 export const deleteUserSkill = (name: string) => api.delete('/user_tools/skills', { params: { name } });
-export const uploadUserSkillZip = (file: Blob | File) => {
+export const uploadUserSkillZip = (file: Blob | File, config: UploadRequestConfig = {}) => {
   const form = new FormData();
   form.append('file', file);
-  return api.post('/user_tools/skills/upload', form);
+  return api.post('/user_tools/skills/upload', form, {
+    ...config,
+    headers: { 'Content-Type': 'multipart/form-data', ...(config.headers || {}) }
+  });
 };
 
 export const fetchUserKnowledgeConfig = () => api.get('/user_tools/knowledge');

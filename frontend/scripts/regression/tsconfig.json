@@ -61,6 +61,7 @@
     "../../src/realtime/chat/chatRuntimeRenderShadow.ts",
     "../../src/realtime/chat/chatRuntimeDebug.ts",
     "../../src/utils/runtimeHeatmap.ts",
+    "../../src/utils/abilityVisuals.ts",
     "../../src/components/chat/workspacePanelRefreshPlanner.ts",
     "../../src/components/chat/toolWorkflowActionViews.ts",
     "../../src/components/chat/toolWorkflowRunModel.ts",
@@ -120,6 +121,7 @@
     "./tool-workflow-patch-preview-regression.test.ts",
     "./prompt-tooling-preview-regression.test.ts",
     "./runtime-heatmap-regression.test.ts",
-    "./workspace-panel-refresh-regression.test.ts"
+    "./workspace-panel-refresh-regression.test.ts",
+    "./ability-visuals-regression.test.ts"
   ]
 }

@@ -321,6 +321,23 @@ impl UserToolStore {
         self.save_payload(user_id, payload)
     }
 
+    pub fn sync_skills_from_disk(&self, user_id: &str) -> Result<UserToolsPayload> {
+        let mut payload = self.load_user_tools(user_id);
+        let skill_root = self.get_skill_root(user_id);
+        if !skill_root.exists() || !skill_root.is_dir() {
+            return Ok(payload);
+        }
+        let discovered = self.resolve_default_skill_enabled(user_id);
+        let normalized = normalize_skill_config(discovered, payload.skills.shared.clone());
+        if payload.skills.enabled == normalized.enabled
+            && payload.skills.shared == normalized.shared
+        {
+            return Ok(payload);
+        }
+        payload.skills = normalized;
+        self.save_payload(user_id, payload)
+    }
+
     /// 更新用户知识库配置，并清理被移除的目录。
     pub fn update_knowledge_bases(
         &self,
@@ -839,11 +856,19 @@ impl UserToolManager {
                         .map(|name| name.trim().to_string())
                         .filter(|name| !name.is_empty())
                         .collect();
+                    if shared_only && requested_names.is_empty() {
+                        return;
+                    }
+                    let cache_names = if shared_only {
+                        requested_names.clone()
+                    } else {
+                        HashSet::new()
+                    };
                     let specs = self.load_cached_skill_specs(
                         config,
                         skill_owner_id,
                         &skill_root,
-                        &requested_names,
+                        &cache_names,
                     );
                     if specs.is_empty() {
                         return;
@@ -1068,7 +1093,7 @@ impl UserToolManager {
         let mut scan_config = config.clone();
         scan_config.skills.paths = vec![root.to_string_lossy().to_string()];
         scan_config.skills.enabled = names.iter().cloned().collect();
-        let registry = load_skills(&scan_config, false, true, false);
+        let registry = load_skills(&scan_config, false, !names.is_empty(), false);
         let specs = registry.list_specs();
         cache.spec_cache.insert(
             key.clone(),
@@ -1640,6 +1665,62 @@ mod tests {
             vec!["alpha".to_string(), "beta".to_string()]
         );
         assert!(config.shared.is_empty());
+    }
+
+    #[test]
+    fn current_user_skill_bindings_rescan_when_saved_name_is_stale() {
+        let root = tempdir().expect("tempdir");
+        let db_path = root.path().join("user-tools-bindings.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = root.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let store = Arc::new(UserToolStore::new(&Config::default(), workspace).expect("store"));
+        let user_id = "alice";
+        let skill_dir = store.get_skill_root(user_id).join("original_skill");
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: renamed_skill\ndescription: renamed\n---\n",
+        )
+        .expect("write skill file");
+        store
+            .save_payload(
+                user_id,
+                UserToolsPayload {
+                    user_id: user_id.to_string(),
+                    skills: UserSkillConfig {
+                        enabled: vec!["original_skill".to_string()],
+                        shared: Vec::new(),
+                    },
+                    ..UserToolsPayload::default()
+                },
+            )
+            .expect("save stale skill config");
+
+        let manager = UserToolManager::new(store.clone());
+        let bindings = manager.build_bindings_for_catalog(
+            &Config::default(),
+            &SkillRegistry::default(),
+            user_id,
+        );
+        let mut skill_names = bindings
+            .skill_specs
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .collect::<Vec<_>>();
+        skill_names.sort();
+
+        assert_eq!(skill_names, vec!["renamed_skill"]);
+        assert!(bindings.alias_map.contains_key("renamed_skill"));
+        assert!(!bindings.alias_map.contains_key("original_skill"));
+
+        let synced = store.sync_skills_from_disk(user_id).expect("sync skills");
+        assert_eq!(synced.skills.enabled, vec!["renamed_skill"]);
     }
 
     #[test]

@@ -781,7 +781,7 @@
   white-space: nowrap;
 }
 
-.chat-shell .workspace-upload-progress {
+.workspace-upload-progress {
   display: none;
   align-items: center;
   gap: 8px;
@@ -790,11 +790,11 @@
   color: var(--chat-muted);
 }
 
-.chat-shell .workspace-upload-progress.active {
+.workspace-upload-progress.active {
   display: flex;
 }
 
-.chat-shell .workspace-upload-bar {
+.workspace-upload-bar {
   flex: 1 1 auto;
   height: 6px;
   border-radius: 999px;
@@ -803,7 +803,7 @@
   overflow: hidden;
 }
 
-.chat-shell .workspace-upload-bar-fill {
+.workspace-upload-bar-fill {
   height: 100%;
   width: 0%;
   background: linear-gradient(90deg, rgba(106, 217, 255, 0.9), rgba(180, 169, 255, 0.9));
@@ -811,12 +811,16 @@
   transform: translateX(0);
 }
 
-.chat-shell .workspace-upload-progress.indeterminate .workspace-upload-bar-fill {
+.workspace-upload-progress.is-download .workspace-upload-bar-fill {
+  background: linear-gradient(90deg, rgba(52, 211, 153, 0.9), rgba(56, 189, 248, 0.9));
+}
+
+.workspace-upload-progress.indeterminate .workspace-upload-bar-fill {
   width: 30%;
   animation: workspace-upload-indeterminate 1s infinite ease-in-out;
 }
 
-.chat-shell .workspace-upload-text {
+.workspace-upload-text {
   min-width: 120px;
   text-align: right;
   font-variant-numeric: tabular-nums;

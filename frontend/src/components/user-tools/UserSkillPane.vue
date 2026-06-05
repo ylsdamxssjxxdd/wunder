@@ -104,7 +104,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 import type { AxiosProgressEvent } from 'axios';
 
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
@@ -170,6 +170,31 @@ const loading = ref(false);
 const deleteLoading = ref(false);
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const workspacePanelRef = ref<InstanceType<typeof WorkspacePanel> | null>(null);
+
+const formatBytes = (size: number) => {
+  const value = Number(size) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+};
+
+const buildTransferText = (
+  label: string,
+  event: AxiosProgressEvent,
+  loadingText: string
+) => {
+  const loaded = Number(event.loaded) || 0;
+  const total = Number.isFinite(event.total) ? Number(event.total) : 0;
+  if (total > 0) {
+    const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    return `${label} ${percent}% (${formatBytes(loaded)} / ${formatBytes(total)})`;
+  }
+  if (loaded > 0) {
+    return `${label} ${formatBytes(loaded)}`;
+  }
+  return loadingText;
+};
 
 const emitLoadingChange = (value: boolean) => {
   emit('loading-change', value === true);
@@ -241,8 +266,14 @@ const activeSkillFileSystem = computed(() => ({
   copyEntry: (payload: Record<string, unknown>) => copyUserSkillEntry({ ...payload, name: activeSkillName.value }),
   batchAction: (payload: Record<string, unknown>) => batchUserSkillAction({ ...payload, name: activeSkillName.value }),
   saveFile: (payload: Record<string, unknown>) => saveUserSkillFsFile({ ...payload, name: activeSkillName.value }),
-  downloadFile: (params: Record<string, unknown>) => downloadUserSkillFile(activeSkillName.value, String(params?.path || '')),
-  downloadArchive: (params: Record<string, unknown>) => downloadUserSkillArchive(activeSkillName.value, String(params?.path || ''))
+  downloadFile: (
+    params: Record<string, unknown>,
+    config: { onDownloadProgress?: (event: AxiosProgressEvent) => void } = {}
+  ) => downloadUserSkillFile(activeSkillName.value, String(params?.path || ''), config),
+  downloadArchive: (
+    params: Record<string, unknown>,
+    config: { onDownloadProgress?: (event: AxiosProgressEvent) => void } = {}
+  ) => downloadUserSkillArchive(activeSkillName.value, String(params?.path || ''), config)
 }));
 
 const buildSkillDesc = (skill: any) => {
@@ -278,8 +309,24 @@ const exportSkill = async () => {
     ElMessage.warning(t('userTools.skills.file.selectSkillRequired'));
     return;
   }
+  const loading = ElLoading.service({
+    lock: false,
+    target: '.user-tools-dialog',
+    text: t('userTools.skills.export.preparing'),
+    background: 'rgba(15, 23, 42, 0.18)'
+  });
   try {
-    const response = await exportUserSkillArchive(skill.name);
+    const response = await exportUserSkillArchive(skill.name, {
+      onDownloadProgress: (event) => {
+        loading.setText(
+          buildTransferText(
+            t('userTools.skills.export.progress'),
+            event,
+            t('userTools.skills.export.preparing')
+          )
+        );
+      }
+    });
     const filename = getFilenameFromHeaders(response.headers, `${skill.name}.zip`);
     const objectUrl = URL.createObjectURL(response.data);
     saveObjectUrlAsFile(objectUrl, filename);
@@ -287,6 +334,8 @@ const exportSkill = async () => {
     ElMessage.success(t('userTools.skills.export.success'));
   } catch (error) {
     showApiError(error, t('userTools.skills.export.failed'));
+  } finally {
+    loading.close();
   }
 };
 
@@ -300,13 +349,34 @@ const handleUpload = async () => {
     uploadInputRef.value.value = '';
     return;
   }
+  const loading = ElLoading.service({
+    lock: false,
+    target: '.user-tools-dialog',
+    text: t('userTools.skills.upload.preparing'),
+    background: 'rgba(15, 23, 42, 0.18)'
+  });
   try {
-    await uploadUserSkillZip(file);
+    await uploadUserSkillZip(file, {
+      onUploadProgress: (event) => {
+        loading.setText(
+          buildTransferText(
+            t('userTools.skills.upload.progress'),
+            event,
+            t('userTools.skills.upload.preparing')
+          )
+        );
+      }
+    });
     await loadSkills({ refreshDetail: true });
     syncUserSkillsCatalog('upload');
     ElMessage.success(t('userTools.skills.upload.success'));
   } catch (error) {
     showApiError(error, t('userTools.skills.upload.failed'));
+  } finally {
+    loading.close();
+    if (uploadInputRef.value) {
+      uploadInputRef.value.value = '';
+    }
   }
 };
 

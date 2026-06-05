@@ -29,6 +29,7 @@ export type MessageViewportRuntimeOptions = {
   messageVirtualViewportHeight: Ref<number>;
   estimateVirtualOffsetTop: (keys: string[], index: number) => number;
   resolveVirtualMessageHeight: (key: string) => number;
+  loadOlderHistory?: () => Promise<unknown[] | unknown>;
 };
 
 export type MessageViewportRuntime = {
@@ -74,6 +75,7 @@ export const createMessageViewportRuntime = (
   let scheduledVirtualMeasureKeys = new Set<string>();
   let messageResizeObserver: ResizeObserver | null = null;
   const observedMessageNodes = new Map<string, HTMLElement>();
+  let olderHistoryLoadInFlight = false;
 
   const logViewportDebug = (event: string, payload?: unknown) => {
     if (!isChatDebugEnabled()) {
@@ -328,6 +330,43 @@ export const createMessageViewportRuntime = (
     options.showScrollBottomButton.value = !shouldStick && isConversation;
   };
 
+  const maybeLoadOlderHistory = async () => {
+    const container = options.messageListRef.value;
+    if (
+      olderHistoryLoadInFlight ||
+      !container ||
+      options.showChatSettingsView.value ||
+      !options.isAgentConversationActive.value ||
+      container.scrollTop > 96 ||
+      typeof options.loadOlderHistory !== 'function'
+    ) {
+      return;
+    }
+
+    olderHistoryLoadInFlight = true;
+    const previousScrollHeight = container.scrollHeight;
+    const previousScrollTop = container.scrollTop;
+    try {
+      const loaded = await options.loadOlderHistory();
+      const loadedCount = Array.isArray(loaded) ? loaded.length : 0;
+      if (loadedCount <= 0) return;
+      await nextTick();
+      const nextContainer = options.messageListRef.value;
+      if (!nextContainer) return;
+      const heightDelta = Math.max(0, nextContainer.scrollHeight - previousScrollHeight);
+      nextContainer.scrollTop = previousScrollTop + heightDelta;
+      syncMessageVirtualMetrics();
+      updateMessageScrollState();
+      scheduleMessageViewportRefresh({
+        updateScrollState: true,
+        measure: true,
+        reason: 'older-history-loaded'
+      });
+    } finally {
+      olderHistoryLoadInFlight = false;
+    }
+  };
+
   const rememberCurrentScroll = () => {
     rememberMessageScrollPosition(options.activeConversationKey.value, options.messageListRef.value);
   };
@@ -440,6 +479,7 @@ export const createMessageViewportRuntime = (
       updateMessageScrollState();
       rememberCurrentScroll();
       scheduleMessageVirtualMeasure();
+      void maybeLoadOlderHistory();
     });
   };
 

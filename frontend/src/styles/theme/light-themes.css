@@ -227,6 +227,10 @@
   background: linear-gradient(90deg, #38bdf8 0%, #3b82f6 100%);
 }
 
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-upload-progress.is-download .workspace-upload-bar-fill {
+  background: linear-gradient(90deg, #10b981 0%, #0ea5e9 100%);
+}
+
 :is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-item.is-folder {
   background: transparent;
 }
