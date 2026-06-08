@@ -228,52 +228,8 @@ const resolveViteEntry = async () =>
     path.join(frontendRoot, 'node_modules', 'vite', 'bin', 'vite.js')
   ]);
 
-const hasVueCompilerDependency = async () => {
-  const vuePackageReady = Boolean(
-    await findFirstExistingPath([
-      path.join(repoRoot, 'node_modules', 'vue', 'package.json'),
-      path.join(frontendRoot, 'node_modules', 'vue', 'package.json')
-    ])
-  );
-  const vueCompilerReady = Boolean(
-    await findFirstExistingPath([
-      path.join(repoRoot, 'node_modules', 'vue', 'compiler-sfc', 'index.js'),
-      path.join(frontendRoot, 'node_modules', 'vue', 'compiler-sfc', 'index.js')
-    ])
-  );
-  return vuePackageReady && vueCompilerReady;
-};
-
-const ensureDependencies = async () => {
-  const viteEntry = await resolveViteEntry();
-  const viteReady = Boolean(viteEntry);
-  const rollupNativeReady = await hasLinuxRollupNativeDependency();
-  const esbuildNativeReady = await hasLinuxEsbuildNativeDependency();
-  const vueCompilerReady = await hasVueCompilerDependency();
-  const dependencySnapshotReady =
-    (await hasCurrentDependencyFingerprint()) || (await hasCurrentPackageLockSnapshot());
-  if (
-    viteReady &&
-    rollupNativeReady &&
-    esbuildNativeReady &&
-    vueCompilerReady &&
-    dependencySnapshotReady
-  ) {
-    if (!(await hasCurrentDependencyFingerprint())) {
-      await writeCurrentDependencyFingerprint();
-    }
-    return viteEntry;
-  }
-
-  if (!viteReady) {
-    log('vite package is missing, reinstalling workspace dependencies');
-  } else if (!vueCompilerReady) {
-    log('vue compiler dependency is incomplete, reinstalling workspace dependencies');
-  } else if (!dependencySnapshotReady) {
-    log('frontend dependency profile is stale, reinstalling workspace dependencies');
-  } else {
-    log('linux native frontend dependency is missing, reinstalling workspace dependencies');
-  }
+const reinstallWorkspaceDependencies = async (reason) => {
+  log(reason);
   try {
     await run(
       'npm',
@@ -317,6 +273,77 @@ const ensureDependencies = async () => {
   }
   await writeCurrentDependencyFingerprint();
   return resolvedViteEntry;
+};
+
+const hasVueCompilerDependency = async () => {
+  const vuePackageReady = Boolean(
+    await findFirstExistingPath([
+      path.join(repoRoot, 'node_modules', 'vue', 'package.json'),
+      path.join(frontendRoot, 'node_modules', 'vue', 'package.json')
+    ])
+  );
+  const vueCompilerReady = Boolean(
+    await findFirstExistingPath([
+      path.join(repoRoot, 'node_modules', 'vue', 'compiler-sfc', 'index.js'),
+      path.join(frontendRoot, 'node_modules', 'vue', 'compiler-sfc', 'index.js')
+    ])
+  );
+  return vuePackageReady && vueCompilerReady;
+};
+
+const ensureDependencies = async () => {
+  const viteEntry = await resolveViteEntry();
+  const viteReady = Boolean(viteEntry);
+  const rollupNativeReady = await hasLinuxRollupNativeDependency();
+  const esbuildNativeReady = await hasLinuxEsbuildNativeDependency();
+  const vueCompilerReady = await hasVueCompilerDependency();
+  const dependencySnapshotReady =
+    (await hasCurrentDependencyFingerprint()) || (await hasCurrentPackageLockSnapshot());
+  if (
+    viteReady &&
+    rollupNativeReady &&
+    esbuildNativeReady &&
+    vueCompilerReady
+  ) {
+    if (!dependencySnapshotReady) {
+      log('frontend dependency profile is stale, trying existing workspace dependencies before reinstalling');
+      return { viteEntry, dependencyProfileStale: true };
+    }
+    if (!(await hasCurrentDependencyFingerprint())) {
+      await writeCurrentDependencyFingerprint();
+    }
+    return { viteEntry, dependencyProfileStale: false };
+  }
+
+  if (!viteReady) {
+    return {
+      viteEntry: await reinstallWorkspaceDependencies(
+        'vite package is missing, reinstalling workspace dependencies'
+      ),
+      dependencyProfileStale: false
+    };
+  } else if (!vueCompilerReady) {
+    return {
+      viteEntry: await reinstallWorkspaceDependencies(
+        'vue compiler dependency is incomplete, reinstalling workspace dependencies'
+      ),
+      dependencyProfileStale: false
+    };
+  } else if (!dependencySnapshotReady) {
+    return {
+      viteEntry: await reinstallWorkspaceDependencies(
+        'frontend dependency profile is stale and native dependency checks failed, reinstalling workspace dependencies'
+      ),
+      dependencyProfileStale: false
+    };
+  } else {
+    return {
+      viteEntry: await reinstallWorkspaceDependencies(
+        'linux native frontend dependency is missing, reinstalling workspace dependencies'
+      ),
+      dependencyProfileStale: false
+    };
+  }
 };
 
 const clearCaches = async () => {
@@ -440,8 +467,11 @@ const keepContainerAlive = async (reason) => {
 
 const main = async () => {
   let viteEntry = '';
+  let dependencyProfileStale = false;
   try {
-    viteEntry = await ensureDependencies();
+    const dependencyState = await ensureDependencies();
+    viteEntry = dependencyState.viteEntry;
+    dependencyProfileStale = dependencyState.dependencyProfileStale;
   } catch (error) {
     if (!parseBoolean(process.env.FRONTEND_ALLOW_PREBUILT_DIST)) {
       throw error;
@@ -459,8 +489,33 @@ const main = async () => {
     await ensurePrebuiltDist();
   } else {
     await clearCaches();
-    await buildTempDist(viteEntry);
+    try {
+      await buildTempDist(viteEntry);
+    } catch (buildError) {
+      if (!dependencyProfileStale) {
+        throw buildError;
+      }
+      console.warn(
+        `[frontend][docker] stale dependency profile failed to build with existing node_modules, retrying after dependency reinstall: ${buildError.message}`
+      );
+      try {
+        viteEntry = await reinstallWorkspaceDependencies(
+          'existing stale frontend dependencies failed to build, reinstalling workspace dependencies'
+        );
+      } catch (reinstallError) {
+        throw new Error(
+          `stale frontend dependency profile could not build with existing node_modules and reinstall failed. Build error: ${buildError.message}; reinstall error: ${reinstallError.message}`
+        );
+      }
+      await clearCaches();
+      await buildTempDist(viteEntry);
+      dependencyProfileStale = false;
+    }
     await syncDist();
+    if (dependencyProfileStale) {
+      await writeCurrentDependencyFingerprint();
+      log('frontend dependency profile accepted after successful build');
+    }
   }
   await waitBackend();
   await startDevServer();
