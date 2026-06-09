@@ -144,8 +144,12 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
   return runtime;
 };
 
-const readInjectedRuntime = (): DesktopRuntime | null =>
-  normalizeRuntime((window as Window).__WUNDER_DESKTOP_RUNTIME__);
+const readInjectedRuntime = (): DesktopRuntime | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return normalizeRuntime((window as Window).__WUNDER_DESKTOP_RUNTIME__);
+};
 
 let runtimeCache: DesktopRuntime | null = readInjectedRuntime();
 

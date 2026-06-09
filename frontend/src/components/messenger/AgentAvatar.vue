@@ -34,7 +34,10 @@ import {
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
 } from '@/utils/agentAvatar';
-import { resolveCompanionSpriteStateForRuntime } from '@/utils/companionRuntimeState';
+import {
+  STATIC_COMPANION_AVATAR_STATE,
+  resolveCompanionSpriteStateForRuntime
+} from '@/utils/companionRuntimeState';
 
 type AgentAvatarSize = 'sm' | 'md' | 'lg';
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
@@ -83,10 +86,13 @@ const companionRecord = computed(() =>
     : null
 );
 const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || companionRecord.value?.spritesheetUrl || '');
-const companionSpriteState = computed<CompanionSpriteStateId>(() =>
+const companionRuntimeSpriteState = computed<CompanionSpriteStateId>(() =>
   resolveCompanionSpriteStateForRuntime(props.state, {
     pendingState: 'review'
   })
+);
+const companionSpriteState = computed<CompanionSpriteStateId>(() =>
+  props.animated ? companionRuntimeSpriteState.value : STATIC_COMPANION_AVATAR_STATE
 );
 const shouldAnimateCompanionSprite = computed(() => props.animated && companionSpriteState.value !== 'idle');
 // The companion display scale is only for the floating character layer.

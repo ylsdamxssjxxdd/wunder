@@ -256,7 +256,7 @@ const renderPreview = async (payload) => {
       if (data.content_type) {
         meta.push(String(data.content_type));
       }
-      elements.multimodalDebugPreviewMeta.textContent = meta.join(" 路 ");
+      elements.multimodalDebugPreviewMeta.textContent = meta.join(" · ");
     }
     return;
   }

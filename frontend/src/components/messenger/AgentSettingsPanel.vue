@@ -34,7 +34,7 @@
                   v-if="formCompanionRecord"
                   class="messenger-agent-avatar-trigger-sprite"
                   :source="formCompanionRecord.spritesheetDataUrl || formCompanionRecord.spritesheetUrl || ''"
-                  state="idle"
+                  :state="STATIC_COMPANION_AVATAR_STATE"
                   fit
                   paused
                 />
@@ -285,7 +285,7 @@
                 v-if="avatarDialogCompanion"
                 class="messenger-agent-avatar-dialog-sprite"
                 :source="avatarDialogCompanion.spritesheetDataUrl || avatarDialogCompanion.spritesheetUrl || ''"
-                state="idle"
+                :state="STATIC_COMPANION_AVATAR_STATE"
                 :scale="avatarDialogCompanionScale"
                 fit
                 paused
@@ -563,6 +563,7 @@ import { invalidateUserToolsCatalogCache, loadUserToolsCatalogCache } from '@/ut
 import { onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { DEFAULT_AVATAR_COLOR, normalizeAvatarColor, normalizeAvatarIcon } from '@/utils/userPreferences';
 import { registerUnsavedChangesGuard } from '@/utils/unsavedChangesGuard';
+import { STATIC_COMPANION_AVATAR_STATE } from '@/utils/companionRuntimeState';
 
 type ToolOption = {
   label: string;

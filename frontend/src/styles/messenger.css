@@ -5646,6 +5646,32 @@ button.messenger-chat-header-model {
   margin-bottom: 0;
 }
 
+.messenger-markdown .markdown-body .ai-math-block {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.18);
+  border-radius: 10px;
+  background: var(--ui-accent-soft-1);
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+}
+
+.messenger-markdown .markdown-body .ai-math-block .katex-display {
+  margin: 0;
+}
+
+.messenger-markdown .markdown-body .ai-math-inline {
+  display: inline;
+  vertical-align: baseline;
+}
+
+.messenger-markdown .markdown-body .katex {
+  color: inherit;
+  font-size: 1.02em;
+  line-height: 1.25;
+}
+
 .messenger-markdown .markdown-body .ai-rich-table {
   margin: 8px 0;
   border: 1px solid #dfe3e8;

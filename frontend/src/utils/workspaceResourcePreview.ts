@@ -225,7 +225,12 @@ type WorkspaceIconTheme = {
   iconDefinitions?: Record<string, { iconPath?: string } | unknown>;
 };
 
-const WORKSPACE_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}vscode-icons`;
+const resolveImportMetaBaseUrl = (): string => {
+  const meta = import.meta as ImportMeta & { env?: { BASE_URL?: string } };
+  return String(meta.env?.BASE_URL || '/').replace(/\/+$/, '/');
+};
+
+const WORKSPACE_ICON_BASE = `${resolveImportMetaBaseUrl()}vscode-icons`;
 const WORKSPACE_ICON_PATH_RE = /^(\.\.\/|\.\/)+/;
 
 const ICON_ID_FALLBACK_BY_EXTENSION = new Map<string, string>([
@@ -362,7 +367,7 @@ export const normalizeWorkspacePreviewBlob = (
   return blob;
 };
 
-const DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
+const DOC_ICON_BASE = `${resolveImportMetaBaseUrl()}doc-icons`;
 const fallbackDocIcon = `${DOC_ICON_BASE}/other.png`;
 const drawioDocIcon = `${DOC_ICON_BASE}/processon_flow.png`;
 

@@ -87,6 +87,7 @@
     "codemirror": "^6.0.2",
     "echarts": "^5.5.0",
     "element-plus": "^2.8.8",
+    "katex": "^0.17.0",
     "markdown-it": "^14.1.0",
     "pinia": "^2.2.6",
     "three": "^0.164.1",

@@ -139,8 +139,6 @@ const DESKTOP_TRANSIENT_SPRITE_STATES = new Set<CompanionSpriteStateId>([
 const props = withDefaults(
   defineProps<{
     desktopMode?: boolean;
-    activeOnly?: boolean;
-    focusAgentId?: string;
     acknowledgedDoneAgentId?: string;
     acknowledgedDoneAt?: number;
     resolveAgentRuntimeState?: ((agentId: string) => AgentRuntimeState) | undefined;
@@ -148,8 +146,6 @@ const props = withDefaults(
   }>(),
   {
     desktopMode: false,
-    activeOnly: false,
-    focusAgentId: '',
     acknowledgedDoneAgentId: '',
     acknowledgedDoneAt: 0
   }
@@ -364,19 +360,7 @@ const allVisibleEntries = computed<FloatingEntry[]>(() => {
   return items.filter((item): item is FloatingEntry => Boolean(item));
 });
 
-const focusedAgentKey = computed(() => resolveAgentKey(props.focusAgentId || activeSessionAgentId.value));
-const visibleEntries = computed<FloatingEntry[]>(() => {
-  const entries = allVisibleEntries.value;
-  if (!props.activeOnly) {
-    return entries;
-  }
-  const targetAgentId = focusedAgentKey.value;
-  if (!targetAgentId) {
-    return [];
-  }
-  const matched = entries.find((entry) => resolveAgentKey(entry.agentId) === targetAgentId);
-  return matched ? [matched] : [];
-});
+const visibleEntries = computed<FloatingEntry[]>(() => allVisibleEntries.value);
 
 const effectiveDesktopMode = computed(() => props.desktopMode || isDesktopModeEnabled());
 const renderedEntries = computed(() => (effectiveDesktopMode.value ? [] : visibleEntries.value));

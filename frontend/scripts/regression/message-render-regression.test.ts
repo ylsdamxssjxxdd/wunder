@@ -1,14 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { prepareMessageMarkdownContent } from '../../src/utils/messageMarkdown';
-import {
+const storageMock = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined
+};
+(globalThis as typeof globalThis & { localStorage?: unknown }).localStorage = storageMock;
+
+const {
+  prepareMessageMarkdownContent
+} = require('../../src/utils/messageMarkdown') as typeof import('../../src/utils/messageMarkdown');
+const { renderMarkdown } = require('../../src/utils/markdown') as typeof import('../../src/utils/markdown');
+const {
   buildAgentWorkspaceScopeId,
   buildWorkspacePublicPathFromScope,
   resolveMarkdownWorkspacePath
-} from '../../src/utils/messageWorkspacePath';
-import { parseWorkspaceResourceUrl } from '../../src/utils/workspaceResources';
-import { buildAssistantDisplayContent } from '../../src/utils/assistantFailureNotice';
+} = require('../../src/utils/messageWorkspacePath') as typeof import('../../src/utils/messageWorkspacePath');
+const {
+  parseWorkspaceResourceUrl
+} = require('../../src/utils/workspaceResources') as typeof import('../../src/utils/workspaceResources');
+const {
+  buildAssistantDisplayContent
+} = require('../../src/utils/assistantFailureNotice') as typeof import('../../src/utils/assistantFailureNotice');
 
 test('repairs malformed markdown image closings', () => {
   const content =
@@ -84,6 +98,25 @@ test('maps local absolute paths back to workspace resources in desktop mode', ()
     workspaceRoot: 'C:\\workspace'
   });
   assert.equal(resolved, '/workspaces/demo-user__c__7/temp_dir/briefing.md');
+});
+
+test('renders display math blocks with KaTeX', () => {
+  const html = renderMarkdown('$$\nM = 3.44 \\times 10^{-3} \\cdot Z^{1/7}\n$$');
+  assert.match(html, /ai-math-block/);
+  assert.match(html, /katex-display/);
+  assert.doesNotMatch(html, /\\times/);
+});
+
+test('renders inline math without treating prices as math', () => {
+  const html = renderMarkdown('Inline \\(Z = 10^{dBZ/10}\\), price $100 stays text.');
+  assert.match(html, /ai-math-inline/);
+  assert.match(html, /\$100 stays text/);
+});
+
+test('falls back safely for invalid formulas', () => {
+  const html = renderMarkdown('$$\n\\badcommand{x}\n$$');
+  assert.match(html, /ai-math-block/);
+  assert.match(html, /katex-error|badcommand/);
 });
 
 const failureNoticeMessages: Record<string, string> = {

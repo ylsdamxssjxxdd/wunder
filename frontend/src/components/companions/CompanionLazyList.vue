@@ -17,7 +17,7 @@
             v-if="item.spritesheetDataUrl || item.spritesheetUrl"
             class="companion-lazy-list-item-sprite"
             :source="item.spritesheetDataUrl || item.spritesheetUrl || ''"
-            state="idle"
+            :state="STATIC_COMPANION_AVATAR_STATE"
             :scale="previewScale"
             fit
             paused
@@ -79,6 +79,7 @@
 import { computed, ref, watch } from 'vue';
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import type { CompanionPackageRecord } from '@/stores/companions';
+import { STATIC_COMPANION_AVATAR_STATE } from '@/utils/companionRuntimeState';
 
 const PAGE_SIZE = 12;
 const PREVIEW_SCALE = 0.28;

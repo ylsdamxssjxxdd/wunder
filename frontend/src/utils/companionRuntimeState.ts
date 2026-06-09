@@ -8,6 +8,8 @@ export type CompanionRuntimeSpriteOptions = {
   idleState?: CompanionSpriteStateId;
 };
 
+export const STATIC_COMPANION_AVATAR_STATE: CompanionSpriteStateId = 'idle';
+
 export const normalizeAgentRuntimeState = (value: unknown): AgentRuntimeStateLike => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'running') return 'running';

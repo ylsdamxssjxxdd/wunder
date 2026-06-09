@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import katex from 'katex';
 import { t } from '@/i18n';
 import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import {
@@ -24,6 +25,16 @@ type MarkdownRenderOptions = {
 };
 
 const BROKEN_TABLE_DIVIDER_REGEX = /^[\s|:-]+$/;
+const MATH_RENDER_CACHE_LIMIT = 240;
+const MATH_RENDER_MAX_LENGTH = 6000;
+const mathRenderCache = new Map<string, string>();
+
+const KATEX_RENDER_OPTIONS = Object.freeze({
+  throwOnError: false,
+  strict: 'ignore',
+  trust: false,
+  output: 'html'
+});
 
 // 统一的 Markdown 渲染器：禁用原始 HTML，启用自动换行与链接识别
 const markdown = new MarkdownIt({
@@ -31,6 +42,195 @@ const markdown = new MarkdownIt({
   linkify: true,
   breaks: true
 });
+
+markdown.block.ruler.after('fence', 'math_block', mathBlockRule, {
+  alt: ['paragraph', 'reference', 'blockquote', 'list']
+});
+markdown.inline.ruler.before('text', 'math_inline', mathInlineRule);
+markdown.renderer.rules.math_inline = (tokens, idx) => {
+  const token = tokens[idx];
+  return renderMath(token.content || '', Boolean(token.meta?.displayMode));
+};
+markdown.renderer.rules.math_block = (tokens, idx) => renderMath(tokens[idx].content || '', true);
+
+function mathBlockRule(state: any, startLine: number, endLine: number, silent: boolean) {
+  const start = state.bMarks[startLine] + state.tShift[startLine];
+  const max = state.eMarks[startLine];
+  const firstLine = state.src.slice(start, max);
+  const trimmed = firstLine.trim();
+  const marker = trimmed.startsWith('$$') ? '$$' : trimmed.startsWith('\\[') ? '\\[' : '';
+  const closeMarker = marker === '$$' ? '$$' : marker === '\\[' ? '\\]' : '';
+  if (!marker) {
+    return false;
+  }
+
+  const firstContent = trimmed.slice(marker.length);
+  const singleLineClose = findBlockMathClose(firstContent, closeMarker);
+  if (singleLineClose >= 0) {
+    const rest = firstContent.slice(singleLineClose + closeMarker.length).trim();
+    if (rest) {
+      return false;
+    }
+    if (!silent) {
+      const token = state.push('math_block', 'math', 0);
+      token.block = true;
+      token.content = firstContent.slice(0, singleLineClose).trim();
+      token.map = [startLine, startLine + 1];
+    }
+    state.line = startLine + 1;
+    return true;
+  }
+
+  let nextLine = startLine;
+  const lines = [firstContent];
+  while (++nextLine < endLine) {
+    const lineStart = state.bMarks[nextLine] + state.tShift[nextLine];
+    const lineMax = state.eMarks[nextLine];
+    const line = state.src.slice(lineStart, lineMax);
+    const closeIndex = findBlockMathClose(line, closeMarker);
+    if (closeIndex >= 0) {
+      const rest = line.slice(closeIndex + closeMarker.length).trim();
+      if (rest) {
+        return false;
+      }
+      lines.push(line.slice(0, closeIndex));
+      if (!silent) {
+        const token = state.push('math_block', 'math', 0);
+        token.block = true;
+        token.content = lines.join('\n').trim();
+        token.map = [startLine, nextLine + 1];
+      }
+      state.line = nextLine + 1;
+      return true;
+    }
+    lines.push(line);
+  }
+  return false;
+}
+
+function mathInlineRule(state: any, silent: boolean) {
+  const start = state.pos;
+  const source = state.src;
+  const marker = source.startsWith('\\(', start) ? '\\(' : source[start] === '$' ? '$' : '';
+  if (!marker) {
+    return false;
+  }
+  if (marker === '$' && !isValidInlineDollarStart(source, start)) {
+    return false;
+  }
+
+  const closeMarker = marker === '$' ? '$' : '\\)';
+  const contentStart = start + marker.length;
+  const closeIndex = findInlineMathClose(source, contentStart, closeMarker);
+  if (closeIndex < 0) {
+    return false;
+  }
+  const content = source.slice(contentStart, closeIndex);
+  if (!content.trim()) {
+    return false;
+  }
+  if (marker === '$' && !isValidInlineDollarEnd(source, closeIndex)) {
+    return false;
+  }
+
+  if (!silent) {
+    const token = state.push('math_inline', 'math', 0);
+    token.content = content.trim();
+    token.meta = { displayMode: false };
+  }
+  state.pos = closeIndex + closeMarker.length;
+  return true;
+}
+
+function findBlockMathClose(content: string, closeMarker: string): number {
+  if (!content) {
+    return -1;
+  }
+  return content.indexOf(closeMarker);
+}
+
+function findInlineMathClose(source: string, start: number, closeMarker: string): number {
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === '\n') {
+      return -1;
+    }
+    if (closeMarker === '$' && source[index] === '$' && !isEscaped(source, index)) {
+      return index;
+    }
+    if (closeMarker === '\\)' && source.startsWith('\\)', index)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isValidInlineDollarStart(source: string, index: number): boolean {
+  if (source.startsWith('$$', index)) {
+    return false;
+  }
+  if (isEscaped(source, index)) {
+    return false;
+  }
+  const next = source[index + 1] || '';
+  if (!next || /\s|\d/.test(next)) {
+    return false;
+  }
+  return true;
+}
+
+function isValidInlineDollarEnd(source: string, index: number): boolean {
+  const previous = source[index - 1] || '';
+  const next = source[index + 1] || '';
+  if (!previous || /\s/.test(previous)) {
+    return false;
+  }
+  if (next && /[A-Za-z0-9_]/.test(next)) {
+    return false;
+  }
+  return true;
+}
+
+function isEscaped(source: string, index: number): boolean {
+  let count = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
+    count += 1;
+  }
+  return count % 2 === 1;
+}
+
+function renderMath(content = '', displayMode = false): string {
+  const source = String(content || '').trim();
+  if (!source) {
+    return '';
+  }
+  if (source.length > MATH_RENDER_MAX_LENGTH) {
+    return `<code>${escapeHtml(source)}</code>`;
+  }
+  const cacheKey = `${displayMode ? 'block' : 'inline'}:${source}`;
+  const cached = mathRenderCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  let html = '';
+  try {
+    html = katex.renderToString(source, {
+      ...KATEX_RENDER_OPTIONS,
+      displayMode
+    });
+  } catch {
+    html = `<code>${escapeHtml(source)}</code>`;
+  }
+
+  const wrapped = displayMode
+    ? `<div class="ai-math-block">${html}</div>`
+    : `<span class="ai-math-inline">${html}</span>`;
+  mathRenderCache.set(cacheKey, wrapped);
+  if (mathRenderCache.size > MATH_RENDER_CACHE_LIMIT) {
+    mathRenderCache.delete(mathRenderCache.keys().next().value);
+  }
+  return wrapped;
+}
 
 // 为所有 Markdown 表格包裹滚动容器，复刻参考项目的工业风表格样式
 const defaultTableOpenRenderer =

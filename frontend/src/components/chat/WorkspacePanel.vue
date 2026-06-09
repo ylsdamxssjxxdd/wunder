@@ -1519,7 +1519,7 @@ const previewMeta = computed(() => {
       parts.push(updated.toLocaleString());
     }
   }
-  return parts.join(' 路 ');
+  return parts.join(' · ');
 });
 
 let searchTimer = null;
@@ -1916,7 +1916,7 @@ const getEntryMeta = (entry) => {
   if (state.searchMode && entry.path) {
     parts.push(entry.path);
   }
-  return parts.join(' 路 ');
+  return parts.join(' · ');
 };
 
 const formatBytes = (size) => {

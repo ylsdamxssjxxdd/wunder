@@ -1818,9 +1818,7 @@
     />
     <CompanionFloatingLayer
       v-if="!isEmbeddedChatRoute"
-      :active-only="sessionHub.activeSection === 'messages'"
       :desktop-mode="desktopMode"
-      :focus-agent-id="sessionHub.activeSection === 'messages' ? activeAgentId : ''"
       :acknowledged-done-agent-id="companionAcknowledgedDoneAgentId"
       :acknowledged-done-at="companionAcknowledgedDoneAt"
       :resolve-agent-runtime-state="resolveAgentRuntimeState"
