@@ -89,6 +89,7 @@ export const elements = {
   workspaceRenameBtn: document.getElementById("workspaceRenameBtn"),
   workspaceMoveBtn: document.getElementById("workspaceMoveBtn"),
   workspaceCopyBtn: document.getElementById("workspaceCopyBtn"),
+  workspacePropertiesBtn: document.getElementById("workspacePropertiesBtn"),
   workspaceNewFolderBtn: document.getElementById("workspaceNewFolderBtn"),
   sidebarTitle: document.getElementById("sidebarTitle"),
   navMonitor: document.getElementById("navMonitor"),

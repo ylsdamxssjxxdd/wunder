@@ -1464,7 +1464,7 @@
   - `onlyoffice.jwt_header`：OnlyOffice JWT 请求头（默认 `Authorization`）
   - `onlyoffice.token_ttl_s`：文件拉取/保存回调短期令牌有效期
   - `onlyoffice.request_timeout_s`：Wunder 下载 OnlyOffice 保存结果的超时时间
-  - `onlyoffice.max_download_bytes`：保存回写文件最大字节数
+  - `onlyoffice.max_download_bytes`：保存回写文件最大字节数（默认 1GB，上限 1GB）
   - `drawio.enabled`：是否启用用户侧工作区 draw.io 图表在线编辑
   - `drawio.editor_url`：浏览器访问 diagrams.net/draw.io 编辑器的地址
   - `drawio.max_file_bytes`：可在线编辑的图表文件大小上限
@@ -1838,6 +1838,7 @@
   - `path`：相对路径（目录）
   - `files`：上传文件列表
   - `relative_paths`：文件相对路径列表（可选，保留目录结构）
+- 限制：单次 multipart 请求上限 1GB。
 - 返回（JSON）：
   - `ok`：是否成功
   - `message`：提示信息
@@ -1847,6 +1848,7 @@
 ### 4.1.16 `/wunder/workspace/download`
 
 - 方法：`GET`
+- 限制：服务端按文件流式返回，不设置应用层文件大小上限。
 - 入参（Query）：
   - `user_id`：用户唯一标识
   - `agent_id`：智能体应用 id（可选）
@@ -1983,7 +1985,7 @@
   - Body：OnlyOffice Document Server 回调 JSON，其中保存状态需包含 `status` 与 `url`
 - 返回（JSON）：
   - `error`：`0` 表示成功；非 0 表示保存失败
-- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，回写成功后会标记工作区目录树刷新；回调下载地址会优先按 `onlyoffice.internal_document_server_url` 重写，未配置时回退到 `onlyoffice.document_server_url`，避免 Docker/反向代理场景下浏览器地址与 Wunder 后端可访问地址不同导致保存失败；只读查看格式不会执行回写。
+- 说明：保存下载受 `onlyoffice.request_timeout_s` 与 `onlyoffice.max_download_bytes` 限制，`max_download_bytes` 默认与上限均为 1GB；回写成功后会标记工作区目录树刷新；回调下载地址会优先按 `onlyoffice.internal_document_server_url` 重写，未配置时回退到 `onlyoffice.document_server_url`，避免 Docker/反向代理场景下浏览器地址与 Wunder 后端可访问地址不同导致保存失败；只读查看格式不会执行回写。
 
 ### 4.1.23.4 `/wunder/workspace/drawio/config`
 

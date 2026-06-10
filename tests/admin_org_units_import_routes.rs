@@ -93,7 +93,7 @@ async fn send_json(
 async fn admin_org_units_import_replaces_units_and_migrates_users() {
     let context = build_test_context("admin-org-units-import").await;
 
-    let admin = context
+    context
         .state
         .user_store
         .ensure_default_admin()
@@ -101,8 +101,9 @@ async fn admin_org_units_import_replaces_units_and_migrates_users() {
     let admin_token = context
         .state
         .user_store
-        .create_session(&admin.user_id)
-        .expect("create admin token");
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
 
     let legacy_root = wunder_server::storage::OrgUnitRecord {
         unit_id: "unit_legacy_root".to_string(),

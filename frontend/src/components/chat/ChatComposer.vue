@@ -788,7 +788,7 @@ type SlashCommandDefinition = {
 const INPUT_MAX_HEIGHT = 180;
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
 const WORLD_COMMAND_PANEL_CLOSE_DELAY_MS = 160;
-const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_WORKSPACE_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const resolveDraftKey = (): string => String(props.draftKey || '').trim();
 const clampWorldComposerHeight = (value: unknown): number => {
   const parsed = Number(value);

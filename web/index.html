@@ -3197,6 +3197,9 @@
             <button id="skillWorkspaceCopyBtn" class="btn-with-icon" type="button">
               <i class="fa-solid fa-copy"></i><span data-i18n="workspace.action.copy">复制</span>
             </button>
+            <button id="skillWorkspacePropertiesBtn" class="btn-with-icon" type="button">
+              <i class="fa-solid fa-circle-info"></i><span data-i18n="workspace.menu.properties">Properties</span>
+            </button>
             <button id="skillWorkspaceNewFolderBtn" class="btn-with-icon" type="button">
               <i class="fa-solid fa-folder-plus"></i><span data-i18n="workspace.action.newFolder">新建文件夹</span>
             </button>
@@ -5866,6 +5869,34 @@
         </div>
       </div>
     </div>
+    <div id="workspacePropertiesModal" class="modal">
+      <div class="modal-card workspace-properties-card">
+        <div class="modal-header">
+          <div id="workspacePropertiesTitle" class="detail-title" data-i18n="workspace.properties.title">Properties</div>
+          <button id="workspacePropertiesClose" class="icon-btn" type="button">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="workspace-properties">
+            <div class="workspace-properties-head">
+              <span id="workspacePropertiesIcon" class="workspace-properties-icon">
+                <i class="fa-solid fa-file"></i>
+              </span>
+              <div class="workspace-properties-title-block">
+                <div id="workspacePropertiesName" class="workspace-properties-title"></div>
+                <div id="workspacePropertiesSubtitle" class="workspace-properties-subtitle"></div>
+              </div>
+            </div>
+            <dl id="workspacePropertiesList" class="workspace-properties-list"></dl>
+            <div id="workspacePropertiesHint" class="workspace-properties-hint"></div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="workspacePropertiesCloseBtn" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">Close</span>
+          </button>
+        </div>
+      </div>
+    </div>
     <input
       id="skillUploadInput"
       type="file"
@@ -5889,6 +5920,9 @@
       </button>
       <button id="workspaceCopyBtn" class="btn-with-icon" type="button">
         <i class="fa-solid fa-copy"></i><span data-i18n="workspace.action.copy">复制</span>
+      </button>
+      <button id="workspacePropertiesBtn" class="btn-with-icon" type="button">
+        <i class="fa-solid fa-circle-info"></i><span data-i18n="workspace.menu.properties">Properties</span>
       </button>
       <button id="workspaceNewFolderBtn" class="btn-with-icon" type="button">
         <i class="fa-solid fa-folder-plus"></i><span data-i18n="workspace.action.newFolder">新建文件夹</span>
@@ -6238,7 +6272,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260603-02"></script>
-</body>
+    <script type="module" src="./app.js?v=20260610-01"></script>
+  </body>
 </html>
 

@@ -1,11 +1,16 @@
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20260610-01";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { escapeHtml, formatBytes } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260610-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
+import {
+  closeWorkspacePropertiesModal,
+  initWorkspacePropertiesModal,
+  openWorkspacePropertiesModal,
+} from "./workspace-properties.js?v=20260610-01";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -50,7 +55,7 @@ const ARCHIVE_EXTENSIONS = new Set(["zip", "rar", "7z", "tar", "gz", "bz2"]);
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm"]);
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
-const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_WORKSPACE_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const WORKSPACE_CONTAINER_STORAGE_KEY = "wunder_workspace_container_id";
 const DEFAULT_WORKSPACE_CONTAINER_ID = 1;
 const MIN_WORKSPACE_CONTAINER_ID = 0;
@@ -1155,12 +1160,16 @@ const openWorkspaceMenu = (event, entry = null) => {
   if (!singleEntry && state.workspace.selected) {
     singleEntry = state.workspace.selected;
   }
+  state.workspace.menuEntry = singleEntry;
   elements.workspaceDownloadBtn.disabled = !singleEntry || !["file", "dir"].includes(singleEntry.type);
   elements.workspaceDeleteBtn.disabled = !hasSelection;
   elements.workspaceRenameBtn.disabled = !singleEntry;
   elements.workspaceMoveBtn.disabled = !hasSelection;
   elements.workspaceCopyBtn.disabled = !hasSelection;
   elements.workspaceEditBtn.disabled = !singleEntry || !isWorkspaceTextEditable(singleEntry);
+  if (elements.workspacePropertiesBtn) {
+    elements.workspacePropertiesBtn.disabled = !singleEntry;
+  }
   const menu = elements.workspaceMenu;
   menu.style.display = "flex";
   const menuRect = menu.getBoundingClientRect();
@@ -1174,6 +1183,17 @@ const openWorkspaceMenu = (event, entry = null) => {
 
 const closeWorkspaceMenu = () => {
   elements.workspaceMenu.style.display = "none";
+};
+
+const openWorkspaceProperties = (entry) => {
+  if (!entry) {
+    return;
+  }
+  const containerId = getWorkspaceContainerId();
+  openWorkspacePropertiesModal(entry, {
+    resolveIcon: getWorkspaceEntryIcon,
+    containerValue: Number.isFinite(containerId) ? String(containerId) : undefined,
+  });
 };
 
 const buildWorkspaceDownloadUrl = (entry) => {
@@ -2447,17 +2467,20 @@ export const resetWorkspaceState = () => {
   state.workspace.searchMode = false;
   state.workspace.renamingPath = "";
   state.workspace.flatEntries = [];
+  state.workspace.menuEntry = null;
   updateWorkspaceSelectionMeta();
   if (elements.workspaceSearchInput) {
     elements.workspaceSearchInput.value = "";
   }
   closeWorkspacePreview();
   closeWorkspaceEditor();
+  closeWorkspacePropertiesModal();
   resetInlineEditor();
 };
 
 // 初始化工作区相关交互
 export const initWorkspace = () => {
+  initWorkspacePropertiesModal();
   initWorkspaceContainerSelect();
   updateWorkspaceSortIcon();
   if (elements.workspaceSortSelect) {
@@ -2614,6 +2637,11 @@ export const initWorkspace = () => {
   elements.workspaceCopyBtn.addEventListener("click", () => {
     closeWorkspaceMenu();
     copyWorkspaceSelectionToDirectory();
+  });
+  elements.workspacePropertiesBtn?.addEventListener("click", () => {
+    const entry = state.workspace.menuEntry || state.workspace.selected;
+    closeWorkspaceMenu();
+    openWorkspaceProperties(entry);
   });
   elements.workspaceNewFolderBtn.addEventListener("click", () => {
     closeWorkspaceMenu();

@@ -276,7 +276,7 @@ onlyoffice:
   jwt_header: Authorization
   token_ttl_s: 3600
   request_timeout_s: 60
-  max_download_bytes: 209715200
+  max_download_bytes: 1073741824
 drawio:
   enabled: true
   editor_url: http://127.0.0.1:18081

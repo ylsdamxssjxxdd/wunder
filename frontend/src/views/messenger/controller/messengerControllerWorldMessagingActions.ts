@@ -668,7 +668,21 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
       ctx.worldContainerPickerVisible.value = false;
   };
 
-  ctx.findWorldOversizedFile = (files: File[]): File | undefined => files.find((file) => Number(file.size || 0) > WORLD_UPLOAD_SIZE_LIMIT);
+  const formatWorldUploadLimit = (): string => {
+      const value = Number(WORLD_UPLOAD_SIZE_LIMIT) || 0;
+      if (value >= 1024 * 1024 * 1024) {
+          return `${(value / (1024 * 1024 * 1024)).toFixed(0)} GB`;
+      }
+      return `${Math.round(value / (1024 * 1024))} MB`;
+  };
+
+  ctx.findWorldOversizedFile = (files: File[]): File | undefined => {
+      const oversized = files.find((file) => Number(file.size || 0) > WORLD_UPLOAD_SIZE_LIMIT);
+      if (oversized)
+          return oversized;
+      const totalBytes = files.reduce((sum, file) => sum + (Number(file.size || 0) || 0), 0);
+      return totalBytes > WORLD_UPLOAD_SIZE_LIMIT ? files[0] : undefined;
+  };
 
   ctx.resolveUploadedWorldPath = (value: unknown): string => {
       if (typeof value === 'string') {
@@ -1357,7 +1371,7 @@ export function installMessengerControllerWorldMessagingActions(ctx: MessengerCo
           return;
       const oversized = ctx.findWorldOversizedFile(files);
       if (oversized) {
-          ElMessage.warning(ctx.t('workspace.upload.tooLarge', { limit: '200 MB' }));
+          ElMessage.warning(ctx.t('workspace.upload.tooLarge', { limit: formatWorldUploadLimit() }));
           if (target)
               target.value = '';
           return;

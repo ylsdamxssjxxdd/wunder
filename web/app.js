@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20260602-01";
+import { elements } from "./modules/elements.js?v=20260610-01";
 
 import { state } from "./modules/state.js";
 
@@ -20,7 +20,7 @@ import { loadI18nConfig } from "./modules/i18n-config.js?v=20260603-02";
 
 import { initToolDetailModal } from "./modules/tool-detail.js?v=20260215-01";
 
-import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260215-01";
+import { initWorkspace, loadWorkspace, resetWorkspaceState } from "./modules/workspace.js?v=20260610-01";
 import {
 
   applyPromptToolError,
@@ -60,7 +60,7 @@ import {
 
 import { initBuiltinPanel, loadBuiltinTools } from "./modules/builtin.js?v=20260518-01";
 
-import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260518-01";
+import { initSkillsPanel, loadSkills } from "./modules/skills.js?v=20260610-01";
 import {
   initToolVisibilityPanel,
   loadToolVisibilityPanel,
@@ -84,7 +84,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20260508-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260603-02";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260610-01";
 
 
 

@@ -1,8 +1,13 @@
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260518-01";
+import { t } from "./i18n.js?v=20260610-01";
 import { escapeHtml, formatBytes } from "./utils.js?v=20251229-02";
 import { resolveApiErrorMessage } from "./api-error.js";
+import {
+  closeWorkspacePropertiesModal,
+  initWorkspacePropertiesModal,
+  openWorkspacePropertiesModal,
+} from "./workspace-properties.js?v=20260610-01";
 
 const TEXT_EXTENSIONS = new Set([
   "txt",
@@ -61,6 +66,7 @@ const elements = {
   renameBtn: document.getElementById("skillWorkspaceRenameBtn"),
   moveBtn: document.getElementById("skillWorkspaceMoveBtn"),
   copyBtn: document.getElementById("skillWorkspaceCopyBtn"),
+  propertiesBtn: document.getElementById("skillWorkspacePropertiesBtn"),
   newFolderBtn: document.getElementById("skillWorkspaceNewFolderBtn"),
   downloadBtn: document.getElementById("skillWorkspaceDownloadBtn"),
   deleteBtn: document.getElementById("skillWorkspaceDeleteBtn"),
@@ -86,6 +92,7 @@ const workspace = {
   searchKeyword: "",
   searchMode: false,
   renamingPath: "",
+  menuEntry: null,
   editorEntry: null,
   editorLoading: false,
   editorContent: "",
@@ -536,9 +543,11 @@ export const resetAdminSkillWorkspace = () => {
   workspace.searchKeyword = "";
   workspace.searchMode = false;
   workspace.renamingPath = "";
+  workspace.menuEntry = null;
   resetSelection();
   closeEditor();
   closeMenu();
+  closeWorkspacePropertiesModal();
   if (elements.search) elements.search.value = "";
   updateHeader();
   renderList();
@@ -703,6 +712,7 @@ const openMenu = (event, entry = null) => {
   renderList();
   const paths = selectionPaths();
   const single = paths.length === 1 ? findEntry(workspace.entries, paths[0]) || entry : null;
+  workspace.menuEntry = single || entry || null;
   const editable = isActiveSkillEditable();
   elements.downloadBtn.disabled = !single;
   elements.editBtn.disabled = !single || !isTextEditable(single);
@@ -710,6 +720,9 @@ const openMenu = (event, entry = null) => {
   elements.moveBtn.disabled = !editable || !paths.length;
   elements.copyBtn.disabled = !editable || !paths.length;
   elements.deleteBtn.disabled = !editable || !paths.length;
+  if (elements.propertiesBtn) {
+    elements.propertiesBtn.disabled = !workspace.menuEntry;
+  }
   elements.newFileBtn.disabled = !editable || !workspace.skill;
   elements.newFolderBtn.disabled = !editable || !workspace.skill;
   elements.menu.style.display = "flex";
@@ -720,6 +733,13 @@ const openMenu = (event, entry = null) => {
 
 const closeMenu = () => {
   if (elements.menu) elements.menu.style.display = "none";
+};
+
+const openProperties = (entry) => {
+  if (!entry) return;
+  openWorkspacePropertiesModal(entry, {
+    resolveIcon: entryIcon,
+  });
 };
 
 const createFile = async () => {
@@ -1017,6 +1037,7 @@ const uploadFiles = async (files, targetPath = workspace.path) => {
 export const initAdminSkillWorkspace = (options = {}) => {
   if (initialized || !elements.list) return;
   initialized = true;
+  initWorkspacePropertiesModal();
   isSkillEditable = options.isSkillEditable || isSkillEditable;
   onSkillMetadataChanged = options.onSkillMetadataChanged || onSkillMetadataChanged;
 
@@ -1094,6 +1115,11 @@ export const initAdminSkillWorkspace = (options = {}) => {
   elements.copyBtn?.addEventListener("click", () => {
     closeMenu();
     copySelectionToDirectory();
+  });
+  elements.propertiesBtn?.addEventListener("click", () => {
+    const entry = workspace.menuEntry || workspace.selected;
+    closeMenu();
+    openProperties(entry);
   });
   elements.downloadBtn?.addEventListener("click", () => {
     closeMenu();

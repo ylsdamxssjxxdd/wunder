@@ -27,7 +27,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
-const MAX_WORKSPACE_UPLOAD_BYTES: usize = 200 * 1024 * 1024;
+const MAX_WORKSPACE_UPLOAD_BYTES: usize = 1024 * 1024 * 1024;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()

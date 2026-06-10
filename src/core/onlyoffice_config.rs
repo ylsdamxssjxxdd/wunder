@@ -120,5 +120,5 @@ fn default_onlyoffice_request_timeout_s() -> u64 {
 }
 
 fn default_onlyoffice_max_download_bytes() -> usize {
-    200 * 1024 * 1024
+    1024 * 1024 * 1024
 }

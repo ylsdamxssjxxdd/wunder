@@ -281,6 +281,7 @@ fn create_agent(
         preset_binding: None,
         silent,
         prefer_mother,
+        visible_unit_ids: Vec::new(),
     };
     app.state
         .user_store

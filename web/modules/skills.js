@@ -3,7 +3,7 @@ import { getWunderBase } from "./api.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import { syncPromptTools } from "./tools.js?v=20260214-01";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260518-01";
+import { t } from "./i18n.js?v=20260610-01";
 import { resolveApiErrorMessage } from "./api-error.js";
 import { getAllOrgUnitItems } from "./org-units.js?v=20260518-01";
 import {
@@ -11,7 +11,7 @@ import {
   loadAdminSkillWorkspace,
   refreshAdminSkillWorkspaceHeader,
   resetAdminSkillWorkspace,
-} from "./admin-skill-workspace.js?v=20260604-01";
+} from "./admin-skill-workspace.js?v=20260610-01";
 
 const skillsList = document.getElementById("skillsList");
 const refreshSkillsBtn = document.getElementById("refreshSkillsBtn");

@@ -208,11 +208,54 @@
         <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleDownload">
           {{ resourceActionLabel }}
         </button>
+        <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleProperties">
+          {{ t('workspace.menu.properties') }}
+        </button>
         <button class="workspace-menu-btn danger" :disabled="isReadonlyFileSystem || !contextMenuHasSelection" @click="handleDelete">
           {{ t('common.delete') }}
         </button>
       </div>
     </Teleport>
+
+    <el-dialog
+      v-model="properties.visible"
+      :title="t('workspace.properties.title')"
+      width="560px"
+      top="clamp(10px, 5vh, 44px)"
+      class="workspace-dialog workspace-dialog--properties"
+      append-to-body
+      @closed="state.properties.entry = null"
+    >
+      <div v-if="properties.entry" class="workspace-properties">
+        <div class="workspace-properties-head">
+          <span :class="['workspace-properties-icon', propertiesIcon.className]" :title="propertiesIcon.label">
+            <img
+              class="workspace-properties-icon-img"
+              :src="propertiesIcon.icon"
+              :alt="propertiesIcon.label"
+            />
+          </span>
+          <div class="workspace-properties-title-block">
+            <div class="workspace-properties-title" :title="properties.entry.name || t('workspace.properties.unnamed')">
+              {{ properties.entry.name || t('workspace.properties.unnamed') }}
+            </div>
+            <div class="workspace-properties-subtitle">{{ propertiesTypeLabel }}</div>
+          </div>
+        </div>
+        <dl class="workspace-properties-list">
+          <template v-for="row in propertiesRows" :key="row.key">
+            <dt>{{ row.label }}</dt>
+            <dd :title="row.value">{{ row.value }}</dd>
+          </template>
+        </dl>
+        <div v-if="propertiesHint" class="workspace-properties-hint">{{ propertiesHint }}</div>
+      </div>
+      <template #footer>
+        <button class="workspace-btn secondary" type="button" @click="closePropertiesDialog">
+          {{ t('common.close') }}
+        </button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="preview.visible"
@@ -946,7 +989,7 @@ const WORKSPACE_DRAWIO_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/processon_flow.pn
 const WORKSPACE_ICON_IDLE_TIMEOUT = 1200;
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 // Align the client-side guard with Wunder's workspace upload limit.
-const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
+const MAX_WORKSPACE_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
 const WORKSPACE_SETTLE_REFRESH_DELAY_MS = 1400;
@@ -1151,6 +1194,10 @@ const state = reactive({
   newFileDialog: {
     visible: false
   },
+  properties: {
+    visible: false,
+    entry: null
+  },
   contextMenu: {
     visible: false,
     x: 0,
@@ -1167,6 +1214,7 @@ const loading = computed(() => state.visualLoading);
 const draggingOver = computed(() => state.draggingOver);
 const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
+const properties = computed(() => state.properties);
 const onlyOffice = computed(() => state.onlyOffice);
 const drawio = computed(() => state.drawio);
 const editorPreviewType = computed(() => {
@@ -1513,11 +1561,9 @@ const previewMeta = computed(() => {
   const parts = [];
   if (entry.path) parts.push(entry.path);
   if (Number.isFinite(entry.size)) parts.push(formatBytes(entry.size));
-  if (entry.updated_time) {
-    const updated = new Date(entry.updated_time);
-    if (!Number.isNaN(updated.getTime())) {
-      parts.push(updated.toLocaleString());
-    }
+  const updated = formatWorkspaceTimestamp(entry.updated_time);
+  if (updated) {
+    parts.push(updated);
   }
   return parts.join(' · ');
 });
@@ -1927,6 +1973,14 @@ const formatBytes = (size) => {
   return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 };
 
+const resolveWorkspaceEntryTypeLabel = (entry) => {
+  if (!entry) return t('workspace.properties.unavailable');
+  if (entry.type === 'dir') return t('workspace.meta.folder');
+  const extension = getWorkspaceExtension(entry);
+  const iconLabel = getEntryIcon(entry).label || t('workspace.icon.file');
+  return extension ? `${iconLabel} (.${extension})` : iconLabel;
+};
+
 const normalizeWorkspaceTimestamp = (value) => {
   if (value === null || value === undefined) return 0;
   const date = new Date(value);
@@ -1935,6 +1989,103 @@ const normalizeWorkspaceTimestamp = (value) => {
   if (!Number.isFinite(numeric)) return 0;
   return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
 };
+
+const formatWorkspaceTimestamp = (value) => {
+  const timestamp = normalizeWorkspaceTimestamp(value);
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString();
+};
+
+const collectLoadedDirectoryStats = (entry) => {
+  const result = {
+    loaded: Array.isArray(entry?.children),
+    files: 0,
+    folders: 0,
+    size: 0
+  };
+  const walk = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      if (item.type === 'dir') {
+        result.folders += 1;
+        walk(item.children);
+        return;
+      }
+      result.files += 1;
+      result.size += Number(item.size || 0);
+    });
+  };
+  if (result.loaded) {
+    walk(entry.children);
+  }
+  return result;
+};
+
+const propertiesEntry = computed(() => state.properties.entry);
+const propertiesIcon = computed(() => {
+  const entry = propertiesEntry.value;
+  if (!entry) {
+    return { icon: WORKSPACE_DEFAULT_FILE_ICON, className: 'icon-vscode', label: t('workspace.icon.file') };
+  }
+  return getEntryIcon(entry);
+});
+const propertiesTypeLabel = computed(() => resolveWorkspaceEntryTypeLabel(propertiesEntry.value));
+const propertiesRows = computed(() => {
+  const entry = propertiesEntry.value;
+  if (!entry) return [];
+  const normalizedPath = normalizeWorkspacePath(entry.path || '');
+  const rows = [
+    { key: 'name', label: t('workspace.properties.name'), value: String(entry.name || t('workspace.properties.unnamed')) },
+    { key: 'type', label: t('workspace.properties.type'), value: resolveWorkspaceEntryTypeLabel(entry) },
+    { key: 'path', label: t('workspace.properties.path'), value: normalizedPath ? `/${normalizedPath}` : '/' }
+  ];
+  if (entry.type === 'dir') {
+    const stats = collectLoadedDirectoryStats(entry);
+    rows.push({
+      key: 'children',
+      label: t('workspace.properties.children'),
+      value: stats.loaded
+        ? t('workspace.properties.loadedChildrenSummary', { folders: stats.folders, files: stats.files })
+        : t('workspace.properties.notLoaded')
+    });
+    rows.push({
+      key: 'loaded-size',
+      label: t('workspace.properties.loadedSize'),
+      value: stats.loaded ? formatBytes(stats.size) : t('workspace.properties.notLoaded')
+    });
+  } else {
+    const extension = getWorkspaceExtension(entry);
+    if (extension) {
+      rows.push({ key: 'extension', label: t('workspace.properties.extension'), value: `.${extension}` });
+    }
+    rows.push({ key: 'size', label: t('workspace.properties.size'), value: formatBytes(entry.size || 0) });
+  }
+  rows.push({
+    key: 'modified',
+    label: t('workspace.properties.modified'),
+    value:
+      formatWorkspaceTimestamp(entry.updated_time || entry.updatedAt || entry.modified_at || entry.modifiedTime) ||
+      t('workspace.properties.unavailable')
+  });
+  if (isWorkspaceFileSystem.value) {
+    rows.push({
+      key: 'container',
+      label: t('workspace.properties.container'),
+      value: String(normalizedContainerId.value)
+    });
+  }
+  return rows;
+});
+const propertiesHint = computed(() => {
+  const entry = propertiesEntry.value;
+  if (!entry || entry.type !== 'dir') return '';
+  return Array.isArray(entry.children)
+    ? t('workspace.properties.loadedScopeHint')
+    : t('workspace.properties.unloadedScopeHint');
+});
 
 const collectWorkspaceStats = (entries) => {
   let latestUpdatedAt = 0;
@@ -2727,7 +2878,7 @@ const uploadWorkspaceFiles = async (
   const { refreshTree = true, relativePaths = [] } = options;
   const fileList = Array.from(files);
   const totalBytes = fileList.reduce((sum: number, file) => sum + (Number(file?.size) || 0), 0);
-  // 瀵归綈 Wunder 涓婁紶闄愬埗锛氬崟娆′笂浼犳€诲ぇ灏忎笉瓒呰繃 200MB
+  // Keep client-side validation aligned with the workspace upload limit.
   if (totalBytes > MAX_WORKSPACE_UPLOAD_BYTES) {
     throw new Error(
       t('workspace.upload.tooLarge', { limit: formatBytes(MAX_WORKSPACE_UPLOAD_BYTES) })
@@ -2839,6 +2990,16 @@ const closeContextMenu = () => {
   state.contextMenu.visible = false;
 };
 
+const closePropertiesDialog = () => {
+  state.properties.visible = false;
+};
+
+const openPropertiesDialog = (entry) => {
+  if (!entry) return;
+  state.properties.entry = entry;
+  state.properties.visible = true;
+};
+
 const openContextMenu = async (event, entry) => {
   const nextSelectionPaths = entry?.path
     ? state.selectedPaths.has(entry.path)
@@ -2912,6 +3073,13 @@ const handleDownload = async () => {
   closeContextMenu();
   if (!targetEntry) return;
   await downloadEntry(targetEntry);
+};
+
+const handleProperties = () => {
+  const targetEntry = contextMenuSingleEntry.value;
+  closeContextMenu();
+  if (!targetEntry) return;
+  openPropertiesDialog(targetEntry);
 };
 
 const handleDelete = async () => {
