@@ -40,7 +40,7 @@ import {
   saveObjectUrlAsFile,
   scheduleWorkspaceLoadingLabel
 } from '@/utils/workspaceResourceCards';
-import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import { isMetafileImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 
 const props = defineProps<{
   cacheKey: string;
@@ -68,6 +68,9 @@ type WorkspaceResourceCacheEntry = {
 const MARKDOWN_CACHE_LIMIT = 160;
 const markdownCache = new Map<string, MarkdownCacheEntry>();
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
+
+const buildWorkspaceResourceCacheKey = (publicPath: string, preview = ''): string =>
+  preview ? `${publicPath}#preview=${preview}` : publicPath;
 
 const { t } = useI18n();
 const authStore = useAuthStore();
@@ -161,8 +164,12 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   };
 };
 
-const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
-  const cacheKey = resource.publicPath;
+const fetchWorkspaceResource = async (
+  resource: WorkspaceResolvedResource,
+  options: { preview?: 'png' } = {}
+) => {
+  const preview = options.preview === 'png' ? 'png' : '';
+  const cacheKey = buildWorkspaceResourceCacheKey(resource.publicPath, preview);
   const cached = workspaceResourceCache.get(cacheKey);
   if (cached?.objectUrl) {
     return {
@@ -184,11 +191,18 @@ const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
     if (resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)) {
       params.container_id = String(resource.requestContainerId);
     }
+    if (preview) {
+      params.preview = preview;
+    }
     const response = await downloadWunderWorkspaceFile(params);
     try {
+      const fallbackFilename =
+        preview === 'png'
+          ? `${String(resource.filename || 'preview').replace(/\.[^.]+$/, '')}.png`
+          : resource.filename || 'download';
       const filename = getFilenameFromHeaders(
         response?.headers as Record<string, unknown>,
-        resource.filename || 'download'
+        fallbackFilename
       );
       const contentType = String(
         (response?.headers as Record<string, unknown>)?.['content-type'] ||
@@ -268,7 +282,11 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
     if (status) status.textContent = message;
   };
   try {
-    const entry = await fetchWorkspaceResource(resource);
+    const entry = await fetchWorkspaceResource(resource, {
+      preview: isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
+        ? 'png'
+        : undefined
+    });
     preview.onload = () => markReady();
     preview.onerror = () => markError(t('chat.resourceImageFailed'));
     preview.src = entry.objectUrl;

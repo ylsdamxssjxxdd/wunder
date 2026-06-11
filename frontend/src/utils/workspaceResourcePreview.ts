@@ -4,7 +4,7 @@ import workspaceIconsTheme from '@/assets/vscode-icons-theme.json';
 
 export const WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES = 512 * 1024;
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'wmf', 'emf']);
 const PDF_EXTENSIONS = new Set(['pdf']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
@@ -198,7 +198,9 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   gif: 'image/gif',
   bmp: 'image/bmp',
   webp: 'image/webp',
-  svg: 'image/svg+xml'
+  svg: 'image/svg+xml',
+  wmf: 'image/png',
+  emf: 'image/png'
 };
 
 const AUDIO_MIME_TYPES: Record<string, string> = {

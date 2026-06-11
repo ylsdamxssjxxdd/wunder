@@ -365,6 +365,21 @@ type WorldVoicePlaybackRuntime = {
   currentResourceKey: string;
 };
 
+const METAFILE_IMAGE_CONTENT_TYPES = new Set([
+  'image/wmf',
+  'image/emf',
+  'image/x-wmf',
+  'image/x-emf',
+  'application/x-msmetafile',
+  'application/emf',
+  'application/x-emf'
+]);
+
+const isImageAttachmentContentType = (contentType: string): boolean => {
+  const normalized = String(contentType || '').trim().toLowerCase();
+  return normalized.startsWith('image/') || METAFILE_IMAGE_CONTENT_TYPES.has(normalized);
+};
+
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 
 type WorkspaceResourceCacheEntry = {
@@ -476,7 +491,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           const contentType = ctx.resolveAttachmentContentType(record);
           const publicPath = ctx.resolveAttachmentPublicPath(record);
           const isDataImage = content.startsWith('data:image/');
-          const isWorkspaceImage = Boolean(publicPath) && (contentType.startsWith('image/') || isImagePath(publicPath));
+          const isWorkspaceImage = Boolean(publicPath) &&
+              (isImageAttachmentContentType(contentType) || isImagePath(publicPath));
           if (!isDataImage && !isWorkspaceImage)
               return null;
           const fallbackName = `image-${index + 1}`;
@@ -562,7 +578,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
               if (content.startsWith('data:'))
                   return;
               const contentType = ctx.resolveAttachmentContentType(record);
-              const isImage = contentType.startsWith('image/') || isImagePath(publicPath);
+              const isImage = isImageAttachmentContentType(contentType) || isImagePath(publicPath);
               const isAudio = contentType.startsWith('audio/') || ctx.isAudioPath(publicPath);
               if (isImage || isAudio) {
                   paths.add(publicPath);

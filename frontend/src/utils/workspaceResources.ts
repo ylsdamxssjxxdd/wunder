@@ -2,7 +2,8 @@ const WORKSPACE_PUBLIC_PREFIX = '/workspaces/';
 const WORKSPACE_AGENT_MARKER = '__agent__';
 const WORKSPACE_SHORT_AGENT_MARKER = '__a__';
 const WORKSPACE_CONTAINER_MARKER = '__c__';
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'wmf', 'emf']);
+const METAFILE_IMAGE_EXTENSIONS = new Set(['wmf', 'emf']);
 const ABSOLUTE_URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 const FILE_URI_SCHEME_RE = /^file:/i;
 const WINDOWS_DRIVE_RE = /^[a-zA-Z]:[\\/]/;
@@ -293,6 +294,14 @@ export const isImagePath = (path) => {
   const suffix = value.split('?')[0].split('#')[0].split('.').pop();
   if (!suffix) return false;
   return IMAGE_EXTENSIONS.has(suffix.toLowerCase());
+};
+
+export const isMetafileImagePath = (path) => {
+  const value = String(path || '').trim();
+  if (!value) return false;
+  const suffix = value.split('?')[0].split('#')[0].split('.').pop();
+  if (!suffix) return false;
+  return METAFILE_IMAGE_EXTENSIONS.has(suffix.toLowerCase());
 };
 
 export const WORKSPACE_PUBLIC_ROOT = WORKSPACE_PUBLIC_PREFIX;

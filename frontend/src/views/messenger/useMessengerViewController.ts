@@ -162,6 +162,7 @@ import {
 } from '@/utils/messageWorkspacePath';
 import {
   isImagePath,
+  isMetafileImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
 import {
@@ -373,6 +374,7 @@ export function useMessengerViewController(): Record<string, any> {
     isCompactionRunningFromWorkflowItems,
     isDesktopModeEnabled,
     isImagePath,
+    isMetafileImagePath,
     isWorkspacePathAffected,
     isWorldVoiceContentType,
     listAgentUserRounds,

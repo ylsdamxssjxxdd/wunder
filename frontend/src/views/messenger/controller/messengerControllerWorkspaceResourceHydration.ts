@@ -366,6 +366,9 @@ type WorkspaceResourceCacheEntry = {
   promise?: Promise<WorkspaceResourceCachePayload>;
 };
 
+const buildWorkspaceResourceCacheKey = (publicPath: string, preview = ''): string =>
+  preview ? `${publicPath}#preview=${preview}` : publicPath;
+
 type AttachmentResourceState = {
   objectUrl?: string;
   filename?: string;
@@ -608,8 +611,12 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       };
   };
 
-  ctx.fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
-      const cacheKey = resource.publicPath;
+  ctx.fetchWorkspaceResource = async (
+      resource: WorkspaceResolvedResource,
+      options: { preview?: 'png' } = {}
+  ) => {
+      const preview = options.preview === 'png' ? 'png' : '';
+      const cacheKey = buildWorkspaceResourceCacheKey(resource.publicPath, preview);
       const cached = ctx.workspaceResourceCache.get(cacheKey);
       if (cached?.objectUrl) {
           return {
@@ -632,9 +639,15 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           if (resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)) {
               params.container_id = String(resource.requestContainerId);
           }
+          if (preview) {
+              params.preview = preview;
+          }
           const response = await downloadWunderWorkspaceFile(params);
           try {
-              const filename = getFilenameFromHeaders(response?.headers as Record<string, unknown>, resource.filename || 'download');
+              const fallbackFilename = preview === 'png'
+                  ? `${String(resource.filename || 'preview').replace(/\.[^.]+$/, '')}.png`
+                  : resource.filename || 'download';
+              const filename = getFilenameFromHeaders(response?.headers as Record<string, unknown>, fallbackFilename);
               const contentType = String((response?.headers as Record<string, unknown>)?.['content-type'] ||
                   (response?.headers as Record<string, unknown>)?.['Content-Type'] ||
                   '');
@@ -679,7 +692,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
       ctx.setUserAttachmentResourceState(normalized, { loading: true });
       try {
-          const entry = await ctx.fetchWorkspaceResource(resource);
+          const preview = ctx.isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
+              ? 'png'
+              : undefined;
+          const entry = await ctx.fetchWorkspaceResource(resource, { preview });
           ctx.setUserAttachmentResourceState(normalized, {
               objectUrl: entry.objectUrl,
               filename: entry.filename
@@ -747,7 +763,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       card.classList.remove('is-ready');
       const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status, ctx.t('chat.resourceImageLoading'));
       try {
-          const entry = await ctx.fetchWorkspaceResource(resource);
+          const entry = await ctx.fetchWorkspaceResource(resource, {
+              preview: ctx.isMetafileImagePath(resource.filename) ? 'png' : undefined
+          });
           preview.src = entry.objectUrl;
           card.dataset.workspaceState = 'ready';
           card.classList.add('is-ready');
@@ -1132,9 +1150,12 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
                   : ctx.t('workspace.preview.emptyContent');
               return;
           }
-          const entry = await ctx.fetchWorkspaceResource(resource);
+          const preview = ctx.isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
+              ? 'png'
+              : undefined;
+          const entry = await ctx.fetchWorkspaceResource(resource, { preview });
           const extension = extractWorkspaceResourceExtension(fileName);
-          const cacheEntry = ctx.workspaceResourceCache.get(resource.publicPath);
+          const cacheEntry = ctx.workspaceResourceCache.get(buildWorkspaceResourceCacheKey(resource.publicPath, preview || ''));
           if (cacheEntry?.objectUrl && previewKind !== 'pdf') {
               ctx.resourcePreviewUrl.value = cacheEntry.objectUrl;
               return;

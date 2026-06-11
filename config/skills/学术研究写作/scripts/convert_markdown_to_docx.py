@@ -556,74 +556,59 @@ def configure_section(section, args: argparse.Namespace) -> None:
     doc_grid.set(qn("w:charSpace"), str(char_space))
 
 
-def setup_styles(doc: Document, args: argparse.Namespace) -> None:
+def resolve_first_line_indent(args: argparse.Namespace):
     if args.first_line_indent_cm > 0:
-        first_line_indent = Cm(args.first_line_indent_cm)
-    else:
-        first_line_indent = Pt(args.font_size * args.first_line_indent_chars)
+        return Cm(args.first_line_indent_cm)
+    return Pt(args.font_size * args.first_line_indent_chars)
+
+
+def apply_fixed_paragraph_layout(paragraph_format, args: argparse.Namespace, first_line_indent=None) -> None:
+    paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    paragraph_format.space_before = Pt(0)
+    paragraph_format.space_after = Pt(0)
+    if first_line_indent is not None:
+        paragraph_format.first_line_indent = first_line_indent
+
+
+def setup_styles(doc: Document, args: argparse.Namespace) -> None:
+    first_line_indent = resolve_first_line_indent(args)
 
     normal = doc.styles["Normal"]
     set_style_font(normal, args.font, args.font_size, None, args.digit_font)
-    normal.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    normal.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
-    normal.paragraph_format.space_before = Pt(0)
-    normal.paragraph_format.space_after = Pt(0)
-    normal.paragraph_format.first_line_indent = first_line_indent
+    apply_fixed_paragraph_layout(normal.paragraph_format, args, first_line_indent)
 
     heading_1 = doc.styles["Heading 1"]
     set_style_font(heading_1, args.title_font, args.title_size, False, args.digit_font)
     heading_1.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    heading_1.paragraph_format.space_before = Pt(0)
-    heading_1.paragraph_format.space_after = Pt(0)
-    heading_1.paragraph_format.first_line_indent = first_line_indent
-    heading_1.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    heading_1.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    apply_fixed_paragraph_layout(heading_1.paragraph_format, args, first_line_indent)
 
     heading_2 = doc.styles["Heading 2"]
     set_style_font(heading_2, args.heading1_font, args.heading_size, False, args.digit_font)
     heading_2.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    heading_2.paragraph_format.space_before = Pt(0)
-    heading_2.paragraph_format.space_after = Pt(0)
-    heading_2.paragraph_format.first_line_indent = first_line_indent
-    heading_2.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    heading_2.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    apply_fixed_paragraph_layout(heading_2.paragraph_format, args, first_line_indent)
 
     heading_3 = doc.styles["Heading 3"]
     set_style_font(heading_3, args.heading2_font, args.heading_size, True, args.digit_font)
     heading_3.font.italic = False
     heading_3.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    heading_3.paragraph_format.space_before = Pt(0)
-    heading_3.paragraph_format.space_after = Pt(0)
-    heading_3.paragraph_format.first_line_indent = first_line_indent
-    heading_3.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    heading_3.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    apply_fixed_paragraph_layout(heading_3.paragraph_format, args, first_line_indent)
 
     heading_4 = doc.styles["Heading 4"]
     set_style_font(heading_4, args.heading3_font, args.heading_size, True, args.digit_font)
     heading_4.font.italic = False
     heading_4.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    heading_4.paragraph_format.space_before = Pt(0)
-    heading_4.paragraph_format.space_after = Pt(0)
-    heading_4.paragraph_format.first_line_indent = first_line_indent
-    heading_4.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    heading_4.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    apply_fixed_paragraph_layout(heading_4.paragraph_format, args, first_line_indent)
 
     heading_5 = doc.styles["Heading 5"]
     set_style_font(heading_5, args.heading4_font, args.heading_size, False, args.digit_font)
     heading_5.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    heading_5.paragraph_format.space_before = Pt(0)
-    heading_5.paragraph_format.space_after = Pt(0)
-    heading_5.paragraph_format.first_line_indent = first_line_indent
-    heading_5.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-    heading_5.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
+    apply_fixed_paragraph_layout(heading_5.paragraph_format, args, first_line_indent)
 
     for style_name in ["List Bullet", "List Number"]:
         style = doc.styles[style_name]
         set_style_font(style, args.font, args.font_size, None, args.digit_font)
-        style.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-        style.paragraph_format.line_spacing = Pt(args.line_spacing_pt)
-        style.paragraph_format.space_before = Pt(0)
-        style.paragraph_format.space_after = Pt(0)
+        apply_fixed_paragraph_layout(style.paragraph_format, args)
 
     if "Imprint" not in doc.styles:
         imprint = doc.styles.add_style("Imprint", WD_STYLE_TYPE.PARAGRAPH)
@@ -2207,6 +2192,150 @@ def normalize_image_paragraphs(doc: Document, space_pt: float) -> int:
     return count
 
 
+def paragraph_has_numbering(paragraph) -> bool:
+    p_pr = paragraph._p.pPr
+    return p_pr is not None and p_pr.find(qn("w:numPr")) is not None
+
+
+def is_list_paragraph(paragraph) -> bool:
+    style_name = paragraph.style.name if paragraph.style is not None else ""
+    return style_name in {"List Bullet", "List Number"} or paragraph_has_numbering(paragraph)
+
+
+def normalize_list_paragraphs(doc: Document, args: argparse.Namespace) -> int:
+    count = 0
+    for paragraph in doc.paragraphs:
+        if not is_list_paragraph(paragraph):
+            continue
+        apply_fixed_paragraph_layout(paragraph.paragraph_format, args)
+        paragraph.paragraph_format.first_line_indent = None
+        paragraph.paragraph_format.left_indent = None
+        paragraph.paragraph_format.right_indent = None
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        count += 1
+    return count
+
+
+def ensure_child(parent, tag: str):
+    child = parent.find(qn(tag))
+    if child is None:
+        child = OxmlElement(tag)
+        parent.append(child)
+    return child
+
+
+def ensure_numbering_suffix(lvl, value: str) -> None:
+    suff = lvl.find(qn("w:suff"))
+    if suff is None:
+        suff = OxmlElement("w:suff")
+        insert_at = 0
+        for index, child in enumerate(list(lvl)):
+            insert_at = index + 1
+            if child.tag == qn("w:lvlText"):
+                break
+        lvl.insert(insert_at, suff)
+    suff.set(qn("w:val"), value)
+
+
+def normalize_numbering_definitions(doc: Document, args: argparse.Namespace) -> int:
+    numbering = getattr(getattr(doc.part, "numbering_part", None), "element", None)
+    if numbering is None:
+        return 0
+
+    supported_formats = {
+        "bullet",
+        "decimal",
+        "decimalZero",
+        "lowerLetter",
+        "upperLetter",
+        "lowerRoman",
+        "upperRoman",
+        "chineseCounting",
+        "ideographDigital",
+    }
+    left_step_twips = max(360, int(args.font_size * 30))
+    hanging_twips = max(240, int(args.font_size * 15))
+    count = 0
+
+    for lvl in numbering.xpath(".//w:lvl"):
+        num_fmt = lvl.find(qn("w:numFmt"))
+        num_fmt_value = num_fmt.get(qn("w:val")) if num_fmt is not None else ""
+        if num_fmt_value not in supported_formats:
+            continue
+
+        ensure_numbering_suffix(lvl, "space")
+        p_pr = ensure_child(lvl, "w:pPr")
+        ind = ensure_child(p_pr, "w:ind")
+
+        try:
+            level = int(lvl.get(qn("w:ilvl"), "0"))
+        except ValueError:
+            level = 0
+        target_left = left_step_twips * (level + 1)
+        old_left = ind.get(qn("w:left"))
+        if old_left and old_left.isdigit():
+            target_left = min(int(old_left), target_left)
+        target_hanging = min(target_left, hanging_twips)
+
+        ind.attrib.pop(qn("w:firstLine"), None)
+        ind.set(qn("w:left"), str(target_left))
+        ind.set(qn("w:hanging"), str(target_hanging))
+
+        tabs = p_pr.find(qn("w:tabs"))
+        if tabs is not None:
+            for tab in tabs.findall(qn("w:tab")):
+                if tab.get(qn("w:val")) == "num":
+                    tab.set(qn("w:pos"), str(target_left))
+        count += 1
+
+    return count
+
+
+def normalize_body_paragraphs(doc: Document, args: argparse.Namespace) -> int:
+    first_line_indent = resolve_first_line_indent(args)
+    skipped_styles = {
+        "Heading 1",
+        "Heading 2",
+        "Heading 3",
+        "Heading 4",
+        "Heading 5",
+        "Title",
+        "Subtitle",
+        "List Bullet",
+        "List Number",
+        "Source Code",
+        "Imprint",
+    }
+    zero_indent_prefixes = (
+        "主送：",
+        "主送机关：",
+        "抄送：",
+        "印发：",
+        "图片：",
+        "圖：",
+        "图：",
+        "表：",
+    )
+    count = 0
+    for paragraph in doc.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        style_name = paragraph.style.name if paragraph.style is not None else ""
+        if style_name in skipped_styles:
+            continue
+        if is_list_paragraph(paragraph):
+            continue
+        if paragraph._p.xpath(".//w:drawing"):
+            continue
+
+        apply_fixed_paragraph_layout(paragraph.paragraph_format, args, first_line_indent)
+        if text.startswith(zero_indent_prefixes) or text in HEADER_KEYS:
+            paragraph.paragraph_format.first_line_indent = Pt(0)
+        count += 1
+    return count
+
+
 def apply_style_fonts(doc: Document, args: argparse.Namespace) -> None:
     style_map = {
         "Normal": (args.font, args.font_size),
@@ -2440,6 +2569,9 @@ def superscript_citations(doc: Document) -> None:
 def postprocess_docx(path: Path, args: argparse.Namespace, space_pt: float) -> None:
     doc = Document(path)
     apply_style_fonts(doc, args)
+    normalize_numbering_definitions(doc, args)
+    normalize_body_paragraphs(doc, args)
+    normalize_list_paragraphs(doc, args)
     normalize_tables(doc, args)
     normalize_code_blocks(doc, args)
     normalize_image_paragraphs(doc, space_pt)

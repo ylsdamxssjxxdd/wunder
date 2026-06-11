@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::path_utils::strip_windows_verbatim_prefix;
+use crate::services::chat_media::render_metafile_preview_png;
 use crate::services::workspace_file_templates::build_workspace_file_template;
 use crate::state::AppState;
 use crate::storage::{normalize_workspace_container_id, DEFAULT_SANDBOX_CONTAINER_ID};
@@ -1066,6 +1067,22 @@ async fn workspace_download(
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("download");
+    if params
+        .preview
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("png"))
+    {
+        let preview = render_metafile_preview_png(&target)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let preview_name = Path::new(filename)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .map(|name| format!("{name}.png"))
+            .unwrap_or_else(|| "preview.png".to_string());
+        return Ok(bytes_response(preview, &preview_name, "image/png"));
+    }
     let file = tokio::fs::File::open(&target)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -1380,6 +1397,18 @@ where
     response
 }
 
+fn bytes_response(bytes: Vec<u8>, filename: &str, content_type: &'static str) -> Response {
+    let disposition = build_content_disposition(filename);
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    response
+}
+
 fn build_content_disposition(filename: &str) -> String {
     let ascii_name = sanitize_filename(filename);
     if ascii_name == filename {
@@ -1503,6 +1532,8 @@ struct WorkspaceDownloadQuery {
     #[serde(default)]
     container_id: Option<i32>,
     path: String,
+    #[serde(default)]
+    preview: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

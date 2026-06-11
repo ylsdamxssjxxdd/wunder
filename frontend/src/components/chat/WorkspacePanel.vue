@@ -775,7 +775,8 @@ const TEXT_EXTENSIONS = new Set([
   'dockerfile',
   'gitignore'
 ]);
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'wmf', 'emf']);
+const METAFILE_IMAGE_EXTENSIONS = new Set(['wmf', 'emf']);
 const IMAGE_MIME_TYPES = {
   png: 'image/png',
   jpg: 'image/jpeg',
@@ -783,7 +784,9 @@ const IMAGE_MIME_TYPES = {
   gif: 'image/gif',
   bmp: 'image/bmp',
   webp: 'image/webp',
-  svg: 'image/svg+xml'
+  svg: 'image/svg+xml',
+  wmf: 'image/png',
+  emf: 'image/png'
 };
 const AUDIO_MIME_TYPES = {
   aac: 'audio/aac',
@@ -1704,6 +1707,16 @@ const getWorkspaceExtension = (entry) => {
   const dotIndex = baseName.lastIndexOf('.');
   if (dotIndex === -1 || dotIndex === baseName.length - 1) return '';
   return baseName.slice(dotIndex + 1).toLowerCase();
+};
+
+const isWorkspaceMetafileImage = (entry) => METAFILE_IMAGE_EXTENSIONS.has(getWorkspaceExtension(entry));
+
+const withWorkspacePreviewParams = (entry) => {
+  const params = { path: entry.path };
+  if (!isWorkspaceFileSystem.value || !isWorkspaceMetafileImage(entry)) {
+    return params;
+  }
+  return { ...params, preview: 'png' };
 };
 
 const normalizeWorkspaceEventPathValue = (value) => {
@@ -3888,7 +3901,7 @@ const openPreviewWithoutOnlyOffice = async (entry) => {
       AUDIO_EXTENSIONS.has(extension) ||
       VIDEO_EXTENSIONS.has(extension)
     ) {
-      const response = await activeFileSystem.value.downloadFile(withFsParams({ path: entry.path }));
+      const response = await activeFileSystem.value.downloadFile(withFsParams(withWorkspacePreviewParams(entry)));
       let blob = response.data;
       if (IMAGE_EXTENSIONS.has(extension)) {
         const expectedMime = IMAGE_MIME_TYPES[extension] || '';

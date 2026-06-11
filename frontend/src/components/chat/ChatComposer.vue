@@ -690,7 +690,14 @@ const IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/gif',
   'image/bmp',
-  'image/webp'
+  'image/webp',
+  'image/wmf',
+  'image/emf',
+  'image/x-wmf',
+  'image/x-emf',
+  'application/x-msmetafile',
+  'application/emf',
+  'application/x-emf'
 ]);
 
 type AttachmentPayload = {
@@ -1387,9 +1394,18 @@ const inferImageMimeTypeFromExtension = (filename: unknown): string => {
       return 'image/bmp';
     case 'webp':
       return 'image/webp';
+    case 'wmf':
+      return 'image/wmf';
+    case 'emf':
+      return 'image/emf';
     default:
       return '';
   }
+};
+
+const isWindowsMetafile = (file: File): boolean => {
+  const ext = resolveFileExtension(file?.name);
+  return ext === 'wmf' || ext === 'emf';
 };
 
 const resolveSupportedImageMimeType = (file): string => {
@@ -1404,6 +1420,9 @@ const resolveSupportedImageMimeType = (file): string => {
 const validateImageFile = async (file: File): Promise<void> => {
   if (!file) {
     throw new Error(t('chat.attachments.imageInvalid'));
+  }
+  if (isWindowsMetafile(file)) {
+    return;
   }
   if (typeof createImageBitmap === 'function') {
     let bitmap: ImageBitmap | null = null;

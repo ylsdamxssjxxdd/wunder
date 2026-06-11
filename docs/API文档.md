@@ -1852,8 +1852,10 @@
 - 入参（Query）：
   - `user_id`：用户唯一标识
   - `agent_id`：智能体应用 id（可选）
+  - `container_id`：工作区容器 id（可选）
   - `path`：相对路径（文件）
-- 返回：文件流
+  - `preview`：预览格式（可选）；`preview=png` 仅支持 WMF/EMF 元文件，返回转换后的 PNG 预览，普通下载不使用该参数。
+- 返回：文件流；`preview=png` 时 `Content-Type` 为 `image/png`，否则按原文件流式返回。
 
 ### 4.1.17 `/wunder/workspace/archive`
 

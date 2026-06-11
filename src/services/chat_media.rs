@@ -36,6 +36,7 @@ const MAX_GIF_FRAME_STEP: usize = 120;
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
 const FFPROBE_BIN_ENV: &str = "WUNDER_FFPROBE_BIN";
+const IMAGE_MAGICK_BIN_ENV: &str = "WUNDER_IMAGE_MAGICK_BIN";
 
 #[derive(Debug, Clone)]
 pub struct ChatMediaUpload {
@@ -241,6 +242,27 @@ async fn process_image_source(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "image".to_string());
+    if is_windows_metafile_path(source_path) {
+        let preview =
+            render_metafile_preview_attachment(workspace, workspace_id, source_path).await?;
+        let source_public_path = workspace.display_path(workspace_id, source_path);
+        return Ok(ChatMediaProcessResult {
+            kind: "image".to_string(),
+            name: filename,
+            source_public_path,
+            transcript: None,
+            duration_ms: None,
+            requested_frame_rate: None,
+            applied_frame_rate: None,
+            requested_frame_step: None,
+            applied_frame_step: None,
+            total_frame_count: None,
+            frame_count: 1,
+            has_audio: false,
+            attachments: vec![preview],
+            warnings: Vec::new(),
+        });
+    }
     let bytes = fs::read(source_path).await?;
     let mime_type = detect_supported_image_content_type(source_path, bytes.as_slice())
         .ok_or_else(|| anyhow!("unsupported image type, expected png/jpeg/gif/webp/bmp/tiff"))?;
@@ -279,6 +301,61 @@ async fn process_image_source(
             public_path: Some(public_path),
         }],
         warnings: Vec::new(),
+    })
+}
+
+pub async fn render_metafile_preview_png(source_path: &Path) -> Result<Vec<u8>> {
+    if !is_windows_metafile_path(source_path) {
+        return Err(anyhow!("unsupported metafile preview type"));
+    }
+    let temp_dir = std::env::temp_dir()
+        .join("wunder_metafile_previews")
+        .join(Uuid::new_v4().simple().to_string());
+    fs::create_dir_all(&temp_dir).await?;
+    let output_path = temp_dir.join("preview.png");
+    let result = async {
+        convert_metafile_to_png(source_path, &output_path).await?;
+        let bytes = fs::read(&output_path).await?;
+        if bytes.is_empty() {
+            return Err(anyhow!(
+                "metafile preview conversion produced an empty image"
+            ));
+        }
+        Ok(bytes)
+    }
+    .await;
+    if temp_dir.exists() {
+        if let Err(err) = fs::remove_dir_all(&temp_dir).await {
+            warn!(
+                "metafile preview temp cleanup failed: {}, {}",
+                temp_dir.display(),
+                err
+            );
+        }
+    }
+    result
+}
+
+async fn render_metafile_preview_attachment(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_path: &Path,
+) -> Result<AttachmentPayload> {
+    let preview_bytes = render_metafile_preview_png(source_path).await?;
+    let source_name = source_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("metafile");
+    let derived_root = persist_derived_root(workspace, workspace_id, source_name).await?;
+    let output_path = derived_root.join("preview.png");
+    fs::write(&output_path, preview_bytes).await?;
+    Ok(AttachmentPayload {
+        name: Some(format!("{source_name}.png")),
+        content: None,
+        content_type: Some("image/png".to_string()),
+        public_path: Some(workspace.display_path(workspace_id, &output_path)),
     })
 }
 
@@ -914,7 +991,7 @@ fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<Media
         .to_ascii_lowercase();
     if matches!(
         extension.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff"
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "wmf" | "emf"
     ) {
         return Some(MediaKind::Image);
     }
@@ -931,6 +1008,55 @@ fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<Media
         return Some(MediaKind::Video);
     }
     None
+}
+
+fn is_windows_metafile_path(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(extension.as_str(), "wmf" | "emf")
+}
+
+async fn convert_metafile_to_png(source_path: &Path, output_path: &Path) -> Result<()> {
+    let configured = std::env::var(IMAGE_MAGICK_BIN_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let mut programs = Vec::new();
+    if let Some(program) = configured {
+        programs.push(program);
+    } else {
+        programs.push("magick".to_string());
+        if !cfg!(windows) {
+            programs.push("convert".to_string());
+        }
+    }
+
+    let mut failures = Vec::new();
+    for program in programs {
+        let output_target = format!("png:{}", output_path.to_string_lossy());
+        let args = vec![source_path.to_string_lossy().to_string(), output_target];
+        match run_command_with_missing_hint(
+            &program,
+            args,
+            &format!(
+                "required executable `{program}` not found; set {IMAGE_MAGICK_BIN_ENV} or install ImageMagick"
+            ),
+        )
+        .await
+        {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => failures.push(format!("{program}: {}", stderr_to_text(&output.stderr))),
+            Err(err) => failures.push(format!("{program}: {err}")),
+        }
+    }
+
+    Err(anyhow!(
+        "metafile preview conversion failed; install ImageMagick or set {IMAGE_MAGICK_BIN_ENV}: {}",
+        failures.join("; ")
+    ))
 }
 
 pub fn detect_media_kind_from_path(path: &Path, sample: &[u8]) -> Option<String> {
@@ -1020,6 +1146,8 @@ fn detect_supported_image_content_type(path: &Path, bytes: &[u8]) -> Option<Stri
         "webp" => Some("image/webp".to_string()),
         "bmp" => Some("image/bmp".to_string()),
         "tif" | "tiff" => Some("image/tiff".to_string()),
+        "wmf" => Some("image/wmf".to_string()),
+        "emf" => Some("image/emf".to_string()),
         _ => None,
     }
 }
@@ -1164,14 +1292,27 @@ fn resolve_binary(env_name: &str, fallback: &str) -> String {
 }
 
 async fn run_command(program: &str, args: Vec<String>) -> Result<std::process::Output> {
+    run_command_with_missing_hint(
+        program,
+        args,
+        &format!(
+            "required executable `{program}` not found; set {FFMPEG_BIN_ENV}/{FFPROBE_BIN_ENV} or install ffmpeg"
+        ),
+    )
+    .await
+}
+
+async fn run_command_with_missing_hint(
+    program: &str,
+    args: Vec<String>,
+    missing_hint: &str,
+) -> Result<std::process::Output> {
     let mut command = Command::new(program);
     command.args(args);
     apply_platform_spawn_options(&mut command);
     match command.output().await {
         Ok(output) => Ok(output),
-        Err(err) if is_not_found_error(&err) => Err(anyhow!(
-            "required executable `{program}` not found; set {FFMPEG_BIN_ENV}/{FFPROBE_BIN_ENV} or install ffmpeg"
-        )),
+        Err(err) if is_not_found_error(&err) => Err(anyhow!(missing_hint.to_string())),
         Err(err) => Err(anyhow!("failed to start `{program}`: {err}")),
     }
 }
@@ -1218,10 +1359,11 @@ pub async fn load_image_attachment_data_url(
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_frame_rate, extract_workspace_id_from_public_path, normalize_filename,
-        normalize_requested_frame_rate, normalize_requested_frame_step, DEFAULT_VIDEO_FRAME_RATE,
-        MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
+        detect_media_kind_from_path, effective_frame_rate, extract_workspace_id_from_public_path,
+        normalize_filename, normalize_requested_frame_rate, normalize_requested_frame_step,
+        DEFAULT_VIDEO_FRAME_RATE, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
+    use std::path::Path;
 
     #[test]
     fn normalize_filename_preserves_extension() {
@@ -1236,6 +1378,18 @@ mod tests {
         assert_eq!(
             extract_workspace_id_from_public_path("/workspaces/alice__c__1/media/a.wav"),
             Some("alice__c__1".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_media_kind_accepts_windows_metafiles() {
+        assert_eq!(
+            detect_media_kind_from_path(Path::new("preview.wmf"), &[]),
+            Some("image".to_string())
+        );
+        assert_eq!(
+            detect_media_kind_from_path(Path::new("preview.emf"), &[]),
+            Some("image".to_string())
         );
     }
 
