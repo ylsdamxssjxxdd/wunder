@@ -2175,9 +2175,30 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
     flush_paragraph()
 
 
+def is_image_caption_text(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if re.match(r"^图\s*[0-9０-９一二三四五六七八九十]+[\s:：、.-]+", stripped):
+        return True
+    return re.match(r"^Figure\s+[0-9]+[\s:：、.-]+", stripped, flags=re.IGNORECASE) is not None
+
+
+def normalize_image_caption_paragraph(paragraph) -> None:
+    fmt = paragraph.paragraph_format
+    fmt.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    fmt.space_before = Pt(0)
+    fmt.space_after = Pt(6)
+    fmt.first_line_indent = Pt(0)
+    fmt.left_indent = Pt(0)
+    fmt.right_indent = Pt(0)
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
 def normalize_image_paragraphs(doc: Document, space_pt: float) -> int:
     count = 0
-    for paragraph in doc.paragraphs:
+    paragraphs = list(doc.paragraphs)
+    for index, paragraph in enumerate(paragraphs):
         if not paragraph._p.xpath(".//w:drawing"):
             continue
         fmt = paragraph.paragraph_format
@@ -2189,6 +2210,9 @@ def normalize_image_paragraphs(doc: Document, space_pt: float) -> int:
         fmt.left_indent = None
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
         count += 1
+        if index + 1 < len(paragraphs) and is_image_caption_text(paragraphs[index + 1].text):
+            normalize_image_caption_paragraph(paragraphs[index + 1])
+            count += 1
     return count
 
 

@@ -1,3 +1,4 @@
+use super::tool_error::{build_failed_tool_result, ToolErrorMeta};
 use super::*;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -1423,12 +1424,12 @@ fn wrap_missing_target_summary(summary: Value, action: &str) -> Value {
     if !selected_items_all_not_found(&summary) {
         return summary;
     }
-    super::build_failed_tool_result(
+    build_failed_tool_result(
         format!(
             "subagent_control {action} target not found under the current session"
         ),
         summary,
-        super::ToolErrorMeta::new(
+        ToolErrorMeta::new(
             "SUBAGENT_TARGET_NOT_FOUND",
             Some(
                 "Use the exact `session_id`/`child_session_id` returned by `spawn`, or pass a `runId` returned by `spawn`/`list`.".to_string(),
@@ -2779,7 +2780,7 @@ mod tests {
     use crate::config::Config;
     use crate::lsp::LspManager;
     use crate::skills::SkillRegistry;
-    use crate::storage::{ChatSessionRecord, SqliteStorage, StorageBackend};
+    use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
     use crate::workspace::WorkspaceManager;
     use std::collections::HashMap;
     use std::sync::Arc;

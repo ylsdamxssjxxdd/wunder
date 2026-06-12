@@ -4,6 +4,7 @@ use super::command_options::parse_dry_run;
 use super::*;
 use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
 use crate::monitor::MonitorState;
+use crate::path_utils::is_within_root;
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";

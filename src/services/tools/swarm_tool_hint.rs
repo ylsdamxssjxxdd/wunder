@@ -1,9 +1,10 @@
 use crate::i18n;
 use crate::services::swarm::beeroom::agent_in_hive;
-use crate::storage::{StorageBackend, UserAgentAccessRecord, UserAgentRecord};
-use crate::user_store::build_default_agent_record_from_storage;
+use crate::storage::{StorageBackend, UserAgentRecord};
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
+
+use super::session_tool_access::{is_agent_allowed_by_access, load_agent_record};
 
 const SWARM_NOT_FOUND_NAME_LIMIT: usize = 8;
 
@@ -171,52 +172,7 @@ fn load_accessible_agent_record(
     user_id: &str,
     agent_id: &str,
 ) -> Result<Option<UserAgentRecord>> {
-    let cleaned = agent_id.trim();
-    if cleaned.is_empty() {
-        return Ok(None);
-    }
-    let record = if is_default_agent_alias_value(cleaned) {
-        Some(build_default_agent_record_from_storage(storage, user_id)?)
-    } else {
-        storage.get_user_agent_by_id(cleaned)?
-    };
-    let Some(record) = record else {
-        return Ok(None);
-    };
-    let access = storage.get_user_agent_access(user_id)?;
-    if !is_agent_allowed_by_access(user_id, access.as_ref(), &record) {
-        return Ok(None);
-    }
-    Ok(Some(record))
-}
-
-fn is_default_agent_alias_value(raw: &str) -> bool {
-    let cleaned = raw.trim();
-    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
-}
-
-fn is_agent_allowed_by_access(
-    user_id: &str,
-    access: Option<&UserAgentAccessRecord>,
-    agent: &UserAgentRecord,
-) -> bool {
-    if agent.user_id != user_id && !agent.is_shared {
-        return false;
-    }
-    if let Some(access) = access {
-        if !access.blocked_agent_ids.is_empty()
-            && access
-                .blocked_agent_ids
-                .iter()
-                .any(|id| id == &agent.agent_id)
-        {
-            return false;
-        }
-        if let Some(allowed) = access.allowed_agent_ids.as_ref() {
-            return allowed.iter().any(|id| id == &agent.agent_id);
-        }
-    }
-    true
+    load_agent_record(storage, user_id, Some(agent_id), true)
 }
 
 #[cfg(test)]

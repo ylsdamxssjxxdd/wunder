@@ -1,30 +1,32 @@
+use super::a2a_tool;
 use super::catalog::resolve_tool_name;
 use super::channel_tool;
+use super::command_tool;
 use super::context::ToolContext;
+use super::file_tool;
+use super::knowledge_tool;
+use super::lsp_tool;
 use super::multimodal_generation_tool;
+use super::node_invoke_tool;
+use super::panel_tools;
+use super::schedule_task_tool;
 use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
+use super::skill_call;
+use super::user_world_tool;
 use super::{
-    a2a_observe, a2a_wait, agent_swarm, compact_cron_tool_result, edit_file2, execute_a2a_service,
-    execute_command, execute_knowledge_tool, execute_mcp_tool, execute_memory_manager_tool,
-    execute_node_invoke, execute_plan_tool, execute_ptc, execute_question_panel_tool,
-    execute_skill_call, execute_thread_control_tool, execute_user_tool, find_knowledge_base,
-    is_a2a_service_tool, is_mcp_tool_name, list_files, lsp_query, read_files, self_status_tool,
-    subagent_control, user_world_tool, write_file,
+    agent_swarm, edit_file2, execute_mcp_tool, execute_memory_manager_tool,
+    execute_thread_control_tool, execute_user_tool, is_mcp_tool_name, self_status_tool,
+    subagent_control,
 };
 use super::{
     apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool, web_fetch_tool,
     web_search_tool,
 };
-use crate::cron::{handle_cron_action, CronActionRequest};
-use crate::i18n;
 use crate::services::goal;
 use crate::skills::execute_skill;
-use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
-use serde_json::{json, Map, Value};
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use serde_json::{json, Value};
 
 /// 工具调度入口：优先处理 A2A 与 MCP，再回落到内置工具。
 pub async fn execute_tool(context: &ToolContext<'_>, name: &str, args: &Value) -> Result<Value> {
@@ -40,14 +42,14 @@ pub async fn execute_tool(context: &ToolContext<'_>, name: &str, args: &Value) -
         context.workspace.mark_tree_dirty(context.workspace_id);
         return Ok(result);
     }
-    if is_a2a_service_tool(&canonical) {
-        return execute_a2a_service(context, &canonical, args).await;
+    if a2a_tool::is_a2a_service_tool(&canonical) {
+        return a2a_tool::execute_a2a_service_tool(context, &canonical, args).await;
     }
     if is_mcp_tool_name(&canonical) {
         return execute_mcp_tool(context, &canonical, args).await;
     }
-    if let Some(base) = find_knowledge_base(context.config, &canonical) {
-        return execute_knowledge_tool(context, &base, args).await;
+    if let Some(base) = knowledge_tool::find_knowledge_base(context.config, &canonical) {
+        return knowledge_tool::execute_knowledge_tool(context, &base, args).await;
     }
     execute_builtin_tool(context, &canonical, args).await
 }
@@ -68,11 +70,11 @@ pub async fn execute_builtin_tool(
         "最终回复" => Ok(json!({
             "answer": args.get("content").and_then(Value::as_str).unwrap_or("").to_string()
         })),
-        "执行命令" => execute_command(context, args).await,
-        "ptc" => execute_ptc(context, args).await,
-        "列出文件" => list_files(context, args).await,
+        "执行命令" => command_tool::execute_command(context, args).await,
+        "ptc" => command_tool::execute_ptc(context, args).await,
+        "列出文件" => file_tool::list_files(context, args).await,
         "搜索内容" => search_content(context, args).await,
-        "读取文件" => read_files(context, args).await,
+        "读取文件" => file_tool::read_files(context, args).await,
         read_image_tool::TOOL_READ_IMAGE => read_image_tool::tool_read_image(context, args).await,
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
             multimodal_generation_tool::tool_generate_speech(context, args).await
@@ -86,15 +88,15 @@ pub async fn execute_builtin_tool(
         multimodal_generation_tool::TOOL_GENERATE_VIDEO => {
             multimodal_generation_tool::tool_generate_video(context, args).await
         }
-        "技能调用" => execute_skill_call(context, args).await,
-        "写入文件" => write_file(context, args).await,
+        "技能调用" => skill_call::execute_skill_call(context, args).await,
+        "写入文件" => file_tool::write_file(context, args).await,
         "文本编辑" => edit_file2(context, args).await,
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,
-        "LSP查询" => lsp_query(context, args).await,
+        "LSP查询" => lsp_tool::lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
         "会话线程控制" => execute_thread_control_tool(context, args).await,
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
-        "节点调用" => execute_node_invoke(context, args).await,
+        "节点调用" => node_invoke_tool::execute_node_invoke_tool(context, args).await,
         web_search_tool::TOOL_WEB_SEARCH => web_search_tool::tool_web_search(context, args).await,
         web_fetch_tool::TOOL_WEB_FETCH => web_fetch_tool::tool_web_fetch(context, args).await,
         browser_tool::TOOL_BROWSER => {
@@ -118,8 +120,8 @@ pub async fn execute_builtin_tool(
         desktop_control::TOOL_DESKTOP_MONITOR => {
             desktop_control::tool_desktop_monitor(context, args).await
         }
-        "a2a观察" => a2a_observe(context, args).await,
-        "a2a等待" => a2a_wait(context, args).await,
+        "a2a观察" => a2a_tool::a2a_observe(context, args).await,
+        "a2a等待" => a2a_tool::a2a_wait(context, args).await,
         "a2ui" => Ok(json!({
             "uid": args.get("uid"),
             "a2ui": args.get("a2ui"),
@@ -128,131 +130,13 @@ pub async fn execute_builtin_tool(
         sessions_yield_tool::TOOL_SESSIONS_YIELD => {
             sessions_yield_tool::execute_sessions_yield_tool(context, args).await
         }
-        "计划面板" => execute_plan_tool(context, args).await,
-        "问询面板" => execute_question_panel_tool(context, args).await,
-        "定时任务" => {
-            let normalized = normalize_cron_action_args(args);
-            let payload: CronActionRequest = serde_json::from_value(normalized.clone()).map_err(
-                |err| {
-                    if normalized.get("raw").is_some() {
-                        anyhow!(
-                            "schedule_task arguments are not valid JSON; retry with a complete JSON object including action"
-                        )
-                    } else {
-                        anyhow!(err.to_string())
-                    }
-                },
-            )?;
-            let user_tool_manager = context
-                .user_tool_manager
-                .clone()
-                .ok_or_else(|| anyhow!(i18n::t("error.internal_error")))?;
-            let user_store = Arc::new(UserStore::new(context.storage.clone()));
-            let skills = Arc::new(RwLock::new(context.skills.clone()));
-            handle_cron_action(
-                context.config.clone(),
-                context.storage.clone(),
-                context.orchestrator.clone(),
-                context.cron_wake_signal.clone(),
-                user_store,
-                user_tool_manager,
-                skills,
-                context.user_id,
-                Some(context.session_id),
-                context.agent_id,
-                payload,
-            )
-            .await
-            .map(compact_cron_tool_result)
-        }
+        "计划面板" => panel_tools::execute_plan_tool(context, args).await,
+        "问询面板" => panel_tools::execute_question_panel_tool(context, args).await,
+        "定时任务" => schedule_task_tool::execute_schedule_task_tool(context, args).await,
         sleep_tool::TOOL_SLEEP_WAIT => sleep_tool::tool_sleep_wait(context, args).await,
-        "用户世界工具" => user_world_tool(context, args).await,
+        "用户世界工具" => user_world_tool::execute_user_world_tool(context, args).await,
         channel_tool::TOOL_CHANNEL => channel_tool::channel_tool(context, args).await,
         "记忆管理" => execute_memory_manager_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
-    }
-}
-
-fn normalize_cron_action_args(args: &Value) -> Value {
-    let Some(obj) = args.as_object() else {
-        return args.clone();
-    };
-    if obj.contains_key("job") {
-        return args.clone();
-    }
-
-    let mut normalized = obj.clone();
-    let mut job = Map::new();
-    for key in [
-        "job_id",
-        "name",
-        "schedule",
-        "schedule_text",
-        "session",
-        "payload",
-        "deliver",
-        "enabled",
-        "delete_after_run",
-        "dedupe_key",
-        "session_id",
-        "agent_id",
-    ] {
-        if let Some(value) = normalized.remove(key) {
-            job.insert(key.to_string(), value);
-        }
-    }
-
-    if let Some(message) = normalized.remove("message") {
-        match job.get_mut("payload") {
-            Some(Value::Object(payload)) => {
-                payload.entry("message".to_string()).or_insert(message);
-            }
-            _ => {
-                let mut payload = Map::new();
-                payload.insert("message".to_string(), message);
-                job.insert("payload".to_string(), Value::Object(payload));
-            }
-        }
-    }
-
-    if !job.is_empty() {
-        normalized.insert("job".to_string(), Value::Object(job));
-    }
-    Value::Object(normalized)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize_cron_action_args;
-    use serde_json::json;
-
-    #[test]
-    fn normalize_cron_action_args_flattens_message_into_job_payload() {
-        let normalized = normalize_cron_action_args(&json!({
-            "action": "add",
-            "job_id": "job_demo",
-            "schedule_text": "every 5 minutes",
-            "message": "hello",
-            "enabled": true
-        }));
-        assert_eq!(normalized["action"], json!("add"));
-        assert_eq!(normalized["job"]["job_id"], json!("job_demo"));
-        assert_eq!(normalized["job"]["schedule_text"], json!("every 5 minutes"));
-        assert_eq!(normalized["job"]["payload"]["message"], json!("hello"));
-        assert_eq!(normalized["job"]["enabled"], json!(true));
-        assert!(normalized.get("message").is_none());
-    }
-
-    #[test]
-    fn normalize_cron_action_args_preserves_existing_job_object() {
-        let original = json!({
-            "action": "add",
-            "job": {
-                "job_id": "job_demo",
-                "payload": { "message": "hello" }
-            }
-        });
-        let normalized = normalize_cron_action_args(&original);
-        assert_eq!(normalized, original);
     }
 }

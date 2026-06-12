@@ -1554,6 +1554,13 @@ fn parse_swarm_wait_structured(
     let all_finished = map
         .get("all_finished")
         .and_then(Value::as_bool)
+        .or_else(|| {
+            state_hint
+                .map(str::trim)
+                .map(str::to_ascii_lowercase)
+                .filter(|state| matches!(state.as_str(), "completed" | "partial"))
+                .map(|_| true)
+        })
         .unwrap_or(total > 0 && done_total >= total);
     let elapsed_s = map
         .get("elapsed_s")
