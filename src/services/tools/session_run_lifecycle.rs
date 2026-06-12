@@ -3,8 +3,8 @@ use super::swarm_realtime::reconcile_swarm_task_from_session_run;
 use super::{
     append_child_announce, build_effective_tool_names, collect_user_allowed_tools,
     finalize_tool_names, insert_run_metadata_field, load_agent_record, normalize_optional_string,
-    now_ts, resolve_child_session_tool_names, should_skip_announce, truncate_text,
-    AnnounceConfig, ChildSessionToolMode, SessionCleanup, ToolContext,
+    now_ts, resolve_child_session_tool_names, should_skip_announce, truncate_text, AnnounceConfig,
+    ChildSessionToolMode, SessionCleanup, ToolContext,
 };
 use crate::config::Config;
 use crate::history::HistoryManager;
@@ -227,12 +227,16 @@ pub(crate) fn prepare_child_session(
         agent_id.as_deref(),
         parent_agent_id.as_deref(),
     )?;
-    let child_tool_names =
-        resolve_child_session_tool_names(tool_mode, &parent_tool_names, child_agent_record.as_ref());
+    let child_tool_names = resolve_child_session_tool_names(
+        tool_mode,
+        &parent_tool_names,
+        child_agent_record.as_ref(),
+    );
     // Keep the first spawned child turn aligned with the same effective model
     // resolution used by the normal chat entrypoint.
-    let resolved_model_name = model_name
-        .or_else(|| resolve_effective_agent_model_name(context.config, child_agent_record.as_ref()));
+    let resolved_model_name = model_name.or_else(|| {
+        resolve_effective_agent_model_name(context.config, child_agent_record.as_ref())
+    });
     let agent_prompt = child_agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())

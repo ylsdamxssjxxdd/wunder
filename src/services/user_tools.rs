@@ -1545,12 +1545,7 @@ fn user_mcp_to_config(server: &UserMcpServer) -> McpServerConfig {
     McpServerConfig {
         name: server.name.clone(),
         endpoint: server.endpoint.clone(),
-        allow_tools: server
-            .allow_tools
-            .iter()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
-            .collect(),
+        allow_tools: Vec::new(),
         packaged: server.packaged,
         enabled: true,
         transport: if server.transport.trim().is_empty() {

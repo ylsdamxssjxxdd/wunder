@@ -9,7 +9,7 @@ use crate::services::memory_fragments::{
     MemoryFragmentStore,
 };
 use crate::state::AppState;
-use crate::storage::MemoryFragmentRecord;
+use crate::storage::{MemoryFragmentRecord, MemoryJobRecord};
 use crate::user_access::is_agent_allowed;
 use anyhow::Result;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -139,11 +139,17 @@ async fn list_memories(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    let agent_scope = normalize_agent_memory_scope(Some(&agent_id));
+    let recent_jobs = state
+        .storage
+        .list_memory_jobs(&resolved.user.user_id, &agent_scope, 10)
+        .unwrap_or_default();
     Ok(Json(json!({
         "data": {
             "items": items.iter().map(public_memory_item).collect::<Vec<_>>(),
             "total": items.len(),
             "tags": tags,
+            "recent_jobs": recent_jobs.iter().map(public_memory_job).collect::<Vec<_>>(),
         }
     })))
 }
@@ -434,6 +440,7 @@ fn public_memory_item(item: &MemoryFragmentRecord) -> Value {
     json!({
         "memory_id": item.memory_id,
         "title_l0": item.title_l0,
+        "summary_l1": item.summary_l1,
         "content_l2": item.content_l2,
         "tag": item.category,
         "source_type": item.source_type,
@@ -443,6 +450,22 @@ fn public_memory_item(item: &MemoryFragmentRecord) -> Value {
         "superseded_by_memory_id": item.superseded_by_memory_id,
         "valid_from": item.valid_from,
         "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    })
+}
+
+fn public_memory_job(item: &MemoryJobRecord) -> Value {
+    json!({
+        "job_id": item.job_id,
+        "agent_id": item.agent_id,
+        "session_id": item.session_id,
+        "job_type": item.job_type,
+        "status": item.status,
+        "result_summary": item.result_summary,
+        "error_message": item.error_message,
+        "queued_at": item.queued_at,
+        "started_at": item.started_at,
+        "finished_at": item.finished_at,
         "updated_at": item.updated_at,
     })
 }
