@@ -1,129 +1,41 @@
 [package]
-name = "wunder-server"
-version = "0.3.0"
-edition = "2021"
-default-run = "wunder-desktop"
+name = "wunder-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 build = "build.rs"
-rust-version = "1.92"
+default-run = "wunder-desktop"
 
 [features]
 default = []
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
-
-[[bin]]
-name = "wunder-cli"
-path = "../../wunder-cli/main.rs"
+desktop = []
 
 [[bin]]
 name = "wunder-desktop"
 path = "main.rs"
-required-features = ["desktop"]
 
 [[bin]]
 name = "wunder-desktop-bridge"
 path = "bridge_main.rs"
+test = false
+bench = false
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
-axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
-bytes = "1"
-base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
-clap_complete = "4"
-chrono-tz = "0.10"
-cron = "0.12"
-crossterm = { version = "0.28", features = ["event-stream"] }
-dashmap = "5"
-futures = "0.3"
-mime = "0.3"
-parking_lot = "0.12"
-hmac = "0.12"
-sha2 = "0.10"
-sha1 = "0.10"
-sasl = "0.5"
-hex = "0.4"
-rmcp = { version = "0.12.0", default-features = false, features = [
-  "auth",
-  "base64",
-  "client",
-  "macros",
-  "schemars",
-  "server",
-  "transport-streamable-http-client-reqwest",
-  "transport-streamable-http-server",
-] }
-serde_bytes = "0.11"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
-tokio = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
-tokio-util = { version = "0.7", features = ["io"] }
-tokio-rustls = "0.26"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tauri = { version = "2", features = ["wry"], optional = true }
-tauri-plugin-updater = { version = "2", optional = true }
-url = "2"
-uuid = { version = "1", features = ["v4", "v5", "serde"] }
-walkdir = "2"
-ignore = "0.4"
-globset = "0.4"
-zip = "0.6"
-regex = "1"
-ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
-unicode-width = "0.1"
-encoding_rs = "0.8"
-sse-stream = "0.2.1"
-idna = "1.0"
-hickory-resolver = "0.24"
-argon2 = "0.5"
-rusqlite = { version = "0.31", features = ["bundled"] }
-tokio-postgres = "0.7.15"
-deadpool-postgres = "0.14.1"
-calamine = "0.25"
-cfb = "0.10"
-html2md = "0.2"
-pdf-extract = "0.10"
-quick-xml = "0.31"
-shell-words = "1"
-rlsx = "1.0.1"
-aes = "0.8"
-cbc = "0.1"
-prost = "0.13"
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
-tokio-xmpp = "4.0.0"
-rustls = { version = "0.23.36", default-features = false, features = ["std", "ring"] }
-webpki-roots = "0.26"
-pulldown-cmark = "0.10"
-syntect = "5"
-textwrap = "0.16.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tauri.workspace = true
+tauri-plugin-updater.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+wunder-runtime = { path = "../.." }
 
 [build-dependencies]
-tauri-build = { version = "2", features = ["codegen"], optional = true }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
-  "Win32_Foundation",
-  "Win32_Graphics_Gdi",
-  "Win32_System_LibraryLoader",
-  "Win32_UI_Input_KeyboardAndMouse",
-  "Win32_UI_HiDpi",
-  "Win32_UI_WindowsAndMessaging",
-] }
-
-[target.'cfg(not(target_vendor = "win7"))'.dependencies]
-reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
-sysinfo = "0.30"
-
-[target.'cfg(target_vendor = "win7")'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls-webpki-roots"] }
-sysinfo = "0.29.11"
-
-[dev-dependencies]
-tempfile = "3"
+tauri-build.workspace = true

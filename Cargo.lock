@@ -7993,7 +7993,68 @@ dependencies = [
 ]
 
 [[package]]
-name = "wunder-server"
+name = "wunder-cli"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "crossterm",
+ "futures",
+ "image",
+ "pulldown-cmark",
+ "ratatui",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "shell-words",
+ "syntect",
+ "textwrap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-width 0.1.14",
+ "url",
+ "uuid",
+ "walkdir",
+ "wunder-runtime",
+ "zip 0.6.6",
+]
+
+[[package]]
+name = "wunder-core"
+version = "0.3.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "wunder-desktop"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-updater",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "wunder-runtime",
+]
+
+[[package]]
+name = "wunder-runtime"
 version = "0.3.0"
 dependencies = [
  "aes",
@@ -8008,10 +8069,7 @@ dependencies = [
  "cfb 0.10.0",
  "chrono",
  "chrono-tz",
- "clap",
- "clap_complete",
  "cron",
- "crossterm",
  "dashmap",
  "deadpool-postgres",
  "ed25519-dalek",
@@ -8034,7 +8092,6 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "quick-xml 0.31.0",
- "ratatui",
  "regex",
  "reqwest 0.12.28",
  "rlsx",
@@ -8051,14 +8108,9 @@ dependencies = [
  "sha2",
  "shell-words",
  "sse-stream",
- "syntect",
  "sysinfo 0.29.11",
  "sysinfo 0.30.13",
- "tauri",
- "tauri-build",
- "tauri-plugin-updater",
  "tempfile",
- "textwrap",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
@@ -8071,13 +8123,28 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "unicode-width 0.1.14",
  "url",
  "uuid",
  "walkdir",
  "webpki-roots 0.26.11",
  "windows-sys 0.52.0",
+ "wunder-core",
  "zip 0.6.6",
+]
+
+[[package]]
+name = "wunder-server"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures",
+ "serde_yaml",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "url",
+ "wunder-runtime",
 ]
 
 [[package]]

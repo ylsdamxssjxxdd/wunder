@@ -137,6 +137,7 @@ fn write_workspace_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path_utils::normalize_path_for_compare;
     use crate::storage::{SqliteStorage, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID};
     use crate::workspace::WorkspaceManager;
     use std::collections::HashMap;
@@ -199,7 +200,11 @@ mod tests {
                 .expect("prepare workspace");
 
         assert_eq!(attempt_root, "benchmark/run_1/sample_task/attempt_1");
-        assert!(attempt_dir.starts_with(workspace.workspace_root(&workspace_id)));
+        assert!(
+            normalize_path_for_compare(&attempt_dir).starts_with(normalize_path_for_compare(
+                &workspace.workspace_root(&workspace_id)
+            ))
+        );
         assert!(attempt_dir.join("src").join("sample.txt").exists());
         assert!(!workspace
             .workspace_root("benchmark_admin")

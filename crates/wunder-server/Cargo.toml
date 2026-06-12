@@ -1,0 +1,22 @@
+[package]
+name = "wunder-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "wunder-server"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+futures.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+url.workspace = true
+wunder-runtime = { path = "../.." }

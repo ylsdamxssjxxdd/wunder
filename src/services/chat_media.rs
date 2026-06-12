@@ -1254,6 +1254,11 @@ fn normalize_filename(raw: &str, fallback_stem: &str) -> String {
         fallback_stem.to_string()
     } else {
         let sanitized = crate::attachment::sanitize_filename_stem(stem);
+        let sanitized = sanitized
+            .split_whitespace()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("_");
         if sanitized.trim().is_empty() {
             fallback_stem.to_string()
         } else {

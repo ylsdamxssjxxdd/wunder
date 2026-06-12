@@ -1,33 +1,6 @@
 // Rust 入口：挂载鉴权、静态资源与 API 路由。
 #![cfg_attr(test, allow(dead_code))]
 #![allow(clippy::result_large_err)]
-mod api;
-mod channels;
-mod core;
-mod gateway;
-mod lsp;
-mod ops;
-mod orchestrator;
-mod request_limits;
-mod sandbox;
-mod services;
-mod storage;
-
-pub use channels::ChannelHub;
-pub use core::{
-    auth, command_utils, config, config_store, drawio_config, exec_policy, i18n, path_utils,
-    schemas, shutdown, state, token_utils,
-};
-pub use ops::{benchmark, monitor, performance, throughput};
-pub use orchestrator::constants as orchestrator_constants;
-pub use services::{
-    a2a_store, admin_skills, attachment, cron, doc2md, drawio, history, knowledge, llm, mcp,
-    memory, multimodal_models, onlyoffice, org_units, prompting, ragflow_knowledge, sim_lab,
-    skills, swarm, tools, user_access, user_store, user_tools, user_world, vector_knowledge,
-    workspace,
-};
-
-use crate::core::logging;
 use axum::body::Body;
 use axum::extract::OriginalUri;
 use axum::http::{Request, StatusCode};
@@ -35,11 +8,7 @@ use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
-use config::{Config, McpToolSpec};
-use config_store::ConfigStore;
 use futures::FutureExt;
-use shutdown::shutdown_signal;
-use state::AppState;
 use std::any::Any as StdAny;
 use std::net::SocketAddr;
 use std::panic::AssertUnwindSafe;
@@ -50,10 +19,18 @@ use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse};
 use tracing::{error, info, warn, Level};
+use wunder_server::config::{Config, McpToolSpec};
+use wunder_server::config_store::ConfigStore;
+use wunder_server::shutdown::shutdown_signal;
+use wunder_server::state::AppState;
+use wunder_server::{
+    admin_skills, api, auth, config, i18n, logging, mcp, rustls_provider, sandbox, schemas,
+    user_store,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    core::rustls_provider::install_process_default_provider();
+    rustls_provider::install_process_default_provider();
     let bootstrap_mode = std::env::var("WUNDER_SERVER_MODE")
         .unwrap_or_default()
         .trim()
@@ -255,7 +232,7 @@ async fn hydrate_enabled_mcp_tool_specs(state: Arc<AppState>) {
         for server in pending {
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(timeout_s),
-                crate::mcp::fetch_tools(&config, &server),
+                mcp::fetch_tools(&config, &server),
             )
             .await;
             match result {
@@ -496,7 +473,7 @@ async fn api_key_guard(
             tokio::task::spawn_blocking(move || user_store.authenticate_token(&token_for_lookup))
                 .await
         {
-            if crate::user_store::UserStore::is_admin(&user) {
+            if user_store::UserStore::is_admin(&user) {
                 return Ok(next.run(request).await);
             }
             if auth::is_leader_path(path) {

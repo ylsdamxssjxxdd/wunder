@@ -35,6 +35,32 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+mod benchmark_store;
+mod bridge_store;
+mod channel_directory;
+mod channel_runtime;
+mod chat_session;
+mod cron;
+mod gateway_store;
+mod media_store;
+mod memory_store;
+mod session_goal;
+mod session_run;
+mod user_world_store;
+
+use benchmark_store::SqliteBenchmarkStorage;
+use bridge_store::SqliteBridgeStorage;
+use channel_directory::SqliteChannelDirectoryStorage;
+use channel_runtime::SqliteChannelRuntimeStorage;
+use chat_session::SqliteChatSessionStorage;
+use cron::SqliteCronStorage;
+use gateway_store::SqliteGatewayStorage;
+use media_store::SqliteMediaStorage;
+use memory_store::SqliteMemoryStorage;
+use session_goal::SqliteSessionGoalStorage;
+use session_run::SqliteSessionRunStorage;
+use user_world_store::SqliteUserWorldStorage;
+
 pub struct SqliteStorage {
     db_path: PathBuf,
     initialized: AtomicBool,
@@ -85,77 +111,6 @@ impl SqliteStorage {
             return None;
         }
         serde_json::from_str::<Value>(text).ok()
-    }
-
-    fn cron_job_select_fields() -> &'static str {
-        "job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at"
-    }
-
-    fn session_run_select_fields() -> &'static str {
-        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time, metadata"
-    }
-
-    fn map_session_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRunRecord> {
-        Ok(SessionRunRecord {
-            run_id: row.get(0)?,
-            session_id: row.get(1)?,
-            parent_session_id: row.get(2)?,
-            user_id: row.get(3)?,
-            dispatch_id: row.get(4)?,
-            run_kind: row.get(5)?,
-            requested_by: row.get(6)?,
-            agent_id: row.get(7)?,
-            model_name: row.get(8)?,
-            status: row.get(9)?,
-            queued_time: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-            started_time: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-            finished_time: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
-            elapsed_s: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
-            result: row.get(14)?,
-            error: row.get(15)?,
-            updated_time: row.get::<_, Option<f64>>(16)?.unwrap_or(0.0),
-            metadata: row
-                .get::<_, Option<String>>(17)?
-                .and_then(|value| Self::json_from_str(&value)),
-        })
-    }
-
-    fn map_cron_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CronJobRecord> {
-        let payload_text: Option<String> = row.get(6)?;
-        let deliver_text: Option<String> = row.get(7)?;
-        let enabled: Option<i64> = row.get(8)?;
-        let delete_after: Option<i64> = row.get(9)?;
-        Ok(CronJobRecord {
-            job_id: row.get(0)?,
-            user_id: row.get(1)?,
-            session_id: row.get(2)?,
-            agent_id: row.get(3)?,
-            name: row.get(4)?,
-            session_target: row.get(5)?,
-            payload: Self::json_value_or_null(payload_text),
-            deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
-            enabled: enabled.unwrap_or(0) != 0,
-            delete_after_run: delete_after.unwrap_or(0) != 0,
-            schedule_kind: row.get(10)?,
-            schedule_at: row.get(11)?,
-            schedule_every_ms: row.get(12)?,
-            schedule_cron: row.get(13)?,
-            schedule_tz: row.get(14)?,
-            dedupe_key: row.get(15)?,
-            next_run_at: row.get(16)?,
-            running_at: row.get(17)?,
-            runner_id: row.get(18)?,
-            run_token: row.get(19)?,
-            heartbeat_at: row.get(20)?,
-            lease_expires_at: row.get(21)?,
-            last_run_at: row.get(22)?,
-            last_status: row.get(23)?,
-            last_error: row.get(24)?,
-            consecutive_failures: row.get::<_, Option<i64>>(25)?.unwrap_or(0),
-            auto_disabled_reason: row.get(26)?,
-            created_at: row.get(27)?,
-            updated_at: row.get(28)?,
-        })
     }
 
     fn parse_string(value: Option<&Value>) -> Option<String> {
@@ -306,136 +261,6 @@ impl SqliteStorage {
         value
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
-    }
-
-    fn normalize_user_world_pair(user_a: &str, user_b: &str) -> Option<(String, String)> {
-        let a = user_a.trim();
-        let b = user_b.trim();
-        if a.is_empty() || b.is_empty() || a == b {
-            return None;
-        }
-        if a <= b {
-            Some((a.to_string(), b.to_string()))
-        } else {
-            Some((b.to_string(), a.to_string()))
-        }
-    }
-
-    fn normalize_user_world_members(
-        owner_user_id: &str,
-        member_user_ids: &[String],
-    ) -> Vec<String> {
-        let mut seen = HashSet::new();
-        let mut output = Vec::new();
-        let owner = owner_user_id.trim();
-        if !owner.is_empty() {
-            seen.insert(owner.to_string());
-            output.push(owner.to_string());
-        }
-        for raw in member_user_ids {
-            let cleaned = raw.trim();
-            if cleaned.is_empty() {
-                continue;
-            }
-            if seen.insert(cleaned.to_string()) {
-                output.push(cleaned.to_string());
-            }
-        }
-        output
-    }
-
-    fn parse_json_column(value: Option<String>) -> Value {
-        value
-            .as_deref()
-            .and_then(Self::json_from_str)
-            .unwrap_or(Value::Null)
-    }
-
-    fn map_user_world_conversation_row(
-        row: &rusqlite::Row<'_>,
-    ) -> rusqlite::Result<UserWorldConversationRecord> {
-        Ok(UserWorldConversationRecord {
-            conversation_id: row.get(0)?,
-            conversation_type: row.get(1)?,
-            participant_a: row.get(2)?,
-            participant_b: row.get(3)?,
-            group_id: row.get(4)?,
-            group_name: row.get(5)?,
-            member_count: row.get(6)?,
-            created_at: row.get(7)?,
-            updated_at: row.get(8)?,
-            last_message_at: row.get(9)?,
-            last_message_id: row.get(10)?,
-            last_message_preview: row.get(11)?,
-        })
-    }
-
-    fn map_user_world_group_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserWorldGroupRecord> {
-        Ok(UserWorldGroupRecord {
-            group_id: row.get(0)?,
-            conversation_id: row.get(1)?,
-            group_name: row.get(2)?,
-            owner_user_id: row.get(3)?,
-            announcement: row.get(4)?,
-            announcement_updated_at: row.get(5)?,
-            member_count: row.get(6)?,
-            unread_count_cache: row.get(7)?,
-            updated_at: row.get(8)?,
-            last_message_at: row.get(9)?,
-            last_message_id: row.get(10)?,
-            last_message_preview: row.get(11)?,
-        })
-    }
-
-    fn map_user_world_member_row(
-        row: &rusqlite::Row<'_>,
-    ) -> rusqlite::Result<UserWorldMemberRecord> {
-        let pinned: Option<i64> = row.get(5)?;
-        let muted: Option<i64> = row.get(6)?;
-        Ok(UserWorldMemberRecord {
-            conversation_id: row.get(0)?,
-            user_id: row.get(1)?,
-            peer_user_id: row.get(2)?,
-            last_read_message_id: row.get(3)?,
-            unread_count_cache: row.get(4)?,
-            pinned: pinned.unwrap_or(0) != 0,
-            muted: muted.unwrap_or(0) != 0,
-            updated_at: row.get(7)?,
-        })
-    }
-
-    fn map_user_world_message_row(
-        row: &rusqlite::Row<'_>,
-    ) -> rusqlite::Result<UserWorldMessageRecord> {
-        Ok(UserWorldMessageRecord {
-            message_id: row.get(0)?,
-            conversation_id: row.get(1)?,
-            sender_user_id: row.get(2)?,
-            content: row.get(3)?,
-            content_type: row.get(4)?,
-            client_msg_id: row.get(5)?,
-            created_at: row.get(6)?,
-        })
-    }
-
-    fn map_beeroom_chat_message_row(
-        row: &rusqlite::Row<'_>,
-    ) -> rusqlite::Result<BeeroomChatMessageRecord> {
-        Ok(BeeroomChatMessageRecord {
-            message_id: row.get(0)?,
-            user_id: row.get(1)?,
-            group_id: row.get(2)?,
-            sender_kind: row.get(3)?,
-            sender_name: row.get(4)?,
-            sender_agent_id: row.get(5)?,
-            mention_name: row.get(6)?,
-            mention_agent_id: row.get(7)?,
-            body: row.get(8)?,
-            meta: row.get(9)?,
-            tone: row.get(10)?,
-            client_msg_id: row.get(11)?,
-            created_at: row.get(12)?,
-        })
     }
 
     fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
@@ -801,24 +626,6 @@ fn load_table_columns(conn: &Connection, table: &str) -> Result<HashSet<String>>
         columns.insert(name);
     }
     Ok(columns)
-}
-
-fn map_session_goal_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionGoalRecord> {
-    Ok(SessionGoalRecord {
-        goal_id: row.get(0)?,
-        session_id: row.get(1)?,
-        user_id: row.get(2)?,
-        objective: row.get(3)?,
-        status: row.get(4)?,
-        token_budget: row.get(5)?,
-        tokens_used: row.get::<_, Option<i64>>(6)?.unwrap_or(0).max(0),
-        time_used_seconds: row.get::<_, Option<i64>>(7)?.unwrap_or(0).max(0),
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
-        completed_at: row.get(10)?,
-        last_continued_at: row.get(11)?,
-        source: row.get::<_, Option<String>>(12)?.unwrap_or_default(),
-    })
 }
 
 fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
@@ -3393,60 +3200,15 @@ impl StorageBackend for SqliteStorage {
     }
 
     fn get_memory_enabled(&self, user_id: &str) -> Result<Option<bool>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let value: Option<i64> = conn
-            .query_row(
-                "SELECT enabled FROM memory_settings WHERE user_id = ?",
-                params![user_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(value.map(|flag| flag != 0))
+        self.get_memory_enabled_impl(user_id)
     }
 
     fn set_memory_enabled(&self, user_id: &str, enabled: bool) -> Result<()> {
-        self.ensure_initialized()?;
-        if user_id.trim().is_empty() {
-            return Ok(());
-        }
-        let now = Self::now_ts();
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO memory_settings (user_id, enabled, updated_time) VALUES (?, ?, ?) \
-             ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled, updated_time = excluded.updated_time",
-            params![user_id, if enabled { 1 } else { 0 }, now],
-        )?;
-        Ok(())
+        self.set_memory_enabled_impl(user_id, enabled)
     }
 
     fn load_memory_settings(&self) -> Result<Vec<HashMap<String, Value>>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt =
-            conn.prepare("SELECT user_id, enabled, updated_time FROM memory_settings")?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, f64>(2).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
-        let mut output = Vec::new();
-        for (user_id, enabled, updated_time) in rows {
-            let cleaned = user_id.trim();
-            if cleaned.is_empty() {
-                continue;
-            }
-            let mut entry = HashMap::new();
-            entry.insert("user_id".to_string(), json!(cleaned));
-            entry.insert("enabled".to_string(), json!(enabled != 0));
-            entry.insert("updated_time".to_string(), json!(updated_time));
-            output.push(entry);
-        }
-        Ok(output)
+        self.load_memory_settings_impl()
     }
 
     fn upsert_memory_record(
@@ -3457,35 +3219,7 @@ impl StorageBackend for SqliteStorage {
         max_records: i64,
         now_ts: f64,
     ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        let cleaned_summary = summary.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_summary.is_empty() {
-            return Ok(());
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO memory_records (user_id, session_id, summary, created_time, updated_time) VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT(user_id, session_id) DO UPDATE SET summary = excluded.summary, updated_time = excluded.updated_time",
-            params![cleaned_user, cleaned_session, cleaned_summary, now_ts, now_ts],
-        )?;
-        if max_records > 0 {
-            let safe_limit = max_records.max(1);
-            conn.execute(
-                "DELETE FROM memory_records WHERE user_id = ? AND id NOT IN (\
-                    SELECT id FROM memory_records WHERE user_id = ? ORDER BY updated_time DESC, id DESC LIMIT ?\
-                 )",
-                params![cleaned_user, cleaned_user, safe_limit],
-            )?;
-        }
-        conn.execute(
-            "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id NOT IN (\
-                SELECT session_id FROM memory_records WHERE user_id = ?\
-             )",
-            params![cleaned_user, cleaned_user],
-        )?;
-        Ok(())
+        self.upsert_memory_record_impl(user_id, session_id, summary, max_records, now_ts)
     }
 
     fn load_memory_records(
@@ -3494,354 +3228,50 @@ impl StorageBackend for SqliteStorage {
         limit: i64,
         order_desc: bool,
     ) -> Result<Vec<HashMap<String, Value>>> {
-        self.ensure_initialized()?;
-        let cleaned = user_id.trim();
-        if cleaned.is_empty() {
-            return Ok(Vec::new());
-        }
-        let direction = if order_desc { "DESC" } else { "ASC" };
-        let query = if limit > 0 {
-            format!(
-                "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction} LIMIT ?"
-            )
-        } else {
-            format!(
-                "SELECT session_id, summary, created_time, updated_time FROM memory_records WHERE user_id = ? ORDER BY updated_time {direction}, id {direction}"
-            )
-        };
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(&query)?;
-        let rows = if limit > 0 {
-            stmt.query_map(params![cleaned, limit], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, f64>(2).unwrap_or(0.0),
-                    row.get::<_, f64>(3).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<Vec<(String, String, f64, f64)>, _>>()?
-        } else {
-            stmt.query_map(params![cleaned], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, f64>(2).unwrap_or(0.0),
-                    row.get::<_, f64>(3).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<Vec<(String, String, f64, f64)>, _>>()?
-        };
-        let mut records = Vec::new();
-        for (session_id, summary, created_time, updated_time) in rows {
-            let mut entry = HashMap::new();
-            entry.insert("session_id".to_string(), json!(session_id));
-            entry.insert("summary".to_string(), json!(summary));
-            entry.insert("created_time".to_string(), json!(created_time));
-            entry.insert("updated_time".to_string(), json!(updated_time));
-            records.push(entry);
-        }
-        Ok(records)
+        self.load_memory_records_impl(user_id, limit, order_desc)
     }
 
     fn get_memory_record_stats(&self) -> Result<Vec<HashMap<String, Value>>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT user_id, COUNT(*) as record_count, MAX(updated_time) as last_time FROM memory_records GROUP BY user_id",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, f64>(2).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<Vec<(String, i64, f64)>, _>>()?;
-        let mut stats = Vec::new();
-        for (user_id, record_count, last_time) in rows {
-            let cleaned = user_id.trim();
-            if cleaned.is_empty() {
-                continue;
-            }
-            let mut entry = HashMap::new();
-            entry.insert("user_id".to_string(), json!(cleaned));
-            entry.insert("record_count".to_string(), json!(record_count));
-            entry.insert("last_time".to_string(), json!(last_time));
-            stats.push(entry);
-        }
-        Ok(stats)
+        self.get_memory_record_stats_impl()
     }
 
     fn delete_memory_record(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM memory_records WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_record_impl(user_id, session_id)
     }
 
     fn delete_memory_records_by_user(&self, user_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM memory_records WHERE user_id = ?",
-            params![cleaned_user],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_records_by_user_impl(user_id)
     }
 
     fn delete_memory_settings_by_user(&self, user_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM memory_settings WHERE user_id = ?",
-            params![cleaned_user],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_settings_by_user_impl(user_id)
     }
 
     fn upsert_memory_task_log(&self, params: UpsertMemoryTaskLogParams<'_>) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = params.user_id.trim();
-        let cleaned_session = params.session_id.trim();
-        let cleaned_task = params.task_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_task.is_empty() {
-            return Ok(());
-        }
-        let status_text = params.status.trim();
-        let payload_text = params
-            .request_payload
-            .map(Self::json_to_string)
-            .unwrap_or_default();
-        let now = params.updated_time.unwrap_or_else(Self::now_ts);
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(user_id, session_id) DO UPDATE SET                task_id = excluded.task_id, status = excluded.status, queued_time = excluded.queued_time, started_time = excluded.started_time,                finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, request_payload = excluded.request_payload, result = excluded.result,                error = excluded.error, updated_time = excluded.updated_time",
-            params![
-                cleaned_task,
-                cleaned_user,
-                cleaned_session,
-                status_text,
-                params.queued_time,
-                params.started_time,
-                params.finished_time,
-                params.elapsed_s,
-                payload_text,
-                params.result,
-                params.error,
-                now
-            ],
-        )?;
-        Ok(())
+        self.upsert_memory_task_log_impl(params)
     }
 
     fn load_memory_task_logs(&self, limit: Option<i64>) -> Result<Vec<HashMap<String, Value>>> {
-        self.ensure_initialized()?;
-        let mut query = String::from(
-            "SELECT task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, updated_time FROM memory_task_logs ORDER BY updated_time DESC, id DESC",
-        );
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(limit) = limit.filter(|value| *value > 0) {
-            query.push_str(" LIMIT ?");
-            params_list.push(SqlValue::from(limit));
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(params_list.iter()), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, f64>(4).unwrap_or(0.0),
-                    row.get::<_, f64>(5).unwrap_or(0.0),
-                    row.get::<_, f64>(6).unwrap_or(0.0),
-                    row.get::<_, f64>(7).unwrap_or(0.0),
-                    row.get::<_, f64>(8).unwrap_or(0.0),
-                ))
-            })?
-            .collect::<std::result::Result<
-                Vec<(String, String, String, String, f64, f64, f64, f64, f64)>,
-                _,
-            >>()?;
-        let mut logs = Vec::new();
-        for (
-            task_id,
-            user_id,
-            session_id,
-            status,
-            queued_time,
-            started_time,
-            finished_time,
-            elapsed_s,
-            updated_time,
-        ) in rows
-        {
-            let mut entry = HashMap::new();
-            entry.insert("task_id".to_string(), json!(task_id));
-            entry.insert("user_id".to_string(), json!(user_id));
-            entry.insert("session_id".to_string(), json!(session_id));
-            entry.insert("status".to_string(), json!(status));
-            entry.insert("queued_time".to_string(), json!(queued_time));
-            entry.insert("started_time".to_string(), json!(started_time));
-            entry.insert("finished_time".to_string(), json!(finished_time));
-            entry.insert("elapsed_s".to_string(), json!(elapsed_s));
-            entry.insert("updated_time".to_string(), json!(updated_time));
-            logs.push(entry);
-        }
-        Ok(logs)
+        self.load_memory_task_logs_impl(limit)
     }
 
     fn load_memory_task_log_by_task_id(
         &self,
         task_id: &str,
     ) -> Result<Option<HashMap<String, Value>>> {
-        self.ensure_initialized()?;
-        let cleaned = task_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT task_id, user_id, session_id, status, queued_time, started_time, finished_time, elapsed_s, request_payload, result, error, updated_time FROM memory_task_logs WHERE task_id = ? ORDER BY updated_time DESC, id DESC LIMIT 1",
-        )?;
-        let row = stmt
-            .query_row(params![cleaned], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, f64>(4).unwrap_or(0.0),
-                    row.get::<_, f64>(5).unwrap_or(0.0),
-                    row.get::<_, f64>(6).unwrap_or(0.0),
-                    row.get::<_, f64>(7).unwrap_or(0.0),
-                    row.get::<_, String>(8).unwrap_or_default(),
-                    row.get::<_, String>(9).unwrap_or_default(),
-                    row.get::<_, String>(10).unwrap_or_default(),
-                    row.get::<_, f64>(11).unwrap_or(0.0),
-                ))
-            })
-            .optional()?;
-        let Some((
-            task_id,
-            user_id,
-            session_id,
-            status,
-            queued_time,
-            started_time,
-            finished_time,
-            elapsed_s,
-            request_payload,
-            result,
-            error,
-            updated_time,
-        )) = row
-        else {
-            return Ok(None);
-        };
-        let mut entry = HashMap::new();
-        entry.insert("task_id".to_string(), json!(task_id));
-        entry.insert("user_id".to_string(), json!(user_id));
-        entry.insert("session_id".to_string(), json!(session_id));
-        entry.insert("status".to_string(), json!(status));
-        entry.insert("queued_time".to_string(), json!(queued_time));
-        entry.insert("started_time".to_string(), json!(started_time));
-        entry.insert("finished_time".to_string(), json!(finished_time));
-        entry.insert("elapsed_s".to_string(), json!(elapsed_s));
-        entry.insert("request_payload".to_string(), json!(request_payload));
-        entry.insert("result".to_string(), json!(result));
-        entry.insert("error".to_string(), json!(error));
-        entry.insert("updated_time".to_string(), json!(updated_time));
-        Ok(Some(entry))
+        self.load_memory_task_log_by_task_id_impl(task_id)
     }
 
     fn delete_memory_task_log(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM memory_task_logs WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_task_log_impl(user_id, session_id)
     }
 
     fn delete_memory_task_logs_by_user(&self, user_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM memory_task_logs WHERE user_id = ?",
-            params![cleaned_user],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_task_logs_by_user_impl(user_id)
     }
 
     fn upsert_memory_fragment(&self, record: &MemoryFragmentRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO memory_fragments (memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(memory_id) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, source_session_id = excluded.source_session_id, source_round_id = excluded.source_round_id, source_type = excluded.source_type, category = excluded.category, title_l0 = excluded.title_l0, summary_l1 = excluded.summary_l1, content_l2 = excluded.content_l2, fact_key = excluded.fact_key, tags = excluded.tags, entities = excluded.entities, importance = excluded.importance, confidence = excluded.confidence, tier = excluded.tier, status = excluded.status, pinned = excluded.pinned, confirmed_by_user = excluded.confirmed_by_user, access_count = excluded.access_count, hit_count = excluded.hit_count, last_accessed_at = excluded.last_accessed_at, valid_from = excluded.valid_from, invalidated_at = excluded.invalidated_at, supersedes_memory_id = excluded.supersedes_memory_id, superseded_by_memory_id = excluded.superseded_by_memory_id, embedding_model = excluded.embedding_model, vector_ref = excluded.vector_ref, created_at = excluded.created_at, updated_at = excluded.updated_at",
-            params![
-                record.memory_id,
-                record.user_id,
-                record.agent_id,
-                record.source_session_id,
-                record.source_round_id,
-                record.source_type,
-                record.category,
-                record.title_l0,
-                record.summary_l1,
-                record.content_l2,
-                record.fact_key,
-                Self::string_list_to_json(&record.tags),
-                Self::string_list_to_json(&record.entities),
-                record.importance,
-                record.confidence,
-                record.tier,
-                record.status,
-                if record.pinned { 1 } else { 0 },
-                if record.confirmed_by_user { 1 } else { 0 },
-                record.access_count,
-                record.hit_count,
-                record.last_accessed_at,
-                record.valid_from,
-                record.invalidated_at,
-                record.supersedes_memory_id,
-                record.superseded_by_memory_id,
-                record.embedding_model,
-                record.vector_ref,
-                record.created_at,
-                record.updated_at,
-            ],
-        )?;
-        Ok(())
+        self.upsert_memory_fragment_impl(record)
     }
 
     fn get_memory_fragment(
@@ -3850,49 +3280,7 @@ impl StorageBackend for SqliteStorage {
         agent_id: &str,
         memory_id: &str,
     ) -> Result<Option<MemoryFragmentRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at FROM memory_fragments WHERE user_id = ? AND agent_id = ? AND memory_id = ? LIMIT 1")?;
-        let row = stmt
-            .query_row(
-                params![user_id.trim(), agent_id.trim(), memory_id.trim()],
-                |row| {
-                    Ok(MemoryFragmentRecord {
-                        memory_id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        agent_id: row.get(2)?,
-                        source_session_id: row.get(3)?,
-                        source_round_id: row.get(4)?,
-                        source_type: row.get(5)?,
-                        category: row.get(6)?,
-                        title_l0: row.get(7)?,
-                        summary_l1: row.get(8)?,
-                        content_l2: row.get(9)?,
-                        fact_key: row.get(10)?,
-                        tags: Self::parse_string_list(row.get(11)?),
-                        entities: Self::parse_string_list(row.get(12)?),
-                        importance: row.get(13)?,
-                        confidence: row.get(14)?,
-                        tier: row.get(15)?,
-                        status: row.get(16)?,
-                        pinned: row.get::<_, Option<i64>>(17)?.unwrap_or(0) != 0,
-                        confirmed_by_user: row.get::<_, Option<i64>>(18)?.unwrap_or(0) != 0,
-                        access_count: row.get::<_, Option<i64>>(19)?.unwrap_or(0),
-                        hit_count: row.get::<_, Option<i64>>(20)?.unwrap_or(0),
-                        last_accessed_at: row.get::<_, Option<f64>>(21)?.unwrap_or(0.0),
-                        valid_from: row.get::<_, Option<f64>>(22)?.unwrap_or(0.0),
-                        invalidated_at: row.get(23)?,
-                        supersedes_memory_id: row.get(24)?,
-                        superseded_by_memory_id: row.get(25)?,
-                        embedding_model: row.get(26)?,
-                        vector_ref: row.get(27)?,
-                        created_at: row.get::<_, Option<f64>>(28)?.unwrap_or(0.0),
-                        updated_at: row.get::<_, Option<f64>>(29)?.unwrap_or(0.0),
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_memory_fragment_impl(user_id, agent_id, memory_id)
     }
 
     fn list_memory_fragments(
@@ -3900,46 +3288,7 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         agent_id: &str,
     ) -> Result<Vec<MemoryFragmentRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at FROM memory_fragments WHERE user_id = ? AND agent_id = ? ORDER BY pinned DESC, updated_at DESC, created_at DESC")?;
-        let rows = stmt
-            .query_map(params![user_id.trim(), agent_id.trim()], |row| {
-                Ok(MemoryFragmentRecord {
-                    memory_id: row.get(0)?,
-                    user_id: row.get(1)?,
-                    agent_id: row.get(2)?,
-                    source_session_id: row.get(3)?,
-                    source_round_id: row.get(4)?,
-                    source_type: row.get(5)?,
-                    category: row.get(6)?,
-                    title_l0: row.get(7)?,
-                    summary_l1: row.get(8)?,
-                    content_l2: row.get(9)?,
-                    fact_key: row.get(10)?,
-                    tags: Self::parse_string_list(row.get(11)?),
-                    entities: Self::parse_string_list(row.get(12)?),
-                    importance: row.get(13)?,
-                    confidence: row.get(14)?,
-                    tier: row.get(15)?,
-                    status: row.get(16)?,
-                    pinned: row.get::<_, Option<i64>>(17)?.unwrap_or(0) != 0,
-                    confirmed_by_user: row.get::<_, Option<i64>>(18)?.unwrap_or(0) != 0,
-                    access_count: row.get::<_, Option<i64>>(19)?.unwrap_or(0),
-                    hit_count: row.get::<_, Option<i64>>(20)?.unwrap_or(0),
-                    last_accessed_at: row.get::<_, Option<f64>>(21)?.unwrap_or(0.0),
-                    valid_from: row.get::<_, Option<f64>>(22)?.unwrap_or(0.0),
-                    invalidated_at: row.get(23)?,
-                    supersedes_memory_id: row.get(24)?,
-                    superseded_by_memory_id: row.get(25)?,
-                    embedding_model: row.get(26)?,
-                    vector_ref: row.get(27)?,
-                    created_at: row.get::<_, Option<f64>>(28)?.unwrap_or(0.0),
-                    updated_at: row.get::<_, Option<f64>>(29)?.unwrap_or(0.0),
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        self.list_memory_fragments_impl(user_id, agent_id)
     }
 
     fn get_memory_fragment_embedding(
@@ -3950,53 +3299,20 @@ impl StorageBackend for SqliteStorage {
         embedding_model: &str,
         content_hash: &str,
     ) -> Result<Option<MemoryFragmentEmbeddingRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND embedding_model = ? AND content_hash = ? LIMIT 1")?;
-        stmt.query_row(
-            params![
-                user_id.trim(),
-                agent_id.trim(),
-                memory_id.trim(),
-                embedding_model.trim(),
-                content_hash.trim()
-            ],
-            |row| {
-                let vector_json: String = row.get(5)?;
-                Ok(MemoryFragmentEmbeddingRecord {
-                    memory_id: row.get(0)?,
-                    user_id: row.get(1)?,
-                    agent_id: row.get(2)?,
-                    embedding_model: row.get(3)?,
-                    content_hash: row.get(4)?,
-                    vector: Self::json_to_f32_vec(&vector_json),
-                    dimensions: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
-                    updated_at: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
-                })
-            },
+        self.get_memory_fragment_embedding_impl(
+            user_id,
+            agent_id,
+            memory_id,
+            embedding_model,
+            content_hash,
         )
-        .optional()
-        .map_err(Into::into)
     }
 
     fn upsert_memory_fragment_embedding(
         &self,
         record: &MemoryFragmentEmbeddingRecord,
     ) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "DELETE FROM memory_fragment_embeddings WHERE memory_id = ? AND embedding_model = ? AND content_hash <> ?",
-            params![record.memory_id, record.embedding_model, record.content_hash],
-        )?;
-        let vector_json = Self::json_to_string(&Value::Array(
-            record.vector.iter().map(|value| json!(value)).collect(),
-        ));
-        conn.execute(
-            "INSERT INTO memory_fragment_embeddings (memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(memory_id, embedding_model, content_hash) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, vector_json = excluded.vector_json, dimensions = excluded.dimensions, updated_at = excluded.updated_at",
-            params![record.memory_id, record.user_id, record.agent_id, record.embedding_model, record.content_hash, vector_json, record.dimensions, record.updated_at],
-        )?;
-        Ok(())
+        self.upsert_memory_fragment_embedding_impl(record)
     }
 
     fn delete_memory_fragment_embeddings(
@@ -4005,13 +3321,7 @@ impl StorageBackend for SqliteStorage {
         agent_id: &str,
         memory_id: &str,
     ) -> Result<i64> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
-            params![user_id.trim(), agent_id.trim(), memory_id.trim()],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_fragment_embeddings_impl(user_id, agent_id, memory_id)
     }
 
     fn delete_memory_fragment(
@@ -4020,27 +3330,11 @@ impl StorageBackend for SqliteStorage {
         agent_id: &str,
         memory_id: &str,
     ) -> Result<i64> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let _ = conn.execute(
-            "DELETE FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
-            params![user_id.trim(), agent_id.trim(), memory_id.trim()],
-        )?;
-        let affected = conn.execute(
-            "DELETE FROM memory_fragments WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
-            params![user_id.trim(), agent_id.trim(), memory_id.trim()],
-        )?;
-        Ok(affected as i64)
+        self.delete_memory_fragment_impl(user_id, agent_id, memory_id)
     }
 
     fn insert_memory_hit(&self, record: &MemoryHitRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO memory_hits (hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![record.hit_id, record.memory_id, record.user_id, record.agent_id, record.session_id, record.round_id, record.query_text, Self::json_to_string(&record.reason_json), record.lexical_score, record.semantic_score, record.freshness_score, record.importance_score, record.final_score, record.created_at],
-        )?;
-        Ok(())
+        self.insert_memory_hit_impl(record)
     }
 
     fn list_memory_hits(
@@ -4050,67 +3344,7 @@ impl StorageBackend for SqliteStorage {
         session_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<MemoryHitRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_agent = agent_id.trim();
-        let safe_limit = limit.max(1);
-        let rows = if let Some(cleaned_session) =
-            session_id.map(str::trim).filter(|item| !item.is_empty())
-        {
-            let mut stmt = conn.prepare(
-                "SELECT hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at FROM memory_hits WHERE user_id = ? AND agent_id = ? AND session_id = ? ORDER BY created_at DESC LIMIT ?",
-            )?;
-            let mapped_rows = stmt.query_map(
-                params![cleaned_user, cleaned_agent, cleaned_session, safe_limit],
-                |row| {
-                    let reason_json: String = row.get::<_, Option<String>>(7)?.unwrap_or_default();
-                    Ok(MemoryHitRecord {
-                        hit_id: row.get(0)?,
-                        memory_id: row.get(1)?,
-                        user_id: row.get(2)?,
-                        agent_id: row.get(3)?,
-                        session_id: row.get(4)?,
-                        round_id: row.get(5)?,
-                        query_text: row.get(6)?,
-                        reason_json: Self::json_value_or_null(Some(reason_json)),
-                        lexical_score: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
-                        semantic_score: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
-                        freshness_score: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-                        importance_score: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-                        final_score: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
-                        created_at: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
-                    })
-                },
-            )?;
-            mapped_rows.collect::<std::result::Result<Vec<_>, _>>()?
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at FROM memory_hits WHERE user_id = ? AND agent_id = ? ORDER BY created_at DESC LIMIT ?",
-            )?;
-            let mapped_rows =
-                stmt.query_map(params![cleaned_user, cleaned_agent, safe_limit], |row| {
-                    let reason_json: String = row.get::<_, Option<String>>(7)?.unwrap_or_default();
-                    Ok(MemoryHitRecord {
-                        hit_id: row.get(0)?,
-                        memory_id: row.get(1)?,
-                        user_id: row.get(2)?,
-                        agent_id: row.get(3)?,
-                        session_id: row.get(4)?,
-                        round_id: row.get(5)?,
-                        query_text: row.get(6)?,
-                        reason_json: Self::json_value_or_null(Some(reason_json)),
-                        lexical_score: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
-                        semantic_score: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
-                        freshness_score: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-                        importance_score: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-                        final_score: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
-                        created_at: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
-                    })
-                })?;
-            mapped_rows.collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        Ok(rows)
+        self.list_memory_hits_impl(user_id, agent_id, session_id, limit)
     }
 
     fn list_memory_hit_counts(
@@ -4118,25 +3352,7 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         agent_id: &str,
     ) -> Result<HashMap<String, i64>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT memory_id, COUNT(DISTINCT CASE
-                WHEN TRIM(round_id) <> '' THEN session_id || '::r::' || TRIM(round_id)
-                WHEN TRIM(query_text) <> '' THEN session_id || '::q::' || TRIM(query_text)
-                ELSE NULL
-             END) AS hit_count
-             FROM memory_hits
-             WHERE user_id = ? AND agent_id = ?
-             GROUP BY memory_id",
-        )?;
-        let rows = stmt.query_map(params![user_id.trim(), agent_id.trim()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<i64>>(1)?.unwrap_or(0),
-            ))
-        })?;
-        Ok(rows.collect::<std::result::Result<HashMap<_, _>, _>>()?)
+        self.list_memory_hit_counts_impl(user_id, agent_id)
     }
 
     fn has_memory_hit_event(
@@ -4148,60 +3364,13 @@ impl StorageBackend for SqliteStorage {
         round_id: Option<&str>,
         query_text: Option<&str>,
     ) -> Result<bool> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_agent = agent_id.trim();
-        let cleaned_memory = memory_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty()
-            || cleaned_agent.is_empty()
-            || cleaned_memory.is_empty()
-            || cleaned_session.is_empty()
-        {
-            return Ok(false);
-        }
-
-        if let Some(cleaned_round) = round_id.map(str::trim).filter(|value| !value.is_empty()) {
-            let exists = conn.query_row(
-                "SELECT 1 FROM memory_hits
-                 WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND session_id = ? AND round_id = ?
-                 LIMIT 1",
-                params![cleaned_user, cleaned_agent, cleaned_memory, cleaned_session, cleaned_round],
-                |_| Ok(()),
-            );
-            return Ok(exists.is_ok());
-        }
-
-        if let Some(cleaned_query) = query_text.map(str::trim).filter(|value| !value.is_empty()) {
-            let exists = conn.query_row(
-                "SELECT 1 FROM memory_hits
-                 WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND session_id = ?
-                   AND TRIM(round_id) = '' AND query_text = ?
-                 LIMIT 1",
-                params![
-                    cleaned_user,
-                    cleaned_agent,
-                    cleaned_memory,
-                    cleaned_session,
-                    cleaned_query
-                ],
-                |_| Ok(()),
-            );
-            return Ok(exists.is_ok());
-        }
-
-        Ok(false)
+        self.has_memory_hit_event_impl(
+            user_id, agent_id, memory_id, session_id, round_id, query_text,
+        )
     }
 
     fn upsert_memory_job(&self, record: &MemoryJobRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO memory_jobs (job_id, user_id, agent_id, session_id, job_type, status, request_payload, result_summary, error_message, queued_at, started_at, finished_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, session_id = excluded.session_id, job_type = excluded.job_type, status = excluded.status, request_payload = excluded.request_payload, result_summary = excluded.result_summary, error_message = excluded.error_message, queued_at = excluded.queued_at, started_at = excluded.started_at, finished_at = excluded.finished_at, updated_at = excluded.updated_at",
-            params![record.job_id, record.user_id, record.agent_id, record.session_id, record.job_type, record.status, Self::json_to_string(&record.request_payload), record.result_summary, record.error_message, record.queued_at, record.started_at, record.finished_at, record.updated_at],
-        )?;
-        Ok(())
+        self.upsert_memory_job_impl(record)
     }
 
     fn list_memory_jobs(
@@ -4210,197 +3379,22 @@ impl StorageBackend for SqliteStorage {
         agent_id: &str,
         limit: i64,
     ) -> Result<Vec<MemoryJobRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT job_id, user_id, agent_id, session_id, job_type, status, request_payload, result_summary, error_message, queued_at, started_at, finished_at, updated_at FROM memory_jobs WHERE user_id = ? AND agent_id = ? ORDER BY updated_at DESC LIMIT ?")?;
-        let rows = stmt
-            .query_map(
-                params![user_id.trim(), agent_id.trim(), limit.max(1)],
-                |row| {
-                    let payload: String = row.get::<_, Option<String>>(6)?.unwrap_or_default();
-                    Ok(MemoryJobRecord {
-                        job_id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        agent_id: row.get(2)?,
-                        session_id: row.get(3)?,
-                        job_type: row.get(4)?,
-                        status: row.get(5)?,
-                        request_payload: Self::json_value_or_null(Some(payload)),
-                        result_summary: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
-                        error_message: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
-                        queued_at: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
-                        started_at: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-                        finished_at: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-                        updated_at: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
-                    })
-                },
-            )?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        self.list_memory_jobs_impl(user_id, agent_id, limit)
     }
     fn create_benchmark_run(&self, payload: &Value) -> Result<()> {
-        self.ensure_initialized()?;
-        let run_id = payload
-            .get("run_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if run_id.is_empty() {
-            return Ok(());
-        }
-        let user_id = payload
-            .get("user_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let model_name = payload
-            .get("model_name")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let judge_model_name = payload
-            .get("judge_model_name")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let status = payload
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let total_score = Self::parse_f64(payload.get("total_score")).unwrap_or(0.0);
-        let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
-        let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
-        let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO benchmark_runs (run_id, user_id, model_name, judge_model_name, status, total_score, started_time, finished_time, payload) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id) DO UPDATE SET user_id = excluded.user_id, model_name = excluded.model_name, \
-             judge_model_name = excluded.judge_model_name, status = excluded.status, total_score = excluded.total_score, \
-             started_time = excluded.started_time, finished_time = excluded.finished_time, payload = excluded.payload",
-            params![
-                run_id,
-                user_id,
-                model_name,
-                judge_model_name,
-                status,
-                total_score,
-                started_time,
-                finished_time,
-                payload_text
-            ],
-        )?;
-        Ok(())
+        self.create_benchmark_run_impl(payload)
     }
 
     fn update_benchmark_run(&self, run_id: &str, payload: &Value) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(());
-        }
-        let mut merged = payload.clone();
-        if let Value::Object(ref mut map) = merged {
-            map.insert("run_id".to_string(), Value::String(cleaned.to_string()));
-        }
-        self.create_benchmark_run(&merged)
+        self.update_benchmark_run_impl(run_id, payload)
     }
 
     fn upsert_benchmark_attempt(&self, run_id: &str, payload: &Value) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(());
-        }
-        let task_id = payload
-            .get("task_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if task_id.is_empty() {
-            return Ok(());
-        }
-        let attempt_no = payload
-            .get("attempt_no")
-            .and_then(Value::as_i64)
-            .or_else(|| {
-                payload
-                    .get("attempt_no")
-                    .and_then(Value::as_u64)
-                    .map(|value| value as i64)
-            })
-            .unwrap_or(0);
-        if attempt_no <= 0 {
-            return Ok(());
-        }
-        let status = payload
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let final_score = Self::parse_f64(payload.get("final_score")).unwrap_or(0.0);
-        let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
-        let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
-        let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO benchmark_attempts (run_id, task_id, attempt_no, status, final_score, started_time, finished_time, payload) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id, task_id, attempt_no) DO UPDATE SET status = excluded.status, final_score = excluded.final_score, \
-             started_time = excluded.started_time, finished_time = excluded.finished_time, payload = excluded.payload",
-            params![
-                cleaned,
-                task_id,
-                attempt_no,
-                status,
-                final_score,
-                started_time,
-                finished_time,
-                payload_text
-            ],
-        )?;
-        Ok(())
+        self.upsert_benchmark_attempt_impl(run_id, payload)
     }
 
     fn upsert_benchmark_task_aggregate(&self, run_id: &str, payload: &Value) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(());
-        }
-        let task_id = payload
-            .get("task_id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if task_id.is_empty() {
-            return Ok(());
-        }
-        let status = payload
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        let mean_score = Self::parse_f64(payload.get("mean_score")).unwrap_or(0.0);
-        let payload_text = Self::json_to_string(payload);
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO benchmark_task_aggregates (run_id, task_id, status, mean_score, payload) \
-             VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id, task_id) DO UPDATE SET status = excluded.status, mean_score = excluded.mean_score, payload = excluded.payload",
-            params![cleaned, task_id, status, mean_score, payload_text],
-        )?;
-        Ok(())
+        self.upsert_benchmark_task_aggregate_impl(run_id, payload)
     }
 
     fn load_benchmark_runs(
@@ -4412,148 +3406,24 @@ impl StorageBackend for SqliteStorage {
         until_time: Option<f64>,
         limit: Option<i64>,
     ) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut conditions = Vec::new();
-        let mut params: Vec<SqlValue> = Vec::new();
-        if let Some(user_id) = user_id {
-            let cleaned = user_id.trim();
-            if !cleaned.is_empty() {
-                conditions.push("user_id = ?".to_string());
-                params.push(SqlValue::from(cleaned.to_string()));
-            }
-        }
-        if let Some(status) = status {
-            let cleaned = status.trim();
-            if !cleaned.is_empty() {
-                conditions.push("status = ?".to_string());
-                params.push(SqlValue::from(cleaned.to_string()));
-            }
-        }
-        if let Some(model_name) = model_name {
-            let cleaned = model_name.trim();
-            if !cleaned.is_empty() {
-                conditions.push("model_name = ?".to_string());
-                params.push(SqlValue::from(cleaned.to_string()));
-            }
-        }
-        if let Some(since) = since_time {
-            conditions.push("started_time >= ?".to_string());
-            params.push(SqlValue::from(since));
-        }
-        if let Some(until) = until_time {
-            conditions.push("started_time <= ?".to_string());
-            params.push(SqlValue::from(until));
-        }
-        let mut sql = String::from("SELECT payload FROM benchmark_runs");
-        if !conditions.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&conditions.join(" AND "));
-        }
-        sql.push_str(" ORDER BY started_time DESC");
-        if let Some(limit) = limit {
-            if limit > 0 {
-                sql.push_str(" LIMIT ?");
-                params.push(SqlValue::from(limit));
-            }
-        }
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(params), |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<String>, _>>()?;
-        let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
-            }
-        }
-        Ok(records)
+        self.load_benchmark_runs_impl(user_id, status, model_name, since_time, until_time, limit)
     }
 
     fn load_benchmark_run(&self, run_id: &str) -> Result<Option<Value>> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT payload FROM benchmark_runs WHERE run_id = ?")?;
-        let mut rows = stmt.query([cleaned])?;
-        if let Some(row) = rows.next()? {
-            let payload: String = row.get(0)?;
-            return Ok(Self::json_from_str(&payload));
-        }
-        Ok(None)
+        self.load_benchmark_run_impl(run_id)
     }
 
     fn load_benchmark_attempts(&self, run_id: &str) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT payload FROM benchmark_attempts WHERE run_id = ? ORDER BY task_id, attempt_no",
-        )?;
-        let rows = stmt
-            .query_map([cleaned], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<String>, _>>()?;
-        let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
-            }
-        }
-        Ok(records)
+        self.load_benchmark_attempts_impl(run_id)
     }
 
     fn load_benchmark_task_aggregates(&self, run_id: &str) -> Result<Vec<Value>> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT payload FROM benchmark_task_aggregates WHERE run_id = ? ORDER BY task_id",
-        )?;
-        let rows = stmt
-            .query_map([cleaned], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<String>, _>>()?;
-        let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
-            }
-        }
-        Ok(records)
+        self.load_benchmark_task_aggregates_impl(run_id)
     }
 
     fn delete_benchmark_run(&self, run_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let tasks_deleted = tx.execute(
-            "DELETE FROM benchmark_task_aggregates WHERE run_id = ?",
-            params![cleaned],
-        )?;
-        let attempts_deleted = tx.execute(
-            "DELETE FROM benchmark_attempts WHERE run_id = ?",
-            params![cleaned],
-        )?;
-        let runs_deleted = tx.execute(
-            "DELETE FROM benchmark_runs WHERE run_id = ?",
-            params![cleaned],
-        )?;
-        tx.commit()?;
-        Ok((tasks_deleted + attempts_deleted + runs_deleted) as i64)
+        self.delete_benchmark_run_impl(run_id)
     }
-
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>> {
         self.ensure_initialized()?;
         if retention_days <= 0 {
@@ -5250,48 +4120,7 @@ impl StorageBackend for SqliteStorage {
     }
 
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let tool_overrides = if record.tool_overrides.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.tool_overrides))
-        };
-        let status = {
-            let cleaned = record.status.trim().to_lowercase();
-            if cleaned.is_empty() {
-                "active".to_string()
-            } else {
-                cleaned
-            }
-        };
-        conn.execute(
-            "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
-             parent_session_id, parent_message_id, spawn_label, spawned_by) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, title = excluded.title, \
-             status = excluded.status, created_at = excluded.created_at, updated_at = excluded.updated_at, \
-             last_message_at = excluded.last_message_at, agent_id = excluded.agent_id, \
-             tool_overrides = excluded.tool_overrides, parent_session_id = excluded.parent_session_id, \
-             parent_message_id = excluded.parent_message_id, spawn_label = excluded.spawn_label, \
-             spawned_by = excluded.spawned_by",
-            params![
-                record.session_id,
-                record.user_id,
-                record.title,
-                status,
-                record.created_at,
-                record.updated_at,
-                record.last_message_at,
-                record.agent_id,
-                tool_overrides,
-                record.parent_session_id,
-                record.parent_message_id,
-                record.spawn_label,
-                record.spawned_by
-            ],
-        )?;
-        Ok(())
+        self.upsert_chat_session_impl(record)
     }
 
     fn get_chat_session(
@@ -5299,47 +4128,7 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         session_id: &str,
     ) -> Result<Option<ChatSessionRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
-                 parent_session_id, parent_message_id, spawn_label, spawned_by \
-                 FROM chat_sessions WHERE user_id = ? AND session_id = ?",
-                params![cleaned_user, cleaned_session],
-                |row| {
-                    let tool_overrides: Option<String> = row.get(8)?;
-                    let status = row
-                        .get::<_, Option<String>>(3)?
-                        .unwrap_or_else(|| "active".to_string());
-                    Ok(ChatSessionRecord {
-                        session_id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        title: row.get(2)?,
-                        status: if status.trim().is_empty() {
-                            "active".to_string()
-                        } else {
-                            status
-                        },
-                        created_at: row.get(4)?,
-                        updated_at: row.get(5)?,
-                        last_message_at: row.get(6)?,
-                        agent_id: row.get(7)?,
-                        tool_overrides: Self::parse_string_list(tool_overrides),
-                        parent_session_id: row.get(9)?,
-                        parent_message_id: row.get(10)?,
-                        spawn_label: row.get(11)?,
-                        spawned_by: row.get(12)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_chat_session_impl(user_id, session_id)
     }
 
     fn list_chat_sessions(
@@ -5350,14 +4139,7 @@ impl StorageBackend for SqliteStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
-        self.list_chat_sessions_by_status(
-            user_id,
-            agent_id,
-            parent_session_id,
-            Some("active"),
-            offset,
-            limit,
-        )
+        self.list_chat_sessions_impl(user_id, agent_id, parent_session_id, offset, limit)
     }
 
     fn list_chat_sessions_by_status(
@@ -5369,129 +4151,18 @@ impl StorageBackend for SqliteStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok((Vec::new(), 0));
-        }
-        let conn = self.open()?;
-        let agent_id = agent_id.map(|value| value.trim());
-        let (agent_clause, agent_params) = match agent_id {
-            None => ("".to_string(), Vec::new()),
-            Some("") => (
-                " AND (agent_id IS NULL OR agent_id = '')".to_string(),
-                Vec::new(),
-            ),
-            Some(value) => (
-                " AND agent_id = ?".to_string(),
-                vec![SqlValue::from(value.to_string())],
-            ),
-        };
-        let (parent_clause, parent_params) = match parent_session_id {
-            None => ("".to_string(), Vec::new()),
-            Some(value) if value.trim().is_empty() => (
-                " AND (parent_session_id IS NULL OR parent_session_id = '')".to_string(),
-                Vec::new(),
-            ),
-            Some(value) => (
-                " AND parent_session_id = ?".to_string(),
-                vec![SqlValue::from(value.trim().to_string())],
-            ),
-        };
-        let normalized_status = status
-            .map(str::trim)
-            .map(str::to_lowercase)
-            .unwrap_or_default();
-        let (status_clause, status_params) =
-            if normalized_status.is_empty() || normalized_status == "all" {
-                ("".to_string(), Vec::new())
-            } else if normalized_status == "archived" {
-                (
-                    " AND status = ?".to_string(),
-                    vec![SqlValue::from("archived".to_string())],
-                )
-            } else {
-                (
-                    " AND (status IS NULL OR status = '' OR status = ?)".to_string(),
-                    vec![SqlValue::from("active".to_string())],
-                )
-            };
-        let total_sql = format!(
-            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}{status_clause}"
-        );
-        let mut total_params =
-            Vec::with_capacity(1 + agent_params.len() + parent_params.len() + status_params.len());
-        total_params.push(SqlValue::from(cleaned_user.to_string()));
-        total_params.extend(agent_params.iter().cloned());
-        total_params.extend(parent_params.iter().cloned());
-        total_params.extend(status_params.iter().cloned());
-        let total: i64 =
-            conn.query_row(&total_sql, params_from_iter(total_params.iter()), |row| {
-                row.get(0)
-            })?;
-        let mut sql = format!(
-            "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
-             parent_session_id, parent_message_id, spawn_label, spawned_by \
-             FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}{status_clause} ORDER BY updated_at DESC"
-        );
-        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
-        params_list.extend(agent_params);
-        params_list.extend(parent_params);
-        params_list.extend(status_params);
-        if limit > 0 {
-            sql.push_str(" LIMIT ? OFFSET ?");
-            params_list.push(SqlValue::from(limit));
-            params_list.push(SqlValue::from(offset.max(0)));
-        }
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(params_list.iter()), |row| {
-                let tool_overrides: Option<String> = row.get(8)?;
-                let status = row
-                    .get::<_, Option<String>>(3)?
-                    .unwrap_or_else(|| "active".to_string());
-                Ok(ChatSessionRecord {
-                    session_id: row.get(0)?,
-                    user_id: row.get(1)?,
-                    title: row.get(2)?,
-                    status: if status.trim().is_empty() {
-                        "active".to_string()
-                    } else {
-                        status
-                    },
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
-                    last_message_at: row.get(6)?,
-                    agent_id: row.get(7)?,
-                    tool_overrides: Self::parse_string_list(tool_overrides),
-                    parent_session_id: row.get(9)?,
-                    parent_message_id: row.get(10)?,
-                    spawn_label: row.get(11)?,
-                    spawned_by: row.get(12)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
-        Ok((rows, total))
+        self.list_chat_sessions_by_status_impl(
+            user_id,
+            agent_id,
+            parent_session_id,
+            status,
+            offset,
+            limit,
+        )
     }
 
     fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT agent_id FROM chat_sessions \
-                 WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active')",
-        )?;
-        let rows = stmt.query_map([cleaned_user], |row| row.get::<_, Option<String>>(0))?;
-        let mut agent_ids = Vec::new();
-        for row in rows {
-            let agent_id = row?.unwrap_or_default();
-            agent_ids.push(agent_id);
-        }
-        Ok(agent_ids)
+        self.list_chat_session_agent_ids_impl(user_id)
     }
 
     fn update_chat_session_title(
@@ -5501,18 +4172,7 @@ impl StorageBackend for SqliteStorage {
         title: &str,
         updated_at: f64,
     ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(());
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE user_id = ? AND session_id = ?",
-            params![title, updated_at, cleaned_user, cleaned_session],
-        )?;
-        Ok(())
+        self.update_chat_session_title_impl(user_id, session_id, title, updated_at)
     }
 
     fn touch_chat_session(
@@ -5522,90 +4182,15 @@ impl StorageBackend for SqliteStorage {
         updated_at: f64,
         last_message_at: f64,
     ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(());
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "UPDATE chat_sessions SET updated_at = ?, last_message_at = ? WHERE user_id = ? AND session_id = ?",
-            params![updated_at, last_message_at, cleaned_user, cleaned_session],
-        )?;
-        Ok(())
+        self.touch_chat_session_impl(user_id, session_id, updated_at, last_message_at)
     }
 
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let _ = conn.execute(
-            "DELETE FROM session_goals WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        );
-        let affected = conn.execute(
-            "DELETE FROM chat_sessions WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        self.delete_chat_session_impl(user_id, session_id)
     }
 
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned_user = record.user_id.trim();
-        let cleaned_session = record.session_id.trim();
-        let cleaned_goal = record.goal_id.trim();
-        let cleaned_objective = record.objective.trim();
-        let cleaned_status = record.status.trim();
-        if cleaned_user.is_empty()
-            || cleaned_session.is_empty()
-            || cleaned_goal.is_empty()
-            || cleaned_objective.is_empty()
-            || cleaned_status.is_empty()
-        {
-            return Ok(());
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO session_goals (
-                session_id, user_id, goal_id, objective, status, token_budget, tokens_used,
-                time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(session_id) DO UPDATE SET
-                user_id = excluded.user_id,
-                goal_id = excluded.goal_id,
-                objective = excluded.objective,
-                status = excluded.status,
-                token_budget = excluded.token_budget,
-                tokens_used = excluded.tokens_used,
-                time_used_seconds = excluded.time_used_seconds,
-                created_at = excluded.created_at,
-                updated_at = excluded.updated_at,
-                completed_at = excluded.completed_at,
-                last_continued_at = excluded.last_continued_at,
-                source = excluded.source",
-            params![
-                cleaned_session,
-                cleaned_user,
-                cleaned_goal,
-                cleaned_objective,
-                cleaned_status,
-                record.token_budget,
-                record.tokens_used.max(0),
-                record.time_used_seconds.max(0),
-                record.created_at,
-                record.updated_at,
-                record.completed_at,
-                record.last_continued_at,
-                record.source.trim()
-            ],
-        )?;
-        Ok(())
+        self.upsert_session_goal_impl(record)
     }
 
     fn get_session_goal(
@@ -5613,23 +4198,7 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         session_id: &str,
     ) -> Result<Option<SessionGoalRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT goal_id, session_id, user_id, objective, status, token_budget, tokens_used,
-                 time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
-                 FROM session_goals WHERE user_id = ? AND session_id = ?",
-                params![cleaned_user, cleaned_session],
-                map_session_goal_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.get_session_goal_impl(user_id, session_id)
     }
 
     fn list_session_goals(
@@ -5637,52 +4206,11 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         session_ids: &[String],
     ) -> Result<Vec<SessionGoalRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(Vec::new());
-        }
-        let cleaned_sessions = session_ids
-            .iter()
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        if cleaned_sessions.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let placeholders = vec!["?"; cleaned_sessions.len()].join(", ");
-        let sql = format!(
-            "SELECT goal_id, session_id, user_id, objective, status, token_budget, tokens_used,
-             time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
-             FROM session_goals WHERE user_id = ? AND session_id IN ({placeholders})"
-        );
-        let mut params_list = Vec::with_capacity(1 + cleaned_sessions.len());
-        params_list.push(SqlValue::from(cleaned_user.to_string()));
-        params_list.extend(
-            cleaned_sessions
-                .iter()
-                .map(|value| SqlValue::from((*value).to_string())),
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), map_session_goal_row)?;
-        let goals = rows.collect::<std::result::Result<Vec<SessionGoalRecord>, _>>()?;
-        Ok(goals)
+        self.list_session_goals_impl(user_id, session_ids)
     }
 
     fn delete_session_goal(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM session_goals WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        self.delete_session_goal_impl(user_id, session_id)
     }
 
     fn account_session_goal_usage(
@@ -5693,37 +4221,13 @@ impl StorageBackend for SqliteStorage {
         time_delta_seconds: i64,
         updated_at: f64,
     ) -> Result<Option<SessionGoalRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "UPDATE session_goals
-             SET tokens_used = MAX(tokens_used + ?, 0),
-                 time_used_seconds = MAX(time_used_seconds + ?, 0),
-                 updated_at = ?
-             WHERE user_id = ? AND session_id = ?",
-            params![
-                tokens_delta,
-                time_delta_seconds,
-                updated_at,
-                cleaned_user,
-                cleaned_session
-            ],
-        )?;
-        let row = conn
-            .query_row(
-                "SELECT goal_id, session_id, user_id, objective, status, token_budget, tokens_used,
-                 time_used_seconds, created_at, updated_at, completed_at, last_continued_at, source
-                 FROM session_goals WHERE user_id = ? AND session_id = ?",
-                params![cleaned_user, cleaned_session],
-                map_session_goal_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.account_session_goal_usage_impl(
+            user_id,
+            session_id,
+            tokens_delta,
+            time_delta_seconds,
+            updated_at,
+        )
     }
 
     fn resolve_or_create_user_world_direct_conversation(
@@ -5732,70 +4236,7 @@ impl StorageBackend for SqliteStorage {
         user_b: &str,
         now: f64,
     ) -> Result<UserWorldConversationRecord> {
-        self.ensure_initialized()?;
-        let (participant_a, participant_b) = Self::normalize_user_world_pair(user_a, user_b)
-            .ok_or_else(|| anyhow::anyhow!("invalid user pair"))?;
-        let now = if now.is_finite() && now > 0.0 {
-            now
-        } else {
-            Self::now_ts()
-        };
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        let existing = tx
-            .query_row(
-                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
-                 NULL AS group_id, NULL AS group_name, 2 AS member_count, \
-                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-                 FROM user_world_conversations c \
-                 WHERE c.conversation_type = 'direct' AND c.participant_a = ? AND c.participant_b = ?",
-                params![participant_a, participant_b],
-                Self::map_user_world_conversation_row,
-            )
-            .optional()?;
-        if let Some(record) = existing {
-            tx.commit()?;
-            return Ok(record);
-        }
-
-        let conversation_id = format!("uwc_{}", uuid::Uuid::new_v4().simple());
-        tx.execute(
-            "INSERT INTO user_world_conversations (conversation_id, conversation_type, participant_a, participant_b, \
-             created_at, updated_at, last_message_at, last_message_id, last_message_preview) \
-             VALUES (?, 'direct', ?, ?, ?, ?, ?, NULL, NULL)",
-            params![
-                conversation_id,
-                participant_a,
-                participant_b,
-                now,
-                now,
-                now
-            ],
-        )?;
-        tx.execute(
-            "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
-             pinned, muted, updated_at) VALUES (?, ?, ?, NULL, 0, 0, 0, ?)",
-            params![conversation_id, participant_a, participant_b, now],
-        )?;
-        tx.execute(
-            "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
-             pinned, muted, updated_at) VALUES (?, ?, ?, NULL, 0, 0, 0, ?)",
-            params![conversation_id, participant_b, participant_a, now],
-        )?;
-        let record = tx
-            .query_row(
-                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
-                 NULL AS group_id, NULL AS group_name, 2 AS member_count, \
-                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-                 FROM user_world_conversations c WHERE c.conversation_id = ?",
-                params![conversation_id],
-                Self::map_user_world_conversation_row,
-            )
-            .optional()?
-            .ok_or_else(|| anyhow::anyhow!("user world conversation missing after insert"))?;
-        tx.commit()?;
-        Ok(record)
+        self.resolve_or_create_user_world_direct_conversation_impl(user_a, user_b, now)
     }
 
     fn create_user_world_group(
@@ -5805,87 +4246,14 @@ impl StorageBackend for SqliteStorage {
         member_user_ids: &[String],
         now: f64,
     ) -> Result<UserWorldConversationRecord> {
-        self.ensure_initialized()?;
-        let owner = owner_user_id.trim();
-        let name = group_name.trim();
-        if owner.is_empty() || name.is_empty() {
-            return Err(anyhow::anyhow!("owner_user_id/group_name is required"));
-        }
-        let members = Self::normalize_user_world_members(owner, member_user_ids);
-        if members.len() < 2 {
-            return Err(anyhow::anyhow!("group requires at least 2 users"));
-        }
-        let now = if now.is_finite() && now > 0.0 {
-            now
-        } else {
-            Self::now_ts()
-        };
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let conversation_id = format!("uwc_{}", uuid::Uuid::new_v4().simple());
-        let group_id = format!("uwg_{}", uuid::Uuid::new_v4().simple());
-        tx.execute(
-            "INSERT INTO user_world_conversations (conversation_id, conversation_type, participant_a, participant_b, \
-             created_at, updated_at, last_message_at, last_message_id, last_message_preview) \
-             VALUES (?, 'group', ?, ?, ?, ?, ?, NULL, NULL)",
-            params![conversation_id, owner, group_id, now, now, now],
-        )?;
-        tx.execute(
-            "INSERT INTO user_world_groups (group_id, conversation_id, group_name, owner_user_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-            params![group_id, conversation_id, name, owner, now, now],
-        )?;
-        for member_user_id in &members {
-            tx.execute(
-                "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
-                 pinned, muted, updated_at) VALUES (?, ?, '', NULL, 0, 0, 0, ?)",
-                params![conversation_id, member_user_id, now],
-            )?;
-        }
-        let member_count = members.len() as i64;
-        let record = tx
-            .query_row(
-                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
-                 g.group_id, g.group_name, ? AS member_count, \
-                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-                 FROM user_world_conversations c \
-                 JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
-                 WHERE c.conversation_id = ?",
-                params![member_count, conversation_id],
-                Self::map_user_world_conversation_row,
-            )
-            .optional()?
-            .ok_or_else(|| anyhow::anyhow!("user world group missing after insert"))?;
-        tx.commit()?;
-        Ok(record)
+        self.create_user_world_group_impl(owner_user_id, group_name, member_user_ids, now)
     }
 
     fn get_user_world_conversation(
         &self,
         conversation_id: &str,
     ) -> Result<Option<UserWorldConversationRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = conversation_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
-                 g.group_id, g.group_name, \
-                 CASE WHEN c.conversation_type = 'group' THEN \
-                    (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
-                 ELSE NULL END AS member_count, \
-                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-                 FROM user_world_conversations c \
-                 LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
-                 WHERE c.conversation_id = ?",
-                params![cleaned],
-                Self::map_user_world_conversation_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.get_user_world_conversation_impl(conversation_id)
     }
 
     fn get_user_world_member(
@@ -5893,22 +4261,7 @@ impl StorageBackend for SqliteStorage {
         conversation_id: &str,
         user_id: &str,
     ) -> Result<Option<UserWorldMemberRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_conversation = conversation_id.trim();
-        let cleaned_user = user_id.trim();
-        if cleaned_conversation.is_empty() || cleaned_user.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, pinned, muted, updated_at \
-                 FROM user_world_members WHERE conversation_id = ? AND user_id = ?",
-                params![cleaned_conversation, cleaned_user],
-                Self::map_user_world_member_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.get_user_world_member_impl(conversation_id, user_id)
     }
 
     fn list_user_world_conversations(
@@ -5917,59 +4270,7 @@ impl StorageBackend for SqliteStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserWorldConversationSummaryRecord>, i64)> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok((Vec::new(), 0));
-        }
-        let conn = self.open()?;
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM user_world_members WHERE user_id = ?",
-            params![cleaned_user],
-            |row| row.get(0),
-        )?;
-
-        let mut sql = "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, \
-                       g.group_id, g.group_name, \
-                       CASE WHEN c.conversation_type = 'group' THEN \
-                         (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
-                       ELSE NULL END AS member_count, \
-                       m.last_read_message_id, m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
-                       c.last_message_at, c.last_message_id, c.last_message_preview \
-                       FROM user_world_members m \
-                       JOIN user_world_conversations c ON c.conversation_id = m.conversation_id \
-                       LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
-                       WHERE m.user_id = ? \
-                       ORDER BY m.pinned DESC, c.last_message_at DESC, m.updated_at DESC"
-            .to_string();
-        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
-        if limit > 0 {
-            sql.push_str(" LIMIT ? OFFSET ?");
-            params_list.push(SqlValue::from(limit));
-            params_list.push(SqlValue::from(offset.max(0)));
-        }
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(params_from_iter(params_list.iter()), |row| {
-                Ok(UserWorldConversationSummaryRecord {
-                    conversation_id: row.get(0)?,
-                    conversation_type: row.get(1)?,
-                    peer_user_id: row.get(2)?,
-                    group_id: row.get(3)?,
-                    group_name: row.get(4)?,
-                    member_count: row.get(5)?,
-                    last_read_message_id: row.get(6)?,
-                    unread_count_cache: row.get(7)?,
-                    pinned: row.get::<_, i64>(8)? != 0,
-                    muted: row.get::<_, i64>(9)? != 0,
-                    updated_at: row.get(10)?,
-                    last_message_at: row.get(11)?,
-                    last_message_id: row.get(12)?,
-                    last_message_preview: row.get(13)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<UserWorldConversationSummaryRecord>, _>>()?;
-        Ok((rows, total))
+        self.list_user_world_conversations_impl(user_id, offset, limit)
     }
 
     fn list_user_world_messages(
@@ -5978,31 +4279,7 @@ impl StorageBackend for SqliteStorage {
         before_message_id: Option<i64>,
         limit: i64,
     ) -> Result<Vec<UserWorldMessageRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = conversation_id.trim();
-        if cleaned.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let safe_limit = if limit <= 0 { 50 } else { limit.min(200) };
-        let mut sql = "SELECT message_id, conversation_id, sender_user_id, content, content_type, client_msg_id, created_at \
-                       FROM user_world_messages WHERE conversation_id = ?"
-            .to_string();
-        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned.to_string())];
-        if let Some(before_id) = before_message_id.filter(|value| *value > 0) {
-            sql.push_str(" AND message_id < ?");
-            params_list.push(SqlValue::from(before_id));
-        }
-        sql.push_str(" ORDER BY message_id DESC LIMIT ?");
-        params_list.push(SqlValue::from(safe_limit));
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(
-                params_from_iter(params_list.iter()),
-                Self::map_user_world_message_row,
-            )?
-            .collect::<std::result::Result<Vec<UserWorldMessageRecord>, _>>()?;
-        Ok(rows)
+        self.list_user_world_messages_impl(conversation_id, before_message_id, limit)
     }
 
     fn send_user_world_message(
@@ -6014,166 +4291,14 @@ impl StorageBackend for SqliteStorage {
         client_msg_id: Option<&str>,
         now: f64,
     ) -> Result<UserWorldSendMessageResult> {
-        self.ensure_initialized()?;
-        let cleaned_conversation = conversation_id.trim();
-        let cleaned_sender = sender_user_id.trim();
-        let cleaned_content = content.trim();
-        if cleaned_conversation.is_empty()
-            || cleaned_sender.is_empty()
-            || cleaned_content.is_empty()
-        {
-            return Err(anyhow::anyhow!("invalid message payload"));
-        }
-        let normalized_content_type = {
-            let cleaned = content_type.trim();
-            if cleaned.is_empty() {
-                "text"
-            } else {
-                cleaned
-            }
-        };
-        let cleaned_client_msg = client_msg_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let now = if now.is_finite() && now > 0.0 {
-            now
-        } else {
-            Self::now_ts()
-        };
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-        let conversation_exists: Option<i64> = tx
-            .query_row(
-                "SELECT 1 FROM user_world_conversations WHERE conversation_id = ?",
-                params![cleaned_conversation],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if conversation_exists.is_none() {
-            return Err(anyhow::anyhow!("conversation not found"));
-        }
-
-        let exists: Option<i64> = tx
-            .query_row(
-                "SELECT 1 FROM user_world_members WHERE conversation_id = ? AND user_id = ?",
-                params![cleaned_conversation, cleaned_sender],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if exists.is_none() {
-            return Err(anyhow::anyhow!("sender is not a member of conversation"));
-        }
-
-        if let Some(client_msg_id) = cleaned_client_msg.as_deref() {
-            if let Some(existing) = tx
-                .query_row(
-                    "SELECT message_id, conversation_id, sender_user_id, content, content_type, client_msg_id, created_at \
-                     FROM user_world_messages WHERE conversation_id = ? AND client_msg_id = ?",
-                    params![cleaned_conversation, client_msg_id],
-                    Self::map_user_world_message_row,
-                )
-                .optional()?
-            {
-                tx.commit()?;
-                return Ok(UserWorldSendMessageResult {
-                    message: existing,
-                    inserted: false,
-                    event: None,
-                });
-            }
-        }
-
-        tx.execute(
-            "INSERT INTO user_world_messages (conversation_id, sender_user_id, content, content_type, client_msg_id, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-            params![
-                cleaned_conversation,
-                cleaned_sender,
-                cleaned_content,
-                normalized_content_type,
-                cleaned_client_msg,
-                now
-            ],
-        )?;
-        let message_id = tx.last_insert_rowid();
-        let normalized_content_type_lower = normalized_content_type.to_ascii_lowercase();
-        let preview = if normalized_content_type_lower == "voice"
-            || normalized_content_type_lower == "audio"
-            || normalized_content_type_lower.starts_with("audio/")
-            || normalized_content_type_lower.contains("voice")
-        {
-            "[Voice]".to_string()
-        } else {
-            cleaned_content.chars().take(120).collect::<String>()
-        };
-        tx.execute(
-            "UPDATE user_world_conversations SET updated_at = ?, last_message_at = ?, last_message_id = ?, last_message_preview = ? \
-             WHERE conversation_id = ?",
-            params![now, now, message_id, preview, cleaned_conversation],
-        )?;
-
-        tx.execute(
-            "UPDATE user_world_members SET last_read_message_id = ?, unread_count_cache = 0, updated_at = ? \
-             WHERE conversation_id = ? AND user_id = ?",
-            params![message_id, now, cleaned_conversation, cleaned_sender],
-        )?;
-        tx.execute(
-            "UPDATE user_world_members SET unread_count_cache = COALESCE(unread_count_cache, 0) + 1, updated_at = ? \
-             WHERE conversation_id = ? AND user_id <> ?",
-            params![now, cleaned_conversation, cleaned_sender],
-        )?;
-
-        let message = tx
-            .query_row(
-                "SELECT message_id, conversation_id, sender_user_id, content, content_type, client_msg_id, created_at \
-                 FROM user_world_messages WHERE message_id = ?",
-                params![message_id],
-                Self::map_user_world_message_row,
-            )
-            .optional()?
-            .ok_or_else(|| anyhow::anyhow!("message missing after insert"))?;
-
-        let next_event_id: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(event_id), 0) + 1 FROM user_world_events WHERE conversation_id = ?",
-            params![cleaned_conversation],
-            |row| row.get(0),
-        )?;
-        let payload = json!({
-            "conversation_id": message.conversation_id,
-            "message": {
-                "message_id": message.message_id,
-                "conversation_id": message.conversation_id,
-                "sender_user_id": message.sender_user_id,
-                "content": message.content,
-                "content_type": message.content_type,
-                "client_msg_id": message.client_msg_id,
-                "created_at": message.created_at,
-            }
-        });
-        tx.execute(
-            "INSERT INTO user_world_events (conversation_id, event_id, event_type, payload, created_time) VALUES (?, ?, ?, ?, ?)",
-            params![
-                cleaned_conversation,
-                next_event_id,
-                "uw.message",
-                Self::json_to_string(&payload),
-                now
-            ],
-        )?;
-        tx.commit()?;
-        Ok(UserWorldSendMessageResult {
-            message,
-            inserted: true,
-            event: Some(UserWorldEventRecord {
-                conversation_id: cleaned_conversation.to_string(),
-                event_id: next_event_id,
-                event_type: "uw.message".to_string(),
-                payload,
-                created_time: now,
-            }),
-        })
+        self.send_user_world_message_impl(
+            conversation_id,
+            sender_user_id,
+            content,
+            content_type,
+            client_msg_id,
+            now,
+        )
     }
 
     fn mark_user_world_read(
@@ -6183,119 +4308,7 @@ impl StorageBackend for SqliteStorage {
         last_read_message_id: Option<i64>,
         now: f64,
     ) -> Result<Option<UserWorldReadResult>> {
-        self.ensure_initialized()?;
-        let cleaned_conversation = conversation_id.trim();
-        let cleaned_user = user_id.trim();
-        if cleaned_conversation.is_empty() || cleaned_user.is_empty() {
-            return Ok(None);
-        }
-        let now = if now.is_finite() && now > 0.0 {
-            now
-        } else {
-            Self::now_ts()
-        };
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current_member = tx
-            .query_row(
-                "SELECT conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, pinned, muted, updated_at \
-                 FROM user_world_members WHERE conversation_id = ? AND user_id = ?",
-                params![cleaned_conversation, cleaned_user],
-                Self::map_user_world_member_row,
-            )
-            .optional()?;
-        let Some(mut member) = current_member else {
-            tx.commit()?;
-            return Ok(None);
-        };
-
-        let max_message_id: Option<i64> = tx.query_row(
-            "SELECT MAX(message_id) FROM user_world_messages WHERE conversation_id = ?",
-            params![cleaned_conversation],
-            |row| row.get(0),
-        )?;
-        let resolved_target = match last_read_message_id.filter(|value| *value > 0) {
-            Some(target) => max_message_id.map(|max_id| target.min(max_id)),
-            None => max_message_id,
-        };
-        let current_last = member.last_read_message_id.unwrap_or(0);
-        let next_last = resolved_target.unwrap_or(0).max(current_last);
-        let unread_count: i64 = if next_last > 0 {
-            tx.query_row(
-                "SELECT COUNT(*) FROM user_world_messages \
-                 WHERE conversation_id = ? AND sender_user_id <> ? AND message_id > ?",
-                params![cleaned_conversation, cleaned_user, next_last],
-                |row| row.get(0),
-            )?
-        } else {
-            tx.query_row(
-                "SELECT COUNT(*) FROM user_world_messages \
-                 WHERE conversation_id = ? AND sender_user_id <> ?",
-                params![cleaned_conversation, cleaned_user],
-                |row| row.get(0),
-            )?
-        };
-
-        tx.execute(
-            "UPDATE user_world_members SET last_read_message_id = ?, unread_count_cache = ?, updated_at = ? \
-             WHERE conversation_id = ? AND user_id = ?",
-            params![
-                if next_last > 0 { Some(next_last) } else { None },
-                unread_count,
-                now,
-                cleaned_conversation,
-                cleaned_user
-            ],
-        )?;
-
-        let prev_last_read_message_id = member.last_read_message_id;
-        let prev_unread_count = member.unread_count_cache;
-        member.last_read_message_id = if next_last > 0 { Some(next_last) } else { None };
-        member.unread_count_cache = unread_count;
-        member.updated_at = now;
-
-        let changed = member.last_read_message_id != prev_last_read_message_id
-            || member.unread_count_cache != prev_unread_count;
-        if !changed {
-            tx.commit()?;
-            return Ok(Some(UserWorldReadResult {
-                member,
-                event: None,
-            }));
-        }
-
-        let next_event_id: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(event_id), 0) + 1 FROM user_world_events WHERE conversation_id = ?",
-            params![cleaned_conversation],
-            |row| row.get(0),
-        )?;
-        let payload = json!({
-            "conversation_id": cleaned_conversation,
-            "user_id": cleaned_user,
-            "last_read_message_id": member.last_read_message_id,
-            "unread_count": member.unread_count_cache,
-        });
-        tx.execute(
-            "INSERT INTO user_world_events (conversation_id, event_id, event_type, payload, created_time) VALUES (?, ?, ?, ?, ?)",
-            params![
-                cleaned_conversation,
-                next_event_id,
-                "uw.read",
-                Self::json_to_string(&payload),
-                now
-            ],
-        )?;
-        tx.commit()?;
-        Ok(Some(UserWorldReadResult {
-            member,
-            event: Some(UserWorldEventRecord {
-                conversation_id: cleaned_conversation.to_string(),
-                event_id: next_event_id,
-                event_type: "uw.read".to_string(),
-                payload,
-                created_time: now,
-            }),
-        }))
+        self.mark_user_world_read_impl(conversation_id, user_id, last_read_message_id, now)
     }
 
     fn list_user_world_events(
@@ -6304,30 +4317,7 @@ impl StorageBackend for SqliteStorage {
         after_event_id: i64,
         limit: i64,
     ) -> Result<Vec<UserWorldEventRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = conversation_id.trim();
-        if cleaned.is_empty() {
-            return Ok(Vec::new());
-        }
-        let safe_limit = if limit <= 0 { 100 } else { limit.min(500) };
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT conversation_id, event_id, event_type, payload, created_time \
-             FROM user_world_events WHERE conversation_id = ? AND event_id > ? \
-             ORDER BY event_id ASC LIMIT ?",
-        )?;
-        let rows = stmt
-            .query_map(params![cleaned, after_event_id.max(0), safe_limit], |row| {
-                Ok(UserWorldEventRecord {
-                    conversation_id: row.get(0)?,
-                    event_id: row.get(1)?,
-                    event_type: row.get(2)?,
-                    payload: Self::parse_json_column(row.get::<_, Option<String>>(3)?),
-                    created_time: row.get(4)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<UserWorldEventRecord>, _>>()?;
-        Ok(rows)
+        self.list_user_world_events_impl(conversation_id, after_event_id, limit)
     }
 
     fn list_user_world_groups(
@@ -6336,66 +4326,11 @@ impl StorageBackend for SqliteStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserWorldGroupRecord>, i64)> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok((Vec::new(), 0));
-        }
-        let conn = self.open()?;
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM user_world_groups g \
-             JOIN user_world_members m ON m.conversation_id = g.conversation_id \
-             WHERE m.user_id = ?",
-            params![cleaned_user],
-            |row| row.get(0),
-        )?;
-
-        let mut sql = "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
-                       g.announcement, g.announcement_updated_at, \
-                       (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
-                       m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-                       FROM user_world_groups g \
-                       JOIN user_world_members m ON m.conversation_id = g.conversation_id \
-                       JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
-                       WHERE m.user_id = ? \
-                       ORDER BY m.pinned DESC, c.last_message_at DESC, g.updated_at DESC"
-            .to_string();
-        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
-        if limit > 0 {
-            sql.push_str(" LIMIT ? OFFSET ?");
-            params_list.push(SqlValue::from(limit));
-            params_list.push(SqlValue::from(offset.max(0)));
-        }
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(
-                params_from_iter(params_list.iter()),
-                Self::map_user_world_group_row,
-            )?
-            .collect::<std::result::Result<Vec<UserWorldGroupRecord>, _>>()?;
-        Ok((rows, total))
+        self.list_user_world_groups_impl(user_id, offset, limit)
     }
 
     fn get_user_world_group_by_id(&self, group_id: &str) -> Result<Option<UserWorldGroupRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_group = group_id.trim();
-        if cleaned_group.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        conn.query_row(
-            "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
-             g.announcement, g.announcement_updated_at, \
-             (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
-             0 AS unread_count_cache, g.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-             FROM user_world_groups g \
-             JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
-             WHERE g.group_id = ?",
-            params![cleaned_group],
-            Self::map_user_world_group_row,
-        )
-        .optional()
-        .map_err(Into::into)
+        self.get_user_world_group_by_id_impl(group_id)
     }
 
     fn update_user_world_group_announcement(
@@ -6405,72 +4340,16 @@ impl StorageBackend for SqliteStorage {
         announcement_updated_at: Option<f64>,
         updated_at: f64,
     ) -> Result<Option<UserWorldGroupRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_group = group_id.trim();
-        if cleaned_group.is_empty() {
-            return Ok(None);
-        }
-        let announcement = announcement
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let affected = tx.execute(
-            "UPDATE user_world_groups SET announcement = ?, announcement_updated_at = ?, updated_at = ? \
-             WHERE group_id = ?",
-            params![
-                announcement,
-                announcement_updated_at,
-                if updated_at.is_finite() && updated_at > 0.0 {
-                    updated_at
-                } else {
-                    Self::now_ts()
-                },
-                cleaned_group
-            ],
-        )?;
-        if affected == 0 {
-            tx.commit()?;
-            return Ok(None);
-        }
-        let record = tx
-            .query_row(
-                "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
-                 g.announcement, g.announcement_updated_at, \
-                 (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
-                 0 AS unread_count_cache, g.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
-                 FROM user_world_groups g \
-                 JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
-                 WHERE g.group_id = ?",
-                params![cleaned_group],
-                Self::map_user_world_group_row,
-            )
-            .optional()?;
-        tx.commit()?;
-        Ok(record)
+        self.update_user_world_group_announcement_impl(
+            group_id,
+            announcement,
+            announcement_updated_at,
+            updated_at,
+        )
     }
 
     fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>> {
-        self.ensure_initialized()?;
-        let cleaned_conversation = conversation_id.trim();
-        if cleaned_conversation.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT user_id FROM user_world_members WHERE conversation_id = ? ORDER BY user_id ASC",
-        )?;
-        let rows = stmt.query_map(params![cleaned_conversation], |row| row.get::<_, String>(0))?;
-        let mut output = Vec::new();
-        for row in rows {
-            let user_id = row?;
-            if user_id.trim().is_empty() {
-                continue;
-            }
-            output.push(user_id);
-        }
-        Ok(output)
+        self.list_user_world_member_user_ids_impl(conversation_id)
     }
 
     fn list_beeroom_chat_messages(
@@ -6480,42 +4359,7 @@ impl StorageBackend for SqliteStorage {
         before_message_id: Option<i64>,
         limit: i64,
     ) -> Result<Vec<BeeroomChatMessageRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_group = group_id.trim();
-        if cleaned_user.is_empty() || cleaned_group.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let safe_limit = limit.clamp(1, 200);
-        let rows = if let Some(before_id) = before_message_id.filter(|value| *value > 0) {
-            let mut stmt = conn.prepare(
-                "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
-                 mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
-                 FROM beeroom_chat_messages WHERE user_id = ? AND group_id = ? AND message_id < ? \
-                 ORDER BY message_id DESC LIMIT ?",
-            )?;
-            let mapped = stmt.query_map(
-                params![cleaned_user, cleaned_group, before_id, safe_limit],
-                Self::map_beeroom_chat_message_row,
-            )?;
-            mapped.collect::<std::result::Result<Vec<BeeroomChatMessageRecord>, _>>()?
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
-                 mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
-                 FROM beeroom_chat_messages WHERE user_id = ? AND group_id = ? \
-                 ORDER BY message_id DESC LIMIT ?",
-            )?;
-            let mapped = stmt.query_map(
-                params![cleaned_user, cleaned_group, safe_limit],
-                Self::map_beeroom_chat_message_row,
-            )?;
-            mapped.collect::<std::result::Result<Vec<BeeroomChatMessageRecord>, _>>()?
-        };
-        let mut output = rows;
-        output.reverse();
-        Ok(output)
+        self.list_beeroom_chat_messages_impl(user_id, group_id, before_message_id, limit)
     }
 
     fn append_beeroom_chat_message(
@@ -6533,136 +4377,27 @@ impl StorageBackend for SqliteStorage {
         client_msg_id: Option<&str>,
         created_at: f64,
     ) -> Result<BeeroomChatMessageRecord> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_group = group_id.trim();
-        let cleaned_sender_kind = sender_kind.trim();
-        let cleaned_sender_name = sender_name.trim();
-        let cleaned_body = body.trim();
-        if cleaned_user.is_empty()
-            || cleaned_group.is_empty()
-            || cleaned_sender_kind.is_empty()
-            || cleaned_sender_name.is_empty()
-            || cleaned_body.is_empty()
-        {
-            return Err(anyhow::anyhow!("invalid beeroom chat message payload"));
-        }
-        let cleaned_tone = if tone.trim().is_empty() {
-            "system"
-        } else {
-            tone.trim()
-        };
-        let normalized_sender_agent_id = sender_agent_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let normalized_mention_name = mention_name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let normalized_mention_agent_id = mention_agent_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let normalized_meta = meta
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let normalized_client_msg_id = client_msg_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let now = if created_at.is_finite() && created_at > 0.0 {
-            created_at
-        } else {
-            Self::now_ts()
-        };
-
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(existing_client_id) = normalized_client_msg_id.as_deref() {
-            if let Some(existing) = tx
-                .query_row(
-                    "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
-                     mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
-                     FROM beeroom_chat_messages WHERE user_id = ? AND group_id = ? AND client_msg_id = ?",
-                    params![cleaned_user, cleaned_group, existing_client_id],
-                    Self::map_beeroom_chat_message_row,
-                )
-                .optional()?
-            {
-                tx.commit()?;
-                return Ok(existing);
-            }
-        }
-        tx.execute(
-            "INSERT INTO beeroom_chat_messages \
-             (user_id, group_id, sender_kind, sender_name, sender_agent_id, mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                cleaned_user,
-                cleaned_group,
-                cleaned_sender_kind,
-                cleaned_sender_name,
-                normalized_sender_agent_id,
-                normalized_mention_name,
-                normalized_mention_agent_id,
-                cleaned_body,
-                normalized_meta,
-                cleaned_tone,
-                normalized_client_msg_id,
-                now
-            ],
-        )?;
-        let message_id = tx.last_insert_rowid();
-        let record = tx
-            .query_row(
-                "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
-                 mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
-                 FROM beeroom_chat_messages WHERE message_id = ?",
-                params![message_id],
-                Self::map_beeroom_chat_message_row,
-            )
-            .optional()?
-            .ok_or_else(|| anyhow::anyhow!("beeroom chat message missing after insert"))?;
-        tx.commit()?;
-        Ok(record)
+        self.append_beeroom_chat_message_impl(
+            user_id,
+            group_id,
+            sender_kind,
+            sender_name,
+            sender_agent_id,
+            mention_name,
+            mention_agent_id,
+            body,
+            meta,
+            tone,
+            client_msg_id,
+            created_at,
+        )
     }
 
     fn delete_beeroom_chat_messages(&self, user_id: &str, group_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_group = group_id.trim();
-        if cleaned_user.is_empty() || cleaned_group.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "DELETE FROM beeroom_chat_messages WHERE user_id = ? AND group_id = ?",
-            params![cleaned_user, cleaned_group],
-        )
-        .map(|count| count as i64)
-        .map_err(Into::into)
+        self.delete_beeroom_chat_messages_impl(user_id, group_id)
     }
-
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let config = Self::json_to_string(&record.config);
-        conn.execute(
-            "INSERT INTO channel_accounts (channel, account_id, config, status, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(channel, account_id) DO UPDATE SET config = excluded.config, status = excluded.status, updated_at = excluded.updated_at",
-            params![
-                record.channel,
-                record.account_id,
-                config,
-                record.status,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_channel_account_impl(record)
     }
 
     fn get_channel_account(
@@ -6670,31 +4405,7 @@ impl StorageBackend for SqliteStorage {
         channel: &str,
         account_id: &str,
     ) -> Result<Option<ChannelAccountRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT channel, account_id, config, status, created_at, updated_at FROM channel_accounts WHERE channel = ? AND account_id = ?",
-                params![cleaned_channel, cleaned_account],
-                |row| {
-                    let config_text: String = row.get(2)?;
-                    Ok(ChannelAccountRecord {
-                        channel: row.get(0)?,
-                        account_id: row.get(1)?,
-                        config: Self::json_from_str(&config_text).unwrap_or(Value::Null),
-                        status: row.get(3)?,
-                        created_at: row.get(4)?,
-                        updated_at: row.get(5)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_channel_account_impl(channel, account_id)
     }
 
     fn list_channel_accounts(
@@ -6702,166 +4413,27 @@ impl StorageBackend for SqliteStorage {
         channel: Option<&str>,
         status: Option<&str>,
     ) -> Result<Vec<ChannelAccountRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(channel) = channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("channel = ?".to_string());
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        if let Some(status) = status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("status = ?".to_string());
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        let mut query =
-            "SELECT channel, account_id, config, status, created_at, updated_at FROM channel_accounts"
-                .to_string();
-        if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" ORDER BY updated_at DESC");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let config_text: String = row.get(2)?;
-            Ok(ChannelAccountRecord {
-                channel: row.get(0)?,
-                account_id: row.get(1)?,
-                config: Self::json_from_str(&config_text).unwrap_or(Value::Null),
-                status: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_channel_accounts_impl(channel, status)
     }
 
     fn delete_channel_account(&self, channel: &str, account_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM channel_accounts WHERE channel = ? AND account_id = ?",
-            params![cleaned_channel, cleaned_account],
-        )?;
-        Ok(affected as i64)
+        self.delete_channel_account_impl(channel, account_id)
     }
 
     fn upsert_channel_binding(&self, record: &ChannelBindingRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let tool_overrides = if record.tool_overrides.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.tool_overrides))
-        };
-        let enabled = if record.enabled { 1 } else { 0 };
-        conn.execute(
-            "INSERT INTO channel_bindings (binding_id, channel, account_id, peer_kind, peer_id, agent_id, tool_overrides, priority, enabled, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(binding_id) DO UPDATE SET channel = excluded.channel, account_id = excluded.account_id, peer_kind = excluded.peer_kind, peer_id = excluded.peer_id, \
-             agent_id = excluded.agent_id, tool_overrides = excluded.tool_overrides, priority = excluded.priority, enabled = excluded.enabled, updated_at = excluded.updated_at",
-            params![
-                record.binding_id,
-                record.channel,
-                record.account_id,
-                record.peer_kind,
-                record.peer_id,
-                record.agent_id,
-                tool_overrides,
-                record.priority,
-                enabled,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_channel_binding_impl(record)
     }
 
     fn list_channel_bindings(&self, channel: Option<&str>) -> Result<Vec<ChannelBindingRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut query = "SELECT binding_id, channel, account_id, peer_kind, peer_id, agent_id, tool_overrides, priority, enabled, created_at, updated_at FROM channel_bindings".to_string();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(channel) = channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            query.push_str(" WHERE channel = ?");
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        query.push_str(" ORDER BY priority DESC, updated_at DESC");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let tool_overrides: Option<String> = row.get(6)?;
-            Ok(ChannelBindingRecord {
-                binding_id: row.get(0)?,
-                channel: row.get(1)?,
-                account_id: row.get(2)?,
-                peer_kind: row.get(3)?,
-                peer_id: row.get(4)?,
-                agent_id: row.get(5)?,
-                tool_overrides: Self::parse_string_list(tool_overrides),
-                priority: row.get(7)?,
-                enabled: row.get::<_, i64>(8)? != 0,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_channel_bindings_impl(channel)
     }
 
     fn delete_channel_binding(&self, binding_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = binding_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM channel_bindings WHERE binding_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_channel_binding_impl(binding_id)
     }
 
     fn upsert_channel_user_binding(&self, record: &ChannelUserBindingRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO channel_user_bindings (channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(channel, account_id, peer_kind, peer_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at",
-            params![
-                record.channel,
-                record.account_id,
-                record.peer_kind,
-                record.peer_id,
-                record.user_id,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_channel_user_binding_impl(record)
     }
 
     fn get_channel_user_binding(
@@ -6871,118 +4443,14 @@ impl StorageBackend for SqliteStorage {
         peer_kind: &str,
         peer_id: &str,
     ) -> Result<Option<ChannelUserBindingRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at \
-                 FROM channel_user_bindings WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ?",
-                params![channel, account_id, peer_kind, peer_id],
-                |row| {
-                    Ok(ChannelUserBindingRecord {
-                        channel: row.get(0)?,
-                        account_id: row.get(1)?,
-                        peer_kind: row.get(2)?,
-                        peer_id: row.get(3)?,
-                        user_id: row.get(4)?,
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_channel_user_binding_impl(channel, account_id, peer_kind, peer_id)
     }
 
     fn list_channel_user_bindings(
         &self,
         query: ListChannelUserBindingsQuery<'_>,
     ) -> Result<(Vec<ChannelUserBindingRecord>, i64)> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(channel) = query
-            .channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("channel = ?".to_string());
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        if let Some(account_id) = query
-            .account_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("account_id = ?".to_string());
-            params_list.push(SqlValue::from(account_id.to_string()));
-        }
-        if let Some(peer_kind) = query
-            .peer_kind
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("peer_kind = ?".to_string());
-            params_list.push(SqlValue::from(peer_kind.to_string()));
-        }
-        if let Some(peer_id) = query
-            .peer_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("peer_id = ?".to_string());
-            params_list.push(SqlValue::from(peer_id.to_string()));
-        }
-        if let Some(user_id) = query
-            .user_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("user_id = ?".to_string());
-            params_list.push(SqlValue::from(user_id.to_string()));
-        }
-        let mut sql =
-            "SELECT channel, account_id, peer_kind, peer_id, user_id, created_at, updated_at FROM channel_user_bindings"
-                .to_string();
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY updated_at DESC");
-        let offset_value = query.offset.max(0);
-        let limit_value = if query.limit <= 0 {
-            100
-        } else {
-            query.limit.min(500)
-        };
-        params_list.push(SqlValue::from(limit_value));
-        params_list.push(SqlValue::from(offset_value));
-        sql.push_str(" LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            Ok(ChannelUserBindingRecord {
-                channel: row.get(0)?,
-                account_id: row.get(1)?,
-                peer_kind: row.get(2)?,
-                peer_id: row.get(3)?,
-                user_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        let mut count_sql = "SELECT COUNT(*) FROM channel_user_bindings".to_string();
-        if !filters.is_empty() {
-            count_sql.push_str(" WHERE ");
-            count_sql.push_str(&filters.join(" AND "));
-        }
-        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
-        let total: i64 = conn.query_row(&count_sql, count_params, |row| row.get(0))?;
-        Ok((output, total))
+        self.list_channel_user_bindings_impl(query)
     }
 
     fn delete_channel_user_binding(
@@ -6992,55 +4460,11 @@ impl StorageBackend for SqliteStorage {
         peer_kind: &str,
         peer_id: &str,
     ) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        let cleaned_kind = peer_kind.trim();
-        let cleaned_peer = peer_id.trim();
-        if cleaned_channel.is_empty()
-            || cleaned_account.is_empty()
-            || cleaned_kind.is_empty()
-            || cleaned_peer.is_empty()
-        {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM channel_user_bindings WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ?",
-            params![cleaned_channel, cleaned_account, cleaned_kind, cleaned_peer],
-        )?;
-        Ok(affected as i64)
+        self.delete_channel_user_binding_impl(channel, account_id, peer_kind, peer_id)
     }
 
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let thread_id = Self::normalize_channel_thread_id(record.thread_id.as_deref());
-        let metadata = record.metadata.as_ref().map(Self::json_to_string);
-        let tts_enabled = record.tts_enabled.map(|value| if value { 1 } else { 0 });
-        conn.execute(
-            "INSERT INTO channel_sessions (channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(channel, account_id, peer_kind, peer_id, thread_id) DO UPDATE SET session_id = excluded.session_id, agent_id = excluded.agent_id, user_id = excluded.user_id, \
-             tts_enabled = excluded.tts_enabled, tts_voice = excluded.tts_voice, metadata = excluded.metadata, last_message_at = excluded.last_message_at, updated_at = excluded.updated_at",
-            params![
-                record.channel,
-                record.account_id,
-                record.peer_kind,
-                record.peer_id,
-                thread_id,
-                record.session_id,
-                record.agent_id,
-                record.user_id,
-                tts_enabled,
-                record.tts_voice,
-                metadata,
-                record.last_message_at,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_channel_session_impl(record)
     }
 
     fn get_channel_session(
@@ -7051,56 +4475,7 @@ impl StorageBackend for SqliteStorage {
         peer_id: &str,
         thread_id: Option<&str>,
     ) -> Result<Option<ChannelSessionRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        let cleaned_peer_kind = peer_kind.trim();
-        let cleaned_peer_id = peer_id.trim();
-        if cleaned_channel.is_empty()
-            || cleaned_account.is_empty()
-            || cleaned_peer_kind.is_empty()
-            || cleaned_peer_id.is_empty()
-        {
-            return Ok(None);
-        }
-        let thread_id = Self::normalize_channel_thread_id(thread_id);
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at \
-                 FROM channel_sessions WHERE channel = ? AND account_id = ? AND peer_kind = ? AND peer_id = ? AND (thread_id IS ? OR thread_id = ?)",
-                params![
-                    cleaned_channel,
-                    cleaned_account,
-                    cleaned_peer_kind,
-                    cleaned_peer_id,
-                    thread_id,
-                    thread_id
-                ],
-                |row| {
-                    let metadata_text: Option<String> = row.get(10)?;
-                    Ok(ChannelSessionRecord {
-                        channel: row.get(0)?,
-                        account_id: row.get(1)?,
-                        peer_kind: row.get(2)?,
-                        peer_id: row.get(3)?,
-                        thread_id: Self::normalize_channel_thread_value(row.get(4)?),
-                        session_id: row.get(5)?,
-                        agent_id: row.get(6)?,
-                        user_id: row.get(7)?,
-                        tts_enabled: row
-                            .get::<_, Option<i64>>(8)?
-                            .map(|value| value != 0),
-                        tts_voice: row.get(9)?,
-                        metadata: metadata_text.and_then(|value| Self::json_from_str(&value)),
-                        last_message_at: row.get(11)?,
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_channel_session_impl(channel, account_id, peer_kind, peer_id, thread_id)
     }
 
     fn list_channel_sessions(
@@ -7112,108 +4487,11 @@ impl StorageBackend for SqliteStorage {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChannelSessionRecord>, i64)> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(channel) = channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("channel = ?".to_string());
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        if let Some(account) = account_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("account_id = ?".to_string());
-            params_list.push(SqlValue::from(account.to_string()));
-        }
-        if let Some(peer_id) = peer_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("peer_id = ?".to_string());
-            params_list.push(SqlValue::from(peer_id.to_string()));
-        }
-        if let Some(session_id) = session_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("session_id = ?".to_string());
-            params_list.push(SqlValue::from(session_id.to_string()));
-        }
-        let mut query = "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, agent_id, user_id, tts_enabled, tts_voice, metadata, last_message_at, created_at, updated_at FROM channel_sessions".to_string();
-        if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" ORDER BY updated_at DESC");
-        let offset_value = offset.max(0);
-        let limit_value = if limit <= 0 { 100 } else { limit.min(500) };
-        params_list.push(SqlValue::from(limit_value));
-        params_list.push(SqlValue::from(offset_value));
-        query.push_str(" LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let metadata_text: Option<String> = row.get(10)?;
-            Ok(ChannelSessionRecord {
-                channel: row.get(0)?,
-                account_id: row.get(1)?,
-                peer_kind: row.get(2)?,
-                peer_id: row.get(3)?,
-                thread_id: Self::normalize_channel_thread_value(row.get(4)?),
-                session_id: row.get(5)?,
-                agent_id: row.get(6)?,
-                user_id: row.get(7)?,
-                tts_enabled: row.get::<_, Option<i64>>(8)?.map(|value| value != 0),
-                tts_voice: row.get(9)?,
-                metadata: metadata_text.and_then(|value| Self::json_from_str(&value)),
-                last_message_at: row.get(11)?,
-                created_at: row.get(12)?,
-                updated_at: row.get(13)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-
-        let mut count_query = "SELECT COUNT(*) FROM channel_sessions".to_string();
-        if !filters.is_empty() {
-            count_query.push_str(" WHERE ");
-            count_query.push_str(&filters.join(" AND "));
-        }
-        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
-        let total: i64 = conn.query_row(&count_query, count_params, |row| row.get(0))?;
-        Ok((output, total))
+        self.list_channel_sessions_impl(channel, account_id, peer_id, session_id, offset, limit)
     }
 
     fn insert_channel_message(&self, record: &ChannelMessageRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let payload = Self::json_to_string(&record.payload);
-        let raw_payload = record.raw_payload.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO channel_messages (channel, account_id, peer_kind, peer_id, thread_id, session_id, message_id, sender_id, message_type, payload, raw_payload, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                record.channel,
-                record.account_id,
-                record.peer_kind,
-                record.peer_id,
-                record.thread_id,
-                record.session_id,
-                record.message_id,
-                record.sender_id,
-                record.message_type,
-                payload,
-                raw_payload,
-                record.created_at
-            ],
-        )?;
-        Ok(())
+        self.insert_channel_message_impl(record)
     }
 
     fn list_channel_messages(
@@ -7222,57 +4500,7 @@ impl StorageBackend for SqliteStorage {
         session_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<ChannelMessageRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(channel) = channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("channel = ?".to_string());
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        if let Some(session_id) = session_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("session_id = ?".to_string());
-            params_list.push(SqlValue::from(session_id.to_string()));
-        }
-        let mut query = "SELECT channel, account_id, peer_kind, peer_id, thread_id, session_id, message_id, sender_id, message_type, payload, raw_payload, created_at FROM channel_messages".to_string();
-        if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" ORDER BY id DESC");
-        let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
-        params_list.push(SqlValue::from(limit_value));
-        query.push_str(" LIMIT ?");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let payload_text: String = row.get(9)?;
-            let raw_text: Option<String> = row.get(10)?;
-            Ok(ChannelMessageRecord {
-                channel: row.get(0)?,
-                account_id: row.get(1)?,
-                peer_kind: row.get(2)?,
-                peer_id: row.get(3)?,
-                thread_id: row.get(4)?,
-                session_id: row.get(5)?,
-                message_id: row.get(6)?,
-                sender_id: row.get(7)?,
-                message_type: row.get(8)?,
-                payload: Self::json_from_str(&payload_text).unwrap_or(Value::Null),
-                raw_payload: raw_text.and_then(|value| Self::json_from_str(&value)),
-                created_at: row.get(11)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_channel_messages_impl(channel, session_id, limit)
     }
 
     fn get_channel_message_stats(
@@ -7280,22 +4508,7 @@ impl StorageBackend for SqliteStorage {
         channel: &str,
         account_id: &str,
     ) -> Result<ChannelMessageStats> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(ChannelMessageStats::default());
-        }
-        let conn = self.open()?;
-        let (total, last_message_at): (i64, Option<f64>) = conn.query_row(
-            "SELECT COUNT(*), MAX(created_at) FROM channel_messages WHERE channel = ? AND account_id = ?",
-            params![cleaned_channel, cleaned_account],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        Ok(ChannelMessageStats {
-            total,
-            last_message_at,
-        })
+        self.get_channel_message_stats_impl(channel, account_id)
     }
 
     fn get_channel_outbox_stats(
@@ -7303,495 +4516,72 @@ impl StorageBackend for SqliteStorage {
         channel: &str,
         account_id: &str,
     ) -> Result<ChannelOutboxStats> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(ChannelOutboxStats::default());
-        }
-        let conn = self.open()?;
-        let (
-            total,
-            sent,
-            retry,
-            pending,
-            failed,
-            retry_attempts,
-            last_sent_at,
-            last_failed_at,
-        ): (
-            i64,
-            Option<i64>,
-            Option<i64>,
-            Option<i64>,
-            Option<i64>,
-            Option<i64>,
-            Option<f64>,
-            Option<f64>,
-        ) = conn.query_row(
-            "SELECT \
-                COUNT(*), \
-                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), \
-                SUM(CASE WHEN status = 'retry' THEN 1 ELSE 0 END), \
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), \
-                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), \
-                SUM(COALESCE(retry_count, 0)), \
-                MAX(CASE WHEN status = 'sent' THEN COALESCE(delivered_at, updated_at, created_at) END), \
-                MAX(CASE WHEN status = 'failed' THEN COALESCE(updated_at, created_at) END) \
-             FROM channel_outbox WHERE channel = ? AND account_id = ?",
-            params![cleaned_channel, cleaned_account],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                ))
-            },
-        )?;
-        Ok(ChannelOutboxStats {
-            total,
-            sent: sent.unwrap_or(0),
-            retry: retry.unwrap_or(0),
-            pending: pending.unwrap_or(0),
-            failed: failed.unwrap_or(0),
-            retry_attempts: retry_attempts.unwrap_or(0),
-            last_sent_at,
-            last_failed_at,
-        })
+        self.get_channel_outbox_stats_impl(channel, account_id)
     }
 
     fn delete_channel_sessions(&self, channel: &str, account_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM channel_sessions WHERE channel = ? AND account_id = ?",
-            params![cleaned_channel, cleaned_account],
-        )?;
-        Ok(affected as i64)
+        self.delete_channel_sessions_impl(channel, account_id)
     }
 
     fn delete_channel_messages(&self, channel: &str, account_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM channel_messages WHERE channel = ? AND account_id = ?",
-            params![cleaned_channel, cleaned_account],
-        )?;
-        Ok(affected as i64)
+        self.delete_channel_messages_impl(channel, account_id)
     }
 
     fn delete_channel_outbox(&self, channel: &str, account_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM channel_outbox WHERE channel = ? AND account_id = ?",
-            params![cleaned_channel, cleaned_account],
-        )?;
-        Ok(affected as i64)
+        self.delete_channel_outbox_impl(channel, account_id)
     }
 
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let payload = Self::json_to_string(&record.payload);
-        conn.execute(
-            "INSERT INTO channel_outbox (outbox_id, channel, account_id, peer_kind, peer_id, thread_id, payload, status, retry_count, retry_at, last_error, created_at, updated_at, delivered_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(outbox_id) DO UPDATE SET payload = excluded.payload, status = excluded.status, retry_count = excluded.retry_count, retry_at = excluded.retry_at, \
-             last_error = excluded.last_error, updated_at = excluded.updated_at, delivered_at = excluded.delivered_at",
-            params![
-                record.outbox_id,
-                record.channel,
-                record.account_id,
-                record.peer_kind,
-                record.peer_id,
-                record.thread_id,
-                payload,
-                record.status,
-                record.retry_count,
-                record.retry_at,
-                record.last_error,
-                record.created_at,
-                record.updated_at,
-                record.delivered_at
-            ],
-        )?;
-        Ok(())
+        self.enqueue_channel_outbox_impl(record)
     }
 
     fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = outbox_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT outbox_id, channel, account_id, peer_kind, peer_id, thread_id, payload, status, retry_count, retry_at, last_error, created_at, updated_at, delivered_at \
-                 FROM channel_outbox WHERE outbox_id = ?",
-                params![cleaned],
-                |row| {
-                    let payload_text: String = row.get(6)?;
-                    Ok(ChannelOutboxRecord {
-                        outbox_id: row.get(0)?,
-                        channel: row.get(1)?,
-                        account_id: row.get(2)?,
-                        peer_kind: row.get(3)?,
-                        peer_id: row.get(4)?,
-                        thread_id: row.get(5)?,
-                        payload: Self::json_from_str(&payload_text).unwrap_or(Value::Null),
-                        status: row.get(7)?,
-                        retry_count: row.get(8)?,
-                        retry_at: row.get(9)?,
-                        last_error: row.get(10)?,
-                        created_at: row.get(11)?,
-                        updated_at: row.get(12)?,
-                        delivered_at: row.get(13)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_channel_outbox_impl(outbox_id)
     }
 
     fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let now = Self::now_ts();
-        let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
-        let mut stmt = conn.prepare(
-            "SELECT outbox_id, channel, account_id, peer_kind, peer_id, thread_id, payload, status, retry_count, retry_at, last_error, created_at, updated_at, delivered_at \
-             FROM channel_outbox WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? ORDER BY retry_at ASC LIMIT ?",
-        )?;
-        let rows = stmt.query_map(params![now, limit_value], |row| {
-            let payload_text: String = row.get(6)?;
-            Ok(ChannelOutboxRecord {
-                outbox_id: row.get(0)?,
-                channel: row.get(1)?,
-                account_id: row.get(2)?,
-                peer_kind: row.get(3)?,
-                peer_id: row.get(4)?,
-                thread_id: row.get(5)?,
-                payload: Self::json_from_str(&payload_text).unwrap_or(Value::Null),
-                status: row.get(7)?,
-                retry_count: row.get(8)?,
-                retry_at: row.get(9)?,
-                last_error: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
-                delivered_at: row.get(13)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_pending_channel_outbox_impl(limit)
     }
 
     fn update_channel_outbox_status(
         &self,
         params: UpdateChannelOutboxStatusParams<'_>,
     ) -> Result<()> {
-        self.ensure_initialized()?;
-        let cleaned = params.outbox_id.trim();
-        if cleaned.is_empty() {
-            return Ok(());
-        }
-        let conn = self.open()?;
-        conn.execute(
-            "UPDATE channel_outbox SET status = ?, retry_count = ?, retry_at = ?, last_error = ?, updated_at = ?, delivered_at = ? WHERE outbox_id = ?",
-            params![
-                params.status,
-                params.retry_count,
-                params.retry_at,
-                params.last_error,
-                params.updated_at,
-                params.delivered_at,
-                cleaned
-            ],
-        )?;
-        Ok(())
+        self.update_channel_outbox_status_impl(params)
     }
 
     fn upsert_bridge_center(&self, record: &BridgeCenterRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let settings_json = Self::json_to_string(&record.settings);
-        conn.execute(
-            "INSERT INTO bridge_centers (center_id, name, code, description, owner_user_id, status, default_preset_agent_name, target_unit_id, default_identity_strategy, username_policy, password_policy, settings_json, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(center_id) DO UPDATE SET name = excluded.name, code = excluded.code, description = excluded.description, owner_user_id = excluded.owner_user_id, status = excluded.status, default_preset_agent_name = excluded.default_preset_agent_name, target_unit_id = excluded.target_unit_id, default_identity_strategy = excluded.default_identity_strategy, username_policy = excluded.username_policy, password_policy = excluded.password_policy, settings_json = excluded.settings_json, updated_at = excluded.updated_at",
-            params![
-                record.center_id,
-                record.name,
-                record.code,
-                record.description,
-                record.owner_user_id,
-                record.status,
-                record.default_preset_agent_name,
-                record.target_unit_id,
-                record.default_identity_strategy,
-                record.username_policy,
-                record.password_policy,
-                settings_json,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_bridge_center_impl(record)
     }
 
     fn get_bridge_center(&self, center_id: &str) -> Result<Option<BridgeCenterRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = center_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT center_id, name, code, description, owner_user_id, status, default_preset_agent_name, target_unit_id, default_identity_strategy, username_policy, password_policy, settings_json, created_at, updated_at \
-                 FROM bridge_centers WHERE center_id = ?",
-                params![cleaned],
-                |row| {
-                    let settings_json: String = row.get(11)?;
-                    Ok(BridgeCenterRecord {
-                        center_id: row.get(0)?,
-                        name: row.get(1)?,
-                        code: row.get(2)?,
-                        description: row.get(3)?,
-                        owner_user_id: row.get(4)?,
-                        status: row.get(5)?,
-                        default_preset_agent_name: row.get(6)?,
-                        target_unit_id: row.get(7)?,
-                        default_identity_strategy: row.get(8)?,
-                        username_policy: row.get(9)?,
-                        password_policy: row.get(10)?,
-                        settings: Self::json_from_str(&settings_json).unwrap_or(Value::Null),
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_bridge_center_impl(center_id)
     }
 
     fn get_bridge_center_by_code(&self, code: &str) -> Result<Option<BridgeCenterRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = code.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT center_id, name, code, description, owner_user_id, status, default_preset_agent_name, target_unit_id, default_identity_strategy, username_policy, password_policy, settings_json, created_at, updated_at \
-                 FROM bridge_centers WHERE code = ?",
-                params![cleaned],
-                |row| {
-                    let settings_json: String = row.get(11)?;
-                    Ok(BridgeCenterRecord {
-                        center_id: row.get(0)?,
-                        name: row.get(1)?,
-                        code: row.get(2)?,
-                        description: row.get(3)?,
-                        owner_user_id: row.get(4)?,
-                        status: row.get(5)?,
-                        default_preset_agent_name: row.get(6)?,
-                        target_unit_id: row.get(7)?,
-                        default_identity_strategy: row.get(8)?,
-                        username_policy: row.get(9)?,
-                        password_policy: row.get(10)?,
-                        settings: Self::json_from_str(&settings_json).unwrap_or(Value::Null),
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_bridge_center_by_code_impl(code)
     }
 
     fn list_bridge_centers(
         &self,
         query: ListBridgeCentersQuery<'_>,
     ) -> Result<(Vec<BridgeCenterRecord>, i64)> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(status) = query
-            .status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("status = ?".to_string());
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        if let Some(keyword) = query
-            .keyword
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("(name LIKE ? OR code LIKE ? OR owner_user_id LIKE ?)".to_string());
-            let like = format!("%{keyword}%");
-            params_list.push(SqlValue::from(like.clone()));
-            params_list.push(SqlValue::from(like.clone()));
-            params_list.push(SqlValue::from(like));
-        }
-        let mut sql = "SELECT center_id, name, code, description, owner_user_id, status, default_preset_agent_name, target_unit_id, default_identity_strategy, username_policy, password_policy, settings_json, created_at, updated_at FROM bridge_centers".to_string();
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY updated_at DESC");
-        let offset_value = query.offset.max(0);
-        let limit_value = if query.limit <= 0 {
-            100
-        } else {
-            query.limit.min(500)
-        };
-        params_list.push(SqlValue::from(limit_value));
-        params_list.push(SqlValue::from(offset_value));
-        sql.push_str(" LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let settings_json: String = row.get(11)?;
-            Ok(BridgeCenterRecord {
-                center_id: row.get(0)?,
-                name: row.get(1)?,
-                code: row.get(2)?,
-                description: row.get(3)?,
-                owner_user_id: row.get(4)?,
-                status: row.get(5)?,
-                default_preset_agent_name: row.get(6)?,
-                target_unit_id: row.get(7)?,
-                default_identity_strategy: row.get(8)?,
-                username_policy: row.get(9)?,
-                password_policy: row.get(10)?,
-                settings: Self::json_from_str(&settings_json).unwrap_or(Value::Null),
-                created_at: row.get(12)?,
-                updated_at: row.get(13)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        let mut count_sql = "SELECT COUNT(*) FROM bridge_centers".to_string();
-        if !filters.is_empty() {
-            count_sql.push_str(" WHERE ");
-            count_sql.push_str(&filters.join(" AND "));
-        }
-        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
-        let total: i64 = conn.query_row(&count_sql, count_params, |row| row.get(0))?;
-        Ok((output, total))
+        self.list_bridge_centers_impl(query)
     }
 
     fn delete_bridge_center(&self, center_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_centers WHERE center_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_center_impl(center_id)
     }
 
     fn upsert_bridge_center_account(&self, record: &BridgeCenterAccountRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let enabled = if record.enabled { 1 } else { 0 };
-        let provider_caps_json = record.provider_caps.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO bridge_center_accounts (center_account_id, center_id, channel, account_id, enabled, default_preset_agent_name_override, identity_strategy, thread_strategy, reply_strategy, fallback_policy, provider_caps_json, status_reason, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(center_account_id) DO UPDATE SET center_id = excluded.center_id, channel = excluded.channel, account_id = excluded.account_id, enabled = excluded.enabled, default_preset_agent_name_override = excluded.default_preset_agent_name_override, identity_strategy = excluded.identity_strategy, thread_strategy = excluded.thread_strategy, reply_strategy = excluded.reply_strategy, fallback_policy = excluded.fallback_policy, provider_caps_json = excluded.provider_caps_json, status_reason = excluded.status_reason, updated_at = excluded.updated_at",
-            params![
-                record.center_account_id,
-                record.center_id,
-                record.channel,
-                record.account_id,
-                enabled,
-                record.default_preset_agent_name_override,
-                record.identity_strategy,
-                record.thread_strategy,
-                record.reply_strategy,
-                record.fallback_policy,
-                provider_caps_json,
-                record.status_reason,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_bridge_center_account_impl(record)
     }
 
     fn get_bridge_center_account(
         &self,
         center_account_id: &str,
     ) -> Result<Option<BridgeCenterAccountRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = center_account_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT center_account_id, center_id, channel, account_id, enabled, default_preset_agent_name_override, identity_strategy, thread_strategy, reply_strategy, fallback_policy, provider_caps_json, status_reason, created_at, updated_at \
-                 FROM bridge_center_accounts WHERE center_account_id = ?",
-                params![cleaned],
-                |row| {
-                    let provider_caps_json: Option<String> = row.get(10)?;
-                    Ok(BridgeCenterAccountRecord {
-                        center_account_id: row.get(0)?,
-                        center_id: row.get(1)?,
-                        channel: row.get(2)?,
-                        account_id: row.get(3)?,
-                        enabled: row.get::<_, i64>(4)? != 0,
-                        default_preset_agent_name_override: row.get(5)?,
-                        identity_strategy: row.get(6)?,
-                        thread_strategy: row.get(7)?,
-                        reply_strategy: row.get(8)?,
-                        fallback_policy: row.get(9)?,
-                        provider_caps: provider_caps_json
-                            .and_then(|value| Self::json_from_str(&value)),
-                        status_reason: row.get(11)?,
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_bridge_center_account_impl(center_account_id)
     }
 
     fn get_bridge_center_account_by_channel_account(
@@ -7799,245 +4589,30 @@ impl StorageBackend for SqliteStorage {
         channel: &str,
         account_id: &str,
     ) -> Result<Option<BridgeCenterAccountRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_channel = channel.trim();
-        let cleaned_account = account_id.trim();
-        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT center_account_id, center_id, channel, account_id, enabled, default_preset_agent_name_override, identity_strategy, thread_strategy, reply_strategy, fallback_policy, provider_caps_json, status_reason, created_at, updated_at \
-                 FROM bridge_center_accounts WHERE channel = ? AND account_id = ?",
-                params![cleaned_channel, cleaned_account],
-                |row| {
-                    let provider_caps_json: Option<String> = row.get(10)?;
-                    Ok(BridgeCenterAccountRecord {
-                        center_account_id: row.get(0)?,
-                        center_id: row.get(1)?,
-                        channel: row.get(2)?,
-                        account_id: row.get(3)?,
-                        enabled: row.get::<_, i64>(4)? != 0,
-                        default_preset_agent_name_override: row.get(5)?,
-                        identity_strategy: row.get(6)?,
-                        thread_strategy: row.get(7)?,
-                        reply_strategy: row.get(8)?,
-                        fallback_policy: row.get(9)?,
-                        provider_caps: provider_caps_json
-                            .and_then(|value| Self::json_from_str(&value)),
-                        status_reason: row.get(11)?,
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_bridge_center_account_by_channel_account_impl(channel, account_id)
     }
 
     fn list_bridge_center_accounts(
         &self,
         query: ListBridgeCenterAccountsQuery<'_>,
     ) -> Result<(Vec<BridgeCenterAccountRecord>, i64)> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(center_id) = query
-            .center_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("center_id = ?".to_string());
-            params_list.push(SqlValue::from(center_id.to_string()));
-        }
-        if let Some(channel) = query
-            .channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("channel = ?".to_string());
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        if let Some(account_id) = query
-            .account_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("account_id = ?".to_string());
-            params_list.push(SqlValue::from(account_id.to_string()));
-        }
-        if let Some(enabled) = query.enabled {
-            filters.push("enabled = ?".to_string());
-            params_list.push(SqlValue::from(if enabled { 1 } else { 0 }));
-        }
-        let mut sql = "SELECT center_account_id, center_id, channel, account_id, enabled, default_preset_agent_name_override, identity_strategy, thread_strategy, reply_strategy, fallback_policy, provider_caps_json, status_reason, created_at, updated_at FROM bridge_center_accounts".to_string();
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY updated_at DESC");
-        let offset_value = query.offset.max(0);
-        let limit_value = if query.limit <= 0 {
-            100
-        } else {
-            query.limit.min(500)
-        };
-        params_list.push(SqlValue::from(limit_value));
-        params_list.push(SqlValue::from(offset_value));
-        sql.push_str(" LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let provider_caps_json: Option<String> = row.get(10)?;
-            Ok(BridgeCenterAccountRecord {
-                center_account_id: row.get(0)?,
-                center_id: row.get(1)?,
-                channel: row.get(2)?,
-                account_id: row.get(3)?,
-                enabled: row.get::<_, i64>(4)? != 0,
-                default_preset_agent_name_override: row.get(5)?,
-                identity_strategy: row.get(6)?,
-                thread_strategy: row.get(7)?,
-                reply_strategy: row.get(8)?,
-                fallback_policy: row.get(9)?,
-                provider_caps: provider_caps_json.and_then(|value| Self::json_from_str(&value)),
-                status_reason: row.get(11)?,
-                created_at: row.get(12)?,
-                updated_at: row.get(13)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        let mut count_sql = "SELECT COUNT(*) FROM bridge_center_accounts".to_string();
-        if !filters.is_empty() {
-            count_sql.push_str(" WHERE ");
-            count_sql.push_str(&filters.join(" AND "));
-        }
-        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
-        let total: i64 = conn.query_row(&count_sql, count_params, |row| row.get(0))?;
-        Ok((output, total))
+        self.list_bridge_center_accounts_impl(query)
     }
 
     fn delete_bridge_center_account(&self, center_account_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_account_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_center_accounts WHERE center_account_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_center_account_impl(center_account_id)
     }
 
     fn delete_bridge_center_accounts_by_center(&self, center_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_center_accounts WHERE center_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_center_accounts_by_center_impl(center_id)
     }
 
     fn upsert_bridge_user_route(&self, record: &BridgeUserRouteRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let external_profile_json = record.external_profile.as_ref().map(Self::json_to_string);
-        let user_created = if record.user_created { 1 } else { 0 };
-        let agent_created = if record.agent_created { 1 } else { 0 };
-        conn.execute(
-            "INSERT INTO bridge_user_routes (route_id, center_id, center_account_id, channel, account_id, external_identity_key, external_user_key, external_display_name, external_peer_id, external_sender_id, external_thread_id, external_profile_json, wunder_user_id, agent_id, agent_name, user_created, agent_created, status, last_session_id, last_error, first_seen_at, last_seen_at, last_inbound_at, last_outbound_at, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(center_account_id, external_identity_key) DO UPDATE SET center_id = excluded.center_id, channel = excluded.channel, account_id = excluded.account_id, external_user_key = excluded.external_user_key, external_display_name = excluded.external_display_name, external_peer_id = excluded.external_peer_id, external_sender_id = excluded.external_sender_id, external_thread_id = excluded.external_thread_id, external_profile_json = excluded.external_profile_json, wunder_user_id = excluded.wunder_user_id, agent_id = excluded.agent_id, agent_name = excluded.agent_name, user_created = excluded.user_created, agent_created = excluded.agent_created, status = excluded.status, last_session_id = excluded.last_session_id, last_error = excluded.last_error, last_seen_at = excluded.last_seen_at, last_inbound_at = excluded.last_inbound_at, last_outbound_at = excluded.last_outbound_at, updated_at = excluded.updated_at",
-            params![
-                record.route_id,
-                record.center_id,
-                record.center_account_id,
-                record.channel,
-                record.account_id,
-                record.external_identity_key,
-                record.external_user_key,
-                record.external_display_name,
-                record.external_peer_id,
-                record.external_sender_id,
-                record.external_thread_id,
-                external_profile_json,
-                record.wunder_user_id,
-                record.agent_id,
-                record.agent_name,
-                user_created,
-                agent_created,
-                record.status,
-                record.last_session_id,
-                record.last_error,
-                record.first_seen_at,
-                record.last_seen_at,
-                record.last_inbound_at,
-                record.last_outbound_at,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_bridge_user_route_impl(record)
     }
 
     fn get_bridge_user_route(&self, route_id: &str) -> Result<Option<BridgeUserRouteRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = route_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT route_id, center_id, center_account_id, channel, account_id, external_identity_key, external_user_key, external_display_name, external_peer_id, external_sender_id, external_thread_id, external_profile_json, wunder_user_id, agent_id, agent_name, user_created, agent_created, status, last_session_id, last_error, first_seen_at, last_seen_at, last_inbound_at, last_outbound_at, created_at, updated_at \
-                 FROM bridge_user_routes WHERE route_id = ?",
-                params![cleaned],
-                |row| {
-                    let external_profile_json: Option<String> = row.get(11)?;
-                    Ok(BridgeUserRouteRecord {
-                        route_id: row.get(0)?,
-                        center_id: row.get(1)?,
-                        center_account_id: row.get(2)?,
-                        channel: row.get(3)?,
-                        account_id: row.get(4)?,
-                        external_identity_key: row.get(5)?,
-                        external_user_key: row.get(6)?,
-                        external_display_name: row.get(7)?,
-                        external_peer_id: row.get(8)?,
-                        external_sender_id: row.get(9)?,
-                        external_thread_id: row.get(10)?,
-                        external_profile: external_profile_json
-                            .and_then(|value| Self::json_from_str(&value)),
-                        wunder_user_id: row.get(12)?,
-                        agent_id: row.get(13)?,
-                        agent_name: row.get(14)?,
-                        user_created: row.get::<_, i64>(15)? != 0,
-                        agent_created: row.get::<_, i64>(16)? != 0,
-                        status: row.get(17)?,
-                        last_session_id: row.get(18)?,
-                        last_error: row.get(19)?,
-                        first_seen_at: row.get(20)?,
-                        last_seen_at: row.get(21)?,
-                        last_inbound_at: row.get(22)?,
-                        last_outbound_at: row.get(23)?,
-                        created_at: row.get(24)?,
-                        updated_at: row.get(25)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_bridge_user_route_impl(route_id)
     }
 
     fn get_bridge_user_route_by_identity(
@@ -8045,740 +4620,98 @@ impl StorageBackend for SqliteStorage {
         center_account_id: &str,
         external_identity_key: &str,
     ) -> Result<Option<BridgeUserRouteRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_center_account = center_account_id.trim();
-        let cleaned_identity = external_identity_key.trim();
-        if cleaned_center_account.is_empty() || cleaned_identity.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT route_id, center_id, center_account_id, channel, account_id, external_identity_key, external_user_key, external_display_name, external_peer_id, external_sender_id, external_thread_id, external_profile_json, wunder_user_id, agent_id, agent_name, user_created, agent_created, status, last_session_id, last_error, first_seen_at, last_seen_at, last_inbound_at, last_outbound_at, created_at, updated_at \
-                 FROM bridge_user_routes WHERE center_account_id = ? AND external_identity_key = ?",
-                params![cleaned_center_account, cleaned_identity],
-                |row| {
-                    let external_profile_json: Option<String> = row.get(11)?;
-                    Ok(BridgeUserRouteRecord {
-                        route_id: row.get(0)?,
-                        center_id: row.get(1)?,
-                        center_account_id: row.get(2)?,
-                        channel: row.get(3)?,
-                        account_id: row.get(4)?,
-                        external_identity_key: row.get(5)?,
-                        external_user_key: row.get(6)?,
-                        external_display_name: row.get(7)?,
-                        external_peer_id: row.get(8)?,
-                        external_sender_id: row.get(9)?,
-                        external_thread_id: row.get(10)?,
-                        external_profile: external_profile_json
-                            .and_then(|value| Self::json_from_str(&value)),
-                        wunder_user_id: row.get(12)?,
-                        agent_id: row.get(13)?,
-                        agent_name: row.get(14)?,
-                        user_created: row.get::<_, i64>(15)? != 0,
-                        agent_created: row.get::<_, i64>(16)? != 0,
-                        status: row.get(17)?,
-                        last_session_id: row.get(18)?,
-                        last_error: row.get(19)?,
-                        first_seen_at: row.get(20)?,
-                        last_seen_at: row.get(21)?,
-                        last_inbound_at: row.get(22)?,
-                        last_outbound_at: row.get(23)?,
-                        created_at: row.get(24)?,
-                        updated_at: row.get(25)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_bridge_user_route_by_identity_impl(center_account_id, external_identity_key)
     }
 
     fn list_bridge_user_routes(
         &self,
         query: ListBridgeUserRoutesQuery<'_>,
     ) -> Result<(Vec<BridgeUserRouteRecord>, i64)> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(center_id) = query
-            .center_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("center_id = ?".to_string());
-            params_list.push(SqlValue::from(center_id.to_string()));
-        }
-        if let Some(center_account_id) = query
-            .center_account_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("center_account_id = ?".to_string());
-            params_list.push(SqlValue::from(center_account_id.to_string()));
-        }
-        if let Some(channel) = query
-            .channel
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("channel = ?".to_string());
-            params_list.push(SqlValue::from(channel.to_string()));
-        }
-        if let Some(account_id) = query
-            .account_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("account_id = ?".to_string());
-            params_list.push(SqlValue::from(account_id.to_string()));
-        }
-        if let Some(status) = query
-            .status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("status = ?".to_string());
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        if let Some(wunder_user_id) = query
-            .wunder_user_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("wunder_user_id = ?".to_string());
-            params_list.push(SqlValue::from(wunder_user_id.to_string()));
-        }
-        if let Some(agent_id) = query
-            .agent_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("agent_id = ?".to_string());
-            params_list.push(SqlValue::from(agent_id.to_string()));
-        }
-        if let Some(identity_key) = query
-            .external_identity_key
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("external_identity_key = ?".to_string());
-            params_list.push(SqlValue::from(identity_key.to_string()));
-        }
-        if let Some(keyword) = query
-            .keyword
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("(external_display_name LIKE ? OR external_identity_key LIKE ? OR wunder_user_id LIKE ? OR agent_name LIKE ? OR agent_id LIKE ?)".to_string());
-            let like = format!("%{keyword}%");
-            params_list.push(SqlValue::from(like.clone()));
-            params_list.push(SqlValue::from(like.clone()));
-            params_list.push(SqlValue::from(like.clone()));
-            params_list.push(SqlValue::from(like.clone()));
-            params_list.push(SqlValue::from(like));
-        }
-        let mut sql = "SELECT route_id, center_id, center_account_id, channel, account_id, external_identity_key, external_user_key, external_display_name, external_peer_id, external_sender_id, external_thread_id, external_profile_json, wunder_user_id, agent_id, agent_name, user_created, agent_created, status, last_session_id, last_error, first_seen_at, last_seen_at, last_inbound_at, last_outbound_at, created_at, updated_at FROM bridge_user_routes".to_string();
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY last_seen_at DESC, updated_at DESC");
-        let offset_value = query.offset.max(0);
-        let limit_value = if query.limit <= 0 {
-            100
-        } else {
-            query.limit.min(500)
-        };
-        params_list.push(SqlValue::from(limit_value));
-        params_list.push(SqlValue::from(offset_value));
-        sql.push_str(" LIMIT ? OFFSET ?");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let external_profile_json: Option<String> = row.get(11)?;
-            Ok(BridgeUserRouteRecord {
-                route_id: row.get(0)?,
-                center_id: row.get(1)?,
-                center_account_id: row.get(2)?,
-                channel: row.get(3)?,
-                account_id: row.get(4)?,
-                external_identity_key: row.get(5)?,
-                external_user_key: row.get(6)?,
-                external_display_name: row.get(7)?,
-                external_peer_id: row.get(8)?,
-                external_sender_id: row.get(9)?,
-                external_thread_id: row.get(10)?,
-                external_profile: external_profile_json
-                    .and_then(|value| Self::json_from_str(&value)),
-                wunder_user_id: row.get(12)?,
-                agent_id: row.get(13)?,
-                agent_name: row.get(14)?,
-                user_created: row.get::<_, i64>(15)? != 0,
-                agent_created: row.get::<_, i64>(16)? != 0,
-                status: row.get(17)?,
-                last_session_id: row.get(18)?,
-                last_error: row.get(19)?,
-                first_seen_at: row.get(20)?,
-                last_seen_at: row.get(21)?,
-                last_inbound_at: row.get(22)?,
-                last_outbound_at: row.get(23)?,
-                created_at: row.get(24)?,
-                updated_at: row.get(25)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        let mut count_sql = "SELECT COUNT(*) FROM bridge_user_routes".to_string();
-        if !filters.is_empty() {
-            count_sql.push_str(" WHERE ");
-            count_sql.push_str(&filters.join(" AND "));
-        }
-        let count_params = params_from_iter(params_list.iter().take(params_list.len() - 2));
-        let total: i64 = conn.query_row(&count_sql, count_params, |row| row.get(0))?;
-        Ok((output, total))
+        self.list_bridge_user_routes_impl(query)
     }
 
     fn delete_bridge_user_route(&self, route_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = route_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_user_routes WHERE route_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_user_route_impl(route_id)
     }
 
     fn delete_bridge_user_routes_by_center(&self, center_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_user_routes WHERE center_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_user_routes_by_center_impl(center_id)
     }
 
     fn delete_bridge_user_routes_by_center_account(&self, center_account_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_account_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_user_routes WHERE center_account_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_user_routes_by_center_account_impl(center_account_id)
     }
 
     fn insert_bridge_delivery_log(&self, record: &BridgeDeliveryLogRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let payload_json = record.payload.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO bridge_delivery_logs (delivery_id, center_id, center_account_id, route_id, direction, stage, provider_message_id, session_id, status, summary, payload_json, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                record.delivery_id,
-                record.center_id,
-                record.center_account_id,
-                record.route_id,
-                record.direction,
-                record.stage,
-                record.provider_message_id,
-                record.session_id,
-                record.status,
-                record.summary,
-                payload_json,
-                record.created_at
-            ],
-        )?;
-        Ok(())
+        self.insert_bridge_delivery_log_impl(record)
     }
 
     fn list_bridge_delivery_logs(
         &self,
         query: ListBridgeDeliveryLogsQuery<'_>,
     ) -> Result<Vec<BridgeDeliveryLogRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(center_id) = query
-            .center_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("center_id = ?".to_string());
-            params_list.push(SqlValue::from(center_id.to_string()));
-        }
-        if let Some(center_account_id) = query
-            .center_account_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("center_account_id = ?".to_string());
-            params_list.push(SqlValue::from(center_account_id.to_string()));
-        }
-        if let Some(route_id) = query
-            .route_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("route_id = ?".to_string());
-            params_list.push(SqlValue::from(route_id.to_string()));
-        }
-        if let Some(direction) = query
-            .direction
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("direction = ?".to_string());
-            params_list.push(SqlValue::from(direction.to_string()));
-        }
-        if let Some(status) = query
-            .status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("status = ?".to_string());
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        let mut sql = "SELECT delivery_id, center_id, center_account_id, route_id, direction, stage, provider_message_id, session_id, status, summary, payload_json, created_at FROM bridge_delivery_logs".to_string();
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY created_at DESC");
-        let limit_value = if query.limit <= 0 {
-            100
-        } else {
-            query.limit.min(500)
-        };
-        params_list.push(SqlValue::from(limit_value));
-        sql.push_str(" LIMIT ?");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let payload_json: Option<String> = row.get(10)?;
-            Ok(BridgeDeliveryLogRecord {
-                delivery_id: row.get(0)?,
-                center_id: row.get(1)?,
-                center_account_id: row.get(2)?,
-                route_id: row.get(3)?,
-                direction: row.get(4)?,
-                stage: row.get(5)?,
-                provider_message_id: row.get(6)?,
-                session_id: row.get(7)?,
-                status: row.get(8)?,
-                summary: row.get(9)?,
-                payload: payload_json.and_then(|value| Self::json_from_str(&value)),
-                created_at: row.get(11)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_bridge_delivery_logs_impl(query)
     }
 
     fn delete_bridge_delivery_logs_by_center(&self, center_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_delivery_logs WHERE center_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_delivery_logs_by_center_impl(center_id)
     }
 
     fn delete_bridge_delivery_logs_by_center_account(
         &self,
         center_account_id: &str,
     ) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_account_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_delivery_logs WHERE center_account_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_delivery_logs_by_center_account_impl(center_account_id)
     }
 
     fn insert_bridge_route_audit_log(&self, record: &BridgeRouteAuditLogRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let detail_json = record.detail.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO bridge_route_audit_logs (audit_id, center_id, route_id, actor_type, actor_id, action, detail_json, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                record.audit_id,
-                record.center_id,
-                record.route_id,
-                record.actor_type,
-                record.actor_id,
-                record.action,
-                detail_json,
-                record.created_at
-            ],
-        )?;
-        Ok(())
+        self.insert_bridge_route_audit_log_impl(record)
     }
 
     fn list_bridge_route_audit_logs(
         &self,
         query: ListBridgeRouteAuditLogsQuery<'_>,
     ) -> Result<Vec<BridgeRouteAuditLogRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(center_id) = query
-            .center_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("center_id = ?".to_string());
-            params_list.push(SqlValue::from(center_id.to_string()));
-        }
-        if let Some(route_id) = query
-            .route_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("route_id = ?".to_string());
-            params_list.push(SqlValue::from(route_id.to_string()));
-        }
-        let mut sql = "SELECT audit_id, center_id, route_id, actor_type, actor_id, action, detail_json, created_at FROM bridge_route_audit_logs".to_string();
-        if !filters.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&filters.join(" AND "));
-        }
-        sql.push_str(" ORDER BY created_at DESC");
-        let limit_value = if query.limit <= 0 {
-            100
-        } else {
-            query.limit.min(500)
-        };
-        params_list.push(SqlValue::from(limit_value));
-        sql.push_str(" LIMIT ?");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let detail_json: Option<String> = row.get(6)?;
-            Ok(BridgeRouteAuditLogRecord {
-                audit_id: row.get(0)?,
-                center_id: row.get(1)?,
-                route_id: row.get(2)?,
-                actor_type: row.get(3)?,
-                actor_id: row.get(4)?,
-                action: row.get(5)?,
-                detail: detail_json.and_then(|value| Self::json_from_str(&value)),
-                created_at: row.get(7)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_bridge_route_audit_logs_impl(query)
     }
 
     fn delete_bridge_route_audit_logs_by_center(&self, center_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_route_audit_logs WHERE center_id = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_route_audit_logs_by_center_impl(center_id)
     }
 
     fn delete_bridge_route_audit_logs_by_center_account(
         &self,
         center_account_id: &str,
     ) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = center_account_id.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM bridge_route_audit_logs \
-             WHERE route_id IN (SELECT route_id FROM bridge_user_routes WHERE center_account_id = ?)",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_bridge_route_audit_logs_by_center_account_impl(center_account_id)
     }
 
     fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let scopes = if record.scopes.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.scopes))
-        };
-        let caps = if record.caps.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.caps))
-        };
-        let commands = if record.commands.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.commands))
-        };
-        let client_info = record.client_info.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO gateway_clients (connection_id, role, user_id, node_id, scopes, caps, commands, client_info, status, connected_at, last_seen_at, disconnected_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(connection_id) DO UPDATE SET role = excluded.role, user_id = excluded.user_id, node_id = excluded.node_id, scopes = excluded.scopes, \
-             caps = excluded.caps, commands = excluded.commands, client_info = excluded.client_info, status = excluded.status, last_seen_at = excluded.last_seen_at, \
-             disconnected_at = excluded.disconnected_at",
-            params![
-                record.connection_id,
-                record.role,
-                record.user_id,
-                record.node_id,
-                scopes,
-                caps,
-                commands,
-                client_info,
-                record.status,
-                record.connected_at,
-                record.last_seen_at,
-                record.disconnected_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_gateway_client_impl(record)
     }
 
     fn list_gateway_clients(&self, status: Option<&str>) -> Result<Vec<GatewayClientRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut query = "SELECT connection_id, role, user_id, node_id, scopes, caps, commands, client_info, status, connected_at, last_seen_at, disconnected_at FROM gateway_clients".to_string();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(status) = status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            query.push_str(" WHERE status = ?");
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        query.push_str(" ORDER BY last_seen_at DESC");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let scopes: Option<String> = row.get(4)?;
-            let caps: Option<String> = row.get(5)?;
-            let commands: Option<String> = row.get(6)?;
-            let client_info: Option<String> = row.get(7)?;
-            Ok(GatewayClientRecord {
-                connection_id: row.get(0)?,
-                role: row.get(1)?,
-                user_id: row.get(2)?,
-                node_id: row.get(3)?,
-                scopes: Self::parse_string_list(scopes),
-                caps: Self::parse_string_list(caps),
-                commands: Self::parse_string_list(commands),
-                client_info: client_info.as_deref().and_then(Self::json_from_str),
-                status: row.get(8)?,
-                connected_at: row.get(9)?,
-                last_seen_at: row.get(10)?,
-                disconnected_at: row.get(11)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_gateway_clients_impl(status)
     }
 
     fn upsert_gateway_node(&self, record: &GatewayNodeRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let caps = if record.caps.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.caps))
-        };
-        let commands = if record.commands.is_empty() {
-            None
-        } else {
-            Some(Self::string_list_to_json(&record.commands))
-        };
-        let permissions = record.permissions.as_ref().map(Self::json_to_string);
-        let metadata = record.metadata.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO gateway_nodes (node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(node_id) DO UPDATE SET name = excluded.name, device_fingerprint = excluded.device_fingerprint, status = excluded.status, caps = excluded.caps, \
-             commands = excluded.commands, permissions = excluded.permissions, metadata = excluded.metadata, updated_at = excluded.updated_at, last_seen_at = excluded.last_seen_at",
-            params![
-                record.node_id,
-                record.name,
-                record.device_fingerprint,
-                record.status,
-                caps,
-                commands,
-                permissions,
-                metadata,
-                record.created_at,
-                record.updated_at,
-                record.last_seen_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_gateway_node_impl(record)
     }
 
     fn get_gateway_node(&self, node_id: &str) -> Result<Option<GatewayNodeRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = node_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at FROM gateway_nodes WHERE node_id = ?",
-                params![cleaned],
-                |row| {
-                    let caps: Option<String> = row.get(4)?;
-                    let commands: Option<String> = row.get(5)?;
-                    let permissions: Option<String> = row.get(6)?;
-                    let metadata: Option<String> = row.get(7)?;
-                    Ok(GatewayNodeRecord {
-                        node_id: row.get(0)?,
-                        name: row.get(1)?,
-                        device_fingerprint: row.get(2)?,
-                        status: row.get(3)?,
-                        caps: Self::parse_string_list(caps),
-                        commands: Self::parse_string_list(commands),
-                        permissions: permissions
-                            .as_deref()
-                            .and_then(Self::json_from_str),
-                        metadata: metadata
-                            .as_deref()
-                            .and_then(Self::json_from_str),
-                        created_at: row.get(8)?,
-                        updated_at: row.get(9)?,
-                        last_seen_at: row.get(10)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_gateway_node_impl(node_id)
     }
 
     fn list_gateway_nodes(&self, status: Option<&str>) -> Result<Vec<GatewayNodeRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut query = "SELECT node_id, name, device_fingerprint, status, caps, commands, permissions, metadata, created_at, updated_at, last_seen_at FROM gateway_nodes".to_string();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(status) = status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            query.push_str(" WHERE status = ?");
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        query.push_str(" ORDER BY updated_at DESC");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            let caps: Option<String> = row.get(4)?;
-            let commands: Option<String> = row.get(5)?;
-            let permissions: Option<String> = row.get(6)?;
-            let metadata: Option<String> = row.get(7)?;
-            Ok(GatewayNodeRecord {
-                node_id: row.get(0)?,
-                name: row.get(1)?,
-                device_fingerprint: row.get(2)?,
-                status: row.get(3)?,
-                caps: Self::parse_string_list(caps),
-                commands: Self::parse_string_list(commands),
-                permissions: permissions.as_deref().and_then(Self::json_from_str),
-                metadata: metadata.as_deref().and_then(Self::json_from_str),
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-                last_seen_at: row.get(10)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_gateway_nodes_impl(status)
     }
 
     fn upsert_gateway_node_token(&self, record: &GatewayNodeTokenRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO gateway_node_tokens (token, node_id, status, created_at, updated_at, last_used_at) \
-             VALUES (?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(token) DO UPDATE SET node_id = excluded.node_id, status = excluded.status, updated_at = excluded.updated_at, last_used_at = excluded.last_used_at",
-            params![
-                record.token,
-                record.node_id,
-                record.status,
-                record.created_at,
-                record.updated_at,
-                record.last_used_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_gateway_node_token_impl(record)
     }
 
     fn get_gateway_node_token(&self, token: &str) -> Result<Option<GatewayNodeTokenRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = token.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT token, node_id, status, created_at, updated_at, last_used_at FROM gateway_node_tokens WHERE token = ?",
-                params![cleaned],
-                |row| {
-                    Ok(GatewayNodeTokenRecord {
-                        token: row.get(0)?,
-                        node_id: row.get(1)?,
-                        status: row.get(2)?,
-                        created_at: row.get(3)?,
-                        updated_at: row.get(4)?,
-                        last_used_at: row.get(5)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_gateway_node_token_impl(token)
     }
 
     fn list_gateway_node_tokens(
@@ -8786,266 +4719,39 @@ impl StorageBackend for SqliteStorage {
         node_id: Option<&str>,
         status: Option<&str>,
     ) -> Result<Vec<GatewayNodeTokenRecord>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let mut query =
-            "SELECT token, node_id, status, created_at, updated_at, last_used_at FROM gateway_node_tokens"
-                .to_string();
-        let mut filters = Vec::new();
-        let mut params_list: Vec<SqlValue> = Vec::new();
-        if let Some(node_id) = node_id
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("node_id = ?".to_string());
-            params_list.push(SqlValue::from(node_id.to_string()));
-        }
-        if let Some(status) = status
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-        {
-            filters.push("status = ?".to_string());
-            params_list.push(SqlValue::from(status.to_string()));
-        }
-        if !filters.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&filters.join(" AND "));
-        }
-        query.push_str(" ORDER BY updated_at DESC");
-        let mut stmt = conn.prepare(&query)?;
-        let rows = stmt.query_map(params_from_iter(params_list.iter()), |row| {
-            Ok(GatewayNodeTokenRecord {
-                token: row.get(0)?,
-                node_id: row.get(1)?,
-                status: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                last_used_at: row.get(5)?,
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_gateway_node_tokens_impl(node_id, status)
     }
 
     fn delete_gateway_node_token(&self, token: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned = token.trim();
-        if cleaned.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM gateway_node_tokens WHERE token = ?",
-            params![cleaned],
-        )?;
-        Ok(affected as i64)
+        self.delete_gateway_node_token_impl(token)
     }
 
     fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO media_assets (asset_id, kind, url, mime, size, hash, source, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(asset_id) DO UPDATE SET kind = excluded.kind, url = excluded.url, mime = excluded.mime, size = excluded.size, hash = excluded.hash, source = excluded.source",
-            params![
-                record.asset_id,
-                record.kind,
-                record.url,
-                record.mime,
-                record.size,
-                record.hash,
-                record.source,
-                record.created_at
-            ],
-        )?;
-        Ok(())
+        self.upsert_media_asset_impl(record)
     }
 
     fn get_media_asset(&self, asset_id: &str) -> Result<Option<MediaAssetRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = asset_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT asset_id, kind, url, mime, size, hash, source, created_at FROM media_assets WHERE asset_id = ?",
-                params![cleaned],
-                |row| {
-                    Ok(MediaAssetRecord {
-                        asset_id: row.get(0)?,
-                        kind: row.get(1)?,
-                        url: row.get(2)?,
-                        mime: row.get(3)?,
-                        size: row.get(4)?,
-                        hash: row.get(5)?,
-                        source: row.get(6)?,
-                        created_at: row.get(7)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_media_asset_impl(asset_id)
     }
 
     fn get_media_asset_by_hash(&self, hash: &str) -> Result<Option<MediaAssetRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = hash.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                "SELECT asset_id, kind, url, mime, size, hash, source, created_at FROM media_assets WHERE hash = ?",
-                params![cleaned],
-                |row| {
-                    Ok(MediaAssetRecord {
-                        asset_id: row.get(0)?,
-                        kind: row.get(1)?,
-                        url: row.get(2)?,
-                        mime: row.get(3)?,
-                        size: row.get(4)?,
-                        hash: row.get(5)?,
-                        source: row.get(6)?,
-                        created_at: row.get(7)?,
-                    })
-                },
-            )
-            .optional()?;
-        Ok(row)
+        self.get_media_asset_by_hash_impl(hash)
     }
 
     fn upsert_speech_job(&self, record: &SpeechJobRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let metadata = record.metadata.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO speech_jobs (job_id, job_type, status, input_text, input_url, output_text, output_url, model, error, retry_count, next_retry_at, created_at, updated_at, metadata) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(job_id) DO UPDATE SET status = excluded.status, input_text = excluded.input_text, input_url = excluded.input_url, output_text = excluded.output_text, \
-             output_url = excluded.output_url, model = excluded.model, error = excluded.error, retry_count = excluded.retry_count, next_retry_at = excluded.next_retry_at, \
-             updated_at = excluded.updated_at, metadata = excluded.metadata",
-            params![
-                record.job_id,
-                record.job_type,
-                record.status,
-                record.input_text,
-                record.input_url,
-                record.output_text,
-                record.output_url,
-                record.model,
-                record.error,
-                record.retry_count,
-                record.next_retry_at,
-                record.created_at,
-                record.updated_at,
-                metadata
-            ],
-        )?;
-        Ok(())
+        self.upsert_speech_job_impl(record)
     }
 
     fn list_pending_speech_jobs(&self, job_type: &str, limit: i64) -> Result<Vec<SpeechJobRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = job_type.trim();
-        if cleaned.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let now = Self::now_ts();
-        let limit_value = if limit <= 0 { 50 } else { limit.min(200) };
-        let mut stmt = conn.prepare(
-            "SELECT job_id, job_type, status, input_text, input_url, output_text, output_url, model, error, retry_count, next_retry_at, created_at, updated_at, metadata \
-             FROM speech_jobs WHERE job_type = ? AND (status = 'queued' OR status = 'retry') AND next_retry_at <= ? ORDER BY next_retry_at ASC LIMIT ?",
-        )?;
-        let rows = stmt.query_map(params![cleaned, now, limit_value], |row| {
-            let metadata_text: Option<String> = row.get(13)?;
-            Ok(SpeechJobRecord {
-                job_id: row.get(0)?,
-                job_type: row.get(1)?,
-                status: row.get(2)?,
-                input_text: row.get(3)?,
-                input_url: row.get(4)?,
-                output_text: row.get(5)?,
-                output_url: row.get(6)?,
-                model: row.get(7)?,
-                error: row.get(8)?,
-                retry_count: row.get(9)?,
-                next_retry_at: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
-                metadata: metadata_text.and_then(|value| Self::json_from_str(&value)),
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_pending_speech_jobs_impl(job_type, limit)
     }
 
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let metadata = record.metadata.as_ref().map(Self::json_to_string);
-        conn.execute(
-            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, \
-             started_time, finished_time, elapsed_s, result, error, updated_time, metadata) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(run_id) DO UPDATE SET session_id = excluded.session_id, parent_session_id = excluded.parent_session_id, \
-             user_id = excluded.user_id, dispatch_id = excluded.dispatch_id, run_kind = excluded.run_kind, requested_by = excluded.requested_by, \
-             agent_id = excluded.agent_id, model_name = excluded.model_name, status = excluded.status, \
-             queued_time = excluded.queued_time, started_time = excluded.started_time, finished_time = excluded.finished_time, \
-             elapsed_s = excluded.elapsed_s, result = excluded.result, error = excluded.error, updated_time = excluded.updated_time, \
-             metadata = excluded.metadata",
-            params![
-                record.run_id,
-                record.session_id,
-                record.parent_session_id,
-                record.user_id,
-                record.dispatch_id,
-                record.run_kind,
-                record.requested_by,
-                record.agent_id,
-                record.model_name,
-                record.status,
-                record.queued_time,
-                record.started_time,
-                record.finished_time,
-                record.elapsed_s,
-                record.result,
-                record.error,
-                record.updated_time,
-                metadata
-            ],
-        )?;
-        Ok(())
+        self.upsert_session_run_impl(record)
     }
 
     fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>> {
-        self.ensure_initialized()?;
-        let cleaned = run_id.trim();
-        if cleaned.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let row = conn
-            .query_row(
-                &format!(
-                    "SELECT {} FROM session_runs WHERE run_id = ?",
-                    Self::session_run_select_fields()
-                ),
-                params![cleaned],
-                Self::map_session_run_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.get_session_run_impl(run_id)
     }
 
     fn list_session_runs_by_session(
@@ -9054,27 +4760,7 @@ impl StorageBackend for SqliteStorage {
         session_id: &str,
         limit: i64,
     ) -> Result<Vec<SessionRunRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() || limit <= 0 {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {} FROM session_runs WHERE user_id = ? AND session_id = ? \
-             ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
-            Self::session_run_select_fields()
-        ))?;
-        let rows = stmt.query_map(
-            params![cleaned_user, cleaned_session, limit],
-            Self::map_session_run_row,
-        )?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_session_runs_by_session_impl(user_id, session_id, limit)
     }
 
     fn list_session_runs_by_parent(
@@ -9083,27 +4769,7 @@ impl StorageBackend for SqliteStorage {
         parent_session_id: &str,
         limit: i64,
     ) -> Result<Vec<SessionRunRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_parent = parent_session_id.trim();
-        if cleaned_user.is_empty() || cleaned_parent.is_empty() || limit <= 0 {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {} FROM session_runs WHERE user_id = ? AND parent_session_id = ? \
-             ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
-            Self::session_run_select_fields()
-        ))?;
-        let rows = stmt.query_map(
-            params![cleaned_user, cleaned_parent, limit],
-            Self::map_session_run_row,
-        )?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_session_runs_by_parent_impl(user_id, parent_session_id, limit)
     }
 
     fn list_session_runs_by_dispatch(
@@ -9112,91 +4778,15 @@ impl StorageBackend for SqliteStorage {
         dispatch_id: &str,
         limit: i64,
     ) -> Result<Vec<SessionRunRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_dispatch = dispatch_id.trim();
-        if cleaned_user.is_empty() || cleaned_dispatch.is_empty() || limit <= 0 {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {} FROM session_runs WHERE user_id = ? AND dispatch_id = ? \
-             ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
-            Self::session_run_select_fields()
-        ))?;
-        let rows = stmt.query_map(
-            params![cleaned_user, cleaned_dispatch, limit],
-            Self::map_session_run_row,
-        )?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_session_runs_by_dispatch_impl(user_id, dispatch_id, limit)
     }
 
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let payload = Self::json_to_string(&record.payload);
-        let deliver = record.deliver.as_ref().map(Self::json_to_string);
-        conn.execute(
-        "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, session_id = excluded.session_id, agent_id = excluded.agent_id, name = excluded.name, session_target = excluded.session_target, payload = excluded.payload, deliver = excluded.deliver, enabled = excluded.enabled, delete_after_run = excluded.delete_after_run, schedule_kind = excluded.schedule_kind, schedule_at = excluded.schedule_at, schedule_every_ms = excluded.schedule_every_ms, schedule_cron = excluded.schedule_cron, schedule_tz = excluded.schedule_tz, dedupe_key = excluded.dedupe_key, next_run_at = excluded.next_run_at, running_at = excluded.running_at, runner_id = excluded.runner_id, run_token = excluded.run_token, heartbeat_at = excluded.heartbeat_at, lease_expires_at = excluded.lease_expires_at, last_run_at = excluded.last_run_at, last_status = excluded.last_status, last_error = excluded.last_error, consecutive_failures = excluded.consecutive_failures, auto_disabled_reason = excluded.auto_disabled_reason, updated_at = excluded.updated_at",
-        params![
-            record.job_id,
-            record.user_id,
-            record.session_id,
-            record.agent_id,
-            record.name,
-            record.session_target,
-            payload,
-            deliver,
-            if record.enabled { 1 } else { 0 },
-            if record.delete_after_run { 1 } else { 0 },
-            record.schedule_kind,
-            record.schedule_at,
-            record.schedule_every_ms,
-            record.schedule_cron,
-            record.schedule_tz,
-            record.dedupe_key,
-            record.next_run_at,
-            record.running_at,
-            record.runner_id,
-            record.run_token,
-            record.heartbeat_at,
-            record.lease_expires_at,
-            record.last_run_at,
-            record.last_status,
-            record.last_error,
-            record.consecutive_failures,
-            record.auto_disabled_reason,
-            record.created_at,
-            record.updated_at
-        ],
-    )?;
-        Ok(())
+        self.upsert_cron_job_impl(record)
     }
 
     fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_job = job_id.trim();
-        if cleaned_user.is_empty() || cleaned_job.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let sql = format!(
-            "SELECT {} FROM cron_jobs WHERE user_id = ? AND job_id = ?",
-            Self::cron_job_select_fields()
-        );
-        let row = conn
-            .query_row(
-                &sql,
-                params![cleaned_user, cleaned_job],
-                Self::map_cron_job_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.get_cron_job_impl(user_id, job_id)
     }
 
     fn get_cron_job_by_dedupe_key(
@@ -9204,100 +4794,27 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         dedupe_key: &str,
     ) -> Result<Option<CronJobRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_key = dedupe_key.trim();
-        if cleaned_user.is_empty() || cleaned_key.is_empty() {
-            return Ok(None);
-        }
-        let conn = self.open()?;
-        let sql = format!(
-        "SELECT {} FROM cron_jobs WHERE user_id = ? AND dedupe_key = ? ORDER BY updated_at DESC LIMIT 1",
-        Self::cron_job_select_fields()
-    );
-        let row = conn
-            .query_row(
-                &sql,
-                params![cleaned_user, cleaned_key],
-                Self::map_cron_job_row,
-            )
-            .optional()?;
-        Ok(row)
+        self.get_cron_job_by_dedupe_key_impl(user_id, dedupe_key)
     }
 
     fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        if cleaned_user.is_empty() {
-            return Ok(Vec::new());
-        }
-        let conn = self.open()?;
-        let mut sql = format!(
-            "SELECT {} FROM cron_jobs WHERE user_id = ?",
-            Self::cron_job_select_fields()
-        );
-        if !include_disabled {
-            sql.push_str(" AND enabled = 1");
-        }
-        sql.push_str(" ORDER BY updated_at DESC");
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![cleaned_user], Self::map_cron_job_row)?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_cron_jobs_impl(user_id, include_disabled)
     }
 
     fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_job = job_id.trim();
-        if cleaned_user.is_empty() || cleaned_job.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM cron_jobs WHERE user_id = ? AND job_id = ?",
-            params![cleaned_user, cleaned_job],
-        )?;
-        Ok(affected as i64)
+        self.delete_cron_job_impl(user_id, job_id)
     }
 
     fn delete_cron_jobs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return Ok(0);
-        }
-        let conn = self.open()?;
-        let affected = conn.execute(
-            "DELETE FROM cron_jobs WHERE user_id = ? AND session_id = ?",
-            params![cleaned_user, cleaned_session],
-        )?;
-        Ok(affected as i64)
+        self.delete_cron_jobs_by_session_impl(user_id, session_id)
     }
 
     fn reset_cron_jobs_running(&self) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-        "UPDATE cron_jobs SET running_at = NULL, runner_id = NULL, run_token = NULL, heartbeat_at = NULL, lease_expires_at = NULL WHERE running_at IS NOT NULL OR runner_id IS NOT NULL OR run_token IS NOT NULL OR heartbeat_at IS NOT NULL OR lease_expires_at IS NOT NULL",
-        [],
-    )?;
-        Ok(())
+        self.reset_cron_jobs_running_impl()
     }
 
     fn count_running_cron_jobs(&self, now: f64) -> Result<i64> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > ?",
-        params![now],
-        |row| row.get(0),
-    )?;
-        Ok(total)
+        self.count_running_cron_jobs_impl(now)
     }
 
     fn claim_due_cron_jobs(
@@ -9307,48 +4824,7 @@ impl StorageBackend for SqliteStorage {
         runner_id: &str,
         lease_expires_at: f64,
     ) -> Result<Vec<CronJobRecord>> {
-        self.ensure_initialized()?;
-        let limit = limit.max(0);
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let mut conn = self.open()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let ids = {
-            let mut stmt = tx.prepare(
-            "SELECT job_id FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? AND (running_at IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?) ORDER BY next_run_at ASC LIMIT ?",
-        )?;
-            let ids = stmt
-                .query_map(params![now, now, limit], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<String>, _>>()?;
-            ids
-        };
-        if ids.is_empty() {
-            tx.commit()?;
-            return Ok(Vec::new());
-        }
-        for id in &ids {
-            let run_token = uuid::Uuid::new_v4().simple().to_string();
-            tx.execute(
-            "UPDATE cron_jobs SET running_at = ?, runner_id = ?, run_token = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ? WHERE job_id = ?",
-            params![now, runner_id, run_token, now, lease_expires_at, now, id],
-        )?;
-        }
-        let placeholders = vec!["?"; ids.len()].join(", ");
-        let sql = format!(
-            "SELECT {} FROM cron_jobs WHERE job_id IN ({placeholders})",
-            Self::cron_job_select_fields()
-        );
-        let mut output = Vec::new();
-        {
-            let mut stmt = tx.prepare(&sql)?;
-            let rows = stmt.query_map(params_from_iter(ids.iter()), Self::map_cron_job_row)?;
-            for record in rows.flatten() {
-                output.push(record);
-            }
-        }
-        tx.commit()?;
-        Ok(output)
+        self.claim_due_cron_jobs_impl(now, limit, runner_id, lease_expires_at)
     }
 
     fn renew_cron_job_lease(
@@ -9360,45 +4836,18 @@ impl StorageBackend for SqliteStorage {
         heartbeat_at: f64,
         lease_expires_at: f64,
     ) -> Result<bool> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let affected = conn.execute(
-        "UPDATE cron_jobs SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ? WHERE user_id = ? AND job_id = ? AND runner_id = ? AND run_token = ? AND running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > ?",
-        params![
-            heartbeat_at,
-            lease_expires_at,
-            heartbeat_at,
-            user_id.trim(),
-            job_id.trim(),
+        self.renew_cron_job_lease_impl(
+            user_id,
+            job_id,
             runner_id,
             run_token,
             heartbeat_at,
-        ],
-    )?;
-        Ok(affected > 0)
+            lease_expires_at,
+        )
     }
 
     fn insert_cron_run(&self, record: &CronRunRecord) -> Result<()> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        conn.execute(
-            "INSERT INTO cron_runs (run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            params![
-                record.run_id,
-                record.job_id,
-                record.user_id,
-                record.session_id,
-                record.agent_id,
-                record.trigger,
-                record.status,
-                record.summary,
-                record.error,
-                record.duration_ms,
-                record.created_at
-            ],
-        )?;
-        Ok(())
+        self.insert_cron_run_impl(record)
     }
 
     fn list_cron_runs(
@@ -9407,49 +4856,11 @@ impl StorageBackend for SqliteStorage {
         job_id: &str,
         limit: i64,
     ) -> Result<Vec<CronRunRecord>> {
-        self.ensure_initialized()?;
-        let cleaned_user = user_id.trim();
-        let cleaned_job = job_id.trim();
-        if cleaned_user.is_empty() || cleaned_job.is_empty() {
-            return Ok(Vec::new());
-        }
-        let safe_limit = limit.clamp(1, 200);
-        let conn = self.open()?;
-        let mut stmt = conn.prepare(
-            "SELECT run_id, job_id, user_id, session_id, agent_id, trigger, status, summary, error, duration_ms, created_at \
-             FROM cron_runs WHERE user_id = ? AND job_id = ? ORDER BY created_at DESC LIMIT ?",
-        )?;
-        let rows = stmt.query_map(params![cleaned_user, cleaned_job, safe_limit], |row| {
-            Ok(CronRunRecord {
-                run_id: row.get(0)?,
-                job_id: row.get(1)?,
-                user_id: row.get(2)?,
-                session_id: row.get(3)?,
-                agent_id: row.get(4)?,
-                trigger: row.get(5)?,
-                status: row.get(6)?,
-                summary: row.get(7)?,
-                error: row.get(8)?,
-                duration_ms: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                created_at: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-            })
-        })?;
-        let mut output = Vec::new();
-        for record in rows.flatten() {
-            output.push(record);
-        }
-        Ok(output)
+        self.list_cron_runs_impl(user_id, job_id, limit)
     }
 
     fn get_next_cron_run_at(&self, now: f64) -> Result<Option<f64>> {
-        self.ensure_initialized()?;
-        let conn = self.open()?;
-        let value: Option<f64> = conn.query_row(
-            "SELECT MIN(next_run_at) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at > ?",
-            params![now],
-            |row| row.get::<_, Option<f64>>(0),
-        )?;
-        Ok(value)
+        self.get_next_cron_run_at_impl(now)
     }
 
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {

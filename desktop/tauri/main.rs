@@ -460,7 +460,7 @@ fn run_gui(args: DesktopArgs) -> Result<()> {
                 .map_err(|err| anyhow!("create desktop window failed: {err}"))?;
             Ok(())
         })
-        .run(tauri::generate_context!("desktop/tauri/tauri.conf.json"));
+        .run(tauri::generate_context!("tauri.conf.json"));
 
     rt.block_on(bridge.shutdown());
     run_result.map_err(|err| anyhow!("tauri runtime exited with error: {err}"))

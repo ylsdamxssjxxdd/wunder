@@ -25,7 +25,7 @@ pub mod desktop;
 pub mod desktop_lan;
 pub mod doc2md;
 pub mod drawio;
-pub(crate) mod errors;
+pub mod errors;
 pub mod external_links;
 pub mod external_workflows;
 pub mod gateway_ws;

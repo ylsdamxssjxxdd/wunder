@@ -737,12 +737,15 @@ impl WorkspaceManager {
         }
         let user_root = self.user_root(user_id);
         let public_like = trimmed.replace('\\', "/");
-        if let Some(public_relative) = public_like.strip_prefix("workspaces/") {
-            let public_target = PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(public_relative);
+        let public_target = public_like
+            .strip_prefix("workspaces/")
+            .or_else(|| public_like.strip_prefix("/workspaces/"))
+            .map(|public_relative| PathBuf::from(PUBLIC_WORKSPACE_ROOT).join(public_relative));
+        if let Some(public_target) = public_target {
             if let Some(mapped) = self.map_public_path(user_id, &public_target) {
                 return Ok(mapped);
             }
-            return Ok(public_target);
+            return Err(anyhow!(i18n::t("error.path_out_of_bounds")));
         }
         let target_path = Path::new(trimmed);
         if target_path.is_absolute() {

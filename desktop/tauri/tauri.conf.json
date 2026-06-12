@@ -12,11 +12,27 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "resources": [
-      "../../config",
-      "../../scripts",
-      "../../frontend/dist"
-    ],
+    "resources": {
+      "../../config/app_version.json": "config/app_version.json",
+      "../../config/fonts.conf": "config/fonts.conf",
+      "../../config/i18n.messages.json": "config/i18n.messages.json",
+      "../../config/matplotlibrc": "config/matplotlibrc",
+      "../../config/mcp_config-example.json": "config/mcp_config-example.json",
+      "../../config/mcp_config.json": "config/mcp_config.json",
+      "../../config/org_units-example.json": "config/org_units-example.json",
+      "../../config/org_units.json": "config/org_units.json",
+      "../../config/sandbox-runtime.yaml": "config/sandbox-runtime.yaml",
+      "../../config/wunder-example.yaml": "config/wunder-example.yaml",
+      "../../config/wunder.yaml": "config/wunder.yaml",
+      "../../config/fonts": "config/fonts",
+      "../../config/knowledge": "config/knowledge",
+      "../../config/preset_worker_cards": "config/preset_worker_cards",
+      "../../config/preset_worker_cards_example": "config/preset_worker_cards_example",
+      "../../config/prompts": "config/prompts",
+      "../../config/skills": "config/skills",
+      "../../scripts": "scripts",
+      "../../frontend/dist": "frontend/dist"
+    },
     "icon": [
       "icons/icon.ico"
     ]

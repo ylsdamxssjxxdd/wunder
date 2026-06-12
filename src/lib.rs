@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::result_large_err)]
 // Library entrypoint for integration tests and internal reuse.
-mod api;
+pub mod api;
 mod channels;
 mod core;
 mod gateway;
@@ -9,15 +9,16 @@ mod lsp;
 mod ops;
 mod orchestrator;
 pub mod request_limits;
-mod sandbox;
+pub mod sandbox;
 mod services;
 pub mod storage;
 
+pub use wunder_core as stable_core;
 pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
 pub use core::{
     approval, approval_registry, auth, command_utils, config, config_store, dpi, drawio_config,
-    exec_policy, i18n, onlyoffice_config, path_utils, repo_assets, rustls_provider, schemas,
+    exec_policy, i18n, logging, onlyoffice_config, path_utils, repo_assets, rustls_provider, schemas,
     shutdown, state, token_utils,
 };
 pub use ops::{benchmark, monitor, performance, throughput};
