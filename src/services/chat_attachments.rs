@@ -330,14 +330,14 @@ mod tests {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
 
-    const TINY_PNG_BASE64: &str =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
-
     #[test]
     fn validate_image_attachment_bytes_accepts_valid_png() {
-        let bytes = STANDARD
-            .decode(TINY_PNG_BASE64.as_bytes())
-            .expect("decode png");
+        let image = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut cursor, image::ImageFormat::Png)
+            .expect("encode png");
+        let bytes = cursor.into_inner();
         assert!(validate_image_attachment_bytes("image/png", &bytes));
     }
 
