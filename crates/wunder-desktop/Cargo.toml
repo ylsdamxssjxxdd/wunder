@@ -1,0 +1,50 @@
+[package]
+name = "wunder-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+default-run = "wunder-desktop"
+
+[features]
+default = ["sqlite-storage"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
+desktop-control = ["wunder-runtime/desktop-control"]
+doc2md = ["wunder-runtime/doc2md"]
+host-metrics = ["wunder-runtime/host-metrics"]
+mcp = ["wunder-runtime/mcp"]
+postgres-storage = ["wunder-runtime/postgres-storage"]
+sqlite-storage = ["wunder-runtime/sqlite-storage"]
+web-fetch = ["wunder-runtime/web-fetch"]
+xmpp = ["wunder-runtime/xmpp"]
+
+[[bin]]
+name = "wunder-desktop"
+path = "main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "wunder-desktop-bridge"
+path = "bridge_main.rs"
+test = false
+bench = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tauri = { workspace = true, optional = true }
+tauri-plugin-updater = { workspace = true, optional = true }
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+wunder-runtime = { path = "../wunder-runtime", default-features = false }
+
+[build-dependencies]
+tauri-build = { workspace = true, optional = true }

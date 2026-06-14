@@ -58,6 +58,16 @@ pub fn looks_like_repo_root(candidate: &Path) -> bool {
         || normalized.join(PROMPTS_DIR_NAME).is_dir()
 }
 
+pub fn find_repo_root_at_or_above(candidate: &Path) -> Option<PathBuf> {
+    for path in candidate.ancestors() {
+        let normalized = normalize_repo_root_candidate(path);
+        if looks_like_repo_root(&normalized) {
+            return Some(normalized);
+        }
+    }
+    None
+}
+
 pub fn config_dir(repo_root: &Path) -> PathBuf {
     repo_root.join(CONFIG_DIR_NAME)
 }

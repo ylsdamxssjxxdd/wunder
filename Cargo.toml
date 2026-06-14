@@ -1,10 +1,10 @@
 [workspace]
 members = [
-  ".",
+  "crates/wunder-runtime",
   "crates/wunder-core",
   "crates/wunder-server",
-  "desktop/tauri",
-  "wunder-cli",
+  "crates/wunder-cli",
+  "crates/wunder-desktop",
 ]
 default-members = ["crates/wunder-server"]
 resolver = "2"
@@ -113,129 +113,6 @@ incremental = false
 [profile.test]
 # `cargo test` hit sporadic metadata/link failures with incremental enabled.
 incremental = false
-
-[package]
-name = "wunder-runtime"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-
-[lib]
-name = "wunder_server"
-path = "src/lib.rs"
-
-# Simulation binaries are used for local benchmarking only.
-# Keep them out of `cargo test` target builds to avoid unnecessary
-# Windows linker pressure in regular CI and developer validation loops.
-[[bin]]
-name = "backend_sim"
-path = "src/bin/backend_sim.rs"
-test = false
-bench = false
-
-[[bin]]
-name = "swarm_sim"
-path = "src/bin/swarm_sim.rs"
-test = false
-bench = false
-
-[[bin]]
-name = "swarm_flow_sim"
-path = "src/bin/swarm_flow_sim.rs"
-test = false
-bench = false
-
-[dependencies]
-anyhow.workspace = true
-argon2.workspace = true
-async-trait.workspace = true
-axum.workspace = true
-base64.workspace = true
-bytes.workspace = true
-chrono.workspace = true
-chrono-tz.workspace = true
-cron.workspace = true
-dashmap.workspace = true
-deadpool-postgres.workspace = true
-ed25519-dalek.workspace = true
-encoding_rs.workspace = true
-futures.workspace = true
-globset.workspace = true
-hickory-resolver.workspace = true
-html2md.workspace = true
-idna.workspace = true
-ignore.workspace = true
-image.workspace = true
-kuchiki.workspace = true
-mime.workspace = true
-parking_lot.workspace = true
-pulldown-cmark.workspace = true
-qrcode.workspace = true
-regex.workspace = true
-rmcp.workspace = true
-rusqlite.workspace = true
-rustls.workspace = true
-sasl.workspace = true
-scraper.workspace = true
-serde.workspace = true
-serde_bytes.workspace = true
-serde_json.workspace = true
-serde_yaml.workspace = true
-sha1.workspace = true
-sha2.workspace = true
-shell-words.workspace = true
-sse-stream.workspace = true
-tokio.workspace = true
-tokio-postgres.workspace = true
-tokio-rustls.workspace = true
-tokio-stream.workspace = true
-tokio-tungstenite.workspace = true
-tokio-util.workspace = true
-tokio-xmpp.workspace = true
-tower.workspace = true
-tower-http.workspace = true
-tracing.workspace = true
-tracing-appender.workspace = true
-tracing-subscriber.workspace = true
-url.workspace = true
-uuid.workspace = true
-walkdir.workspace = true
-webpki-roots.workspace = true
-wunder-core = { path = "crates/wunder-core" }
-zip.workspace = true
-calamine.workspace = true
-cfb.workspace = true
-quick-xml.workspace = true
-rlsx.workspace = true
-aes.workspace = true
-cbc.workspace = true
-hex.workspace = true
-hmac.workspace = true
-md5.workspace = true
-pdf-extract.workspace = true
-prost.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
-  "Win32_Foundation",
-  "Win32_Graphics_Gdi",
-  "Win32_System_LibraryLoader",
-  "Win32_UI_Input_KeyboardAndMouse",
-  "Win32_UI_HiDpi",
-  "Win32_UI_WindowsAndMessaging",
-] }
-
-[target.'cfg(not(target_vendor = "win7"))'.dependencies]
-reqwest.workspace = true
-sysinfo.workspace = true
-
-[target.'cfg(target_vendor = "win7")'.dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls-webpki-roots"] }
-sysinfo = "0.29.11"
-
-[dev-dependencies]
-tempfile.workspace = true
-tower.workspace = true
 
 [patch.crates-io]
 tokio-xmpp = { path = "patches/tokio-xmpp" }

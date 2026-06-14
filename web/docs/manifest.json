@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-06-04T23:42:57.541447+00:00",
+  "generated_at": "2026-06-14T03:20:20.166775+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -2031,8 +2031,8 @@
         "你要把 wunder 集成到脚本或自动化流程"
       ],
       "source_docs": [
-        "wunder-cli/src/main.rs",
-        "wunder-cli/src/tui/"
+        "crates/wunder-cli/main.rs",
+        "crates/wunder-cli/tui/"
       ],
       "tab": "开始",
       "group": "入门",
@@ -10402,7 +10402,7 @@
         "You want to integrate wunder into scripts or automation"
       ],
       "source_docs": [
-        "wunder-cli/src/main.rs"
+        "crates/wunder-cli/main.rs"
       ],
       "tab": "Getting Started",
       "group": "Onboarding",

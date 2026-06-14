@@ -4,6 +4,17 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["postgres-storage"]
+desktop-control = ["wunder-runtime/desktop-control"]
+doc2md = ["wunder-runtime/doc2md"]
+host-metrics = ["wunder-runtime/host-metrics"]
+mcp = ["wunder-runtime/mcp"]
+postgres-storage = ["wunder-runtime/postgres-storage"]
+sqlite-storage = ["wunder-runtime/sqlite-storage"]
+web-fetch = ["wunder-runtime/web-fetch"]
+xmpp = ["wunder-runtime/xmpp"]
+
 [[bin]]
 name = "wunder-server"
 path = "src/main.rs"
@@ -19,4 +30,4 @@ tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 url.workspace = true
-wunder-runtime = { path = "../.." }
+wunder-runtime = { path = "../wunder-runtime", default-features = false }

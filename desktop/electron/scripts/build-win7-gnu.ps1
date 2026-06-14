@@ -66,6 +66,8 @@ $buildArgs = @(
   'unstable-options',
   'build',
   '--release',
+  '-p',
+  'wunder-desktop',
   '--bin',
   'wunder-desktop-bridge',
   '-Zbuild-std=std,panic_abort',

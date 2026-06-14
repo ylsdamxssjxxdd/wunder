@@ -254,7 +254,7 @@ def main() -> int:
         build_log = logs_root / "build-wunder-cli.log"
         build_result = run_command(
             name="build_wunder_cli_release",
-            command=["cargo", "build", "--release", "--bin", "wunder-cli"],
+            command=["cargo", "build", "--release", "-p", "wunder-cli", "--bin", "wunder-cli"],
             cwd=root,
             output_path=build_log,
             timeout_s=args.timeout_verify,

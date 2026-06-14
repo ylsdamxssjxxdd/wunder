@@ -127,8 +127,9 @@ RUN set -eux; \
 WORKDIR /app
 
 # Build commands (inside container):
-#   cargo build --release --bin wunder-server --bin wunder-cli
-#   cargo build --release --features desktop --bin wunder-desktop
+#   cargo build --release -p wunder-server --bin wunder-server
+#   cargo build --release -p wunder-cli --bin wunder-cli
+#   cargo build --release -p wunder-desktop --features desktop --bin wunder-desktop
 
 CMD ["/bin/bash"]
 # docker build -t wunder-arm-20 --platform linux/arm64 -f Dockerfile.ubuntu20-arm .

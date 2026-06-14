@@ -63,7 +63,7 @@ def main() -> int:
     # so we sync them from the single source of truth in config/app_version.json.
     sync_targets = [
         ROOT / "Cargo.toml",
-        ROOT / "desktop" / "tauri" / "Cargo.toml",
+        ROOT / "crates" / "wunder-desktop" / "Cargo.toml",
     ]
     for target in sync_targets:
         if replace_package_version(target, version):
@@ -72,7 +72,7 @@ def main() -> int:
     json_targets = [
         ROOT / "frontend" / "package.json",
         ROOT / "desktop" / "electron" / "package.json",
-        ROOT / "desktop" / "tauri" / "tauri.conf.json",
+        ROOT / "crates" / "wunder-desktop" / "tauri.conf.json",
     ]
     for target in json_targets:
         if write_json(target, lambda payload, value=version: set_version_field(payload, value)):

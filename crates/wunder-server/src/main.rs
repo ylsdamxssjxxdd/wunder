@@ -25,7 +25,7 @@ use wunder_server::shutdown::shutdown_signal;
 use wunder_server::state::AppState;
 use wunder_server::{
     admin_skills, api, auth, config, i18n, logging, mcp, rustls_provider, sandbox, schemas,
-    user_store,
+    user_store, repo_assets,
 };
 
 #[tokio::main]
@@ -312,9 +312,11 @@ where
 {
     let mut path = PathBuf::from(dir);
     if !path.exists() && path.is_relative() {
-        let manifest_fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
-        if manifest_fallback.exists() {
-            path = manifest_fallback;
+        if let Some(repo_root) = resolve_static_repo_root() {
+            let fallback = repo_root.join(dir);
+            if fallback.exists() {
+                path = fallback;
+            }
         }
     }
     if path.exists() {
@@ -330,6 +332,41 @@ where
     } else {
         app
     }
+}
+
+fn resolve_static_repo_root() -> Option<PathBuf> {
+    for candidate in static_repo_root_candidates() {
+        if let Some(repo_root) = repo_assets::find_repo_root_at_or_above(&candidate) {
+            return Some(repo_root);
+        }
+    }
+    None
+}
+
+fn static_repo_root_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    push_static_candidate(&mut candidates, std::env::current_dir().ok());
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(app_dir) = exe.parent() {
+            push_static_candidate(&mut candidates, Some(app_dir.to_path_buf()));
+            push_static_candidate(&mut candidates, Some(app_dir.join("resources")));
+        }
+    }
+    push_static_candidate(
+        &mut candidates,
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
+    candidates
+}
+
+fn push_static_candidate(candidates: &mut Vec<PathBuf>, candidate: Option<PathBuf>) {
+    let Some(path) = candidate else {
+        return;
+    };
+    if path.as_os_str().is_empty() || candidates.iter().any(|item| item == &path) {
+        return;
+    }
+    candidates.push(path);
 }
 
 fn mount_simple_chat_disabled<S>(app: Router<S>) -> Router<S>

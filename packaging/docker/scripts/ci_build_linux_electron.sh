@@ -41,7 +41,7 @@ else
 fi
 
 echo "Building bridge binary..."
-cargo build --release --bin wunder-desktop-bridge
+cargo build --release -p wunder-desktop --bin wunder-desktop-bridge
 BRIDGE_BIN="${CARGO_TARGET_DIR}/release/wunder-desktop-bridge"
 if [ ! -x "${BRIDGE_BIN}" ]; then
   echo "Bridge binary not found: ${BRIDGE_BIN}" >&2

@@ -1,0 +1,1928 @@
+use crate::args::DesktopArgs;
+use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tracing::{info, warn};
+use wunder_server::admin_skills;
+use wunder_server::config::{merge_config_value, Config, LlmConfig};
+use wunder_server::config_store::ConfigStore;
+use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
+use wunder_server::desktop_runtime_recovery::recover_desktop_runtime_state;
+use wunder_server::repo_assets;
+use wunder_server::state::{AppState, AppStateInitOptions};
+use wunder_server::storage::{
+    normalize_workspace_container_id, UserTokenRecord, MAX_SANDBOX_CONTAINER_ID,
+    USER_PRIVATE_CONTAINER_ID,
+};
+use wunder_server::user_store::UserStore;
+
+pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
+const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
+const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
+const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
+const BUILTIN_SKILLS_STAMP_NAME: &str = ".wunder_builtin_skills_stamp.json";
+
+#[derive(Clone)]
+pub struct DesktopRuntime {
+    pub state: Arc<AppState>,
+    pub app_dir: PathBuf,
+    pub temp_root: PathBuf,
+    pub settings_path: PathBuf,
+    pub workspace_root: PathBuf,
+    pub frontend_root: Option<PathBuf>,
+    pub repo_root: PathBuf,
+    pub user_id: String,
+    pub desktop_token: String,
+    pub lan_mesh: DesktopLanMeshSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopSettings {
+    pub workspace_root: String,
+    pub desktop_token: String,
+    #[serde(default)]
+    pub python_path: String,
+    #[serde(default)]
+    pub pip_path: String,
+    #[serde(default)]
+    pub git_path: String,
+    #[serde(default)]
+    pub rg_path: String,
+    #[serde(default = "default_python_runtime_mode")]
+    pub python_runtime_mode: String,
+    #[serde(default)]
+    pub container_roots: HashMap<i32, String>,
+    #[serde(default)]
+    pub container_cloud_workspaces: HashMap<i32, String>,
+    #[serde(default)]
+    pub language: String,
+    #[serde(default)]
+    pub llm: Option<LlmConfig>,
+    #[serde(default)]
+    pub lan_mesh: DesktopLanMeshSettings,
+    pub updated_at: f64,
+}
+
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self {
+            workspace_root: String::new(),
+            desktop_token: uuid::Uuid::new_v4().simple().to_string(),
+            python_path: String::new(),
+            pip_path: String::new(),
+            git_path: String::new(),
+            rg_path: String::new(),
+            python_runtime_mode: default_python_runtime_mode(),
+            container_roots: HashMap::new(),
+            container_cloud_workspaces: HashMap::new(),
+            language: String::new(),
+            llm: None,
+            lan_mesh: DesktopLanMeshSettings::default(),
+            updated_at: now_ts(),
+        }
+    }
+}
+
+impl DesktopRuntime {
+    pub async fn init(args: &DesktopArgs) -> Result<Self> {
+        let startup_enabled = startup_timing_enabled();
+        let startup_boot = Instant::now();
+        log_startup_point(
+            startup_enabled,
+            "bridge-runtime",
+            "runtime_init_begin",
+            startup_boot,
+        );
+
+        let mut step_start = Instant::now();
+        let app_dir = resolve_app_dir()?;
+        let repo_root = resolve_repo_root(&app_dir);
+        let temp_root = resolve_temp_root(args.temp_root.as_deref(), &app_dir);
+        let user_id = normalize_user_id(args.user.as_deref());
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "resolve_paths_and_user",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        ensure_runtime_dirs(&temp_root)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "ensure_runtime_dirs",
+            step_start,
+            startup_boot,
+        );
+
+        let settings_path = temp_root.join("config/desktop.settings.json");
+        step_start = Instant::now();
+        let mut settings = load_desktop_settings(&settings_path)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "load_desktop_settings",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        let workspace_root = resolve_workspace_root(
+            args.workspace.as_deref(),
+            &settings.workspace_root,
+            &app_dir,
+        );
+        fs::create_dir_all(&workspace_root).with_context(|| {
+            format!(
+                "create workspace root failed: {}",
+                workspace_root.to_string_lossy()
+            )
+        })?;
+        if let Err(err) = seed_workspace_skills(&repo_root, &workspace_root) {
+            warn!(
+                "seed desktop workspace skills failed: {} -> {}: {err}",
+                repo_assets::builtin_skills_root(&repo_root).display(),
+                workspace_root.join("skills").display()
+            );
+        }
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "prepare_workspace_and_seed_skills",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        if settings.desktop_token.trim().is_empty() {
+            settings.desktop_token = uuid::Uuid::new_v4().simple().to_string();
+        }
+        settings.workspace_root = workspace_root.to_string_lossy().to_string();
+        settings.container_roots = normalize_desktop_container_roots(
+            &settings.container_roots,
+            &workspace_root,
+            &app_dir,
+            &user_id,
+        );
+        settings.container_cloud_workspaces =
+            normalize_desktop_container_cloud_workspaces(&settings.container_cloud_workspaces);
+        settings
+            .container_cloud_workspaces
+            .retain(|container_id, _| settings.container_roots.contains_key(container_id));
+        fs::create_dir_all(&workspace_root).with_context(|| {
+            format!(
+                "create desktop workspace root failed: {}",
+                workspace_root.display()
+            )
+        })?;
+        ensure_container_root_dirs(&settings.container_roots)?;
+        settings.lan_mesh = settings.lan_mesh.clone().normalized();
+        if settings.lan_mesh.peer_id.trim().is_empty() {
+            settings.lan_mesh.peer_id = build_default_lan_peer_id(&user_id);
+        }
+        if settings.lan_mesh.display_name.trim().is_empty() {
+            settings.lan_mesh.display_name = user_id.clone();
+        }
+        desktop_lan::manager()
+            .apply_settings(settings.lan_mesh.clone())
+            .await;
+        settings.updated_at = now_ts();
+        save_desktop_settings(&settings_path, &settings)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "normalize_settings_and_save",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        let config_path = prepare_runtime_config_path(&repo_root, &temp_root, &app_dir)?;
+        let i18n_path = repo_root.join("config/i18n.messages.json");
+        let skill_runner = repo_root.join("scripts/skill_runner.py");
+        let user_tools_root = temp_root.join("user_tools");
+        let admin_custom_skills_root = temp_root.join("admin_skills");
+        if let Err(err) = seed_user_tool_skills(&repo_root, &user_tools_root, &user_id) {
+            warn!(
+                "seed desktop user tool skills failed: {} -> {}: {err}",
+                repo_assets::builtin_skills_root(&repo_root).display(),
+                user_tools_root.display()
+            );
+        }
+        let vector_root = temp_root.join("vector_knowledge");
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "prepare_config_paths_and_seed_user_tools",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        set_env_path("WUNDER_CONFIG_PATH", &config_path);
+        set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
+        set_env_prompts_root_if_unset(&repo_root);
+        set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
+        set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
+        set_env_path(ADMIN_CUSTOM_SKILLS_ROOT_ENV, &admin_custom_skills_root);
+        set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
+        set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
+        set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
+        prepend_embedded_tool_paths(&app_dir);
+        match resolve_desktop_python_bin(&settings, &app_dir) {
+            DesktopPythonBin::Custom(python_bin) | DesktopPythonBin::Auto(python_bin) => {
+                set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
+            }
+            DesktopPythonBin::System => {
+                std::env::remove_var("WUNDER_PYTHON_BIN");
+            }
+            DesktopPythonBin::None => {}
+        }
+        if let Some(rg_bin) = resolve_desktop_tool_bin(&settings.rg_path, &app_dir)
+            .or_else(|| resolve_embedded_rg_bin(&app_dir))
+        {
+            set_env_path_if_exists("WUNDER_RG_BIN", &rg_bin);
+        }
+        set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
+        set_env_path(
+            BUILTIN_SKILLS_ROOT_ENV,
+            &repo_assets::builtin_skills_root(&repo_root),
+        );
+        std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
+        std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "apply_environment",
+            step_start,
+            startup_boot,
+        );
+
+        let desktop_token = settings.desktop_token.clone();
+
+        step_start = Instant::now();
+        let config_store = ConfigStore::new(config_path);
+        let workspace_for_update = workspace_root.clone();
+        let temp_root_for_update = temp_root.clone();
+        let repo_root_for_update = repo_root.clone();
+        let token_for_update = desktop_token.clone();
+        let container_roots_for_update = settings.container_roots.clone();
+        let language_for_update = settings.language.clone();
+        let llm_for_update = settings.llm.clone();
+        let _config = config_store
+            .update(move |config| {
+                apply_desktop_defaults(
+                    config,
+                    &workspace_for_update,
+                    &temp_root_for_update,
+                    &repo_root_for_update,
+                    DesktopDefaultsInput {
+                        desktop_token: &token_for_update,
+                        container_roots: &container_roots_for_update,
+                        language: &language_for_update,
+                        llm: llm_for_update.as_ref(),
+                    },
+                );
+            })
+            .await
+            .context("apply desktop runtime config failed")?;
+        let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "config_store_update",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        let state = Arc::new(
+            AppState::new_with_options(
+                config_store.clone(),
+                config.clone(),
+                AppStateInitOptions::desktop_default().with_start_thread_runtime(false),
+            )
+            .context("initialize desktop state failed")?,
+        );
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "app_state_init",
+            step_start,
+            startup_boot,
+        );
+
+        if config.lsp.enabled {
+            step_start = Instant::now();
+            state.lsp_manager.sync_with_config(&config).await;
+            log_startup_segment(
+                startup_enabled,
+                "bridge-runtime",
+                "lsp_sync_with_config",
+                step_start,
+                startup_boot,
+            );
+        }
+        step_start = Instant::now();
+        ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "ensure_desktop_identity",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        if state.runtime_capabilities.thread_runtime_active {
+            let summary = recover_desktop_runtime_state(state.as_ref(), &user_id)
+                .await
+                .context("recover desktop runtime state failed")?;
+            state.kernel.thread_runtime.clone().start();
+            info!(
+                cancelled_monitor_sessions = summary.cancelled_monitor_sessions,
+                cancelled_session_locks = summary.cancelled_session_locks,
+                cancelled_agent_tasks = summary.cancelled_agent_tasks,
+                reset_agent_threads = summary.reset_agent_threads,
+                "desktop runtime state recovered"
+            );
+        }
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "desktop_runtime_recovery",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        migrate_desktop_local_agent_approval_modes(state.as_ref(), &user_id)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "migrate_desktop_agent_approval_modes",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
+        let lan_mesh = settings.lan_mesh.clone();
+        let frontend_root =
+            resolve_frontend_root(args.frontend_root.as_deref(), &repo_root, &app_dir);
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "resolve_remote_and_frontend",
+            step_start,
+            startup_boot,
+        );
+
+        log_startup_point(
+            startup_enabled,
+            "bridge-runtime",
+            "runtime_init_done",
+            startup_boot,
+        );
+
+        Ok(Self {
+            state,
+            app_dir,
+            temp_root,
+            settings_path,
+            workspace_root,
+            frontend_root,
+            repo_root,
+            user_id,
+            desktop_token,
+            lan_mesh,
+        })
+    }
+}
+
+fn resolve_app_dir() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("resolve current exe path failed")?;
+    exe.parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("resolve app dir failed from exe path"))
+}
+
+fn resolve_repo_root(app_dir: &Path) -> PathBuf {
+    let mut candidates = vec![app_dir.to_path_buf(), app_dir.join("resources")];
+    if let Some(parent) = app_dir.parent() {
+        candidates.push(parent.join("Resources"));
+    }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    for candidate in candidates {
+        if let Some(repo_root) = find_runtime_resource_root(&candidate) {
+            return repo_root;
+        }
+    }
+    app_dir.to_path_buf()
+}
+
+fn resolve_temp_root(temp_root: Option<&Path>, app_dir: &Path) -> PathBuf {
+    match temp_root {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => app_dir.join(path),
+        None => app_dir.join("WUNDER_TEMPD"),
+    }
+}
+
+fn resolve_workspace_root(
+    arg_workspace: Option<&Path>,
+    settings_workspace: &str,
+    app_dir: &Path,
+) -> PathBuf {
+    if let Some(path) = arg_workspace {
+        return if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            app_dir.join(path)
+        };
+    }
+
+    let raw = settings_workspace.trim();
+    if raw.is_empty() {
+        return app_dir.join("WUNDER_WORK");
+    }
+
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        path
+    } else {
+        app_dir.join(path)
+    }
+}
+
+fn resolve_frontend_root(
+    arg_frontend_root: Option<&Path>,
+    repo_root: &Path,
+    app_dir: &Path,
+) -> Option<PathBuf> {
+    if let Some(path) = arg_frontend_root {
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            app_dir.join(path)
+        };
+        if resolved.exists() {
+            return Some(resolved);
+        }
+        return None;
+    }
+
+    let mut candidates = vec![
+        repo_root.join("frontend/dist"),
+        repo_root.join("frontend-dist"),
+        app_dir.join("frontend/dist"),
+        app_dir.join("frontend-dist"),
+        app_dir.join("resources/frontend/dist"),
+        app_dir.join("resources/frontend-dist"),
+    ];
+    if let Some(parent) = app_dir.parent() {
+        candidates.push(parent.join("Resources/frontend/dist"));
+        candidates.push(parent.join("Resources/frontend-dist"));
+    }
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn find_runtime_resource_root(candidate: &Path) -> Option<PathBuf> {
+    for path in candidate.ancestors() {
+        let normalized = repo_assets::normalize_repo_root_candidate(path);
+        if repo_assets::looks_like_repo_root(&normalized) {
+            return Some(normalized);
+        }
+    }
+    None
+}
+
+fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
+    for dir in [
+        temp_root.to_path_buf(),
+        temp_root.join("config"),
+        temp_root.join("logs"),
+        temp_root.join("sessions"),
+        temp_root.join("user_tools"),
+        temp_root.join("admin_skills"),
+        temp_root.join("vector_knowledge"),
+    ] {
+        fs::create_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> {
+    let source = repo_assets::builtin_skills_root(repo_root);
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let target = workspace_root.join("skills");
+    sync_builtin_skills(&source, &target)
+}
+
+fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str) -> Result<()> {
+    let source = repo_assets::builtin_skills_root(repo_root);
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let safe_user_id = sanitize_user_tools_user_id(user_id);
+    let target = user_tools_root.join(safe_user_id).join("skills");
+    sync_builtin_skills(&source, &target)
+}
+
+fn sync_builtin_skills(source: &Path, target: &Path) -> Result<()> {
+    if should_skip_builtin_skill_sync(source, target) {
+        return Ok(());
+    }
+    fs::create_dir_all(target)
+        .with_context(|| format!("create skills target dir failed: {}", target.display()))?;
+    let previous = read_builtin_skill_manifest(target);
+    let mut current: HashSet<String> = HashSet::new();
+    let entries = fs::read_dir(source)
+        .with_context(|| format!("read skills source dir failed: {}", source.display()))?;
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("read skills source entry failed: {}", source.display()))?;
+        let source_path = entry.path();
+        let entry_name = entry.file_name().to_string_lossy().to_string();
+        if entry_name.is_empty() {
+            continue;
+        }
+        let target_path = target.join(&entry_name);
+        let file_type = entry.file_type().with_context(|| {
+            format!(
+                "read skills source entry type failed: {}",
+                source_path.display()
+            )
+        })?;
+        if file_type.is_dir() {
+            remove_path_if_exists(&target_path)?;
+            copy_directory_recursive(&source_path, &target_path)?;
+            current.insert(entry_name);
+            continue;
+        }
+        if file_type.is_file() {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("create skills target parent failed: {}", parent.display())
+                })?;
+            }
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy desktop skill file failed: {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    for stale in previous.difference(&current) {
+        remove_path_if_exists(&target.join(stale))?;
+    }
+    write_builtin_skill_manifest(target, &current)?;
+    write_builtin_skill_stamp(target, source)?;
+    Ok(())
+}
+
+fn copy_directory_recursive(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)
+        .with_context(|| format!("create target dir failed: {}", target.display()))?;
+    let entries = fs::read_dir(source)
+        .with_context(|| format!("read source dir failed: {}", source.display()))?;
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("read source entry failed: {}", source.display()))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type().with_context(|| {
+            format!(
+                "read source entry type failed: {}",
+                source_path.to_string_lossy()
+            )
+        })?;
+        if file_type.is_dir() {
+            copy_directory_recursive(&source_path, &target_path)?;
+            continue;
+        }
+        if file_type.is_file() {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("create target parent dir failed: {}", parent.display())
+                })?;
+            }
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy desktop skill file failed: {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("remove stale skill dir failed: {}", path.display()))?;
+        return Ok(());
+    }
+    fs::remove_file(path)
+        .with_context(|| format!("remove stale skill file failed: {}", path.display()))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BuiltinSkillsStamp {
+    source_root: String,
+    app_version: String,
+}
+
+fn should_skip_builtin_skill_sync(source: &Path, target: &Path) -> bool {
+    if std::env::var("WUNDER_FORCE_SKILL_SYNC")
+        .ok()
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let appimage = std::env::var("APPIMAGE")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !appimage {
+        return false;
+    }
+    if !target.is_dir() {
+        return false;
+    }
+    if !target.join(BUILTIN_SKILLS_MANIFEST_NAME).is_file() {
+        return false;
+    }
+    let Some(stamp) = read_builtin_skill_stamp(target) else {
+        return false;
+    };
+    let source_key = build_builtin_skills_source_key(source);
+    stamp.source_root == source_key && stamp.app_version == env!("CARGO_PKG_VERSION")
+}
+
+fn read_builtin_skill_stamp(target: &Path) -> Option<BuiltinSkillsStamp> {
+    let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
+    let Ok(content) = fs::read_to_string(&stamp_path) else {
+        return None;
+    };
+    serde_json::from_str::<BuiltinSkillsStamp>(&content).ok()
+}
+
+fn write_builtin_skill_stamp(target: &Path, source: &Path) -> Result<()> {
+    let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
+    let stamp = BuiltinSkillsStamp {
+        source_root: build_builtin_skills_source_key(source),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let text =
+        serde_json::to_string_pretty(&stamp).context("serialize builtin skills stamp failed")?;
+    fs::write(&stamp_path, text).with_context(|| {
+        format!(
+            "write builtin skills stamp failed: {}",
+            stamp_path.display()
+        )
+    })
+}
+
+fn read_builtin_skill_manifest(target: &Path) -> HashSet<String> {
+    let manifest_path = target.join(BUILTIN_SKILLS_MANIFEST_NAME);
+    let Ok(content) = fs::read_to_string(manifest_path) else {
+        return HashSet::new();
+    };
+    serde_json::from_str::<Vec<String>>(&content)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn write_builtin_skill_manifest(target: &Path, names: &HashSet<String>) -> Result<()> {
+    let mut ordered = names.iter().cloned().collect::<Vec<_>>();
+    ordered.sort();
+    let manifest_path = target.join(BUILTIN_SKILLS_MANIFEST_NAME);
+    let text = serde_json::to_string_pretty(&ordered)
+        .context("serialize builtin skills manifest failed")?;
+    fs::write(&manifest_path, text).with_context(|| {
+        format!(
+            "write builtin skills manifest failed: {}",
+            manifest_path.display()
+        )
+    })
+}
+
+pub(crate) fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
+    if !path.exists() {
+        return Ok(DesktopSettings::default());
+    }
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("read desktop settings failed: {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(DesktopSettings::default());
+    }
+    serde_json::from_str::<DesktopSettings>(&text)
+        .with_context(|| format!("parse desktop settings failed: {}", path.display()))
+}
+
+pub(crate) fn save_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()> {
+    let text =
+        serde_json::to_string_pretty(settings).context("serialize desktop settings failed")?;
+    fs::write(path, text)
+        .with_context(|| format!("write desktop settings failed: {}", path.to_string_lossy()))
+}
+
+pub(crate) fn normalize_desktop_container_roots(
+    source: &HashMap<i32, String>,
+    default_workspace_root: &Path,
+    app_dir: &Path,
+    user_id: &str,
+) -> HashMap<i32, String> {
+    let normalized_user_id = normalize_user_id(Some(user_id));
+    let workspace_root_cmp = normalize_path_for_compare(default_workspace_root);
+
+    let mut explicit = HashMap::new();
+    let mut seen_paths = HashSet::new();
+    seen_paths.insert(workspace_root_cmp);
+    for container_id in USER_PRIVATE_CONTAINER_ID..=MAX_SANDBOX_CONTAINER_ID {
+        let default_root =
+            build_default_container_root(default_workspace_root, &normalized_user_id, container_id);
+        seen_paths.insert(normalize_path_for_compare(&default_root));
+    }
+
+    for (container_id, root) in source {
+        let normalized_id = normalize_workspace_container_id(*container_id);
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let resolved = resolve_workspace_path_input(trimmed, app_dir);
+        let resolved_cmp = normalize_path_for_compare(&resolved);
+        if resolved_cmp.is_empty() || seen_paths.contains(&resolved_cmp) {
+            continue;
+        }
+        if normalized_id == USER_PRIVATE_CONTAINER_ID {
+            seen_paths.insert(resolved_cmp.clone());
+            explicit.insert(normalized_id, resolved);
+            continue;
+        }
+        if !(1..=MAX_SANDBOX_CONTAINER_ID).contains(&normalized_id) {
+            continue;
+        }
+        seen_paths.insert(resolved_cmp);
+        explicit.insert(normalized_id, resolved);
+    }
+
+    let mut output = HashMap::new();
+    for container_id in USER_PRIVATE_CONTAINER_ID..=MAX_SANDBOX_CONTAINER_ID {
+        let root = explicit.remove(&container_id).unwrap_or_else(|| {
+            build_default_container_root(default_workspace_root, &normalized_user_id, container_id)
+        });
+        output.insert(container_id, root.to_string_lossy().to_string());
+    }
+    output
+}
+
+pub(crate) fn normalize_desktop_container_cloud_workspaces(
+    source: &HashMap<i32, String>,
+) -> HashMap<i32, String> {
+    let mut output = HashMap::new();
+    for (container_id, workspace_id) in source {
+        let normalized_id = wunder_server::storage::normalize_sandbox_container_id(*container_id);
+        let cleaned = workspace_id.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        output.insert(normalized_id, cleaned.to_string());
+    }
+    output
+}
+
+pub(crate) fn ensure_container_root_dirs(container_roots: &HashMap<i32, String>) -> Result<()> {
+    for root in container_roots.values() {
+        let trimmed = root.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        fs::create_dir_all(trimmed)
+            .with_context(|| format!("create desktop container workspace failed: {trimmed}"))?;
+    }
+    Ok(())
+}
+
+fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        app_dir.join(path)
+    }
+}
+
+fn default_python_runtime_mode() -> String {
+    "auto".to_string()
+}
+
+enum DesktopPythonBin {
+    Auto(PathBuf),
+    Custom(PathBuf),
+    System,
+    None,
+}
+
+fn resolve_desktop_python_bin(settings: &DesktopSettings, app_dir: &Path) -> DesktopPythonBin {
+    let trimmed = settings.python_path.trim();
+    if !trimmed.is_empty() {
+        let candidate = resolve_workspace_path_input(trimmed, app_dir);
+        if candidate.is_file() {
+            return DesktopPythonBin::Custom(candidate);
+        }
+        return DesktopPythonBin::System;
+    }
+    if settings
+        .python_runtime_mode
+        .trim()
+        .eq_ignore_ascii_case("system")
+    {
+        return DesktopPythonBin::System;
+    }
+    resolve_embedded_python_bin(app_dir)
+        .map(DesktopPythonBin::Auto)
+        .unwrap_or(DesktopPythonBin::None)
+}
+
+fn resolve_desktop_tool_bin(raw: &str, app_dir: &Path) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = resolve_workspace_path_input(trimmed, app_dir);
+    candidate.is_file().then_some(candidate)
+}
+
+fn sanitize_workspace_scope(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.trim().is_empty() {
+        DESKTOP_DEFAULT_USER_ID.to_string()
+    } else {
+        output
+    }
+}
+
+fn sanitize_user_tools_user_id(value: &str) -> String {
+    let cleaned = value.trim();
+    if cleaned.is_empty() {
+        return "anonymous".to_string();
+    }
+    let mut output = String::with_capacity(cleaned.len());
+    for ch in cleaned.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    output
+}
+
+fn build_default_container_root(
+    workspace_root: &Path,
+    user_id: &str,
+    container_id: i32,
+) -> PathBuf {
+    if container_id == USER_PRIVATE_CONTAINER_ID {
+        return workspace_root.join(sanitize_workspace_scope(user_id));
+    }
+    workspace_root.join(format!(
+        "{}__c__{container_id}",
+        sanitize_workspace_scope(user_id)
+    ))
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
+}
+
+fn build_builtin_skills_source_key(source: &Path) -> String {
+    let appimage = std::env::var("APPIMAGE").ok();
+    build_builtin_skills_source_key_with_appimage(source, appimage.as_deref())
+}
+
+fn build_builtin_skills_source_key_with_appimage(source: &Path, appimage: Option<&str>) -> String {
+    let Some(raw_appimage) = appimage else {
+        return normalize_path_for_compare(source);
+    };
+    let trimmed = raw_appimage.trim();
+    if trimmed.is_empty() {
+        return normalize_path_for_compare(source);
+    }
+
+    // AppImage mounts to a randomized /tmp/.mount_* path on each run.
+    // Keying by APPIMAGE file identity avoids full skill resync on every launch.
+    let appimage_path = PathBuf::from(trimmed);
+    let normalized_path = normalize_path_for_compare(&appimage_path);
+    match fs::metadata(&appimage_path) {
+        Ok(metadata) => {
+            let modified_s = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            format!("appimage:{normalized_path}:{}:{modified_s}", metadata.len())
+        }
+        Err(_) => format!("appimage:{normalized_path}"),
+    }
+}
+
+fn set_env_path(key: &str, value: &Path) {
+    std::env::set_var(key, value.to_string_lossy().to_string());
+}
+
+fn set_env_path_if_exists(key: &str, value: &Path) {
+    if value.exists() {
+        set_env_path(key, value);
+    }
+}
+
+fn prepend_path_entry_if_exists(value: &Path) {
+    if !value.exists() {
+        return;
+    }
+    let mut entries = vec![value.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(entries) {
+        std::env::set_var("PATH", joined);
+    }
+}
+
+fn prepend_embedded_tool_paths(app_dir: &Path) {
+    // Keep bundled supplement paths ahead of the system PATH so extracting
+    // opt/python/opt/git/opt/rg into the install root becomes effective immediately.
+    for candidate in [
+        app_dir.join("opt/python"),
+        app_dir.join("opt/python/Scripts"),
+        app_dir.join("opt/python/bin"),
+        app_dir.join("opt/venv"),
+        app_dir.join("opt/venv/Scripts"),
+        app_dir.join("opt/venv/bin"),
+        app_dir.join("opt/git/cmd"),
+        app_dir.join("opt/git/bin"),
+        app_dir.join("opt/rg"),
+        app_dir.join("opt/rg/bin"),
+        app_dir.join("opt/ripgrep"),
+        app_dir.join("opt/ripgrep/bin"),
+    ] {
+        prepend_path_entry_if_exists(&candidate);
+    }
+}
+
+fn resolve_embedded_python_bin(app_dir: &Path) -> Option<PathBuf> {
+    let candidates = if cfg!(windows) {
+        vec![
+            app_dir.join("opt/python/python.exe"),
+            app_dir.join("opt/python/python3.exe"),
+            app_dir.join("opt/python/bin/python.exe"),
+            app_dir.join("opt/python/bin/python3.exe"),
+        ]
+    } else {
+        vec![
+            app_dir.join("opt/python/bin/python3"),
+            app_dir.join("opt/python/bin/python"),
+        ]
+    };
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn resolve_embedded_rg_bin(app_dir: &Path) -> Option<PathBuf> {
+    let candidates = if cfg!(windows) {
+        vec![
+            app_dir.join("opt/rg/rg.exe"),
+            app_dir.join("opt/rg/bin/rg.exe"),
+            app_dir.join("opt/ripgrep/rg.exe"),
+            app_dir.join("opt/ripgrep/bin/rg.exe"),
+        ]
+    } else {
+        vec![
+            app_dir.join("opt/rg/bin/rg"),
+            app_dir.join("opt/rg/rg"),
+            app_dir.join("opt/ripgrep/bin/rg"),
+            app_dir.join("opt/ripgrep/rg"),
+        ]
+    };
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn set_env_prompts_root_if_unset(repo_root: &Path) {
+    if std::env::var("WUNDER_PROMPTS_ROOT")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    if repo_assets::builtin_prompts_root(repo_root).is_dir() {
+        set_env_path("WUNDER_PROMPTS_ROOT", repo_root);
+    }
+}
+
+fn prepare_runtime_config_path(
+    repo_root: &Path,
+    temp_root: &Path,
+    app_dir: &Path,
+) -> Result<PathBuf> {
+    let runtime_config = temp_root.join("config/wunder.yaml");
+    if runtime_config.exists() {
+        return Ok(runtime_config);
+    }
+    let parent = runtime_config
+        .parent()
+        .ok_or_else(|| anyhow!("invalid desktop config path: {}", runtime_config.display()))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create desktop config dir failed: {}", parent.display()))?;
+
+    let repo_config = repo_root.join("config/wunder.yaml");
+    if repo_config.exists() {
+        fs::copy(&repo_config, &runtime_config).with_context(|| {
+            format!(
+                "copy desktop config failed: {} -> {}",
+                repo_config.display(),
+                runtime_config.display()
+            )
+        })?;
+    } else {
+        ensure_generated_base_config(&runtime_config)?;
+    }
+
+    if let Some(source_path) = resolve_desktop_preconfig_path(app_dir, repo_root) {
+        merge_desktop_preconfig(&runtime_config, &source_path)?;
+    }
+
+    Ok(runtime_config)
+}
+
+fn merge_desktop_preconfig(config_path: &Path, source_path: &Path) -> Result<()> {
+    let content = fs::read_to_string(source_path)
+        .with_context(|| format!("read desktop preconfig failed: {}", source_path.display()))?;
+    if content.trim().is_empty() {
+        warn!(
+            "desktop preconfig is empty, skip seeding: {}",
+            source_path.display()
+        );
+        return Ok(());
+    }
+
+    let mut config_value = read_yaml_value_raw(config_path)?;
+    let preconfig_value = serde_yaml::from_str(&content)
+        .with_context(|| format!("parse desktop preconfig failed: {}", source_path.display()))?;
+    merge_config_value(&mut config_value, preconfig_value);
+    let merged_text =
+        serde_yaml::to_string(&config_value).context("serialize merged desktop config failed")?;
+    fs::write(config_path, merged_text).with_context(|| {
+        format!(
+            "seed desktop config failed: {} -> {}",
+            source_path.display(),
+            config_path.display()
+        )
+    })?;
+    info!(
+        "seed desktop config from {} to {}",
+        source_path.display(),
+        config_path.display()
+    );
+    Ok(())
+}
+
+fn read_yaml_value_raw(path: &Path) -> Result<serde_yaml::Value> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read yaml failed: {}", path.display()))?;
+    serde_yaml::from_str(&content).with_context(|| format!("parse yaml failed: {}", path.display()))
+}
+
+fn resolve_desktop_preconfig_path(app_dir: &Path, repo_root: &Path) -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("WUNDER_DESKTOP_PRECONFIG_PATH") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            let path = PathBuf::from(trimmed);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+
+    if let Some(appimage_dir) = resolve_appimage_dir() {
+        if let Some(path) = desktop_preconfig_candidates(&appimage_dir)
+            .into_iter()
+            .find(|path| path.is_file())
+        {
+            return Some(path);
+        }
+    }
+
+    if let Some(path) = desktop_preconfig_candidates(app_dir)
+        .into_iter()
+        .find(|path| path.is_file())
+    {
+        return Some(path);
+    }
+
+    [
+        repo_root.join("config/wunder.desktop.preconfig.yaml"),
+        repo_root.join("预配置文件.yml"),
+        repo_root.join("docs/分发/预配置文件.yml"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn resolve_appimage_dir() -> Option<PathBuf> {
+    std::env::var("APPIMAGE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .filter(|path| path.is_dir())
+}
+
+fn desktop_preconfig_candidates(root: &Path) -> Vec<PathBuf> {
+    [
+        "wunder.yaml",
+        "wunder.yml",
+        "预配置文件.yml",
+        "预配置文件.yaml",
+    ]
+    .into_iter()
+    .map(|name| root.join(name))
+    .collect()
+}
+
+fn ensure_generated_base_config(path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("invalid generated base config path: {}", path.display()))?;
+    fs::create_dir_all(parent)?;
+    let mut config = Config::default();
+    config.server.mode = "desktop".to_string();
+    let content =
+        serde_yaml::to_string(&config).context("serialize generated desktop base config failed")?;
+    fs::write(path, content).with_context(|| {
+        format!(
+            "write generated desktop base config failed: {}",
+            path.to_string_lossy()
+        )
+    })?;
+    Ok(())
+}
+
+struct DesktopDefaultsInput<'a> {
+    desktop_token: &'a str,
+    container_roots: &'a HashMap<i32, String>,
+    language: &'a str,
+    llm: Option<&'a LlmConfig>,
+}
+
+fn apply_desktop_defaults(
+    config: &mut Config,
+    workspace_root: &Path,
+    temp_root: &Path,
+    repo_root: &Path,
+    defaults: DesktopDefaultsInput<'_>,
+) {
+    config.server.mode = "desktop".to_string();
+    config.storage.backend = "sqlite".to_string();
+    config.storage.db_path = temp_root
+        .join("wunder_desktop.sqlite3")
+        .to_string_lossy()
+        .to_string();
+    config.workspace.root = workspace_root.to_string_lossy().to_string();
+    config.workspace.container_roots = defaults.container_roots.clone();
+    config.lsp.enabled = false;
+
+    if !defaults.language.trim().is_empty() {
+        config.i18n.default_language = defaults.language.trim().to_string();
+    }
+
+    if let Some(llm) = defaults.llm {
+        config.llm = llm.clone();
+    }
+
+    // Keep per-agent channel settings available in desktop local mode.
+    config.channels.enabled = true;
+    // Desktop local mode has no admin panel to toggle outbox worker, so keep
+    // channel outbound delivery worker enabled by default.
+    config.channels.outbox.worker_enabled = true;
+    config.gateway.enabled = false;
+    config.agent_queue.enabled = false;
+    config.cron.enabled = true;
+    if let Some(preset_worker_cards_root) = resolve_desktop_preset_worker_cards_root(
+        &config.user_agents.worker_cards_root,
+        repo_root,
+        workspace_root,
+    ) {
+        config.user_agents.worker_cards_root =
+            preset_worker_cards_root.to_string_lossy().to_string();
+    }
+
+    if !defaults.desktop_token.trim().is_empty() {
+        config.security.api_key = Some(defaults.desktop_token.to_string());
+    }
+
+    let repo_skills = repo_assets::builtin_skills_root(repo_root);
+    let admin_custom_skills = temp_root.join("admin_skills");
+    let mut skill_paths = vec![repo_skills, admin_custom_skills];
+    for existing in &config.skills.paths {
+        if is_legacy_eva_skills_path(existing) {
+            continue;
+        }
+        let resolved = resolve_maybe_relative_path(existing, repo_root, workspace_root);
+        skill_paths.push(resolved);
+    }
+    config.skills.paths = dedupe_paths(skill_paths)
+        .into_iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    for required in resolve_desktop_builtin_skill_names(&config, repo_root) {
+        if !config
+            .skills
+            .enabled
+            .iter()
+            .any(|name| name.trim() == required)
+        {
+            config.skills.enabled.push(required.to_string());
+        }
+    }
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
+    config.tools.desktop_controller.enabled = true;
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制器");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面监视器");
+    config.tools.browser.enabled = true;
+    let legacy_browser_tools = [
+        "浏览器导航",
+        "浏览器点击",
+        "浏览器输入",
+        "浏览器截图",
+        "浏览器读页",
+        "浏览器关闭",
+    ];
+    config.tools.builtin.enabled.retain(|name| {
+        let canonical = wunder_server::tools::resolve_tool_name(name.trim());
+        !legacy_browser_tools
+            .iter()
+            .any(|legacy| canonical == *legacy)
+    });
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器");
+
+    let mut allow_paths = config
+        .security
+        .allow_paths
+        .iter()
+        .filter(|path| !is_legacy_eva_skills_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    allow_paths.push(
+        repo_assets::builtin_skills_root(repo_root)
+            .to_string_lossy()
+            .to_string(),
+    );
+    allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
+    allow_paths.push(workspace_root.to_string_lossy().to_string());
+    config.security.allow_paths = dedupe_strings(allow_paths);
+    config.security.allow_commands = vec!["*".to_string()];
+    config.security.deny_globs.clear();
+    config.security.exec_policy_mode = None;
+    config.security.approval_mode = Some("full_auto".to_string());
+}
+
+fn resolve_desktop_preset_worker_cards_root(
+    configured_root: &str,
+    repo_root: &Path,
+    workspace_root: &Path,
+) -> Option<PathBuf> {
+    let cleaned = configured_root.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let configured_path = resolve_maybe_relative_path(cleaned, repo_root, workspace_root);
+    if configured_path.is_dir() {
+        Some(configured_path)
+    } else {
+        None
+    }
+}
+
+fn resolve_desktop_builtin_skill_names(config: &Config, repo_root: &Path) -> Vec<String> {
+    let mut skill_roots = vec![repo_assets::builtin_skills_root(repo_root)];
+    for raw_path in &config.skills.paths {
+        let cleaned = raw_path.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        skill_roots.push(resolve_maybe_relative_path(cleaned, repo_root, repo_root));
+    }
+
+    let mut seen = HashSet::new();
+    let mut names = Vec::new();
+    for root in dedupe_paths(skill_roots) {
+        if !root.is_dir() {
+            continue;
+        }
+        for name in read_skill_names_from_root(&root) {
+            if seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+fn read_skill_names_from_root(root: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        let skill_file = entry.path().join("SKILL.md");
+        if !skill_file.is_file() {
+            continue;
+        }
+        if let Some(name) = read_skill_name_from_file(&skill_file) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn read_skill_name_from_file(path: &Path) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    let normalized = content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim_start_matches('\u{feff}')
+        .to_string();
+    let mut lines = normalized.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    let mut body_lines = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        body_lines.push(line);
+    }
+    let meta: HashMap<String, serde_yaml::Value> =
+        serde_yaml::from_str(&body_lines.join("\n")).ok()?;
+    for key in ["name", "名称", "技能名称"] {
+        if let Some(name) = meta.get(key).and_then(serde_yaml::Value::as_str) {
+            let cleaned = name.trim();
+            if !cleaned.is_empty() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn ensure_desktop_builtin_tool(enabled: &mut Vec<String>, required: &str) {
+    let required = required.trim();
+    if required.is_empty() {
+        return;
+    }
+    let has_required = enabled
+        .iter()
+        .any(|name| wunder_server::tools::resolve_tool_name(name.trim()) == required);
+    if !has_required {
+        enabled.push(required.to_string());
+    }
+}
+
+fn normalize_user_id(raw: Option<&str>) -> String {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return DESKTOP_DEFAULT_USER_ID.to_string();
+    };
+    UserStore::normalize_user_id(raw).unwrap_or_else(|| DESKTOP_DEFAULT_USER_ID.to_string())
+}
+
+fn build_default_lan_peer_id(user_id: &str) -> String {
+    let machine = std::env::var("COMPUTERNAME")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "desktop".to_string());
+    format!("{machine}-{user_id}")
+}
+
+fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str) -> Result<()> {
+    if let Some(mut existing) = state.user_store.get_user_by_id(user_id)? {
+        let mut changed = false;
+        if existing.status.trim().to_lowercase() != "active" {
+            existing.status = "active".to_string();
+            changed = true;
+        }
+        if !UserStore::is_admin(&existing) {
+            existing.roles.push("admin".to_string());
+            changed = true;
+        }
+        if changed {
+            existing.updated_at = now_ts();
+            state.user_store.update_user(&existing)?;
+        }
+    } else {
+        let password = format!("wunder_desktop_{}", uuid::Uuid::new_v4().simple());
+        state.user_store.create_user(
+            user_id,
+            None,
+            &password,
+            Some("A"),
+            None,
+            vec!["admin".to_string()],
+            "active",
+            false,
+        )?;
+    }
+
+    if desktop_token.trim().is_empty() {
+        return Ok(());
+    }
+
+    let _ = state.storage.delete_user_token(desktop_token);
+    let now = now_ts();
+    let record = UserTokenRecord {
+        token: desktop_token.to_string(),
+        user_id: user_id.to_string(),
+        session_scope: UserStore::default_session_scope().to_string(),
+        expires_at: now + 10.0 * 365.0 * 24.0 * 3600.0,
+        created_at: now,
+        last_used_at: now,
+    };
+    state.storage.create_user_token(&record)?;
+    Ok(())
+}
+
+fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -> Result<()> {
+    for mut record in state.user_store.list_user_agents(user_id)? {
+        let normalized = record.approval_mode.trim().to_ascii_lowercase();
+        if !(normalized.is_empty() || normalized == "auto_edit" || normalized == "auto-edit") {
+            continue;
+        }
+        record.approval_mode = "full_auto".to_string();
+        record.updated_at = now_ts();
+        state.user_store.upsert_user_agent(&record)?;
+    }
+
+    let default_agent_key = format!("default_agent:{user_id}");
+    let Some(raw) = state.user_store.get_meta(&default_agent_key)? else {
+        return Ok(());
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Ok(());
+    }
+    let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(cleaned) else {
+        return Ok(());
+    };
+    let approval_mode = payload
+        .get("approval_mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if !(approval_mode.is_empty() || approval_mode == "auto_edit" || approval_mode == "auto-edit") {
+        return Ok(());
+    }
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "approval_mode".to_string(),
+            serde_json::Value::String("full_auto".to_string()),
+        );
+        state
+            .user_store
+            .set_meta(&default_agent_key, &serde_json::to_string(object)?)?;
+    }
+    Ok(())
+}
+
+fn resolve_maybe_relative_path(raw: &str, repo_root: &Path, workspace_root: &Path) -> PathBuf {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return repo_root.to_path_buf();
+    }
+    let path = PathBuf::from(cleaned);
+    if path.is_absolute() {
+        return path;
+    }
+    let workspace_candidate = workspace_root.join(&path);
+    if workspace_candidate.exists() {
+        return workspace_candidate;
+    }
+    repo_root.join(path)
+}
+
+fn is_legacy_eva_skills_path(raw: &str) -> bool {
+    let normalized = raw.replace('\\', "/").to_ascii_lowercase();
+    let trimmed = normalized.trim();
+    trimmed == "eva_skills" || trimmed == "./eva_skills" || trimmed.ends_with("/eva_skills")
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for path in paths {
+        let key = path.to_string_lossy().to_string().to_lowercase();
+        if key.trim().is_empty() || !seen.insert(key) {
+            continue;
+        }
+        output.push(path);
+    }
+    output
+}
+
+fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for value in values {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let key = cleaned.to_ascii_lowercase();
+        if !seen.insert(key) {
+            continue;
+        }
+        output.push(cleaned.to_string());
+    }
+    output
+}
+
+fn startup_timing_enabled() -> bool {
+    match std::env::var("WUNDER_STARTUP_TIMING")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        Some(value) if matches!(value.as_str(), "1" | "true" | "on" | "yes") => true,
+        Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no") => false,
+        Some(_) => true,
+        None => true,
+    }
+}
+
+fn startup_elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn log_startup_segment(
+    enabled: bool,
+    scope: &str,
+    segment: &str,
+    started: Instant,
+    startup_boot: Instant,
+) {
+    if !enabled {
+        return;
+    }
+    info!(
+        "[startup][{scope}] segment={segment} elapsed_ms={:.1} total_ms={:.1}",
+        startup_elapsed_ms(started),
+        startup_elapsed_ms(startup_boot),
+    );
+}
+
+fn log_startup_point(enabled: bool, scope: &str, point: &str, startup_boot: Instant) {
+    if !enabled {
+        return;
+    }
+    info!(
+        "[startup][{scope}] point={point} total_ms={:.1}",
+        startup_elapsed_ms(startup_boot),
+    );
+}
+
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn apply_desktop_defaults_keeps_channels_available() {
+        let mut config = Config::default();
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let temp_root = PathBuf::from("/tmp/wunder-temp");
+        let repo_root = PathBuf::from("/tmp/wunder-repo");
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert!(config.channels.enabled);
+        assert!(config.channels.outbox.worker_enabled);
+        assert!(!config.gateway.enabled);
+        assert!(config.cron.enabled);
+    }
+
+    #[test]
+    fn apply_desktop_defaults_keeps_worker_cards_root_empty_without_explicit_config() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-preset-root-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace_root = root.join("workspace");
+        let temp_root = root.join("temp");
+        let repo_root = root.join("repo");
+        let bundled_root = repo_root.join("config/preset_worker_cards");
+        fs::create_dir_all(&bundled_root).expect("create bundled preset root");
+
+        let mut config = Config::default();
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert!(config.user_agents.worker_cards_root.trim().is_empty());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_desktop_defaults_respects_explicit_worker_cards_root() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-preset-root-prefer-bundled-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace_root = root.join("workspace");
+        let temp_root = root.join("temp");
+        let repo_root = root.join("repo");
+        let bundled_root = repo_root.join("config/preset_worker_cards");
+        let configured_sparse_root = workspace_root.join("custom-preset-cards");
+
+        fs::create_dir_all(&bundled_root).expect("create bundled preset root");
+        fs::create_dir_all(&configured_sparse_root).expect("create sparse preset root");
+        fs::write(bundled_root.join("preset-a.worker-card.json"), "{}")
+            .expect("write bundled preset a");
+        fs::write(bundled_root.join("preset-b.worker-card.json"), "{}")
+            .expect("write bundled preset b");
+        fs::write(bundled_root.join("preset-c.worker-card.json"), "{}")
+            .expect("write bundled preset c");
+        fs::write(
+            configured_sparse_root.join("preset-only.worker-card.json"),
+            "{}",
+        )
+        .expect("write sparse preset");
+
+        let mut config = Config::default();
+        config.user_agents.worker_cards_root = configured_sparse_root.to_string_lossy().to_string();
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert_eq!(
+            PathBuf::from(&config.user_agents.worker_cards_root),
+            configured_sparse_root
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn normalize_desktop_container_roots_uses_isolated_defaults() {
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let app_dir = PathBuf::from("/tmp/wunder-app");
+        let roots =
+            normalize_desktop_container_roots(&HashMap::new(), &workspace_root, &app_dir, "alice");
+
+        let user_root = roots
+            .get(&USER_PRIVATE_CONTAINER_ID)
+            .expect("user root should exist");
+        let container_one_root = roots.get(&1).expect("container 1 root should exist");
+
+        assert_eq!(
+            user_root,
+            &workspace_root.join("alice").to_string_lossy().to_string()
+        );
+        assert_eq!(
+            container_one_root,
+            &workspace_root
+                .join("alice__c__1")
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_ne!(user_root, container_one_root);
+    }
+
+    #[test]
+    fn normalize_desktop_container_roots_ignores_shared_workspace_root_mapping() {
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let app_dir = PathBuf::from("/tmp/wunder-app");
+        let mut source = HashMap::new();
+        source.insert(1, workspace_root.to_string_lossy().to_string());
+        source.insert(
+            2,
+            workspace_root
+                .join("alice__c__1")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let roots = normalize_desktop_container_roots(&source, &workspace_root, &app_dir, "alice");
+
+        let container_one_root = roots.get(&1).expect("container 1 root should exist");
+        let container_two_root = roots.get(&2).expect("container 2 root should exist");
+
+        assert_eq!(
+            container_one_root,
+            &workspace_root
+                .join("alice__c__1")
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_eq!(
+            container_two_root,
+            &workspace_root
+                .join("alice__c__2")
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_ne!(Path::new(container_one_root), Path::new(container_two_root));
+    }
+
+    #[test]
+    fn seed_desktop_config_uses_repo_preconfig_when_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-seed-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let app_dir = root.join("app");
+        let repo_root = root.join("repo");
+        let config_path = root.join("temp/config/wunder.yaml");
+        let docs_dir = repo_root.join("docs/分发");
+
+        fs::create_dir_all(&app_dir).expect("create app dir");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::write(
+            docs_dir.join("预配置文件.yml"),
+            "llm:\n  default: seeded_model\n",
+        )
+        .expect("write preconfig");
+
+        prepare_runtime_config_path(&repo_root, &root.join("temp"), &app_dir).expect("seed config");
+
+        let content = fs::read_to_string(&config_path).expect("read config");
+        assert!(content.contains("seeded_model"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn seed_desktop_config_keeps_existing_config() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-seed-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let app_dir = root.join("app");
+        let repo_root = root.join("repo");
+        let config_path = root.join("temp/config/wunder.yaml");
+        let docs_dir = repo_root.join("docs/分发");
+
+        fs::create_dir_all(&app_dir).expect("create app dir");
+        fs::create_dir_all(&docs_dir).expect("create docs dir");
+        fs::create_dir_all(config_path.parent().expect("config parent"))
+            .expect("create config dir");
+        fs::write(&config_path, "llm:\n  default: existing_model\n")
+            .expect("write existing config");
+        fs::write(
+            docs_dir.join("预配置文件.yml"),
+            "llm:\n  default: seeded_model\n",
+        )
+        .expect("write preconfig");
+
+        prepare_runtime_config_path(&repo_root, &root.join("temp"), &app_dir).expect("seed config");
+
+        let content = fs::read_to_string(&config_path).expect("read config");
+        assert!(content.contains("existing_model"));
+        assert!(!content.contains("seeded_model"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn builtin_skills_source_key_is_stable_across_appimage_mount_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-source-key-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let appimage_path = root.join("wunder-desktop.AppImage");
+        let mount_a = root.join("mount-a/resources/skills");
+        let mount_b = root.join("mount-b/resources/skills");
+
+        fs::create_dir_all(&mount_a).expect("create mount a");
+        fs::create_dir_all(&mount_b).expect("create mount b");
+        fs::write(&appimage_path, b"appimage-content").expect("write appimage");
+
+        let appimage = appimage_path.to_string_lossy().to_string();
+        let key_a = build_builtin_skills_source_key_with_appimage(&mount_a, Some(&appimage));
+        let key_b = build_builtin_skills_source_key_with_appimage(&mount_b, Some(&appimage));
+
+        assert_eq!(key_a, key_b);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn builtin_skills_source_key_changes_when_appimage_file_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-source-key-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let appimage_path = root.join("wunder-desktop.AppImage");
+        let source = root.join("mount/resources/skills");
+
+        fs::create_dir_all(&source).expect("create source");
+        fs::write(&appimage_path, b"v1").expect("write appimage v1");
+
+        let appimage = appimage_path.to_string_lossy().to_string();
+        let key_v1 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
+
+        fs::write(&appimage_path, b"v2-with-different-size").expect("write appimage v2");
+        let key_v2 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
+
+        assert_ne!(key_v1, key_v2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+}

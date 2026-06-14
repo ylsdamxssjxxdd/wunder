@@ -1,0 +1,48 @@
+[package]
+name = "wunder-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["sqlite-storage"]
+desktop-control = ["wunder-runtime/desktop-control"]
+doc2md = ["wunder-runtime/doc2md"]
+host-metrics = ["wunder-runtime/host-metrics"]
+mcp = ["wunder-runtime/mcp"]
+postgres-storage = ["wunder-runtime/postgres-storage"]
+sqlite-storage = ["wunder-runtime/sqlite-storage"]
+web-fetch = ["wunder-runtime/web-fetch"]
+xmpp = ["wunder-runtime/xmpp"]
+
+[[bin]]
+name = "wunder-cli"
+path = "main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+image.workspace = true
+pulldown-cmark.workspace = true
+ratatui.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+shell-words.workspace = true
+syntect.workspace = true
+textwrap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-width.workspace = true
+url.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+wunder-runtime = { path = "../wunder-runtime", default-features = false }

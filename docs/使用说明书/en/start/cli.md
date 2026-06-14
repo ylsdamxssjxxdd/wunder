@@ -5,7 +5,7 @@ read_when:
   - You want to use wunder in the terminal
   - You want to integrate wunder into scripts or automation
 source_docs:
-  - wunder-cli/src/main.rs
+  - crates/wunder-cli/main.rs
 updated_at: 2026-04-10
 ---
 
@@ -27,7 +27,7 @@ CLI is the entry point for developers and automation. Use it directly in the ter
 
 ```bash
 # Build (requires Rust toolchain)
-cargo build --release
+cargo build --release -p wunder-cli
 
 # Run
 ./target/release/wunder-cli

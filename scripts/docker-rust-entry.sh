@@ -14,7 +14,8 @@ binary_is_ready() {
     return 0
   fi
 
-  ! find src Cargo.toml Cargo.lock -type f -newer "${binary}" -print -quit 2>/dev/null | grep -q .
+  ! find Cargo.toml Cargo.lock crates/wunder-core crates/wunder-runtime crates/wunder-server patches/tokio-xmpp \
+    -type f -newer "${binary}" -print -quit 2>/dev/null | grep -q .
 }
 
 run_binary() {
@@ -44,7 +45,7 @@ case "${mode}" in
       run_binary
     fi
 
-    cargo build --release --bin wunder-server
+    cargo build --release -p wunder-server --bin wunder-server
     run_binary
     ;;
   *)

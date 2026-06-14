@@ -67,7 +67,7 @@ jobs:
       - name: Build bridge and package Electron (Windows x64)
         shell: pwsh
         run: |
-          cargo build --release --bin wunder-desktop-bridge
+          cargo build --release -p wunder-desktop --bin wunder-desktop-bridge
           $bridge = Join-Path $env:GITHUB_WORKSPACE "target\release\wunder-desktop-bridge.exe"
           $nightlyVersion = "${{ needs.prepare.outputs.nightly_version }}"
           if (-not (Test-Path $bridge)) { throw "Bridge not found: $bridge" }
@@ -216,7 +216,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release --bin wunder-desktop-bridge
+          cargo build --release -p wunder-desktop --bin wunder-desktop-bridge
           bridge="$GITHUB_WORKSPACE/target/release/wunder-desktop-bridge"
           if [ ! -x "$bridge" ]; then
             echo "Bridge not found: $bridge" >&2

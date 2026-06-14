@@ -6,7 +6,7 @@ import sys
 
 
 DEFAULT_PATHS = [
-    "src",
+    "crates",
     "frontend/src",
     "tests",
     "docs",

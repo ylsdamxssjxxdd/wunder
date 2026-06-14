@@ -220,6 +220,10 @@ def build_command(
     cmd = [
         cargo_bin,
         "run",
+        "-p",
+        "wunder-runtime",
+        "--features",
+        "sim-bins",
         "--bin",
         "backend_sim",
         "--",

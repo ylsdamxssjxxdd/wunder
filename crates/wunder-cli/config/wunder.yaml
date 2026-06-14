@@ -1,0 +1,278 @@
+security:
+  api_key: null
+  external_auth_key: null
+  external_embed_preset_agent_name: null
+  external_embed_jwt_secret: null
+  external_embed_jwt_user_id_claim: null
+  allow_commands: []
+  allow_paths:
+  - C:\Users\sjxx\.wunder
+  - C:\Users\sjxx\Desktop\wunder\crates\wunder-cli\.wunder
+  - C:\Users\sjxx\Desktop\wunder\config\skills
+  - C:\Users\sjxx\Desktop\wunder\crates\wunder-cli
+  deny_globs: []
+  exec_policy_mode: null
+  approval_mode: suggest
+cors:
+  allow_origins: null
+  allow_methods: null
+  allow_headers: null
+  allow_credentials: null
+server:
+  host: 0.0.0.0
+  port: 8000
+  stream_chunk_size: 1024
+  max_active_sessions: 300
+  tool_failure_guard_threshold: 5
+  mode: cli
+i18n:
+  default_language: zh-CN
+  supported_languages:
+  - zh-CN
+  - en-US
+  aliases: {}
+llm:
+  default: ''
+  default_embedding: null
+  default_asr: null
+  default_tts: null
+  default_image: null
+  default_video: null
+  models: {}
+tools:
+  builtin:
+    enabled: []
+  visibility:
+    rules: []
+  swarm:
+    runner: legacy
+    max_active_team_runs: 256
+    max_parallel_tasks_per_team: 256
+    default_timeout_s: 0
+    max_retry: 2
+    max_depth: 2
+  search:
+    rg_path: null
+  web:
+    search:
+      enabled: false
+      provider: ''
+      count: 5
+      max_result_chars: 1200
+      cache_ttl_secs: 600
+      firecrawl:
+        api_key: null
+        base_url: https://api.firecrawl.dev
+        timeout_secs: 45
+    fetch:
+      enabled: true
+      provider: direct
+      timeout_secs: 20
+      max_redirects: 3
+      max_response_bytes: 2097152
+      max_chars: 12000
+      max_chars_cap: 30000
+      cache_ttl_secs: 600
+      allow_private_network: false
+      hostname_allowlist: []
+      user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36
+      firecrawl:
+        api_key: null
+        base_url: https://api.firecrawl.dev
+        timeout_secs: 45
+        only_main_content: true
+        max_age_ms: 600000
+        proxy: auto
+        store_in_cache: true
+  browser:
+    enabled: false
+    headless: true
+    viewport_width: 1280
+    viewport_height: 720
+    timeout_secs: 30
+    idle_timeout_secs: 300
+    max_sessions: 5
+    python_path: null
+  desktop_controller:
+    enabled: false
+    norm_width: 1000
+    norm_height: 1000
+    max_frames: 6
+    capture_timeout_ms: 5000
+browser:
+  enabled: false
+  deployment: auto
+  default_profile: managed
+  control:
+    host: 127.0.0.1
+    port: 18791
+    auth_token: null
+    public_base_url: null
+  limits:
+    max_sessions: 5
+    idle_timeout_secs: 300
+    max_tabs_per_session: 8
+    max_snapshot_chars: 40000
+    max_download_bytes: 104857600
+  playwright:
+    headless: true
+    viewport_width: 1280
+    viewport_height: 720
+    timeout_secs: 30
+    python_path: null
+    browsers_path: null
+    launch_args: []
+  security:
+    allow_private_network: false
+    hostname_allowlist: []
+    deny_file_scheme: true
+  docker:
+    enabled: false
+    force_headless: true
+    use_no_sandbox: true
+    disable_dev_shm_usage: true
+    browser_data_root: ./config/data/browser
+    downloads_root: ./config/data/browser/downloads
+    extra_launch_args: []
+cron:
+  enabled: false
+  max_concurrent_runs: 1
+  poll_interval_ms: 1000
+  max_idle_sleep_ms: 5000
+  idle_retry_ms: 2000
+  max_busy_wait_ms: 120000
+  lease_ttl_ms: 300000
+  lease_heartbeat_ms: 60000
+  max_consecutive_failures: 5
+workspace:
+  root: C:\Users\sjxx\Desktop\wunder\crates\wunder-cli
+  container_roots: {}
+  max_history_items: 0
+  retention_days: 0
+onlyoffice:
+  enabled: false
+  document_server_url: null
+  internal_document_server_url: null
+  api_url: null
+  public_base_url: null
+  jwt_secret: null
+  jwt_header: Authorization
+  token_ttl_s: 3600
+  request_timeout_s: 60
+  max_download_bytes: 1073741824
+drawio:
+  enabled: false
+  editor_url: null
+  max_file_bytes: 52428800
+mcp:
+  timeout_s: 0
+  servers: []
+lsp:
+  enabled: false
+  timeout_s: 0
+  diagnostics_debounce_ms: 0
+  idle_ttl_s: 0
+  servers: []
+a2a:
+  timeout_s: 0
+  services: []
+skills:
+  paths:
+  - C:\Users\sjxx\Desktop\wunder\config\skills
+  - C:\Users\sjxx\.wunder\skills
+  - C:\Users\sjxx\Desktop\wunder\crates\wunder-cli\.wunder\skills
+  - C:\Users\sjxx\Desktop\wunder\crates\wunder-cli\skills
+  enabled: []
+knowledge:
+  bases: []
+ragflow:
+  base_url: ''
+  api_key: null
+  timeout_s: 120
+vector_store:
+  weaviate:
+    url: ''
+    api_key: null
+    timeout_s: 0
+    batch_size: 0
+observability:
+  log_level: ''
+  server_log_dir: ./config/data/logs/server
+  server_log_retention_days: 14
+  monitor_event_limit: 0
+  monitor_payload_max_chars: 0
+  monitor_drop_event_types: []
+storage:
+  backend: sqlite
+  db_path: C:\Users\sjxx\AppData\Local\Temp\wunder_cli_smoke_line_chat_61168_1781401424029153700\wunder_cli.sqlite3
+  postgres:
+    dsn: ''
+    connect_timeout_s: 0
+    pool_size: 0
+channels:
+  enabled: false
+  allow_unknown_accounts: false
+  session_strategy: ''
+  default_agent_id: null
+  default_tool_overrides: []
+  rate_limit:
+    default_qps: 0
+    default_concurrency: 0
+    by_channel: {}
+  outbox:
+    worker_enabled: false
+    poll_interval_ms: 0
+    max_batch: 0
+    max_retries: 0
+    retry_base_s: 0.0
+    retry_max_s: 0.0
+  media:
+    asr:
+      enabled: false
+      provider: null
+      base_url: null
+      api_key: null
+      model: null
+      timeout_s: 0
+      max_bytes: 0
+    tts:
+      enabled: false
+      provider: null
+      base_url: null
+      api_key: null
+      model: null
+      voice: null
+      format: null
+      timeout_s: 0
+      max_chars: 0
+    ocr:
+      enabled: false
+      endpoint: null
+      api_key: null
+      timeout_s: 0
+      prompt: null
+    geocode:
+      enabled: false
+      endpoint: null
+      api_key: null
+      timeout_s: 0
+gateway:
+  enabled: false
+  auth_token: null
+  protocol_version: 1
+  allow_unpaired_nodes: false
+  node_token_required: false
+  allow_gateway_token_for_nodes: false
+  allowed_origins: []
+  trusted_proxies: []
+agent_queue:
+  enabled: false
+  poll_interval_ms: 1500
+  max_retries: 2
+  task_ttl_s: 86400
+user_agents:
+  worker_cards_root: ''
+  presets: []
+prompt_templates:
+  active: default
+  root: ./config/data/prompt_templates

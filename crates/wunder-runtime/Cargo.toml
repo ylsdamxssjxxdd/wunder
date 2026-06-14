@@ -1,0 +1,138 @@
+[package]
+name = "wunder-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "wunder_server"
+path = "src/lib.rs"
+
+[features]
+default = []
+desktop-control = ["dep:windows-sys"]
+doc2md = ["dep:calamine", "dep:cfb", "dep:pdf-extract", "dep:rlsx"]
+host-metrics = ["dep:sysinfo"]
+mcp = ["dep:rmcp", "dep:sse-stream"]
+postgres-storage = ["dep:deadpool-postgres", "dep:tokio-postgres"]
+sim-bins = ["sqlite-storage"]
+sqlite-storage = ["dep:rusqlite"]
+web-fetch = ["dep:hickory-resolver", "dep:idna", "dep:kuchiki"]
+xmpp = ["dep:hickory-resolver", "dep:idna", "dep:sasl", "dep:scraper", "dep:tokio-xmpp"]
+
+# Simulation binaries are used for local benchmarking only.
+# Keep them behind an explicit feature so regular workspace checks do not
+# build local benchmark targets.
+[[bin]]
+name = "backend_sim"
+path = "src/bin/backend_sim.rs"
+required-features = ["sim-bins"]
+test = false
+bench = false
+
+[[bin]]
+name = "swarm_sim"
+path = "src/bin/swarm_sim.rs"
+required-features = ["sim-bins"]
+test = false
+bench = false
+
+[[bin]]
+name = "swarm_flow_sim"
+path = "src/bin/swarm_flow_sim.rs"
+required-features = ["sim-bins"]
+test = false
+bench = false
+
+[dependencies]
+anyhow.workspace = true
+argon2.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+cron.workspace = true
+dashmap.workspace = true
+deadpool-postgres = { workspace = true, optional = true }
+ed25519-dalek.workspace = true
+encoding_rs.workspace = true
+futures.workspace = true
+globset.workspace = true
+hickory-resolver = { workspace = true, optional = true }
+html2md.workspace = true
+idna = { workspace = true, optional = true }
+ignore.workspace = true
+image.workspace = true
+kuchiki = { workspace = true, optional = true }
+mime.workspace = true
+parking_lot.workspace = true
+pulldown-cmark.workspace = true
+qrcode.workspace = true
+regex.workspace = true
+rmcp = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+rustls.workspace = true
+sasl = { workspace = true, optional = true }
+scraper = { workspace = true, optional = true }
+serde.workspace = true
+serde_bytes.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+shell-words.workspace = true
+sse-stream = { workspace = true, optional = true }
+tokio.workspace = true
+tokio-postgres = { workspace = true, optional = true }
+tokio-rustls.workspace = true
+tokio-stream.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+tokio-xmpp = { workspace = true, optional = true }
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+webpki-roots.workspace = true
+wunder-core = { path = "../wunder-core" }
+zip.workspace = true
+calamine = { workspace = true, optional = true }
+cfb = { workspace = true, optional = true }
+quick-xml.workspace = true
+rlsx = { workspace = true, optional = true }
+aes.workspace = true
+cbc.workspace = true
+hex.workspace = true
+hmac.workspace = true
+md5.workspace = true
+pdf-extract = { workspace = true, optional = true }
+prost.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_HiDpi",
+  "Win32_UI_WindowsAndMessaging",
+], optional = true }
+
+[target.'cfg(not(target_vendor = "win7"))'.dependencies]
+reqwest.workspace = true
+sysinfo = { workspace = true, optional = true }
+
+[target.'cfg(target_vendor = "win7")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls-webpki-roots"] }
+sysinfo = { version = "0.29.11", optional = true }
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true
+tower.workspace = true

@@ -22,7 +22,7 @@ const pngTargets = [path.join(repoRoot, 'desktop', 'electron', 'build', 'icon.pn
 const icoTargets = [
   path.join(repoRoot, 'desktop', 'electron', 'build', 'icon.ico'),
   path.join(repoRoot, 'desktop', 'electron', 'assets', 'icon.ico'),
-  path.join(repoRoot, 'desktop', 'tauri', 'icons', 'icon.ico')
+  path.join(repoRoot, 'crates', 'wunder-desktop', 'icons', 'icon.ico')
 ]
 
 const normalizePaddingRatio = (rawValue) => {
