@@ -25,7 +25,9 @@ use crate::services::swarm::SwarmService;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::services::user_world::UserWorldService;
 use crate::skills::{load_skills, SkillRegistry};
-use crate::storage::{build_storage, SqliteStorage, StorageBackend};
+#[cfg(any(feature = "sqlite-storage", test))]
+use crate::storage::SqliteStorage;
+use crate::storage::{build_storage, StorageBackend};
 use crate::throughput::ThroughputManager;
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolManager, UserToolStore};
@@ -35,7 +37,9 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(any(feature = "sqlite-storage", test))]
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -510,6 +514,7 @@ fn init_storage_strict(config: &Config) -> Result<Arc<dyn StorageBackend>> {
     Ok(storage)
 }
 
+#[cfg(any(feature = "sqlite-storage", test))]
 fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
     match init_storage_strict(config) {
         Ok(storage) => Ok(storage),
@@ -520,6 +525,15 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
             Ok(sqlite)
         }
     }
+}
+
+#[cfg(not(any(feature = "sqlite-storage", test)))]
+fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
+    init_storage_strict(config).map_err(|err| {
+        anyhow!(
+            "storage backend auto failed and sqlite fallback is unavailable because the 'sqlite-storage' feature is disabled: {err}"
+        )
+    })
 }
 
 #[cfg(test)]

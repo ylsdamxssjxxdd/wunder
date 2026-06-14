@@ -44,6 +44,86 @@ required-features = ["sim-bins"]
 test = false
 bench = false
 
+[[test]]
+name = "admin_channel_accounts_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "admin_org_units_import_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "admin_user_account_token_adjustment_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "agent_model_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "auth_profile_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "channel_runtime_logs_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "context_overflow_recovery_regression"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "cron_finish_job"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "cron_lease"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "cron_session_delete"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "cron_tool"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "gateway_regression"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "inner_visible_agent_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "memory_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "monitor_log_profile_regression"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "orchestration_state_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "preset_agent_model_sync"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "qqbot_webhook_runtime_logs"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "session_goal_storage"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "user_plaza_routes"
+required-features = ["sqlite-storage"]
+
 [dependencies]
 anyhow.workspace = true
 argon2.workspace = true
