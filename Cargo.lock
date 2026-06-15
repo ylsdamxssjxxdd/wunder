@@ -8028,8 +8028,13 @@ dependencies = [
 name = "wunder-core"
 version = "0.3.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "regex",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "tempfile",
 ]
 
 [[package]]
