@@ -118,6 +118,9 @@ const resolveWorkspaceResourcePath = (rawUrl: string, baseDirectoryPath: string)
 
   const { path } = splitUrlPath(text.replace(/\\/g, '/'));
   if (!path) return '';
+  if (path.startsWith('workspaces/')) {
+    return normalizeWorkspacePath(normalizeWorkspacePublicResourcePath(path));
+  }
   if (path.startsWith('/')) {
     const normalizedRootPath = path.replace(/\\/g, '/');
     if (

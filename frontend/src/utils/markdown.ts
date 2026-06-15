@@ -826,7 +826,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', 
   const imageBody = `
     <div class="ai-resource-body">
       <div class="ai-resource-status" data-loading-label="${imageLoadingLabel}"></div>
-      <img class="ai-resource-preview" alt="${safeName}" loading="lazy" />
+      <img class="ai-resource-preview" alt="${safeName}" />
     </div>
   `;
   return `

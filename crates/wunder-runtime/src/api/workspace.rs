@@ -29,6 +29,8 @@ use walkdir::WalkDir;
 use zip::write::FileOptions;
 
 const MAX_WORKSPACE_UPLOAD_BYTES: usize = 1024 * 1024 * 1024;
+const MAX_PATH_DECODE_PASSES: usize = 3;
+const WORKSPACE_PUBLIC_PREFIX: &str = "/workspaces/";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -110,15 +112,26 @@ async fn workspace_content(
     headers: HeaderMap,
     Query(params): Query<WorkspaceContentQuery>,
 ) -> Result<Json<WorkspaceContentResponse>, Response> {
-    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let public_path = parse_workspace_public_path(&params.path);
+    let requested_user_id = public_path
+        .as_ref()
+        .map(|path| path.workspace_id.as_str())
+        .or(params.user_id.as_deref());
+    let resolved = resolve_user(&state, &headers, requested_user_id).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
+    let workspace_id = public_path
+        .as_ref()
+        .map(|path| path.workspace_id.clone())
+        .unwrap_or_else(|| resolve_workspace_id(&state, &user_id, agent_id, params.container_id));
     let _root = state
         .workspace
         .ensure_user_root(&workspace_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let normalized = normalize_relative_path(&params.path);
+    let normalized = public_path
+        .as_ref()
+        .map(|path| path.relative_path.clone())
+        .unwrap_or_else(|| normalize_relative_path(&params.path));
     let target_path = if normalized.is_empty() {
         ".".to_string()
     } else {
@@ -1038,11 +1051,22 @@ async fn workspace_download(
     headers: HeaderMap,
     Query(params): Query<WorkspaceDownloadQuery>,
 ) -> Result<Response, Response> {
-    let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
+    let public_path = parse_workspace_public_path(&params.path);
+    let requested_user_id = public_path
+        .as_ref()
+        .map(|path| path.workspace_id.as_str())
+        .or(params.user_id.as_deref());
+    let resolved = resolve_user(&state, &headers, requested_user_id).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
-    let normalized = normalize_relative_path(&params.path);
+    let workspace_id = public_path
+        .as_ref()
+        .map(|path| path.workspace_id.clone())
+        .unwrap_or_else(|| resolve_workspace_id(&state, &user_id, agent_id, params.container_id));
+    let normalized = public_path
+        .as_ref()
+        .map(|path| path.relative_path.clone())
+        .unwrap_or_else(|| normalize_relative_path(&params.path));
     if normalized.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -1090,7 +1114,7 @@ async fn workspace_download(
     Ok(stream_response(
         stream,
         filename,
-        "application/octet-stream",
+        workspace_download_content_type(filename),
     ))
 }
 
@@ -1204,6 +1228,93 @@ fn normalize_relative_path(value: &str) -> String {
         trimmed
     };
     trimmed.to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspacePublicPath {
+    workspace_id: String,
+    relative_path: String,
+}
+
+fn parse_workspace_public_path(value: &str) -> Option<WorkspacePublicPath> {
+    let decoded = percent_decode_path(value);
+    let normalized = strip_windows_verbatim_prefix(&decoded)
+        .replace('\\', "/")
+        .trim()
+        .to_string();
+    let normalized = normalized.strip_prefix("./").unwrap_or(&normalized);
+    let rest = normalized
+        .strip_prefix(WORKSPACE_PUBLIC_PREFIX)
+        .or_else(|| normalized.strip_prefix("workspaces/"))?;
+    let mut parts = rest.split('/');
+    let workspace_id = parts.next()?.trim();
+    if workspace_id.is_empty()
+        || !workspace_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return None;
+    }
+    let relative_path =
+        normalize_public_workspace_relative_path(&parts.collect::<Vec<_>>().join("/"))?;
+    Some(WorkspacePublicPath {
+        workspace_id: workspace_id.to_string(),
+        relative_path,
+    })
+}
+
+fn normalize_public_workspace_relative_path(value: &str) -> Option<String> {
+    let mut segments = Vec::new();
+    for segment in value.split('/') {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return None;
+        }
+        segments.push(segment);
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    Some(segments.join("/"))
+}
+
+fn percent_decode_path(value: &str) -> String {
+    let mut output = value.to_string();
+    for _ in 0..MAX_PATH_DECODE_PASSES {
+        if !output.as_bytes().windows(3).any(|window| {
+            window[0] == b'%' && window[1].is_ascii_hexdigit() && window[2].is_ascii_hexdigit()
+        }) {
+            break;
+        }
+        let decoded = percent_decode_once(&output);
+        if decoded == output {
+            break;
+        }
+        output = decoded;
+    }
+    output
+}
+
+fn percent_decode_once(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(hex_text) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
+                if let Ok(raw) = u8::from_str_radix(hex_text, 16) {
+                    output.push(raw);
+                    index += 3;
+                    continue;
+                }
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).to_string()
 }
 
 fn normalize_agent_id(value: Option<&str>) -> Option<&str> {
@@ -1380,6 +1491,28 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), io::Error> {
         }
     }
     Ok(())
+}
+
+fn workspace_download_content_type(filename: &str) -> &'static str {
+    let extension = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim().to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("md") | Some("markdown") => "text/markdown; charset=utf-8",
+        Some("json") => "application/json",
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("csv") => "text/csv; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 fn stream_response<S>(stream: S, filename: &str, content_type: &'static str) -> Response
@@ -1780,7 +1913,10 @@ fn default_search_limit() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_relative_path;
+    use super::{
+        normalize_relative_path, parse_workspace_public_path, workspace_download_content_type,
+        WorkspacePublicPath,
+    };
 
     #[test]
     fn normalize_relative_path_strips_windows_verbatim_prefix() {
@@ -1791,6 +1927,53 @@ mod tests {
         assert_eq!(
             normalize_relative_path("//?/C:/Users/demo/workspace/src/pages"),
             "C:/Users/demo/workspace/src/pages"
+        );
+    }
+
+    #[test]
+    fn parse_workspace_public_path_accepts_slashless_workspace_prefix() {
+        assert_eq!(
+            parse_workspace_public_path("workspaces/admin__c__1/love_heart.png"),
+            Some(WorkspacePublicPath {
+                workspace_id: "admin__c__1".to_string(),
+                relative_path: "love_heart.png".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_workspace_public_path("/workspaces/admin__c__1/generated_media/heart.png"),
+            Some(WorkspacePublicPath {
+                workspace_id: "admin__c__1".to_string(),
+                relative_path: "generated_media/heart.png".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_workspace_public_path_decodes_and_rejects_traversal() {
+        assert_eq!(
+            parse_workspace_public_path("/workspaces/admin__c__1/generated%20media/%E7%88%B1.png"),
+            Some(WorkspacePublicPath {
+                workspace_id: "admin__c__1".to_string(),
+                relative_path: "generated media/爱.png".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_workspace_public_path("/workspaces/admin__c__1/../secret.png"),
+            None
+        );
+        assert_eq!(
+            parse_workspace_public_path("/workspaces/admin__c__1/%2e%2e/secret.png"),
+            None
+        );
+    }
+
+    #[test]
+    fn workspace_download_content_type_detects_common_images() {
+        assert_eq!(workspace_download_content_type("heart.png"), "image/png");
+        assert_eq!(workspace_download_content_type("photo.JPG"), "image/jpeg");
+        assert_eq!(
+            workspace_download_content_type("unknown.bin"),
+            "application/octet-stream"
         );
     }
 }

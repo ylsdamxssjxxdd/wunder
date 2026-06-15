@@ -81,7 +81,9 @@ fn run_line_chat_slash(lang: &str, slash_command: &str) {
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
-            let output = child.wait_with_output().expect("collect timed out wunder-cli");
+            let output = child
+                .wait_with_output()
+                .expect("collect timed out wunder-cli");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let _ = fs::remove_dir_all(&temp_root);

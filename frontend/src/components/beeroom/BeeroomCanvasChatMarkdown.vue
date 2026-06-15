@@ -33,13 +33,17 @@ import { renderMarkdown, hydrateExternalMarkdownImages } from '@/utils/markdown'
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { normalizeWorkspaceOwnerId } from '@/utils/messageWorkspacePath';
 import {
-  clearWorkspaceLoadingLabelTimer,
+  bindWorkspaceImagePreviewState,
   getFilenameFromHeaders,
-  normalizeWorkspaceImageBlob,
+  hydrateWorkspaceResourceErrorDiagnostics,
+  markWorkspaceImageCardError,
+  normalizeWorkspaceImageResponseBlob,
   resetWorkspaceImageCards,
+  resolveWorkspaceResourceErrorDiagnostics,
   saveObjectUrlAsFile,
   scheduleWorkspaceLoadingLabel
 } from '@/utils/workspaceResourceCards';
+import { buildWorkspaceResourceRequestParams } from '@/utils/workspaceResourceRequest';
 import { isMetafileImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 
 const props = defineProps<{
@@ -121,8 +125,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   const parsed = parseWorkspaceResourceUrl(publicPath);
   if (!parsed) return null;
   const user = authStore.user as Record<string, unknown> | null;
-  if (!user) return null;
-  const currentId = normalizeWorkspaceOwnerId(user.id);
+  const currentId = normalizeWorkspaceOwnerId(user?.id || user?.user_id || user?.username);
   const workspaceId = parsed.workspaceId || parsed.userId;
   const ownerId = parsed.ownerId || workspaceId;
   const agentId = parsed.agentId || '';
@@ -145,7 +148,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
       allowed: true
     };
   }
-  if (isAdminUser(user)) {
+  if (user && isAdminUser(user)) {
     return {
       ...parsed,
       requestUserId: ownerId,
@@ -154,7 +157,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
       allowed: true
     };
   }
-  // Prefer current login context for non-admin requests to avoid cross-display ID mismatches.
+  // Public workspace paths can be resolved by the backend from the bearer token even while the profile is loading.
   return {
     ...parsed,
     requestUserId: null,
@@ -179,21 +182,7 @@ const fetchWorkspaceResource = async (
   }
   if (cached?.promise) return cached.promise;
   const promise = (async () => {
-    const params: Record<string, string> = {
-      path: String(resource.relativePath || '')
-    };
-    if (resource.requestUserId) {
-      params.user_id = resource.requestUserId;
-    }
-    if (resource.requestAgentId) {
-      params.agent_id = resource.requestAgentId;
-    }
-    if (resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)) {
-      params.container_id = String(resource.requestContainerId);
-    }
-    if (preview) {
-      params.preview = preview;
-    }
+    const params = buildWorkspaceResourceRequestParams(resource, preview ? { preview } : {});
     const response = await downloadWunderWorkspaceFile(params);
     try {
       const fallbackFilename =
@@ -209,7 +198,13 @@ const fetchWorkspaceResource = async (
           (response?.headers as Record<string, unknown>)?.['Content-Type'] ||
           ''
       );
-      const blob = normalizeWorkspaceImageBlob(response.data as Blob, filename, contentType);
+      const sourceBlob = response.data as Blob;
+      const blob = await normalizeWorkspaceImageResponseBlob(
+        sourceBlob,
+        filename,
+        contentType,
+        response
+      );
       const objectUrl = URL.createObjectURL(blob);
       const entry = { objectUrl, filename };
       workspaceResourceCache.set(cacheKey, entry);
@@ -267,38 +262,36 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
   card.classList.remove('is-error');
   card.classList.remove('is-ready');
   const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status, t('chat.resourceImageLoading'));
-  const markReady = () => {
-    clearWorkspaceLoadingLabelTimer(loadingTimerId);
-    card.dataset.workspaceState = 'ready';
-    card.classList.remove('is-error');
-    card.classList.add('is-ready');
-    if (status) status.textContent = '';
-  };
-  const markError = (message: string) => {
-    clearWorkspaceLoadingLabelTimer(loadingTimerId);
-    card.dataset.workspaceState = 'error';
-    card.classList.remove('is-ready');
-    card.classList.add('is-error');
-    if (status) status.textContent = message;
-  };
   try {
     const entry = await fetchWorkspaceResource(resource, {
       preview: isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
         ? 'png'
         : undefined
     });
-    preview.onload = () => markReady();
-    preview.onerror = () => markError(t('chat.resourceImageFailed'));
-    preview.src = entry.objectUrl;
-    if (preview.complete) {
-      if (preview.naturalWidth > 0) {
-        markReady();
-      } else {
-        markError(t('chat.resourceImageFailed'));
+    bindWorkspaceImagePreviewState(card, preview, entry.objectUrl, {
+      status,
+      loadingTimerId,
+      failedLabel: t('chat.resourceImageFailed'),
+      onDecodeError: () => {
+        ['', 'png'].forEach((previewKind) => {
+          const cacheKey = buildWorkspaceResourceCacheKey(resource.publicPath, previewKind);
+          const cached = workspaceResourceCache.get(cacheKey);
+          if (cached?.objectUrl) {
+            URL.revokeObjectURL(cached.objectUrl);
+          }
+          workspaceResourceCache.delete(cacheKey);
+        });
       }
-    }
+    });
   } catch (error) {
-    markError(isWorkspaceResourceMissing(error) ? t('chat.resourceMissing') : t('chat.resourceImageFailed'));
+    await hydrateWorkspaceResourceErrorDiagnostics(error);
+    markWorkspaceImageCardError(
+      card,
+      status,
+      loadingTimerId,
+      isWorkspaceResourceMissing(error) ? t('chat.resourceMissing') : t('chat.resourceImageFailed'),
+      resolveWorkspaceResourceErrorDiagnostics(error)
+    );
   }
 };
 

@@ -703,8 +703,7 @@ async fn execute_builtin_file_tool(
     let mut config = Config::default();
     config.server.mode = "desktop".to_string();
     config.workspace.root = context.container_root.to_string_lossy().to_string();
-    config.storage.backend = "sqlite".to_string();
-    config.storage.db_path = "/tmp/wunder-sandbox-tools.db".to_string();
+    configure_sandbox_file_tool_storage(&mut config);
     config.security.allow_paths = vec!["*".to_string()];
     config.security.deny_globs = Vec::new();
     config.lsp.enabled = false;
@@ -721,13 +720,13 @@ async fn execute_builtin_file_tool(
     container_roots.insert(1, context.workspace_root.to_string_lossy().to_string());
     config.workspace.container_roots = container_roots.clone();
 
-    let storage = match storage::build_storage(&config.storage) {
+    let storage = match sandbox_file_tool_storage(&config) {
         Ok(storage) => storage,
         Err(err) => {
             return ToolResult {
                 ok: false,
                 data: with_error_meta(
-                    json!({ "detail": err.to_string() }),
+                    json!({ "detail": err }),
                     ToolErrorMeta::new(
                         "SANDBOX_STORAGE_INIT_FAILED",
                         Some("sandbox 文件工具初始化本地存储失败。".to_string()),
@@ -781,7 +780,8 @@ async fn execute_builtin_file_tool(
         http: &http,
     };
 
-    match execute_builtin_tool(&tool_context, request.tool.as_str(), args).await {
+    let args = normalize_sandbox_file_tool_args(args);
+    match execute_builtin_tool(&tool_context, request.tool.as_str(), &args).await {
         Ok(result) => ToolResult {
             ok: result.get("ok").and_then(Value::as_bool).unwrap_or(true),
             data: result,
@@ -801,6 +801,96 @@ async fn execute_builtin_file_tool(
             error: err.to_string(),
         },
     }
+}
+
+fn sandbox_file_tool_storage(
+    config: &Config,
+) -> std::result::Result<Arc<dyn storage::StorageBackend>, String> {
+    static STORAGE: OnceLock<Arc<dyn storage::StorageBackend>> = OnceLock::new();
+    if let Some(storage) = STORAGE.get() {
+        return Ok(Arc::clone(storage));
+    }
+    let storage = storage::build_storage(&config.storage).map_err(|err| err.to_string())?;
+    storage
+        .ensure_initialized()
+        .map_err(|err| err.to_string())?;
+    if STORAGE.set(Arc::clone(&storage)).is_ok() {
+        Ok(storage)
+    } else {
+        STORAGE
+            .get()
+            .map(Arc::clone)
+            .ok_or_else(|| "sandbox storage cache initialization failed".to_string())
+    }
+}
+
+fn configure_sandbox_file_tool_storage(config: &mut Config) {
+    configure_sandbox_file_tool_storage_from(config, &|name| std::env::var(name).ok());
+}
+
+fn configure_sandbox_file_tool_storage_from(
+    config: &mut Config,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) {
+    let backend = env_string_from(env_lookup, "WUNDER_STORAGE_BACKEND")
+        .unwrap_or_else(|| "postgres".to_string());
+    config.storage.backend = backend.clone();
+    if let Some(db_path) = env_string_from(env_lookup, "WUNDER_SQLITE_DB_PATH") {
+        config.storage.db_path = db_path;
+    }
+    if let Some(dsn) = env_string_from(env_lookup, "WUNDER_POSTGRES_DSN") {
+        config.storage.postgres.dsn = dsn;
+    } else if is_postgres_backend(&backend) {
+        config.storage.postgres.dsn =
+            "postgresql://wunder:wunder@wunder-postgres:5432/wunder".to_string();
+    }
+    if let Some(timeout_s) = env_u64_from(env_lookup, "WUNDER_POSTGRES_CONNECT_TIMEOUT_S") {
+        config.storage.postgres.connect_timeout_s = timeout_s;
+    }
+    if let Some(pool_size) = env_usize_from(env_lookup, "WUNDER_POSTGRES_POOL_SIZE") {
+        config.storage.postgres.pool_size = pool_size;
+    }
+}
+
+fn env_string_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
+    env_lookup(name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_u64_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<u64> {
+    env_string_from(env_lookup, name).and_then(|value| value.parse::<u64>().ok())
+}
+
+fn env_usize_from(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<usize> {
+    env_string_from(env_lookup, name).and_then(|value| value.parse::<usize>().ok())
+}
+
+fn is_postgres_backend(backend: &str) -> bool {
+    matches!(
+        backend.trim().to_ascii_lowercase().as_str(),
+        "postgres" | "postgresql" | "pg" | "auto"
+    )
+}
+
+fn normalize_sandbox_file_tool_args(args: &Value) -> Value {
+    let mut output = args.clone();
+    let Value::Object(map) = &mut output else {
+        return output;
+    };
+    for key in ["path", "workdir", "cwd", "root", "base_path"] {
+        if let Some(Value::String(path)) = map.get_mut(key) {
+            *path = normalize_container_visible_path(path);
+        }
+    }
+    if let Some(Value::Array(paths)) = map.get_mut("paths") {
+        for item in paths {
+            if let Value::String(path) = item {
+                *path = normalize_container_visible_path(path);
+            }
+        }
+    }
+    output
 }
 
 async fn execute_ptc(context: &SandboxContext, args: &Value) -> ToolResult {
@@ -1164,7 +1254,7 @@ fn resolve_path_with_base(
     context: &SandboxContext,
     raw_path: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
-    let trimmed = normalize_slashes(raw_path.trim());
+    let trimmed = normalize_container_visible_path(raw_path);
     let rel = PathBuf::from(&trimmed);
     if rel.is_absolute() {
         let target = normalize_posix_path(&rel);
@@ -1282,6 +1372,18 @@ fn normalize_slashes(input: &str) -> String {
     input.replace('\\', "/")
 }
 
+fn normalize_container_visible_path(input: &str) -> String {
+    let normalized = normalize_slashes(input.trim());
+    let without_current = normalized.strip_prefix("./").unwrap_or(&normalized);
+    if without_current == "workspaces" {
+        return "/workspaces".to_string();
+    }
+    if let Some(rest) = without_current.strip_prefix("workspaces/") {
+        return format!("/workspaces/{rest}");
+    }
+    normalized
+}
+
 fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     match value {
         Some(Value::Number(num)) => num.as_f64(),
@@ -1359,6 +1461,51 @@ mod tests {
         assert_eq!(
             resolve_path(&context, "README.md").expect("relative path"),
             normalize_posix_path(&workspace_root.join("README.md"))
+        );
+    }
+
+    #[test]
+    fn resolve_path_accepts_public_workspaces_relative_prefix() {
+        let temp = tempdir().expect("tempdir");
+        let context = SandboxContext {
+            workspace_root: temp.path().join("workspace").join("admin__c__1"),
+            container_root: PathBuf::from("/"),
+            allow_commands: Arc::new(HashSet::new()),
+        };
+
+        assert_eq!(
+            resolve_path(&context, "workspaces/admin__c__1").expect("relative public path"),
+            PathBuf::from("/workspaces/admin__c__1")
+        );
+        assert_eq!(
+            resolve_path(&context, "./workspaces/admin__c__1/report.txt").expect("dot public path"),
+            PathBuf::from("/workspaces/admin__c__1/report.txt")
+        );
+    }
+
+    #[test]
+    fn normalize_sandbox_file_tool_args_accepts_public_workspaces_relative_prefix() {
+        let args = normalize_sandbox_file_tool_args(&json!({
+            "path": "workspaces/admin__c__1/a.txt",
+            "workdir": "./workspaces/admin__c__1",
+            "paths": ["workspaces/admin__c__1/b.txt", "notes.txt"]
+        }));
+
+        assert_eq!(args["path"], "/workspaces/admin__c__1/a.txt");
+        assert_eq!(args["workdir"], "/workspaces/admin__c__1");
+        assert_eq!(args["paths"][0], "/workspaces/admin__c__1/b.txt");
+        assert_eq!(args["paths"][1], "notes.txt");
+    }
+
+    #[test]
+    fn sandbox_file_tool_storage_defaults_to_postgres() {
+        let mut config = Config::default();
+        configure_sandbox_file_tool_storage_from(&mut config, &|_| None);
+
+        assert_eq!(config.storage.backend, "postgres");
+        assert_eq!(
+            config.storage.postgres.dsn,
+            "postgresql://wunder:wunder@wunder-postgres:5432/wunder"
         );
     }
 }

@@ -107,7 +107,7 @@ struct SessionDetailQuery {
 #[derive(Debug, Deserialize)]
 struct HistoryPageQuery {
     #[serde(default)]
-    before_id: Option<i64>,
+    before_id: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
 }
@@ -497,7 +497,7 @@ async fn get_session_history(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let limit = normalize_history_page_limit(query.limit);
-    let before_id = query.before_id.filter(|value| *value > 0);
+    let before_id = normalize_history_before_id(query.before_id.as_deref());
     let fetch_limit = limit.saturating_add(1);
     let mut history = match state.workspace.load_history_page(
         &resolved.user.user_id,
@@ -961,6 +961,11 @@ fn normalize_history_page_limit(raw: Option<i64>) -> i64 {
     } else {
         value.min(200)
     }
+}
+
+fn normalize_history_before_id(raw: Option<&str>) -> Option<i64> {
+    raw.and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|value| *value > 0)
 }
 
 fn is_session_stream_active(status: &str) -> bool {
@@ -1504,7 +1509,8 @@ mod tests {
     use super::{
         apply_session_running_state, build_projected_queue_assistant_message,
         build_projected_queue_user_message, has_active_queue_task,
-        is_session_stream_active_or_queued, project_queued_session_messages,
+        is_session_stream_active_or_queued, normalize_history_before_id,
+        project_queued_session_messages,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -1520,6 +1526,16 @@ mod tests {
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         UserStore::new(storage)
+    }
+
+    #[test]
+    fn normalize_history_before_id_ignores_invalid_cursor_values() {
+        assert_eq!(normalize_history_before_id(Some("42")), Some(42));
+        assert_eq!(normalize_history_before_id(Some(" 42 ")), Some(42));
+        assert_eq!(normalize_history_before_id(Some("NaN")), None);
+        assert_eq!(normalize_history_before_id(Some("0")), None);
+        assert_eq!(normalize_history_before_id(Some("-1")), None);
+        assert_eq!(normalize_history_before_id(None), None);
     }
 
     #[test]

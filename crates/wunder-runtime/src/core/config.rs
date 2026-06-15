@@ -2050,7 +2050,130 @@ pub fn load_config_from_path(path: &Path) -> Config {
             restore_generated_sparse_config_sections(&mut config, &example);
         }
     }
+    apply_env_overrides(&mut config);
     config
+}
+
+fn apply_env_overrides(config: &mut Config) {
+    let env_lookup = |name: &str| env::var(name).ok();
+    apply_env_overrides_from(config, &env_lookup);
+}
+
+fn apply_env_overrides_from(config: &mut Config, env_lookup: &dyn Fn(&str) -> Option<String>) {
+    apply_server_env_overrides(&mut config.server, env_lookup);
+    apply_storage_env_overrides(&mut config.storage, env_lookup);
+    apply_workspace_env_overrides(&mut config.workspace, env_lookup);
+    apply_vector_store_env_overrides(&mut config.vector_store, env_lookup);
+    apply_browser_env_overrides(&mut config.browser, &mut config.tools.browser, env_lookup);
+}
+
+fn apply_server_env_overrides(
+    server: &mut ServerConfig,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) {
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_HOST") {
+        server.host = value;
+    }
+    if let Some(port) = env_u16(env_lookup, "WUNDER_PORT") {
+        server.port = port;
+    }
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_SERVER_MODE") {
+        server.mode = value;
+    }
+}
+
+fn apply_storage_env_overrides(
+    storage: &mut StorageConfig,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) {
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_STORAGE_BACKEND") {
+        storage.backend = value;
+    }
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_SQLITE_DB_PATH") {
+        storage.db_path = value;
+    }
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_POSTGRES_DSN") {
+        storage.postgres.dsn = value;
+    }
+    if let Some(value) = env_u64(env_lookup, "WUNDER_POSTGRES_CONNECT_TIMEOUT_S") {
+        storage.postgres.connect_timeout_s = value;
+    }
+    if let Some(value) = env_usize(env_lookup, "WUNDER_POSTGRES_POOL_SIZE") {
+        storage.postgres.pool_size = value;
+    }
+}
+
+fn apply_workspace_env_overrides(
+    workspace: &mut WorkspaceConfig,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) {
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_WORKSPACE_ROOT") {
+        workspace.root = value;
+    }
+}
+
+fn apply_vector_store_env_overrides(
+    vector_store: &mut VectorStoreConfig,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) {
+    if let Some(value) = non_empty_env(env_lookup, "WUNDER_WEAVIATE_URL") {
+        vector_store.weaviate.url = value;
+    }
+    if let Some(value) = env_optional_string(env_lookup, "WUNDER_WEAVIATE_API_KEY") {
+        vector_store.weaviate.api_key = value;
+    }
+}
+
+fn apply_browser_env_overrides(
+    browser: &mut BrowserConfig,
+    browser_tool: &mut BrowserToolConfig,
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+) {
+    if let Some(value) = env_bool(env_lookup, "WUNDER_BROWSER_ENABLED") {
+        browser.enabled = value;
+    }
+    if let Some(value) = env_bool(env_lookup, "WUNDER_BROWSER_TOOL_ENABLED") {
+        browser_tool.enabled = value;
+    }
+    if let Some(value) = env_bool(env_lookup, "WUNDER_BROWSER_DOCKER_ENABLED") {
+        browser.docker.enabled = value;
+    }
+}
+
+fn non_empty_env(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
+    env_lookup(name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_optional_string(
+    env_lookup: &dyn Fn(&str) -> Option<String>,
+    name: &str,
+) -> Option<Option<String>> {
+    env_lookup(name)
+        .map(|value| value.trim().to_string())
+        .map(|value| if value.is_empty() { None } else { Some(value) })
+}
+
+fn env_u16(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<u16> {
+    non_empty_env(env_lookup, name).and_then(|value| value.parse::<u16>().ok())
+}
+
+fn env_u64(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<u64> {
+    non_empty_env(env_lookup, name).and_then(|value| value.parse::<u64>().ok())
+}
+
+fn env_usize(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<usize> {
+    non_empty_env(env_lookup, name).and_then(|value| value.parse::<usize>().ok())
+}
+
+fn env_bool(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<bool> {
+    let value = non_empty_env(env_lookup, name)?;
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 pub fn load_config_value_from_path(path: &Path) -> Value {
@@ -2304,6 +2427,7 @@ fn expand_env_placeholders(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::fs;
 
     #[test]
@@ -2424,6 +2548,68 @@ storage:
             merged.storage.postgres.dsn,
             "postgresql://wunder:wunder@postgres:5432/wunder"
         );
+    }
+
+    #[test]
+    fn test_env_overrides_deployment_runtime_values() {
+        let mut config = Config::default();
+        config.server.host = "127.0.0.1".to_string();
+        config.server.port = 8000;
+        config.server.mode = "cli".to_string();
+        config.storage.backend = "sqlite".to_string();
+        config.storage.db_path = "local.sqlite3".to_string();
+        config.storage.postgres.dsn = "postgresql://old".to_string();
+        config.storage.postgres.connect_timeout_s = 5;
+        config.storage.postgres.pool_size = 8;
+        config.workspace.root = "C:/local/workspaces".to_string();
+        config.vector_store.weaviate.url = "http://old-weaviate:8080".to_string();
+        config.vector_store.weaviate.api_key = Some("old-key".to_string());
+        config.browser.enabled = false;
+        config.tools.browser.enabled = false;
+        config.browser.docker.enabled = false;
+
+        let env = HashMap::from([
+            ("WUNDER_HOST", "0.0.0.0"),
+            ("WUNDER_PORT", "18000"),
+            ("WUNDER_SERVER_MODE", "api"),
+            ("WUNDER_STORAGE_BACKEND", "postgres"),
+            (
+                "WUNDER_POSTGRES_DSN",
+                "postgresql://wunder:wunder@wunder-postgres:5432/wunder",
+            ),
+            ("WUNDER_POSTGRES_CONNECT_TIMEOUT_S", "9"),
+            ("WUNDER_POSTGRES_POOL_SIZE", "64"),
+            ("WUNDER_WORKSPACE_ROOT", "/workspaces"),
+            ("WUNDER_WEAVIATE_URL", "http://wunder-weaviate:8080"),
+            ("WUNDER_WEAVIATE_API_KEY", ""),
+            ("WUNDER_BROWSER_ENABLED", "true"),
+            ("WUNDER_BROWSER_TOOL_ENABLED", "true"),
+            ("WUNDER_BROWSER_DOCKER_ENABLED", "true"),
+        ]);
+
+        apply_env_overrides_from(&mut config, &|name| {
+            env.get(name).map(|value| value.to_string())
+        });
+
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 18000);
+        assert_eq!(config.server.mode, "api");
+        assert_eq!(config.storage.backend, "postgres");
+        assert_eq!(
+            config.storage.postgres.dsn,
+            "postgresql://wunder:wunder@wunder-postgres:5432/wunder"
+        );
+        assert_eq!(config.storage.postgres.connect_timeout_s, 9);
+        assert_eq!(config.storage.postgres.pool_size, 64);
+        assert_eq!(config.workspace.root, "/workspaces");
+        assert_eq!(
+            config.vector_store.weaviate.url,
+            "http://wunder-weaviate:8080"
+        );
+        assert_eq!(config.vector_store.weaviate.api_key, None);
+        assert!(config.browser.enabled);
+        assert!(config.tools.browser.enabled);
+        assert!(config.browser.docker.enabled);
     }
 
     #[test]

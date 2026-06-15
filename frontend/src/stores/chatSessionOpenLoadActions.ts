@@ -195,6 +195,11 @@ const withSessionDetailLoadInFlight = <T>(
   return request;
 };
 
+const normalizeHistoryBeforeId = (value: unknown): number | null => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
 export const chatSessionOpenLoadActions = {
     appendLocalMessage(role: string, content: string, options: AppendLocalMessageOptions = {}) {
       const normalizedRole = role === 'assistant' ? 'assistant' : 'user';
@@ -1008,15 +1013,14 @@ export const chatSessionOpenLoadActions = {
       const perfStart = perfEnabled ? performance.now() : 0;
       const limit = normalizeHistoryPageLimit(options.limit ?? HISTORY_PAGE_LIMIT);
       const beforeIdRaw = options.beforeId ?? state.beforeId;
-      const beforeId = Number.isFinite(Number(beforeIdRaw))
-        ? Number.parseInt(String(beforeIdRaw), 10)
-        : null;
+      const beforeId = normalizeHistoryBeforeId(beforeIdRaw);
       state.loading = true;
       try {
-        const { data } = await getSessionHistoryPage(targetId, {
-          before_id: beforeId,
-          limit
-        });
+        const params: { before_id?: number; limit: number } = { limit };
+        if (beforeId !== null) {
+          params.before_id = beforeId;
+        }
+        const { data } = await getSessionHistoryPage(targetId, params);
         const payload = data?.data || {};
         const incoming = Array.isArray(payload.transcript) ? payload.transcript : [];
         const incomingHasMore =
@@ -1065,10 +1069,7 @@ export const chatSessionOpenLoadActions = {
             cacheSessionMessages(targetId, nextMessages);
           }
         }
-        const resolvedBeforeId = Number.parseInt(String(incomingBeforeId ?? ''), 10);
-        state.beforeId = Number.isFinite(resolvedBeforeId) && resolvedBeforeId > 0
-          ? resolvedBeforeId
-          : findOldestHistoryId(this.messages);
+        state.beforeId = normalizeHistoryBeforeId(incomingBeforeId) ?? findOldestHistoryId(this.messages);
         state.hasMore = Boolean(incomingHasMore) && Boolean(state.beforeId);
         if (perfEnabled) {
           chatPerf.recordDuration('chat_history_load', performance.now() - perfStart, {

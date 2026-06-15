@@ -163,16 +163,21 @@ import {
 } from '@/utils/messageWorkspacePath';
 import {
   isImagePath,
+  isMetafileImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
 import {
-  clearWorkspaceLoadingLabelTimer,
+  bindWorkspaceImagePreviewState,
   getFilenameFromHeaders,
-  normalizeWorkspaceImageBlob,
+  hydrateWorkspaceResourceErrorDiagnostics,
+  markWorkspaceImageCardError,
+  normalizeWorkspaceImageResponseBlob,
   resetWorkspaceImageCardState,
+  resolveWorkspaceResourceErrorDiagnostics,
   saveObjectUrlAsFile,
   scheduleWorkspaceLoadingLabel
 } from '@/utils/workspaceResourceCards';
+import { buildWorkspaceResourceRequestParams } from '@/utils/workspaceResourceRequest';
 import {
   WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES,
   decodeWorkspaceResourceLabel,
@@ -569,9 +574,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (!parsed)
           return null;
       const user = ctx.authStore.user as Record<string, unknown> | null;
-      if (!user)
-          return null;
-      const currentId = normalizeWorkspaceOwnerId(user.id);
+      const currentId = normalizeWorkspaceOwnerId(user?.id || user?.user_id || user?.username);
       const workspaceId = parsed.workspaceId || parsed.userId;
       const ownerId = parsed.ownerId || workspaceId;
       const agentId = parsed.agentId || '';
@@ -592,7 +595,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               allowed: true
           };
       }
-      if (ctx.isAdminUser(user)) {
+      if (user && ctx.isAdminUser(user)) {
           return {
               ...parsed,
               requestUserId: ownerId,
@@ -601,7 +604,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               allowed: true
           };
       }
-      // Non-admin requests should prefer the current login context to avoid cross-display ID mismatches.
+      // Public workspace paths can be resolved by the backend from the bearer token even while the profile is loading.
       return {
           ...parsed,
           requestUserId: null,
@@ -627,21 +630,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (cached?.promise)
           return cached.promise;
       const promise = (async () => {
-          const params: Record<string, string> = {
-              path: String(resource.relativePath || '')
-          };
-          if (resource.requestUserId) {
-              params.user_id = resource.requestUserId;
-          }
-          if (resource.requestAgentId) {
-              params.agent_id = resource.requestAgentId;
-          }
-          if (resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)) {
-              params.container_id = String(resource.requestContainerId);
-          }
-          if (preview) {
-              params.preview = preview;
-          }
+          const params = buildWorkspaceResourceRequestParams(resource, preview ? { preview } : {});
           const response = await downloadWunderWorkspaceFile(params);
           try {
               const fallbackFilename = preview === 'png'
@@ -651,7 +640,13 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               const contentType = String((response?.headers as Record<string, unknown>)?.['content-type'] ||
                   (response?.headers as Record<string, unknown>)?.['Content-Type'] ||
                   '');
-              const normalizedBlob = normalizeWorkspaceImageBlob(response.data as Blob, filename, contentType);
+              const sourceBlob = response.data as Blob;
+              const normalizedBlob = await normalizeWorkspaceImageResponseBlob(
+                  sourceBlob,
+                  filename,
+                  contentType,
+                  response
+              );
               const objectUrl = URL.createObjectURL(normalizedBlob);
               const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
               ctx.workspaceResourceCache.set(cacheKey, entry);
@@ -692,7 +687,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
       ctx.setUserAttachmentResourceState(normalized, { loading: true });
       try {
-          const preview = ctx.isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
+          const preview = isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
               ? 'png'
               : undefined;
           const entry = await ctx.fetchWorkspaceResource(resource, { preview });
@@ -764,25 +759,28 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status, ctx.t('chat.resourceImageLoading'));
       try {
           const entry = await ctx.fetchWorkspaceResource(resource, {
-              preview: ctx.isMetafileImagePath(resource.filename) ? 'png' : undefined
+              preview: isMetafileImagePath(resource.filename) ? 'png' : undefined
           });
-          preview.src = entry.objectUrl;
-          card.dataset.workspaceState = 'ready';
-          card.classList.add('is-ready');
-          if (status)
-              status.textContent = '';
+          bindWorkspaceImagePreviewState(card, preview, entry.objectUrl, {
+              status,
+              loadingTimerId,
+              failedLabel: ctx.t('chat.resourceImageFailed'),
+              onDecodeError: () => {
+                  ['', 'png'].forEach((previewKind) => {
+                      const cacheEntry = ctx.workspaceResourceCache.get(buildWorkspaceResourceCacheKey(resource.publicPath, previewKind));
+                      if (cacheEntry?.objectUrl) {
+                          URL.revokeObjectURL(cacheEntry.objectUrl);
+                      }
+                      ctx.workspaceResourceCache.delete(buildWorkspaceResourceCacheKey(resource.publicPath, previewKind));
+                  });
+              }
+          });
       }
       catch (error) {
-          if (status) {
-              status.textContent = ctx.isWorkspaceResourceMissing(error)
-                  ? ctx.t('chat.resourceMissing')
-                  : ctx.t('chat.resourceImageFailed');
-          }
-          card.dataset.workspaceState = 'error';
-          card.classList.add('is-error');
-      }
-      finally {
-          clearWorkspaceLoadingLabelTimer(loadingTimerId);
+          await hydrateWorkspaceResourceErrorDiagnostics(error);
+          markWorkspaceImageCardError(card, status, loadingTimerId, ctx.isWorkspaceResourceMissing(error)
+              ? ctx.t('chat.resourceMissing')
+              : ctx.t('chat.resourceImageFailed'), resolveWorkspaceResourceErrorDiagnostics(error));
       }
   };
 
@@ -877,6 +875,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.clearWorkspaceResourceCache = () => {
+      ctx.resetWorkspaceResourceCards();
       if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
           window.clearTimeout(workspaceHydrationTimeout);
           workspaceHydrationTimeout = null;
@@ -1131,16 +1130,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       ctx.resourcePreviewLoading.value = true;
       try {
           if (previewKind === 'text') {
-              const response = await fetchWunderWorkspaceContent({
-                  path: String(resource.relativePath || ''),
-                  ...(resource.requestUserId ? { user_id: resource.requestUserId } : {}),
-                  ...(resource.requestAgentId ? { agent_id: resource.requestAgentId } : {}),
-                  ...(resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)
-                      ? { container_id: String(resource.requestContainerId) }
-                      : {}),
+              const response = await fetchWunderWorkspaceContent(buildWorkspaceResourceRequestParams(resource, {
                   include_content: true,
                   max_bytes: WORKSPACE_RESOURCE_PREVIEW_TEXT_MAX_BYTES
-              });
+              }));
               const payload = response.data || {};
               if (payload.truncated) {
                   ctx.resourcePreviewHint.value = ctx.t('workspace.preview.truncatedHint');
@@ -1150,7 +1143,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
                   : ctx.t('workspace.preview.emptyContent');
               return;
           }
-          const preview = ctx.isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
+          const preview = isMetafileImagePath(resource.filename || resource.relativePath || resource.publicPath)
               ? 'png'
               : undefined;
           const entry = await ctx.fetchWorkspaceResource(resource, { preview });
@@ -1160,14 +1153,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               ctx.resourcePreviewUrl.value = cacheEntry.objectUrl;
               return;
           }
-          const response = await downloadWunderWorkspaceFile({
-              path: String(resource.relativePath || ''),
-              ...(resource.requestUserId ? { user_id: resource.requestUserId } : {}),
-              ...(resource.requestAgentId ? { agent_id: resource.requestAgentId } : {}),
-              ...(resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)
-                  ? { container_id: String(resource.requestContainerId) }
-                  : {})
-          });
+          const response = await downloadWunderWorkspaceFile(buildWorkspaceResourceRequestParams(resource));
           const blob = normalizeWorkspacePreviewBlob(response.data as Blob, previewKind as never, extension);
           ctx.resourcePreviewUrl.value = URL.createObjectURL(blob);
           ctx.resourcePreviewContent.value = '';

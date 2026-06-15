@@ -1,6 +1,7 @@
 import {
   normalizeWorkspaceBareRelativePath,
   normalizeWorkspaceRelativeMarkdownPath,
+  parseWorkspaceResourceUrl,
   resolveWorkspaceRelativePathFromLocal
 } from './workspaceResources';
 
@@ -79,6 +80,11 @@ export const resolveMarkdownWorkspacePath = ({
   desktopLocalMode = false,
   workspaceRoot = ''
 }: ResolveMarkdownWorkspacePathOptions): string => {
+  const directResource = parseWorkspaceResourceUrl(rawPath);
+  if (directResource?.publicPath) {
+    return directResource.publicPath;
+  }
+
   const safeOwner = normalizeWorkspaceOwnerId(ownerId);
   const scopeId = String(workspaceScopeId || '').trim() || buildWorkspaceScopeId(safeOwner, containerId);
   if (!scopeId) return '';

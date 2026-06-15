@@ -24,8 +24,8 @@ use wunder_server::config_store::ConfigStore;
 use wunder_server::shutdown::shutdown_signal;
 use wunder_server::state::AppState;
 use wunder_server::{
-    admin_skills, api, auth, config, i18n, logging, mcp, rustls_provider, sandbox, schemas,
-    user_store, repo_assets,
+    admin_skills, api, auth, config, i18n, logging, mcp, repo_assets, rustls_provider, sandbox,
+    schemas, user_store,
 };
 
 #[tokio::main]

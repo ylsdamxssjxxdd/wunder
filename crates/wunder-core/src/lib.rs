@@ -4,7 +4,10 @@
 //! modules still re-export the legacy in-crate core surface while the remaining
 //! reverse dependencies are migrated out of `wunder-runtime`.
 
+pub mod json_schema;
+pub mod path_utils;
 pub mod repo_assets;
+pub mod tool_args;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

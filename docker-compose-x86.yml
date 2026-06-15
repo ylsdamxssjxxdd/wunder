@@ -29,6 +29,7 @@ services:
       - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://wunder-sandbox:9001}
       - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@wunder-postgres:5432/wunder}
       - WUNDER_STORAGE_BACKEND=${WUNDER_STORAGE_BACKEND:-postgres}
+      - WUNDER_SERVER_MODE=${WUNDER_SERVER_MODE:-api}
       - WUNDER_WEAVIATE_URL=${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
       - WUNDER_WEAVIATE_API_KEY=${WUNDER_WEAVIATE_API_KEY:-}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
@@ -146,6 +147,8 @@ services:
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
+      - WUNDER_STORAGE_BACKEND=${WUNDER_STORAGE_BACKEND:-postgres}
+      - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@wunder-postgres:5432/wunder}
       - WUNDER_CONFIG_PATH=/run/wunder-sandbox-runtime.yaml
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001

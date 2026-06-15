@@ -64,6 +64,16 @@ const buildWsProtocols = (
   return protocols.length ? protocols : null;
 };
 
+const sanitizeQueryParams = (params: QueryParams = {}): QueryParams => {
+  const output: QueryParams = {};
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (typeof value === 'number' && !Number.isFinite(value)) return;
+    output[key] = value;
+  });
+  return output;
+};
+
 export const createSession = (payload: unknown) => api.post('/chat/sessions', payload);
 export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
 export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>
@@ -93,7 +103,7 @@ export const getSessionCommandSession = (
   options: { signal?: AbortSignal } = {}
 ) => api.get(`/chat/sessions/${sessionId}/command-sessions/${commandSessionId}`, options);
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
-  api.get(`/chat/sessions/${id}/history`, { params });
+  api.get(`/chat/sessions/${id}/history`, { params: sanitizeQueryParams(params) });
 export const getSessionSubagents = (
   id: string,
   params: QueryParams = {},

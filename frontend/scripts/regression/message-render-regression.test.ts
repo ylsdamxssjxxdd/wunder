@@ -21,6 +21,18 @@ const {
   parseWorkspaceResourceUrl
 } = require('../../src/utils/workspaceResources') as typeof import('../../src/utils/workspaceResources');
 const {
+  buildWorkspaceResourceRequestParams
+} = require('../../src/utils/workspaceResourceRequest') as typeof import('../../src/utils/workspaceResourceRequest');
+const {
+  bindWorkspaceImagePreviewState,
+  buildWorkspaceResourceErrorDiagnostics,
+  isWorkspaceImageBlobLikelyInvalid,
+  markWorkspaceImageCardError,
+  normalizeWorkspaceImageBlob,
+  normalizeWorkspaceImageResponseBlob,
+  resolveWorkspaceResourceErrorDiagnostics
+} = require('../../src/utils/workspaceResourceCards') as typeof import('../../src/utils/workspaceResourceCards');
+const {
   buildAssistantDisplayContent
 } = require('../../src/utils/assistantFailureNotice') as typeof import('../../src/utils/assistantFailureNotice');
 
@@ -98,6 +110,283 @@ test('maps local absolute paths back to workspace resources in desktop mode', ()
     workspaceRoot: 'C:\\workspace'
   });
   assert.equal(resolved, '/workspaces/demo-user__c__7/temp_dir/briefing.md');
+});
+
+test('keeps public workspace markdown paths without rewriting owner scope', () => {
+  assert.equal(
+    resolveMarkdownWorkspacePath({
+      rawPath: 'workspaces/admin__c__1/love_heart.png',
+      ownerId: 'current-user',
+      containerId: 9
+    }),
+    '/workspaces/admin__c__1/love_heart.png'
+  );
+  assert.equal(
+    resolveMarkdownWorkspacePath({
+      rawPath: '/workspaces/admin__c__1/love_heart.png',
+      ownerId: 'current-user',
+      containerId: 9
+    }),
+    '/workspaces/admin__c__1/love_heart.png'
+  );
+});
+
+test('uses public workspace paths directly for resource requests', () => {
+  const params = buildWorkspaceResourceRequestParams(
+    {
+      publicPath: '/workspaces/admin__c__1/heart.png',
+      relativePath: 'heart.png',
+      requestUserId: 'admin',
+      requestAgentId: 'default',
+      requestContainerId: 1
+    },
+    { preview: 'png' }
+  );
+  assert.deepEqual(params, {
+    path: '/workspaces/admin__c__1/heart.png',
+    preview: 'png'
+  });
+});
+
+test('keeps scoped parameters for relative workspace resource requests', () => {
+  const params = buildWorkspaceResourceRequestParams({
+    relativePath: 'heart.png',
+    requestUserId: 'demo-user',
+    requestAgentId: 'agent-a',
+    requestContainerId: 3
+  });
+  assert.deepEqual(params, {
+    path: 'heart.png',
+    user_id: 'demo-user',
+    agent_id: 'agent-a',
+    container_id: '3'
+  });
+});
+
+test('retypes octet-stream workspace image blobs by filename extension', () => {
+  const source = new Blob(['png-bytes'], { type: 'application/octet-stream' });
+  const normalized = normalizeWorkspaceImageBlob(source, 'heart.png', 'application/octet-stream');
+  assert.equal(normalized.type, 'image/png');
+  assert.equal(normalized.size, source.size);
+});
+
+test('rejects non-image workspace image responses before object url hydration', () => {
+  const source = new Blob(['<html>not an image</html>'], { type: 'text/html' });
+  assert.equal(isWorkspaceImageBlobLikelyInvalid(source, 'heart.png', 'text/html'), true);
+  const png = new Blob(['png-bytes'], { type: 'application/octet-stream' });
+  assert.equal(isWorkspaceImageBlobLikelyInvalid(png, 'heart.png', 'application/octet-stream'), false);
+});
+
+test('extracts diagnostics from workspace image json error blobs', async () => {
+  const source = new Blob(
+    [JSON.stringify({ error: { code: 'AUTH_REQUIRED', message: 'auth required' } })],
+    { type: 'application/json' }
+  );
+  await assert.rejects(
+    () =>
+      normalizeWorkspaceImageResponseBlob(source, 'heart.png', 'application/json', {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+        data: source
+      }),
+    (error: unknown) => {
+      const diagnostics = resolveWorkspaceResourceErrorDiagnostics(error);
+      assert.equal(diagnostics?.status, 401);
+      assert.equal(diagnostics?.code, 'AUTH_REQUIRED');
+      assert.equal(diagnostics?.message, 'auth required');
+      assert.equal(diagnostics?.contentType, 'application/json');
+      assert.equal(diagnostics?.size, source.size);
+      return true;
+    }
+  );
+});
+
+test('workspace image card exposes fetch diagnostics on failure', async () => {
+  const source = new Blob(
+    [JSON.stringify({ error: { code: 'AUTH_REQUIRED', message: 'auth required' } })],
+    { type: 'application/json' }
+  );
+  const diagnostics = await buildWorkspaceResourceErrorDiagnostics({
+    status: 401,
+    headers: { 'content-type': 'application/json' },
+    data: source
+  });
+  const card = {
+    dataset: {},
+    title: '',
+    removeAttribute(name: string) {
+      if (name === 'title') {
+        this.title = '';
+      }
+    },
+    classList: {
+      values: new Set<string>(),
+      add(value: string) {
+        this.values.add(value);
+      },
+      remove(value: string) {
+        this.values.delete(value);
+      },
+      contains(value: string) {
+        return this.values.has(value);
+      }
+    }
+  } as unknown as HTMLElement;
+  const status = {
+    textContent: '',
+    title: '',
+    removeAttribute(name: string) {
+      if (name === 'title') {
+        this.title = '';
+      }
+    }
+  } as unknown as HTMLElement;
+
+  markWorkspaceImageCardError(card, status, null, 'failed', diagnostics);
+
+  assert.equal(card.dataset.workspaceState, 'error');
+  assert.equal(card.dataset.workspaceErrorStatus, '401');
+  assert.equal(card.dataset.workspaceErrorCode, 'AUTH_REQUIRED');
+  assert.equal(card.dataset.workspaceErrorContentType, 'application/json');
+  assert.equal(card.dataset.workspaceErrorSize, String(source.size));
+  assert.match(card.dataset.workspaceErrorDetail || '', /AUTH_REQUIRED/);
+  assert.match(card.title, /HTTP 401/);
+  assert.equal(status.textContent, 'failed');
+});
+
+test('workspace image card waits for image decode before ready state', () => {
+  const originalImage = (globalThis as typeof globalThis & { Image?: unknown }).Image;
+  let decoder: { onload: null | (() => void); onerror: null | (() => void); src: string } | null = null;
+  (globalThis as typeof globalThis & { Image?: unknown }).Image = class {
+    onload: null | (() => void) = null;
+    onerror: null | (() => void) = null;
+    src = '';
+
+    constructor() {
+      decoder = this;
+    }
+  };
+  const card = {
+    dataset: { workspaceState: 'loading' },
+    classList: {
+      values: new Set<string>(),
+      add(value: string) {
+        this.values.add(value);
+      },
+      remove(value: string) {
+        this.values.delete(value);
+      },
+      contains(value: string) {
+        return this.values.has(value);
+      }
+    }
+  } as unknown as HTMLElement;
+  const status = { textContent: 'loading' } as HTMLElement;
+  const preview = {
+    attributes: new Map<string, string>(),
+    complete: false,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    set src(value: string) {
+      this.attributes.set('src', value);
+    },
+    get src() {
+      return this.attributes.get('src') || '';
+    },
+    getAttribute(name: string) {
+      return this.attributes.get(name) || null;
+    },
+    removeAttribute(name: string) {
+      this.attributes.delete(name);
+    },
+    onload: null,
+    onerror: null
+  } as unknown as HTMLImageElement;
+
+  bindWorkspaceImagePreviewState(card, preview, 'blob:wunder-heart', {
+    status,
+    failedLabel: 'failed'
+  });
+  try {
+    assert.equal(card.dataset.workspaceState, 'loading');
+    assert.equal(decoder?.src, 'blob:wunder-heart');
+    decoder?.onload?.();
+    assert.equal(card.dataset.workspaceState, 'ready');
+    assert.equal((preview as unknown as { src: string }).src, 'blob:wunder-heart');
+    assert.equal(status.textContent, '');
+    assert.equal((card.classList as unknown as { contains: (value: string) => boolean }).contains('is-ready'), true);
+  } finally {
+    (globalThis as typeof globalThis & { Image?: unknown }).Image = originalImage;
+  }
+});
+
+test('workspace image card marks decode failures as errors', () => {
+  const originalImage = (globalThis as typeof globalThis & { Image?: unknown }).Image;
+  let decoder: { onload: null | (() => void); onerror: null | (() => void); src: string } | null = null;
+  (globalThis as typeof globalThis & { Image?: unknown }).Image = class {
+    onload: null | (() => void) = null;
+    onerror: null | (() => void) = null;
+    src = '';
+
+    constructor() {
+      decoder = this;
+    }
+  };
+  const card = {
+    dataset: { workspaceState: 'loading' },
+    classList: {
+      values: new Set<string>(),
+      add(value: string) {
+        this.values.add(value);
+      },
+      remove(value: string) {
+        this.values.delete(value);
+      },
+      contains(value: string) {
+        return this.values.has(value);
+      }
+    }
+  } as unknown as HTMLElement;
+  const status = { textContent: '' } as HTMLElement;
+  let decodeErrorCount = 0;
+  const preview = {
+    attributes: new Map<string, string>(),
+    complete: false,
+    naturalWidth: 0,
+    naturalHeight: 0,
+    set src(value: string) {
+      this.attributes.set('src', value);
+    },
+    get src() {
+      return this.attributes.get('src') || '';
+    },
+    getAttribute(name: string) {
+      return this.attributes.get(name) || null;
+    },
+    removeAttribute(name: string) {
+      this.attributes.delete(name);
+    },
+    onload: null,
+    onerror: null
+  } as unknown as HTMLImageElement;
+
+  bindWorkspaceImagePreviewState(card, preview, 'blob:wunder-broken', {
+    status,
+    failedLabel: 'failed',
+    onDecodeError: () => {
+      decodeErrorCount += 1;
+    }
+  });
+  try {
+    assert.equal(decoder?.src, 'blob:wunder-broken');
+    decoder?.onerror?.();
+    assert.equal(card.dataset.workspaceState, 'error');
+    assert.equal(status.textContent, 'failed');
+    assert.equal(decodeErrorCount, 1);
+    assert.equal((card.classList as unknown as { contains: (value: string) => boolean }).contains('is-error'), true);
+  } finally {
+    (globalThis as typeof globalThis & { Image?: unknown }).Image = originalImage;
+  }
 });
 
 test('renders display math blocks with KaTeX', () => {
