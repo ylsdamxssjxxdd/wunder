@@ -16,6 +16,7 @@ use super::{
 };
 use crate::command_utils;
 use crate::config::Config;
+use crate::core::long_task;
 use crate::core::python_runtime;
 use crate::i18n;
 use anyhow::{anyhow, Result};
@@ -426,7 +427,7 @@ async fn run_spawned_child_streaming(
         let tool_name = tool_name.to_string();
         let command_text = command_text.to_string();
         let command_session = command_session.clone();
-        tokio::spawn(async move {
+        long_task::spawn("tools.command.stdout_reader", async move {
             read_stream_output(
                 stdout,
                 emitter,
@@ -445,7 +446,7 @@ async fn run_spawned_child_streaming(
         let tool_name = tool_name.to_string();
         let command_text = command_text.to_string();
         let command_session = command_session.clone();
-        tokio::spawn(async move {
+        long_task::spawn("tools.command.stderr_reader", async move {
             read_stream_output(
                 stderr,
                 emitter,

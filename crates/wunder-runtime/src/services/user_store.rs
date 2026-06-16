@@ -1368,9 +1368,7 @@ fn micros_to_ts(value: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::UserStore;
-    use crate::storage::{
-        HiveRecord, SqliteStorage, StorageBackend, UserAccountRecord, DEFAULT_HIVE_ID,
-    };
+    use crate::storage::*;
     use serde_json::json;
     use std::sync::Arc;
     use tempfile::tempdir;

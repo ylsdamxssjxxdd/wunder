@@ -1,7 +1,7 @@
 use super::PostgresStorage;
 use crate::i18n;
 use crate::services::output_quality;
-use crate::storage::StorageBackend;
+use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use serde_json::{json, Value};
 

@@ -10,7 +10,7 @@ mod records;
 #[cfg(any(feature = "sqlite-storage", test))]
 mod sqlite;
 
-pub use backend::StorageBackend;
+pub use backend::*;
 pub use bridge::*;
 pub use constants::{
     normalize_hive_id, normalize_sandbox_container_id, normalize_workspace_container_id,

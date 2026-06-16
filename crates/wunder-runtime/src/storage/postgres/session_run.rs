@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{SessionRunRecord, StorageBackend};
+use crate::storage::{SessionRunRecord, StorageLifecycle};
 use anyhow::Result;
 
 pub(super) trait PostgresSessionRunStorage {

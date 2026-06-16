@@ -1,7 +1,7 @@
 use super::SqliteStorage;
 use crate::storage::{
     ChannelMessageRecord, ChannelMessageStats, ChannelOutboxRecord, ChannelOutboxStats,
-    ChannelSessionRecord, StorageBackend, UpdateChannelOutboxStatusParams,
+    ChannelSessionRecord, StorageLifecycle, UpdateChannelOutboxStatusParams,
 };
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;

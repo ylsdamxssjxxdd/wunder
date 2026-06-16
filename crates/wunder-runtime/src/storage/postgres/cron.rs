@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{CronJobRecord, CronRunRecord, StorageBackend};
+use crate::storage::{CronJobRecord, CronRunRecord, StorageLifecycle};
 use anyhow::Result;
 
 pub(super) trait PostgresCronStorage {

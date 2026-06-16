@@ -1,7 +1,7 @@
 use super::PostgresStorage;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelUserBindingRecord,
-    ListChannelUserBindingsQuery, StorageBackend,
+    ListChannelUserBindingsQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use serde_json::Value;

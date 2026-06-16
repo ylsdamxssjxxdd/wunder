@@ -1109,7 +1109,7 @@ mod tests {
     use super::*;
     use crate::services::user_tools::UserToolManager;
     use crate::skills::load_skills;
-    use crate::storage::{SqliteStorage, StorageBackend};
+    use crate::storage::*;
     use crate::workspace::WorkspaceManager;
     use std::collections::{HashMap, HashSet};
     use std::path::Path;

@@ -1,4 +1,5 @@
 use crate::config::{Config, LlmConfig};
+use crate::core::{blocking, long_task};
 use crate::services::desktop_lan;
 use crate::services::work_state_reset::reset_user_work_state;
 use crate::state::AppState;
@@ -381,7 +382,7 @@ impl DesktopSeedManager {
         }
 
         let client = self.http.clone();
-        tokio::spawn(async move {
+        long_task::spawn("api.desktop.seed_job", async move {
             run_seed_job(client, config, job).await;
         });
         Ok(snapshot)
@@ -1173,9 +1174,11 @@ async fn run_seed_job_inner(
     wait_if_seed_paused_or_canceled(&job).await?;
 
     let local_root_for_scan = config.local_root.clone();
-    let scan_result = tokio::task::spawn_blocking(move || collect_seed_files(local_root_for_scan))
-        .await
-        .map_err(|err| format!("scan worker failed: {err}"))??;
+    let scan_result = blocking::run_fs("api.desktop.seed.scan", move || {
+        collect_seed_files(local_root_for_scan).map_err(anyhow::Error::msg)
+    })
+    .await
+    .map_err(|err| format!("scan worker failed: {err}"))?;
     let (files, total_bytes) = scan_result;
 
     {

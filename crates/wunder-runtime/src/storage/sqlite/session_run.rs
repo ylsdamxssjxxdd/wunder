@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{SessionRunRecord, StorageBackend};
+use crate::storage::{SessionRunRecord, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 

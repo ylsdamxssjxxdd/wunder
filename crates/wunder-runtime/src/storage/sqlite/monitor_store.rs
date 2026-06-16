@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::StorageBackend;
+use crate::storage::*;
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter};
@@ -197,7 +197,7 @@ impl SqliteMonitorStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::StorageBackend;
+    use crate::storage::*;
     use serde_json::json;
     use tempfile::tempdir;
 

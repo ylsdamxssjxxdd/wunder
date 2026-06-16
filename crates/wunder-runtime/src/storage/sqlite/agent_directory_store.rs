@@ -1,6 +1,6 @@
 use super::SqliteStorage;
 use crate::storage::{
-    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, StorageBackend, TeamRunRecord,
+    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, StorageLifecycle, TeamRunRecord,
     TeamTaskRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;
@@ -827,9 +827,7 @@ impl SqliteAgentDirectoryStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{
-        HiveRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UserAgentRecord, DEFAULT_HIVE_ID,
-    };
+    use crate::storage::*;
     use tempfile::tempdir;
 
     fn build_storage() -> (SqliteStorage, tempfile::TempDir) {

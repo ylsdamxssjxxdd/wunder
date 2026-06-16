@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{SessionLockRecord, SessionLockStatus, StorageBackend};
+use crate::storage::{SessionLockRecord, SessionLockStatus, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::{params, ErrorCode, TransactionBehavior};
 
@@ -188,7 +188,7 @@ impl SqliteSessionLockStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{SessionLockStatus, StorageBackend};
+    use crate::storage::*;
     use tempfile::tempdir;
 
     fn build_storage() -> (SqliteStorage, tempfile::TempDir) {

@@ -1,5 +1,6 @@
 use crate::api::errors::error_response_with_detail;
 use crate::auth as guard_auth;
+use crate::core::blocking;
 use crate::i18n;
 use crate::state::AppState;
 use crate::storage::UserAccountRecord;
@@ -24,16 +25,14 @@ pub async fn resolve_user(
         .filter(|value| !value.is_empty());
     let token_auth = if let Some(token) = guard_auth::extract_bearer_token(headers) {
         let user_store = state.user_store.clone();
-        match tokio::task::spawn_blocking(move || user_store.authenticate_token_details(&token))
-            .await
+        match blocking::run_db("api.user_context.authenticate_token", move || {
+            user_store.authenticate_token_details(&token)
+        })
+        .await
         {
-            Ok(Ok(user)) => user,
-            Ok(Err(err)) => {
-                warn!("resolve_user token auth failed: {err}");
-                None
-            }
+            Ok(user) => user,
             Err(err) => {
-                warn!("resolve_user token auth join failed: {err}");
+                warn!("resolve_user token auth failed: {err}");
                 None
             }
         }
@@ -76,11 +75,11 @@ pub async fn resolve_user(
         if api_key_valid || token_is_admin {
             let user_store = state.user_store.clone();
             let requested_user_id = requested.to_string();
-            let user =
-                tokio::task::spawn_blocking(move || user_store.get_user_by_id(&requested_user_id))
-                    .await
-                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            let user = blocking::run_db("api.user_context.get_user", move || {
+                user_store.get_user_by_id(&requested_user_id)
+            })
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             if let Some(user) = user {
                 state.control.presence.touch_user(&user.user_id, now_ts());
                 return Ok(ResolvedUser {

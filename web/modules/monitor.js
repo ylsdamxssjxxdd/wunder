@@ -1237,6 +1237,88 @@ const renderServiceMetrics = (service) => {
   }
 };
 
+const sumBy = (items, key) =>
+  (Array.isArray(items) ? items : []).reduce((sum, item) => sum + (Number(item?.[key]) || 0), 0);
+
+const maxBy = (items, key) =>
+  (Array.isArray(items) ? items : []).reduce(
+    (max, item) => Math.max(max, Number(item?.[key]) || 0),
+    0
+  );
+
+const formatMs = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return "0ms";
+  }
+  if (number >= 1000) {
+    return `${(number / 1000).toFixed(1)}s`;
+  }
+  return `${Math.round(number)}ms`;
+};
+
+const renderRuntimeMetrics = (runtime) => {
+  if (!elements.runtimeBlockingSummary) {
+    return;
+  }
+  const blocking = Array.isArray(runtime?.blocking) ? runtime.blocking : [];
+  const queues = Array.isArray(runtime?.queues) ? runtime.queues : [];
+  const longTasks = Array.isArray(runtime?.long_tasks) ? runtime.long_tasks : [];
+  const alerts = Array.isArray(runtime?.alerts) ? runtime.alerts : [];
+
+  const blockingCalls = sumBy(blocking, "calls");
+  const blockingTimeouts =
+    sumBy(blocking, "queue_timeouts") + sumBy(blocking, "exec_timeouts") + sumBy(blocking, "join_errors");
+  elements.runtimeBlockingSummary.textContent = `${blockingCalls}`;
+  elements.runtimeBlockingDetail.textContent = `max queue ${formatMs(
+    maxBy(blocking, "max_queue_ms")
+  )} / max exec ${formatMs(maxBy(blocking, "max_exec_ms"))} / timeout ${blockingTimeouts}`;
+
+  const queueEnqueued = sumBy(queues, "enqueued");
+  const queueBusy = sumBy(queues, "busy");
+  elements.runtimeQueueSummary.textContent = `${queueEnqueued}`;
+  elements.runtimeQueueDetail.textContent = `busy ${queueBusy} / failed ${sumBy(
+    queues,
+    "failed"
+  )} / max wait ${formatMs(maxBy(queues, "max_wait_ms"))}`;
+
+  const longStarted = sumBy(longTasks, "started");
+  const longWarnings = sumBy(longTasks, "warnings");
+  elements.runtimeLongTaskSummary.textContent = `${longStarted}`;
+  elements.runtimeLongTaskDetail.textContent = `in flight ${sumBy(
+    longTasks,
+    "in_flight"
+  )} / warn ${longWarnings} / max ${formatMs(maxBy(longTasks, "max_elapsed_ms"))}`;
+
+  if (elements.runtimeMetricsAlertBadge) {
+    elements.runtimeMetricsAlertBadge.textContent = alerts.length ? `${alerts.length}` : "0";
+    elements.runtimeMetricsAlertBadge.dataset.status = alerts.some(
+      (item) => item?.severity === "critical"
+    )
+      ? "error"
+      : alerts.length
+        ? "warning"
+        : "ok";
+  }
+  if (!elements.runtimeMetricsAlerts) {
+    return;
+  }
+  elements.runtimeMetricsAlerts.textContent = "";
+  if (!alerts.length) {
+    const item = document.createElement("div");
+    item.className = "runtime-alert-item runtime-alert-item--ok";
+    item.textContent = "No runtime boundary alerts";
+    elements.runtimeMetricsAlerts.appendChild(item);
+    return;
+  }
+  alerts.slice(0, 6).forEach((alert) => {
+    const item = document.createElement("div");
+    item.className = `runtime-alert-item runtime-alert-item--${alert.severity || "warning"}`;
+    item.textContent = `${alert.source || "runtime"}:${alert.label || "-"} ${alert.message || ""}`;
+    elements.runtimeMetricsAlerts.appendChild(item);
+  });
+};
+
 // 渲染用户看板指标，复用用户管理页统计并加 TTL 避免频繁请求
 const ensureUserDashboardState = () => {
   if (!state.users || typeof state.users !== "object") {
@@ -2646,6 +2728,7 @@ export const loadMonitorData = async (options = {}) => {
     if (mode === "full") {
       renderMonitorMetrics(result.system);
       renderServiceMetrics(result.service);
+      renderRuntimeMetrics(result.runtime);
       refreshUserDashboardSummary({ silent: true });
       state.monitor.serviceSnapshot = result.service || null;
       state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];

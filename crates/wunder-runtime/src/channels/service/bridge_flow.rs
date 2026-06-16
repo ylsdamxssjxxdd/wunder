@@ -4,11 +4,12 @@ use super::support::{
 };
 use super::{ChannelHub, SESSION_STRATEGY_MAIN_THREAD};
 use crate::channels::types::{ChannelMessage, ChannelOutboundMessage};
+use crate::core::blocking;
 use crate::services::bridge::{
     log_bridge_delivery, touch_bridge_route_after_outbound, BridgeRouteResolution,
 };
 use crate::storage::ChannelOutboxRecord;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 use tracing::warn;
 
@@ -40,7 +41,7 @@ impl ChannelHub {
         let center_id = center_id.trim().to_string();
         let center_account_id = center_account_id.trim().to_string();
         let route_id = route_id.trim().to_string();
-        tokio::task::spawn_blocking(move || {
+        blocking::run_db("channels.bridge.load_resolution", move || {
             let Some(center) = storage.get_bridge_center(&center_id)? else {
                 return Ok(None);
             };
@@ -64,7 +65,6 @@ impl ChannelHub {
             }))
         })
         .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
     pub(super) async fn load_bridge_resolution_for_outbox(
@@ -206,10 +206,10 @@ impl ChannelHub {
         route.last_inbound_at = Some(now);
         route.updated_at = now;
         let storage = self.storage.clone();
-        if let Err(err) =
-            tokio::task::spawn_blocking(move || storage.upsert_bridge_user_route(&route))
-                .await
-                .unwrap_or_else(|spawn_err| Err(anyhow!(spawn_err)))
+        if let Err(err) = blocking::run_db("channels.bridge.persist_inbound_route", move || {
+            storage.upsert_bridge_user_route(&route)
+        })
+        .await
         {
             warn!(
                 "persist bridge inbound route failed: route_id={}, session_id={}, error={err}",

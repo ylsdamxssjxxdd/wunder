@@ -4,6 +4,7 @@ use super::{
     tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES,
     MAX_SEARCH_MATCHES,
 };
+use crate::core::blocking;
 use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
 use crate::core::python_runtime;
 use crate::i18n;
@@ -275,11 +276,10 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let unrestricted_paths = roots_allow_any_path(&extra_roots);
     let root = {
         let path = params.path.clone();
-        tokio::task::spawn_blocking(move || {
+        blocking::run_fs("tools.search.resolve_path", move || {
             resolve_tool_path(workspace.as_ref(), &user_id, &path, &extra_roots)
         })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??
+        .await?
     };
     if !root.exists() {
         return Ok(build_failed_tool_result(
@@ -1365,7 +1365,7 @@ async fn execute_search_attempt(
         let file_filter = file_filter.cloned();
         let root_for_task = root.to_path_buf();
         let params_for_task = params.clone();
-        tokio::task::spawn_blocking(move || {
+        blocking::run_fs("tools.search.candidates", move || {
             search_content_with_candidates(
                 &root_for_task,
                 candidates,
@@ -1376,14 +1376,13 @@ async fn execute_search_attempt(
                 deadline,
             )
         })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??
+        .await?
     } else {
         let matcher = attempt.matcher.clone();
         let file_filter = file_filter.cloned();
         let root_for_task = root.to_path_buf();
         let params_for_task = params.clone();
-        tokio::task::spawn_blocking(move || {
+        blocking::run_fs("tools.search.walk", move || {
             search_content_walk(
                 &root_for_task,
                 matcher.as_ref(),
@@ -1393,8 +1392,7 @@ async fn execute_search_attempt(
                 deadline,
             )
         })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??
+        .await?
     };
 
     Ok(SearchAttemptResult {

@@ -3,6 +3,7 @@ use crate::api::admin::{
     PRESET_TEMPLATE_USER_ID,
 };
 use crate::config::UserAgentPresetConfig;
+use crate::core::blocking;
 use crate::services::companions::{
     content_hash, delete_global_companion, export_global_companion, import_global_companion,
     list_global_companions, load_global_companion, load_global_companion_spritesheet,
@@ -468,10 +469,11 @@ async fn admin_companions_import(
             .to_vec();
     }
     let checksum = content_hash(&data);
-    let item = tokio::task::spawn_blocking(move || import_global_companion(&filename, &data))
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let item = blocking::run_fs("api.admin.resource.import_companion", move || {
+        import_global_companion(&filename, &data)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(
         json!({ "data": { "item": item, "sha256": checksum } }),
     ))

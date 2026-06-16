@@ -28,6 +28,7 @@ use crate::core::approval::{
 use crate::core::approval_registry::{
     ApprovalSource, PendingApprovalEntry, PendingApprovalRegistry,
 };
+use crate::core::long_task;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -228,27 +229,27 @@ impl ChannelHub {
             inbound_processor,
         );
         let worker = hub.clone();
-        tokio::spawn(async move {
+        long_task::spawn("channels.outbox.loop", async move {
             worker.outbox_loop().await;
         });
         let feishu_worker = hub.clone();
-        tokio::spawn(async move {
+        long_task::spawn("channels.long_connection.feishu.supervisor", async move {
             feishu_worker.feishu_long_connection_supervisor_loop().await;
         });
         let qqbot_worker = hub.clone();
-        tokio::spawn(async move {
+        long_task::spawn("channels.long_connection.qqbot.supervisor", async move {
             qqbot_worker.qqbot_long_connection_supervisor_loop().await;
         });
         let xmpp_worker = hub.clone();
-        tokio::spawn(async move {
+        long_task::spawn("channels.long_connection.xmpp.supervisor", async move {
             xmpp_worker.xmpp_long_connection_supervisor_loop().await;
         });
         let weixin_worker = hub.clone();
-        tokio::spawn(async move {
+        long_task::spawn("channels.long_connection.weixin.supervisor", async move {
             weixin_worker.weixin_long_connection_supervisor_loop().await;
         });
         let bootstrap_worker = hub.clone();
-        tokio::spawn(async move {
+        long_task::spawn("channels.runtime.bootstrap_log", async move {
             bootstrap_worker.runtime_bootstrap_log_once().await;
         });
         hub
@@ -1070,7 +1071,7 @@ impl ChannelHub {
             request.approval_tx = Some(approval_tx);
             let approval_hub = self.clone();
             let approval_context_clone = approval_context.clone();
-            Some(tokio::spawn(async move {
+            Some(long_task::spawn("channels.approval.forward", async move {
                 approval_hub
                     .forward_channel_approval_requests(approval_rx, approval_context_clone)
                     .await;

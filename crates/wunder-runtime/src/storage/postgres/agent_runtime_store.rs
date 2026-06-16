@@ -1,6 +1,6 @@
 use super::PostgresStorage;
 use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, StorageBackend, UpdateAgentTaskStatusParams,
+    AgentTaskRecord, AgentThreadRecord, StorageLifecycle, UpdateAgentTaskStatusParams,
 };
 use anyhow::Result;
 use serde_json::{json, Value};

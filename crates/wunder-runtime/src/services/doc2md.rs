@@ -1,3 +1,4 @@
+use crate::core::blocking;
 use crate::i18n;
 use anyhow::{anyhow, Result};
 #[cfg(feature = "doc2md")]
@@ -83,9 +84,10 @@ fn doc2md_extension_enabled(extension: &&str) -> bool {
 pub async fn convert_path(path: &Path, extension: &str) -> Result<Doc2mdResult> {
     let path = path.to_path_buf();
     let extension = extension.to_string();
-    tokio::task::spawn_blocking(move || convert_sync(&path, &extension))
-        .await
-        .map_err(|err| anyhow!(err.to_string()))?
+    blocking::run_fs("services.doc2md.convert", move || {
+        convert_sync(&path, &extension)
+    })
+    .await
 }
 
 fn convert_sync(path: &Path, extension: &str) -> Result<Doc2mdResult> {

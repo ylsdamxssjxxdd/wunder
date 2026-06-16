@@ -1,5 +1,6 @@
 use super::{build_model_tool_success, ToolContext};
 use crate::config::{Config, DesktopControllerConfig};
+use crate::core::blocking;
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::STANDARD;
@@ -711,15 +712,21 @@ async fn capture_screenshot(config: &DesktopControllerConfig) -> Result<DesktopS
     let norm_height = config.norm_height.max(1);
     let timeout_ms = config.capture_timeout_ms.max(100);
     let max_frames = config.max_frames.max(1);
-    let result = tokio::time::timeout(
+    let screenshot = match blocking::run_external_with_timeout(
+        "tools.desktop_control.capture_screenshot",
         Duration::from_millis(timeout_ms),
-        tokio::task::spawn_blocking(move || capture_screenshot_blocking(norm_width, norm_height)),
+        move || capture_screenshot_blocking(norm_width, norm_height).map_err(anyhow::Error::msg),
     )
     .await
-    .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.capture_timeout")))?;
-    let screenshot = result
-        .map_err(|err| anyhow!(err.to_string()))?
-        .map_err(|err| anyhow!(err.to_string()))?;
+    {
+        Ok(value) => value,
+        Err(err) if err.to_string().contains("timed out") => {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.capture_timeout"
+            )));
+        }
+        Err(err) => return Err(err),
+    };
     cleanup_old_frames(&screenshot.path, max_frames);
     Ok(screenshot)
 }

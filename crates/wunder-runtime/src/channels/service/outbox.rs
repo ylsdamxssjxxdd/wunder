@@ -8,6 +8,7 @@ use crate::channels::outbound_attachments::{
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::types::{ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage};
 use crate::channels::weixin;
+use crate::core::blocking;
 use crate::storage::{ChannelOutboxRecord, UpdateChannelOutboxStatusParams};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -393,11 +394,10 @@ impl ChannelHub {
 
     pub(super) async fn runtime_bootstrap_log_once(&self) {
         let storage = self.storage.clone();
-        let records = tokio::task::spawn_blocking(move || {
+        let records = blocking::run_db("channels.outbox.bootstrap_accounts", move || {
             storage.list_channel_accounts(None, Some("active"))
         })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)));
+        .await;
         let records = match records {
             Ok(items) => items,
             Err(err) => {

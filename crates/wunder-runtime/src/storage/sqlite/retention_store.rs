@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::StorageBackend;
+use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use rusqlite::params_from_iter;
 use rusqlite::types::Value as SqlValue;
@@ -76,7 +76,7 @@ impl SqliteRetentionStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{StorageBackend, UserAccountRecord};
+    use crate::storage::*;
     use rusqlite::params;
     use tempfile::tempdir;
 

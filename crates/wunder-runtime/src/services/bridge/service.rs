@@ -1,5 +1,6 @@
 use crate::channels::types::ChannelMessage;
 use crate::config_store::ConfigStore;
+use crate::core::blocking;
 use crate::services::bridge::identity::{
     extract_bridge_identity, normalize_bridge_route_status, normalize_bridge_thread_strategy,
     normalize_bridge_username_policy, BRIDGE_CENTER_STATUS_ACTIVE,
@@ -38,6 +39,14 @@ pub struct BridgeRuntime {
     pub storage: Arc<dyn StorageBackend>,
 }
 
+async fn run_bridge_db<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
+}
+
 #[allow(dead_code)]
 pub async fn is_bridge_managed_account(
     runtime: &BridgeRuntime,
@@ -47,11 +56,10 @@ pub async fn is_bridge_managed_account(
     let storage = runtime.storage.clone();
     let channel = channel.trim().to_string();
     let account_id = account_id.trim().to_string();
-    let record = tokio::task::spawn_blocking(move || {
+    let record = run_bridge_db("bridge.is_managed_account", move || {
         storage.get_bridge_center_account_by_channel_account(&channel, &account_id)
     })
-    .await
-    .unwrap_or_else(|err| Err(anyhow!(err)))?;
+    .await?;
     Ok(record.is_some())
 }
 
@@ -62,11 +70,10 @@ pub async fn resolve_inbound_bridge_route(
     let storage = runtime.storage.clone();
     let channel = message.channel.trim().to_string();
     let account_id = message.account_id.trim().to_string();
-    let center_account = tokio::task::spawn_blocking(move || {
+    let center_account = run_bridge_db("bridge.resolve.center_account", move || {
         storage.get_bridge_center_account_by_channel_account(&channel, &account_id)
     })
-    .await
-    .unwrap_or_else(|err| Err(anyhow!(err)))?;
+    .await?;
     let Some(center_account) = center_account else {
         return Ok(None);
     };
@@ -155,9 +162,10 @@ pub async fn log_bridge_delivery(
         created_at: now_ts(),
     };
     let storage = runtime.storage.clone();
-    tokio::task::spawn_blocking(move || storage.insert_bridge_delivery_log(&record))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
+    run_bridge_db("bridge.log_delivery", move || {
+        storage.insert_bridge_delivery_log(&record)
+    })
+    .await
 }
 
 pub async fn touch_bridge_route_after_outbound(
@@ -181,9 +189,10 @@ pub async fn touch_bridge_route_after_outbound(
         .map(str::to_string);
     record.updated_at = now;
     let storage = runtime.storage.clone();
-    tokio::task::spawn_blocking(move || storage.upsert_bridge_user_route(&record))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
+    run_bridge_db("bridge.touch_route_after_outbound", move || {
+        storage.upsert_bridge_user_route(&record)
+    })
+    .await
 }
 
 async fn auto_provision_route(
@@ -245,9 +254,10 @@ async fn auto_provision_route(
     };
     let storage = runtime.storage.clone();
     let inserted = route.clone();
-    tokio::task::spawn_blocking(move || storage.upsert_bridge_user_route(&inserted))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+    run_bridge_db("bridge.auto_provision.upsert_route", move || {
+        storage.upsert_bridge_user_route(&inserted)
+    })
+    .await?;
 
     if user_created {
         insert_audit_log(
@@ -313,9 +323,10 @@ async fn ensure_existing_route(
     route.last_error = None;
     let storage = runtime.storage.clone();
     let updated_route = route.clone();
-    tokio::task::spawn_blocking(move || storage.upsert_bridge_user_route(&updated_route))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+    run_bridge_db("bridge.ensure_route.upsert", move || {
+        storage.upsert_bridge_user_route(&updated_route)
+    })
+    .await?;
     load_route(runtime, &route.route_id)
         .await?
         .ok_or_else(|| anyhow!("bridge route missing after update"))
@@ -324,10 +335,11 @@ async fn ensure_existing_route(
 async fn load_center(runtime: &BridgeRuntime, center_id: &str) -> Result<BridgeCenterRecord> {
     let storage = runtime.storage.clone();
     let center_id = center_id.trim().to_string();
-    tokio::task::spawn_blocking(move || storage.get_bridge_center(&center_id))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?
-        .ok_or_else(|| anyhow!("bridge center not found"))
+    run_bridge_db("bridge.load_center", move || {
+        storage.get_bridge_center(&center_id)
+    })
+    .await?
+    .ok_or_else(|| anyhow!("bridge center not found"))
 }
 
 async fn load_route(
@@ -336,9 +348,10 @@ async fn load_route(
 ) -> Result<Option<BridgeUserRouteRecord>> {
     let storage = runtime.storage.clone();
     let route_id = route_id.trim().to_string();
-    tokio::task::spawn_blocking(move || storage.get_bridge_user_route(&route_id))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
+    run_bridge_db("bridge.load_route", move || {
+        storage.get_bridge_user_route(&route_id)
+    })
+    .await
 }
 
 async fn load_route_by_identity(
@@ -349,11 +362,10 @@ async fn load_route_by_identity(
     let storage = runtime.storage.clone();
     let center_account_id = center_account_id.trim().to_string();
     let external_identity_key = external_identity_key.trim().to_string();
-    tokio::task::spawn_blocking(move || {
+    run_bridge_db("bridge.load_route_by_identity", move || {
         storage.get_bridge_user_route_by_identity(&center_account_id, &external_identity_key)
     })
     .await
-    .unwrap_or_else(|err| Err(anyhow!(err)))
 }
 
 fn ensure_center_account_active(
@@ -482,9 +494,10 @@ async fn insert_audit_log(
         created_at: now_ts(),
     };
     let storage = runtime.storage.clone();
-    tokio::task::spawn_blocking(move || storage.insert_bridge_route_audit_log(&record))
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
+    run_bridge_db("bridge.insert_audit_log", move || {
+        storage.insert_bridge_route_audit_log(&record)
+    })
+    .await
 }
 
 fn now_ts() -> f64 {

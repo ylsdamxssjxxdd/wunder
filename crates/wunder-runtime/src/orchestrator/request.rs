@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::long_task;
 use crate::orchestrator_constants::MAX_USER_INPUT_TEXT_CHARS;
 use crate::request_limits::measure_request_text_input_chars;
 
@@ -168,17 +169,12 @@ impl Orchestrator {
         let session_id = prepared.session_id.clone();
         let storage = self.storage.clone();
         let start_event_id =
-            match tokio::task::spawn_blocking(move || storage.get_max_stream_event_id(&session_id))
-                .await
+            match crate::core::blocking::run_db("orchestrator.request.stream_offset", move || {
+                storage.get_max_stream_event_id(&session_id)
+            })
+            .await
             {
-                Ok(Ok(value)) => value,
-                Ok(Err(err)) => {
-                    warn!(
-                        "failed to load stream event offset for session {}: {err}",
-                        prepared.session_id
-                    );
-                    0
-                }
+                Ok(value) => value,
                 Err(err) => {
                     warn!(
                         "failed to load stream event offset for session {}: {err}",
@@ -202,7 +198,7 @@ impl Orchestrator {
             let emitter = emitter.clone();
             let prepared = prepared.clone();
             let language = language.clone();
-            tokio::spawn(async move {
+            long_task::spawn("orchestrator.request.runner", async move {
                 let _ = i18n::with_language(language, async {
                     orchestrator.execute_request(prepared, emitter).await
                 })

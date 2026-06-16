@@ -1,4 +1,5 @@
 use crate::api::user_context::resolve_user;
+use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{AttachmentPayload, WunderRequest};
@@ -700,7 +701,7 @@ async fn compact_session(
     let agent_id_for_task = agent_id.clone();
     let agent_prompt_for_task = agent_prompt.clone();
     let debug_payload = payload.debug_payload;
-    tokio::spawn(async move {
+    long_task::spawn("api.chat.force_compact_session", async move {
         let result = orchestrator
             .force_compact_session(
                 &user_id_for_task,

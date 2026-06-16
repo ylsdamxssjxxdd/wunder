@@ -1,4 +1,5 @@
 use crate::config::{ChannelAsrConfig, Config};
+use crate::core::blocking;
 use crate::core::command_utils::{apply_platform_spawn_options, is_not_found_error};
 use crate::schemas::AttachmentPayload;
 use crate::services::chat_attachments::{
@@ -1185,14 +1186,17 @@ async fn render_gif_frame_attachment(
     let derived_root = persist_derived_root(workspace, workspace_id, source_name).await?;
     let output_path = derived_root.join(format!("frame_{:04}.png", index + 1));
     let output_path_for_write = output_path.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        DynamicImage::ImageRgba8(image)
-            .save_with_format(&output_path_for_write, ImageFormat::Png)
-            .map_err(|err| anyhow!("failed to save gif frame: {err}"))?;
-        Ok(())
-    })
+    blocking::run_fs(
+        "services.chat_media.save_gif_frame",
+        move || -> Result<()> {
+            DynamicImage::ImageRgba8(image)
+                .save_with_format(&output_path_for_write, ImageFormat::Png)
+                .map_err(|err| anyhow!("failed to save gif frame: {err}"))?;
+            Ok(())
+        },
+    )
     .await
-    .map_err(|err| anyhow!("gif frame save task failed: {err}"))??;
+    .map_err(|err| anyhow!("gif frame save task failed: {err}"))?;
     let public_path = workspace.display_path(workspace_id, &output_path);
     let name = output_path
         .file_name()

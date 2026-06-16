@@ -4,6 +4,7 @@ use crate::api::admin::{
 };
 use crate::api::user_context::resolve_user;
 use crate::api::user_tools::{error_response, resolve_visible_user_skill};
+use crate::core::blocking;
 use crate::i18n;
 use crate::path_utils::{is_within_root, normalize_target_path, strip_windows_verbatim_prefix};
 use crate::state::AppState;
@@ -1063,11 +1064,14 @@ async fn skill_fs_archive_response(
     let archive_path_clone = archive_path.clone();
     let target_clone = target.clone();
     let base_clone = base_root.clone();
-    tokio::task::spawn_blocking(move || {
-        build_archive(&archive_path_clone, &target_clone, &base_clone)
+    blocking::run_fs("api.skill_fs.archive", move || {
+        Ok(build_archive(
+            &archive_path_clone,
+            &target_clone,
+            &base_clone,
+        )?)
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| {
         let _ = std::fs::remove_file(&archive_path);
         error_response(StatusCode::BAD_REQUEST, err.to_string())
@@ -1559,10 +1563,11 @@ async fn copy_skill_entry(root: &Path, source: &str, destination: &str) -> Resul
     if source_path.is_dir() {
         let source_path = source_path.clone();
         let destination_path = destination_path.clone();
-        tokio::task::spawn_blocking(move || copy_dir_all(&source_path, &destination_path))
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+        blocking::run_fs("api.skill_fs.copy_dir", move || {
+            Ok(copy_dir_all(&source_path, &destination_path)?)
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
     } else {
         tokio::fs::copy(&source_path, &destination_path)
             .await

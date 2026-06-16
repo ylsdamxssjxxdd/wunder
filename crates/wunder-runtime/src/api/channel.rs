@@ -6,6 +6,7 @@ use crate::channels::wechat;
 use crate::channels::wechat_mp;
 use crate::channels::whatsapp_cloud;
 use crate::channels::ChannelMessage;
+use crate::core::blocking;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -1193,11 +1194,10 @@ async fn load_account_records_by_channel(
 ) -> Result<Vec<crate::storage::ChannelAccountRecord>, Response> {
     let storage = state.storage.clone();
     let channel = channel.to_string();
-    tokio::task::spawn_blocking(move || {
+    blocking::run_db("api.channel.list_accounts", move || {
         storage.list_channel_accounts(Some(channel.as_str()), Some("active"))
     })
     .await
-    .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "storage error"))?
     .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))
 }
 
@@ -1593,11 +1593,11 @@ async fn load_account_by_channel_and_id(
     let storage = state.storage.clone();
     let channel = channel.to_string();
     let account_id = account_id.to_string();
-    let record =
-        tokio::task::spawn_blocking(move || storage.get_channel_account(&channel, &account_id))
-            .await
-            .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "storage error"))?
-            .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+    let record = blocking::run_db("api.channel.get_account", move || {
+        storage.get_channel_account(&channel, &account_id)
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
     let record = record
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "channel account not found"))?;
     if !record.status.trim().eq_ignore_ascii_case("active") {

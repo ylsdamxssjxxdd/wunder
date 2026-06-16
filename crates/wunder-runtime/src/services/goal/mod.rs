@@ -1,3 +1,4 @@
+use crate::core::blocking;
 use crate::schemas::WunderRequest;
 use crate::services::stream_events::StreamEventService;
 use crate::services::subagents;
@@ -105,6 +106,14 @@ pub enum GoalToolAction {
 
 pub fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+async fn run_goal_db<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
 }
 
 pub fn normalize_status(raw: &str) -> Result<GoalStatus> {
@@ -253,9 +262,10 @@ pub async fn get_goal(
 ) -> Result<Option<SessionGoalRecord>> {
     let user_id = user_id.trim().to_string();
     let session_id = session_id.trim().to_string();
-    tokio::task::spawn_blocking(move || storage.get_session_goal(&user_id, &session_id))
-        .await
-        .map_err(|err| anyhow!(err))?
+    run_goal_db("goal.get", move || {
+        storage.get_session_goal(&user_id, &session_id)
+    })
+    .await
 }
 
 pub async fn list_goals(
@@ -270,9 +280,10 @@ pub async fn list_goals(
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-    tokio::task::spawn_blocking(move || storage.list_session_goals(&user_id, &session_ids))
-        .await
-        .map_err(|err| anyhow!(err))?
+    run_goal_db("goal.list", move || {
+        storage.list_session_goals(&user_id, &session_ids)
+    })
+    .await
 }
 
 pub async fn set_goal(
@@ -304,9 +315,10 @@ pub async fn set_goal(
     };
     let storage_for_write = storage.clone();
     let record_for_write = record.clone();
-    tokio::task::spawn_blocking(move || storage_for_write.upsert_session_goal(&record_for_write))
-        .await
-        .map_err(|err| anyhow!(err))??;
+    run_goal_db("goal.set.upsert", move || {
+        storage_for_write.upsert_session_goal(&record_for_write)
+    })
+    .await?;
     emit_goal_event(storage, &record, EVENT_GOAL_UPDATED, None).await;
     Ok(record)
 }
@@ -323,11 +335,10 @@ pub async fn set_goal_status(
     let storage_for_read = storage.clone();
     let read_user = user_id.clone();
     let read_session = session_id.clone();
-    let Some(mut record) = tokio::task::spawn_blocking(move || {
+    let Some(mut record) = run_goal_db("goal.status.get", move || {
         storage_for_read.get_session_goal(&read_user, &read_session)
     })
-    .await
-    .map_err(|err| anyhow!(err))??
+    .await?
     else {
         return Err(anyhow!("goal not found"));
     };
@@ -341,9 +352,10 @@ pub async fn set_goal_status(
     };
     let storage_for_write = storage.clone();
     let record_for_write = record.clone();
-    tokio::task::spawn_blocking(move || storage_for_write.upsert_session_goal(&record_for_write))
-        .await
-        .map_err(|err| anyhow!(err))??;
+    run_goal_db("goal.status.upsert", move || {
+        storage_for_write.upsert_session_goal(&record_for_write)
+    })
+    .await?;
     let event = if status == GoalStatus::BudgetLimited {
         EVENT_GOAL_BUDGET_LIMITED
     } else {
@@ -364,11 +376,10 @@ pub async fn clear_goal(
     let storage_for_delete = storage.clone();
     let delete_user = user_id.clone();
     let delete_session = session_id.clone();
-    let affected = tokio::task::spawn_blocking(move || {
+    let affected = run_goal_db("goal.clear.delete", move || {
         storage_for_delete.delete_session_goal(&delete_user, &delete_session)
     })
-    .await
-    .map_err(|err| anyhow!(err))??;
+    .await?;
     if let Some(record) = existing.as_ref() {
         emit_goal_event(storage, record, EVENT_GOAL_CLEARED, None).await;
     }
@@ -385,11 +396,10 @@ pub async fn mark_goal_continuation_started(
     let storage_for_read = storage.clone();
     let read_user = user_id.clone();
     let read_session = session_id.clone();
-    let Some(mut record) = tokio::task::spawn_blocking(move || {
+    let Some(mut record) = run_goal_db("goal.continuation.get", move || {
         storage_for_read.get_session_goal(&read_user, &read_session)
     })
-    .await
-    .map_err(|err| anyhow!(err))??
+    .await?
     else {
         return Ok(None);
     };
@@ -400,9 +410,10 @@ pub async fn mark_goal_continuation_started(
     record.updated_at = record.last_continued_at.unwrap_or(record.updated_at);
     let storage_for_write = storage.clone();
     let record_for_write = record.clone();
-    tokio::task::spawn_blocking(move || storage_for_write.upsert_session_goal(&record_for_write))
-        .await
-        .map_err(|err| anyhow!(err))??;
+    run_goal_db("goal.continuation.upsert", move || {
+        storage_for_write.upsert_session_goal(&record_for_write)
+    })
+    .await?;
     emit_goal_event(storage, &record, EVENT_GOAL_CONTINUATION_STARTED, None).await;
     Ok(Some(record))
 }
@@ -456,7 +467,7 @@ pub async fn account_turn_usage(
     let storage_for_write = storage.clone();
     let write_user = user_id.clone();
     let write_session = session_id.clone();
-    let Some(record) = tokio::task::spawn_blocking(move || {
+    let Some(record) = run_goal_db("goal.account_usage", move || {
         storage_for_write.account_session_goal_usage(
             &write_user,
             &write_session,
@@ -465,8 +476,7 @@ pub async fn account_turn_usage(
             now_ts(),
         )
     })
-    .await
-    .map_err(|err| anyhow!(err))??
+    .await?
     else {
         return Ok(None);
     };
@@ -699,9 +709,10 @@ pub async fn ensure_session(
     };
     let storage_for_write = storage;
     let record_for_write = record.clone();
-    tokio::task::spawn_blocking(move || storage_for_write.upsert_chat_session(&record_for_write))
-        .await
-        .map_err(|err| anyhow!(err))??;
+    run_goal_db("goal.ensure_session.upsert", move || {
+        storage_for_write.upsert_chat_session(&record_for_write)
+    })
+    .await?;
     Ok(record)
 }
 
@@ -712,9 +723,10 @@ async fn load_session(
 ) -> Result<Option<ChatSessionRecord>> {
     let user_id = user_id.trim().to_string();
     let session_id = session_id.trim().to_string();
-    tokio::task::spawn_blocking(move || storage.get_chat_session(&user_id, &session_id))
-        .await
-        .map_err(|err| anyhow!(err))?
+    run_goal_db("goal.load_session", move || {
+        storage.get_chat_session(&user_id, &session_id)
+    })
+    .await
 }
 
 fn clean_required(value: &str, label: &str) -> Result<String> {

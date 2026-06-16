@@ -3,6 +3,7 @@ use crate::api::skill_fs;
 use crate::api::user_context::resolve_user;
 use crate::attachment::sanitize_filename_stem;
 use crate::config::{Config, McpServerConfig};
+use crate::core::blocking;
 use crate::core::repo_assets;
 use crate::i18n;
 use crate::path_utils::{
@@ -1080,12 +1081,13 @@ async fn user_skills_export(
     let archive_path_clone = archive_path.clone();
     let root_clone = root.clone();
     let top_dir_clone = top_dir.clone();
-    tokio::task::spawn_blocking(move || {
-        create_skill_archive(&root_clone, &top_dir_clone, &archive_path_clone)
-            .map_err(|err| io::Error::other(err.to_string()))
+    blocking::run_fs("api.user_tools.archive_skill", move || {
+        Ok(
+            create_skill_archive(&root_clone, &top_dir_clone, &archive_path_clone)
+                .map_err(|err| io::Error::other(err.to_string()))?,
+        )
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| {
         let _ = std::fs::remove_file(&archive_path);
         error_response(StatusCode::BAD_REQUEST, err.to_string())
@@ -1382,7 +1384,7 @@ async fn user_skills_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
     let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
-    let import_result = tokio::task::spawn_blocking({
+    let import_result = blocking::run_fs("api.user_tools.import_skill", {
         let filename = filename.clone();
         let data = data.clone();
         let skill_root = skill_root.clone();
@@ -1390,7 +1392,6 @@ async fn user_skills_upload(
         move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| {
         let message = err.to_string();
         let status = if message.contains("builtin skill directory") {

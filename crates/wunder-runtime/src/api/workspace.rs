@@ -1,4 +1,5 @@
 use crate::api::user_context::resolve_user;
+use crate::core::blocking;
 use crate::i18n;
 use crate::path_utils::strip_windows_verbatim_prefix;
 use crate::services::chat_media::render_metafile_preview_png;
@@ -716,10 +717,11 @@ async fn workspace_copy(
     if source_path.is_dir() {
         let source_path = source_path.clone();
         let destination_path = destination_path.clone();
-        tokio::task::spawn_blocking(move || copy_dir_all(&source_path, &destination_path))
-            .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        blocking::run_fs("api.workspace.copy_dir", move || {
+            Ok(copy_dir_all(&source_path, &destination_path)?)
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     } else {
         tokio::fs::copy(&source_path, &destination_path)
             .await
@@ -868,10 +870,11 @@ async fn workspace_batch(
         } else if source_path.is_dir() {
             let source_path = source_path.clone();
             let target_path = target_path.clone();
-            tokio::task::spawn_blocking(move || copy_dir_all(&source_path, &target_path))
-                .await
-                .map_err(|err| io::Error::other(err.to_string()))
-                .and_then(|result| result)
+            blocking::run_fs("api.workspace.batch_copy_dir", move || {
+                Ok(copy_dir_all(&source_path, &target_path)?)
+            })
+            .await
+            .map_err(|err| io::Error::other(err.to_string()))
         } else {
             tokio::fs::copy(&source_path, &target_path)
                 .await
@@ -1024,11 +1027,14 @@ async fn workspace_archive(
     let archive_path_clone = archive_path.clone();
     let target_clone = target.clone();
     let base_clone = base_root.clone();
-    tokio::task::spawn_blocking(move || {
-        build_archive(&archive_path_clone, &target_clone, &base_clone)
+    blocking::run_fs("api.workspace.archive", move || {
+        Ok(build_archive(
+            &archive_path_clone,
+            &target_clone,
+            &base_clone,
+        )?)
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| {
         let _ = std::fs::remove_file(&archive_path);
         error_response(StatusCode::BAD_REQUEST, err.to_string())

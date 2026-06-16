@@ -1,6 +1,7 @@
 // MCP 服务与客户端：对齐 codex-main 的 rmcp SDK，用于流式 HTTP 与工具调用。
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::config::{Config, McpServerConfig};
+use crate::core::long_task;
 use crate::i18n;
 use crate::schemas::{ToolSpec, WunderRequest};
 use crate::state::AppState;
@@ -732,7 +733,7 @@ impl SseClientSession {
         let base_url = url::Url::parse(&server.endpoint)?;
         let (tx, rx) = mpsc::channel(64);
         let (endpoint_tx, endpoint_rx) = oneshot::channel::<Result<url::Url>>();
-        let handle = tokio::spawn(async move {
+        let handle = long_task::spawn("services.mcp.sse_client_reader", async move {
             let mut endpoint_tx = Some(endpoint_tx);
             let mut stream = SseStream::from_byte_stream(response.bytes_stream());
             while let Some(item) = stream.next().await {

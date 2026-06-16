@@ -1820,7 +1820,7 @@ fn now_ts() -> f64 {
 mod tests {
     use super::*;
     use crate::config::Config;
-    use crate::storage::SqliteStorage;
+    use crate::storage::*;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::tempdir;

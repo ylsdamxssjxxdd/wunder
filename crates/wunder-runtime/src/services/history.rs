@@ -1,5 +1,6 @@
 // 历史管理：加载对话历史、压缩摘要与产物索引。
 use crate::config::LlmModelConfig;
+use crate::core::blocking;
 use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
@@ -14,7 +15,6 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::task::spawn_blocking;
 
 pub struct HistoryManager;
 
@@ -120,9 +120,9 @@ impl HistoryManager {
         session_id: String,
         max_items: i64,
     ) -> Vec<Value> {
-        spawn_blocking(move || {
+        blocking::run_fs("services.history.load_messages", move || {
             let manager = HistoryManager;
-            manager.load_history_messages(&workspace, &user_id, &session_id, max_items)
+            Ok(manager.load_history_messages(&workspace, &user_id, &session_id, max_items))
         })
         .await
         .unwrap_or_default()

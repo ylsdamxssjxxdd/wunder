@@ -1,4 +1,5 @@
 use super::context::ToolContext;
+use crate::core::long_task;
 use crate::monitor::MonitorState;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::swarm::events::{
@@ -394,7 +395,7 @@ fn publish_swarm_team_event_realtime(
     let user_id = cleaned_user.to_string();
     let hive_id = cleaned_hive.to_string();
     let event_name = event_name.to_string();
-    tokio::spawn(async move {
+    long_task::spawn("tools.swarm_realtime.publish_team_event", async move {
         realtime
             .publish_group_event(&user_id, &hive_id, &event_name, payload)
             .await;

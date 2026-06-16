@@ -1,5 +1,6 @@
 use crate::api::admin::{error_response, now_ts, resolve_monitor_session_agent_name};
 use crate::config::Config;
+use crate::core::runtime_metrics;
 use crate::i18n;
 use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
@@ -63,6 +64,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/performance/sample",
             post(admin_performance_sample),
         )
+        .route("/wunder/admin/runtime_metrics", get(admin_runtime_metrics))
 }
 
 async fn admin_monitor(
@@ -128,6 +130,7 @@ async fn admin_monitor(
     let response = Json(json!({
         "system": system,
         "service": service,
+        "runtime": runtime_metrics::snapshot(),
         "sandbox": sandbox,
         "sessions": sessions,
         "tool_stats": tool_stats
@@ -157,6 +160,12 @@ async fn admin_monitor(
         total_ms,
     );
     Ok(response)
+}
+
+async fn admin_runtime_metrics() -> Json<Value> {
+    Json(json!({
+        "runtime": runtime_metrics::snapshot(),
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]

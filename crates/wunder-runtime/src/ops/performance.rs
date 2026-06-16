@@ -1,5 +1,6 @@
 use crate::a2a_store::A2aStore;
 use crate::config::{is_debug_log_level, Config, KnowledgeBaseConfig};
+use crate::core::blocking;
 use crate::lsp::LspManager;
 use crate::orchestrator::Orchestrator;
 use crate::skills::SkillRegistry;
@@ -498,10 +499,11 @@ async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> 
             }
         }
         let started = Instant::now();
-        tokio::task::spawn_blocking(move || workspace.append_tool_log(&user_id, &payload))
-            .await
-            .map_err(|err| err.to_string())?
-            .map_err(|err| err.to_string())?;
+        blocking::run_fs("ops.performance.append_tool_log", move || {
+            workspace.append_tool_log(&user_id, &payload)
+        })
+        .await
+        .map_err(|err| err.to_string())?;
         Ok((started.elapsed().as_secs_f64() * 1000.0, None))
     })
     .await

@@ -1,7 +1,7 @@
 use super::SqliteStorage;
 use crate::storage::{
     MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
-    StorageBackend, UpsertMemoryTaskLogParams,
+    StorageLifecycle, UpsertMemoryTaskLogParams,
 };
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;

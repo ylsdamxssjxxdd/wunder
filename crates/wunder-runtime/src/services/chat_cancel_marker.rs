@@ -1,3 +1,4 @@
+use crate::core::blocking;
 use crate::i18n;
 use crate::orchestrator_constants::OBSERVATION_PREFIX;
 use crate::user_store::UserStore;
@@ -27,7 +28,7 @@ pub async fn persist_user_cancelled_turn_marker(
     let user_id = cleaned_user_id.to_string();
     let session_id = cleaned_session_id.to_string();
     let cancel_source = cancel_source.trim().to_string();
-    tokio::task::spawn_blocking(move || {
+    blocking::run_db("services.chat_cancel_marker.persist", move || {
         persist_user_cancelled_turn_marker_sync(
             workspace.as_ref(),
             user_store.as_ref(),
@@ -37,7 +38,6 @@ pub async fn persist_user_cancelled_turn_marker(
         )
     })
     .await
-    .map_err(|err| anyhow::anyhow!("persist cancelled turn marker failed: {err}"))?
 }
 
 pub(crate) fn persist_user_cancelled_turn_marker_sync(

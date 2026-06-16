@@ -16,9 +16,10 @@ pub mod storage;
 pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
 pub use core::{
-    approval, approval_registry, auth, command_utils, config, config_store, dpi, drawio_config,
-    exec_policy, i18n, logging, onlyoffice_config, path_utils, repo_assets, rustls_provider,
-    schemas, shutdown, state, token_utils,
+    approval, approval_registry, auth, blocking, bounded_queue, command_utils, config,
+    config_store, dpi, drawio_config, exec_policy, i18n, logging, long_task, onlyoffice_config,
+    path_utils, repo_assets, runtime_metrics, rustls_provider, schemas, shutdown, state,
+    token_utils,
 };
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;

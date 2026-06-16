@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{StorageBackend, VectorDocumentRecord, VectorDocumentSummaryRecord};
+use crate::storage::{StorageLifecycle, VectorDocumentRecord, VectorDocumentSummaryRecord};
 use anyhow::Result;
 
 pub(super) trait PostgresVectorDocumentStorage {

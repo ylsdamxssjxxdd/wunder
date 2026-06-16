@@ -1,5 +1,6 @@
 use crate::api::errors::error_response;
 use crate::api::user_context::resolve_user;
+use crate::core::{blocking, long_task};
 use crate::i18n;
 use crate::services::desktop_lan::{self, DesktopLanEnvelope};
 use crate::services::user_world::{UserWorldContact, UserWorldConversationView};
@@ -472,7 +473,7 @@ async fn stream_events(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
 
-    tokio::spawn(async move {
+    long_task::spawn("api.user_world.event_stream", async move {
         let mut current_event_id = after_event_id;
         loop {
             let events = service
@@ -613,11 +614,14 @@ async fn download_user_world_file(
         let archive_path_clone = archive_path.clone();
         let target_clone = target.clone();
         let base_clone = base_root.clone();
-        tokio::task::spawn_blocking(move || {
-            build_archive(&archive_path_clone, &target_clone, &base_clone)
+        blocking::run_fs("api.user_world.archive", move || {
+            Ok(build_archive(
+                &archive_path_clone,
+                &target_clone,
+                &base_clone,
+            )?)
         })
         .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .map_err(|err| {
             let _ = std::fs::remove_file(&archive_path);
             error_response(StatusCode::BAD_REQUEST, err.to_string())

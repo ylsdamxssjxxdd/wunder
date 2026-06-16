@@ -1,4 +1,6 @@
 use crate::config_store::ConfigStore;
+use crate::core::blocking;
+use crate::core::long_task;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
@@ -124,7 +126,7 @@ impl ThreadRuntime {
 
     pub fn start(self: Arc<Self>) {
         let runtime = self.clone();
-        tokio::spawn(async move {
+        long_task::spawn("runtime.thread.queue_loop", async move {
             runtime.run_loop().await;
         });
     }
@@ -268,7 +270,7 @@ impl ThreadRuntime {
                 let runtime = self.clone();
                 let user_id = user_id.trim().to_string();
                 let session_id = session.session_id.clone();
-                tokio::spawn(async move {
+                long_task::spawn("runtime.thread.goal_continuation.run", async move {
                     let _lease = lease;
                     match orchestrator.stream(*request).await {
                         Ok(stream) => {
@@ -315,7 +317,7 @@ impl ThreadRuntime {
                 existing.cancel();
             }
         }
-        tokio::spawn(async move {
+        long_task::spawn("runtime.thread.goal_continuation.cooldown", async move {
             let delay =
                 match goal::get_goal(runtime.user_store.storage_backend(), &user_id, &session_id)
                     .await
@@ -978,14 +980,14 @@ impl ThreadRuntime {
     async fn process_pending_tasks(&self) -> Result<()> {
         let pending = {
             let store = self.user_store.clone();
-            match tokio::task::spawn_blocking(move || store.list_pending_agent_tasks(50)).await {
-                Ok(Ok(items)) => items,
-                Ok(Err(err)) => {
-                    warn!("load pending agent tasks failed: {err}");
-                    Vec::new()
-                }
+            match blocking::run_db("runtime.thread.list_pending_tasks", move || {
+                store.list_pending_agent_tasks(50)
+            })
+            .await
+            {
+                Ok(items) => items,
                 Err(err) => {
-                    warn!("load pending agent tasks join failed: {err}");
+                    warn!("load pending agent tasks failed: {err}");
                     Vec::new()
                 }
             }
@@ -1013,7 +1015,7 @@ impl ThreadRuntime {
             }
             let task_clone = task.clone();
             let runtime = self.clone();
-            tokio::spawn(async move {
+            long_task::spawn("runtime.thread.execute_task", async move {
                 runtime.execute_task(task_clone).await;
             });
         }

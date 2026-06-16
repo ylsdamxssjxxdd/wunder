@@ -3,6 +3,7 @@ use super::apply_patch_update::{ChunkContextFailureDetail, ChunkContextFailureKi
 use super::command_options::parse_dry_run;
 use super::*;
 use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
+use crate::core::blocking;
 use crate::monitor::MonitorState;
 use crate::path_utils::is_within_root;
 
@@ -260,7 +261,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         ));
     }
     ensure_patch_not_cancelled(context)?;
-    let parsed_ops = tokio::task::spawn_blocking({
+    let parsed_ops = blocking::run_cpu("tools.apply_patch.parse", {
         let input = input.clone();
         let cancel_probe = build_patch_cancel_probe(context);
         move || parse_patch_checked(&input, cancel_probe.as_ref())
@@ -274,7 +275,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "请重试；若持续失败请检查运行时环境是否稳定。",
             "Retry; if this persists, verify runtime stability.",
         )
-    })??;
+    })?;
 
     let allow_roots = collect_allow_roots(context);
     let resolved_ops = parsed_ops
@@ -325,7 +326,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
     }
 
     ensure_patch_not_cancelled(context)?;
-    let summary = tokio::task::spawn_blocking({
+    let summary = blocking::run_fs("tools.apply_patch.apply", {
         let cancel_probe = build_patch_cancel_probe(context);
         move || apply_patch_ops_checked(resolved_ops, cancel_probe.as_ref())
     })
@@ -338,7 +339,7 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "请重试；若持续失败请检查运行时环境是否稳定。",
             "Retry; if this persists, verify runtime stability.",
         )
-    })??;
+    })?;
 
     if !summary.no_effect_updates.is_empty()
         && summary.added == 0

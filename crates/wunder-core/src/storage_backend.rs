@@ -4,15 +4,23 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// Storage backend abstraction for persistent history, monitoring, memory, and runtime records.
-pub trait StorageBackend: Send + Sync {
-    fn ensure_initialized(&self) -> Result<()>;
+/// Domain-scoped storage abstractions for persistent runtime data.
 
+/// Storage backend lifecycle and schema readiness checks.
+pub trait StorageLifecycle {
+    fn ensure_initialized(&self) -> Result<()>;
+}
+
+/// Persistent metadata key/value store.
+pub trait MetaStore {
     fn get_meta(&self, key: &str) -> Result<Option<String>>;
     fn set_meta(&self, key: &str, value: &str) -> Result<()>;
     fn list_meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>>;
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize>;
+}
 
+/// Chat, model-context, tool, and artifact log storage.
+pub trait ConversationLogStore {
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_model_context_entry(
         &self,
@@ -28,7 +36,6 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<()>;
     fn append_tool_log(&self, user_id: &str, payload: &Value) -> Result<()>;
     fn append_artifact_log(&self, user_id: &str, payload: &Value) -> Result<()>;
-
     fn load_model_context_entries(
         &self,
         user_id: &str,
@@ -56,7 +63,10 @@ pub trait StorageBackend: Send + Sync {
         session_id: &str,
         language: Option<&str>,
     ) -> Result<Option<String>>;
+}
 
+/// Log usage, statistics, and cleanup storage.
+pub trait LogStatsStore {
     fn get_user_chat_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
     fn get_user_tool_stats(&self) -> Result<HashMap<String, HashMap<String, i64>>>;
     fn get_tool_usage_stats(
@@ -71,14 +81,16 @@ pub trait StorageBackend: Send + Sync {
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
     fn get_log_usage(&self) -> Result<u64>;
-
     fn delete_chat_history(&self, user_id: &str) -> Result<i64>;
     fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_tool_logs(&self, user_id: &str) -> Result<i64>;
     fn delete_tool_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_artifact_logs(&self, user_id: &str) -> Result<i64>;
     fn delete_artifact_logs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+}
 
+/// Runtime monitor record storage.
+pub trait MonitorStore {
     fn upsert_monitor_record(&self, payload: &Value) -> Result<()>;
     fn get_monitor_record(&self, session_id: &str) -> Result<Option<Value>>;
     fn load_monitor_records(&self) -> Result<Vec<Value>>;
@@ -147,7 +159,10 @@ pub trait StorageBackend: Send + Sync {
     }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64>;
+}
 
+/// Session concurrency lock storage.
+pub trait SessionLockStore {
     fn try_acquire_session_lock(
         &self,
         session_id: &str,
@@ -161,11 +176,13 @@ pub trait StorageBackend: Send + Sync {
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64>;
     fn count_session_locks(&self) -> Result<i64>;
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
+}
 
+/// Agent thread, task queue, and stream event storage.
+pub trait AgentRuntimeStore {
     fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()>;
     fn get_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<Option<AgentThreadRecord>>;
     fn delete_agent_thread(&self, user_id: &str, agent_id: &str) -> Result<i64>;
-
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
@@ -183,23 +200,6 @@ pub trait StorageBackend: Send + Sync {
         limit: i64,
     ) -> Result<Vec<AgentTaskRecord>>;
     fn update_agent_task_status(&self, params: UpdateAgentTaskStatusParams<'_>) -> Result<()>;
-
-    fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()>;
-    fn get_vector_document(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        doc_id: &str,
-    ) -> Result<Option<VectorDocumentRecord>>;
-    fn list_vector_document_summaries(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-    ) -> Result<Vec<VectorDocumentSummaryRecord>>;
-    fn delete_vector_document(&self, owner_id: &str, base_name: &str, doc_id: &str)
-        -> Result<bool>;
-    fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64>;
-
     fn get_max_stream_event_id(&self, session_id: &str) -> Result<i64>;
     fn append_stream_event(
         &self,
@@ -218,7 +218,29 @@ pub trait StorageBackend: Send + Sync {
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;
+}
 
+/// Vector knowledge document storage.
+pub trait VectorDocumentStore {
+    fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()>;
+    fn get_vector_document(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        doc_id: &str,
+    ) -> Result<Option<VectorDocumentRecord>>;
+    fn list_vector_document_summaries(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+    ) -> Result<Vec<VectorDocumentSummaryRecord>>;
+    fn delete_vector_document(&self, owner_id: &str, base_name: &str, doc_id: &str)
+        -> Result<bool>;
+    fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64>;
+}
+
+/// Long-term memory settings, records, fragments, hits, and jobs storage.
+pub trait MemoryRecordStore {
     fn get_memory_enabled(&self, user_id: &str) -> Result<Option<bool>>;
     fn set_memory_enabled(&self, user_id: &str, enabled: bool) -> Result<()>;
     fn load_memory_settings(&self) -> Result<Vec<HashMap<String, Value>>>;
@@ -306,7 +328,10 @@ pub trait StorageBackend: Send + Sync {
         agent_id: &str,
         limit: i64,
     ) -> Result<Vec<MemoryJobRecord>>;
+}
 
+/// Benchmark run, attempt, and aggregate storage.
+pub trait BenchmarkStore {
     fn create_benchmark_run(&self, payload: &Value) -> Result<()>;
     fn update_benchmark_run(&self, run_id: &str, payload: &Value) -> Result<()>;
     fn upsert_benchmark_attempt(&self, run_id: &str, payload: &Value) -> Result<()>;
@@ -324,9 +349,15 @@ pub trait StorageBackend: Send + Sync {
     fn load_benchmark_attempts(&self, run_id: &str) -> Result<Vec<Value>>;
     fn load_benchmark_task_aggregates(&self, run_id: &str) -> Result<Vec<Value>>;
     fn delete_benchmark_run(&self, run_id: &str) -> Result<i64>;
+}
 
+/// Retention cleanup storage.
+pub trait RetentionStore {
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
+}
 
+/// User, organization, token, external link, and session-scope storage.
+pub trait UserAccountStore {
     fn upsert_user_account(&self, record: &UserAccountRecord) -> Result<()>;
     fn upsert_user_accounts(&self, records: &[UserAccountRecord]) -> Result<()>;
     fn get_user_account(&self, user_id: &str) -> Result<Option<UserAccountRecord>>;
@@ -346,17 +377,14 @@ pub trait StorageBackend: Send + Sync {
         updated_at: f64,
     ) -> Result<UserExperienceUpdateResult>;
     fn delete_user_account(&self, user_id: &str) -> Result<i64>;
-
     fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>>;
     fn get_org_unit(&self, unit_id: &str) -> Result<Option<OrgUnitRecord>>;
     fn upsert_org_unit(&self, record: &OrgUnitRecord) -> Result<()>;
     fn delete_org_unit(&self, unit_id: &str) -> Result<i64>;
-
     fn upsert_external_link(&self, record: &ExternalLinkRecord) -> Result<()>;
     fn get_external_link(&self, link_id: &str) -> Result<Option<ExternalLinkRecord>>;
     fn list_external_links(&self, include_disabled: bool) -> Result<Vec<ExternalLinkRecord>>;
     fn delete_external_link(&self, link_id: &str) -> Result<i64>;
-
     fn create_user_token(&self, record: &UserTokenRecord) -> Result<()>;
     fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>>;
     fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()>;
@@ -367,7 +395,10 @@ pub trait StorageBackend: Send + Sync {
         user_id: &str,
         session_scope: &str,
     ) -> Result<Option<UserSessionScopeRecord>>;
+}
 
+/// Chat session catalog storage.
+pub trait ChatSessionStore {
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()>;
     fn get_chat_session(
         &self,
@@ -407,6 +438,10 @@ pub trait StorageBackend: Send + Sync {
         last_message_at: f64,
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+}
+
+/// Session goal accounting storage.
+pub trait SessionGoalStore {
     fn upsert_session_goal(&self, record: &SessionGoalRecord) -> Result<()>;
     fn get_session_goal(
         &self,
@@ -427,7 +462,10 @@ pub trait StorageBackend: Send + Sync {
         time_delta_seconds: i64,
         updated_at: f64,
     ) -> Result<Option<SessionGoalRecord>>;
+}
 
+/// User-world direct and group conversation storage.
+pub trait UserWorldStore {
     fn resolve_or_create_user_world_direct_conversation(
         &self,
         user_a: &str,
@@ -499,7 +537,10 @@ pub trait StorageBackend: Send + Sync {
         updated_at: f64,
     ) -> Result<Option<UserWorldGroupRecord>>;
     fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>>;
+}
 
+/// Beeroom chat message storage.
+pub trait BeeroomStore {
     fn list_beeroom_chat_messages(
         &self,
         user_id: &str,
@@ -524,7 +565,10 @@ pub trait StorageBackend: Send + Sync {
         created_at: f64,
     ) -> Result<BeeroomChatMessageRecord>;
     fn delete_beeroom_chat_messages(&self, user_id: &str, group_id: &str) -> Result<i64>;
+}
 
+/// External channel account and binding directory storage.
+pub trait ChannelDirectoryStore {
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()>;
     fn get_channel_account(
         &self,
@@ -537,11 +581,9 @@ pub trait StorageBackend: Send + Sync {
         status: Option<&str>,
     ) -> Result<Vec<ChannelAccountRecord>>;
     fn delete_channel_account(&self, channel: &str, account_id: &str) -> Result<i64>;
-
     fn upsert_channel_binding(&self, record: &ChannelBindingRecord) -> Result<()>;
     fn list_channel_bindings(&self, channel: Option<&str>) -> Result<Vec<ChannelBindingRecord>>;
     fn delete_channel_binding(&self, binding_id: &str) -> Result<i64>;
-
     fn upsert_channel_user_binding(&self, record: &ChannelUserBindingRecord) -> Result<()>;
     fn get_channel_user_binding(
         &self,
@@ -561,7 +603,10 @@ pub trait StorageBackend: Send + Sync {
         peer_kind: &str,
         peer_id: &str,
     ) -> Result<i64>;
+}
 
+/// External channel session, message, and outbox storage.
+pub trait ChannelRuntimeStore {
     fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()>;
     fn get_channel_session(
         &self,
@@ -580,7 +625,6 @@ pub trait StorageBackend: Send + Sync {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChannelSessionRecord>, i64)>;
-
     fn insert_channel_message(&self, record: &ChannelMessageRecord) -> Result<()>;
     fn list_channel_messages(
         &self,
@@ -601,7 +645,6 @@ pub trait StorageBackend: Send + Sync {
     fn delete_channel_sessions(&self, channel: &str, account_id: &str) -> Result<i64>;
     fn delete_channel_messages(&self, channel: &str, account_id: &str) -> Result<i64>;
     fn delete_channel_outbox(&self, channel: &str, account_id: &str) -> Result<i64>;
-
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()>;
     fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>>;
     fn list_pending_channel_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>>;
@@ -609,7 +652,10 @@ pub trait StorageBackend: Send + Sync {
         &self,
         params: UpdateChannelOutboxStatusParams<'_>,
     ) -> Result<()>;
+}
 
+/// Bridge center, route, delivery log, and audit log storage.
+pub trait BridgeStore {
     fn upsert_bridge_center(&self, record: &BridgeCenterRecord) -> Result<()>;
     fn get_bridge_center(&self, center_id: &str) -> Result<Option<BridgeCenterRecord>>;
     fn get_bridge_center_by_code(&self, code: &str) -> Result<Option<BridgeCenterRecord>>;
@@ -618,7 +664,6 @@ pub trait StorageBackend: Send + Sync {
         query: ListBridgeCentersQuery<'_>,
     ) -> Result<(Vec<BridgeCenterRecord>, i64)>;
     fn delete_bridge_center(&self, center_id: &str) -> Result<i64>;
-
     fn upsert_bridge_center_account(&self, record: &BridgeCenterAccountRecord) -> Result<()>;
     fn get_bridge_center_account(
         &self,
@@ -635,7 +680,6 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(Vec<BridgeCenterAccountRecord>, i64)>;
     fn delete_bridge_center_account(&self, center_account_id: &str) -> Result<i64>;
     fn delete_bridge_center_accounts_by_center(&self, center_id: &str) -> Result<i64>;
-
     fn upsert_bridge_user_route(&self, record: &BridgeUserRouteRecord) -> Result<()>;
     fn get_bridge_user_route(&self, route_id: &str) -> Result<Option<BridgeUserRouteRecord>>;
     fn get_bridge_user_route_by_identity(
@@ -650,7 +694,6 @@ pub trait StorageBackend: Send + Sync {
     fn delete_bridge_user_route(&self, route_id: &str) -> Result<i64>;
     fn delete_bridge_user_routes_by_center(&self, center_id: &str) -> Result<i64>;
     fn delete_bridge_user_routes_by_center_account(&self, center_account_id: &str) -> Result<i64>;
-
     fn insert_bridge_delivery_log(&self, record: &BridgeDeliveryLogRecord) -> Result<()>;
     fn list_bridge_delivery_logs(
         &self,
@@ -659,7 +702,6 @@ pub trait StorageBackend: Send + Sync {
     fn delete_bridge_delivery_logs_by_center(&self, center_id: &str) -> Result<i64>;
     fn delete_bridge_delivery_logs_by_center_account(&self, center_account_id: &str)
         -> Result<i64>;
-
     fn insert_bridge_route_audit_log(&self, record: &BridgeRouteAuditLogRecord) -> Result<()>;
     fn list_bridge_route_audit_logs(
         &self,
@@ -670,14 +712,15 @@ pub trait StorageBackend: Send + Sync {
         &self,
         center_account_id: &str,
     ) -> Result<i64>;
+}
 
+/// Gateway client, node, and node-token storage.
+pub trait GatewayStore {
     fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()>;
     fn list_gateway_clients(&self, status: Option<&str>) -> Result<Vec<GatewayClientRecord>>;
-
     fn upsert_gateway_node(&self, record: &GatewayNodeRecord) -> Result<()>;
     fn get_gateway_node(&self, node_id: &str) -> Result<Option<GatewayNodeRecord>>;
     fn list_gateway_nodes(&self, status: Option<&str>) -> Result<Vec<GatewayNodeRecord>>;
-
     fn upsert_gateway_node_token(&self, record: &GatewayNodeTokenRecord) -> Result<()>;
     fn get_gateway_node_token(&self, token: &str) -> Result<Option<GatewayNodeTokenRecord>>;
     fn list_gateway_node_tokens(
@@ -686,14 +729,19 @@ pub trait StorageBackend: Send + Sync {
         status: Option<&str>,
     ) -> Result<Vec<GatewayNodeTokenRecord>>;
     fn delete_gateway_node_token(&self, token: &str) -> Result<i64>;
+}
 
+/// Media asset and speech job storage.
+pub trait MediaStore {
     fn upsert_media_asset(&self, record: &MediaAssetRecord) -> Result<()>;
     fn get_media_asset(&self, asset_id: &str) -> Result<Option<MediaAssetRecord>>;
     fn get_media_asset_by_hash(&self, hash: &str) -> Result<Option<MediaAssetRecord>>;
-
     fn upsert_speech_job(&self, record: &SpeechJobRecord) -> Result<()>;
     fn list_pending_speech_jobs(&self, job_type: &str, limit: i64) -> Result<Vec<SpeechJobRecord>>;
+}
 
+/// Session run storage.
+pub trait SessionRunStore {
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
     fn list_session_runs_by_session(
@@ -714,7 +762,10 @@ pub trait StorageBackend: Send + Sync {
         dispatch_id: &str,
         limit: i64,
     ) -> Result<Vec<SessionRunRecord>>;
+}
 
+/// Cron job leasing and run history storage.
+pub trait CronStore {
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()>;
     fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>>;
     fn get_cron_job_by_dedupe_key(
@@ -747,7 +798,10 @@ pub trait StorageBackend: Send + Sync {
     fn list_cron_runs(&self, user_id: &str, job_id: &str, limit: i64)
         -> Result<Vec<CronRunRecord>>;
     fn get_next_cron_run_at(&self, now: f64) -> Result<Option<f64>>;
+}
 
+/// Agent directory, hive, team run, and team task storage.
+pub trait AgentDirectoryStore {
     fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>>;
     fn set_user_tool_access(
         &self,
@@ -772,7 +826,6 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Vec<UserAgentRecord>>;
     fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>>;
     fn delete_user_agent(&self, user_id: &str, agent_id: &str) -> Result<i64>;
-
     fn upsert_hive(&self, record: &HiveRecord) -> Result<()>;
     fn get_hive(&self, user_id: &str, hive_id: &str) -> Result<Option<HiveRecord>>;
     fn list_hives(&self, user_id: &str, include_archived: bool) -> Result<Vec<HiveRecord>>;
@@ -783,7 +836,6 @@ pub trait StorageBackend: Send + Sync {
         hive_id: &str,
         agent_ids: &[String],
     ) -> Result<i64>;
-
     fn upsert_team_run(&self, record: &TeamRunRecord) -> Result<()>;
     fn delete_team_runs_by_hive(&self, user_id: &str, hive_id: &str) -> Result<i64>;
     fn get_team_run(&self, team_run_id: &str) -> Result<Option<TeamRunRecord>>;
@@ -804,7 +856,10 @@ pub trait StorageBackend: Send + Sync {
     fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()>;
     fn list_team_tasks(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
     fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>>;
+}
 
+/// User token balance accounting storage.
+pub trait TokenBalanceStore {
     fn prepare_user_token_balance(
         &self,
         user_id: &str,
@@ -826,6 +881,70 @@ pub trait StorageBackend: Send + Sync {
         amount: i64,
         updated_at: f64,
     ) -> Result<Option<UserTokenBalanceStatus>>;
+}
+
+/// Complete storage surface kept for existing runtime call paths.
+pub trait StorageBackend:
+    StorageLifecycle
+    + MetaStore
+    + ConversationLogStore
+    + LogStatsStore
+    + MonitorStore
+    + SessionLockStore
+    + AgentRuntimeStore
+    + VectorDocumentStore
+    + MemoryRecordStore
+    + BenchmarkStore
+    + RetentionStore
+    + UserAccountStore
+    + ChatSessionStore
+    + SessionGoalStore
+    + UserWorldStore
+    + BeeroomStore
+    + ChannelDirectoryStore
+    + ChannelRuntimeStore
+    + BridgeStore
+    + GatewayStore
+    + MediaStore
+    + SessionRunStore
+    + CronStore
+    + AgentDirectoryStore
+    + TokenBalanceStore
+    + Send
+    + Sync
+{
+}
+
+impl<T> StorageBackend for T where
+    T: ?Sized
+        + StorageLifecycle
+        + MetaStore
+        + ConversationLogStore
+        + LogStatsStore
+        + MonitorStore
+        + SessionLockStore
+        + AgentRuntimeStore
+        + VectorDocumentStore
+        + MemoryRecordStore
+        + BenchmarkStore
+        + RetentionStore
+        + UserAccountStore
+        + ChatSessionStore
+        + SessionGoalStore
+        + UserWorldStore
+        + BeeroomStore
+        + ChannelDirectoryStore
+        + ChannelRuntimeStore
+        + BridgeStore
+        + GatewayStore
+        + MediaStore
+        + SessionRunStore
+        + CronStore
+        + AgentDirectoryStore
+        + TokenBalanceStore
+        + Send
+        + Sync
+{
 }
 
 // Helper for sorting monitor session records by updated_time.

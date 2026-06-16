@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::StorageBackend;
+use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, TransactionBehavior};

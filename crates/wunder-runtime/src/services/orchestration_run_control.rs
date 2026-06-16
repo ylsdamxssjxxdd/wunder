@@ -1,3 +1,4 @@
+use crate::core::long_task;
 use crate::services::orchestration_context::{
     load_hive_state, load_round_state, load_session_context, OrchestrationSessionContext,
 };
@@ -242,17 +243,20 @@ fn emit_team_event(
             "data": payload.clone(),
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
-        tokio::spawn(async move {
-            if let Err(err) = stream_events
-                .append_event(&session_id, &user_id, stream_payload)
-                .await
-            {
-                warn!(
+        long_task::spawn(
+            "services.orchestration_run_control.append_stream_event",
+            async move {
+                if let Err(err) = stream_events
+                    .append_event(&session_id, &user_id, stream_payload)
+                    .await
+                {
+                    warn!(
                     "append team stream event failed: session_id={}, event_type={}, error={err}",
                     session_id, event_name
                 );
-            }
-        });
+                }
+            },
+        );
     }
 
     let cleaned_hive = hive_id.trim();
@@ -263,11 +267,14 @@ fn emit_team_event(
     let user_id = cleaned_user.to_string();
     let hive_id = cleaned_hive.to_string();
     let event_name = cleaned_event.to_string();
-    tokio::spawn(async move {
-        realtime
-            .publish_group_event(&user_id, &hive_id, &event_name, payload)
-            .await;
-    });
+    long_task::spawn(
+        "services.orchestration_run_control.publish_realtime_event",
+        async move {
+            realtime
+                .publish_group_event(&user_id, &hive_id, &event_name, payload)
+                .await;
+        },
+    );
 }
 
 fn now_ts() -> f64 {
@@ -281,7 +288,7 @@ mod tests {
         persist_hive_state, persist_round_state, persist_session_context, OrchestrationHiveState,
         OrchestrationRoundRecord, OrchestrationRoundState, ORCHESTRATION_MODE,
     };
-    use crate::storage::{ChatSessionRecord, SqliteStorage, StorageBackend};
+    use crate::storage::*;
     use serde_json::json;
     use tempfile::tempdir;
 

@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::StorageBackend;
+use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use std::collections::HashMap;
 

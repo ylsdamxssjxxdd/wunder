@@ -1,5 +1,6 @@
 use super::thread_runtime::{thread_closed_payload, thread_not_loaded_payload};
 use super::*;
+use crate::core::long_task;
 
 pub(super) enum StreamSignal {
     Event(StreamEvent),
@@ -456,7 +457,7 @@ impl Orchestrator {
     ) {
         let storage = self.storage.clone();
         let thread_runtime = self.thread_runtime.clone();
-        tokio::spawn(async move {
+        long_task::spawn("orchestrator.stream_pump", async move {
             let mut last_event_id: i64 = start_event_id.max(0);
             let mut closed = false;
             let mut client_open = true;
@@ -660,8 +661,13 @@ async fn load_overflow_events(
     }
     let after_event_id = after_event_id.max(0);
     let session_id_for_log = session_id.clone();
-    match tokio::task::spawn_blocking(move || {
-        load_overflow_events_inner(storage.as_ref(), &session_id, after_event_id, limit)
+    match crate::core::blocking::run_db("orchestrator.event_stream.overflow_load", move || {
+        Ok(load_overflow_events_inner(
+            storage.as_ref(),
+            &session_id,
+            after_event_id,
+            limit,
+        ))
     })
     .await
     {

@@ -11,6 +11,7 @@ use super::{
     MIN_READ_OUTPUT_BUDGET_BYTES,
 };
 use crate::core::atomic_write::atomic_write_text;
+use crate::core::blocking;
 use crate::i18n;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use crate::workspace::WorkspaceManager;
@@ -56,7 +57,7 @@ pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Resul
     let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
     let path = raw_path.to_string();
-    tokio::task::spawn_blocking(move || {
+    blocking::run_fs("tools.file.list", move || {
         list_files_inner(
             workspace.as_ref(),
             &user_id,
@@ -68,7 +69,6 @@ pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Resul
         )
     })
     .await
-    .map_err(|err| anyhow!(err.to_string()))?
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -793,7 +793,7 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
     let workspace = context.workspace.clone();
     let extra_roots = collect_read_roots(context);
     let budget_for_task = read_budget;
-    let result = tokio::task::spawn_blocking(move || {
+    let result = blocking::run_fs("tools.file.read", move || {
         read_files_inner(
             workspace.as_ref(),
             &user_id,
@@ -805,8 +805,7 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
             budget_file_limit_hit,
         )
     })
-    .await
-    .map_err(|err| anyhow!(err.to_string()))?;
+    .await;
     if result.is_ok() && context.config.lsp.enabled && !dry_run {
         for spec in specs_for_lsp {
             if let Ok(target) = context
@@ -1335,7 +1334,7 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     let user_id = context.workspace_id.to_string();
     let path_for_write = path.clone();
     let allow_roots = collect_orchestration_aware_allow_roots(context);
-    let write_outcome = tokio::task::spawn_blocking(move || {
+    let write_outcome = blocking::run_fs("tools.file.write", move || {
         let target =
             resolve_tool_path(workspace.as_ref(), &user_id, &path_for_write, &allow_roots)?;
         if target.exists() && target.is_dir() {
@@ -1373,11 +1372,10 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
             previous_bytes,
         })
     })
-    .await
-    .map_err(|err| anyhow!(err.to_string()));
+    .await;
     let write_outcome = match write_outcome {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(err)) | Err(err) => {
+        Ok(outcome) => outcome,
+        Err(err) => {
             return Ok(build_failed_tool_result(
                 format!("写入文件失败：{err}"),
                 json!({

@@ -1,3 +1,4 @@
+use crate::core::long_task;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator_constants::OBSERVATION_PREFIX;
@@ -845,7 +846,7 @@ fn schedule_parent_auto_wake(
             return;
         }
     };
-    tokio::spawn(async move {
+    long_task::spawn("services.subagents.parent_auto_wake", async move {
         wait_parent_session_unlock(storage.clone(), &user_id, &parent_session_id).await;
         match parent_session_blocks_auto_wake(
             storage.as_ref(),
@@ -1768,7 +1769,7 @@ mod tests {
         parent_session_blocks_auto_wake, suppress_auto_wake_from_wait_result,
         suppress_auto_wake_from_wait_result_with_parent, ParentSubagentListOptions,
     };
-    use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
+    use crate::storage::*;
     use serde_json::{json, Value};
     use tempfile::tempdir;
 

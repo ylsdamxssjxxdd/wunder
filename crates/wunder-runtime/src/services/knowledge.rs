@@ -1,5 +1,6 @@
 // 知识库模块：解析 Markdown、缓存章节，并支持 LLM + 词面回退检索。
 use crate::config::{Config, KnowledgeBaseConfig, LlmModelConfig};
+use crate::core::blocking;
 use crate::i18n;
 use crate::llm::{build_llm_client, is_llm_configured, is_llm_model, ChatMessage};
 use anyhow::Result;
@@ -378,9 +379,11 @@ async fn load_sections(root: &str) -> Vec<KnowledgeSection> {
     if !root_path.exists() || !root_path.is_dir() {
         return Vec::new();
     }
-    tokio::task::spawn_blocking(move || load_knowledge_sections(&root_path))
-        .await
-        .unwrap_or_default()
+    blocking::run_fs("services.knowledge.load_sections", move || {
+        Ok(load_knowledge_sections(&root_path))
+    })
+    .await
+    .unwrap_or_default()
 }
 
 fn load_knowledge_sections(root: &Path) -> Vec<KnowledgeSection> {

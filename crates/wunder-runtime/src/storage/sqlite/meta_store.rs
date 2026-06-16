@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::StorageBackend;
+use crate::storage::*;
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 
@@ -71,7 +71,7 @@ impl SqliteMetaStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::StorageBackend;
+    use crate::storage::*;
     use tempfile::tempdir;
 
     #[test]

@@ -5,6 +5,7 @@ use crate::channels::pending_files::{
 };
 use crate::channels::types::ChannelMessage;
 use crate::config::Config;
+use crate::core::blocking;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
     ChannelSessionRecord, ChatSessionRecord, ListChannelUserBindingsQuery,
@@ -15,6 +16,14 @@ use chrono::{Local, Utc};
 use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
+
+async fn run_channel_db<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
+}
 
 impl ChannelHub {
     pub(super) async fn load_channel_account(
@@ -33,11 +42,10 @@ impl ChannelHub {
         let account_key = account_id.to_string();
         let channel_lookup = channel_key.clone();
         let account_lookup = account_key.clone();
-        let record = tokio::task::spawn_blocking(move || {
+        let record = run_channel_db("channels.persistence.load_channel_account", move || {
             storage.get_channel_account(&channel_lookup, &account_lookup)
         })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        .await?;
         if let Some(record) = record {
             if record.status.trim().to_lowercase() != "active" {
                 return Err(anyhow!("channel account disabled"));
@@ -64,9 +72,10 @@ impl ChannelHub {
     ) -> Result<Vec<ChannelBindingRecord>> {
         let storage = self.storage.clone();
         let channel = channel.map(|value| value.to_string());
-        tokio::task::spawn_blocking(move || storage.list_channel_bindings(channel.as_deref()))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.list_channel_bindings", move || {
+            storage.list_channel_bindings(channel.as_deref())
+        })
+        .await
     }
 
     pub(super) async fn get_channel_user_binding(
@@ -81,7 +90,7 @@ impl ChannelHub {
         let account_id = account_id.to_string();
         let peer_kinds = equivalent_peer_kinds(peer_kind);
         let peer_id = peer_id.to_string();
-        tokio::task::spawn_blocking(move || {
+        run_channel_db("channels.persistence.get_channel_user_binding", move || {
             let mut peer_ids = vec![peer_id.clone()];
             if !peer_ids
                 .iter()
@@ -104,7 +113,6 @@ impl ChannelHub {
             Ok(None)
         })
         .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
     pub(super) async fn get_channel_account_owner(
@@ -115,24 +123,26 @@ impl ChannelHub {
         let storage = self.storage.clone();
         let channel = channel.to_string();
         let account_id = account_id.to_string();
-        tokio::task::spawn_blocking(move || {
-            let (records, _) =
-                storage.list_channel_user_bindings(ListChannelUserBindingsQuery {
-                    channel: Some(channel.as_str()),
-                    account_id: Some(account_id.as_str()),
-                    peer_kind: None,
-                    peer_id: None,
-                    user_id: None,
-                    offset: 0,
-                    limit: 1,
-                })?;
-            Ok(records
-                .first()
-                .map(|record| record.user_id.trim().to_string())
-                .filter(|value| !value.is_empty()))
-        })
+        run_channel_db(
+            "channels.persistence.get_channel_account_owner",
+            move || {
+                let (records, _) =
+                    storage.list_channel_user_bindings(ListChannelUserBindingsQuery {
+                        channel: Some(channel.as_str()),
+                        account_id: Some(account_id.as_str()),
+                        peer_kind: None,
+                        peer_id: None,
+                        user_id: None,
+                        offset: 0,
+                        limit: 1,
+                    })?;
+                Ok(records
+                    .first()
+                    .map(|record| record.user_id.trim().to_string())
+                    .filter(|value| !value.is_empty()))
+            },
+        )
         .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
     pub(super) async fn append_channel_chat(
@@ -193,9 +203,11 @@ impl ChannelHub {
         }
         let storage = self.storage.clone();
         let user_id = cleaned_user.to_string();
-        let outcome = tokio::task::spawn_blocking(move || storage.append_chat(&user_id, &payload))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)));
+        let outcome = run_channel_db(
+            "channels.persistence.append_channel_chat_history",
+            move || storage.append_chat(&user_id, &payload),
+        )
+        .await;
         if let Err(err) = outcome {
             warn!(
                 "append channel chat history failed: user_id={}, session_id={}, role={}, error={err}",
@@ -259,11 +271,11 @@ impl ChannelHub {
         let user_id = cleaned_user.to_string();
         let session_id = cleaned_session.to_string();
         let now = now_ts();
-        let outcome = tokio::task::spawn_blocking(move || {
-            user_store.touch_chat_session(&user_id, &session_id, now, now)
-        })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)));
+        let outcome = run_channel_db(
+            "channels.persistence.touch_chat_session_activity",
+            move || user_store.touch_chat_session(&user_id, &session_id, now, now),
+        )
+        .await;
         if let Err(err) = outcome {
             warn!(
                 "touch channel chat session failed: user_id={}, session_id={}, error={err}",
@@ -285,11 +297,10 @@ impl ChannelHub {
         let storage = self.storage.clone();
         let user_id = cleaned_user.to_string();
         let session_id = cleaned_session.to_string();
-        let history = tokio::task::spawn_blocking(move || {
+        let history = run_channel_db("channels.persistence.load_latest_user_message", move || {
             storage.load_chat_history(&user_id, &session_id, Some(20))
         })
         .await
-        .ok()?
         .ok()?;
         for item in history {
             let role = item.get("role").and_then(Value::as_str).unwrap_or("");
@@ -316,11 +327,11 @@ impl ChannelHub {
         let storage = self.storage.clone();
         let user_id = cleaned_user.to_string();
         let session_id = cleaned_session.to_string();
-        let history = tokio::task::spawn_blocking(move || {
-            storage.load_chat_history(&user_id, &session_id, Some(20))
-        })
+        let history = run_channel_db(
+            "channels.persistence.load_latest_assistant_message",
+            move || storage.load_chat_history(&user_id, &session_id, Some(20)),
+        )
         .await
-        .ok()?
         .ok()?;
         for item in history.iter().rev() {
             let role = item.get("role").and_then(Value::as_str).unwrap_or("");
@@ -351,7 +362,7 @@ impl ChannelHub {
         let peer_kinds = equivalent_peer_kinds(peer_kind);
         let peer_id = peer_id.to_string();
         let thread_id = thread_id.map(str::to_string);
-        tokio::task::spawn_blocking(move || {
+        run_channel_db("channels.persistence.get_channel_session", move || {
             for candidate_kind in &peer_kinds {
                 if let Some(record) = storage.get_channel_session(
                     &channel,
@@ -366,7 +377,6 @@ impl ChannelHub {
             Ok(None)
         })
         .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
     pub(super) async fn load_pending_channel_files(
@@ -419,25 +429,28 @@ impl ChannelHub {
         let user_store = self.user_store.clone();
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
-        tokio::task::spawn_blocking(move || user_store.get_chat_session(&user_id, &session_id))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.get_chat_session", move || {
+            user_store.get_chat_session(&user_id, &session_id)
+        })
+        .await
     }
 
     pub(super) async fn upsert_channel_session(&self, record: &ChannelSessionRecord) -> Result<()> {
         let storage = self.storage.clone();
         let record = record.clone();
-        tokio::task::spawn_blocking(move || storage.upsert_channel_session(&record))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.upsert_channel_session", move || {
+            storage.upsert_channel_session(&record)
+        })
+        .await
     }
 
     pub(super) async fn save_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {
         let user_store = self.user_store.clone();
         let record = record.clone();
-        tokio::task::spawn_blocking(move || user_store.upsert_chat_session(&record))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.save_chat_session", move || {
+            user_store.upsert_chat_session(&record)
+        })
+        .await
     }
 
     pub(super) async fn save_media_asset(
@@ -457,9 +470,10 @@ impl ChannelHub {
             source: Some(format!("{channel}:{account_id}")),
             created_at: now_ts(),
         };
-        tokio::task::spawn_blocking(move || storage.upsert_media_asset(&record))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.save_media_asset", move || {
+            storage.upsert_media_asset(&record)
+        })
+        .await
     }
 
     pub(super) async fn insert_channel_message(
@@ -483,32 +497,36 @@ impl ChannelHub {
             created_at: now_ts(),
         };
         let storage = self.storage.clone();
-        tokio::task::spawn_blocking(move || storage.insert_channel_message(&record))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.insert_channel_message", move || {
+            storage.insert_channel_message(&record)
+        })
+        .await
     }
 
     pub(super) async fn insert_outbox(&self, record: &ChannelOutboxRecord) -> Result<()> {
         let storage = self.storage.clone();
         let record = record.clone();
-        tokio::task::spawn_blocking(move || storage.enqueue_channel_outbox(&record))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.insert_outbox", move || {
+            storage.enqueue_channel_outbox(&record)
+        })
+        .await
     }
 
     pub(super) async fn get_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>> {
         let storage = self.storage.clone();
         let outbox_id = outbox_id.to_string();
-        tokio::task::spawn_blocking(move || storage.get_channel_outbox(&outbox_id))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.get_outbox", move || {
+            storage.get_channel_outbox(&outbox_id)
+        })
+        .await
     }
 
     pub(super) async fn list_pending_outbox(&self, limit: i64) -> Result<Vec<ChannelOutboxRecord>> {
         let storage = self.storage.clone();
-        tokio::task::spawn_blocking(move || storage.list_pending_channel_outbox(limit))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.list_pending_outbox", move || {
+            storage.list_pending_channel_outbox(limit)
+        })
+        .await
     }
 
     pub(super) async fn set_outbox_status(
@@ -523,7 +541,7 @@ impl ChannelHub {
         let retry_at = params.retry_at;
         let delivered_at = params.delivered_at;
         let updated_at = params.updated_at;
-        tokio::task::spawn_blocking(move || {
+        run_channel_db("channels.persistence.set_outbox_status", move || {
             storage.update_channel_outbox_status(UpdateChannelOutboxStatusParams {
                 outbox_id: &outbox_id,
                 status: &status,
@@ -535,14 +553,14 @@ impl ChannelHub {
             })
         })
         .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
     pub(super) async fn get_agent(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
         let user_store = self.user_store.clone();
         let agent_id = agent_id.to_string();
-        tokio::task::spawn_blocking(move || user_store.get_user_agent_by_id(&agent_id))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        run_channel_db("channels.persistence.get_agent", move || {
+            user_store.get_user_agent_by_id(&agent_id)
+        })
+        .await
     }
 }

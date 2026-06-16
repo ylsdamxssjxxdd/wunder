@@ -2,6 +2,7 @@ use super::{
     error_response, format_ts, is_session_runtime_active, is_session_stream_active_or_queued,
 };
 use crate::api::user_context::resolve_user;
+use crate::core::blocking;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_FETCH_LIMIT;
 use crate::state::AppState;
@@ -92,11 +93,11 @@ async fn get_session_events(
     let last_event_id = {
         let storage = state.storage.clone();
         let session_id = session_id.clone();
-        tokio::task::spawn_blocking(move || storage.get_max_stream_event_id(&session_id))
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .unwrap_or(0)
+        blocking::run_db("api.chat.events.tail", move || {
+            storage.get_max_stream_event_id(&session_id)
+        })
+        .await
+        .unwrap_or(0)
     };
     Ok(Json(json!({
         "data": {
@@ -199,8 +200,8 @@ async fn load_session_stream_events(
     }
     let workspace = state.workspace.clone();
     let normalized_limit = normalize_session_events_limit(Some(limit));
-    tokio::task::spawn_blocking(move || {
-        if normalized_limit <= 0 {
+    blocking::run_fs("api.chat.events.load_stream", move || {
+        let records = if normalized_limit <= 0 {
             let mut after_event_id = 0;
             let mut records = Vec::new();
             let batch_limit = STREAM_EVENT_FETCH_LIMIT.max(1);
@@ -226,9 +227,11 @@ async fn load_session_stream_events(
                     break;
                 }
             }
-            return records;
-        }
-        workspace.load_recent_stream_events(&cleaned_session_id, normalized_limit)
+            records
+        } else {
+            workspace.load_recent_stream_events(&cleaned_session_id, normalized_limit)
+        };
+        Ok(records)
     })
     .await
     .unwrap_or_default()

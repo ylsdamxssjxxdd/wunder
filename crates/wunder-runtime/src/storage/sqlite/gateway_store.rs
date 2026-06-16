@@ -1,6 +1,6 @@
 use super::SqliteStorage;
 use crate::storage::{
-    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, StorageBackend,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, StorageLifecycle,
 };
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;

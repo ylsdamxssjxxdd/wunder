@@ -350,6 +350,31 @@
                     暂无工具调用
                   </div>
                 </div>
+                <div class="monitor-block monitor-block-runtime">
+                  <div class="monitor-block-title">
+                    <i class="fa-solid fa-gauge-high"></i>
+                    <span data-i18n="monitor.runtime.title">运行时边界</span>
+                    <span id="runtimeMetricsAlertBadge" class="monitor-status runtime-alert-badge">-</span>
+                  </div>
+                  <div class="runtime-metrics-grid">
+                    <div class="runtime-metric-card">
+                      <div class="stat-label" data-i18n="monitor.runtime.blocking">阻塞执行</div>
+                      <div id="runtimeBlockingSummary" class="stat-value">-</div>
+                      <div id="runtimeBlockingDetail" class="monitor-subtext"></div>
+                    </div>
+                    <div class="runtime-metric-card">
+                      <div class="stat-label" data-i18n="monitor.runtime.queue">有界队列</div>
+                      <div id="runtimeQueueSummary" class="stat-value">-</div>
+                      <div id="runtimeQueueDetail" class="monitor-subtext"></div>
+                    </div>
+                    <div class="runtime-metric-card">
+                      <div class="stat-label" data-i18n="monitor.runtime.longTask">长任务</div>
+                      <div id="runtimeLongTaskSummary" class="stat-value">-</div>
+                      <div id="runtimeLongTaskDetail" class="monitor-subtext"></div>
+                    </div>
+                  </div>
+                  <div id="runtimeMetricsAlerts" class="runtime-alert-list"></div>
+                </div>
               <div class="monitor-block monitor-block-token">
                 <div id="serviceTokenTitle" class="monitor-block-title" data-i18n="monitor.chart.tokenTrend.default">
                   近 3 小时 Token 总消耗趋势

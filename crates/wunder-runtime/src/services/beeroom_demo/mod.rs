@@ -1,4 +1,4 @@
-use crate::core::schemas::WunderRequest;
+use crate::core::{long_task, schemas::WunderRequest};
 use crate::services::swarm::beeroom::{
     claim_mother_agent, get_mother_agent_id, resolve_or_create_agent_main_session,
     set_mother_agent, snapshot_team_run,
@@ -291,7 +291,7 @@ pub async fn start_demo_run(
 
     let run_state = state.clone();
     let run_control = control.clone();
-    tokio::spawn(async move {
+    long_task::spawn("services.beeroom_demo.execute_run", async move {
         execute_demo_run(run_state, run_control, plan).await;
     });
     Ok(control.snapshot())
@@ -830,7 +830,7 @@ async fn start_mock_llm_server(
         .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let handle = tokio::spawn(async move {
+    let handle = long_task::spawn("services.beeroom_demo.mock_llm_server", async move {
         if let Err(err) = axum::serve(listener, app).await {
             eprintln!("[beeroom_demo] mock llm server failed: {err}");
         }
@@ -1245,7 +1245,7 @@ mod tests {
         normalize_hive_id, resolve_worker_count, DemoWorkerPlan, MockScenario, MOTHER_MARKER,
         OBS_PREFIX,
     };
-    use crate::storage::{SqliteStorage, StorageBackend, UserAgentRecord, DEFAULT_HIVE_ID};
+    use crate::storage::*;
     use crate::tools::resolve_tool_name;
     use serde_json::{json, Value};
     use tempfile::tempdir;

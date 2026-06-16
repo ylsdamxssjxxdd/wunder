@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{ChatSessionRecord, StorageBackend};
+use crate::storage::{ChatSessionRecord, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, OptionalExtension};

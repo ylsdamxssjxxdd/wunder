@@ -2,7 +2,7 @@ use crate::api::admin::error_response;
 use crate::config::{
     normalize_knowledge_base_type, Config, KnowledgeBaseConfig, KnowledgeBaseType,
 };
-use crate::core::repo_assets;
+use crate::core::{bounded_queue, long_task, repo_assets};
 use crate::i18n;
 use crate::knowledge;
 use crate::llm;
@@ -27,10 +27,10 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
-use tracing::info;
+use tracing::{info, warn};
 
 mod file_admin;
 
@@ -530,13 +530,37 @@ async fn admin_knowledge_chunks(
 }
 
 type AdminKnowledgeTestEvent = (String, Value);
+const ADMIN_KNOWLEDGE_TEST_EVENT_QUEUE_CAPACITY: usize = 128;
+const ADMIN_KNOWLEDGE_TEST_EVENT_SEND_TIMEOUT_MS: u64 = 250;
 
 fn send_admin_knowledge_test_event(
-    sender: &UnboundedSender<AdminKnowledgeTestEvent>,
+    sender: &mpsc::Sender<AdminKnowledgeTestEvent>,
     event_type: &str,
     payload: Value,
 ) {
-    let _ = sender.send((event_type.to_string(), payload));
+    if let Err(err) = sender.try_send((event_type.to_string(), payload)) {
+        warn!(
+            queue.name = "admin.knowledge.test.stream",
+            "admin knowledge test event dropped: {err}"
+        );
+    }
+}
+
+async fn enqueue_admin_knowledge_test_event(
+    sender: &mpsc::Sender<AdminKnowledgeTestEvent>,
+    event_type: &str,
+    payload: Value,
+) {
+    if let Err(err) = bounded_queue::enqueue_with_timeout(
+        "admin.knowledge.test.stream",
+        sender,
+        (event_type.to_string(), payload),
+        ADMIN_KNOWLEDGE_TEST_EVENT_SEND_TIMEOUT_MS,
+    )
+    .await
+    {
+        warn!("admin knowledge test event enqueue failed: {err}");
+    }
 }
 
 fn build_admin_vector_knowledge_test_hits(
@@ -622,8 +646,9 @@ async fn admin_knowledge_test_stream(
     let base = resolve_knowledge_base(&config, base_name)?;
     let query = query.to_string();
 
-    let (event_tx, event_rx) = unbounded_channel::<AdminKnowledgeTestEvent>();
-    tokio::spawn(async move {
+    let (event_tx, event_rx) =
+        mpsc::channel::<AdminKnowledgeTestEvent>(ADMIN_KNOWLEDGE_TEST_EVENT_QUEUE_CAPACITY);
+    long_task::spawn("api.admin.knowledge.test_stream", async move {
         let outcome = async {
             if base.is_vector() {
                 let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
@@ -633,7 +658,7 @@ async fn admin_knowledge_test_stream(
                 let effective_top_k = top_k
                     .filter(|value| *value > 0)
                     .unwrap_or_else(|| vector_knowledge::resolve_top_k(&base));
-                send_admin_knowledge_test_event(
+                enqueue_admin_knowledge_test_event(
                     &event_tx,
                     "request",
                     json!({
@@ -643,7 +668,8 @@ async fn admin_knowledge_test_stream(
                         "embedding_model": embedding_name,
                         "top_k": effective_top_k,
                     }),
-                );
+                )
+                .await;
                 let vectors = llm::embed_texts(&embed_config, &[query.clone()], timeout_s).await?;
                 let vector = vectors
                     .first()
@@ -665,7 +691,7 @@ async fn admin_knowledge_test_stream(
                 if hits.len() > effective_top_k {
                     hits.truncate(effective_top_k);
                 }
-                send_admin_knowledge_test_event(
+                enqueue_admin_knowledge_test_event(
                     &event_tx,
                     "complete",
                     json!({
@@ -675,14 +701,15 @@ async fn admin_knowledge_test_stream(
                         "top_k": effective_top_k,
                         "hits": build_admin_vector_knowledge_test_hits(hits),
                     }),
-                );
+                )
+                .await;
                 return Ok::<(), anyhow::Error>(());
             }
             if base.is_ragflow() {
                 let effective_top_k = top_k
                     .filter(|value| *value > 0)
                     .unwrap_or_else(|| ragflow_knowledge::resolve_top_k(&base));
-                send_admin_knowledge_test_event(
+                enqueue_admin_knowledge_test_event(
                     &event_tx,
                     "request",
                     json!({
@@ -692,10 +719,11 @@ async fn admin_knowledge_test_stream(
                         "embedding_model": "ragflow",
                         "top_k": effective_top_k,
                     }),
-                );
+                )
+                .await;
                 let hits =
                     ragflow_knowledge::retrieve(&config, &base, &query, effective_top_k).await?;
-                send_admin_knowledge_test_event(
+                enqueue_admin_knowledge_test_event(
                     &event_tx,
                     "complete",
                     json!({
@@ -705,7 +733,8 @@ async fn admin_knowledge_test_stream(
                         "top_k": effective_top_k,
                         "hits": build_admin_ragflow_knowledge_test_hits(hits),
                     }),
-                );
+                )
+                .await;
                 return Ok::<(), anyhow::Error>(());
             }
 
@@ -726,25 +755,27 @@ async fn admin_knowledge_test_stream(
                     let delta_sender = delta_sender.clone();
                     async move {
                         if !reasoning_delta.is_empty() {
-                            send_admin_knowledge_test_event(
+                            enqueue_admin_knowledge_test_event(
                                 &delta_sender,
                                 "reasoning",
                                 json!({ "delta": reasoning_delta }),
-                            );
+                            )
+                            .await;
                         }
                         if !content_delta.is_empty() {
-                            send_admin_knowledge_test_event(
+                            enqueue_admin_knowledge_test_event(
                                 &delta_sender,
                                 "output",
                                 json!({ "delta": content_delta }),
-                            );
+                            )
+                            .await;
                         }
                         Ok::<(), anyhow::Error>(())
                     }
                 },
             )
             .await?;
-            send_admin_knowledge_test_event(
+            enqueue_admin_knowledge_test_event(
                 &event_tx,
                 "complete",
                 json!({
@@ -754,21 +785,23 @@ async fn admin_knowledge_test_stream(
                     "reasoning": reasoning,
                     "hits": build_admin_literal_knowledge_test_hits(docs),
                 }),
-            );
+            )
+            .await;
             Ok::<(), anyhow::Error>(())
         }
         .await;
 
         if let Err(err) = outcome {
-            send_admin_knowledge_test_event(
+            enqueue_admin_knowledge_test_event(
                 &event_tx,
                 "error",
                 json!({ "message": err.to_string() }),
-            );
+            )
+            .await;
         }
     });
 
-    let stream = UnboundedReceiverStream::new(event_rx).map(|(event_type, payload)| {
+    let stream = ReceiverStream::new(event_rx).map(|(event_type, payload)| {
         Ok::<Event, Infallible>(Event::default().event(event_type).data(payload.to_string()))
     });
     let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)));

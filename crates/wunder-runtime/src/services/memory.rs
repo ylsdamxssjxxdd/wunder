@@ -1,4 +1,5 @@
 // 长期记忆存储：基于持久化存储封装读写与提示构建。
+use crate::core::blocking;
 use crate::i18n;
 use crate::storage::{StorageBackend, UpsertMemoryTaskLogParams};
 use chrono::{Datelike, Local, TimeZone, Timelike};
@@ -11,6 +12,14 @@ use tracing::{error, warn};
 
 const DEFAULT_MAX_RECORDS: i64 = 30;
 const DEFAULT_AGENT_MEMORY_SCOPE: &str = "__default__";
+
+async fn run_memory_db<T, F>(label: &'static str, task: F) -> anyhow::Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryRecord {
@@ -124,12 +133,12 @@ impl MemoryStore {
         let user_id = user_id.to_string();
         let storage = self.storage.clone();
         let max_records = self.max_records;
-        tokio::task::spawn_blocking(move || {
+        run_memory_db("memory.is_enabled", move || {
             let store = MemoryStore {
                 storage,
                 max_records,
             };
-            store.is_enabled(&user_id)
+            Ok(store.is_enabled(&user_id))
         })
         .await
         .unwrap_or_else(|err| {
@@ -238,12 +247,12 @@ impl MemoryStore {
         let user_id = user_id.to_string();
         let storage = self.storage.clone();
         let max_records = self.max_records;
-        tokio::task::spawn_blocking(move || {
+        run_memory_db("memory.list_records", move || {
             let store = MemoryStore {
                 storage,
                 max_records,
             };
-            store.list_records(&user_id, limit, order_desc)
+            Ok(store.list_records(&user_id, limit, order_desc))
         })
         .await
         .unwrap_or_else(|err| {
@@ -263,12 +272,12 @@ impl MemoryStore {
     pub async fn list_task_logs_async(&self, limit: Option<i64>) -> Vec<HashMap<String, Value>> {
         let storage = self.storage.clone();
         let max_records = self.max_records;
-        tokio::task::spawn_blocking(move || {
+        run_memory_db("memory.list_task_logs", move || {
             let store = MemoryStore {
                 storage,
                 max_records,
             };
-            store.list_task_logs(limit)
+            Ok(store.list_task_logs(limit))
         })
         .await
         .unwrap_or_else(|err| {
@@ -317,12 +326,12 @@ impl MemoryStore {
         let task_id = task_id.to_string();
         let storage = self.storage.clone();
         let max_records = self.max_records;
-        tokio::task::spawn_blocking(move || {
+        run_memory_db("memory.get_task_log", move || {
             let store = MemoryStore {
                 storage,
                 max_records,
             };
-            store.get_task_log(&task_id)
+            Ok(store.get_task_log(&task_id))
         })
         .await
         .unwrap_or_else(|err| {
@@ -355,7 +364,7 @@ impl MemoryStore {
         let updated_time = params.updated_time;
         let storage = self.storage.clone();
         let max_records = self.max_records;
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = run_memory_db("memory.upsert_task_log", move || {
             let store = MemoryStore {
                 storage,
                 max_records,
@@ -374,6 +383,7 @@ impl MemoryStore {
                 error: &error,
                 updated_time,
             });
+            Ok(())
         })
         .await;
     }
@@ -414,18 +424,18 @@ impl MemoryStore {
         let summary = summary.to_string();
         let storage = self.storage.clone();
         let max_records = self.max_records;
-        tokio::task::spawn_blocking(move || {
+        run_memory_db("memory.upsert_record", move || {
             let store = MemoryStore {
                 storage,
                 max_records,
             };
-            store.upsert_record(
+            Ok(store.upsert_record(
                 &user_id,
                 &session_id,
                 &summary,
                 now_ts,
                 max_records_override,
-            )
+            ))
         })
         .await
         .unwrap_or_else(|err| {

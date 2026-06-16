@@ -27,6 +27,7 @@ use wunder_server::{
     admin_skills, api, auth, config, i18n, logging, mcp, repo_assets, rustls_provider, sandbox,
     schemas, user_store,
 };
+use wunder_server::{blocking, long_task};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -56,7 +57,10 @@ async fn main() -> anyhow::Result<()> {
     );
     let state = Arc::new(AppState::new(config_store.clone(), config.clone())?);
     state.lsp_manager.sync_with_config(&config).await;
-    tokio::spawn(hydrate_enabled_mcp_tool_specs(state.clone()));
+    long_task::spawn(
+        "server.bootstrap.hydrate_mcp_tool_specs",
+        hydrate_enabled_mcp_tool_specs(state.clone()),
+    );
 
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
@@ -506,27 +510,28 @@ async fn api_key_guard(
     if let Some(token) = auth::extract_bearer_token(headers) {
         let user_store = state.user_store.clone();
         let token_for_lookup = token.clone();
-        if let Ok(Ok(Some(user))) =
-            tokio::task::spawn_blocking(move || user_store.authenticate_token(&token_for_lookup))
-                .await
+        if let Ok(Some(user)) =
+            blocking::run_db("server.auth_guard.authenticate_token", move || {
+                user_store.authenticate_token(&token_for_lookup)
+            })
+            .await
         {
             if user_store::UserStore::is_admin(&user) {
                 return Ok(next.run(request).await);
             }
             if auth::is_leader_path(path) {
                 let user_store = state.user_store.clone();
-                let units =
-                    match tokio::task::spawn_blocking(move || user_store.list_org_units()).await {
-                        Ok(Ok(units)) => units,
-                        Ok(Err(err)) => {
-                            let message = format!("org unit lookup failed: {err}");
-                            return Ok(auth_error(StatusCode::INTERNAL_SERVER_ERROR, &message));
-                        }
-                        Err(err) => {
-                            let message = format!("org unit lookup join failed: {err}");
-                            return Ok(auth_error(StatusCode::INTERNAL_SERVER_ERROR, &message));
-                        }
-                    };
+                let units = match blocking::run_db("server.auth_guard.list_org_units", move || {
+                    user_store.list_org_units()
+                })
+                .await
+                {
+                    Ok(units) => units,
+                    Err(err) => {
+                        let message = format!("org unit lookup failed: {err}");
+                        return Ok(auth_error(StatusCode::INTERNAL_SERVER_ERROR, &message));
+                    }
+                };
                 if units
                     .iter()
                     .any(|unit| unit.leader_ids.iter().any(|id| id == &user.user_id))

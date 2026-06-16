@@ -1,3 +1,4 @@
+use crate::core::blocking;
 use crate::storage::StorageBackend;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
@@ -41,11 +42,10 @@ impl StreamEventService {
         let storage = self.storage.clone();
         let session_snapshot = cleaned_session.clone();
         let user_snapshot = cleaned_user.clone();
-        tokio::task::spawn_blocking(move || {
+        blocking::run_db("stream_events.append", move || {
             storage.append_stream_event(&session_snapshot, &user_snapshot, next_event_id, &payload)
         })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        .await?;
         self.update_tail_cache(&cleaned_session, next_event_id)
             .await;
         Ok(next_event_id)
@@ -63,11 +63,10 @@ impl StreamEventService {
         }
         let storage = self.storage.clone();
         let session_snapshot = cleaned_session.clone();
-        let events = tokio::task::spawn_blocking(move || {
+        let events = blocking::run_db("stream_events.list", move || {
             storage.load_stream_events(&session_snapshot, after_event_id.max(0), limit.max(1))
         })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        .await?;
         if let Some(max_event_id) = events.iter().filter_map(extract_event_id).max() {
             self.update_tail_cache(&cleaned_session, max_event_id).await;
         }
@@ -92,9 +91,10 @@ impl StreamEventService {
 
     async fn load_tail_from_storage(&self, session_id: String) -> Result<i64> {
         let storage = self.storage.clone();
-        tokio::task::spawn_blocking(move || storage.get_max_stream_event_id(&session_id))
-            .await
-            .unwrap_or_else(|err| Err(anyhow!(err)))
+        blocking::run_db("stream_events.tail", move || {
+            storage.get_max_stream_event_id(&session_id)
+        })
+        .await
     }
 
     async fn cached_tail(&self, session_id: &str) -> i64 {

@@ -1,5 +1,6 @@
 // 工作区管理：路径校验、文件读写、目录操作与压缩打包。
 use crate::core::atomic_write::atomic_write_text;
+use crate::core::blocking;
 use crate::i18n;
 use crate::path_utils::{
     normalize_path_for_compare, normalize_target_path, strip_windows_verbatim_prefix,
@@ -55,6 +56,22 @@ fn effective_temp_cleanup_idle_ttl_s(single_root: bool) -> f64 {
 }
 
 type WorkspaceEntriesPage = (Vec<WorkspaceEntry>, u64, String, Option<String>, u64);
+
+async fn run_workspace_db<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
+}
+
+async fn run_workspace_fs<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_fs(label, task).await
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceEntry {
@@ -684,9 +701,10 @@ impl WorkspaceManager {
         let state = self.retention_state.clone();
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
-                let _ =
-                    tokio::task::spawn_blocking(move || storage.cleanup_retention(retention_days))
-                        .await;
+                let _ = run_workspace_db("workspace.retention.cleanup", move || {
+                    storage.cleanup_retention(retention_days)
+                })
+                .await;
                 let mut guard = state.lock();
                 guard.running = false;
             });
@@ -716,8 +734,9 @@ impl WorkspaceManager {
         let state = self.temp_cleanup_state.clone();
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || {
+                let _ = run_workspace_fs("workspace.temp.cleanup", move || {
                     cleanup_idle_temp_files(&root, &storage, idle_ttl_s);
+                    Ok(())
                 })
                 .await;
                 let mut guard = state.lock();
@@ -945,7 +964,7 @@ impl WorkspaceManager {
         let sort_by = sort_by.to_string();
         let order = order.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
+        run_workspace_fs("workspace.list_entries", move || {
             workspace.list_workspace_entries(
                 &user_id,
                 &relative_path,
@@ -957,7 +976,6 @@ impl WorkspaceManager {
             )
         })
         .await
-        .map_err(|err| anyhow!("workspace list cancelled: {err}"))?
     }
 
     pub async fn load_history_async(
@@ -969,9 +987,10 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || workspace.load_history(&user_id, &session_id, limit))
-            .await
-            .map_err(|err| anyhow!("workspace load history cancelled: {err}"))?
+        run_workspace_db("workspace.load_history", move || {
+            workspace.load_history(&user_id, &session_id, limit)
+        })
+        .await
     }
 
     pub async fn load_session_system_prompt_async(
@@ -984,11 +1003,10 @@ impl WorkspaceManager {
         let session_id = session_id.to_string();
         let language = language.map(|value| value.to_string());
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
+        run_workspace_db("workspace.load_session_system_prompt", move || {
             workspace.load_session_system_prompt(&user_id, &session_id, language.as_deref())
         })
         .await
-        .map_err(|err| anyhow!("workspace load session prompt cancelled: {err}"))?
     }
 
     pub async fn load_session_frozen_tool_overrides_async(
@@ -999,8 +1017,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.load_session_frozen_tool_overrides(&user_id, &session_id)
+        run_workspace_db("workspace.load_session_frozen_tool_overrides", move || {
+            Ok(workspace.load_session_frozen_tool_overrides(&user_id, &session_id))
         })
         .await
         .unwrap_or(None)
@@ -1014,8 +1032,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.load_session_frozen_tool_call_mode(&user_id, &session_id)
+        run_workspace_db("workspace.load_session_frozen_tool_call_mode", move || {
+            Ok(workspace.load_session_frozen_tool_call_mode(&user_id, &session_id))
         })
         .await
         .unwrap_or(None)
@@ -1029,8 +1047,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.load_session_context_tokens(&user_id, &session_id)
+        run_workspace_db("workspace.load_session_context_tokens", move || {
+            Ok(workspace.load_session_context_tokens(&user_id, &session_id))
         })
         .await
         .unwrap_or(0)
@@ -1045,8 +1063,9 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = run_workspace_db("workspace.save_session_context_tokens", move || {
             workspace.save_session_context_tokens(&user_id, &session_id, total_tokens);
+            Ok(())
         })
         .await;
     }
@@ -1059,8 +1078,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.load_session_context_overflow(&user_id, &session_id)
+        run_workspace_db("workspace.load_session_context_overflow", move || {
+            Ok(workspace.load_session_context_overflow(&user_id, &session_id))
         })
         .await
         .unwrap_or(false)
@@ -1075,8 +1094,9 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = run_workspace_db("workspace.save_session_context_overflow", move || {
             workspace.save_session_context_overflow(&user_id, &session_id, overflowed);
+            Ok(())
         })
         .await;
     }
@@ -1089,8 +1109,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.delete_session_context_overflow(&user_id, &session_id)
+        run_workspace_db("workspace.delete_session_context_overflow", move || {
+            Ok(workspace.delete_session_context_overflow(&user_id, &session_id))
         })
         .await
         .unwrap_or(0)
@@ -1104,8 +1124,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.load_session_context_limit_hint(&user_id, &session_id)
+        run_workspace_db("workspace.load_session_context_limit_hint", move || {
+            Ok(workspace.load_session_context_limit_hint(&user_id, &session_id))
         })
         .await
         .unwrap_or(None)
@@ -1120,8 +1140,9 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = run_workspace_db("workspace.save_session_context_limit_hint", move || {
             workspace.save_session_context_limit_hint(&user_id, &session_id, limit_hint);
+            Ok(())
         })
         .await;
     }
@@ -1134,8 +1155,8 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            workspace.delete_session_context_limit_hint(&user_id, &session_id)
+        run_workspace_db("workspace.delete_session_context_limit_hint", move || {
+            Ok(workspace.delete_session_context_limit_hint(&user_id, &session_id))
         })
         .await
         .unwrap_or(0)
@@ -1211,9 +1232,11 @@ impl WorkspaceManager {
 
     pub async fn flush_writes_async(self: &Arc<Self>) -> bool {
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || workspace.write_queue.flush())
-            .await
-            .unwrap_or(false)
+        run_workspace_db("workspace.flush_writes", move || {
+            Ok(workspace.write_queue.flush())
+        })
+        .await
+        .unwrap_or(false)
     }
 
     pub fn flush_writes(&self) -> bool {
@@ -1669,7 +1692,7 @@ impl WorkspaceManager {
         let user_id = user_id.to_string();
         let keyword = keyword.to_string();
         let workspace = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
+        run_workspace_fs("workspace.search_entries", move || {
             workspace.search_workspace_entries(
                 &user_id,
                 &keyword,
@@ -1680,7 +1703,6 @@ impl WorkspaceManager {
             )
         })
         .await
-        .map_err(|err| anyhow!("workspace search cancelled: {err}"))?
     }
 
     pub fn get_workspace_tree_snapshot(&self, user_id: &str) -> WorkspaceTreeSnapshot {

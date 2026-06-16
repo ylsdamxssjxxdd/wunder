@@ -1,6 +1,6 @@
 use super::PostgresStorage;
 use crate::storage::{
-    BeeroomChatMessageRecord, StorageBackend, UserWorldConversationRecord,
+    BeeroomChatMessageRecord, StorageLifecycle, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
 };

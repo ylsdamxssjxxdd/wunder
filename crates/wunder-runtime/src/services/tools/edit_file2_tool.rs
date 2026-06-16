@@ -5,6 +5,7 @@ use super::{
     recover_tool_args_value, resolve_tool_path, touch_lsp_file, ToolContext,
 };
 use crate::core::atomic_write::atomic_write_text;
+use crate::core::blocking;
 use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -90,7 +91,7 @@ pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Resul
     let ensure_newline = plan.ensure_newline;
     let instructions = plan.instructions.clone();
 
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = blocking::run_fs("tools.edit_file2.execute", move || {
         execute_edit_file2_plan(
             workspace.as_ref(),
             &user_id,
@@ -101,12 +102,11 @@ pub(crate) async fn edit_file2(context: &ToolContext<'_>, args: &Value) -> Resul
             ensure_newline,
         )
     })
-    .await
-    .map_err(|err| anyhow!(err.to_string()));
+    .await;
 
     let outcome = match outcome {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(err)) | Err(err) => {
+        Ok(outcome) => outcome,
+        Err(err) => {
             let error = err.to_string();
             return Ok(build_failed_tool_result(
                 format!("文本编辑失败：{error}"),

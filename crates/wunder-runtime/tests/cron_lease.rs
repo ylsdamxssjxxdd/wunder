@@ -1,5 +1,5 @@
 use serde_json::json;
-use wunder_server::storage::{CronJobRecord, SqliteStorage, StorageBackend};
+use wunder_server::storage::*;
 
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0

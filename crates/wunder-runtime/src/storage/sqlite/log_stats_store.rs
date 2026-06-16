@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{StorageBackend, TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
+use crate::storage::{StorageLifecycle, TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter};
@@ -328,7 +328,7 @@ impl SqliteLogStatsStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::StorageBackend;
+    use crate::storage::*;
     use serde_json::json;
     use tempfile::tempdir;
 

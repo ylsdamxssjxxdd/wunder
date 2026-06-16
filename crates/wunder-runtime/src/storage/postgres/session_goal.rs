@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{SessionGoalRecord, StorageBackend};
+use crate::storage::{SessionGoalRecord, StorageLifecycle};
 use anyhow::Result;
 
 pub(super) trait PostgresSessionGoalStorage {

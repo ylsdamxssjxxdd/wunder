@@ -2,6 +2,7 @@ use crate::api::admin::error_response;
 use crate::api::skill_fs;
 use crate::attachment::sanitize_filename_stem;
 use crate::config::{A2aServiceConfig, Config, LspConfig, McpServerConfig, ToolVisibilityRule};
+use crate::core::blocking;
 use crate::i18n;
 use crate::lsp::{LspDiagnostic, LspManager};
 use crate::path_utils::{
@@ -1290,14 +1291,13 @@ async fn admin_skills_upload(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
     let reserved_top_dirs = collect_admin_reserved_skill_top_dirs(&config, true);
-    let import_result = tokio::task::spawn_blocking({
+    let import_result = blocking::run_fs("api.admin.integration.import_skill", {
         let filename = filename.clone();
         let data = data.clone();
         let skill_root = skill_root.clone();
         move || import_skill_archive(&filename, &data, &skill_root, &reserved_top_dirs)
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let updated = state
         .config_store
@@ -1345,16 +1345,15 @@ async fn admin_skills_export(
     let archive_path_clone = archive_path.clone();
     let root_clone = root.clone();
     let top_dir_clone = top_dir.to_string();
-    tokio::task::spawn_blocking(move || {
-        crate::services::skill_archive::create_skill_archive(
+    blocking::run_fs("api.admin.integration.export_skill", move || {
+        Ok(crate::services::skill_archive::create_skill_archive(
             &root_clone,
             &top_dir_clone,
             &archive_path_clone,
         )
-        .map_err(|err| std::io::Error::other(err.to_string()))
+        .map_err(|err| std::io::Error::other(err.to_string()))?)
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filename = format!("{}.zip", sanitize_filename_stem(&spec.name));
     let bytes = tokio::fs::read(&archive_path)

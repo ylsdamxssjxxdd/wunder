@@ -1,6 +1,6 @@
 use super::PostgresStorage;
 use crate::storage::{
-    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, StorageBackend, TeamRunRecord,
+    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, StorageLifecycle, TeamRunRecord,
     TeamTaskRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;

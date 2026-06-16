@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{MediaAssetRecord, SpeechJobRecord, StorageBackend};
+use crate::storage::{MediaAssetRecord, SpeechJobRecord, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension, Row};
 

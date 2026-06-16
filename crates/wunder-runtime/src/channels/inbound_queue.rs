@@ -1,13 +1,11 @@
 use crate::channels::types::ChannelMessage;
+use crate::core::bounded_queue;
 use anyhow::{anyhow, Result};
 use axum::http::HeaderMap;
 use futures::future::BoxFuture;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::mpsc::{self, error::TrySendError, Receiver, Sender};
-use tokio::sync::Semaphore;
-use tokio::time::{timeout, Duration};
-use tracing::warn;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub const CHANNEL_INBOUND_QUEUE_CAPACITY: usize = 512;
 pub const CHANNEL_INBOUND_MAX_IN_FLIGHT: usize = 8;
@@ -30,30 +28,15 @@ pub fn new_channel(
     Sender<ChannelInboundEnvelope>,
     Receiver<ChannelInboundEnvelope>,
 ) {
-    mpsc::channel(capacity.max(1))
+    bounded_queue::new_channel(capacity)
 }
 
 pub fn spawn_dispatcher(
-    mut receiver: Receiver<ChannelInboundEnvelope>,
+    receiver: Receiver<ChannelInboundEnvelope>,
     max_in_flight: usize,
     processor: ChannelInboundProcessor,
 ) {
-    let semaphore = Arc::new(Semaphore::new(max_in_flight.max(1)));
-    tokio::spawn(async move {
-        while let Some(envelope) = receiver.recv().await {
-            let permit = match Arc::clone(&semaphore).acquire_owned().await {
-                Ok(permit) => permit,
-                Err(_) => break,
-            };
-            let processor = Arc::clone(&processor);
-            tokio::spawn(async move {
-                let _permit = permit;
-                if let Err(err) = processor(envelope).await {
-                    warn!("channel inbound dispatch failed: {err}");
-                }
-            });
-        }
-    });
+    bounded_queue::spawn_dispatcher("channel.inbound", receiver, max_in_flight, processor);
 }
 
 pub async fn enqueue_with_timeout(
@@ -61,16 +44,11 @@ pub async fn enqueue_with_timeout(
     envelope: ChannelInboundEnvelope,
     timeout_ms: u64,
 ) -> Result<()> {
-    match sender.try_send(envelope) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Closed(_)) => Err(anyhow!("channel inbound queue closed")),
-        Err(TrySendError::Full(envelope)) => {
-            let wait_ms = timeout_ms.max(1);
-            match timeout(Duration::from_millis(wait_ms), sender.send(envelope)).await {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(_)) => Err(anyhow!("channel inbound queue closed")),
-                Err(_) => Err(anyhow!("channel inbound queue busy")),
-            }
-        }
-    }
+    bounded_queue::enqueue_with_timeout("channel.inbound", sender, envelope, timeout_ms)
+        .await
+        .map_err(|err| match err.to_string().as_str() {
+            "bounded queue channel.inbound closed" => anyhow!("channel inbound queue closed"),
+            "bounded queue channel.inbound busy" => anyhow!("channel inbound queue busy"),
+            _ => err,
+        })
 }

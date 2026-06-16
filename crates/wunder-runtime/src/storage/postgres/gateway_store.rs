@@ -1,6 +1,6 @@
 use super::PostgresStorage;
 use crate::storage::{
-    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, StorageBackend,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, StorageLifecycle,
 };
 use anyhow::Result;
 use tokio_postgres::types::ToSql;

@@ -4,6 +4,7 @@ use crate::api::ws_helpers::{
     send_ws_ready, ws_protocol_info, WsEnvelope, WsFeatures, WsPolicy, WsQuery, WsReadyPayload,
     WsSender, WS_MAX_MESSAGE_BYTES,
 };
+use crate::core::long_task;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
 use crate::state::AppState;
@@ -199,7 +200,7 @@ async fn handle_ws(
                         let req_snapshot = request_id.clone();
                         let ws_tx_snapshot = ws_tx.clone();
                         let after_event_id = payload.after_event_id.unwrap_or(0).max(0);
-                        tokio::spawn(async move {
+                        long_task::spawn("api.user_world_ws.watch_loop", async move {
                             run_watch_loop(
                                 state_snapshot,
                                 user_snapshot,

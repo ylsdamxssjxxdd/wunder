@@ -3,6 +3,7 @@ use super::retry_governor::RetryGovernor;
 use super::tool_calls::ToolCall;
 use super::*;
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
+use crate::core::long_task;
 use crate::services::chat_attachments::persist_user_chat_attachments;
 use crate::services::goal;
 use crate::services::orchestration_context::session_orchestration_run_root;
@@ -65,10 +66,11 @@ impl Orchestrator {
                 let lock_user = user_id.clone();
                 let lock_session = session_id.clone();
                 let lock_session_query = lock_session.clone();
-                if let Ok(Ok(Some(record))) = tokio::task::spawn_blocking(move || {
-                    storage.get_chat_session(&lock_user, &lock_session_query)
-                })
-                .await
+                if let Ok(Some(record)) =
+                    crate::core::blocking::run_db("orchestrator.execute.lock_session", move || {
+                        storage.get_chat_session(&lock_user, &lock_session_query)
+                    })
+                    .await
                 {
                     if record.parent_session_id.is_some() {
                         lock_agent_id = format!("subagent:{lock_session}");
@@ -105,15 +107,13 @@ impl Orchestrator {
             if prepared.stream && !is_admin && !skip_stream_clear {
                 let cleanup_session = session_id.clone();
                 let storage = self.storage.clone();
-                match tokio::task::spawn_blocking(move || {
-                    storage.delete_stream_events_by_session(&cleanup_session)
-                })
+                match crate::core::blocking::run_db(
+                    "orchestrator.execute.clear_stream",
+                    move || storage.delete_stream_events_by_session(&cleanup_session),
+                )
                 .await
                 {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => {
-                        warn!("failed to clear stream events for session {session_id}: {err}");
-                    }
+                    Ok(_) => {}
                     Err(err) => {
                         warn!("failed to clear stream events for session {session_id}: {err}");
                     }
@@ -123,7 +123,9 @@ impl Orchestrator {
             let heartbeat_limiter = limiter.clone();
             if acquired {
                 let heartbeat_session = session_id.clone();
-                heartbeat_task = Some(tokio::spawn(async move {
+                heartbeat_task = Some(long_task::spawn(
+                    "orchestrator.execute.session_lock_heartbeat",
+                    async move {
                     loop {
                         tokio::time::sleep(std::time::Duration::from_secs_f64(
                             SESSION_LOCK_HEARTBEAT_S,
@@ -131,7 +133,8 @@ impl Orchestrator {
                         .await;
                         heartbeat_limiter.touch(&heartbeat_session).await;
                     }
-                }));
+                    },
+                ));
             }
 
             let local_full_event_logs =
@@ -933,9 +936,12 @@ impl Orchestrator {
                             if let Value::Object(ref mut map) = data {
                                 round_info.insert_into(map);
                             }
-                            tokio::spawn(async move {
+                            long_task::spawn(
+                                "orchestrator.execute.tool_event_emit",
+                                async move {
                                 emitter.emit(&event_name, data).await;
-                            });
+                                },
+                            );
                         }
                     },
                     prepared.stream,

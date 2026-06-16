@@ -1,7 +1,7 @@
 use super::SqliteStorage;
 use crate::i18n;
 use crate::services::output_quality;
-use crate::storage::StorageBackend;
+use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use rusqlite::{params, TransactionBehavior};
 use serde_json::{json, Value};

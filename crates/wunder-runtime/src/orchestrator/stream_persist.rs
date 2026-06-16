@@ -69,7 +69,16 @@ impl StreamPersistQueue {
 
     fn spawn_fallback(task: StreamPersistTask) {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || Self::apply_task(task));
+            handle.spawn(async move {
+                let _ = crate::core::blocking::run_db(
+                    "orchestrator.stream_persist.fallback",
+                    move || {
+                        Self::apply_task(task);
+                        Ok(())
+                    },
+                )
+                .await;
+            });
         } else {
             Self::apply_task(task);
         }

@@ -1,3 +1,4 @@
+use crate::core::blocking;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
@@ -609,12 +610,12 @@ pub(crate) async fn resume_stream_events(
 
         let session_id_snapshot = session_id.clone();
         let workspace_snapshot = workspace.clone();
-        let records = tokio::task::spawn_blocking(move || {
-            workspace_snapshot.load_stream_events(
+        let records = blocking::run_fs("api.ws_helpers.resume_stream_events", move || {
+            Ok(workspace_snapshot.load_stream_events(
                 &session_id_snapshot,
                 last_event_id,
                 STREAM_EVENT_FETCH_LIMIT,
-            )
+            ))
         })
         .await
         .unwrap_or_default();

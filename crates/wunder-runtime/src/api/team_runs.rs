@@ -1,4 +1,5 @@
 use crate::api::user_context::resolve_user;
+use crate::core::long_task;
 use crate::i18n;
 use crate::services::orchestration_run_control::cancel_team_run_record;
 use crate::services::stream_events::StreamEventService;
@@ -448,7 +449,7 @@ fn emit_team_event(
             "data": payload.clone(),
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
-        tokio::spawn(async move {
+        long_task::spawn("api.team_runs.append_stream_event", async move {
             if let Err(err) = stream_events
                 .append_event(&session_id, &user_id, stream_payload)
                 .await
@@ -476,7 +477,7 @@ fn emit_team_event(
     let user_id = cleaned_user.to_string();
     let hive_id = cleaned_hive.to_string();
     let event_name = cleaned_event.to_string();
-    tokio::spawn(async move {
+    long_task::spawn("api.team_runs.publish_realtime_event", async move {
         realtime
             .publish_group_event(&user_id, &hive_id, &event_name, realtime_payload)
             .await;

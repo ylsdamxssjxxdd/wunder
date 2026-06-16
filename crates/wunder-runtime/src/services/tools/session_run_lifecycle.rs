@@ -7,6 +7,8 @@ use super::{
     ChildSessionToolMode, SessionCleanup, ToolContext,
 };
 use crate::config::Config;
+use crate::core::blocking;
+use crate::core::long_task;
 use crate::history::HistoryManager;
 use crate::i18n;
 use crate::monitor::MonitorState;
@@ -30,6 +32,7 @@ use uuid::Uuid;
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS: usize = 240;
 const MAX_SUBAGENT_SESSION_DEPTH: usize = 32;
+const SESSION_RUN_BLOCKING_EXEC_TIMEOUT_S: u64 = 24 * 60 * 60;
 
 #[derive(Debug)]
 pub(crate) struct SessionRunOutcome {
@@ -501,9 +504,10 @@ pub(crate) async fn spawn_session_run(
     {
         let queued_storage = context.storage.clone();
         let queued_record = record.clone();
-        tokio::task::spawn_blocking(move || queued_storage.upsert_session_run(&queued_record))
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+        blocking::run_db("tools.session_run.queued", move || {
+            queued_storage.upsert_session_run(&queued_record)
+        })
+        .await?;
     }
 
     let storage = context.storage.clone();
@@ -513,7 +517,7 @@ pub(crate) async fn spawn_session_run(
     let swarm_team_task_id = run_meta.team_task_id.clone();
     let (tx, rx) = oneshot::channel::<SessionRunOutcome>();
     let announce_for_start = announce.clone();
-    tokio::spawn(async move {
+    long_task::spawn("tools.session_run.lifecycle", async move {
         let started = now_ts();
         let running = SessionRunRecord {
             status: "running".to_string(),
@@ -526,7 +530,7 @@ pub(crate) async fn spawn_session_run(
             let user_for_start = user_id.clone();
             let session_for_start = session_id.clone();
             let running_for_start = running.clone();
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = blocking::run_db("tools.session_run.started", move || {
                 let _ = storage_for_start.touch_chat_session(
                     &user_for_start,
                     &session_for_start,
@@ -534,6 +538,7 @@ pub(crate) async fn spawn_session_run(
                     started,
                 );
                 let _ = storage_for_start.upsert_session_run(&running_for_start);
+                Ok(())
             })
             .await;
         }
@@ -555,12 +560,23 @@ pub(crate) async fn spawn_session_run(
         let mut run_request = request;
         run_request.stream = true;
         let child_orchestrator = orchestrator.clone();
-        let mut run_handle = tokio::task::spawn_blocking(move || {
-            session_run_runtime().block_on(session_run_stream::run_request(
-                child_orchestrator,
-                run_request,
-            ))
-        });
+        let blocking_exec_timeout = run_timeout_s
+            .filter(|value| *value > 0.0)
+            .map(|value| Duration::from_secs_f64(value + 5.0))
+            .unwrap_or_else(|| Duration::from_secs(SESSION_RUN_BLOCKING_EXEC_TIMEOUT_S));
+        let mut run_handle = long_task::spawn(
+            "tools.session_run.execute",
+            blocking::run_external_with_timeout(
+                "tools.session_run.execute",
+                blocking_exec_timeout,
+                move || {
+                    session_run_runtime().block_on(session_run_stream::run_request(
+                        child_orchestrator,
+                        run_request,
+                    ))
+                },
+            ),
+        );
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
             let timeout_duration = Duration::from_secs_f64(timeout_s);
@@ -616,8 +632,9 @@ pub(crate) async fn spawn_session_run(
         {
             let storage_for_finish = storage.clone();
             let finished_for_write = finished_record.clone();
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = blocking::run_db("tools.session_run.finished", move || {
                 let _ = storage_for_finish.upsert_session_run(&finished_for_write);
+                Ok(())
             })
             .await;
         }
@@ -724,8 +741,8 @@ pub(crate) async fn load_session_messages(
     limit: i64,
     include_tools: bool,
 ) -> Vec<Value> {
-    tokio::task::spawn_blocking(move || {
-        if include_tools {
+    blocking::run_fs("tools.session_run.load_messages", move || {
+        let messages = if include_tools {
             let history = workspace
                 .load_history(&user_id, &session_id, limit)
                 .unwrap_or_default();
@@ -736,7 +753,8 @@ pub(crate) async fn load_session_messages(
         } else {
             let manager = HistoryManager;
             manager.load_history_messages(&workspace, &user_id, &session_id, limit)
-        }
+        };
+        Ok(messages)
     })
     .await
     .unwrap_or_default()

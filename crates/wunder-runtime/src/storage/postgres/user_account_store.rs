@@ -1,6 +1,6 @@
 use super::PostgresStorage;
 use crate::storage::{
-    ExternalLinkRecord, OrgUnitRecord, StorageBackend, UserAccountRecord,
+    ExternalLinkRecord, OrgUnitRecord, StorageLifecycle, UserAccountRecord,
     UserExperienceUpdateResult, UserSessionScopeRecord, UserTokenRecord,
 };
 use anyhow::Result;

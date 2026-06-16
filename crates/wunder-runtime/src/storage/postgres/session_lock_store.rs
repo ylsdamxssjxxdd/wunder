@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{SessionLockRecord, SessionLockStatus, StorageBackend};
+use crate::storage::{SessionLockRecord, SessionLockStatus, StorageLifecycle};
 use anyhow::Result;
 
 pub(super) trait PostgresSessionLockStorage {

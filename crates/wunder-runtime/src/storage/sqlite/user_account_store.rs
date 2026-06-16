@@ -1,6 +1,6 @@
 use super::SqliteStorage;
 use crate::storage::{
-    ExternalLinkRecord, OrgUnitRecord, StorageBackend, UserAccountRecord,
+    ExternalLinkRecord, OrgUnitRecord, StorageLifecycle, UserAccountRecord,
     UserExperienceUpdateResult, UserSessionScopeRecord, UserTokenRecord,
 };
 use anyhow::Result;
@@ -691,10 +691,7 @@ impl SqliteUserAccountStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{
-        ExternalLinkRecord, OrgUnitRecord, StorageBackend, UserAccountRecord,
-        UserSessionScopeRecord, UserTokenRecord,
-    };
+    use crate::storage::*;
     use tempfile::tempdir;
 
     fn build_storage() -> (SqliteStorage, tempfile::TempDir) {

@@ -956,7 +956,7 @@ mod tests {
     use crate::config::Config;
     use crate::lsp::LspManager;
     use crate::skills::SkillRegistry;
-    use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
+    use crate::storage::*;
     use crate::workspace::WorkspaceManager;
     use std::collections::HashMap;
     use std::sync::Arc;

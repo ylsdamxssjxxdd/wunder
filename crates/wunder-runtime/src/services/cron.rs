@@ -2,6 +2,8 @@ mod policy;
 
 use crate::config::Config;
 use crate::config_store::ConfigStore;
+use crate::core::blocking;
+use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -36,6 +38,14 @@ use tracing::error;
 use uuid::Uuid;
 
 use self::policy::{compute_error_backoff_ms, compute_scheduler_sleep_ms};
+
+async fn run_cron_db<T, F>(label: &'static str, task: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    blocking::run_db(label, task).await
+}
 
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
@@ -109,22 +119,25 @@ pub async fn handle_cron_action(
         "status" => {
             let global_running = {
                 let storage = storage.clone();
-                tokio::task::spawn_blocking(move || storage.count_running_cron_jobs(now))
-                    .await
-                    .map_err(|err| anyhow!(err.to_string()))??
+                run_cron_db("cron.status.count_running", move || {
+                    storage.count_running_cron_jobs(now)
+                })
+                .await?
             };
             let global_next_run_at = {
                 let storage = storage.clone();
-                tokio::task::spawn_blocking(move || storage.get_next_cron_run_at(now))
-                    .await
-                    .map_err(|err| anyhow!(err.to_string()))??
+                run_cron_db("cron.status.next_run_at", move || {
+                    storage.get_next_cron_run_at(now)
+                })
+                .await?
             };
             let user_jobs = {
                 let storage = storage.clone();
                 let cleaned_user = user_id.trim().to_string();
-                tokio::task::spawn_blocking(move || storage.list_cron_jobs(&cleaned_user, true))
-                    .await
-                    .map_err(|err| anyhow!(err.to_string()))??
+                run_cron_db("cron.status.list_user_jobs", move || {
+                    storage.list_cron_jobs(&cleaned_user, true)
+                })
+                .await?
             };
             let scoped_jobs = filter_jobs_by_agent_scope(user_jobs, scoped_agent_id.as_deref());
             let user_total_jobs = scoped_jobs.len();
@@ -168,9 +181,10 @@ pub async fn handle_cron_action(
         "list" => {
             let storage = storage.clone();
             let cleaned = user_id.trim().to_string();
-            let jobs = tokio::task::spawn_blocking(move || storage.list_cron_jobs(&cleaned, true))
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??;
+            let jobs = run_cron_db("cron.action.list_jobs", move || {
+                storage.list_cron_jobs(&cleaned, true)
+            })
+            .await?;
             let jobs = filter_jobs_by_agent_scope(jobs, scoped_agent_id.as_deref());
             let items = jobs.iter().map(cron_job_to_value).collect::<Vec<_>>();
             Ok(json!({ "action": "list", "jobs": items }))
@@ -186,11 +200,10 @@ pub async fn handle_cron_action(
             let storage = storage.clone();
             let cleaned_user = user_id.trim().to_string();
             let cleaned_job = job_id.to_string();
-            let job = tokio::task::spawn_blocking(move || {
+            let job = run_cron_db("cron.action.get_job", move || {
                 storage.get_cron_job(&cleaned_user, &cleaned_job)
             })
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+            .await?;
             let Some(job) = job else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
@@ -220,11 +233,10 @@ pub async fn handle_cron_action(
                 let key = key.clone();
                 let existing = {
                     let storage = storage.clone();
-                    tokio::task::spawn_blocking(move || {
+                    run_cron_db("cron.action.get_job_by_dedupe", move || {
                         storage.get_cron_job_by_dedupe_key(&cleaned_user, &key)
                     })
-                    .await
-                    .map_err(|err| anyhow!(err.to_string()))??
+                    .await?
                 };
                 if let Some(mut record) = existing.filter(|record| {
                     cron_job_matches_agent_scope(record, scoped_agent_id.as_deref())
@@ -239,9 +251,10 @@ pub async fn handle_cron_action(
                     )?;
                     let storage = storage.clone();
                     let record_clone = record.clone();
-                    tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
-                        .await
-                        .map_err(|err| anyhow!(err.to_string()))??;
+                    run_cron_db("cron.action.upsert_job", move || {
+                        storage.upsert_cron_job(&record_clone)
+                    })
+                    .await?;
                     if let Some(signal) = wake_signal.clone() {
                         signal.notify();
                     }
@@ -261,9 +274,10 @@ pub async fn handle_cron_action(
             )?;
             let storage = storage.clone();
             let record_clone = record.clone();
-            tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??;
+            run_cron_db("cron.action.upsert_job", move || {
+                storage.upsert_cron_job(&record_clone)
+            })
+            .await?;
             if let Some(signal) = wake_signal.clone() {
                 signal.notify();
             }
@@ -281,11 +295,10 @@ pub async fn handle_cron_action(
             let cleaned_job = job_id.to_string();
             let existing = {
                 let storage = storage.clone();
-                tokio::task::spawn_blocking(move || {
+                run_cron_db("cron.action.update.get_job", move || {
                     storage.get_cron_job(&cleaned_user, &cleaned_job)
                 })
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??
+                .await?
             };
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
@@ -310,9 +323,10 @@ pub async fn handle_cron_action(
             )?;
             let storage = storage.clone();
             let record_clone = record.clone();
-            tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??;
+            run_cron_db("cron.action.upsert_job", move || {
+                storage.upsert_cron_job(&record_clone)
+            })
+            .await?;
             if let Some(signal) = wake_signal.clone() {
                 signal.notify();
             }
@@ -330,11 +344,10 @@ pub async fn handle_cron_action(
             let cleaned_job = job_id.to_string();
             let existing = {
                 let storage = storage.clone();
-                tokio::task::spawn_blocking(move || {
+                run_cron_db("cron.action.toggle.get_job", move || {
                     storage.get_cron_job(&cleaned_user, &cleaned_job)
                 })
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??
+                .await?
             };
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
@@ -362,9 +375,10 @@ pub async fn handle_cron_action(
             record.updated_at = now;
             let storage = storage.clone();
             let record_clone = record.clone();
-            tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??;
+            run_cron_db("cron.action.upsert_job", move || {
+                storage.upsert_cron_job(&record_clone)
+            })
+            .await?;
             if let Some(signal) = wake_signal.clone() {
                 signal.notify();
             }
@@ -384,9 +398,10 @@ pub async fn handle_cron_action(
                 let storage = storage.clone();
                 let lookup_user = cleaned_user.clone();
                 let lookup_job = cleaned_job.clone();
-                tokio::task::spawn_blocking(move || storage.get_cron_job(&lookup_user, &lookup_job))
-                    .await
-                    .map_err(|err| anyhow!(err.to_string()))??
+                run_cron_db("cron.action.lookup_job", move || {
+                    storage.get_cron_job(&lookup_user, &lookup_job)
+                })
+                .await?
             };
             let Some(record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
@@ -395,11 +410,10 @@ pub async fn handle_cron_action(
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             }
             let storage = storage.clone();
-            let removed = tokio::task::spawn_blocking(move || {
+            let removed = run_cron_db("cron.action.delete_job", move || {
                 storage.delete_cron_job(&cleaned_user, &cleaned_job)
             })
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+            .await?;
             if removed > 0 {
                 if let Some(signal) = wake_signal.clone() {
                     signal.notify();
@@ -419,11 +433,10 @@ pub async fn handle_cron_action(
             let cleaned_job = job_id.to_string();
             let existing = {
                 let storage = storage.clone();
-                tokio::task::spawn_blocking(move || {
+                run_cron_db("cron.action.run.get_job", move || {
                     storage.get_cron_job(&cleaned_user, &cleaned_job)
                 })
-                .await
-                .map_err(|err| anyhow!(err.to_string()))??
+                .await?
             };
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
@@ -453,11 +466,10 @@ pub async fn handle_cron_action(
             let record_for_upsert = record.clone();
             let record_for_response = record.clone();
             let storage_for_upsert = storage.clone();
-            tokio::task::spawn_blocking(move || {
+            run_cron_db("cron.action.run.upsert_job", move || {
                 storage_for_upsert.upsert_cron_job(&record_for_upsert)
             })
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+            .await?;
             if let Some(signal) = wake_signal.clone() {
                 signal.notify();
             }
@@ -478,8 +490,12 @@ pub async fn handle_cron_action(
                 skills,
             );
             let handle = tokio::runtime::Handle::current();
-            tokio::task::spawn_blocking(move || {
-                handle.block_on(runtime.execute_job(record, "manual"));
+            let _handle = long_task::spawn("cron.manual.execute", async move {
+                let _ = blocking::run_external("cron.action.run.execute_manual", move || {
+                    handle.block_on(runtime.execute_job(record, "manual"));
+                    Ok(())
+                })
+                .await;
             });
             Ok(
                 json!({ "action": "run", "queued": true, "job": cron_job_to_value(&record_for_response) }),
@@ -503,9 +519,10 @@ pub async fn list_cron_runs(
         let storage = storage.clone();
         let cleaned_user = cleaned_user.clone();
         let cleaned_job = cleaned_job.clone();
-        tokio::task::spawn_blocking(move || storage.get_cron_job(&cleaned_user, &cleaned_job))
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??
+        run_cron_db("cron.runs.get_job", move || {
+            storage.get_cron_job(&cleaned_user, &cleaned_job)
+        })
+        .await?
     };
     let Some(record) = existing else {
         return Err(anyhow!(i18n::t("error.task_not_found")));
@@ -516,11 +533,10 @@ pub async fn list_cron_runs(
     let storage = storage.clone();
     let runs = {
         let job_id = cleaned_job.clone();
-        tokio::task::spawn_blocking(move || {
+        run_cron_db("cron.runs.list", move || {
             storage.list_cron_runs(&cleaned_user, &job_id, safe_limit)
         })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??
+        .await?
     };
     let items = runs.iter().map(cron_run_to_value).collect::<Vec<_>>();
     Ok(json!({ "job_id": cleaned_job, "runs": items }))
@@ -1393,7 +1409,7 @@ impl CronRuntime {
         let user_id = job.user_id.clone();
         let job_id = job.job_id.clone();
         let (stop_tx, mut stop_rx) = oneshot::channel();
-        let task = tokio::spawn(async move {
+        let task = long_task::spawn("cron.lease.heartbeat", async move {
             loop {
                 tokio::select! {
                     _ = &mut stop_rx => break,
@@ -1405,7 +1421,7 @@ impl CronRuntime {
                         let job_id = job_id.clone();
                         let runner_id = runner_id.clone();
                         let run_token = run_token.clone();
-                        let renewed = tokio::task::spawn_blocking(move || {
+                        let renewed = run_cron_db("cron.lease.renew", move || {
                             storage.renew_cron_job_lease(
                                 &user_id,
                                 &job_id,
@@ -1417,12 +1433,8 @@ impl CronRuntime {
                         })
                         .await;
                         match renewed {
-                            Ok(Ok(true)) => {}
-                            Ok(Ok(false)) => break,
-                            Ok(Err(err)) => {
-                                error!("failed to renew cron job lease: {err}");
-                                break;
-                            }
+                            Ok(true) => {}
+                            Ok(false) => break,
                             Err(err) => {
                                 error!("failed to renew cron job lease: {err}");
                                 break;
@@ -1787,7 +1799,7 @@ impl CronRuntime {
         let summary = summary.clone();
         let error_msg = error_msg.clone();
         let max_consecutive_failures = self.config.cron.max_consecutive_failures.max(1);
-        match tokio::task::spawn_blocking(move || {
+        match run_cron_db("cron.runtime.finish_job", move || {
             persist_cron_run_and_update_job_with_limits(
                 storage.as_ref(),
                 job_clone,
@@ -1803,10 +1815,7 @@ impl CronRuntime {
         })
         .await
         {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                error!("failed to write cron run: {err}");
-            }
+            Ok(()) => {}
             Err(err) => {
                 error!("failed to write cron run: {err}");
             }
@@ -2032,7 +2041,7 @@ impl CronScheduler {
 
     pub fn start(self: &Arc<Self>) {
         let scheduler = Arc::clone(self);
-        tokio::spawn(async move {
+        long_task::spawn("cron.scheduler.loop", async move {
             scheduler.run_loop().await;
         });
     }
@@ -2060,7 +2069,7 @@ impl CronScheduler {
                     .unwrap_or_default();
                 for job in jobs {
                     let scheduler = Arc::clone(&self);
-                    tokio::spawn(async move {
+                    long_task::spawn("cron.scheduler.execute_job", async move {
                         scheduler.execute_job(job, "timer").await;
                     });
                 }
@@ -2081,9 +2090,10 @@ impl CronScheduler {
 
     async fn count_running_jobs(&self, now: f64) -> Result<i64> {
         let storage = self.storage.clone();
-        let count = tokio::task::spawn_blocking(move || storage.count_running_cron_jobs(now))
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+        let count = run_cron_db("cron.scheduler.count_running", move || {
+            storage.count_running_cron_jobs(now)
+        })
+        .await?;
         Ok(count)
     }
 
@@ -2095,19 +2105,19 @@ impl CronScheduler {
     ) -> Result<Vec<CronJobRecord>> {
         let storage = self.storage.clone();
         let runner_id = self.runner_id.clone();
-        let jobs = tokio::task::spawn_blocking(move || {
+        let jobs = run_cron_db("cron.scheduler.claim_due_jobs", move || {
             storage.claim_due_cron_jobs(now, limit, &runner_id, lease_expires_at)
         })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??;
+        .await?;
         Ok(jobs)
     }
 
     async fn get_next_cron_run_at(&self, now: f64) -> Result<Option<f64>> {
         let storage = self.storage.clone();
-        let next = tokio::task::spawn_blocking(move || storage.get_next_cron_run_at(now))
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+        let next = run_cron_db("cron.scheduler.next_run_at", move || {
+            storage.get_next_cron_run_at(now)
+        })
+        .await?;
         Ok(next)
     }
 
@@ -2120,9 +2130,7 @@ impl CronScheduler {
 #[cfg(test)]
 mod tests {
     use super::resolve_cron_session_routing;
-    use crate::storage::{
-        AgentThreadRecord, ChatSessionRecord, CronJobRecord, SqliteStorage, StorageBackend,
-    };
+    use crate::storage::*;
     use serde_json::json;
 
     fn now_ts_test() -> f64 {

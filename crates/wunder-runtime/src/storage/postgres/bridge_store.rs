@@ -3,7 +3,7 @@ use crate::storage::{
     BridgeCenterAccountRecord, BridgeCenterRecord, BridgeDeliveryLogRecord,
     BridgeRouteAuditLogRecord, BridgeUserRouteRecord, ListBridgeCenterAccountsQuery,
     ListBridgeCentersQuery, ListBridgeDeliveryLogsQuery, ListBridgeRouteAuditLogsQuery,
-    ListBridgeUserRoutesQuery, StorageBackend,
+    ListBridgeUserRoutesQuery, StorageLifecycle,
 };
 use anyhow::Result;
 use serde_json::Value;

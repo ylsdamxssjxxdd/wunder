@@ -6,6 +6,7 @@ use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
 
 use super::memory_support::*;
+use crate::core::{blocking, long_task};
 
 pub(super) use super::memory_support::{insert_compaction_id, CompactionRunMode};
 
@@ -1094,21 +1095,18 @@ impl Orchestrator {
     ) -> Result<Value, OrchestratorError> {
         let storage = self.storage.clone();
         let session_id_for_offset = session_id.to_string();
-        let start_event_id = match tokio::task::spawn_blocking(move || {
-            storage.get_max_stream_event_id(&session_id_for_offset)
-        })
-        .await
-        {
-            Ok(Ok(value)) => value,
-            Ok(Err(err)) => {
-                warn!("failed to load stream event offset for session {session_id}: {err}");
-                0
-            }
-            Err(err) => {
-                warn!("failed to load stream event offset for session {session_id}: {err}");
-                0
-            }
-        };
+        let start_event_id =
+            match blocking::run_db("orchestrator.memory.stream_offset", move || {
+                storage.get_max_stream_event_id(&session_id_for_offset)
+            })
+            .await
+            {
+                Err(err) => {
+                    warn!("failed to load stream event offset for session {session_id}: {err}");
+                    0
+                }
+                Ok(value) => value,
+            };
         let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let emitter = EventEmitter::new(
             session_id.to_string(),
@@ -1562,16 +1560,16 @@ impl Orchestrator {
 
         // Auto extraction is strictly opt-in per agent. It never mutates the
         // frozen system prompt of the current thread; it only writes long-term memories.
-        tokio::spawn(async move {
+        long_task::spawn("orchestrator.memory.auto_extract", async move {
             i18n::with_language(language, async move {
                 let enabled_storage = storage.clone();
                 let enabled_user_id = user_id.clone();
                 let enabled_agent_id = agent_id.clone();
-                let enabled = match tokio::task::spawn_blocking(move || {
-                    crate::services::memory_agent_settings::AgentMemorySettingsService::new(
+                let enabled = match blocking::run_db("orchestrator.memory.auto_extract.enabled", move || {
+                    Ok(crate::services::memory_agent_settings::AgentMemorySettingsService::new(
                         enabled_storage,
                     )
-                    .auto_extract_enabled(&enabled_user_id, enabled_agent_id.as_deref())
+                    .auto_extract_enabled(&enabled_user_id, enabled_agent_id.as_deref()))
                 })
                 .await
                 {
@@ -1598,7 +1596,7 @@ impl Orchestrator {
                 let prep_round_id = round_id.clone();
                 let prep_question = question.clone();
                 let prep_answer = answer.clone();
-                let prepared = match tokio::task::spawn_blocking(move || {
+                let prepared = match blocking::run_db("orchestrator.memory.auto_extract.prepare", move || {
                     let service = crate::services::memory_auto_extract::MemoryAutoExtractService::new(prep_storage);
                     let window = service.build_recent_user_window(&prep_user_id, &prep_session_id, &prep_question);
                     let mut job = service.queue_turn_job(
@@ -1615,24 +1613,14 @@ impl Orchestrator {
                 })
                 .await
                 {
-                    Ok(Ok(result)) => result,
-                    Ok(Err(err)) => {
-                        tracing::warn!(
-                            target: "wunder_server",
-                            user_id = %user_id,
-                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
-                            session_id = %session_id,
-                            "auto memory extraction job init failed: {err}"
-                        );
-                        return;
-                    }
+                    Ok(result) => result,
                     Err(err) => {
                         tracing::warn!(
                             target: "wunder_server",
                             user_id = %user_id,
                             agent_id = %agent_id.as_deref().unwrap_or("__default__"),
                             session_id = %session_id,
-                            "auto memory extraction init task join failed: {err}"
+                            "auto memory extraction job init failed: {err}"
                         );
                         return;
                     }
@@ -1659,10 +1647,11 @@ impl Orchestrator {
                 if !is_llm_configured(&extract_config) {
                     let finalize_storage = storage.clone();
                     let finalize_job = job.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
+                    let _ = blocking::run_db("orchestrator.memory.auto_extract.unconfigured", move || {
                         let mut job = finalize_job;
                         crate::services::memory_auto_extract::MemoryAutoExtractService::new(finalize_storage)
                             .finish_job_failed(&mut job, "memory auto extraction llm is not configured");
+                        Ok(())
                     })
                     .await;
                     tracing::warn!(
@@ -1699,10 +1688,11 @@ impl Orchestrator {
                         let finalize_storage = storage.clone();
                         let finalize_job = job.clone();
                         let error_message = err.to_string();
-                        let _ = tokio::task::spawn_blocking(move || {
+                        let _ = blocking::run_db("orchestrator.memory.auto_extract.llm_failed", move || {
                             let mut job = finalize_job;
                             crate::services::memory_auto_extract::MemoryAutoExtractService::new(finalize_storage)
                                 .finish_job_failed(&mut job, &error_message);
+                            Ok(())
                         })
                         .await;
                         tracing::warn!(
@@ -1722,7 +1712,7 @@ impl Orchestrator {
                 let apply_session_id = session_id.clone();
                 let apply_round_id = round_id.clone();
                 let apply_output = raw_output.clone();
-                match tokio::task::spawn_blocking(move || {
+                match blocking::run_db("orchestrator.memory.auto_extract.apply", move || {
                     let service = crate::services::memory_auto_extract::MemoryAutoExtractService::new(apply_storage);
                     let run = (|| -> anyhow::Result<(crate::services::memory_auto_extract::MemoryAutoExtractOutcome, usize)> {
                         let items = crate::services::memory_auto_extract::MemoryAutoExtractService::parse_llm_response(&apply_output)?;
@@ -1749,7 +1739,7 @@ impl Orchestrator {
                 })
                 .await
                 {
-                    Ok(Ok(outcome)) => {
+                    Ok(outcome) => {
                         tracing::debug!(
                             target: "wunder_server",
                             user_id = %user_id,
@@ -1761,22 +1751,13 @@ impl Orchestrator {
                             "auto memory extraction finished"
                         );
                     }
-                    Ok(Err(err)) => {
-                        tracing::warn!(
-                            target: "wunder_server",
-                            user_id = %user_id,
-                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
-                            session_id = %session_id,
-                            "auto memory extraction failed: {err}"
-                        );
-                    }
                     Err(err) => {
                         tracing::warn!(
                             target: "wunder_server",
                             user_id = %user_id,
                             agent_id = %agent_id.as_deref().unwrap_or("__default__"),
                             session_id = %session_id,
-                            "auto memory extraction apply task join failed: {err}"
+                            "auto memory extraction failed: {err}"
                         );
                     }
                 }

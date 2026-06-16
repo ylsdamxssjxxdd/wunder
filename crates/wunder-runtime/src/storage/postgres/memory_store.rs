@@ -1,7 +1,7 @@
 use super::PostgresStorage;
 use crate::storage::{
     MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
-    StorageBackend, UpsertMemoryTaskLogParams,
+    StorageLifecycle, UpsertMemoryTaskLogParams,
 };
 use anyhow::Result;
 use serde_json::{json, Value};

@@ -11,7 +11,7 @@ use crate::storage::{
     ListBridgeUserRoutesQuery, ListChannelUserBindingsQuery, MediaAssetRecord,
     MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
     OrgUnitRecord, SessionGoalRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
-    SpeechJobRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
+    SpeechJobRecord, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserExperienceUpdateResult,
     UserSessionScopeRecord, UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord,
@@ -286,7 +286,7 @@ impl SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{StorageBackend, UserAccountRecord};
+    use crate::storage::*;
     use chrono::Local;
     use rusqlite::params;
     use rusqlite::Connection;

@@ -1,4 +1,5 @@
 use crate::config_store::ConfigStore;
+use crate::core::long_task;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -100,7 +101,7 @@ impl MissionRuntime {
 
     pub fn start(self: Arc<Self>) {
         let runner = self.clone();
-        tokio::spawn(async move {
+        long_task::spawn("runtime.mission.queue_loop", async move {
             runner.run_loop().await;
         });
     }
@@ -248,7 +249,7 @@ impl MissionRuntime {
             let run_id_for_task = team_run_id.clone();
             let cancel_for_task = cancel.clone();
             let sessions_for_task = sessions.clone();
-            let handle = tokio::spawn(async move {
+            let handle = long_task::spawn("runtime.mission.execute_team_run", async move {
                 if let Err(err) = runner
                     .execute_team_run(run_id_for_task.clone(), cancel_for_task, sessions_for_task)
                     .await
@@ -1077,7 +1078,7 @@ impl MissionRuntime {
             let user_id = cleaned_user.to_string();
             let event_name = cleaned_event_type.to_string();
             let stream_payload = payload.clone();
-            tokio::spawn(async move {
+            long_task::spawn("runtime.mission.emit_stream_event", async move {
                 let envelope = build_parent_session_stream_event(&event_name, stream_payload);
                 if let Err(err) = stream_events
                     .append_event(&session_id, &user_id, envelope)
@@ -1102,7 +1103,7 @@ impl MissionRuntime {
         let user_id = cleaned_user.to_string();
         let hive_id = cleaned_hive.to_string();
         let event_name = cleaned_event_type.to_string();
-        tokio::spawn(async move {
+        long_task::spawn("runtime.mission.publish_realtime_event", async move {
             realtime_service
                 .publish_group_event(&user_id, &hive_id, &event_name, realtime_payload)
                 .await;

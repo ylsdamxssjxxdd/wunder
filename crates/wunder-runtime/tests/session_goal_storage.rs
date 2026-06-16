@@ -1,6 +1,9 @@
 use std::sync::Arc;
 use wunder_server::goal;
-use wunder_server::storage::{ChatSessionRecord, SessionGoalRecord, SqliteStorage, StorageBackend};
+use wunder_server::storage::{
+    ChatSessionRecord, ChatSessionStore, SessionGoalRecord, SessionGoalStore, SqliteStorage,
+    StorageLifecycle,
+};
 
 fn now_ts() -> f64 {
     1_700_000_000.0

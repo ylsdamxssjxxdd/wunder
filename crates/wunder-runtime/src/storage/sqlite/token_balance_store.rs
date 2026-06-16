@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{StorageBackend, UserTokenBalanceStatus};
+use crate::storage::{StorageLifecycle, UserTokenBalanceStatus};
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 

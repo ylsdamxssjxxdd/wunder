@@ -1,3 +1,4 @@
+use crate::core::long_task;
 use crate::schemas::WunderRequest;
 use crate::state::AppState;
 use crate::storage::{
@@ -797,7 +798,7 @@ async fn start_mock_llm_server(
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let handle = tokio::spawn(async move {
+    let handle = long_task::spawn("services.sim_lab.mock_llm_server", async move {
         if let Err(err) = axum::serve(listener, app).await {
             eprintln!("[swarm_flow_sim] mock llm server failed: {err}");
         }

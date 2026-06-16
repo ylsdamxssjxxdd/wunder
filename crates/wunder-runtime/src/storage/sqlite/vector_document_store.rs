@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{StorageBackend, VectorDocumentRecord, VectorDocumentSummaryRecord};
+use crate::storage::{StorageLifecycle, VectorDocumentRecord, VectorDocumentSummaryRecord};
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
 
@@ -158,7 +158,7 @@ impl SqliteVectorDocumentStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{StorageBackend, VectorDocumentRecord};
+    use crate::storage::*;
     use tempfile::tempdir;
 
     fn build_storage() -> (SqliteStorage, tempfile::TempDir) {

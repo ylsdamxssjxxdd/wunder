@@ -18,6 +18,7 @@ use crate::core::approval::{
 use crate::core::approval_registry::{
     ApprovalSource, PendingApprovalEntry, PendingApprovalRegistry,
 };
+use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
@@ -509,13 +510,16 @@ async fn handle_ws(
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
                         let session_id_cleanup = session_id.clone();
-                        let approval_forward = tokio::spawn(forward_approval_requests(
-                            approval_rx,
-                            approval_registry_snapshot.clone(),
-                            request_id_cleanup.clone(),
-                            session_id_cleanup.clone(),
-                        ));
-                        tokio::spawn(async move {
+                        let approval_forward = long_task::spawn(
+                            "api.chat_ws.approval_forward",
+                            forward_approval_requests(
+                                approval_rx,
+                                approval_registry_snapshot.clone(),
+                                request_id_cleanup.clone(),
+                                session_id_cleanup.clone(),
+                            ),
+                        );
+                        long_task::spawn("api.chat_ws.stream_request", async move {
                             let _lease = lease;
                             match state_snapshot.kernel.orchestrator.stream(request).await {
                                 Ok(stream) => {
@@ -653,7 +657,7 @@ async fn handle_ws(
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
-                        tokio::spawn(async move {
+                        long_task::spawn("api.chat_ws.resume_stream", async move {
                             resume_stream_events(
                                 state_snapshot,
                                 session_id,
@@ -717,7 +721,7 @@ async fn handle_ws(
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
-                        tokio::spawn(async move {
+                        long_task::spawn("api.chat_ws.watch_stream", async move {
                             resume_stream_events(
                                 state_snapshot,
                                 session_id,

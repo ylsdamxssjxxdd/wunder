@@ -1,5 +1,6 @@
 use crate::api::user_context::resolve_user;
 use crate::auth as guard_auth;
+use crate::core::{blocking, long_task};
 use crate::i18n;
 use crate::schemas::{StreamEvent, TokenUsage, WunderRequest};
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
@@ -166,7 +167,7 @@ async fn create_workflow(
     let parsed = parse_multipart(multipart).await?;
     let prepared = prepare_workflow(state.clone(), &headers, parsed).await?;
     let payload = workflow_started_payload(&prepared, "running");
-    tokio::spawn(async move {
+    long_task::spawn("api.external_workflows.accepted_run", async move {
         let mut stream = run_workflow_stream(state, prepared);
         while stream.next().await.is_some() {}
     });
@@ -444,7 +445,7 @@ fn run_workflow_stream(
     prepared: PreparedWorkflow,
 ) -> impl Stream<Item = Result<Event, std::convert::Infallible>> {
     let (tx, rx) = tokio::sync::mpsc::channel::<Event>(64);
-    tokio::spawn(async move {
+    long_task::spawn("api.external_workflows.stream_run", async move {
         let timeout = std::time::Duration::from_secs_f64(timeout_s(&prepared.request));
         let _ = send_workflow_event(
             &tx,
@@ -746,11 +747,10 @@ async fn resolve_target_user(
         if let Some(user_key) = user_key {
             let user_store = state.user_store.clone();
             let lookup = user_key.to_string();
-            let user = tokio::task::spawn_blocking(move || {
+            let user = blocking::run_db("api.external_workflows.resolve_target_user", move || {
                 resolve_or_provision_external_workflow_user(user_store.as_ref(), &lookup)
             })
             .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
             .map_err(|err| {
                 error_with_code(
                     StatusCode::BAD_REQUEST,
@@ -1732,8 +1732,11 @@ async fn is_external_workflow_key_or_admin(state: &AppState, headers: &HeaderMap
     }
     if let Some(token) = guard_auth::extract_bearer_token(headers) {
         let user_store = state.user_store.clone();
-        if let Ok(Ok(Some(user))) =
-            tokio::task::spawn_blocking(move || user_store.authenticate_token(&token)).await
+        if let Ok(Some(user)) =
+            blocking::run_db("api.external_workflows.authenticate_token", move || {
+                user_store.authenticate_token(&token)
+            })
+            .await
         {
             return UserStore::is_admin(&user);
         }

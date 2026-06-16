@@ -4,6 +4,8 @@ use crate::channels::types::{
     ChannelAccountConfig, ChannelMessage, FeishuConfig, QqBotConfig, WeixinConfig, XmppConfig,
 };
 use crate::channels::{feishu, qqbot, weixin, xmpp};
+use crate::core::blocking;
+use crate::core::long_task;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -104,9 +106,12 @@ impl ChannelHub {
                         let worker = self.clone();
                         workers.insert(
                             task_key,
-                            tokio::spawn(async move {
-                                worker.feishu_long_connection_worker_loop(target).await;
-                            }),
+                            long_task::spawn(
+                                "channels.long_connection.feishu.worker",
+                                async move {
+                                    worker.feishu_long_connection_worker_loop(target).await;
+                                },
+                            ),
                         );
                     }
 
@@ -138,11 +143,11 @@ impl ChannelHub {
 
     async fn list_feishu_long_connection_targets(&self) -> Result<Vec<FeishuLongConnTarget>> {
         let storage = self.storage.clone();
-        let accounts = tokio::task::spawn_blocking(move || {
-            storage.list_channel_accounts(Some(feishu::FEISHU_CHANNEL), Some("active"))
-        })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        let accounts =
+            blocking::run_db("channels.long_connection.feishu.list_accounts", move || {
+                storage.list_channel_accounts(Some(feishu::FEISHU_CHANNEL), Some("active"))
+            })
+            .await?;
 
         let mut targets = Vec::new();
         for record in accounts {
@@ -296,7 +301,7 @@ impl ChannelHub {
                         let worker = self.clone();
                         workers.insert(
                             task_key,
-                            tokio::spawn(async move {
+                            long_task::spawn("channels.long_connection.qqbot.worker", async move {
                                 worker.qqbot_long_connection_worker_loop(target).await;
                             }),
                         );
@@ -330,11 +335,11 @@ impl ChannelHub {
 
     async fn list_qqbot_long_connection_targets(&self) -> Result<Vec<QqBotLongConnTarget>> {
         let storage = self.storage.clone();
-        let accounts = tokio::task::spawn_blocking(move || {
-            storage.list_channel_accounts(Some(qqbot::QQBOT_CHANNEL), Some("active"))
-        })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        let accounts =
+            blocking::run_db("channels.long_connection.qqbot.list_accounts", move || {
+                storage.list_channel_accounts(Some(qqbot::QQBOT_CHANNEL), Some("active"))
+            })
+            .await?;
 
         let mut targets = Vec::new();
         for record in accounts {
@@ -577,7 +582,7 @@ impl ChannelHub {
                         let worker = self.clone();
                         workers.insert(
                             task_key,
-                            tokio::spawn(async move {
+                            long_task::spawn("channels.long_connection.xmpp.worker", async move {
                                 worker.xmpp_long_connection_worker_loop(target).await;
                             }),
                         );
@@ -611,11 +616,10 @@ impl ChannelHub {
 
     async fn list_xmpp_long_connection_targets(&self) -> Result<Vec<XmppLongConnTarget>> {
         let storage = self.storage.clone();
-        let accounts = tokio::task::spawn_blocking(move || {
+        let accounts = blocking::run_db("channels.long_connection.xmpp.list_accounts", move || {
             storage.list_channel_accounts(Some(xmpp::XMPP_CHANNEL), Some("active"))
         })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        .await?;
 
         let mut targets = Vec::new();
         for record in accounts {
@@ -751,9 +755,12 @@ impl ChannelHub {
                         let worker = self.clone();
                         workers.insert(
                             task_key,
-                            tokio::spawn(async move {
-                                worker.weixin_long_connection_worker_loop(target).await;
-                            }),
+                            long_task::spawn(
+                                "channels.long_connection.weixin.worker",
+                                async move {
+                                    worker.weixin_long_connection_worker_loop(target).await;
+                                },
+                            ),
                         );
                     }
 
@@ -785,11 +792,11 @@ impl ChannelHub {
 
     async fn list_weixin_long_connection_targets(&self) -> Result<Vec<WeixinLongConnTarget>> {
         let storage = self.storage.clone();
-        let accounts = tokio::task::spawn_blocking(move || {
-            storage.list_channel_accounts(Some(weixin::WEIXIN_CHANNEL), Some("active"))
-        })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+        let accounts =
+            blocking::run_db("channels.long_connection.weixin.list_accounts", move || {
+                storage.list_channel_accounts(Some(weixin::WEIXIN_CHANNEL), Some("active"))
+            })
+            .await?;
 
         let mut targets = Vec::new();
         for record in accounts {

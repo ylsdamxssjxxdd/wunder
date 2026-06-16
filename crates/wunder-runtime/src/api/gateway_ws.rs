@@ -1,4 +1,5 @@
 use crate::config::GatewayConfig;
+use crate::core::{blocking, long_task};
 use crate::gateway::{
     now_ts, GatewayClientMeta, GatewayConnectParams, GatewayHub, GatewayRole,
     GATEWAY_HANDSHAKE_TIMEOUT_MS, GATEWAY_MAX_MESSAGE_BYTES,
@@ -498,11 +499,15 @@ async fn handle_connect(
         record.last_used_at = Some(now);
         record.updated_at = now;
         let storage = state.storage.clone();
-        std::mem::drop(tokio::task::spawn_blocking(move || {
-            if let Err(err) = storage.upsert_gateway_node_token(&record) {
+        long_task::spawn("api.gateway_ws.touch_node_token", async move {
+            if let Err(err) = blocking::run_db("api.gateway_ws.touch_node_token", move || {
+                storage.upsert_gateway_node_token(&record)
+            })
+            .await
+            {
                 warn!("gateway node token touch failed: {err}");
             }
-        }));
+        });
     }
     let policy = GatewayHub::default_policy();
     let payload = json!({

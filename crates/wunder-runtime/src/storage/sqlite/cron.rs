@@ -1,5 +1,5 @@
 use super::SqliteStorage;
-use crate::storage::{CronJobRecord, CronRunRecord, StorageBackend};
+use crate::storage::{CronJobRecord, CronRunRecord, StorageLifecycle};
 use anyhow::Result;
 use rusqlite::{params, params_from_iter, OptionalExtension, TransactionBehavior};
 

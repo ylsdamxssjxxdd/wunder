@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::blocking;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
@@ -39,11 +40,11 @@ impl RequestLimiter {
             let agent_id = cleaned_agent.to_string();
             let ttl = self.lock_ttl_s;
             let max_active = self.max_active;
-            let status = tokio::task::spawn_blocking(move || {
+            let status = blocking::run_db("orchestrator.limiter.acquire_nowait", move || {
                 storage.try_acquire_session_lock(&session_id, &user_id, &agent_id, ttl, max_active)
             })
             .await
-            .map_err(|err| anyhow!("session lock join error: {err}"))??;
+            .map_err(|err| anyhow!("session lock acquire error: {err}"))?;
             return Ok(matches!(status, SessionLockStatus::Acquired));
         }
         let retry_window = SESSION_LOCK_BUSY_RETRY_S.max(self.poll_interval_s);
@@ -55,11 +56,11 @@ impl RequestLimiter {
             let agent_id = cleaned_agent.to_string();
             let ttl = self.lock_ttl_s;
             let max_active = self.max_active;
-            let status = tokio::task::spawn_blocking(move || {
+            let status = blocking::run_db("orchestrator.limiter.acquire", move || {
                 storage.try_acquire_session_lock(&session_id, &user_id, &agent_id, ttl, max_active)
             })
             .await
-            .map_err(|err| anyhow!("session lock join error: {err}"))??;
+            .map_err(|err| anyhow!("session lock acquire error: {err}"))?;
             match status {
                 SessionLockStatus::Acquired => return Ok(true),
                 SessionLockStatus::UserBusy => {
@@ -83,13 +84,12 @@ impl RequestLimiter {
         let storage = self.storage.clone();
         let session_id = cleaned_session.to_string();
         let ttl = self.lock_ttl_s;
-        match tokio::task::spawn_blocking(move || storage.touch_session_lock(&session_id, ttl))
-            .await
+        match blocking::run_db("orchestrator.limiter.touch", move || {
+            storage.touch_session_lock(&session_id, ttl)
+        })
+        .await
         {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                warn!("failed to touch session lock for {cleaned_session}: {err}");
-            }
+            Ok(()) => {}
             Err(err) => {
                 warn!("failed to touch session lock for {cleaned_session}: {err}");
             }
@@ -103,11 +103,12 @@ impl RequestLimiter {
         }
         let storage = self.storage.clone();
         let session_id = cleaned_session.to_string();
-        match tokio::task::spawn_blocking(move || storage.release_session_lock(&session_id)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                warn!("failed to release session lock for {cleaned_session}: {err}");
-            }
+        match blocking::run_db("orchestrator.limiter.release", move || {
+            storage.release_session_lock(&session_id)
+        })
+        .await
+        {
+            Ok(()) => {}
             Err(err) => {
                 warn!("failed to release session lock for {cleaned_session}: {err}");
             }

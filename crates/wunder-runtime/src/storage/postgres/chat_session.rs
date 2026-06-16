@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{ChatSessionRecord, StorageBackend};
+use crate::storage::{ChatSessionRecord, StorageLifecycle};
 use anyhow::Result;
 use tokio_postgres::types::ToSql;
 

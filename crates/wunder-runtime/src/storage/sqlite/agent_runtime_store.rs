@@ -1,6 +1,6 @@
 use super::SqliteStorage;
 use crate::storage::{
-    AgentTaskRecord, AgentThreadRecord, StorageBackend, UpdateAgentTaskStatusParams,
+    AgentTaskRecord, AgentThreadRecord, StorageLifecycle, UpdateAgentTaskStatusParams,
 };
 use anyhow::Result;
 use rusqlite::{params, OptionalExtension};
@@ -504,9 +504,7 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
 #[cfg(test)]
 mod tests {
     use super::SqliteStorage;
-    use crate::storage::{
-        AgentTaskRecord, AgentThreadRecord, StorageBackend, UpdateAgentTaskStatusParams,
-    };
+    use crate::storage::*;
     use serde_json::json;
     use tempfile::tempdir;
 

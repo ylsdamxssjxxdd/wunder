@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{StorageBackend, TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
+use crate::storage::{StorageLifecycle, TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::HashMap;

@@ -10,6 +10,7 @@ use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
     log_ws_parse_error, log_ws_ready, WsConnMeta,
 };
+use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
@@ -466,7 +467,7 @@ async fn handle_ws(
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
-                        tokio::spawn(async move {
+                        long_task::spawn("api.core_ws.stream_request", async move {
                             let _lease = lease;
                             match state_snapshot.kernel.orchestrator.stream(request).await {
                                 Ok(stream) => {
@@ -595,7 +596,7 @@ async fn handle_ws(
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
-                        tokio::spawn(async move {
+                        long_task::spawn("api.core_ws.resume_stream", async move {
                             resume_stream_events(
                                 state_snapshot,
                                 session_id,

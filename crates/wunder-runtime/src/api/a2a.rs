@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::core::{blocking, long_task};
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{StreamEvent, WunderRequest};
@@ -788,7 +789,7 @@ impl A2aService {
         }
 
         let orchestrator = self.state.kernel.orchestrator.clone();
-        tokio::spawn(async move {
+        long_task::spawn("api.a2a.message.run", async move {
             let _ = orchestrator.run(request).await;
         });
 
@@ -856,7 +857,7 @@ impl A2aService {
 
         let (tx, rx) = mpsc::channel(64);
         let state = self.state.clone();
-        tokio::spawn(async move {
+        long_task::spawn("api.a2a.message.stream", async move {
             let mut stream_state = A2aStreamState {
                 session_id: session_id.clone(),
                 context_id: context_id.clone(),
@@ -951,7 +952,7 @@ impl A2aService {
 
         let (tx, rx) = mpsc::channel(64);
         let monitor = self.state.monitor.clone();
-        tokio::spawn(async move {
+        long_task::spawn("api.a2a.task.subscribe", async move {
             if tx.send(json!({ "task": task })).await.is_err() {
                 return;
             }
@@ -1206,11 +1207,10 @@ impl A2aService {
         let session_id = session_id.to_string();
         let session_id_for_query = session_id.clone();
         let workspace = self.state.workspace.clone();
-        let records = tokio::task::spawn_blocking(move || {
+        let records = blocking::run_fs("api.a2a.load_history", move || {
             workspace.load_history(&user_id, &session_id_for_query, limit)
         })
         .await
-        .map_err(|err| A2AError::internal(&err.to_string()))?
         .map_err(|err| A2AError::internal(&err.to_string()))?;
         let mut messages = Vec::new();
         for item in records {
@@ -1240,11 +1240,10 @@ impl A2aService {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = self.state.workspace.clone();
-        let logs = tokio::task::spawn_blocking(move || {
+        let logs = blocking::run_fs("api.a2a.load_artifacts", move || {
             workspace.load_artifact_logs(&user_id, &session_id, 50)
         })
         .await
-        .map_err(|err| A2AError::internal(&err.to_string()))?
         .map_err(|err| A2AError::internal(&err.to_string()))?;
         let mut artifacts = Vec::new();
         for item in logs {

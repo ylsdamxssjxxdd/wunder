@@ -1,5 +1,6 @@
 use crate::api::user_context::resolve_user;
 use crate::auth;
+use crate::core::blocking;
 use crate::i18n;
 use crate::org_units;
 use crate::services::external as external_service;
@@ -452,19 +453,19 @@ async fn external_login(
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
     let session_scope_snapshot = resolve_login_session_scope(&headers);
-    let (session, created, updated) = tokio::task::spawn_blocking(move || {
-        provision_external_user(
-            &user_store,
-            &username_snapshot,
-            &password_snapshot,
-            unit_snapshot,
-            desktop_mode_snapshot,
-            &session_scope_snapshot,
-        )
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (session, created, updated) =
+        blocking::run_db("auth.external_login.provision", move || {
+            provision_external_user(
+                &user_store,
+                &username_snapshot,
+                &password_snapshot,
+                unit_snapshot,
+                desktop_mode_snapshot,
+                &session_scope_snapshot,
+            )
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
             crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)
@@ -518,7 +519,7 @@ async fn external_issue_code(
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
     let session_scope_snapshot = resolve_login_session_scope(&headers);
-    let (session, created, updated) = tokio::task::spawn_blocking(move || {
+    let (session, created, updated) = blocking::run_db("auth.external_code.provision", move || {
         provision_external_user(
             &user_store,
             &username_snapshot,
@@ -529,7 +530,6 @@ async fn external_issue_code(
         )
     })
     .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
@@ -621,19 +621,19 @@ async fn external_launch(
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
     let session_scope_snapshot = resolve_login_session_scope(&headers);
-    let (session, created, updated) = tokio::task::spawn_blocking(move || {
-        provision_external_launch_session(
-            &user_store,
-            &username_snapshot,
-            password_snapshot.as_deref(),
-            unit_snapshot,
-            desktop_mode_snapshot,
-            &session_scope_snapshot,
-        )
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (session, created, updated) =
+        blocking::run_db("auth.external_launch.provision", move || {
+            provision_external_launch_session(
+                &user_store,
+                &username_snapshot,
+                password_snapshot.as_deref(),
+                unit_snapshot,
+                desktop_mode_snapshot,
+                &session_scope_snapshot,
+            )
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
             crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)
@@ -709,19 +709,19 @@ async fn external_token_launch(
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
     let session_scope_snapshot = resolve_login_session_scope(&headers);
-    let (session, created, updated) = tokio::task::spawn_blocking(move || {
-        provision_external_launch_session(
-            &user_store,
-            &username_snapshot,
-            None,
-            unit_snapshot,
-            desktop_mode_snapshot,
-            &session_scope_snapshot,
-        )
-    })
-    .await
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (session, created, updated) =
+        blocking::run_db("auth.external_token_launch.provision", move || {
+            provision_external_launch_session(
+                &user_store,
+                &username_snapshot,
+                None,
+                unit_snapshot,
+                desktop_mode_snapshot,
+                &session_scope_snapshot,
+            )
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if created {
         if let Err(err) =
             crate::services::user_agent_presets::ensure_user_agent_bootstrap(&state, &session.user)

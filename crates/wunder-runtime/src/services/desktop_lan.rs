@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::core::long_task;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -452,11 +453,11 @@ fn build_runtime_key(settings: &DesktopLanMeshSettings) -> String {
 fn spawn_discovery_runtime(settings: DesktopLanMeshSettings, cancel: CancellationToken) {
     let recv_settings = settings.clone();
     let recv_cancel = cancel.clone();
-    tokio::spawn(async move {
+    long_task::spawn("services.desktop_lan.discovery_receiver", async move {
         run_discovery_receiver(recv_settings, recv_cancel).await;
     });
 
-    tokio::spawn(async move {
+    long_task::spawn("services.desktop_lan.discovery_sender", async move {
         run_discovery_sender(settings, cancel).await;
     });
 }

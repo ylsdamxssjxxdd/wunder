@@ -1,5 +1,5 @@
 use super::PostgresStorage;
-use crate::storage::{StorageBackend, UserTokenBalanceStatus};
+use crate::storage::{StorageLifecycle, UserTokenBalanceStatus};
 use anyhow::Result;
 
 pub(super) trait PostgresTokenBalanceStorage {
