@@ -558,4 +558,42 @@ mod tests {
             .iter()
             .any(|item| item.label == "runtime_metrics.test.long" && item.finished > 0));
     }
+
+    #[test]
+    fn long_task_warning_is_alerted_when_explicitly_recorded() {
+        let long_tasks = vec![super::LongTaskMetricSnapshot {
+            label: "runtime_metrics.test.long_warning".to_string(),
+            started: 1,
+            finished: 1,
+            warnings: 1,
+            panics: 0,
+            in_flight: 0,
+            avg_elapsed_ms: 45_000.0,
+            max_elapsed_ms: 45_000,
+        }];
+
+        let alerts = super::build_alerts(&[], &[], &long_tasks);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].severity, "warning");
+    }
+
+    #[test]
+    fn long_task_panic_is_alerted() {
+        let long_tasks = vec![super::LongTaskMetricSnapshot {
+            label: "runtime_metrics.test.long_panic".to_string(),
+            started: 1,
+            finished: 0,
+            warnings: 0,
+            panics: 1,
+            in_flight: 0,
+            avg_elapsed_ms: 45_000.0,
+            max_elapsed_ms: 45_000,
+        }];
+
+        let alerts = super::build_alerts(&[], &[], &long_tasks);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].severity, "critical");
+    }
 }
