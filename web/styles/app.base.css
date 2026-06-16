@@ -2082,10 +2082,9 @@ button.btn-with-icon[aria-busy="true"] i {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
-  grid-template-rows: minmax(0, 1fr) minmax(160px, 0.55fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-areas:
     "summary token"
-    "runtime runtime"
     "tools status";
   gap: 10px;
   overflow: hidden;
@@ -2121,8 +2120,54 @@ button.btn-with-icon[aria-busy="true"] i {
   grid-area: tools;
 }
 
-.monitor-block-runtime {
-  grid-area: runtime;
+.monitor-tools-title {
+  justify-content: space-between;
+}
+
+.monitor-tools-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.monitor-switch-btn {
+  border: 1px solid #dbe3ef;
+  background: #ffffff;
+  color: #64748b;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.monitor-switch-btn.active {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+
+.monitor-tools-panel {
+  display: none;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.monitor-tools-panel.active {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.runtime-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
 }
 
 .monitor-block-token {

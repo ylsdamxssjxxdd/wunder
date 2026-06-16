@@ -337,43 +337,64 @@
                   </div>
                 </div>
                 <div class="monitor-block monitor-block-tools">
-                  <div id="toolHeatmapTitle" class="monitor-block-title">
+                  <div id="toolHeatmapTitle" class="monitor-block-title monitor-tools-title">
                     <i class="fa-solid fa-diagram-project"></i>
                     <span data-role="title" data-i18n="monitor.chart.toolHeatmap.default">
                       近 3 小时工具调用热力图
                     </span>
-                  </div>
-                  <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
-                    <div id="toolHeatmapGrid" class="tool-heatmap"></div>
-                  </div>
-                  <div id="toolHeatmapEmpty" class="tool-heatmap-empty" data-i18n="monitor.toolHeatmap.empty">
-                    暂无工具调用
-                  </div>
-                </div>
-                <div class="monitor-block monitor-block-runtime">
-                  <div class="monitor-block-title">
-                    <i class="fa-solid fa-gauge-high"></i>
-                    <span data-i18n="monitor.runtime.title">运行时边界</span>
-                    <span id="runtimeMetricsAlertBadge" class="monitor-status runtime-alert-badge">-</span>
-                  </div>
-                  <div class="runtime-metrics-grid">
-                    <div class="runtime-metric-card">
-                      <div class="stat-label" data-i18n="monitor.runtime.blocking">阻塞执行</div>
-                      <div id="runtimeBlockingSummary" class="stat-value">-</div>
-                      <div id="runtimeBlockingDetail" class="monitor-subtext"></div>
-                    </div>
-                    <div class="runtime-metric-card">
-                      <div class="stat-label" data-i18n="monitor.runtime.queue">有界队列</div>
-                      <div id="runtimeQueueSummary" class="stat-value">-</div>
-                      <div id="runtimeQueueDetail" class="monitor-subtext"></div>
-                    </div>
-                    <div class="runtime-metric-card">
-                      <div class="stat-label" data-i18n="monitor.runtime.longTask">长任务</div>
-                      <div id="runtimeLongTaskSummary" class="stat-value">-</div>
-                      <div id="runtimeLongTaskDetail" class="monitor-subtext"></div>
+                    <div class="monitor-tools-switch" role="group" aria-label="监控视图切换">
+                      <button
+                        id="monitorToolsHeatmapBtn"
+                        class="monitor-switch-btn active"
+                        type="button"
+                        data-view="heatmap"
+                        data-i18n="monitor.switch.heatmap"
+                      >
+                        工具
+                      </button>
+                      <button
+                        id="monitorToolsRuntimeBtn"
+                        class="monitor-switch-btn"
+                        type="button"
+                        data-view="runtime"
+                        data-i18n="monitor.switch.runtime"
+                      >
+                        边界
+                      </button>
                     </div>
                   </div>
-                  <div id="runtimeMetricsAlerts" class="runtime-alert-list"></div>
+                  <div id="monitorToolsHeatmapPanel" class="monitor-tools-panel active">
+                    <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
+                      <div id="toolHeatmapGrid" class="tool-heatmap"></div>
+                    </div>
+                    <div id="toolHeatmapEmpty" class="tool-heatmap-empty" data-i18n="monitor.toolHeatmap.empty">
+                      暂无工具调用
+                    </div>
+                  </div>
+                  <div id="monitorToolsRuntimePanel" class="monitor-tools-panel">
+                    <div class="runtime-panel-head">
+                      <span data-i18n="monitor.runtime.title">运行时边界</span>
+                      <span id="runtimeMetricsAlertBadge" class="monitor-status runtime-alert-badge">-</span>
+                    </div>
+                    <div class="runtime-metrics-grid">
+                      <div class="runtime-metric-card">
+                        <div class="stat-label" data-i18n="monitor.runtime.blocking">阻塞执行</div>
+                        <div id="runtimeBlockingSummary" class="stat-value">-</div>
+                        <div id="runtimeBlockingDetail" class="monitor-subtext"></div>
+                      </div>
+                      <div class="runtime-metric-card">
+                        <div class="stat-label" data-i18n="monitor.runtime.queue">有界队列</div>
+                        <div id="runtimeQueueSummary" class="stat-value">-</div>
+                        <div id="runtimeQueueDetail" class="monitor-subtext"></div>
+                      </div>
+                      <div class="runtime-metric-card">
+                        <div class="stat-label" data-i18n="monitor.runtime.longTask">长任务</div>
+                        <div id="runtimeLongTaskSummary" class="stat-value">-</div>
+                        <div id="runtimeLongTaskDetail" class="monitor-subtext"></div>
+                      </div>
+                    </div>
+                    <div id="runtimeMetricsAlerts" class="runtime-alert-list"></div>
+                  </div>
                 </div>
               <div class="monitor-block monitor-block-token">
                 <div id="serviceTokenTitle" class="monitor-block-title" data-i18n="monitor.chart.tokenTrend.default">

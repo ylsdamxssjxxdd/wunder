@@ -1257,6 +1257,101 @@ const formatMs = (value) => {
   return `${Math.round(number)}ms`;
 };
 
+const MONITOR_RUNTIME_SOURCE_LABELS = {
+  blocking: "阻塞执行",
+  queue: "队列",
+  long_task: "长任务",
+  runtime: "运行时",
+};
+
+const MONITOR_RUNTIME_KIND_LABELS = {
+  db: "数据库",
+  fs: "文件系统",
+  cpu: "CPU",
+  external: "外部调用",
+};
+
+const MONITOR_RUNTIME_TEXT_REPLACEMENTS = [
+  [/queue_timeouts?/gi, "排队超时"],
+  [/exec_timeouts?/gi, "执行超时"],
+  [/join_errors?/gi, "任务错误"],
+  [/max_queue_ms/gi, "最大排队耗时"],
+  [/max_exec_ms/gi, "最大执行耗时"],
+  [/max_wait_ms/gi, "最大等待耗时"],
+  [/max_elapsed_ms/gi, "最大耗时"],
+  [/avg_queue_ms/gi, "平均排队耗时"],
+  [/avg_exec_ms/gi, "平均执行耗时"],
+  [/in_flight/gi, "进行中"],
+  [/warnings?/gi, "慢任务告警"],
+  [/panics?/gi, "异常退出"],
+  [/failed/gi, "失败"],
+  [/closed/gi, "已关闭"],
+  [/busy/gi, "忙碌"],
+  [/queue/gi, "队列"],
+  [/blocking/gi, "阻塞执行"],
+  [/long_task/gi, "长任务"],
+];
+
+const replaceRuntimeMetricText = (value) =>
+  MONITOR_RUNTIME_TEXT_REPLACEMENTS.reduce(
+    (result, [pattern, replacement]) => result.replace(pattern, replacement),
+    String(value || "").trim().replace(/[._]/g, " ")
+  );
+
+const formatRuntimeMetricLabel = (value) => {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "-";
+  }
+  const lower = text.toLowerCase();
+  if (MONITOR_RUNTIME_KIND_LABELS[lower]) {
+    return MONITOR_RUNTIME_KIND_LABELS[lower];
+  }
+  if (text.includes(".")) {
+    const segments = text
+      .split(".")
+      .map((segment) => replaceRuntimeMetricText(segment))
+      .filter(Boolean);
+    if (segments.length > 0) {
+      return segments.join(" · ");
+    }
+  }
+  return replaceRuntimeMetricText(text);
+};
+
+const formatRuntimeMetricSource = (value) => {
+  const key = String(value || "").trim().toLowerCase();
+  return MONITOR_RUNTIME_SOURCE_LABELS[key] || formatRuntimeMetricLabel(key);
+};
+
+const getMonitorToolsView = () => {
+  const value = String(state.runtime?.monitorToolsView || "heatmap").toLowerCase();
+  return value === "runtime" ? "runtime" : "heatmap";
+};
+
+const syncMonitorToolsView = () => {
+  const view = getMonitorToolsView();
+  if (elements.monitorToolsHeatmapBtn) {
+    elements.monitorToolsHeatmapBtn.classList.toggle("active", view === "heatmap");
+    elements.monitorToolsHeatmapBtn.setAttribute("aria-pressed", String(view === "heatmap"));
+  }
+  if (elements.monitorToolsRuntimeBtn) {
+    elements.monitorToolsRuntimeBtn.classList.toggle("active", view === "runtime");
+    elements.monitorToolsRuntimeBtn.setAttribute("aria-pressed", String(view === "runtime"));
+  }
+  if (elements.monitorToolsHeatmapPanel) {
+    elements.monitorToolsHeatmapPanel.classList.toggle("active", view === "heatmap");
+  }
+  if (elements.monitorToolsRuntimePanel) {
+    elements.monitorToolsRuntimePanel.classList.toggle("active", view === "runtime");
+  }
+};
+
+const setMonitorToolsView = (view) => {
+  state.runtime.monitorToolsView = view === "runtime" ? "runtime" : "heatmap";
+  syncMonitorToolsView();
+};
+
 const renderRuntimeMetrics = (runtime) => {
   if (!elements.runtimeBlockingSummary) {
     return;
@@ -1270,25 +1365,25 @@ const renderRuntimeMetrics = (runtime) => {
   const blockingTimeouts =
     sumBy(blocking, "queue_timeouts") + sumBy(blocking, "exec_timeouts") + sumBy(blocking, "join_errors");
   elements.runtimeBlockingSummary.textContent = `${blockingCalls}`;
-  elements.runtimeBlockingDetail.textContent = `max queue ${formatMs(
+  elements.runtimeBlockingDetail.textContent = `最大排队 ${formatMs(
     maxBy(blocking, "max_queue_ms")
-  )} / max exec ${formatMs(maxBy(blocking, "max_exec_ms"))} / timeout ${blockingTimeouts}`;
+  )} / 最大执行 ${formatMs(maxBy(blocking, "max_exec_ms"))} / 超时 ${blockingTimeouts}`;
 
   const queueEnqueued = sumBy(queues, "enqueued");
   const queueBusy = sumBy(queues, "busy");
   elements.runtimeQueueSummary.textContent = `${queueEnqueued}`;
-  elements.runtimeQueueDetail.textContent = `busy ${queueBusy} / failed ${sumBy(
+  elements.runtimeQueueDetail.textContent = `忙碌 ${queueBusy} / 失败 ${sumBy(
     queues,
     "failed"
-  )} / max wait ${formatMs(maxBy(queues, "max_wait_ms"))}`;
+  )} / 最大等待 ${formatMs(maxBy(queues, "max_wait_ms"))}`;
 
   const longStarted = sumBy(longTasks, "started");
   const longWarnings = sumBy(longTasks, "warnings");
   elements.runtimeLongTaskSummary.textContent = `${longStarted}`;
-  elements.runtimeLongTaskDetail.textContent = `in flight ${sumBy(
+  elements.runtimeLongTaskDetail.textContent = `进行中 ${sumBy(
     longTasks,
     "in_flight"
-  )} / warn ${longWarnings} / max ${formatMs(maxBy(longTasks, "max_elapsed_ms"))}`;
+  )} / 告警 ${longWarnings} / 最大耗时 ${formatMs(maxBy(longTasks, "max_elapsed_ms"))}`;
 
   if (elements.runtimeMetricsAlertBadge) {
     elements.runtimeMetricsAlertBadge.textContent = alerts.length ? `${alerts.length}` : "0";
@@ -1307,14 +1402,20 @@ const renderRuntimeMetrics = (runtime) => {
   if (!alerts.length) {
     const item = document.createElement("div");
     item.className = "runtime-alert-item runtime-alert-item--ok";
-    item.textContent = "No runtime boundary alerts";
+    item.textContent = t("monitor.runtime.alerts.empty");
     elements.runtimeMetricsAlerts.appendChild(item);
     return;
   }
   alerts.slice(0, 6).forEach((alert) => {
     const item = document.createElement("div");
     item.className = `runtime-alert-item runtime-alert-item--${alert.severity || "warning"}`;
-    item.textContent = `${alert.source || "runtime"}:${alert.label || "-"} ${alert.message || ""}`;
+    item.textContent = [
+      formatRuntimeMetricSource(alert.source || "runtime"),
+      formatRuntimeMetricLabel(alert.label || "-"),
+      replaceRuntimeMetricText(alert.message || ""),
+    ]
+      .filter(Boolean)
+      .join(" | ");
     elements.runtimeMetricsAlerts.appendChild(item);
   });
 };
@@ -4180,6 +4281,7 @@ export const initMonitorPanel = () => {
   bindMonitorPagination();
   bindMonitorSessionFilters();
   syncMonitorSessionFilterInputs();
+  syncMonitorToolsView();
   window.addEventListener("resize", resizeMonitorCharts);
   if (elements.monitorTimeRange) {
     applyMonitorTimeRange(elements.monitorTimeRange.value || state.monitor.timeRangeHours);
@@ -4281,6 +4383,12 @@ export const initMonitorPanel = () => {
         closeMonitorToolModal();
       }
     });
+  }
+  if (elements.monitorToolsHeatmapBtn) {
+    elements.monitorToolsHeatmapBtn.addEventListener("click", () => setMonitorToolsView("heatmap"));
+  }
+  if (elements.monitorToolsRuntimeBtn) {
+    elements.monitorToolsRuntimeBtn.addEventListener("click", () => setMonitorToolsView("runtime"));
   }
 };
 
