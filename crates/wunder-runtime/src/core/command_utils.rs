@@ -323,6 +323,7 @@ fn is_rg_program(program: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[cfg(windows)]
     #[test]
@@ -406,5 +407,79 @@ mod tests {
         )
         .expect("direct command");
         assert_eq!(command.as_std().get_program().to_string_lossy(), "echo");
+    }
+
+    #[test]
+    fn build_direct_command_recognizes_env_prefix_and_arguments() {
+        let command =
+            build_direct_command("FOO=bar rustc --version", Path::new(".")).expect("direct");
+        let std_command = command.as_std();
+        assert_eq!(std_command.get_program().to_string_lossy(), "rustc");
+        let args = std_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(args, vec!["--version"]);
+        let envs = std_command.get_envs().collect::<Vec<_>>();
+        assert!(envs.iter().any(|(key, value)| {
+            key.to_string_lossy() == "FOO"
+                && value
+                    .as_ref()
+                    .map(|item| item.to_string_lossy().to_string())
+                    == Some("bar".to_string())
+        }));
+    }
+
+    #[test]
+    fn build_direct_command_rejects_shell_builtins_and_meta_commands() {
+        assert!(build_direct_command("cd /tmp", Path::new(".")).is_none());
+        assert!(build_direct_command("echo hello && pwd", Path::new(".")).is_none());
+    }
+
+    #[test]
+    fn build_direct_command_with_overrides_uses_pip_binary_override() {
+        let overrides = CommandProgramOverrides {
+            pip_bin: Some(PathBuf::from("/tmp/custom-pip")),
+            ..Default::default()
+        };
+        let command = build_direct_command_with_overrides(
+            "pip install wunder",
+            Path::new("."),
+            Some(Path::new("/tmp/python")),
+            overrides,
+        )
+        .expect("direct command");
+        let std_command = command.as_std();
+        assert_eq!(
+            std_command.get_program().to_string_lossy(),
+            "/tmp/custom-pip"
+        );
+        let args = std_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(args, vec!["install", "wunder"]);
+    }
+
+    #[test]
+    fn build_direct_command_with_overrides_falls_back_to_python_module_for_pip() {
+        let python_bin = Path::new("/tmp/wunder-python/bin/python3");
+        let command = build_direct_command_with_overrides(
+            "pip install wunder",
+            Path::new("."),
+            Some(python_bin),
+            CommandProgramOverrides::default(),
+        )
+        .expect("direct command");
+        let std_command = command.as_std();
+        assert_eq!(
+            std_command.get_program().to_string_lossy(),
+            python_bin.to_string_lossy()
+        );
+        let args = std_command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(args, vec!["-m", "pip", "install", "wunder"]);
     }
 }

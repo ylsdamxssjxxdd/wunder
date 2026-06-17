@@ -235,13 +235,17 @@ const detailMeta = computed(() => {
 });
 
 const resolveSkillSource = (skill: any) => {
-  if (skill?.source === 'builtin' || skill?.builtin === true || skill?.readonly === true) {
+  const source = String(skill?.source || '').trim();
+  if (source === 'global') {
+    return 'global';
+  }
+  if (source === 'builtin' || skill?.builtin === true || skill?.readonly === true) {
     return 'builtin';
   }
   return 'custom';
 };
 
-const isSkillReadonly = (skill: any) => resolveSkillSource(skill) === 'builtin';
+const isSkillReadonly = (skill: any) => resolveSkillSource(skill) !== 'custom';
 
 const activeSkillReadonly = computed(() => isSkillReadonly(activeSkill.value));
 const workspaceEmptyText = computed(() =>
@@ -289,9 +293,7 @@ const buildSkillDesc = (skill: any) => {
 };
 
 const buildSkillSourceLabel = (skill: any) =>
-  resolveSkillSource(skill) === 'builtin'
-    ? t('userTools.skills.source.builtin')
-    : t('userTools.skills.source.custom');
+  t(`userTools.skills.source.${resolveSkillSource(skill)}`);
 
 const emitWorkspaceLoading = (value: boolean) => {
   emitLoadingChange(value);

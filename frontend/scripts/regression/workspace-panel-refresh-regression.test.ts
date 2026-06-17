@@ -10,6 +10,37 @@ import {
   type WorkspaceRefreshEntryLike
 } from '../../src/components/chat/workspacePanelRefreshPlanner';
 
+const ensureBrowserRuntimeStub = (): void => {
+  const root = globalThis as typeof globalThis & {
+    window?: { location?: { origin?: string } };
+    localStorage?: {
+      getItem: (key: string) => string | null;
+      setItem: (key: string, value: string) => void;
+      removeItem: (key: string) => void;
+    };
+  };
+  if (!root.window) {
+    root.window = { location: { origin: 'http://localhost' } };
+  } else if (!root.window.location) {
+    root.window.location = { origin: 'http://localhost' };
+  }
+  if (!root.window.location.origin) {
+    root.window.location.origin = 'http://localhost';
+  }
+  if (!root.localStorage) {
+    const values = new Map<string, string>();
+    root.localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      }
+    };
+  }
+};
+
 test('workspace refresh targets collapse file updates to the visible parent directory', () => {
   const entries: WorkspaceRefreshEntryLike[] = [
     {
@@ -173,4 +204,29 @@ test('workspace tree version gating only skips versions that are already applied
   assert.equal(shouldAcceptWorkspaceTreeVersion(5, 5), false);
   assert.equal(shouldAcceptWorkspaceTreeVersion(4, 5), false);
   assert.equal(shouldAcceptWorkspaceTreeVersion(6, 5), true);
+});
+
+test('workspace refresh paths normalize public generated resource aliases', async () => {
+  ensureBrowserRuntimeStub();
+  const {
+    extractWorkspaceRefreshPaths,
+    isWorkspacePathAffected
+  } = await import('../../src/utils/workspaceRefresh');
+  const paths = extractWorkspaceRefreshPaths({
+    public_path: '/workspaces/user__c__2/images/output.png',
+    data: {
+      outputPath: 'reports/final.pdf',
+      workspace_relative_path: 'images/output.png'
+    },
+    meta: {
+      savedPath: 'audio/result.mp3'
+    }
+  });
+
+  assert.deepEqual(paths.sort(), [
+    'audio/result.mp3',
+    'images/output.png',
+    'reports/final.pdf'
+  ]);
+  assert.equal(isWorkspacePathAffected('images/output.png', paths), true);
 });

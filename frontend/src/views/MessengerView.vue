@@ -1780,10 +1780,13 @@
           </div>
         </div>
         <div v-if="rightDockSkillContentLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
-        <pre
+        <SkillMarkdownPreview
           v-else-if="rightDockSkillContent"
           class="messenger-skill-detail-content"
-        ><code>{{ rightDockSkillContent }}</code></pre>
+          :content="rightDockSkillContent"
+          :skill-name="rightDockSelectedSkillName"
+          :content-path="rightDockSkillContentPath"
+        />
         <div v-else class="messenger-list-empty">{{ t('chat.ability.noDesc') }}</div>
       </div>
     </el-dialog>
@@ -1834,6 +1837,7 @@ defineOptions({
 
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
+import SkillMarkdownPreview from '@/components/messenger/SkillMarkdownPreview.vue';
 import { ref as vueRef } from 'vue';
 import { reportDesktopRendererStage } from '@/config/desktop';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';

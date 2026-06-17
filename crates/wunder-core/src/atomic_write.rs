@@ -160,4 +160,30 @@ mod tests {
         let saved = fs::read_to_string(&target).expect("read");
         assert_eq!(saved, "new");
     }
+
+    #[test]
+    fn atomic_write_creates_nested_parent_directories() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("nested").join("deeper").join("note.txt");
+
+        atomic_write_text(&target, "nested").expect("write");
+
+        let saved = fs::read_to_string(&target).expect("read");
+        assert_eq!(saved, "nested");
+    }
+
+    #[test]
+    fn atomic_write_leaves_no_sibling_temp_files_after_success() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("note.txt");
+
+        atomic_write_text(&target, "clean").expect("write");
+
+        let leftovers = fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".wunder.tmp."))
+            .collect::<Vec<_>>();
+        assert!(leftovers.is_empty());
+    }
 }

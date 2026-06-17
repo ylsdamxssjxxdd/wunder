@@ -941,7 +941,9 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               return;
           const payload = (result?.data?.data || {}) as Record<string, unknown>;
           ctx.rightDockSkillContent.value = String(payload.content || '');
-          ctx.rightDockSkillContentPath.value = String(payload.path || ctx.rightDockSkillContentPath.value || '').trim();
+          ctx.rightDockSkillContentPath.value = String(
+              payload.relative_path || payload.relativePath || payload.path || ctx.rightDockSkillContentPath.value || ''
+          ).trim();
       }
       catch (error) {
           if (currentVersion !== ctx.rightDockSkillContentLoadVersion)

@@ -337,6 +337,48 @@ mod tests {
     }
 
     #[test]
+    fn audit_mode_allows_high_risk_exec_but_requires_approval() {
+        let mut config = Config::default();
+        config.security.exec_policy_mode = Some("audit".to_string());
+
+        let decision =
+            evaluate_tool_policy(&config, ExecPolicyToolKind::Exec, "rm -rf ./target", false)
+                .expect("decision");
+
+        assert!(decision.allowed);
+        assert!(decision.requires_approval);
+        assert_eq!(decision.reason, "high_risk_command");
+        assert_eq!(decision.mode, ExecPolicyMode::Audit);
+    }
+
+    #[test]
+    fn approved_high_risk_exec_is_not_blocked_in_enforce_mode() {
+        let mut config = Config::default();
+        config.security.exec_policy_mode = Some("enforce".to_string());
+
+        let decision =
+            evaluate_tool_policy(&config, ExecPolicyToolKind::Exec, "rm -rf ./target", true);
+
+        assert!(decision.is_none());
+    }
+
+    #[test]
+    fn build_approval_signature_uses_tool_name_for_blank_exec_command() {
+        assert_eq!(
+            build_approval_signature(ExecPolicyToolKind::Exec, "execute_command", &json!({}), " "),
+            "tool:execute_command"
+        );
+    }
+
+    #[test]
+    fn extract_approval_token_accepts_numeric_ids() {
+        assert_eq!(
+            extract_approval_token(&json!({ "approval_id": 42 })),
+            Some("42".to_string())
+        );
+    }
+
+    #[test]
     fn build_write_signature_truncates_on_char_boundary() {
         let repeated = "局".repeat(300);
         let args = json!({

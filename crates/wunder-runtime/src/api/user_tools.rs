@@ -781,28 +781,24 @@ pub(crate) fn normalize_public_path(path: &Path) -> String {
 
 fn user_skill_to_value(
     spec: SkillSpec,
+    source: UserSkillSourceKind,
     enabled_set: &HashSet<String>,
     shared_set: &HashSet<String>,
-    skill_root: &Path,
-    builtin_catalog: &BuiltinSkillCatalog,
     builtin_enabled_set: Option<&HashSet<String>>,
 ) -> Value {
-    let source = resolve_user_skill_source(skill_root, &spec, builtin_catalog);
     let name = spec.name;
     let description = spec.description;
     let path = normalize_public_path_text(&spec.path);
     let input_schema = spec.input_schema;
-    let enabled = if source.is_builtin() {
-        builtin_enabled_set
+    let enabled = match source {
+        UserSkillSourceKind::Builtin => builtin_enabled_set
             .map(|items| items.contains(&name))
-            .unwrap_or_else(|| enabled_set.contains(&name))
-    } else {
-        true
+            .unwrap_or_else(|| enabled_set.contains(&name)),
+        UserSkillSourceKind::Custom | UserSkillSourceKind::Global => true,
     };
-    let shared = if source.is_builtin() {
-        false
-    } else {
-        shared_set.contains(&name)
+    let shared = match source {
+        UserSkillSourceKind::Custom => shared_set.contains(&name),
+        UserSkillSourceKind::Builtin | UserSkillSourceKind::Global => false,
     };
     json!({
         "name": name,
@@ -930,10 +926,9 @@ fn build_visible_user_skills_payload(
             if desktop_mode && seen.insert(spec.name.clone()) {
                 skills.push(user_skill_to_value(
                     spec,
+                    source,
                     &enabled_set,
                     &shared_set,
-                    skill_root,
-                    &builtin_catalog,
                     builtin_enabled_ref,
                 ));
             }
@@ -942,12 +937,37 @@ fn build_visible_user_skills_payload(
         if seen.insert(spec.name.clone()) {
             skills.push(user_skill_to_value(
                 spec,
+                source,
                 &enabled_set,
                 &shared_set,
-                skill_root,
-                &builtin_catalog,
                 builtin_enabled_ref,
             ));
+        }
+    }
+
+    let global_registry = load_skills(config, false, true, false);
+    for spec in global_registry.list_specs() {
+        if seen.contains(&spec.name) {
+            continue;
+        }
+        let source = if desktop_mode
+            && resolve_user_skill_source(skill_root, &spec, &builtin_catalog).is_builtin()
+        {
+            UserSkillSourceKind::Builtin
+        } else {
+            UserSkillSourceKind::Global
+        };
+        if let Ok(root) = resolve_user_skill_root_for_source(config, skill_root, &spec, source) {
+            let global_spec = SkillSpec { root, ..spec };
+            if seen.insert(global_spec.name.clone()) {
+                skills.push(user_skill_to_value(
+                    global_spec,
+                    source,
+                    &enabled_set,
+                    &shared_set,
+                    builtin_enabled_ref,
+                ));
+            }
         }
     }
 
@@ -963,10 +983,9 @@ fn build_visible_user_skills_payload(
                 if let Some(spec) = builtin_registry.get(&name) {
                     skills.push(user_skill_to_value(
                         spec,
+                        UserSkillSourceKind::Builtin,
                         &enabled_set,
                         &shared_set,
-                        skill_root,
-                        &builtin_catalog,
                         builtin_enabled_ref,
                     ));
                 }
@@ -1018,6 +1037,7 @@ async fn user_skills_content(
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let resolved_skill = resolve_visible_user_skill(&config, &skill_root, name)?;
+    let root = resolved_skill.root;
     let spec = resolved_skill.spec;
     let skill_path = PathBuf::from(&spec.path);
     if !skill_path.exists() || !skill_path.is_file() {
@@ -1037,10 +1057,16 @@ async fn user_skills_content(
                 ),
             )
         })?;
+    let relative_path = skill_path
+        .strip_prefix(&root)
+        .ok()
+        .map(normalize_public_path)
+        .unwrap_or_else(|| "SKILL.md".to_string());
     Ok(Json(json!({
         "data": {
             "name": name,
             "path": normalize_public_path(&skill_path),
+            "relative_path": relative_path,
             "content": content
         }
     })))

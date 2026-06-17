@@ -1,5 +1,5 @@
 pub fn is_admin_path(path: &str) -> bool {
-    if path.starts_with("/.well-known/agent-card.json") {
+    if path == "/.well-known/agent-card.json" {
         return false;
     }
     if path.starts_with("/a2a") {
@@ -8,61 +8,68 @@ pub fn is_admin_path(path: &str) -> bool {
     if !path.starts_with("/wunder") {
         return false;
     }
-    if path.starts_with("/wunder/ppt") {
+    if path == "/wunder/ppt-en" || path_is_prefix_or_child(path, "/wunder/ppt") {
         return false;
     }
-    if path.starts_with("/wunder/i18n") {
+    if path_is_prefix_or_child(path, "/wunder/i18n") {
         return false;
     }
-    if path.starts_with("/wunder/doc2md") {
+    if path_is_prefix_or_child(path, "/wunder/doc2md") {
         return false;
     }
-    if path.starts_with("/wunder/temp_dir") {
+    if path_is_prefix_or_child(path, "/wunder/temp_dir") {
         return false;
     }
-    if path.starts_with("/wunder/auth") {
+    if path_is_prefix_or_child(path, "/wunder/auth") {
         return false;
     }
-    if path.starts_with("/wunder/chat") {
+    if path_is_prefix_or_child(path, "/wunder/chat") {
         return false;
     }
-    if path.starts_with("/wunder/workspace") {
+    if path_is_prefix_or_child(path, "/wunder/workspace") {
         return false;
     }
-    if path.starts_with("/wunder/user_world") {
+    if path_is_prefix_or_child(path, "/wunder/user_world") {
         return false;
     }
-    if path.starts_with("/wunder/cron") {
+    if path_is_prefix_or_child(path, "/wunder/cron") {
         return false;
     }
-    if path.starts_with("/wunder/channels") {
+    if path_is_prefix_or_child(path, "/wunder/channels") {
         return false;
     }
-    if path.starts_with("/wunder/user_tools") {
+    if path_is_prefix_or_child(path, "/wunder/user_tools") {
         return false;
     }
-    if path.starts_with("/wunder/prompt_templates") {
+    if path_is_prefix_or_child(path, "/wunder/prompt_templates") {
         return false;
     }
-    if path.starts_with("/wunder/agents") {
+    if path_is_prefix_or_child(path, "/wunder/agents") {
         return false;
     }
-    if path.starts_with("/wunder/beeroom") {
+    if path_is_prefix_or_child(path, "/wunder/beeroom") {
         return false;
     }
-    if path.starts_with("/wunder/external_links") {
+    if path_is_prefix_or_child(path, "/wunder/external_links") {
         return false;
     }
-    if path.starts_with("/wunder/external/workflows") {
+    if path_is_prefix_or_child(path, "/wunder/external/workflows") {
         return false;
     }
-    if path.starts_with("/wunder/plaza") {
+    if path_is_prefix_or_child(path, "/wunder/plaza") {
         return false;
     }
-    if path.starts_with("/wunder/companions/global") {
+    if path_is_prefix_or_child(path, "/wunder/companions/global") {
         return false;
     }
     true
+}
+
+fn path_is_prefix_or_child(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 pub fn is_leader_path(path: &str) -> bool {
@@ -157,5 +164,27 @@ mod tests {
             Some("sample-token".to_string())
         );
         assert_eq!(extract_bearer_token_value("Basic sample-token"), None);
+    }
+
+    #[test]
+    fn empty_explicit_api_key_falls_back_to_bearer_token() {
+        assert_eq!(
+            extract_api_key_values(Some("   "), Some("Bearer fallback-token")),
+            Some("fallback-token".to_string())
+        );
+    }
+
+    #[test]
+    fn bearer_token_requires_space_delimited_prefix() {
+        assert_eq!(extract_bearer_token_value("Bearer"), None);
+        assert_eq!(extract_bearer_token_value("BearerToken value"), None);
+        assert_eq!(extract_bearer_token_value("Bearer    "), None);
+    }
+
+    #[test]
+    fn route_prefixes_do_not_unlock_similar_admin_paths() {
+        assert!(is_admin_path("/wunder/plazadmin"));
+        assert!(is_admin_path("/wunder/user_tooling"));
+        assert!(is_admin_path("/wunder/companions/global-admin"));
     }
 }

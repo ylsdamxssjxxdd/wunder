@@ -974,6 +974,33 @@ test('message stats keeps orphan subagent ownership away from a stopped assistan
   assert.equal(stoppedAssistant.subagents.length, 0);
 });
 
+test('chat workspace path hints read generated resource aliases', async () => {
+  ensureBrowserRuntimeStub();
+  const { collectWorkspacePathHints } = await import('../../src/stores/chatStats');
+  const paths = collectWorkspacePathHints(
+    {
+      public_path: '/workspaces/user__c__2/images/output.png',
+      outputPath: 'reports/final.pdf'
+    },
+    {
+      data: {
+        workspace_relative_path: 'images/output.png',
+        savedPath: 'audio/result.mp3'
+      },
+      meta: {
+        filePath: 'video/result.mp4'
+      }
+    }
+  );
+
+  assert.deepEqual(paths.sort(), [
+    'audio/result.mp3',
+    'images/output.png',
+    'reports/final.pdf',
+    'video/result.mp4'
+  ]);
+});
+
 test('message stats keeps waiting-input status ahead of stale running flags', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

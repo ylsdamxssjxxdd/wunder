@@ -419,6 +419,83 @@ mod tests {
     }
 
     #[test]
+    fn normalize_tool_arguments_json_with_meta_wraps_strict_scalar_values() {
+        let (normalized, repair) = normalize_tool_arguments_json_with_meta("[\"alpha\", 2]");
+        assert_eq!(
+            serde_json::from_str::<Value>(&normalized).expect("wrapped args should parse"),
+            json!({
+                "value": ["alpha", 2]
+            })
+        );
+        assert_eq!(
+            repair,
+            Some(json!({
+                "kind": "tool_arguments",
+                "source": "arguments",
+                "strategy": "non_object_arguments_wrapped"
+            }))
+        );
+    }
+
+    #[test]
+    fn recover_tool_args_value_keeps_raw_fields_when_merging_outer_fields() {
+        let args = json!({
+            "raw": "{\"path\":\"from_raw.txt\",\"mode\":\"read\"}",
+            "path": "explicit.txt",
+            "limit": 3
+        });
+
+        let recovered = recover_tool_args_value(&args);
+
+        assert_eq!(
+            recovered,
+            json!({
+                "path": "from_raw.txt",
+                "mode": "read",
+                "limit": 3
+            })
+        );
+    }
+
+    #[test]
+    fn sanitize_tool_call_payload_counts_each_repaired_arguments_field() {
+        let payload = json!([
+            {
+                "function": {
+                    "name": "one",
+                    "arguments": "plain text"
+                }
+            },
+            {
+                "function": {
+                    "name": "two",
+                    "arguments": "[\"alpha\"]"
+                }
+            }
+        ]);
+
+        let sanitized = sanitize_tool_call_payload_with_meta(&payload);
+
+        assert_eq!(
+            sanitized.repair,
+            Some(json!({
+                "kind": "tool_call_payload",
+                "source": "function.arguments",
+                "strategy": "sanitize_before_request",
+                "count": 2
+            }))
+        );
+        assert_eq!(
+            sanitized.value[0]["function"]["arguments"],
+            json!("{\"raw\":\"plain text\"}")
+        );
+        assert_eq!(
+            sanitized.value[1]["function"]["arguments"],
+            json!("{\"value\":[\"alpha\"]}")
+        );
+    }
+
+    #[test]
     fn sanitize_tool_call_payload_normalizes_nested_arguments() {
         let payload = json!([
             {

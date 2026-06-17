@@ -1,10 +1,15 @@
 import { normalizeWorkspacePath } from './workspaceTreeCache';
+import { parseWorkspaceResourceUrl } from './workspaceResources';
 
 const WORKSPACE_REFRESH_PATH_KEYS = [
   'path',
   'paths',
   'changed_paths',
   'changedPaths',
+  'public_path',
+  'publicPath',
+  'workspace_relative_path',
+  'workspaceRelativePath',
   'target_path',
   'targetPath',
   'source_path',
@@ -12,6 +17,12 @@ const WORKSPACE_REFRESH_PATH_KEYS = [
   'destination',
   'destination_path',
   'destinationPath',
+  'output_path',
+  'outputPath',
+  'saved_path',
+  'savedPath',
+  'file_path',
+  'filePath',
   'relative_path',
   'relativePath',
   'file',
@@ -22,6 +33,8 @@ const WORKSPACE_REFRESH_PATH_KEYS = [
 export const normalizeWorkspaceRefreshPath = (value: unknown): string => {
   const text = String(value || '').trim();
   if (!text || text === '/' || text === '.') return '';
+  const parsed = parseWorkspaceResourceUrl(text);
+  if (parsed?.relativePath) return normalizeWorkspacePath(parsed.relativePath);
   return normalizeWorkspacePath(text);
 };
 

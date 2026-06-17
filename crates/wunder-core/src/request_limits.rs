@@ -67,4 +67,34 @@ mod tests {
             "abctext".chars().count()
         );
     }
+
+    #[test]
+    fn measure_request_text_input_chars_trims_empty_attachment_content() {
+        let attachments = vec![AttachmentPayload {
+            name: Some("note.txt".to_string()),
+            content: Some("   \n\t  ".to_string()),
+            content_type: Some("text/plain".to_string()),
+            public_path: None,
+        }];
+
+        assert_eq!(
+            measure_request_text_input_chars("abc", Some(&attachments)),
+            3
+        );
+    }
+
+    #[test]
+    fn request_attachment_is_image_detects_image_extension_without_content_type() {
+        let attachment = AttachmentPayload {
+            name: Some("preview.WEBP".to_string()),
+            content: Some("binary-placeholder".to_string()),
+            content_type: None,
+            public_path: None,
+        };
+
+        assert!(request_attachment_is_image(
+            &attachment,
+            "binary-placeholder"
+        ));
+    }
 }

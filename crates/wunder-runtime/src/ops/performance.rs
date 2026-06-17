@@ -24,6 +24,8 @@ const PERF_USER_ID: &str = "performance_admin";
 const PERF_ROOT_DIR: &str = ".wunder_perf";
 const DEFAULT_COMMAND: &str = "echo wunder_perf";
 const COMMAND_TIMEOUT_S: u64 = 5;
+const DEFAULT_SAMPLE_REPEATS: usize = 2;
+const FILE_OPS_SAMPLE_REPEATS: usize = 1;
 
 #[derive(Debug, Deserialize)]
 pub struct PerformanceSampleRequest {
@@ -130,27 +132,45 @@ pub async fn run_sample(
     let mut metrics = Vec::new();
     metrics.push(build_metric(
         "prompt_build",
-        measure_twice(|| measure_prompt_build(concurrency, &context)).await,
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_prompt_build(concurrency, &context)
+        })
+        .await,
     ));
     metrics.push(build_metric(
         "file_ops",
-        measure_twice(|| measure_file_ops(concurrency, &context)).await,
+        measure_repeated(FILE_OPS_SAMPLE_REPEATS, || {
+            measure_file_ops(concurrency, &context)
+        })
+        .await,
     ));
     metrics.push(build_metric(
         "command_exec",
-        measure_twice(|| measure_command_exec(concurrency, &context, &command)).await,
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_command_exec(concurrency, &context, &command)
+        })
+        .await,
     ));
     metrics.push(build_metric(
         "tool_access",
-        measure_twice(|| measure_tool_access(concurrency, &context)).await,
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_tool_access(concurrency, &context)
+        })
+        .await,
     ));
     metrics.push(build_metric(
         "vector_flow",
-        measure_twice(|| measure_vector_flow(concurrency, &context)).await,
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_vector_flow(concurrency, &context)
+        })
+        .await,
     ));
     metrics.push(build_metric(
         "log_write",
-        measure_twice(|| measure_log_write(concurrency, &context)).await,
+        measure_repeated(DEFAULT_SAMPLE_REPEATS, || {
+            measure_log_write(concurrency, &context)
+        })
+        .await,
     ));
 
     cleanup_perf_dir(&context).await;
@@ -172,36 +192,40 @@ fn build_metric(key: &str, summary: MetricSummary) -> PerformanceMetricSample {
     }
 }
 
-async fn measure_twice<F, Fut>(mut op: F) -> MetricSummary
+async fn measure_repeated<F, Fut>(repeats: usize, mut op: F) -> MetricSummary
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = MetricSummary>,
 {
-    let first = op().await;
-    let second = op().await;
-    merge_summaries(first, second)
+    let repeats = repeats.max(1);
+    let mut summaries = Vec::with_capacity(repeats);
+    for _ in 0..repeats {
+        summaries.push(op().await);
+    }
+    merge_summaries(summaries)
 }
 
-fn merge_summaries(first: MetricSummary, second: MetricSummary) -> MetricSummary {
+fn merge_summaries(summaries: Vec<MetricSummary>) -> MetricSummary {
     let mut values = Vec::new();
-    if let Some(value) = first.avg_ms {
-        values.push(value);
-    }
-    if let Some(value) = second.avg_ms {
-        values.push(value);
+    let mut ok = true;
+    let mut error = None;
+    let mut details = Vec::new();
+    for summary in summaries {
+        if let Some(value) = summary.avg_ms {
+            values.push(value);
+        }
+        ok = ok && summary.ok;
+        if error.is_none() && !summary.ok {
+            error = summary.error;
+        }
+        details.push(summary.details);
     }
     let avg_ms = if values.is_empty() {
         None
     } else {
         Some(values.iter().sum::<f64>() / values.len() as f64)
     };
-    let ok = first.ok && second.ok;
-    let error = if ok {
-        None
-    } else {
-        first.error.or(second.error)
-    };
-    let details = merge_metric_details(first.details, second.details);
+    let details = merge_metric_details(details);
     MetricSummary {
         avg_ms,
         ok,
@@ -210,10 +234,10 @@ fn merge_summaries(first: MetricSummary, second: MetricSummary) -> MetricSummary
     }
 }
 
-fn merge_metric_details(first: Option<Value>, second: Option<Value>) -> Option<Value> {
+fn merge_metric_details(details_list: Vec<Option<Value>>) -> Option<Value> {
     let mut sums = BTreeMap::new();
     let mut count = 0usize;
-    for details in [first, second] {
+    for details in details_list {
         let Some(Value::Object(map)) = details else {
             continue;
         };
@@ -673,4 +697,227 @@ fn build_vector_perf_base(base_name: &str, root: &std::path::Path) -> KnowledgeB
 fn build_vector_flow_content(run_id: &str) -> String {
     let seed = format!("vector perf sample {run_id} lorem ipsum dolor sit amet.\n");
     seed.repeat(120)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn measure_repeated_uses_at_least_one_sample() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_op = calls.clone();
+
+        let summary = measure_repeated(0, move || {
+            let calls = calls_for_op.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                MetricSummary {
+                    avg_ms: Some(12.0),
+                    ok: true,
+                    details: Some(json!({ "step": 4.0 })),
+                    error: None,
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(summary.avg_ms, Some(12.0));
+        assert!(summary.ok);
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("step"))
+                .and_then(Value::as_f64),
+            Some(4.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn measure_repeated_averages_successful_samples_and_details() {
+        let values = Arc::new([10.0, 30.0]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let values_for_op = values.clone();
+        let calls_for_op = calls.clone();
+
+        let summary = measure_repeated(2, move || {
+            let values = values_for_op.clone();
+            let calls = calls_for_op.clone();
+            async move {
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                let value = values[index];
+                MetricSummary {
+                    avg_ms: Some(value),
+                    ok: true,
+                    details: Some(json!({ "write_file": value, "read_file": value / 2.0 })),
+                    error: None,
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(summary.avg_ms, Some(20.0));
+        assert!(summary.ok);
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("write_file"))
+                .and_then(Value::as_f64),
+            Some(20.0)
+        );
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("read_file"))
+                .and_then(Value::as_f64),
+            Some(10.0)
+        );
+    }
+
+    #[test]
+    fn merge_summaries_preserves_first_error_and_partial_average() {
+        let summary = merge_summaries(vec![
+            MetricSummary {
+                avg_ms: Some(40.0),
+                ok: true,
+                details: Some(json!({ "total_ms": 40.0 })),
+                error: None,
+            },
+            MetricSummary {
+                avg_ms: None,
+                ok: false,
+                details: None,
+                error: Some("first failure".to_string()),
+            },
+            MetricSummary {
+                avg_ms: None,
+                ok: false,
+                details: None,
+                error: Some("second failure".to_string()),
+            },
+        ]);
+
+        assert_eq!(summary.avg_ms, Some(40.0));
+        assert!(!summary.ok);
+        assert_eq!(summary.error.as_deref(), Some("first failure"));
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("total_ms"))
+                .and_then(Value::as_f64),
+            Some(40.0)
+        );
+    }
+
+    #[test]
+    fn merge_summaries_averages_multiple_detail_fields() {
+        let summary = merge_summaries(vec![
+            MetricSummary {
+                avg_ms: Some(10.0),
+                ok: true,
+                details: Some(json!({ "read_file": 8.0, "write_file": 12.0 })),
+                error: None,
+            },
+            MetricSummary {
+                avg_ms: Some(30.0),
+                ok: true,
+                details: Some(json!({ "read_file": 16.0, "write_file": 24.0 })),
+                error: None,
+            },
+        ]);
+
+        assert_eq!(summary.avg_ms, Some(20.0));
+        assert!(summary.ok);
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("read_file"))
+                .and_then(Value::as_f64),
+            Some(12.0)
+        );
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("write_file"))
+                .and_then(Value::as_f64),
+            Some(18.0)
+        );
+    }
+
+    #[test]
+    fn merge_summaries_ignores_missing_or_non_object_details() {
+        let summary = merge_summaries(vec![
+            MetricSummary {
+                avg_ms: None,
+                ok: true,
+                details: None,
+                error: None,
+            },
+            MetricSummary {
+                avg_ms: Some(25.0),
+                ok: true,
+                details: Some(json!(["unexpected", 1, 2])),
+                error: None,
+            },
+        ]);
+
+        assert_eq!(summary.avg_ms, Some(25.0));
+        assert!(summary.ok);
+        assert!(summary.details.is_none());
+    }
+
+    #[tokio::test]
+    async fn measure_repeated_keeps_first_error_when_later_samples_succeed() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_op = calls.clone();
+
+        let summary = measure_repeated(3, move || {
+            let calls = calls_for_op.clone();
+            async move {
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                if index == 0 {
+                    MetricSummary {
+                        avg_ms: None,
+                        ok: false,
+                        details: None,
+                        error: Some("first failure".to_string()),
+                    }
+                } else {
+                    MetricSummary {
+                        avg_ms: Some(15.0 + index as f64),
+                        ok: true,
+                        details: Some(json!({ "step": 1.0 })),
+                        error: None,
+                    }
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(!summary.ok);
+        assert_eq!(summary.error.as_deref(), Some("first failure"));
+        assert_eq!(summary.avg_ms, Some(16.5));
+        assert_eq!(
+            summary
+                .details
+                .as_ref()
+                .and_then(|value| value.get("step"))
+                .and_then(Value::as_f64),
+            Some(1.0)
+        );
+    }
 }

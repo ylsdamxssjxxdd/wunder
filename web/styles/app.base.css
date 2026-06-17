@@ -532,6 +532,23 @@ h1 {
   min-height: 200px;
 }
 
+.performance-metric-value {
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.25;
+}
+
+.performance-metric-detail {
+  margin-top: 3px;
+  max-width: 220px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .throughput-summary-block {
   overflow: hidden;
   max-height: 40vh;

@@ -352,7 +352,7 @@ const publishForm = reactive<{ kind: PublishKind; source_key: string; title: str
   title: '',
   summary: ''
 });
-const customSkills = ref<Array<Record<string, unknown>>>([]);
+const publishableSkills = ref<Array<Record<string, unknown>>>([]);
 
 const itemsInternal = computed(() => (Array.isArray(props.items) ? props.items : []));
 const browseKindInternal = computed(() => normalizePlazaBrowseKind(props.browseKind));
@@ -414,12 +414,14 @@ const swarmOptions = computed<SourceOption[]>(() =>
 );
 
 const skillOptions = computed<SourceOption[]>(() =>
-  customSkills.value
+  publishableSkills.value
     .map((skill) => {
       const title = String(skill?.name || '').trim();
+      const source = String(skill?.source || '').trim();
+      const sourceLabel = source ? t(`userTools.skills.source.${source}`) : '';
       return {
         value: title,
-        label: title,
+        label: sourceLabel && source !== 'custom' ? `${title} (${sourceLabel})` : title,
         title,
         summary: String(skill?.description || '').trim()
       };
@@ -443,24 +445,27 @@ const loadPublishSources = async () => {
     await Promise.allSettled([beeroomStore.loadGroups(), agentStore.loadAgents()]);
     const { data } = await fetchUserSkills();
     const skills = Array.isArray(data?.data?.skills) ? data.data.skills : [];
-    customSkills.value = skills.filter((item) => String(item?.source || '').trim() === 'custom');
+    publishableSkills.value = skills.filter((item) => String(item?.name || '').trim());
   } catch (error) {
     showApiError(error, t('plaza.publish.loadSkillsFailed'));
   }
 };
 
-const syncPublishSource = () => {
+const applyPublishSourceMeta = (source: SourceOption) => {
+  publishForm.title = source.title;
+  publishForm.summary = source.summary;
+};
+
+const syncPublishSource = (options: { overwriteMeta?: boolean } = {}) => {
   if (!sourceOptions.value.length) {
     publishForm.source_key = '';
     return;
   }
   const matched = sourceOptions.value.find((item) => item.value === publishForm.source_key) || sourceOptions.value[0];
+  const sourceChanged = publishForm.source_key !== matched.value;
   publishForm.source_key = matched.value;
-  if (!String(publishForm.title || '').trim()) {
-    publishForm.title = matched.title;
-  }
-  if (!String(publishForm.summary || '').trim()) {
-    publishForm.summary = matched.summary;
+  if (options.overwriteMeta || sourceChanged || !String(publishForm.title || '').trim()) {
+    applyPublishSourceMeta(matched);
   }
 };
 
@@ -499,20 +504,25 @@ const goNextPage = () => {
 };
 
 const submitPublish = async () => {
-  if (!publishForm.source_key) {
+  const submitKind = publishForm.kind;
+  const selectedSource = sourceOptions.value.find((item) => item.value === publishForm.source_key);
+  if (!selectedSource) {
     ElMessage.warning(t('plaza.publish.sourceEmpty'));
     return;
   }
+  const sourceKey = selectedSource.value;
+  const title = String(publishForm.title || selectedSource.title || '').trim();
+  const summary = String(publishForm.summary || selectedSource.summary || '').trim();
   try {
     const published = await plazaStore.publishItem({
-      kind: publishForm.kind,
-      source_key: publishForm.source_key,
-      title: publishForm.title || undefined,
-      summary: publishForm.summary || undefined
+      kind: submitKind,
+      source_key: sourceKey,
+      title: title || undefined,
+      summary: summary || undefined
     });
     publishDialogVisible.value = false;
     await Promise.allSettled([plazaStore.loadItems({ force: true }), agentStore.loadAgents(), beeroomStore.loadGroups()]);
-    if (published?.item_id && publishForm.kind === browseKindInternal.value) {
+    if (published?.item_id && submitKind === browseKindInternal.value) {
       selectItem(published.item_id);
     }
     ElMessage.success(t('plaza.publish.success'));
@@ -646,13 +656,23 @@ watch(
     publishForm.source_key = '';
     publishForm.title = '';
     publishForm.summary = '';
-    syncPublishSource();
+    syncPublishSource({ overwriteMeta: true });
   }
 );
 
 watch(sourceOptions, () => {
   syncPublishSource();
 });
+
+watch(
+  () => publishForm.source_key,
+  () => {
+    const matched = sourceOptions.value.find((item) => item.value === publishForm.source_key);
+    if (matched) {
+      applyPublishSourceMeta(matched);
+    }
+  }
+);
 
 onMounted(() => {
   if (props.active) {

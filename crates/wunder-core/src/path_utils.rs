@@ -54,8 +54,10 @@ pub fn is_within_root(root: &Path, target: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_path_for_compare, strip_windows_verbatim_prefix};
+    use super::{is_within_root, normalize_path_for_compare, strip_windows_verbatim_prefix};
+    use std::fs;
     use std::path::Path;
+    use tempfile::tempdir;
 
     #[test]
     fn strip_windows_verbatim_prefix_handles_double_slash_variants() {
@@ -74,5 +76,39 @@ mod tests {
     fn normalize_path_for_compare_strips_verbatim_prefix() {
         let path = normalize_path_for_compare(Path::new(r"\\?\C:\sample\file.txt"));
         assert_eq!(path, Path::new(r"c:\sample\file.txt"));
+    }
+
+    #[test]
+    fn is_within_root_accepts_existing_descendant() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("root");
+        let child_dir = root.join("child");
+        fs::create_dir_all(&child_dir).expect("create child");
+        let target = child_dir.join("file.txt");
+        fs::write(&target, "ok").expect("write target");
+
+        assert!(is_within_root(&root, &target));
+    }
+
+    #[test]
+    fn is_within_root_accepts_missing_descendant_under_existing_parent() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).expect("create root");
+        let target = root.join("child").join("future.txt");
+
+        assert!(is_within_root(&root, &target));
+    }
+
+    #[test]
+    fn is_within_root_rejects_sibling_with_same_prefix() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("root");
+        let sibling = dir.path().join("root_sibling");
+        fs::create_dir_all(&root).expect("create root");
+        fs::create_dir_all(&sibling).expect("create sibling");
+        let target = sibling.join("file.txt");
+
+        assert!(!is_within_root(&root, &target));
     }
 }

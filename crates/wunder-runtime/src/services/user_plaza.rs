@@ -1,5 +1,6 @@
 use crate::attachment::sanitize_filename_stem;
 use crate::config::Config;
+use crate::services::admin_skills::resolve_builtin_skills_root;
 use crate::services::agent_abilities::resolve_agent_ability_selection;
 use crate::services::archive_extract::extract_zip_bytes;
 use crate::services::hive_pack::{
@@ -447,7 +448,7 @@ async fn publish_skill_pack(
     existing: Option<&UserPlazaItemRecord>,
 ) -> Result<UserPlazaItemRecord> {
     let config = state.config_store.get().await;
-    let spec = resolve_custom_user_skill_spec(state, &config, &user.user_id, skill_name)?;
+    let spec = resolve_plaza_skill_spec(state, &config, &user.user_id, skill_name)?;
     let skill_dir_name = spec
         .root
         .file_name()
@@ -718,7 +719,7 @@ fn resolve_agent_for_publish(
         .ok_or_else(|| anyhow!("agent not found"))
 }
 
-fn resolve_custom_user_skill_spec(
+fn resolve_plaza_skill_spec(
     state: &AppState,
     config: &Config,
     user_id: &str,
@@ -729,17 +730,50 @@ fn resolve_custom_user_skill_spec(
         return Err(anyhow!("skill name is required"));
     }
     let skill_root = state.user_tool_store.get_skill_root(user_id);
+    if let Some(spec) = resolve_plaza_skill_spec_from_root(config, &skill_root, cleaned) {
+        return Ok(spec);
+    }
+    let global_registry = load_skills(config, false, true, false);
+    if let Some(spec) = global_registry.get(cleaned) {
+        return Ok(spec);
+    }
+    if let Some(builtin_root) = resolve_builtin_skills_root() {
+        if let Some(spec) = resolve_plaza_skill_spec_from_root(config, &builtin_root, cleaned) {
+            return Ok(spec);
+        }
+    }
+    Err(anyhow!("skill not found"))
+}
+
+fn resolve_plaza_skill_spec_from_root(
+    config: &Config,
+    root: &Path,
+    skill_name: &str,
+) -> Option<SkillSpec> {
+    if !root.exists() || !root.is_dir() {
+        return None;
+    }
+    let cleaned = skill_name.trim();
     let mut scan_config = config.clone();
-    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
+    scan_config.skills.paths = vec![root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
-    let spec = registry
-        .get(cleaned)
-        .ok_or_else(|| anyhow!("skill not found"))?;
-    if !spec.root.starts_with(&skill_root) {
-        return Err(anyhow!("only custom user skills can be published"));
+    registry.get(cleaned).or_else(|| {
+        registry.list_specs().into_iter().find(|spec| {
+            skill_top_dir_name(root, &spec.root).is_some_and(|top_dir| top_dir == cleaned)
+        })
+    })
+}
+
+fn skill_top_dir_name(base_root: &Path, skill_root: &Path) -> Option<String> {
+    let relative = skill_root.strip_prefix(base_root).ok()?;
+    let first = relative.components().next()?;
+    let value = first.as_os_str().to_string_lossy().trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
     }
-    Ok(spec)
 }
 
 #[derive(Debug)]
@@ -1011,7 +1045,7 @@ async fn compute_current_source_signature(
             ))
         }
         "skill_pack" => {
-            let spec = match resolve_custom_user_skill_spec(
+            let spec = match resolve_plaza_skill_spec(
                 state,
                 config,
                 &record.owner_user_id,

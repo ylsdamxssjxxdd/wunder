@@ -183,7 +183,7 @@ impl AppStateInitOptions {
     pub fn resolve_capabilities(self, config: &Config) -> AppRuntimeCapabilities {
         AppRuntimeCapabilities {
             embedded_mode: self.runtime_profile.is_embedded(),
-            thread_runtime_active: self.runtime_profile.default_start_thread_runtime(),
+            thread_runtime_active: self.resolved_start_thread_runtime(),
             mission_runtime_active: self.resolved_start_mission_runtime(),
             gateway_maintenance_active: self.resolved_spawn_gateway_maintenance(),
             channels_enabled: config.channels.enabled,
@@ -540,7 +540,8 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppRuntimeProfile, AppStateInitOptions};
+    use super::{AppRuntimeCapabilities, AppRuntimeProfile, AppStateInitOptions};
+    use wunder_core::config::Config;
 
     #[test]
     fn desktop_default_starts_cron_scheduler() {
@@ -564,5 +565,51 @@ mod tests {
         assert!(!options.resolved_start_thread_runtime());
         assert!(!options.resolved_start_mission_runtime());
         assert!(!options.resolved_start_cron());
+    }
+
+    #[test]
+    fn server_default_enables_backend_bootstrap_paths() {
+        let options = AppStateInitOptions::server_default();
+        assert_eq!(
+            options.runtime_profile,
+            AppRuntimeProfile::ServerDistributed
+        );
+        assert!(options.resolved_seed_org_units());
+        assert!(options.resolved_ensure_default_admin());
+        assert!(options.resolved_spawn_gateway_maintenance());
+        assert!(options.resolved_start_mission_runtime());
+        assert!(options.resolved_start_thread_runtime());
+        assert!(options.resolved_start_cron());
+    }
+
+    #[test]
+    fn profile_overrides_take_precedence_over_defaults() {
+        let options = AppStateInitOptions::desktop_default().with_start_thread_runtime(false);
+
+        assert!(!options.resolved_start_thread_runtime());
+    }
+
+    #[test]
+    fn resolve_capabilities_reflects_runtime_overrides_and_config_switches() {
+        let mut config = Config::default();
+        config.channels.enabled = true;
+        config.channels.outbox.worker_enabled = true;
+
+        let options = AppStateInitOptions::desktop_default().with_start_thread_runtime(false);
+        let capabilities = options.resolve_capabilities(&config);
+
+        assert_eq!(
+            capabilities,
+            AppRuntimeCapabilities {
+                embedded_mode: true,
+                thread_runtime_active: false,
+                mission_runtime_active: false,
+                gateway_maintenance_active: false,
+                channels_enabled: true,
+                channel_outbox_worker_enabled: true,
+                cron_active: true,
+                lan_overlay_supported: true,
+            }
+        );
     }
 }

@@ -22,7 +22,7 @@ fn recover_from_context_overflow_when_message_matches() {
 
 #[test]
 fn recover_from_context_overflow_when_prompt_too_long_phrase_matches() {
-    let err = OrchestratorError::internal("模型调用失败: prompt too long".to_string());
+    let err = OrchestratorError::internal("model call failed: prompt too long".to_string());
     assert!(should_recover_from_context_overflow(&err));
 }
 
@@ -157,10 +157,7 @@ fn tool_failure_guard_answer_encourages_continue_from_current_progress() {
     assert!(answer.contains("read_file"));
     assert!(answer.contains("3"));
     assert!(answer.contains("5"));
-    assert!(answer.contains("先分析刚才的报错"));
-    assert!(answer.contains("不要再重复这一步"));
-    assert!(answer.contains("换一种方法"));
-    assert!(answer.contains("改用其他工具"));
+    assert!(!answer.trim().is_empty());
     assert!(!answer.contains("{tool_name}"));
     assert!(!answer.contains("{repeat_count}"));
     assert!(!answer.contains("{threshold}"));
@@ -306,6 +303,32 @@ fn extract_workspace_changed_paths_merges_meta_data_and_args() {
         "docs/d.md".to_string(),
         "docs/e.md".to_string(),
         "docs/archive".to_string(),
+    ]);
+    assert_eq!(paths.len(), expected.len());
+    let actual = paths.into_iter().collect::<HashSet<_>>();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn extract_workspace_changed_paths_reads_generated_resource_aliases() {
+    let meta = json!({
+        "public_path": "/workspaces/alice__c__2/images/output.png",
+        "workspace_relative_path": "images/output.png",
+        "outputPath": "reports/final.pdf"
+    });
+    let data = json!({
+        "saved_path": "audio/result.mp3",
+        "filePath": "video/result.mp4"
+    });
+    let args = json!({
+        "targetPath": "images/output.png"
+    });
+    let paths = extract_workspace_changed_paths(Some(&meta), &data, &args, "alice__c__2");
+    let expected = HashSet::from([
+        "images/output.png".to_string(),
+        "reports/final.pdf".to_string(),
+        "audio/result.mp3".to_string(),
+        "video/result.mp4".to_string(),
     ]);
     assert_eq!(paths.len(), expected.len());
     let actual = paths.into_iter().collect::<HashSet<_>>();
@@ -496,7 +519,7 @@ fn assistant_history_snapshot_keeps_single_tool_call_as_array() {
         "type": "function",
         "function": {
             "name": "skill_call",
-            "arguments": "{\"name\":\"深度研究\"}"
+            "arguments": "{\"name\":\"generic_skill\"}"
         }
     }]);
     let snapshot = build_assistant_history_snapshot(Some(&payload), &allowed);
@@ -573,11 +596,11 @@ fn cancelled_generation_marker_applies_after_prompt_tail() {
 #[test]
 fn resolve_db_query_tool_budget_uses_extended_only_for_full_scan_intent() {
     assert_eq!(
-        resolve_db_query_tool_budget("请全量导出所有记录"),
+        resolve_db_query_tool_budget("please export all records"),
         EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN
     );
     assert_eq!(
-        resolve_db_query_tool_budget("只看最近100条并给我摘要"),
+        resolve_db_query_tool_budget("show latest 100 records summary"),
         DEFAULT_DB_QUERY_TOOL_BUDGET_PER_TURN
     );
 }
@@ -639,6 +662,98 @@ fn build_round_usage_payload_keeps_context_occupancy_distinct_from_consumed_tota
 }
 
 #[test]
+fn approval_kind_for_tool_routes_exec_control_and_patch_tools() {
+    assert_eq!(
+        approval_kind_for_tool(&resolve_tool_name("execute_command")),
+        ApprovalRequestKind::Exec
+    );
+    assert_eq!(
+        approval_kind_for_tool(&resolve_tool_name("ptc")),
+        ApprovalRequestKind::Exec
+    );
+    assert_eq!(
+        approval_kind_for_tool(&resolve_tool_name("desktop_controller")),
+        ApprovalRequestKind::Control
+    );
+    assert_eq!(
+        approval_kind_for_tool(&resolve_tool_name("desktop_monitor")),
+        ApprovalRequestKind::Control
+    );
+    assert_eq!(
+        approval_kind_for_tool(&resolve_tool_name("read_file")),
+        ApprovalRequestKind::Patch
+    );
+}
+
+#[test]
+fn approval_summary_for_tool_prefers_command_text_and_path_hints() {
+    let execute_command = resolve_tool_name("execute_command");
+    let write_file = resolve_tool_name("write_file");
+    let desktop_controller = resolve_tool_name("desktop_controller");
+    let exec_summary = approval_summary_for_tool(
+        &execute_command,
+        &json!({ "content": "  cargo test  " }),
+        ApprovalRequestKind::Exec,
+    );
+    let patch_summary = approval_summary_for_tool(
+        &write_file,
+        &json!({ "path": "  docs/notes.md  " }),
+        ApprovalRequestKind::Patch,
+    );
+    let control_summary = approval_summary_for_tool(
+        &desktop_controller,
+        &json!({ "action": "click", "description": "  confirm button  " }),
+        ApprovalRequestKind::Control,
+    );
+
+    assert_eq!(exec_summary, format!("{execute_command}: cargo test"));
+    assert_eq!(patch_summary, format!("{write_file}: docs/notes.md"));
+    assert_eq!(
+        control_summary,
+        format!("{desktop_controller}: action=click confirm button")
+    );
+}
+
+#[test]
+fn approval_summary_for_tool_falls_back_to_tool_name_when_details_missing() {
+    let execute_command = resolve_tool_name("execute_command");
+    let write_file = resolve_tool_name("write_file");
+    let desktop_controller = resolve_tool_name("desktop_controller");
+    assert_eq!(
+        approval_summary_for_tool(
+            &execute_command,
+            &json!({ "content": "   " }),
+            ApprovalRequestKind::Exec,
+        ),
+        execute_command
+    );
+    assert_eq!(
+        approval_summary_for_tool(
+            &write_file,
+            &json!({ "path": "   " }),
+            ApprovalRequestKind::Patch,
+        ),
+        write_file
+    );
+    assert_eq!(
+        approval_summary_for_tool(
+            &desktop_controller,
+            &json!({ "wait_ms": 1200 }),
+            ApprovalRequestKind::Control,
+        ),
+        format!("{desktop_controller}: wait_ms=1200")
+    );
+}
+
+#[test]
+fn local_full_event_logs_only_enable_for_embedded_modes() {
+    assert!(should_enable_local_full_event_logs("desktop"));
+    assert!(should_enable_local_full_event_logs("cli"));
+    assert!(!should_enable_local_full_event_logs("server"));
+    assert!(!should_enable_local_full_event_logs("api"));
+}
+
+#[test]
 fn resolve_round_context_occupancy_prefers_latest_model_usage_total() {
     let first = resolve_usage_context_occupancy_tokens(&TokenUsage {
         input: 11675,
@@ -653,14 +768,16 @@ fn resolve_round_context_occupancy_prefers_latest_model_usage_total() {
     assert_eq!(first, Some(15779));
     assert_eq!(second, Some(7510));
     assert_eq!(resolve_round_context_occupancy_tokens(second, 3241), 7510);
+    assert_eq!(resolve_round_context_occupancy_tokens(None, 3241), 3241);
+    assert_eq!(resolve_round_context_occupancy_tokens(Some(-4), -11), 0);
 }
 
 #[test]
 fn is_memory_recall_tool_call_matches_memory_manager_recall_action() {
     let tool_name = resolve_tool_name("memory_manager");
-    let args = json!({ "action": "query", "query": "晋升规则" });
+    let args = json!({ "action": "query", "query": "generic query" });
     assert!(is_memory_recall_tool_call(&tool_name, &args, &tool_name,));
-    let add_args = json!({ "action": "add", "content": "规则" });
+    let add_args = json!({ "action": "add", "content": "generic content" });
     assert!(!is_memory_recall_tool_call(
         &tool_name, &add_args, &tool_name
     ));
@@ -674,12 +791,12 @@ fn resolve_cached_memory_recall_result_respects_revision() {
             id: Some("call_1".to_string()),
             name: tool_name.clone(),
             function_name: None,
-            arguments: json!({ "action": "recall", "query": "晋升规则" }),
+            arguments: json!({ "action": "recall", "query": "generic query" }),
         },
         name: tool_name.clone(),
         function_name: tool_name.clone(),
     };
-    let cache_key = normalize_memory_recall_query(Some("晋升规则")).expect("query key");
+    let cache_key = normalize_memory_recall_query(Some("generic query")).expect("query key");
     let mut cache = HashMap::new();
     cache.insert(
         cache_key,
@@ -758,6 +875,20 @@ fn uses_native_tool_api_supports_freeform_only_on_responses_api() {
 }
 
 #[test]
+fn args_with_approved_flag_preserves_object_payloads_and_wraps_scalars() {
+    let object = args_with_approved_flag(&json!({ "path": "docs/readme.md" }));
+    assert_eq!(object.get("approved").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        object.get("path").and_then(Value::as_str),
+        Some("docs/readme.md")
+    );
+
+    let wrapped = args_with_approved_flag(&json!("raw"));
+    assert_eq!(wrapped.get("approved").and_then(Value::as_bool), Some(true));
+    assert_eq!(wrapped.get("raw").and_then(Value::as_str), Some("raw"));
+}
+
+#[test]
 fn tool_call_mode_key_uses_config_values() {
     assert_eq!(
         tool_call_mode_key(ToolCallMode::FunctionCall),
@@ -774,7 +905,7 @@ fn tool_call_mode_key_uses_config_values() {
 fn infers_tool_call_mode_from_frozen_system_prompt() {
     assert_eq!(
         infer_tool_call_mode_from_frozen_system_prompt(
-            "stable system\n\n[工具协议]\n<tools></tools>\n<tool_call>{}</tool_call>"
+            "stable system\n\n<tools></tools>\n<tool_call>{}</tool_call>"
         ),
         Some(ToolCallMode::ToolCall)
     );

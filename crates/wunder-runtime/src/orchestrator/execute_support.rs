@@ -131,11 +131,15 @@ const INVALID_TOOL_CALL_ARGUMENT_PREVIEW_CHARS: usize = 320;
 pub(super) const EMPTY_FINAL_ANSWER_REROUTE_MAX_PER_TURN: u32 = 3;
 const WORKSPACE_UPDATE_MAX_CHANGED_PATHS: usize = 24;
 const CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: &str = "_channel_display_question";
-const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
+const WORKSPACE_PATH_HINT_KEYS: [&str; 26] = [
     "path",
     "paths",
     "changed_paths",
     "changedPaths",
+    "public_path",
+    "publicPath",
+    "workspace_relative_path",
+    "workspaceRelativePath",
     "target_path",
     "targetPath",
     "source_path",
@@ -143,6 +147,12 @@ const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
     "destination",
     "destination_path",
     "destinationPath",
+    "output_path",
+    "outputPath",
+    "saved_path",
+    "savedPath",
+    "file_path",
+    "filePath",
     "relative_path",
     "relativePath",
     "file",

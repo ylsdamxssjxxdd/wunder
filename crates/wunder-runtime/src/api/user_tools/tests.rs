@@ -505,3 +505,43 @@ fn resolve_visible_user_skill_can_read_enabled_global_skill_from_config_paths() 
         normalize_test_path(&global_root.path().join("政策知识库检索"))
     );
 }
+
+#[test]
+fn server_visible_skill_payload_includes_enabled_global_config_skills() {
+    let user_root = tempdir().expect("user root");
+    let global_root = tempdir().expect("global root");
+    write_test_skill(global_root.path(), "全局技能", "global skill");
+
+    let mut config = Config::default();
+    config.server.mode = "server".to_string();
+    config.skills.paths = vec![global_root.path().to_string_lossy().to_string()];
+    config.skills.enabled = vec!["全局技能".to_string()];
+
+    let payload = UserToolsPayload::default();
+    let (skills, enabled, shared) =
+        build_visible_user_skills_payload(&config, &payload, user_root.path());
+
+    let names = skills
+        .iter()
+        .filter_map(|item| item.get("name").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["全局技能"]);
+    assert!(enabled.is_empty());
+    assert!(shared.is_empty());
+    assert_eq!(
+        skills[0].get("source").and_then(serde_json::Value::as_str),
+        Some("global")
+    );
+    assert_eq!(
+        skills[0]
+            .get("readonly")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        skills[0]
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+}

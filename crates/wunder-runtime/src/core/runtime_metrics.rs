@@ -535,28 +535,120 @@ pub(crate) fn elapsed_ms_u64(started: std::time::Instant) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    fn unique_label(suffix: &str) -> String {
+        format!(
+            "runtime_metrics.test.{}.{}",
+            suffix,
+            std::thread::current().name().unwrap_or("unnamed")
+        )
+    }
+
     #[test]
     fn snapshot_includes_recorded_runtime_metrics() {
-        super::record_blocking_started("db", "runtime_metrics.test.blocking");
-        super::record_blocking_finished("db", "runtime_metrics.test.blocking", 2, 3, true);
-        super::record_queue_enqueued("runtime_metrics.test.queue", false, 0);
-        super::record_queue_busy("runtime_metrics.test.queue");
-        super::record_long_task_started("runtime_metrics.test.long");
-        super::record_long_task_finished("runtime_metrics.test.long", 4, false);
+        let blocking_label = unique_label("blocking");
+        let queue_label = unique_label("queue");
+        let long_label = unique_label("long");
+        super::record_blocking_started("db", &blocking_label);
+        super::record_blocking_finished("db", &blocking_label, 2, 3, true);
+        super::record_queue_enqueued(&queue_label, false, 0);
+        super::record_queue_busy(&queue_label);
+        super::record_long_task_started(&long_label);
+        super::record_long_task_finished(&long_label, 4, false);
 
         let snapshot = super::snapshot();
         assert!(snapshot
             .blocking
             .iter()
-            .any(|item| item.label == "runtime_metrics.test.blocking" && item.calls > 0));
+            .any(|item| item.label == blocking_label && item.calls > 0));
         assert!(snapshot
             .queues
             .iter()
-            .any(|item| item.name == "runtime_metrics.test.queue" && item.busy > 0));
+            .any(|item| item.name == queue_label && item.busy > 0));
         assert!(snapshot
             .long_tasks
             .iter()
-            .any(|item| item.label == "runtime_metrics.test.long" && item.finished > 0));
+            .any(|item| item.label == long_label && item.finished > 0));
+    }
+
+    #[test]
+    fn blocking_snapshot_tracks_average_max_and_error_counts() {
+        let label = unique_label("blocking_stats");
+        super::record_blocking_started("fs", &label);
+        super::record_blocking_finished("fs", &label, 20, 40, true);
+        super::record_blocking_started("fs", &label);
+        super::record_blocking_finished("fs", &label, 60, 80, false);
+
+        let snapshot = super::snapshot();
+        let item = snapshot
+            .blocking
+            .iter()
+            .find(|item| item.label == label)
+            .expect("blocking metric should be present");
+
+        assert_eq!(item.calls, 2);
+        assert_eq!(item.ok, 1);
+        assert_eq!(item.errors, 1);
+        assert_eq!(item.avg_queue_ms, 40.0);
+        assert_eq!(item.max_queue_ms, 60);
+        assert_eq!(item.avg_exec_ms, 60.0);
+        assert_eq!(item.max_exec_ms, 80);
+        assert_eq!(item.in_flight, 0);
+    }
+
+    #[test]
+    fn queue_snapshot_tracks_config_waits_and_failures() {
+        let label = unique_label("queue_stats");
+        super::record_queue_config(&label, 4, 2);
+        super::record_queue_config(&label, 2, 1);
+        super::record_queue_enqueued(&label, true, 10);
+        super::record_queue_enqueued(&label, true, 30);
+        super::record_queue_item_started(&label);
+        super::record_queue_item_finished(&label, false);
+        super::record_queue_closed(&label);
+
+        let snapshot = super::snapshot();
+        let item = snapshot
+            .queues
+            .iter()
+            .find(|item| item.name == label)
+            .expect("queue metric should be present");
+
+        assert_eq!(item.capacity, 4);
+        assert_eq!(item.max_in_flight, 2);
+        assert_eq!(item.enqueued, 2);
+        assert_eq!(item.waited_enqueues, 2);
+        assert_eq!(item.avg_wait_ms, 20.0);
+        assert_eq!(item.max_wait_ms, 30);
+        assert_eq!(item.processed, 1);
+        assert_eq!(item.failed, 1);
+        assert_eq!(item.closed, 1);
+        assert_eq!(item.in_flight, 0);
+    }
+
+    #[test]
+    fn snapshot_sorting_is_stable_for_highest_activity_first() {
+        let high_label = unique_label("sort_high");
+        let low_label = unique_label("sort_low");
+        super::record_blocking_started("sort", &high_label);
+        super::record_blocking_finished("sort", &high_label, 1, 1, true);
+        super::record_blocking_started("sort", &high_label);
+        super::record_blocking_finished("sort", &high_label, 1, 1, true);
+        super::record_blocking_started("sort", &low_label);
+        super::record_blocking_finished("sort", &low_label, 1, 1, true);
+
+        let snapshot = super::snapshot();
+        let high_index = snapshot
+            .blocking
+            .iter()
+            .position(|item| item.label == high_label)
+            .expect("high activity metric");
+        let low_index = snapshot
+            .blocking
+            .iter()
+            .position(|item| item.label == low_label)
+            .expect("low activity metric");
+
+        assert!(high_index < low_index);
     }
 
     #[test]
@@ -576,6 +668,98 @@ mod tests {
 
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].severity, "warning");
+    }
+
+    #[test]
+    fn blocking_timeout_alert_is_critical_before_latency_warning() {
+        let blocking = vec![super::BlockingMetricSnapshot {
+            kind: "fs".to_string(),
+            label: "runtime_metrics.test.blocking_timeout".to_string(),
+            calls: 1,
+            ok: 0,
+            errors: 0,
+            queue_timeouts: 1,
+            exec_timeouts: 0,
+            join_errors: 0,
+            in_flight: 0,
+            avg_queue_ms: super::ALERT_BLOCKING_MAX_QUEUE_MS as f64,
+            max_queue_ms: super::ALERT_BLOCKING_MAX_QUEUE_MS,
+            avg_exec_ms: 0.0,
+            max_exec_ms: 0,
+        }];
+
+        let alerts = super::build_alerts(&blocking, &[], &[]);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].source, "blocking");
+        assert_eq!(alerts[0].severity, "critical");
+        assert!(alerts[0].message.contains("queue_timeouts=1"));
+    }
+
+    #[test]
+    fn blocking_latency_threshold_alert_is_warning() {
+        let blocking = vec![super::BlockingMetricSnapshot {
+            kind: "fs".to_string(),
+            label: "runtime_metrics.test.blocking_latency".to_string(),
+            calls: 1,
+            ok: 1,
+            errors: 0,
+            queue_timeouts: 0,
+            exec_timeouts: 0,
+            join_errors: 0,
+            in_flight: 0,
+            avg_queue_ms: 0.0,
+            max_queue_ms: 0,
+            avg_exec_ms: super::ALERT_BLOCKING_MAX_EXEC_MS as f64,
+            max_exec_ms: super::ALERT_BLOCKING_MAX_EXEC_MS,
+        }];
+
+        let alerts = super::build_alerts(&blocking, &[], &[]);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].source, "blocking");
+        assert_eq!(alerts[0].severity, "warning");
+        assert!(alerts[0].message.contains("max_exec_ms="));
+    }
+
+    #[test]
+    fn queue_busy_alert_is_warning_and_closed_alert_is_critical() {
+        let queues = vec![
+            super::QueueMetricSnapshot {
+                name: "runtime_metrics.test.queue_busy".to_string(),
+                capacity: 1,
+                max_in_flight: 1,
+                enqueued: 1,
+                waited_enqueues: 0,
+                busy: 1,
+                closed: 0,
+                processed: 0,
+                failed: 0,
+                in_flight: 0,
+                avg_wait_ms: 0.0,
+                max_wait_ms: 0,
+            },
+            super::QueueMetricSnapshot {
+                name: "runtime_metrics.test.queue_closed".to_string(),
+                capacity: 1,
+                max_in_flight: 1,
+                enqueued: 1,
+                waited_enqueues: 0,
+                busy: 0,
+                closed: 1,
+                processed: 0,
+                failed: 0,
+                in_flight: 0,
+                avg_wait_ms: 0.0,
+                max_wait_ms: 0,
+            },
+        ];
+
+        let alerts = super::build_alerts(&[], &queues, &[]);
+
+        assert_eq!(alerts.len(), 2);
+        assert_eq!(alerts[0].severity, "warning");
+        assert_eq!(alerts[1].severity, "critical");
     }
 
     #[test]

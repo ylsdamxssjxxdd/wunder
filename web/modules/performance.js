@@ -44,6 +44,13 @@ const METRICS = [
     color: "#a855f7",
   },
 ];
+const FILE_OP_DETAIL_STEPS = [
+  { key: "list_files", labelKey: "performance.detail.listFiles" },
+  { key: "write_file", labelKey: "performance.detail.writeFile" },
+  { key: "read_file", labelKey: "performance.detail.readFile" },
+  { key: "search_content", labelKey: "performance.detail.searchContent" },
+  { key: "apply_patch", labelKey: "performance.detail.applyPatch" },
+];
 
 let initialized = false;
 let chart = null;
@@ -404,6 +411,29 @@ const formatMs = (value) => {
   return `${Math.max(0, Math.round(value))} ms`;
 };
 
+const getMetricDetailItems = (entry, metric) => {
+  if (metric.key !== "file_ops" || !entry?.details || typeof entry.details !== "object") {
+    return [];
+  }
+  return FILE_OP_DETAIL_STEPS.map((step) => {
+    const value = Number(entry.details?.[step.key]);
+    return Number.isFinite(value)
+      ? { key: step.key, label: t(step.labelKey), value }
+      : null;
+  }).filter(Boolean);
+};
+
+const buildDetailText = (items) =>
+  items.map((item) => `${item.label}: ${formatMs(item.value)}`).join("\n");
+
+const buildDetailSummary = (items) =>
+  items
+    .slice()
+    .sort((left, right) => right.value - left.value)
+    .slice(0, 2)
+    .map((item) => `${item.label} ${formatMs(item.value)}`)
+    .join(" · ");
+
 const renderChart = () => {
   if (!ensureChart()) {
     return;
@@ -487,7 +517,18 @@ const renderTable = () => {
       const entry = sample.metrics?.[metric.key];
       const avg = Number(entry?.avg_ms);
       if (Number.isFinite(avg)) {
-        cell.textContent = formatMs(avg);
+        const value = document.createElement("div");
+        value.className = "performance-metric-value";
+        value.textContent = formatMs(avg);
+        cell.appendChild(value);
+        const detailItems = getMetricDetailItems(entry, metric);
+        if (detailItems.length) {
+          const detail = document.createElement("div");
+          detail.className = "performance-metric-detail";
+          detail.textContent = buildDetailSummary(detailItems);
+          cell.title = buildDetailText(detailItems);
+          cell.appendChild(detail);
+        }
       } else {
         cell.textContent = entry?.error ? t("performance.table.error") : "-";
       }

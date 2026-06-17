@@ -65,6 +65,10 @@ name = "auth_profile_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]
+name = "backend_contracts"
+required-features = ["sqlite-storage"]
+
+[[test]]
 name = "channel_runtime_logs_routes"
 required-features = ["sqlite-storage"]
 

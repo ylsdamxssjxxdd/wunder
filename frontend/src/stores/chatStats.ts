@@ -111,6 +111,7 @@ import {
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
 import { isCompactionSummaryEvent } from '@/utils/chatCompactionWorkflow';
+import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import {
   dedupeTerminalCompactionMarkersInPlace,
   isCompactionMarkerAssistantMessage,
@@ -417,6 +418,10 @@ export const WORKSPACE_PATH_HINT_KEYS = [
   'paths',
   'changed_paths',
   'changedPaths',
+  'public_path',
+  'publicPath',
+  'workspace_relative_path',
+  'workspaceRelativePath',
   'target_path',
   'targetPath',
   'source_path',
@@ -424,15 +429,24 @@ export const WORKSPACE_PATH_HINT_KEYS = [
   'destination',
   'destination_path',
   'destinationPath',
+  'output_path',
+  'outputPath',
+  'saved_path',
+  'savedPath',
+  'file_path',
+  'filePath',
   'file',
   'files',
   'relative_path',
-  'relativePath'
+  'relativePath',
+  'to_path'
 ];
 
 export const normalizeWorkspaceEventPath = (value) => {
   const text = String(value || '').trim();
   if (!text || text === '/' || text === '.') return '';
+  const parsed = parseWorkspaceResourceUrl(text);
+  if (parsed?.relativePath) return parsed.relativePath.replace(/\\/g, '/').replace(/^\/+/, '');
   const normalized = text.replace(/\\/g, '/').replace(/^\/+/, '');
   return normalized === '.' ? '' : normalized;
 };
@@ -457,6 +471,10 @@ export const collectWorkspacePathHints = (...sources) => {
       const record = value as Record<string, unknown>;
       appendPathLike(
         record.path ??
+        record.public_path ??
+        record.publicPath ??
+        record.workspace_relative_path ??
+        record.workspaceRelativePath ??
         record.relative_path ??
         record.relativePath ??
         record.target_path ??
@@ -465,7 +483,14 @@ export const collectWorkspacePathHints = (...sources) => {
         record.sourcePath ??
         record.destination ??
         record.destination_path ??
-        record.destinationPath
+        record.destinationPath ??
+        record.output_path ??
+        record.outputPath ??
+        record.saved_path ??
+        record.savedPath ??
+        record.file_path ??
+        record.filePath ??
+        record.to_path
       );
     }
   };

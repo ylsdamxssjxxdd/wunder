@@ -322,4 +322,40 @@ mod tests {
             json!(["alpha", "beta"])
         );
     }
+
+    #[test]
+    fn sanitize_json_schema_replaces_boolean_subschemas() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "enabled": true,
+                "disabled": false
+            }
+        });
+
+        sanitize_json_schema_in_place(&mut schema);
+
+        assert_eq!(schema["properties"]["enabled"]["type"], json!("string"));
+        assert_eq!(schema["properties"]["disabled"]["type"], json!("string"));
+    }
+
+    #[test]
+    fn sanitize_json_schema_normalizes_type_arrays_to_first_supported_type() {
+        let mut schema = json!({
+            "type": ["null", "INTEGER"],
+            "minimum": 0
+        });
+
+        sanitize_json_schema_in_place(&mut schema);
+
+        assert_eq!(schema["type"], json!("integer"));
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_defaults_missing_schema_to_object() {
+        let normalized = normalize_tool_input_schema(None);
+
+        assert_eq!(normalized["type"], json!("object"));
+        assert!(normalized["properties"].is_object());
+    }
 }

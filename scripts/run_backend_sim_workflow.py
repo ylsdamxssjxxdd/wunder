@@ -220,6 +220,7 @@ def build_command(
     cmd = [
         cargo_bin,
         "run",
+        "--release",
         "-p",
         "wunder-runtime",
         "--features",

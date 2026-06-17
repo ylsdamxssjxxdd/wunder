@@ -242,4 +242,41 @@ mod tests {
         assert_eq!(trimmed, "abcd");
         assert!(!trimmed.starts_with("..."));
     }
+
+    #[test]
+    fn test_estimate_content_tokens_counts_embedded_data_urls_as_images() {
+        let content = json!("before data:image/png;base64,abcd after");
+
+        let tokens = estimate_content_tokens(&content);
+
+        assert!(tokens >= IMAGE_TOKEN_ESTIMATE);
+        assert!(tokens < IMAGE_TOKEN_ESTIMATE * 2);
+    }
+
+    #[test]
+    fn test_trim_messages_to_budget_keeps_latest_message_when_budget_too_small() {
+        let messages = vec![
+            json!({ "role": "user", "content": "first" }),
+            json!({ "role": "assistant", "content": "second" }),
+        ];
+
+        let trimmed = trim_messages_to_budget(&messages, 1);
+
+        assert_eq!(
+            trimmed,
+            vec![json!({ "role": "assistant", "content": "second" })]
+        );
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_counts_reasoning_alias() {
+        let baseline = estimate_message_tokens(&json!({ "role": "assistant", "content": "" }));
+        let message = json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning": "intermediate reasoning"
+        });
+
+        assert!(estimate_message_tokens(&message) > baseline);
+    }
 }
