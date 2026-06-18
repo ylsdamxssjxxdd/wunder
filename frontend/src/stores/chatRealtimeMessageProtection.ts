@@ -53,6 +53,16 @@ const normalizeText = (value: unknown): string => String(value || '').trim();
 const normalizeComparableText = (value: unknown): string =>
   normalizeText(value).replace(/\s+/g, ' ');
 
+const contentsRepresentSameAssistantOutput = (left: unknown, right: unknown): boolean => {
+  const leftText = normalizeComparableText(left);
+  const rightText = normalizeComparableText(right);
+  if (!leftText || !rightText) return false;
+  if (leftText === rightText) return true;
+  const shorter = leftText.length <= rightText.length ? leftText : rightText;
+  const longer = shorter === leftText ? rightText : leftText;
+  return shorter.length >= 80 && longer.includes(shorter);
+};
+
 const resolveMessageTimestampMs = (message: ChatMessage | null | undefined): number | null => {
   if (!message) return null;
   const parsed = Date.parse(String(message.created_at ?? ''));
@@ -118,6 +128,16 @@ const resolveProtectedInsertIndex = (
   return messages.length;
 };
 
+const resolveLatestUserTurnStartIndex = (messages: ChatMessage[]): number => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'user' && !message?.isGreeting) {
+      return index;
+    }
+  }
+  return -1;
+};
+
 const resolveMatchingMessage = (
   messages: ChatMessage[],
   entry: ProtectedRealtimeMessage,
@@ -129,15 +149,28 @@ const resolveMatchingMessage = (
   }
   const entryTimestampMs = entry.createdAt ? Date.parse(entry.createdAt) : Number.NaN;
   const hasEntryTimestamp = Number.isFinite(entryTimestampMs);
+  const latestUserTurnStartIndex = entry.role === 'assistant'
+    ? resolveLatestUserTurnStartIndex(messages)
+    : -1;
   let matched: ChatMessage | null = null;
   let bestDelta = Number.POSITIVE_INFINITY;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (latestUserTurnStartIndex >= 0 && index <= latestUserTurnStartIndex) break;
     const candidate = messages[index];
     if (candidate?.role !== entry.role) continue;
-    if (normalizeComparableText(candidate?.content) !== normalizedEntryContent) continue;
+    const contentMatches = entry.role === 'assistant'
+      ? contentsRepresentSameAssistantOutput(candidate?.content, normalizedEntryContent)
+      : normalizeComparableText(candidate?.content) === normalizedEntryContent;
+    if (!contentMatches) continue;
     const candidateEventId = normalizeEventId(candidate?.stream_event_id);
-    if (candidateEventId !== null && candidateEventId !== entry.eventId) continue;
+    if (candidateEventId !== null && candidateEventId !== entry.eventId && entry.role !== 'assistant') {
+      continue;
+    }
     if (isStreamingAssistant(candidate)) continue;
+    if (entry.role === 'assistant' && hasEntryTimestamp && candidateEventId !== null) {
+      matched = candidate;
+      break;
+    }
     if (!hasEntryTimestamp) {
       matched = candidate;
       break;
@@ -182,6 +215,10 @@ export const mergeProtectedRealtimeMessages = (
           const previousEventId = options.normalizeEventId(existing.stream_event_id);
           const previousHiddenInternal = existing.hiddenInternal === true;
           const previousCreatedAt = String(existing.created_at || '').trim();
+          const previousContent = String(existing.content || '');
+          if (entry.role === 'assistant' && entry.content.length > previousContent.length) {
+            existing.content = entry.content;
+          }
           options.assignStreamEventId(existing, entry.eventId);
           if (!previousCreatedAt && entry.createdAt) {
             existing.created_at = entry.createdAt;
@@ -192,6 +229,7 @@ export const mergeProtectedRealtimeMessages = (
           const nextEventId = options.normalizeEventId(existing.stream_event_id);
           if (
             previousEventId !== nextEventId ||
+            (entry.role === 'assistant' && entry.content.length > previousContent.length) ||
             (!previousCreatedAt && entry.createdAt) ||
             (!previousHiddenInternal && entry.role === 'user' && entry.hiddenInternal === true)
           ) {

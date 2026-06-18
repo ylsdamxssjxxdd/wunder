@@ -79,6 +79,7 @@ import {
 import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
+import { mergeFinalTranscriptAssistantDuplicates } from './chatFinalTranscriptMerge';
 import {
   assistantEntriesShareTurnAnchor,
   buildAssistantMatchEntries,
@@ -92,6 +93,13 @@ import {
   isPendingAssistantMessage,
   stopPendingAssistantMessage
 } from './chatPendingMessage';
+import {
+  buildExistingHistoryIdSet,
+  collectDedupedHistoryBackfillPage,
+  normalizeHistoryBeforeId,
+  prependHistoryBackfillPage,
+  readHistoryBackfillPage
+} from './chatHistoryBackfill';
 import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
@@ -193,11 +201,6 @@ const withSessionDetailLoadInFlight = <T>(
   });
   sessionDetailLoadInFlight.set(key, request);
   return request;
-};
-
-const normalizeHistoryBeforeId = (value: unknown): number | null => {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
 export const chatSessionOpenLoadActions = {
@@ -705,7 +708,9 @@ export const chatSessionOpenLoadActions = {
         let messages = finalCachedMessages;
         if (canReuseHydratedMessages) {
           getSessionWorkflowState(targetSessionId, { reset: true });
-          messages = dedupeAssistantMessages(mergeSnapshotIntoMessages(finalCachedMessages, snapshot));
+          messages = mergeFinalTranscriptAssistantDuplicates(
+            dedupeAssistantMessages(mergeSnapshotIntoMessages(finalCachedMessages, snapshot))
+          );
         } else {
           const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
           const rawMessages = attachWorkflowEvents(
@@ -720,6 +725,7 @@ export const chatSessionOpenLoadActions = {
             messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
             messages = dedupeAssistantMessages(messages);
           }
+          messages = mergeFinalTranscriptAssistantDuplicates(messages);
         }
         if (compactionHydrationRounds.length > 0) {
           chatDebugLog('chat.compaction.hydrate', 'load-session-detail', {
@@ -858,7 +864,7 @@ export const chatSessionOpenLoadActions = {
             nextMessages
           );
           const mergedWithCompactionMarkers = mergeCompactionMarkersIntoMessages(
-            foregroundMerge.messages,
+            mergeFinalTranscriptAssistantDuplicates(foregroundMerge.messages),
             watchedMessages
           );
           chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
@@ -884,7 +890,7 @@ export const chatSessionOpenLoadActions = {
           });
           nextMessages = replaceMessageArrayKeepingReference(
             watchedMessages,
-            mergedWithCompactionMarkers
+            mergeFinalTranscriptAssistantDuplicates(mergedWithCompactionMarkers)
           );
         }
         if (!remoteRunning) {
@@ -1016,41 +1022,46 @@ export const chatSessionOpenLoadActions = {
       const beforeId = normalizeHistoryBeforeId(beforeIdRaw);
       state.loading = true;
       try {
-        const params: { before_id?: number; limit: number } = { limit };
-        if (beforeId !== null) {
-          params.before_id = beforeId;
-        }
-        const { data } = await getSessionHistoryPage(targetId, params);
-        const payload = data?.data || {};
-        const incoming = Array.isArray(payload.transcript) ? payload.transcript : [];
-        const incomingHasMore =
-          payload.history_has_more ??
-          payload.historyHasMore ??
-          payload.history_more ??
-          payload.historyMore ??
-          false;
-        const incomingBeforeId =
-          payload.history_before_id ??
-          payload.historyBeforeId ??
-          payload.history_before ??
-          payload.historyBefore ??
-          null;
-        const existingIds = new Set(
-          (Array.isArray(this.messages) ? this.messages : [])
-            .map((message) => Number.parseInt(String(message?.history_id ?? ''), 10))
-            .filter((value) => Number.isFinite(value) && value > 0)
+        const currentSessionMessages = resolveSessionMessageArray(
+          this,
+          targetId,
+          resolveSessionKey(this.activeSessionId) === targetId ? this.messages : null
         );
-        const deduped = incoming.filter((message) => {
-          const id = Number.parseInt(String(message?.history_id ?? ''), 10);
-          if (Number.isFinite(id) && id > 0) {
-            if (existingIds.has(id)) return false;
-            existingIds.add(id);
+        const existingIds = buildExistingHistoryIdSet(currentSessionMessages);
+        let cursor = beforeId;
+        let incomingCount = 0;
+        let incomingHasMore = false;
+        let incomingBeforeId: number | null = null;
+        let deduped: Record<string, unknown>[] = [];
+        let messagesForCursor = currentSessionMessages;
+        const maxEmptyPages = 3;
+        for (let emptyPageCount = 0; emptyPageCount <= maxEmptyPages; emptyPageCount += 1) {
+          const params: { before_id?: number; limit: number } = { limit };
+          if (cursor !== null) {
+            params.before_id = cursor;
           }
-          return true;
-        });
+          const { data } = await getSessionHistoryPage(targetId, params);
+          const payload = data?.data || {};
+          const page = readHistoryBackfillPage(payload);
+          incomingCount += page.transcript.length;
+          incomingHasMore = page.hasMore;
+          incomingBeforeId = page.beforeId;
+          const pageDeduped = collectDedupedHistoryBackfillPage(page.transcript, existingIds);
+          if (pageDeduped.length > 0) {
+            deduped = prependHistoryBackfillPage(deduped, pageDeduped);
+          }
+          if (pageDeduped.length > 0 || !incomingHasMore) {
+            break;
+          }
+          const nextCursor = incomingBeforeId;
+          if (nextCursor === null || nextCursor === cursor) {
+            break;
+          }
+          cursor = nextCursor;
+        }
         if (deduped.length > 0) {
-          const sessionMessagesRef = resolveSessionMessageArray(this, targetId, this.messages);
-          const nextMessages = [...deduped, ...sessionMessagesRef];
+          const nextMessages = [...deduped, ...currentSessionMessages];
+          messagesForCursor = nextMessages;
           const nextLimit = Math.min(
             Number(state.windowLimit || resolveSessionDetailMessageLimit(isDesktopModeEnabled())) + deduped.length,
             resolveMessageWindowMax(isDesktopModeEnabled())
@@ -1069,12 +1080,12 @@ export const chatSessionOpenLoadActions = {
             cacheSessionMessages(targetId, nextMessages);
           }
         }
-        state.beforeId = normalizeHistoryBeforeId(incomingBeforeId) ?? findOldestHistoryId(this.messages);
+        state.beforeId = incomingBeforeId ?? findOldestHistoryId(messagesForCursor);
         state.hasMore = Boolean(incomingHasMore) && Boolean(state.beforeId);
         if (perfEnabled) {
           chatPerf.recordDuration('chat_history_load', performance.now() - perfStart, {
             sessionId: targetId,
-            incoming: incoming.length,
+            incoming: incomingCount,
             appended: deduped.length,
             hasMore: state.hasMore
           });

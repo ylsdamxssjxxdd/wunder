@@ -313,3 +313,77 @@ test('message viewport runtime loads older agent history near top and preserves 
     }
   }
 });
+
+test('message viewport runtime auto-loads older history when refreshed viewport is underfilled', async () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const frameQueue: FrameRequestCallback[] = [];
+  const flushFrames = () => {
+    while (frameQueue.length > 0) {
+      const frame = frameQueue.shift();
+      frame?.(performance.now());
+    }
+  };
+  const waitForMicrotasks = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  try {
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frameQueue.push(callback);
+        return frameQueue.length;
+      },
+      cancelAnimationFrame: () => {}
+    };
+
+    let loadCalls = 0;
+    const container = {
+      scrollTop: 0,
+      clientHeight: 720,
+      scrollHeight: 480,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ top: 0, height: 720 })
+    } as unknown as HTMLElement;
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container),
+      showChatSettingsView: ref(false),
+      autoStickToBottom: ref(true),
+      showScrollTopButton: ref(false),
+      showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true),
+      isWorldConversationActive: ref(false),
+      activeConversationKey: ref('agent:session-underfilled'),
+      shouldVirtualizeMessages: ref(false),
+      agentRenderableMessages: ref([]),
+      worldRenderableMessages: ref([]),
+      messageVirtualHeightCache: new Map<string, number>(),
+      messageVirtualLayoutVersion: ref(0),
+      messageVirtualScrollTop: ref(0),
+      messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0,
+      resolveVirtualMessageHeight: () => 0,
+      loadOlderHistory: async () => {
+        loadCalls += 1;
+        (container as unknown as { scrollHeight: number }).scrollHeight = 900;
+        return [{ history_id: 7 }];
+      }
+    });
+
+    runtime.scheduleMessageViewportRefresh({
+      updateScrollState: true,
+      measure: true,
+      reason: 'detail-hydrated'
+    });
+    flushFrames();
+    await waitForMicrotasks();
+    flushFrames();
+
+    assert.equal(loadCalls, 1);
+    assert.equal(container.scrollTop, 420);
+    runtime.dispose();
+  } finally {
+    if (originalWindow === undefined) {
+      delete (globalThis as Record<string, unknown>).window;
+    } else {
+      (globalThis as Record<string, unknown>).window = originalWindow;
+    }
+  }
+});

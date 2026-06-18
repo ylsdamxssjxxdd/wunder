@@ -55,6 +55,16 @@ const normalizeComparableContent = (value: unknown): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const contentsRepresentSameAssistantOutput = (left: unknown, right: unknown): boolean => {
+  const leftText = normalizeComparableContent(left);
+  const rightText = normalizeComparableContent(right);
+  if (!leftText || !rightText) return false;
+  if (leftText === rightText) return true;
+  const shorter = leftText.length <= rightText.length ? leftText : rightText;
+  const longer = shorter === leftText ? rightText : leftText;
+  return shorter.length >= 80 && longer.includes(shorter);
+};
+
 const resolveMessageTimestampMs = (message: ChatWatchMessage | null | undefined): number | null => {
   if (!message) return null;
   const parsed = Date.parse(String(message.created_at ?? ''));
@@ -129,6 +139,16 @@ const resolveLatestAssistantAnchor = (
   return null;
 };
 
+const resolveLatestUserTurnStartIndex = (messages: ChatWatchMessage[]): number => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'user' && !message?.isGreeting) {
+      return index;
+    }
+  }
+  return -1;
+};
+
 const normalizeMessageRole = (payload: Record<string, any> | null | undefined): string =>
   String(payload?.role ?? '')
     .trim()
@@ -160,15 +180,32 @@ const tryBackfillMessageEventId = (
   }
   const eventTimestampMs = Number(options.eventTimestampMs);
   const hasEventTimestamp = Number.isFinite(eventTimestampMs);
+  const latestUserTurnStartIndex = options.role === 'assistant'
+    ? resolveLatestUserTurnStartIndex(options.messages)
+    : -1;
   let matchedMessage: ChatWatchMessage | null = null;
   let bestDelta = Number.POSITIVE_INFINITY;
   for (let index = options.messages.length - 1; index >= 0; index -= 1) {
+    if (latestUserTurnStartIndex >= 0 && index <= latestUserTurnStartIndex) break;
     const candidate = options.messages[index];
     if (!candidate || candidate.role !== options.role) continue;
-    if (normalizeComparableContent(candidate.content) !== normalizedContent) continue;
+    const contentMatches = options.role === 'assistant'
+      ? contentsRepresentSameAssistantOutput(candidate.content, normalizedContent)
+      : normalizeComparableContent(candidate.content) === normalizedContent;
+    if (!contentMatches) continue;
     const candidateEventId = options.normalizeEventId(candidate.stream_event_id);
-    if (candidateEventId !== null && candidateEventId !== normalizedEventId) continue;
+    if (
+      candidateEventId !== null &&
+      candidateEventId !== normalizedEventId &&
+      options.role !== 'assistant'
+    ) {
+      continue;
+    }
     if (options.role === 'assistant' && isStreamingAssistant(candidate)) continue;
+    if (options.role === 'assistant' && hasEventTimestamp && candidateEventId !== null) {
+      matchedMessage = candidate;
+      break;
+    }
     if (!hasEventTimestamp) {
       matchedMessage = candidate;
       break;
@@ -185,6 +222,12 @@ const tryBackfillMessageEventId = (
   }
   if (!matchedMessage) {
     return false;
+  }
+  if (
+    options.role === 'assistant' &&
+    String(matchedMessage.content || '').length < String(options.content || '').length
+  ) {
+    matchedMessage.content = options.content;
   }
   options.assignStreamEventId(matchedMessage, options.eventId);
   if (options.role === 'user' && options.hiddenInternalUser === true) {

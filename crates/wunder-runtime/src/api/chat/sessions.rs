@@ -27,6 +27,19 @@ use uuid::Uuid;
 
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const SESSION_DETAIL_MAX_LIMIT: i64 = 500;
+const MAX_VISIBLE_HISTORY_PAGE_FETCHES: usize = 6;
+
+struct RawHistoryPage {
+    history: Vec<Value>,
+    has_more: bool,
+    before_id: Option<i64>,
+}
+
+struct VisibleTranscriptPage {
+    transcript: Vec<Value>,
+    history_has_more: bool,
+    history_before_id: Option<i64>,
+}
 
 #[derive(Debug, Clone)]
 struct SessionModelRuntime {
@@ -343,59 +356,6 @@ async fn get_session(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
 
-    let limit = normalize_session_detail_limit(
-        query.limit,
-        if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT },
-    );
-    let mut history_incomplete = false;
-    let (history, history_has_more, history_before_id) = if limit <= 0 {
-        let items = match state
-            .workspace
-            .load_history(&resolved.user.user_id, &session_id, limit)
-        {
-            Ok(items) => items,
-            Err(err) => {
-                warn!(
-                    "load history failed: user_id={}, session_id={}, error={err}",
-                    resolved.user.user_id, session_id
-                );
-                history_incomplete = true;
-                Vec::new()
-            }
-        };
-        (items, false, None)
-    } else {
-        let fetch_limit = limit.saturating_add(1);
-        let items = match state.workspace.load_history_page(
-            &resolved.user.user_id,
-            &session_id,
-            None,
-            fetch_limit,
-        ) {
-            Ok(items) => items,
-            Err(err) => {
-                warn!(
-                    "load history failed: user_id={}, session_id={}, error={err}",
-                    resolved.user.user_id, session_id
-                );
-                history_incomplete = true;
-                Vec::new()
-            }
-        };
-        let mut items = items;
-        let mut has_more = false;
-        if items.len() as i64 > limit {
-            has_more = true;
-            if !items.is_empty() {
-                items.remove(0);
-            }
-        }
-        let before_id = items
-            .first()
-            .and_then(|item| item.get("_history_id"))
-            .and_then(Value::as_i64);
-        (items, has_more, before_id)
-    };
     let monitor_record = state.monitor.get_record(&session_id);
     let session_status = monitor_record.as_ref().and_then(|record| {
         record
@@ -404,6 +364,33 @@ async fn get_session(
             .map(ToString::to_string)
     });
     let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
+    let limit = normalize_session_detail_limit(
+        query.limit,
+        if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT },
+    );
+    let mut history_incomplete = false;
+    let mut transcript_page = match load_visible_transcript_page(
+        state.as_ref(),
+        &resolved.user.user_id,
+        &session_id,
+        None,
+        limit,
+        &message_feedback,
+    ) {
+        Ok(page) => page,
+        Err(err) => {
+            warn!(
+                "load history failed: user_id={}, session_id={}, error={err}",
+                resolved.user.user_id, session_id
+            );
+            history_incomplete = true;
+            VisibleTranscriptPage {
+                transcript: Vec::new(),
+                history_has_more: false,
+                history_before_id: None,
+            }
+        }
+    };
     let monitor_active = session_status
         .as_deref()
         .map(is_session_stream_active)
@@ -411,13 +398,7 @@ async fn get_session(
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
     let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
     let session_running = monitor_active || !active_queue_tasks.is_empty();
-    let history = filter_orchestration_suppressed_history(
-        state.as_ref(),
-        &resolved.user.user_id,
-        &session_id,
-        history,
-    );
-    let mut transcript = build_chat_transcript(&session_id, history, &message_feedback);
+    let mut transcript = std::mem::take(&mut transcript_page.transcript);
     project_queued_session_messages(&mut transcript, &active_queue_tasks, pure_queue_phase);
     apply_session_running_state(&mut transcript, session_running);
     let transcript = transcript
@@ -462,8 +443,8 @@ async fn get_session(
             "goal": goal.as_ref().map(crate::services::goal::goal_payload),
             "context_tokens": context_tokens,
             "context_occupancy_tokens": context_tokens,
-            "history_has_more": history_has_more,
-            "history_before_id": history_before_id
+            "history_has_more": transcript_page.history_has_more,
+            "history_before_id": transcript_page.history_before_id
         }
     })))
 }
@@ -475,6 +456,126 @@ fn normalize_session_detail_limit(raw: Option<i64>, fallback: i64) -> i64 {
     } else {
         value.min(SESSION_DETAIL_MAX_LIMIT)
     }
+}
+
+fn oldest_history_id_from_transcript(transcript: &[Value]) -> Option<i64> {
+    transcript
+        .iter()
+        .find_map(|item| item.get("history_id").and_then(Value::as_i64))
+}
+
+fn merge_visible_transcript_page(
+    transcript: &mut Vec<Value>,
+    page_transcript: Vec<Value>,
+    limit: i64,
+) -> bool {
+    if page_transcript.is_empty() {
+        return false;
+    }
+    let mut merged = page_transcript;
+    merged.extend(std::mem::take(transcript));
+    let trimmed = limit > 0 && merged.len() > limit as usize;
+    if limit > 0 && merged.len() > limit as usize {
+        let overflow = merged.len() - limit as usize;
+        merged.drain(0..overflow);
+    }
+    *transcript = merged;
+    trimmed
+}
+
+fn raw_history_page_from_loaded_history(mut history: Vec<Value>, limit: i64) -> RawHistoryPage {
+    let has_more = limit > 0 && history.len() as i64 > limit;
+    if has_more && !history.is_empty() {
+        history.remove(0);
+    }
+    let before_id = history
+        .first()
+        .and_then(|item| item.get("_history_id"))
+        .and_then(Value::as_i64);
+    RawHistoryPage {
+        history,
+        has_more,
+        before_id,
+    }
+}
+
+fn history_page_cursor_after_merge(
+    transcript_was_trimmed: bool,
+    transcript: &[Value],
+    raw_before_id: Option<i64>,
+) -> Option<i64> {
+    if transcript_was_trimmed {
+        oldest_history_id_from_transcript(transcript).or(raw_before_id)
+    } else {
+        raw_before_id
+    }
+}
+
+fn load_visible_transcript_page(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    before_id: Option<i64>,
+    limit: i64,
+    message_feedback: &HashMap<i64, Value>,
+) -> anyhow::Result<VisibleTranscriptPage> {
+    if limit <= 0 {
+        let history = state.workspace.load_history(user_id, session_id, limit)?;
+        let history = filter_orchestration_suppressed_history(state, user_id, session_id, history);
+        return Ok(VisibleTranscriptPage {
+            transcript: build_chat_transcript(session_id, history, message_feedback),
+            history_has_more: false,
+            history_before_id: None,
+        });
+    }
+
+    let mut cursor = before_id;
+    let mut raw_has_more = true;
+    let mut visible_window_trimmed = false;
+    let mut transcript = Vec::new();
+    let mut fetch_count = 0usize;
+    while transcript.len() < limit as usize
+        && raw_has_more
+        && fetch_count < MAX_VISIBLE_HISTORY_PAGE_FETCHES
+    {
+        fetch_count += 1;
+        let page = raw_history_page_from_loaded_history(
+            state.storage.load_chat_history_page(
+                user_id,
+                session_id,
+                cursor,
+                limit.saturating_add(1),
+            )?,
+            limit,
+        );
+        raw_has_more = page.has_more;
+        let next_cursor = page.before_id;
+        if page.history.is_empty() {
+            cursor = next_cursor;
+            break;
+        }
+        let history =
+            filter_orchestration_suppressed_history(state, user_id, session_id, page.history);
+        let page_transcript = build_chat_transcript(session_id, history, message_feedback);
+        if page_transcript.is_empty() {
+            if next_cursor.is_none() || next_cursor == cursor {
+                cursor = next_cursor;
+                break;
+            }
+            cursor = next_cursor;
+            continue;
+        }
+        let trimmed = merge_visible_transcript_page(&mut transcript, page_transcript, limit);
+        visible_window_trimmed = visible_window_trimmed || trimmed;
+        cursor = history_page_cursor_after_merge(trimmed, &transcript, next_cursor);
+    }
+
+    let history_before_id = cursor.or_else(|| oldest_history_id_from_transcript(&transcript));
+    Ok(VisibleTranscriptPage {
+        transcript,
+        history_has_more: (raw_has_more || visible_window_trimmed) && history_before_id.is_some(),
+        history_before_id,
+    })
 }
 
 async fn get_session_history(
@@ -498,14 +599,17 @@ async fn get_session_history(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let limit = normalize_history_page_limit(query.limit);
     let before_id = normalize_history_before_id(query.before_id.as_deref());
-    let fetch_limit = limit.saturating_add(1);
-    let mut history = match state.workspace.load_history_page(
+    let monitor_record = state.monitor.get_record(&session_id);
+    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
+    let transcript_page = match load_visible_transcript_page(
+        state.as_ref(),
         &resolved.user.user_id,
         &session_id,
         before_id,
-        fetch_limit,
+        limit,
+        &message_feedback,
     ) {
-        Ok(history) => history,
+        Ok(page) => page,
         Err(err) => {
             warn!(
                 "load history page failed: user_id={}, session_id={}, error={err}",
@@ -517,26 +621,8 @@ async fn get_session_history(
             ));
         }
     };
-    let mut has_more = false;
-    if history.len() as i64 > limit {
-        has_more = true;
-        if !history.is_empty() {
-            history.remove(0);
-        }
-    }
-    let before_id = history
-        .first()
-        .and_then(|item| item.get("_history_id"))
-        .and_then(Value::as_i64);
-    let history = filter_orchestration_suppressed_history(
-        state.as_ref(),
-        &resolved.user.user_id,
-        &session_id,
-        history,
-    );
-    let monitor_record = state.monitor.get_record(&session_id);
-    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
-    let transcript = build_chat_transcript(&session_id, history, &message_feedback)
+    let transcript = transcript_page
+        .transcript
         .into_iter()
         .enumerate()
         .map(|(index, item)| {
@@ -551,8 +637,8 @@ async fn get_session_history(
         "data": {
             "id": session_id,
             "transcript": transcript,
-            "history_has_more": has_more,
-            "history_before_id": before_id
+            "history_has_more": transcript_page.history_has_more,
+            "history_before_id": transcript_page.history_before_id
         }
     })))
 }
@@ -1508,9 +1594,10 @@ fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {
 mod tests {
     use super::{
         apply_session_running_state, build_projected_queue_assistant_message,
-        build_projected_queue_user_message, has_active_queue_task,
-        is_session_stream_active_or_queued, normalize_history_before_id,
-        project_queued_session_messages,
+        build_projected_queue_user_message, has_active_queue_task, history_page_cursor_after_merge,
+        is_session_stream_active_or_queued, merge_visible_transcript_page,
+        normalize_history_before_id, project_queued_session_messages,
+        raw_history_page_from_loaded_history,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -1536,6 +1623,62 @@ mod tests {
         assert_eq!(normalize_history_before_id(Some("0")), None);
         assert_eq!(normalize_history_before_id(Some("-1")), None);
         assert_eq!(normalize_history_before_id(None), None);
+    }
+
+    #[test]
+    fn visible_transcript_page_merge_backfills_without_dropping_recent_window() {
+        let mut transcript = vec![
+            json!({"role": "user", "content": "newer-user", "history_id": 40}),
+            json!({"role": "assistant", "content": "newer-assistant", "history_id": 41}),
+        ];
+        let trimmed = merge_visible_transcript_page(
+            &mut transcript,
+            vec![
+                json!({"role": "user", "content": "older-user", "history_id": 20}),
+                json!({"role": "assistant", "content": "older-assistant", "history_id": 21}),
+            ],
+            3,
+        );
+
+        assert!(trimmed);
+        let contents = transcript
+            .iter()
+            .map(|item| item["content"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contents,
+            vec!["older-assistant", "newer-user", "newer-assistant"]
+        );
+    }
+
+    #[test]
+    fn raw_history_page_uses_oldest_raw_id_as_cursor_after_sentinel_trim() {
+        let page = raw_history_page_from_loaded_history(
+            vec![
+                json!({"role": "system", "content": "hidden", "_history_id": 7}),
+                json!({"role": "tool", "content": "hidden", "_history_id": 8}),
+                json!({"role": "assistant", "content": "visible", "_history_id": 9}),
+            ],
+            2,
+        );
+
+        assert!(page.has_more);
+        assert_eq!(page.before_id, Some(8));
+        assert_eq!(page.history.len(), 2);
+    }
+
+    #[test]
+    fn history_cursor_advances_past_scanned_raw_rows_when_visible_window_not_trimmed() {
+        let transcript = vec![json!({"role": "assistant", "content": "visible", "history_id": 9})];
+
+        assert_eq!(
+            history_page_cursor_after_merge(false, &transcript, Some(7)),
+            Some(7)
+        );
+        assert_eq!(
+            history_page_cursor_after_merge(true, &transcript, Some(7)),
+            Some(9)
+        );
     }
 
     #[test]

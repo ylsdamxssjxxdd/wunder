@@ -119,47 +119,38 @@ const isTerminalEventType = (
     normalized === 'final' ||
     normalized === 'error' ||
     normalized === 'queue_fail' ||
-    normalized === 'turn_terminal' ||
-    normalized === 'thread_closed'
+    normalized === 'turn_terminal'
   ) {
     return true;
   }
-  if (normalized !== 'thread_status') {
-    return false;
-  }
-  return isTerminalRuntimePayload(eventPayload || {});
+  if (normalized !== 'llm_output') return false;
+  return isTerminalLlmOutputPayload(eventPayload || {});
 };
 
-const isTerminalRuntimeStatus = (value: unknown): boolean => {
-  const normalized = String(value || '').trim().toLowerCase();
-  return (
-    normalized === 'idle' ||
-    normalized === 'completed' ||
-    normalized === 'complete' ||
-    normalized === 'done' ||
-    normalized === 'failed' ||
-    normalized === 'error' ||
-    normalized === 'system_error' ||
-    normalized === 'cancelled' ||
-    normalized === 'canceled' ||
-    normalized === 'not_loaded'
-  );
-};
-
-const isTerminalRuntimePayload = (eventPayload: Record<string, unknown>): boolean => {
+const isTerminalLlmOutputPayload = (eventPayload: Record<string, unknown>): boolean => {
   const data = asPayloadRecord(eventPayload.data);
-  return isTerminalRuntimeStatus(
-    data.thread_status ??
-      data.threadStatus ??
-      data.runtime_status ??
-      data.runtimeStatus ??
-      data.status ??
-      eventPayload.thread_status ??
-      eventPayload.threadStatus ??
-      eventPayload.runtime_status ??
-      eventPayload.runtimeStatus ??
-      eventPayload.status
-  );
+  const stopReason = String(
+    data.stop_reason ??
+      data.stopReason ??
+      data.finish_reason ??
+      data.finishReason ??
+      eventPayload.stop_reason ??
+      eventPayload.stopReason ??
+      eventPayload.finish_reason ??
+      eventPayload.finishReason ??
+      ''
+  ).trim();
+  if (stopReason) return true;
+  return [
+    data.done,
+    data.is_final,
+    data.isFinal,
+    data.final,
+    eventPayload.done,
+    eventPayload.is_final,
+    eventPayload.isFinal,
+    eventPayload.final
+  ].some((flag) => flag === true);
 };
 
 const buildWsPayloadError = (payload: unknown, phase?: string): WsError => {

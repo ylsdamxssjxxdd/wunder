@@ -140,7 +140,7 @@ import { buildMessage, clearAssistantRetryState, resetAssistantWaitingOutputPhas
 import { assignStreamEventId, getRuntimeLastEventId, normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
 import { ResumeStreamOptions } from './chatTypes';
 import { abortCompactRequest, abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, finalizeManualCompactionAsCancelled, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
-import { getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalRuntimeStatus, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
+import { getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
 import { createWorkflowProcessor } from './chatWorkflowProcessor';
 
 const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
@@ -409,8 +409,6 @@ export const chatStopResumeActions = {
               );
               if (runtimeStatus === 'system_error') {
                 errorSeen = true;
-              } else {
-                finalSeen = true;
               }
             }
             updateRuntimeRemoteLastEventId(runtime, eventId);
@@ -589,9 +587,6 @@ export const chatStopResumeActions = {
         const finishedRequestId = runtime?.resumeRequestId || '';
         const terminalSeen = finalSeen || errorSeen;
         let keepStreaming = recoveredByRealtime || (!aborted && !terminalSeen);
-        if (keepStreaming && runtime && isTerminalRuntimeStatus(runtime.threadStatus)) {
-          keepStreaming = false;
-        }
         message.workflowStreaming = keepStreaming;
         if (!aborted || recoveredByRealtime) {
           message.stream_incomplete = keepStreaming;

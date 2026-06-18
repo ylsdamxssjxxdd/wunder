@@ -462,6 +462,7 @@ export const createMessageViewportRuntime = (
           measureVisibleMessageHeights(nextMeasureKeys);
         }
       }
+      void maybeLoadOlderHistory();
     });
   };
 

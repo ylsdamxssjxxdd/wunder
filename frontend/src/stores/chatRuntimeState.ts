@@ -1303,13 +1303,41 @@ export function applySessionRuntimeEvent(store, sessionId, payload, eventType = 
   syncChatRuntimeProjectionStatus(store, targetId, runtime.threadStatus, {
     eventType: eventType === 'thread_closed' ? 'session_idle' : 'session_runtime'
   });
-  if (isTerminalRuntimeStatus(runtime.threadStatus)) {
+  if (
+    isTerminalRuntimeStatus(runtime.threadStatus) &&
+    !shouldDeferTerminalRuntimeSettlement(store, targetId, runtime, eventType)
+  ) {
     settleTerminalSessionRuntime(store, targetId, {
       eventType,
       failed: runtime.threadStatus === 'system_error'
     });
   }
   return runtime;
+}
+
+export function shouldDeferTerminalRuntimeSettlement(store, sessionId, runtime, eventType = '') {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId || !runtime) return false;
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  if (normalizedEventType !== 'thread_status' && normalizedEventType !== 'thread_closed') {
+    return false;
+  }
+  if (!runtime.sendController && !runtime.resumeController) {
+    return false;
+  }
+  const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
+    ? store?.messages
+    : getSessionMessages(targetId);
+  if (!Array.isArray(targetMessages) || !findPendingAssistantMessage(targetMessages)) {
+    return false;
+  }
+  chatDebugLog('chat.store.terminal-debug', 'defer-terminal-runtime-settlement', {
+    sessionId: targetId,
+    eventType: normalizedEventType,
+    runtime: buildRuntimeDebugSnapshot(runtime),
+    latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages)
+  });
+  return true;
 }
 
 export function settleTerminalSessionRuntime(

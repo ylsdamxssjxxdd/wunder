@@ -95,7 +95,8 @@ test('messenger exposes a single active agent renderable record helper with lega
 
   assert.ok(helperSource.includes('const renderable = ctx.agentRenderableMessages?.value;'));
   assert.ok(helperSource.includes('return (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])'));
-  assert.ok(renderableMessages.includes('ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => ctx.resolveActiveAgentRenderableMessageRecords());'));
+  assert.ok(renderableMessages.includes('ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => {'));
+  assert.ok(renderableMessages.includes('const records = ctx.resolveActiveAgentRenderableMessageRecords();'));
   assert.ok(renderableMessages.includes('const buildLegacyAgentRenderableMessages = ()'));
 });
 

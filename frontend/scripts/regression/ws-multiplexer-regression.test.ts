@@ -371,7 +371,7 @@ test('ws multiplexer sends client_abort cancel source on default local abort', a
   }
 });
 
-test('ws multiplexer resolves request on terminal thread_status runtime event', async () => {
+test('ws multiplexer keeps request open on terminal thread_status runtime event until turn terminal', async () => {
   const restore = installWebSocketMock();
   try {
     const { createWsMultiplexer } = await import('../../src/utils/ws');
@@ -401,16 +401,31 @@ test('ws multiplexer resolves request on terminal thread_status runtime event', 
       }
     });
 
+    await sleep(0);
+    assert.deepEqual(events, ['thread_status:{"thread_status":"idle"}']);
+
+    socket.emit({
+      type: 'event',
+      request_id: 'request-terminal-thread-status',
+      payload: {
+        event: 'turn_terminal',
+        data: { status: 'completed' }
+      }
+    });
+
     await requestPromise;
     await sleep(0);
 
-    assert.deepEqual(events, ['thread_status:{"thread_status":"idle"}']);
+    assert.deepEqual(events, [
+      'thread_status:{"thread_status":"idle"}',
+      'turn_terminal:{"status":"completed"}'
+    ]);
   } finally {
     restore();
   }
 });
 
-test('ws multiplexer resolves request on thread_closed event', async () => {
+test('ws multiplexer keeps request open on thread_closed event until turn terminal', async () => {
   const restore = installWebSocketMock();
   try {
     const { createWsMultiplexer } = await import('../../src/utils/ws');
@@ -440,10 +455,25 @@ test('ws multiplexer resolves request on thread_closed event', async () => {
       }
     });
 
+    await sleep(0);
+    assert.deepEqual(events, ['thread_closed:{"status":"runtime_unloaded"}']);
+
+    socket.emit({
+      type: 'event',
+      request_id: 'request-thread-closed',
+      payload: {
+        event: 'turn_terminal',
+        data: { status: 'completed' }
+      }
+    });
+
     await requestPromise;
     await sleep(0);
 
-    assert.deepEqual(events, ['thread_closed:{"status":"runtime_unloaded"}']);
+    assert.deepEqual(events, [
+      'thread_closed:{"status":"runtime_unloaded"}',
+      'turn_terminal:{"status":"completed"}'
+    ]);
   } finally {
     restore();
   }
