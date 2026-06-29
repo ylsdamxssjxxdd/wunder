@@ -376,12 +376,18 @@ function renderProfileOptions() {
 
 function formatProfileName(profileId, fallback) {
   return {
+    quick: "全量",
+    core: "全量",
+    standard: "全量",
     full: "全量",
   }[profileId] || fallback || profileId || "-";
 }
 
 function formatProfileDescription(profileId, fallback) {
   return {
+    quick: "历史档位已归一为全量题库",
+    core: "历史档位已归一为全量题库",
+    standard: "历史档位已归一为全量题库",
     full: "运行全部可用题目，适合发布前确认和模型对比",
   }[profileId] || fallback || "";
 }

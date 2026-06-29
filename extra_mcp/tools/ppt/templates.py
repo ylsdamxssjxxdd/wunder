@@ -21,6 +21,7 @@ COLOR_KEYS = {
     "section_bg",
     "data_panel",
     "cover_panel",
+    "dark_panel",
 }
 
 BASE_THEME: dict[str, str] = {
@@ -39,6 +40,7 @@ BASE_THEME: dict[str, str] = {
     "section_bg": "1F2937",
     "data_panel": "FFF7ED",
     "cover_panel": "1F2937",
+    "dark_panel": "262B33",
 }
 
 BUILTIN_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -159,6 +161,31 @@ BUILTIN_TEMPLATES: dict[str, dict[str, Any]] = {
             "data_panel": "F2F2EF",
         },
     },
+    "doubao_radar": {
+        "name": "Doubao Radar",
+        "description": "Doubao-like technical deck style with teal accents, large corner circles, dense white cards, and image-forward layouts.",
+        "suitable_for": ["technical introduction", "radar presentation", "science education"],
+        "style": "doubao_radar",
+        "theme": {
+            **BASE_THEME,
+            "bg": "F4F6F8",
+            "surface": "FFFFFF",
+            "surface_alt": "F3F4F6",
+            "primary": "1F2329",
+            "secondary": "2B2F36",
+            "muted": "6B7280",
+            "line": "DEE0E3",
+            "accent": "00C9B6",
+            "accent2": "10B981",
+            "accent3": "3B82F6",
+            "success": "34D399",
+            "danger": "F97316",
+            "section_bg": "1F2329",
+            "cover_panel": "00C9B6",
+            "dark_panel": "262B33",
+            "data_panel": "E6FFFA",
+        },
+    },
 }
 
 
@@ -177,6 +204,10 @@ def normalize_template_id(value: str | None) -> str:
         "product": "creative_coral",
         "minimal": "minimal_gray",
         "simple": "minimal_gray",
+        "doubao": "doubao_radar",
+        "radar": "doubao_radar",
+        "phase_array": "doubao_radar",
+        "phased_array": "doubao_radar",
     }
     candidate = aliases.get(raw, raw)
     if candidate in BUILTIN_TEMPLATES:
@@ -199,12 +230,21 @@ def is_builtin_template(value: str | None) -> bool:
         "product",
         "minimal",
         "simple",
+        "doubao",
+        "radar",
+        "phase_array",
+        "phased_array",
     }
 
 
 def theme_for_template(template_id: str | None) -> dict[str, str]:
     normalized = normalize_template_id(template_id)
     return deepcopy(BUILTIN_TEMPLATES[normalized]["theme"])
+
+
+def style_for_template(template_id: str | None) -> str:
+    normalized = normalize_template_id(template_id)
+    return str(BUILTIN_TEMPLATES[normalized].get("style") or "default")
 
 
 def list_builtin_templates() -> list[dict[str, Any]]:
@@ -216,6 +256,7 @@ def list_builtin_templates() -> list[dict[str, Any]]:
                 "name": data["name"],
                 "description": data["description"],
                 "suitable_for": list(data["suitable_for"]),
+                "style": str(data.get("style") or "default"),
                 "theme": deepcopy(data["theme"]),
             }
         )
@@ -230,5 +271,6 @@ def builtin_template_summary(template_id: str) -> dict[str, Any]:
         "name": data["name"],
         "description": data["description"],
         "suitable_for": list(data["suitable_for"]),
+        "style": str(data.get("style") or "default"),
         "theme": deepcopy(data["theme"]),
     }

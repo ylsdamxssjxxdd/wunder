@@ -247,7 +247,8 @@ def register_tools(mcp: FastMCP) -> None:
             "创建新的 PPTX 演示文稿，或向已有 presentation_id 追加/插入页面。"
             "使用方式对齐豆包 lark-ppt：content 优先传 XML，根节点为 <slides>，每个 <slide> 至少包含 <prompt>，"
             "也可包含 <type>/<title>/<subtitle>/<body>/<bullet>/<item>/<metric>/<template_id>/<template_slide_id>。"
-            "可用 template_id 选择内置模板：amber_clear、executive_green、research_blue、finance_ink、creative_coral、minimal_gray。"
+            "可用 template_id 选择内置模板：amber_clear、executive_green、research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar。"
+            "页面可通过 <image src=\"/workspaces/.../image.png\"/> 或 JSON images 数组插入本地/工作区图片。"
             "请在 prompt 中详细写明主题、版式、文案、图表、配色、字体和素材使用要求。"
             "返回 presentation_id、pptx 路径与 slide_id，后续用 ppt_refine 精修。"
             "如需文件落到当前工作区，请把 output_path 写为 /workspaces/{user_id}/exports/report.pptx。"
@@ -300,7 +301,7 @@ def register_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "内置模板 ID。可选：amber_clear、executive_green、research_blue、"
-                    "finance_ink、creative_coral、minimal_gray。为空时使用 amber_clear。"
+                    "finance_ink、creative_coral、minimal_gray、doubao_radar。为空时使用 amber_clear。"
                 ),
                 title="模板 ID",
             ),
@@ -372,7 +373,7 @@ def register_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "可选内置模板 ID，用于重渲染整份 PPT 风格。可选：amber_clear、executive_green、"
-                    "research_blue、finance_ink、creative_coral、minimal_gray。"
+                    "research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar。"
                 ),
                 title="模板 ID",
             ),

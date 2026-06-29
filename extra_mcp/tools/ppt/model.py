@@ -271,19 +271,19 @@ def _fill_from_prompt(slide: SlideSpec) -> None:
 
 def _infer_type(prompt: str, slide: SlideSpec) -> str:
     text = " ".join([prompt, slide.title, slide.layout]).lower()
-    if any(word in text for word in ("cover", "封面", "标题页")):
+    if any(word in text for word in ("cover", "封面", "标题页", "首页")):
         return "cover"
-    if any(word in text for word in ("目录", "agenda", "contents", "toc")):
+    if any(word in text for word in ("目录", "大纲", "agenda", "contents", "toc")):
         return "toc"
-    if any(word in text for word in ("章节", "过渡", "section divider")):
+    if any(word in text for word in ("章节", "过渡", "分节", "section divider")):
         return "section"
-    if any(word in text for word in ("对比", "comparison", "versus", "vs", "优缺点")):
+    if any(word in text for word in ("对比", "比较", "comparison", "versus", "vs", "优缺点")):
         return "comparison"
-    if any(word in text for word in ("时间线", "timeline", "步骤", "流程", "process")):
+    if any(word in text for word in ("时间线", "发展历程", "timeline", "步骤", "流程", "process")):
         return "timeline"
-    if any(word in text for word in ("图表", "chart", "数据", "指标", "metric")):
+    if any(word in text for word in ("图表", "chart", "数据", "指标", "统计", "metric")):
         return "data"
-    if any(word in text for word in ("总结", "结尾", "closing", "summary")):
+    if any(word in text for word in ("总结", "结尾", "致谢", "closing", "summary")):
         return "closing"
     return "content"
 
@@ -291,13 +291,35 @@ def _infer_type(prompt: str, slide: SlideSpec) -> str:
 def _normalize_type(value: str) -> str:
     raw = value.strip().lower().replace("_", "-")
     aliases = {
+        "封面": "cover",
+        "标题页": "cover",
+        "首页": "cover",
+        "目录": "toc",
+        "大纲": "toc",
         "table-of-contents": "toc",
         "agenda": "toc",
         "contents": "toc",
+        "章节": "section",
+        "过渡页": "section",
+        "分节": "section",
         "section-divider": "section",
         "divider": "section",
+        "对比": "comparison",
+        "比较": "comparison",
+        "优缺点": "comparison",
+        "流程": "timeline",
+        "步骤": "timeline",
+        "时间线": "timeline",
+        "发展历程": "timeline",
         "process": "timeline",
+        "数据": "data",
+        "图表": "data",
+        "指标": "data",
+        "统计": "data",
         "chart": "data",
+        "总结": "closing",
+        "结尾": "closing",
+        "致谢": "closing",
         "summary": "closing",
         "end": "closing",
     }
@@ -339,7 +361,7 @@ def _infer_bullets(prompt: str) -> list[str]:
     for label in ("要点", "内容", "points"):
         match = re.search(rf"{label}\s*[:：]\s*(.+)", prompt, re.IGNORECASE)
         if match:
-            parts = re.split(r"[;；。]\s*|,\s*|，\s*", match.group(1))
+            parts = re.split(r"[;；。、|,\n]+", match.group(1))
             return [_clean_inline(part) for part in parts if _clean_inline(part)][:8]
     return []
 

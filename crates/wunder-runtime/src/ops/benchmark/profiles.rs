@@ -65,12 +65,7 @@ pub fn build_scorecard(task_aggregates: &[Value], attempts: &[Value]) -> Value {
     })
 }
 
-fn normalize_profile(profile: Option<&str>) -> String {
-    let _ = profile
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(PROFILE_FULL)
-        .to_lowercase();
+fn normalize_profile(_profile: Option<&str>) -> String {
     // Historical quick/core/standard aliases are accepted but now all map to the only profile.
     PROFILE_FULL.to_string()
 }

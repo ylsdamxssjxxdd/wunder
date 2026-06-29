@@ -37,7 +37,8 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 可用 `database.export_root` 或环境变量 `EXTRA_MCP_EXPORT_ROOT` 配置导出根目录（默认 `exports/extra_mcp`）；`db_export*` 的 `path` 参数必须是相对该根目录的相对路径
 - 若希望 `db_export*` 直接写入 Wunder 工作区，`extra-mcp` 进程必须能看到与 `wunder-server` 相同的工作区根目录；Docker Compose 已通过共享 `wunder_workspaces:/workspaces` 卷打通该路径
 - PPT 工具产物默认写入 `/workspaces/.extra_mcp/ppt/<presentation_id>/`；也可以把 `ppt_write`/`ppt_refine`/`ppt_delete` 的 `output_path` 写成 `/workspaces/{user_id}/exports/report.pptx`，让文件直接落到当前工作区
-- PPT 工具内置 6 套可选模板：`amber_clear`、`executive_green`、`research_blue`、`finance_ink`、`creative_coral`、`minimal_gray`。模型可先调用 `ppt_template_read` 空参数读取模板列表，再把选定的 `template_id` 传给 `ppt_write` 或 `ppt_refine`
+- PPT 工具内置 7 套可选模板：`amber_clear`、`executive_green`、`research_blue`、`finance_ink`、`creative_coral`、`minimal_gray`、`doubao_radar`。模型可先调用 `ppt_template_read` 空参数读取模板列表，再把选定的 `template_id` 传给 `ppt_write` 或 `ppt_refine`
+- PPT 页面支持图片：XML 可写 `<image src="/workspaces/{user_id}/assets/demo.png" />`，JSON 可传 `images: [{"src": "..."}]`；当前支持本地或共享工作区内的常见位图格式，远程图片需先下载到工作区
 - 可用 `ppt.root` 或环境变量 `EXTRA_MCP_PPT_ROOT` 覆盖 PPT 产物根目录；Docker Compose 已把 `/workspaces` 挂到 `extra-mcp` 容器内
 
 ## 2. `mcp_config.json` 最小示例
@@ -137,7 +138,7 @@ mcp:
 
 ### PPT 生成任务推荐流程
 
-1. 如需选择内置风格，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。
+1. 如需选择内置风格，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。复刻豆包相控阵雷达类技术介绍 PPT 时优先使用 `doubao_radar`。
 2. 首次生成调用 `ppt_write`，传入豆包式 XML：`<slides><slide><prompt>...</prompt></slide></slides>`，并按需传入 `template_id`。
 3. 保存返回的 `presentation_id` 与每页 `slide_id`；后续局部修改或整体换模板用 `ppt_refine`。
 4. 如需读取已有内容或确认页面 ID，用 `ppt_read`。

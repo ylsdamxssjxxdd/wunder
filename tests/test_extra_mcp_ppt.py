@@ -5,6 +5,10 @@ import sys
 import types
 from pathlib import Path
 
+from PIL import Image
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+
 
 def _install_mcp_stub_if_missing() -> None:
     if importlib.util.find_spec("mcp") is not None:
@@ -145,3 +149,42 @@ def test_ppt_tool_flow_generates_refines_reads_and_deletes(tmp_path, monkeypatch
     )
     assert deleted["ok"] is True
     assert deleted["slide_count"] == 2
+
+
+def test_ppt_doubao_radar_template_supports_images(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    monkeypatch.setenv("EXTRA_MCP_PPT_ROOT", str(tmp_path / "ppt"))
+    monkeypatch.setenv("WUNDER_WORKSPACE_ROOT", str(workspace_root))
+
+    image_path = tmp_path / "sample.png"
+    Image.new("RGB", (640, 360), "#0f766e").save(image_path)
+    content = f"""
+    <slides>
+      <slide>
+        <type>content</type>
+        <title>Image Support</title>
+        <body>Images can be placed into the Doubao-like technical layout.</body>
+        <bullet>Workspace/local image path</bullet>
+        <image src="{image_path.as_posix()}" />
+        <prompt>content page with right-side image</prompt>
+      </slide>
+    </slides>
+    """
+    created = _write_sync(
+        presentation_id="",
+        presentation_name="doubao-radar-image",
+        insert_before="",
+        content=content,
+        lang="xml",
+        template_id="doubao_radar",
+        output_path="/workspaces/u1/exports/doubao-radar-image.pptx",
+        overwrite=True,
+    )
+    assert created["ok"] is True
+    assert created["slide_count"] == 1
+    assert created["template_id"] == "doubao_radar"
+    assert Path(created["output_path"]).exists()
+
+    prs = Presentation(created["output_path"])
+    assert any(shape.shape_type == MSO_SHAPE_TYPE.PICTURE for shape in prs.slides[0].shapes)

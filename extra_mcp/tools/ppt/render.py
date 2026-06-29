@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
@@ -12,7 +13,7 @@ from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.util import Inches, Pt
 
 from .model import PresentationManifest, SlideSpec
-from .templates import COLOR_KEYS, theme_for_template
+from .templates import COLOR_KEYS, style_for_template, theme_for_template
 
 SLIDE_W = 13.333
 SLIDE_H = 7.5
@@ -29,8 +30,9 @@ def render_manifest(manifest: PresentationManifest, output_path: Path) -> None:
     manifest_template_id = str(manifest.theme.get("template_id") or "")
 
     for index, slide in enumerate(manifest.slides, start=1):
-        theme = _theme(manifest.theme, template_id=slide.template_id or manifest_template_id)
-        _render_slide(prs, slide, index, len(manifest.slides), theme)
+        template_id = slide.template_id or manifest_template_id
+        theme = _theme(manifest.theme, template_id=template_id)
+        _render_slide(prs, slide, index, len(manifest.slides), theme, style_for_template(template_id))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
@@ -73,8 +75,12 @@ def _render_slide(
     index: int,
     total: int,
     theme: dict[str, str],
+    style: str = "default",
 ) -> None:
     slide = prs.slides.add_slide(prs.slide_layouts[6])
+    if style == "doubao_radar":
+        _render_doubao_slide(slide, spec, index, total, theme)
+        return
     _background(slide, theme)
     slide_type = spec.slide_type
     if slide_type == "cover":
@@ -95,6 +101,195 @@ def _render_slide(
         _render_content(slide, spec, theme)
     if index > 1:
         _page_badge(slide, index, total, theme)
+
+
+def _render_doubao_slide(slide: Any, spec: SlideSpec, index: int, total: int, theme: dict[str, str]) -> None:
+    _doubao_background(slide, theme)
+    slide_type = spec.slide_type
+    if slide_type == "cover":
+        _doubao_cover(slide, spec, theme)
+    elif slide_type == "toc":
+        _doubao_toc(slide, spec, theme)
+    elif slide_type == "timeline":
+        _doubao_timeline(slide, spec, theme)
+    elif slide_type == "comparison":
+        _doubao_comparison(slide, spec, theme)
+    elif slide_type == "data":
+        _doubao_data(slide, spec, theme)
+    elif slide_type == "section":
+        _doubao_section(slide, spec, index, theme)
+    elif slide_type == "closing":
+        _doubao_closing(slide, spec, theme)
+    else:
+        _doubao_content(slide, spec, theme)
+    if index > 1:
+        _doubao_footer(slide, index, total, theme)
+
+
+def _doubao_background(slide: Any, theme: dict[str, str]) -> None:
+    _shape(slide, MSO_SHAPE.RECTANGLE, 0, 0, SLIDE_W, SLIDE_H, theme["bg"], line=theme["bg"])
+    _shape(slide, MSO_SHAPE.OVAL, 9.72, -1.39, 5.56, 5.56, theme["accent"], transparency=8)
+    _shape(slide, MSO_SHAPE.OVAL, -1.39, 4.86, 4.17, 4.17, theme["accent2"], transparency=10)
+
+
+def _doubao_cover(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _shape(slide, MSO_SHAPE.OVAL, 8.75, 2.15, 3.61, 3.61, theme["accent"], transparency=18)
+    _shape(slide, MSO_SHAPE.OVAL, 9.38, 2.78, 2.36, 2.36, theme["bg"], line=theme["bg"], transparency=2)
+    _shape(slide, MSO_SHAPE.OVAL, 10.44, 3.85, 0.22, 0.22, theme["accent"], transparency=4)
+    _shape(slide, MSO_SHAPE.RECTANGLE, 0.83, 2.43, 0.11, 1.81, theme["accent"], line=theme["accent"])
+    _text(slide, spec.title or "Presentation", 1.18, 2.24, 7.35, 1.65, 40, theme["primary"], bold=True)
+    subtitle = spec.subtitle or spec.body or _compact_prompt(spec.prompt)
+    if subtitle:
+        _text(slide, subtitle, 1.18, 4.48, 7.2, 0.7, 20, theme["secondary"])
+    _shape(slide, MSO_SHAPE.RECTANGLE, 0.83, 6.32, 11.67, 0.01, "FFFFFF", line="FFFFFF")
+    tags = _cover_tags(spec)
+    if tags:
+        _text(slide, " / ".join(tags), 0.83, 6.5, 5.7, 0.4, 12, theme["secondary"], bold=True)
+    _text(slide, "SMART DETECTION SYSTEMS", 6.94, 6.5, 5.56, 0.4, 11, theme["muted"], align=PP_ALIGN.RIGHT)
+
+
+def _doubao_toc(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _text(slide, spec.title or "目录 CONTENTS", 0.67, 0.67, 12.0, 0.64, 30, theme["primary"], bold=True)
+    items = _content_items(spec, fallback_count=6)[:6]
+    for idx, item in enumerate(items, start=1):
+        col = 0 if idx <= 3 else 1
+        row = (idx - 1) % 3
+        x = 0.67 + col * 6.22
+        y = 1.94 + row * 1.74
+        _card(slide, x, y, 5.78, 1.46, theme, fill="FFFFFF")
+        _text(slide, f"{idx:02d}", x + 0.22, y + 0.2, 1.0, 0.6, 21, theme["accent"], bold=True)
+        title = str(item.get("title") or item.get("text") or f"Section {idx}")
+        body = str(item.get("body") or item.get("description") or "")
+        _text(slide, title, x + 1.42, y + 0.17, 4.1, 0.38, 15, theme["primary"], bold=True)
+        if body:
+            _text(slide, body, x + 1.42, y + 0.58, 4.05, 0.56, 8.8, theme["secondary"])
+
+
+def _doubao_section(slide: Any, spec: SlideSpec, index: int, theme: dict[str, str]) -> None:
+    _shape(slide, MSO_SHAPE.RECTANGLE, 0, 0, SLIDE_W, SLIDE_H, theme["dark_panel"], line=theme["dark_panel"])
+    _shape(slide, MSO_SHAPE.OVAL, 9.6, -1.2, 5.2, 5.2, theme["accent"], transparency=18)
+    _text(slide, f"{index:02d}", 0.9, 1.08, 2.2, 1.0, 60, theme["accent"], bold=True)
+    _text(slide, spec.title or "Section", 0.9, 2.55, 10.8, 0.8, 36, "FFFFFF", bold=True)
+    body = spec.body or _compact_prompt(spec.prompt)
+    if body:
+        _text(slide, body, 0.92, 3.65, 9.8, 0.7, 16, "E5E7EB")
+
+
+def _doubao_content(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _doubao_header(slide, spec.title or "Content", theme)
+    image = _first_image(spec)
+    if image and _image(slide, image, 7.72, 1.55, 5.05, 4.85):
+        text_w = 6.35
+    else:
+        text_w = 6.35
+        _doubao_visual_panel(slide, 7.72, 1.7, 5.05, 4.6, theme, spec.bullets or _fallback_bullets(spec))
+    body = spec.body or _compact_prompt(spec.prompt)
+    if body:
+        _text(slide, body, 0.56, 1.82, text_w, 1.8, 14.5, theme["secondary"])
+    bullets = spec.bullets or _fallback_bullets(spec)
+    for idx, bullet in enumerate(bullets[:3]):
+        y = 4.12 + idx * 0.88
+        _card(slide, 0.56, y, text_w, 0.72, theme, fill="FFFFFF")
+        _shape(slide, MSO_SHAPE.OVAL, 0.78, y + 0.18, 0.34, 0.34, theme["accent"])
+        _text(slide, bullet, 1.26, y + 0.13, text_w - 1.0, 0.38, 11.5, theme["secondary"])
+
+
+def _doubao_timeline(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _doubao_header(slide, spec.title or "Timeline", theme)
+    items = _content_items(spec, fallback_count=4)[:4]
+    _shape(slide, MSO_SHAPE.RECTANGLE, 0.83, 2.22, 11.67, 0.02, theme["line"], line=theme["line"])
+    for idx, item in enumerate(items):
+        x = 0.83 + idx * 2.99
+        _shape(slide, MSO_SHAPE.OVAL, x + 1.05, 2.11, 0.22, 0.22, "FFFFFF", line=theme["accent"])
+        _card(slide, x, 2.78, 2.85, 3.61, theme, fill="FFFFFF")
+        _text(slide, str(item.get("label") or item.get("date") or item.get("title") or f"Stage {idx+1}"), x + 0.28, 3.05, 2.3, 0.42, 17, theme["accent"], bold=True)
+        title = str(item.get("subtitle") or item.get("body") or item.get("description") or "")
+        parts = re_split_list(title)
+        if parts:
+            _text(slide, parts[0], x + 0.28, 3.72, 2.4, 0.36, 11.5, theme["primary"], bold=True)
+            _text(slide, " ".join(parts[1:]) or title, x + 0.28, 4.34, 2.35, 1.7, 9.4, theme["secondary"])
+    if spec.body:
+        _shape(slide, MSO_SHAPE.RECTANGLE, 0.56, 6.6, 12.22, 0.01, "FFFFFF", line="FFFFFF")
+        _text(slide, spec.body, 0.56, 6.74, 12.22, 0.34, 10.5, theme["secondary"], align=PP_ALIGN.CENTER)
+
+
+def _doubao_comparison(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _doubao_header(slide, spec.title or "Comparison", theme)
+    items = _content_items(spec, fallback_count=2)
+    while len(items) < 2:
+        items.append({"title": f"Option {len(items)+1}", "body": ""})
+    _doubao_compare_column(slide, items[0], 0.56, 1.72, 5.9, 4.25, theme, "FFFFFF", theme["primary"])
+    _doubao_compare_column(slide, items[1], 6.88, 1.72, 5.9, 4.25, theme, theme["accent"], "FFFFFF")
+    summary = spec.body or _compact_prompt(spec.prompt)
+    if summary:
+        _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, 0.56, 6.18, 12.22, 0.78, theme["accent"], line=theme["accent"])
+        _text(slide, summary, 0.76, 6.3, 11.8, 0.42, 11, "FFFFFF")
+
+
+def _doubao_compare_column(slide: Any, item: dict[str, Any], x: float, y: float, w: float, h: float, theme: dict[str, str], fill: str, text_color: str) -> None:
+    _card(slide, x, y, w, h, theme, fill=fill)
+    _text(slide, str(item.get("title") or "Option"), x + 0.27, y + 0.25, w - 0.54, 0.42, 17, text_color, bold=True)
+    _shape(slide, MSO_SHAPE.RECTANGLE, x + 0.27, y + 0.88, w - 0.54, 0.01, theme["line"], line=theme["line"])
+    parts = re_split_list(str(item.get("body") or item.get("description") or item.get("text") or ""))
+    for idx, part in enumerate(parts[:4]):
+        px = x + 0.27 + (idx % 2) * ((w - 0.78) / 2)
+        py = y + 1.18 + (idx // 2) * 1.25
+        card_fill = theme["surface_alt"] if fill == "FFFFFF" else theme["accent"]
+        _shape(slide, MSO_SHAPE.ROUNDED_RECTANGLE, px, py, (w - 0.9) / 2, 0.96, card_fill, line=theme["line"], transparency=0 if fill == "FFFFFF" else 12)
+        _text(slide, part, px + 0.16, py + 0.13, (w - 1.25) / 2, 0.62, 9.2, text_color)
+
+
+def _doubao_data(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _doubao_header(slide, spec.title or "Data Insights", theme)
+    metrics = _metrics(spec)[:6]
+    max_value = max([abs(float(item.get("value", 0))) for item in metrics] or [1])
+    for idx, item in enumerate(metrics):
+        col = idx % 3
+        row = idx // 3
+        x = 0.56 + col * 4.17
+        y = 1.65 + row * 1.7
+        _card(slide, x, y, 3.9, 1.35, theme, fill=theme["dark_panel"])
+        _text(slide, str(item.get("label") or f"Metric {idx+1}"), x + 0.24, y + 0.18, 2.6, 0.28, 12, "FFFFFF", bold=True)
+        value = float(item.get("value") or 0)
+        _text(slide, _format_number(value), x + 2.9, y + 0.12, 0.72, 0.34, 16, theme["accent"], bold=True, align=PP_ALIGN.RIGHT)
+        _shape(slide, MSO_SHAPE.RECTANGLE, x + 0.25, y + 0.85, 3.35, 0.12, "FFFFFF", line="FFFFFF", transparency=50)
+        _shape(slide, MSO_SHAPE.RECTANGLE, x + 0.25, y + 0.85, max(0.1, 3.35 * abs(value) / max_value), 0.12, theme["accent"], line=theme["accent"])
+    bullets = spec.bullets or _fallback_bullets(spec)
+    _card(slide, 0.56, 5.18, 12.22, 1.55, theme, fill="FFFFFF")
+    _text(slide, spec.body or "Conclusion", 0.86, 5.42, 2.2, 0.35, 16, theme["accent"], bold=True)
+    _text(slide, "  ".join(bullets[:3]), 0.86, 5.95, 11.4, 0.48, 11.5, theme["secondary"])
+
+
+def _doubao_closing(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
+    _shape(slide, MSO_SHAPE.RECTANGLE, 0, 0, SLIDE_W, SLIDE_H, theme["dark_panel"], line=theme["dark_panel"])
+    _shape(slide, MSO_SHAPE.OVAL, 8.2, -1.0, 5.0, 5.0, theme["accent"], transparency=18)
+    _text(slide, spec.title or "Thank You", 1.0, 2.4, 11.2, 0.8, 44, "FFFFFF", bold=True, align=PP_ALIGN.CENTER)
+    body = spec.body or _compact_prompt(spec.prompt)
+    if body:
+        _text(slide, body, 2.0, 3.45, 9.3, 0.5, 16, "E5E7EB", align=PP_ALIGN.CENTER)
+
+
+def _doubao_header(slide: Any, title: str, theme: dict[str, str]) -> None:
+    _text(slide, title, 0.56, 0.56, 12.22, 0.64, 27, theme["primary"], bold=True)
+
+
+def _doubao_footer(slide: Any, index: int, total: int, theme: dict[str, str]) -> None:
+    _shape(slide, MSO_SHAPE.RECTANGLE, 11.6, 6.94, 0.88, 0.02, theme["accent"], line=theme["accent"])
+    _text(slide, f"{index:02d}/{total:02d}", 11.72, 6.72, 0.75, 0.22, 8, theme["muted"], align=PP_ALIGN.RIGHT)
+
+
+def _doubao_visual_panel(slide: Any, x: float, y: float, w: float, h: float, theme: dict[str, str], bullets: list[str]) -> None:
+    _card(slide, x, y, w, h, theme, fill="FFFFFF")
+    cx = x + w / 2
+    cy = y + h / 2
+    _shape(slide, MSO_SHAPE.OVAL, cx - 1.35, cy - 1.35, 2.7, 2.7, theme["accent"], transparency=12)
+    _shape(slide, MSO_SHAPE.OVAL, cx - 0.82, cy - 0.82, 1.64, 1.64, theme["bg"], line=theme["bg"])
+    _shape(slide, MSO_SHAPE.OVAL, cx - 0.12, cy - 0.12, 0.24, 0.24, theme["accent"], transparency=5)
+    for idx, bullet in enumerate(bullets[:4]):
+        angle = math.radians(idx * 90 + 35)
+        px = cx + math.cos(angle) * 1.8
+        py = cy + math.sin(angle) * 1.3
+        _shape(slide, MSO_SHAPE.OVAL, px - 0.12, py - 0.12, 0.24, 0.24, theme["accent2"])
 
 
 def _render_cover(slide: Any, spec: SlideSpec, theme: dict[str, str]) -> None:
@@ -285,6 +480,33 @@ def _pill(slide: Any, text: str, x: float, y: float, w: float, h: float, fill: s
     _text(slide, text, x, y + 0.08, w, h - 0.1, font_size, color, bold=True, align=PP_ALIGN.CENTER)
 
 
+def _image(slide: Any, path_text: str, x: float, y: float, w: float, h: float) -> Any | None:
+    path = _resolve_image_path(path_text)
+    if not path:
+        return None
+    try:
+        with Image.open(path) as image:
+            image_w, image_h = image.size
+        shape = slide.shapes.add_picture(str(path), Inches(x), Inches(y), width=Inches(w))
+        actual_h = shape.height / 914400
+        if actual_h > h:
+            slide.shapes._spTree.remove(shape._element)
+            shape = slide.shapes.add_picture(str(path), Inches(x), Inches(y), height=Inches(h))
+            actual_w = shape.width / 914400
+            if actual_w > w:
+                ratio = actual_w / w
+                shape.crop_left = max(0, min(0.45, (1 - 1 / ratio) / 2))
+                shape.crop_right = shape.crop_left
+                shape.width = Inches(w)
+        shape.left = Inches(x)
+        shape.top = Inches(y)
+        if image_w and image_h:
+            shape.name = f"image_{path.name}"
+        return shape
+    except Exception:
+        return None
+
+
 def _shape(
     slide: Any,
     shape_type: Any,
@@ -397,4 +619,35 @@ def _format_number(value: float) -> str:
 
 
 def re_split_list(text: str) -> list[str]:
-    return [part.strip() for part in re.split(r"[;；。]\s*|[、]\s*|\n+", str(text or "")) if part.strip()]
+    return [part.strip() for part in re.split(r"[;；。、|,\n]+", str(text or "")) if part.strip()]
+
+
+def _first_image(spec: SlideSpec) -> str:
+    for item in spec.images:
+        source = str(item.get("src") or item.get("path") or "").strip()
+        if source:
+            return source
+    return ""
+
+
+def _resolve_image_path(path_text: str) -> Path | None:
+    raw = str(path_text or "").strip()
+    if not raw or raw.startswith(("http://", "https://")):
+        return None
+    path = Path(raw).expanduser()
+    candidates = [path]
+    if not path.is_absolute():
+        candidates.extend(
+            [
+                Path.cwd() / path,
+                Path("/workspaces") / raw.lstrip("/\\"),
+            ]
+        )
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_file() and resolved.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"}:
+            return resolved
+    return None
