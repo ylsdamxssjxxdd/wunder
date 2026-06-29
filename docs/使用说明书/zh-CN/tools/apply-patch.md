@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: 应用补丁
 summary: `apply_patch` 的精确编辑语义、成功返回和 patch 失败码。
 read_when:

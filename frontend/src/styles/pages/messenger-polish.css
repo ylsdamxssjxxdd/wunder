@@ -432,15 +432,8 @@
 }
 
 .messenger-skill-list {
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   gap: 8px;
-}
-
-.messenger-skill-divider {
-  height: 1px;
-  margin: 8px 8px 2px;
-  border: 0;
-  background: var(--messenger-polish-divider);
-  opacity: 1;
 }
 
 .messenger-skill-item,
@@ -453,7 +446,8 @@
 }
 
 .messenger-skill-item {
-  padding: 10px 11px;
+  height: 66px;
+  padding: 8px 6px 7px;
   transition:
     border-color 0.16s ease,
     background-color 0.16s ease,
@@ -490,26 +484,24 @@
 .messenger-skill-item-title {
   color: rgba(17, 24, 39, 0.94);
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 
 .messenger-skill-item.is-disabled .messenger-skill-item-title {
   color: rgba(100, 116, 139, 0.82);
 }
 
-.messenger-skill-item.is-enabled .ability-icon-badge {
-  border-color: rgba(245, 158, 11, 0.34);
-  background: rgba(245, 158, 11, 0.16);
+.messenger-skill-item.is-enabled .messenger-skill-item-icon {
   color: #b45309;
-  box-shadow: none;
+  background: rgba(245, 158, 11, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.34);
 }
 
-.messenger-skill-item:not(.is-disabled):hover .ability-icon-badge,
-.messenger-skill-item:not(.is-disabled):focus-visible .ability-icon-badge {
-  border-color: rgba(245, 158, 11, 0.42);
+.messenger-skill-item:not(.is-disabled):hover .messenger-skill-item-icon,
+.messenger-skill-item:not(.is-disabled):focus-visible .messenger-skill-item-icon {
   background: rgba(245, 158, 11, 0.22);
   color: #a16207;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.42);
 }
 
 .messenger-timeline-item {

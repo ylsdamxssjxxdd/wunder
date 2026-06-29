@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: Desktop 本地模式
 summary: Desktop 本地模式是一套本地优先、持久目录优先的运行形态。
 read_when:

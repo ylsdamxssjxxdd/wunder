@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: LSP 查询
 summary: `lsp_query` 的操作类型、位置参数与返回结构。
 read_when:

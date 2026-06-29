@@ -591,11 +591,23 @@
   color: #91a2b8;
 }
 
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled .messenger-skill-item-icon {
+  background: rgba(47, 62, 84, 0.88);
+  color: #91a2b8;
+  box-shadow: inset 0 0 0 1px rgba(120, 138, 160, 0.24);
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-enabled .ability-icon-badge {
   border-color: rgba(251, 191, 36, 0.34);
   background: rgba(245, 158, 11, 0.2);
   color: #fde68a;
   box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-enabled .messenger-skill-item-icon {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fde68a;
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.34);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:not(.is-disabled):hover .ability-icon-badge,
@@ -604,6 +616,13 @@
   background: rgba(245, 158, 11, 0.28);
   color: #fef3c7;
   box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:not(.is-disabled):hover .messenger-skill-item-icon,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:not(.is-disabled):focus-visible .messenger-skill-item-icon {
+  background: rgba(245, 158, 11, 0.28);
+  color: #fef3c7;
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.46);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-detail-path,

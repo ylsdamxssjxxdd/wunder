@@ -3595,22 +3595,24 @@ button.messenger-chat-header-model {
 }
 
 .messenger-skill-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   gap: 8px;
-}
-
-.messenger-skill-divider {
-  height: 12px;
-  margin: 4px 0;
-  border-top: 1px solid var(--messenger-divider-color);
+  align-items: start;
 }
 
 .messenger-skill-item {
   border: 1px solid var(--messenger-skill-border);
   border-radius: 10px;
   background: var(--messenger-skill-bg);
-  padding: 10px 12px;
+  min-width: 0;
+  height: 68px;
+  padding: 8px 6px 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   cursor: pointer;
   transition:
     border-color 0.15s ease,
@@ -3647,6 +3649,21 @@ button.messenger-chat-header-model {
   background: rgba(148, 163, 184, 0.12);
 }
 
+.messenger-skill-item-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.13);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.24);
+}
+
 .ability-entry {
   display: flex;
   align-items: center;
@@ -3673,12 +3690,14 @@ button.messenger-chat-header-model {
 }
 
 .messenger-skill-item-title {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
-  font-size: 13px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.15;
   font-weight: 600;
   color: #1f2937;
 }
@@ -3695,6 +3714,12 @@ button.messenger-chat-header-model {
   border-color: rgba(148, 163, 184, 0.24);
   background: rgba(148, 163, 184, 0.12);
   color: #8a94a6;
+}
+
+.messenger-skill-item.is-disabled .messenger-skill-item-icon {
+  color: #8a94a6;
+  background: rgba(148, 163, 184, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
 }
 
 .messenger-skill-detail-body {

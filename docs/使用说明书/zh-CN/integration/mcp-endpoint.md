@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: MCP 入口
 summary: Wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。
 read_when:

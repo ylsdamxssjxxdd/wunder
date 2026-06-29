@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: 监控与 WunderBench
 summary: 观测能力各有分工：会话监控看线程、工具统计看热点、性能采样看链路、WunderBench 看模型能力质量。
 ---

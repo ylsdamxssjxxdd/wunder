@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: 技能调用
 summary: `skill_call` 如何把技能正文、根目录和文件树返回给模型。
 read_when:

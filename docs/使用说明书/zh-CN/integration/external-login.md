@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: 外部登录与免登嵌入
 summary: Wunder 保留 `/wunder/auth/external/*` 作为外部系统嵌入和免登接入面。
 read_when:

@@ -1,4 +1,4 @@
-﻿---
+﻿﻿---
 title: 渠道 Webhook
 summary: Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。
 read_when:
