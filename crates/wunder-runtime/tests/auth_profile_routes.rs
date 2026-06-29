@@ -108,6 +108,36 @@ async fn send_json(
     (status, payload)
 }
 
+async fn send_public_json(
+    app: &Router,
+    method: Method,
+    path: &str,
+    payload: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder().method(method).uri(path);
+    let body = if let Some(payload) = payload {
+        builder = builder.header("content-type", "application/json");
+        Body::from(payload.to_string())
+    } else {
+        Body::empty()
+    };
+    let response = app
+        .clone()
+        .oneshot(builder.body(body).expect("build request"))
+        .await
+        .expect("send request");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read response body");
+    let payload = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("parse response json")
+    };
+    (status, payload)
+}
+
 #[tokio::test]
 async fn auth_me_patch_updates_user_password() {
     let context = build_test_context("profile_route_user").await;
@@ -142,6 +172,46 @@ async fn auth_me_patch_updates_user_password() {
         .login("profile_route_user", "password-123")
         .expect_err("old password should be rejected");
     assert_eq!(error.to_string(), "invalid password");
+}
+
+#[tokio::test]
+async fn auth_settings_reports_registration_switch_and_register_respects_it() {
+    let context = build_test_context("auth_settings_user").await;
+    context
+        .state
+        .config_store
+        .update(|config| {
+            config.security.allow_user_registration = false;
+        })
+        .await
+        .expect("disable registration");
+
+    let (settings_status, settings_payload) =
+        send_public_json(&context.app, Method::GET, "/wunder/auth/settings", None).await;
+    assert_eq!(settings_status, StatusCode::OK);
+    assert_eq!(
+        settings_payload
+            .pointer("/data/allow_user_registration")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let (register_status, register_payload) = send_public_json(
+        &context.app,
+        Method::POST,
+        "/wunder/auth/register",
+        Some(json!({
+            "username": "disabled_register_user",
+            "password": "password-123"
+        })),
+    )
+    .await;
+    assert_eq!(register_status, StatusCode::FORBIDDEN);
+    assert!(register_payload
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .contains("注册"));
 }
 
 #[tokio::test]

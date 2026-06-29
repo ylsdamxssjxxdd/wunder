@@ -735,15 +735,107 @@ pub(crate) fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
     if text.trim().is_empty() {
         return Ok(DesktopSettings::default());
     }
-    serde_json::from_str::<DesktopSettings>(&text)
-        .with_context(|| format!("parse desktop settings failed: {}", path.display()))
+    match serde_json::from_str::<DesktopSettings>(&text) {
+        Ok(settings) => Ok(settings),
+        Err(primary_err) => {
+            let backup_path = desktop_settings_backup_path(path);
+            if backup_path.exists() {
+                if let Ok(backup_text) = fs::read_to_string(&backup_path) {
+                    if !backup_text.trim().is_empty() {
+                        if let Ok(settings) = serde_json::from_str::<DesktopSettings>(&backup_text)
+                        {
+                            warn!(
+                                "desktop settings parse failed, recovered from backup: {} -> {}: {primary_err}",
+                                path.display(),
+                                backup_path.display()
+                            );
+                            archive_invalid_desktop_settings(path);
+                            return Ok(settings);
+                        }
+                    }
+                }
+            }
+            warn!(
+                "desktop settings parse failed and no backup was usable, starting with defaults: {}: {primary_err}",
+                path.display()
+            );
+            archive_invalid_desktop_settings(path);
+            Ok(DesktopSettings::default())
+        }
+    }
 }
 
 pub(crate) fn save_desktop_settings(path: &Path, settings: &DesktopSettings) -> Result<()> {
     let text =
         serde_json::to_string_pretty(settings).context("serialize desktop settings failed")?;
-    fs::write(path, text)
-        .with_context(|| format!("write desktop settings failed: {}", path.to_string_lossy()))
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create desktop settings dir failed: {}", parent.display()))?;
+    }
+    let backup_path = desktop_settings_backup_path(path);
+    let temp_path = desktop_settings_temp_path(path);
+    fs::write(&temp_path, text).with_context(|| {
+        format!(
+            "write desktop settings temp failed: {}",
+            temp_path.display()
+        )
+    })?;
+    if path.exists() {
+        fs::copy(path, &backup_path).with_context(|| {
+            format!(
+                "backup desktop settings failed: {} -> {}",
+                path.display(),
+                backup_path.display()
+            )
+        })?;
+    }
+    if let Err(initial_err) = fs::rename(&temp_path, path) {
+        if let Err(remove_err) = fs::remove_file(path) {
+            if remove_err.kind() != std::io::ErrorKind::NotFound {
+                return Err(remove_err).with_context(|| {
+                    format!("remove old desktop settings failed: {}", path.display())
+                });
+            }
+        }
+        fs::rename(&temp_path, path).with_context(|| {
+            format!(
+                "replace desktop settings failed: {} (initial rename error: {initial_err})",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn desktop_settings_backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
+fn desktop_settings_temp_path(path: &Path) -> PathBuf {
+    path.with_extension("json.tmp")
+}
+
+fn desktop_settings_invalid_path(path: &Path) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("desktop.settings.json");
+    path.with_file_name(format!("{file_name}.invalid-{stamp}"))
+}
+
+fn archive_invalid_desktop_settings(path: &Path) {
+    let archive_path = desktop_settings_invalid_path(path);
+    if let Err(err) = fs::rename(path, &archive_path) {
+        warn!(
+            "archive invalid desktop settings failed: {} -> {}: {err}",
+            path.display(),
+            archive_path.display()
+        );
+    }
 }
 
 pub(crate) fn normalize_desktop_container_roots(
@@ -1671,6 +1763,83 @@ mod tests {
         assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
+    }
+
+    #[test]
+    fn load_desktop_settings_recovers_from_backup_when_primary_is_invalid() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-settings-recover-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let settings_path = root.join("config/desktop.settings.json");
+        fs::create_dir_all(settings_path.parent().expect("settings parent"))
+            .expect("create settings dir");
+        fs::write(&settings_path, "{").expect("write invalid settings");
+        fs::write(
+            desktop_settings_backup_path(&settings_path),
+            r#"{"workspace_root":"workspace","desktop_token":"backup-token","updated_at":1.0}"#,
+        )
+        .expect("write backup settings");
+
+        let settings = load_desktop_settings(&settings_path).expect("load recovered settings");
+
+        assert_eq!(settings.desktop_token, "backup-token");
+        assert_eq!(settings.workspace_root, "workspace");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_desktop_settings_uses_defaults_when_invalid_primary_has_no_backup() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-settings-default-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let settings_path = root.join("config/desktop.settings.json");
+        fs::create_dir_all(settings_path.parent().expect("settings parent"))
+            .expect("create settings dir");
+        fs::write(&settings_path, "{").expect("write invalid settings");
+
+        let settings = load_desktop_settings(&settings_path).expect("load default settings");
+
+        assert_eq!(settings.workspace_root, "");
+        assert!(!settings.desktop_token.trim().is_empty());
+        assert!(!settings_path.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn save_desktop_settings_replaces_primary_and_keeps_backup() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-settings-save-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let settings_path = root.join("config/desktop.settings.json");
+        fs::create_dir_all(settings_path.parent().expect("settings parent"))
+            .expect("create settings dir");
+        fs::write(
+            &settings_path,
+            r#"{"workspace_root":"old","desktop_token":"old-token","updated_at":1.0}"#,
+        )
+        .expect("write old settings");
+        let settings = DesktopSettings {
+            workspace_root: "new".to_string(),
+            desktop_token: "new-token".to_string(),
+            ..DesktopSettings::default()
+        };
+
+        save_desktop_settings(&settings_path, &settings).expect("save settings");
+
+        let primary = load_desktop_settings(&settings_path).expect("load primary settings");
+        let backup = load_desktop_settings(&desktop_settings_backup_path(&settings_path))
+            .expect("load backup");
+        assert_eq!(primary.desktop_token, "new-token");
+        assert_eq!(primary.workspace_root, "new");
+        assert_eq!(backup.desktop_token, "old-token");
+        assert_eq!(backup.workspace_root, "old");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

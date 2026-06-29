@@ -1,8 +1,8 @@
----
+﻿---
 title: 工作区文件
 summary: `list_files`、`search_content`、`read_file`、`write_file` 的最新参数与返回结构。
 read_when:
-  - 你要浏览工作区、搜索代码、读文件或写文件
+  - 用户要浏览工作区、搜索代码、读文件或写文件
 source_docs:
   - src/services/tools.rs
   - src/services/tools/search_content_tool.rs
@@ -21,7 +21,7 @@ updated_at: 2026-04-10
 
 它们都已经走统一成功/失败骨架。
 
-## 什么时候优先用它
+## 优先使用场景
 
 - 先看目录：`list_files`
 - 先定位关键词：`search_content`
@@ -261,14 +261,14 @@ updated_at: 2026-04-10
 }
 ```
 
-### 什么时候更适合用它
+### 优先使用场景
 
-- 你已经通过 `read_file` 拿到精确原文
+- 用户已经通过 `read_file` 拿到精确原文
 - 目标修改能写成一次 `old_text` -> `new_text`
 - 不需要正则、条件判断、标记间替换或多步骤编辑
 - `old_text` 匹配多处时，优先扩大上下文；确实要替换全部匹配时再设置 `expected_count`
 
-### 什么时候不要用它
+### 不适用场景
 
 - 要做复杂替换、正则替换、跨多段编辑或带条件逻辑时，改用 `programmatic_tool_call` 写 Python 脚本。
 - 要整文件生成或覆盖时，改用 `write_file`。
@@ -311,12 +311,12 @@ updated_at: 2026-04-10
 }
 ```
 
-### 什么时候不要用它
+### 不适用场景
 
 - 小范围精确修改代码，不要用 `write_file`，改用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
 - 要执行脚本、跑构建，不要用它，改用 [执行命令](/docs/zh-CN/tools/exec/)
 
-## 失败返回怎么读
+## 失败返回的阅读
 
 这四个工具失败时都优先看：
 

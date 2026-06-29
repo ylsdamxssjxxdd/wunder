@@ -3087,6 +3087,31 @@
   white-space: nowrap;
 }
 
+.user-account-import-result {
+  white-space: pre-line;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+  min-height: 40px;
+}
+
+.user-account-import-result:empty {
+  display: none;
+}
+
+.user-account-import-result.is-success {
+  color: #166534;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.user-account-import-result.is-error {
+  color: #991b1b;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
 .skill-source-tag.is-custom {
   color: #1d4ed8;
   border: 1px solid #bfdbfe;

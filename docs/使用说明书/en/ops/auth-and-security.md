@@ -123,6 +123,12 @@ This means:
 - `deny_globs`
 - Whether sandbox is enabled
 
+## Registration and Batch Account Creation
+
+Admins can toggle **Allow user registration** in the admin System Settings panel. When it is disabled, the user frontend hides the registration entry and the registration API rejects new self-service signups. Admins can still create accounts from User Management.
+
+In User Management, click **Add User** and choose an Excel file to batch import accounts. The first row must include `username` and `password`; optional columns include `email`, `unit_id`, `status`, and `roles`. The importer creates accounts row by row, reports failed rows in the result, and does not roll back accounts that were already created.
+
 ## Further Reading
 
 - [Deployment and Runtime](/docs/en/ops/deployment/)

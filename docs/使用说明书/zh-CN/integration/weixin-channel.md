@@ -1,10 +1,10 @@
----
+﻿---
 title: 微信 iLink 渠道
 summary: `weixin` 是 Wunder 的新微信渠道（iLink 协议），与 `wechat` / `wechat_mp` 不同；本文给出选型、扫码接入、运行态检查与故障定位。
 read_when:
-  - 你要接入新微信渠道并替换旧的 `wechat` / `wechat_mp`
-  - 你想确认用户是否可以直接扫系统生成二维码
-  - 你在排查 `context_token` 缺失、会话过期、文件下载失败
+  - 用户要接入新微信渠道并替换旧的 `wechat` / `wechat_mp`
+  - 用户想确认用户是否可以直接扫系统生成二维码
+  - 用户在排查 `context_token` 缺失、会话过期、文件下载失败
 source_docs:
   - docs/方案/新微信渠道落地方案.md
   - docs/API文档.md

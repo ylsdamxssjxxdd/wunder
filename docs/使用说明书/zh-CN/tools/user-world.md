@@ -1,8 +1,8 @@
----
+﻿---
 title: 用户世界工具
 summary: 站内用户查询与站内消息投递。
 read_when:
-  - 你要查站内用户，或给站内用户发送消息
+  - 用户要查站内用户，或给站内用户发送消息
 source_docs:
   - src/services/tools.rs
 updated_at: 2026-04-10

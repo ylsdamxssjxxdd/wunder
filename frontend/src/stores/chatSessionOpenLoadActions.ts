@@ -172,6 +172,7 @@ const writeLoadSessionsCache = (agentId: string | null, sessions: Record<string,
 const resolveSessionOpenDetailLimit = (): number => resolveSessionDetailMessageLimit(isDesktopModeEnabled());
 
 const sessionDetailLoadInFlight = new Map<string, Promise<unknown>>();
+const sessionDetailFetchControllers = new Map<string, AbortController>();
 
 const resolveSessionDetailLoadInFlightKey = (
   sessionId: string,
@@ -202,6 +203,66 @@ const withSessionDetailLoadInFlight = <T>(
   sessionDetailLoadInFlight.set(key, request);
   return request;
 };
+
+const isAbortLikeError = (error: unknown): boolean => {
+  const record = error && typeof error === 'object'
+    ? error as Record<string, unknown>
+    : {};
+  const name = String(record.name || '').trim();
+  const message = String(record.message || error || '').trim().toLowerCase();
+  return name === 'AbortError' ||
+    name === 'CanceledError' ||
+    message.includes('aborted') ||
+    message.includes('canceled') ||
+    message.includes('cancelled');
+};
+
+const abortDesktopSessionDetailLoadsExcept = (sessionId: string): void => {
+  if (!isDesktopModeEnabled()) return;
+  for (const [key, controller] of sessionDetailFetchControllers.entries()) {
+    if (key === sessionId) continue;
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+    sessionDetailFetchControllers.delete(key);
+    for (const requestKey of Array.from(sessionDetailLoadInFlight.keys())) {
+      if (requestKey.startsWith(`${key}|`)) {
+        sessionDetailLoadInFlight.delete(requestKey);
+      }
+    }
+  }
+};
+
+const createDesktopSessionDetailController = (sessionId: string): AbortController | null => {
+  if (!isDesktopModeEnabled()) return null;
+  abortDesktopSessionDetailLoadsExcept(sessionId);
+  const existing = sessionDetailFetchControllers.get(sessionId);
+  if (existing && !existing.signal.aborted) {
+    return existing;
+  }
+  const controller = new AbortController();
+  sessionDetailFetchControllers.set(sessionId, controller);
+  return controller;
+};
+
+const clearDesktopSessionDetailController = (
+  sessionId: string,
+  controller: AbortController | null
+): void => {
+  if (!controller) return;
+  if (sessionDetailFetchControllers.get(sessionId) === controller) {
+    sessionDetailFetchControllers.delete(sessionId);
+  }
+};
+
+const isStaleDesktopSessionDetailLoad = (
+  store: { activeSessionId?: unknown } | null | undefined,
+  sessionId: string,
+  preserveWatcher: boolean
+): boolean =>
+  isDesktopModeEnabled() &&
+  !preserveWatcher &&
+  resolveSessionKey(store?.activeSessionId) !== sessionId;
 
 export const chatSessionOpenLoadActions = {
     appendLocalMessage(role: string, content: string, options: AppendLocalMessageOptions = {}) {
@@ -512,7 +573,9 @@ export const chatSessionOpenLoadActions = {
           abortResumeStream(previousSessionId);
           clearSessionWatcher();
           this.activeSessionId = targetSessionId;
+          abortDesktopSessionDetailLoadsExcept(targetSessionId);
         }
+        const detailAbortController = createDesktopSessionDetailController(targetSessionId);
         getHistoryState(targetSessionId, { reset: true });
         const knownSessionRecord =
           this.sessions.find((item) => resolveSessionKey(item?.id) === targetSessionId) || null;
@@ -597,26 +660,46 @@ export const chatSessionOpenLoadActions = {
         try {
           if (!sessionDetail || !eventsPayload) {
             [sessionRes, eventsPayload] = await Promise.all([
-              getSessionWithParams(targetSessionId, { limit: detailLimit }),
+              getSessionWithParams(
+                targetSessionId,
+                { limit: detailLimit },
+                detailAbortController ? { signal: detailAbortController.signal } : {}
+              ),
               loadSessionEventsSnapshot(targetSessionId, {
                 limit: detailLimit,
-                minLastEventId: knownEventFloor
+                minLastEventId: knownEventFloor,
+                shouldCache: () => !isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher),
+                ...(detailAbortController ? { signal: detailAbortController.signal } : {})
               }).catch((error) => {
                 if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+                  throw error;
+                }
+                if (isAbortLikeError(error)) {
                   throw error;
                 }
                 return null;
               })
             ]);
+            if (detailAbortController?.signal.aborted || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
+              return null;
+            }
             sessionDetail = sessionRes?.data?.data || null;
             cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
           }
         } catch (error) {
+          if (isAbortLikeError(error)) {
+            return null;
+          }
           if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
             purgeUnavailableSession(this, targetSessionId);
             return null;
           }
           throw error;
+        } finally {
+          clearDesktopSessionDetailController(targetSessionId, detailAbortController);
+        }
+        if (isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
+          return null;
         }
         const data = sessionRes?.data;
         const detailTranscriptCount = Array.isArray(sessionDetail?.transcript)

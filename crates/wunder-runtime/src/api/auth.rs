@@ -31,6 +31,7 @@ const SESSION_SCOPE_HEADER: &str = "x-wunder-session-scope";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/wunder/auth/settings", get(auth_settings))
         .route("/wunder/auth/register", post(register))
         .route("/wunder/auth/login", post(login))
         .route("/wunder/auth/reset_password", post(reset_password))
@@ -58,6 +59,15 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/wunder/auth/logout", post(logout))
         .route("/wunder/auth/me", get(me).patch(update_me))
+}
+
+async fn auth_settings(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    Ok(Json(json!({
+        "data": {
+            "allow_user_registration": config.security.allow_user_registration
+        }
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -223,6 +233,13 @@ async fn register(
     headers: HeaderMap,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
+    let config = state.config_store.get().await;
+    if !config.security.allow_user_registration {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "\u{7528}\u{6237}\u{6ce8}\u{518c}\u{5df2}\u{5173}\u{95ed}\u{ff0c}\u{8bf7}\u{8054}\u{7cfb}\u{7ba1}\u{7406}\u{5458}\u{521b}\u{5efa}\u{8d26}\u{53f7}\u{3002}".to_string(),
+        ));
+    }
     let RegisterRequest {
         username,
         email,

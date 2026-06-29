@@ -2090,6 +2090,20 @@
               <div class="settings-card-body">
                 <div class="settings-grid settings-grid--auto">
                   <div class="form-row form-row-span">
+                    <label for="settingsAllowUserRegistration" data-i18n="settings.label.allowUserRegistration">
+                      Allow user registration
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="settingsAllowUserRegistration" type="checkbox" />
+                      <span data-i18n="settings.option.allowUserRegistration">
+                        Allow self-service registration from user frontend
+                      </span>
+                    </label>
+                    <div class="settings-field-hint" data-i18n="settings.hint.allowUserRegistration">
+                      Disabled registration hides the user frontend entry and rejects register API calls.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
                     <label for="settingsAllowCommands" data-i18n="settings.label.allowCommands">Allow commands</label>
                     <textarea
                       id="settingsAllowCommands"
@@ -3612,6 +3626,28 @@
                   <div class="form-row">
                     <label for="llmApiKey" data-i18n="llm.field.apiKey">api_key（选填）</label>
                     <input id="llmApiKey" type="text" placeholder="sk-..." />
+                  </div>
+                  <div id="llmVirtualReplayRows" class="form-row" style="display: none">
+                    <label for="llmVirtualReplaySelect" data-i18n="llm.virtual.label">Virtual replay logs</label>
+                    <div class="form-row-inline">
+                      <select id="llmVirtualReplaySelect"></select>
+                      <button id="llmVirtualReplayRefreshBtn" class="secondary btn-with-icon" type="button">
+                        <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">Refresh</span>
+                      </button>
+                    </div>
+                    <div class="form-row-inline">
+                      <input id="llmVirtualReplayUploadInput" type="file" accept=".jsonl,application/jsonlines,application/json" />
+                      <button id="llmVirtualReplayUploadBtn" class="secondary btn-with-icon" type="button">
+                        <i class="fa-solid fa-upload"></i><span data-i18n="llm.virtual.upload">Upload JSONL</span>
+                      </button>
+                      <button id="llmVirtualReplayToggleBtn" class="secondary btn-with-icon" type="button">
+                        <i class="fa-solid fa-power-off"></i><span data-i18n="llm.virtual.toggle">Enable/Disable</span>
+                      </button>
+                      <button id="llmVirtualReplayDeleteBtn" class="danger btn-with-icon" type="button">
+                        <i class="fa-solid fa-trash"></i><span data-i18n="common.delete">Delete</span>
+                      </button>
+                    </div>
+                    <div id="llmVirtualReplayStatus" class="muted" data-i18n="llm.virtual.empty">No replay logs</div>
                   </div>
                 </div>
                 <div id="llmGenerationCard" class="llm-card">
@@ -5575,10 +5611,25 @@
               <option value="disabled">disabled</option>
             </select>
           </div>
+          <div class="form-row form-row-span">
+            <label for="userAccountImportFile" data-i18n="userAccounts.modal.import.file">Excel file</label>
+            <input
+              id="userAccountImportFile"
+              type="file"
+              accept=".xlsx,.xls,.xlsm,.xlsb,.ods"
+            />
+            <div id="userAccountImportHint" class="muted" data-i18n="userAccounts.modal.import.hint">
+              First row must contain username and password columns. Optional columns: email, unit_id, status, roles.
+            </div>
+          </div>
+          <div id="userAccountImportResult" class="muted user-account-import-result" aria-live="polite"></div>
         </form>
         <div class="modal-actions">
           <button id="userAccountModalCancel" class="secondary btn-with-icon" type="button">
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="userAccountImportBtn" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-file-arrow-up"></i><span data-i18n="userAccounts.modal.import.action">Import</span>
           </button>
           <button id="userAccountModalSave" class="btn-with-icon" type="button">
             <i class="fa-solid fa-floppy-disk"></i><span data-i18n="common.save">保存</span>

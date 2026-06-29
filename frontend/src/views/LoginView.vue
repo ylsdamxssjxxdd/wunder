@@ -40,7 +40,12 @@
           <button class="auth-submit-btn" type="submit" :disabled="loading">
             {{ loading ? t('common.loading') : t('auth.login.action') }}
           </button>
-          <button class="auth-link-btn" type="button" @click="goRegister">
+          <button
+            v-if="allowUserRegistration"
+            class="auth-link-btn"
+            type="button"
+            @click="goRegister"
+          >
             {{ t('auth.login.register') }}
           </button>
           <button class="auth-link-btn" type="button" @click="toggleResetPanel">
@@ -120,7 +125,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { isDesktopModeEnabled } from '@/config/desktop';
@@ -159,6 +164,7 @@ const fieldErrors = reactive<Partial<Record<LoginField, string>>>({
 });
 
 const loading = computed(() => authStore.loading);
+const allowUserRegistration = computed(() => authStore.allowUserRegistration !== false);
 
 const clearFieldErrors = () => {
   fieldErrors.username = '';
@@ -270,4 +276,8 @@ const handleResetPassword = async () => {
 };
 
 const goRegister = () => router.push('/register');
+
+onMounted(() => {
+  authStore.loadAuthSettings().catch(() => {});
+});
 </script>

@@ -55,6 +55,16 @@ export type DesktopLlmContextProbePayload = {
 
 export type DesktopTtsVoicesProbePayload = DesktopLlmContextProbePayload;
 
+export type DesktopVirtualReplayLog = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  format: string;
+  user_rounds: number;
+  size_bytes: number;
+  uploaded_at: string;
+};
+
 export type DesktopLlmConfig = {
   default: string;
   default_embedding?: string;
@@ -196,6 +206,35 @@ export const probeDesktopLlmContextWindow = (payload: DesktopLlmContextProbePayl
 
 export const probeDesktopTtsVoices = (payload: DesktopTtsVoicesProbePayload) =>
   desktopApi.post('/wunder/desktop/llm/tts_voices', payload, {
+    headers: buildDesktopHeaders()
+  });
+
+export const listDesktopVirtualReplayLogs = () =>
+  desktopApi.get('/wunder/desktop/llm/virtual_logs', {
+    headers: buildDesktopHeaders()
+  });
+
+export const uploadDesktopVirtualReplayLog = (file: File, name?: string) => {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('name', String(name || file.name || '').trim());
+  return desktopApi.post('/wunder/desktop/llm/virtual_logs', form, {
+    headers: buildDesktopHeaders(),
+    timeout: 120000
+  });
+};
+
+export const setDesktopVirtualReplayLogEnabled = (logId: string, enabled: boolean) =>
+  desktopApi.post(
+    `/wunder/desktop/llm/virtual_logs/${encodeURIComponent(logId)}`,
+    { enabled },
+    {
+      headers: buildDesktopHeaders()
+    }
+  );
+
+export const deleteDesktopVirtualReplayLog = (logId: string) =>
+  desktopApi.delete(`/wunder/desktop/llm/virtual_logs/${encodeURIComponent(logId)}`, {
     headers: buildDesktopHeaders()
   });
 

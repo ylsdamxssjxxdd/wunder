@@ -203,6 +203,8 @@ export const state = {
     defaultVideoName: "",
     activeName: "",
     nameEdits: {},
+    virtualLogs: [],
+    virtualLogsLoaded: false,
     loaded: false,
   },
   workspace: {

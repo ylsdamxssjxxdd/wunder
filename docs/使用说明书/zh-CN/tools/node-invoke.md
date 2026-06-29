@@ -1,8 +1,8 @@
----
+﻿---
 title: 节点调用
 summary: 网关节点列表与命令调用。
 read_when:
-  - 你要列出可用节点或向指定节点发送命令
+  - 用户要列出可用节点或向指定节点发送命令
 source_docs:
   - src/services/tools.rs
 updated_at: 2026-04-10

@@ -1,23 +1,23 @@
----
+﻿---
 title: 说明书总览
-summary: 按角色快速找到你需要的文档入口。
+summary: 按角色快速找到用户需要的文档入口。
 read_when:
-  - 你不确定先看哪一页
-  - 你希望按角色快速进入正确文档
+  - 用户不确定先看哪一页
+  - 用户希望按角色快速进入正确文档
 source_docs:
   - docs/wunder补全文档落地方案.md
 ---
 
 # 说明书总览
 
-这页是导航页，按角色直接带你到可执行页面。
+这页是导航页，按角色直接带用户到可执行页面。
 
 ## 我是普通用户
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/quickstart/">
     <strong>快速开始</strong>
-    <span>10 分钟跑通第一个任务。</span>
+    <span>跑通第一个任务。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/desktop/">
     <strong>Desktop 入门</strong>
@@ -67,7 +67,7 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/">
     <strong>接入概览</strong>
-    <span>找到适合你的接入方式。</span>
+    <span>找到适合用户的接入方式。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/tools/">
     <strong>工具总览</strong>

@@ -43,7 +43,8 @@ const AUTH_FREE_ENDPOINTS = new Set([
   '/auth/demo',
   '/auth/login',
   '/auth/register',
-  '/auth/reset_password'
+  '/auth/reset_password',
+  '/auth/settings'
 ]);
 
 const shouldSkipStoredAuthorization = (url: unknown): boolean => {

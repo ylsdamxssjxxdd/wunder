@@ -11,7 +11,7 @@ use crate::org_units;
 use crate::state::AppState;
 use crate::storage::{ExternalLinkRecord, OrgUnitRecord};
 use crate::user_store::UserStore;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
@@ -26,6 +26,7 @@ const ORG_UNIT_NAME_SEPARATOR: &str = " / ";
 const MAX_ORG_UNIT_LEVEL: i32 = 4;
 
 mod test_accounts;
+mod user_account_import;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -53,6 +54,12 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/user_accounts",
             get(admin_user_accounts_list).post(admin_user_accounts_create),
+        )
+        .route(
+            "/wunder/admin/user_accounts/import",
+            post(admin_user_accounts_import).layer(DefaultBodyLimit::max(
+                user_account_import::MAX_USER_ACCOUNT_IMPORT_BYTES,
+            )),
         )
         .route(
             "/wunder/admin/user_accounts/{user_id}",
@@ -88,6 +95,16 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(admin_user_sessions),
         )
         .route("/wunder/admin/users/{user_id}", delete(admin_user_delete))
+}
+
+async fn admin_user_accounts_import(
+    state: State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    multipart: axum::extract::Multipart,
+) -> Result<Json<Value>, Response> {
+    user_account_import::import_user_accounts(state, headers, multipart)
+        .await
+        .map(Json)
 }
 
 async fn admin_org_units_list(

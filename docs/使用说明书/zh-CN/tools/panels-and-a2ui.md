@@ -1,8 +1,8 @@
----
+﻿---
 title: 面板与 a2ui
 summary: `a2ui`、`plan_update`、`question_panel` 的语义与返回。
 read_when:
-  - 你要更新前端计划面板、问询面板或发送结构化 UI 指令
+  - 用户要更新前端计划面板、问询面板或发送结构化 UI 指令
 source_docs:
   - src/services/tools.rs
   - src/services/tools/catalog.rs

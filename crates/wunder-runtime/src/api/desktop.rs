@@ -1,13 +1,13 @@
 use crate::config::{Config, LlmConfig};
 use crate::core::{blocking, long_task};
-use crate::services::desktop_lan;
 use crate::services::work_state_reset::reset_user_work_state;
+use crate::services::{desktop_lan, virtual_llm};
 use crate::state::AppState;
 use crate::storage::{
     normalize_workspace_container_id, MAX_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
 };
 use crate::{i18n, llm};
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{
@@ -36,6 +36,7 @@ const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
 const DESKTOP_DEFAULT_WORKSPACE_ROOT_ENV: &str = "WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT";
 const DESKTOP_USER_ID_ENV: &str = "WUNDER_DESKTOP_USER_ID";
 const DEFAULT_SEED_QUERY_LIMIT: usize = 50;
+const MAX_VIRTUAL_LLM_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
 
 fn default_desktop_python_runtime_mode() -> String {
     "auto".to_string()
@@ -60,10 +61,30 @@ pub fn router() -> Router<Arc<AppState>> {
             post(desktop_llm_tts_voices),
         )
         .route(
+            "/wunder/desktop/llm/virtual_logs",
+            get(desktop_virtual_llm_logs_get)
+                .post(desktop_virtual_llm_logs_upload)
+                .layer(DefaultBodyLimit::max(MAX_VIRTUAL_LLM_UPLOAD_BYTES)),
+        )
+        .route(
+            "/wunder/desktop/llm/virtual_logs/{log_id}",
+            post(desktop_virtual_llm_log_enable).delete(desktop_virtual_llm_log_delete),
+        )
+        .route(
             "/wunder/admin/llm/context_window",
             post(desktop_llm_context_window),
         )
         .route("/wunder/admin/llm/tts_voices", post(desktop_llm_tts_voices))
+        .route(
+            "/wunder/admin/llm/virtual_logs",
+            get(desktop_virtual_llm_logs_get)
+                .post(desktop_virtual_llm_logs_upload)
+                .layer(DefaultBodyLimit::max(MAX_VIRTUAL_LLM_UPLOAD_BYTES)),
+        )
+        .route(
+            "/wunder/admin/llm/virtual_logs/{log_id}",
+            post(desktop_virtual_llm_log_enable).delete(desktop_virtual_llm_log_delete),
+        )
         .route("/wunder/desktop/fs/list", get(desktop_fs_list))
         .route("/wunder/desktop/sync/seed/start", post(desktop_seed_start))
         .route("/wunder/desktop/sync/seed/jobs", get(desktop_seed_jobs))
@@ -193,6 +214,11 @@ struct DesktopLlmContextProbeRequest {
     model: String,
     #[serde(default)]
     timeout_s: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopVirtualLlmLogEnableRequest {
+    enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -613,6 +639,92 @@ async fn desktop_llm_tts_voices(
     Ok(Json(response))
 }
 
+async fn desktop_virtual_llm_logs_get(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let logs = virtual_llm::list_logs(config)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    Ok(Json(json!({ "logs": virtual_llm::logs_payload(logs) })))
+}
+
+async fn desktop_virtual_llm_logs_upload(
+    State(state): State<Arc<AppState>>,
+    multipart: Multipart,
+) -> Result<Json<Value>, Response> {
+    let upload = virtual_llm::parse_upload_multipart(multipart)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    let config = state.config_store.get().await;
+    let (next_config, summary) = virtual_llm::store_uploaded_log(config, upload)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    let next_virtual = next_config.llm.virtual_replay.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.llm.virtual_replay = next_virtual;
+        })
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    sync_desktop_llm_settings(updated.llm.clone()).map_err(internal_error)?;
+    let logs = virtual_llm::list_logs(updated)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    Ok(Json(json!({
+        "log": summary,
+        "logs": virtual_llm::logs_payload(logs),
+    })))
+}
+
+async fn desktop_virtual_llm_log_enable(
+    State(state): State<Arc<AppState>>,
+    AxumPath(log_id): AxumPath<String>,
+    Json(payload): Json<DesktopVirtualLlmLogEnableRequest>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let next_config = virtual_llm::set_log_enabled(config, log_id, payload.enabled)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    let next_virtual = next_config.llm.virtual_replay.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.llm.virtual_replay = next_virtual;
+        })
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    sync_desktop_llm_settings(updated.llm.clone()).map_err(internal_error)?;
+    let logs = virtual_llm::list_logs(updated)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    Ok(Json(json!({ "logs": virtual_llm::logs_payload(logs) })))
+}
+
+async fn desktop_virtual_llm_log_delete(
+    State(state): State<Arc<AppState>>,
+    AxumPath(log_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let next_config = virtual_llm::delete_log(config, log_id)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    let next_virtual = next_config.llm.virtual_replay.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.llm.virtual_replay = next_virtual;
+        })
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    sync_desktop_llm_settings(updated.llm.clone()).map_err(internal_error)?;
+    let logs = virtual_llm::list_logs(updated)
+        .await
+        .map_err(|err| bad_request(err.to_string()))?;
+    Ok(Json(json!({ "logs": virtual_llm::logs_payload(logs) })))
+}
+
 async fn desktop_fs_list(
     State(_state): State<Arc<AppState>>,
     Query(query): Query<DesktopDirectoryListQuery>,
@@ -889,7 +1001,9 @@ async fn desktop_settings_update(
         .config_store
         .update(move |config| {
             if let Some(ref llm) = llm_update {
+                let virtual_replay = config.llm.virtual_replay.clone();
                 config.llm = llm.clone();
+                config.llm.virtual_replay = virtual_replay;
             }
             config.workspace.root = next_workspace_root.clone();
             config.workspace.container_roots = next_container_roots.clone();
@@ -1502,11 +1616,13 @@ fn load_desktop_settings(path: &Path) -> Result<DesktopSettingsFile, String> {
                         if let Ok(settings) =
                             serde_json::from_str::<DesktopSettingsFile>(&backup_text)
                         {
+                            archive_invalid_desktop_settings(path);
                             return Ok(settings);
                         }
                     }
                 }
             }
+            archive_invalid_desktop_settings(path);
             Err(format!(
                 "parse desktop settings failed {}: {primary_err}",
                 path.display()
@@ -1562,12 +1678,45 @@ fn save_desktop_settings(path: &Path, settings: &DesktopSettingsFile) -> Result<
     Ok(())
 }
 
+fn sync_desktop_llm_settings(llm: LlmConfig) -> Result<(), String> {
+    let (settings_path, _, _) = resolve_desktop_paths()?;
+    let mut settings = load_desktop_settings(&settings_path)?;
+    settings.llm = Some(llm);
+    settings.updated_at = now_ts();
+    save_desktop_settings(&settings_path, &settings)
+}
+
 fn desktop_settings_backup_path(path: &Path) -> PathBuf {
     path.with_extension("json.bak")
 }
 
 fn desktop_settings_temp_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
+}
+
+fn desktop_settings_invalid_path(path: &Path) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("desktop.settings.json");
+    path.with_file_name(format!("{file_name}.invalid-{stamp}"))
+}
+
+fn archive_invalid_desktop_settings(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    let archive_path = desktop_settings_invalid_path(path);
+    if let Err(err) = fs::rename(path, archive_path) {
+        tracing::warn!(
+            "archive invalid desktop settings failed: {}: {err}",
+            path.display()
+        );
+    }
 }
 
 fn resolve_desktop_list_path(
@@ -1868,7 +2017,10 @@ fn internal_error(message: String) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{describe_desktop_python_path, normalize_desktop_python_path, DesktopSettingsFile};
+    use super::{
+        describe_desktop_python_path, desktop_settings_backup_path, load_desktop_settings,
+        normalize_desktop_python_path, save_desktop_settings, DesktopSettingsFile,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -1904,5 +2056,49 @@ mod tests {
 
         assert_eq!(path, "missing/python.exe");
         assert!(!valid);
+    }
+
+    #[test]
+    fn load_desktop_settings_recovers_backup_and_archives_invalid_primary() {
+        let temp = tempdir().expect("tempdir");
+        let settings_path = temp.path().join("desktop.settings.json");
+        fs::write(&settings_path, "{").expect("write invalid settings");
+        fs::write(
+            desktop_settings_backup_path(&settings_path),
+            r#"{"workspace_root":"workspace","desktop_token":"backup-token","updated_at":1.0}"#,
+        )
+        .expect("write backup settings");
+
+        let settings = load_desktop_settings(&settings_path).expect("load settings");
+
+        assert_eq!(settings.desktop_token, "backup-token");
+        assert_eq!(settings.workspace_root, "workspace");
+        assert!(!settings_path.exists());
+    }
+
+    #[test]
+    fn save_desktop_settings_keeps_previous_primary_as_backup() {
+        let temp = tempdir().expect("tempdir");
+        let settings_path = temp.path().join("desktop.settings.json");
+        fs::write(
+            &settings_path,
+            r#"{"workspace_root":"old","desktop_token":"old-token","updated_at":1.0}"#,
+        )
+        .expect("write old settings");
+        let settings = DesktopSettingsFile {
+            workspace_root: "new".to_string(),
+            desktop_token: "new-token".to_string(),
+            ..DesktopSettingsFile::default()
+        };
+
+        save_desktop_settings(&settings_path, &settings).expect("save settings");
+
+        let primary = load_desktop_settings(&settings_path).expect("load primary settings");
+        let backup = load_desktop_settings(&desktop_settings_backup_path(&settings_path))
+            .expect("load backup");
+        assert_eq!(primary.desktop_token, "new-token");
+        assert_eq!(primary.workspace_root, "new");
+        assert_eq!(backup.desktop_token, "old-token");
+        assert_eq!(backup.workspace_root, "old");
     }
 }

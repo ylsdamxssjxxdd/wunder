@@ -11,7 +11,7 @@ path = "src/lib.rs"
 [features]
 default = []
 desktop-control = ["dep:windows-sys"]
-doc2md = ["dep:calamine", "dep:cfb", "dep:pdf-extract", "dep:rlsx"]
+doc2md = ["dep:cfb", "dep:pdf-extract", "dep:rlsx"]
 host-metrics = ["dep:sysinfo"]
 mcp = ["dep:rmcp", "dep:sse-stream"]
 postgres-storage = ["dep:deadpool-postgres", "dep:tokio-postgres"]
@@ -54,6 +54,10 @@ required-features = ["sqlite-storage"]
 
 [[test]]
 name = "admin_user_account_token_adjustment_routes"
+required-features = ["sqlite-storage"]
+
+[[test]]
+name = "admin_user_accounts_import_routes"
 required-features = ["sqlite-storage"]
 
 [[test]]
@@ -186,7 +190,7 @@ walkdir.workspace = true
 webpki-roots.workspace = true
 wunder-core = { path = "../wunder-core" }
 zip.workspace = true
-calamine = { workspace = true, optional = true }
+calamine.workspace = true
 cfb = { workspace = true, optional = true }
 quick-xml.workspace = true
 rlsx = { workspace = true, optional = true }

@@ -33,6 +33,7 @@ const securitySettings = {
   externalEmbedPresetAgentName: "",
   externalEmbedJwtSecret: "",
   externalEmbedJwtUserIdClaim: "sub",
+  allowUserRegistration: true,
   allowCommands: [],
   allowPaths: [],
   denyGlobs: [],
@@ -251,6 +252,9 @@ const applySecuritySettings = (options = {}) => {
   }
   if (elements.externalEmbedJwtUserIdClaim) {
     elements.externalEmbedJwtUserIdClaim.value = options.externalEmbedJwtUserIdClaim || "sub";
+  }
+  if (elements.settingsAllowUserRegistration) {
+    elements.settingsAllowUserRegistration.checked = options.allowUserRegistration !== false;
   }
   if (elements.settingsAllowCommands) {
     elements.settingsAllowCommands.value = renderTextList(options.allowCommands);
@@ -492,6 +496,7 @@ const applySystemSettings = (payload = {}) => {
     security.external_embed_jwt_user_id_claim.trim()
       ? security.external_embed_jwt_user_id_claim.trim()
       : "sub";
+  securitySettings.allowUserRegistration = security.allow_user_registration !== false;
   securitySettings.allowCommands = Array.isArray(security.allow_commands)
     ? security.allow_commands
     : [];
@@ -709,6 +714,7 @@ const buildSystemUpdatePayload = () => {
     elements.settingsExternalEmbedPresetAgent ||
     elements.externalEmbedJwtSecret ||
     elements.externalEmbedJwtUserIdClaim ||
+    elements.settingsAllowUserRegistration ||
     elements.settingsAllowCommands ||
     elements.settingsAllowPaths ||
     elements.settingsDenyGlobs
@@ -734,6 +740,9 @@ const buildSystemUpdatePayload = () => {
       security.external_embed_jwt_user_id_claim = String(
         elements.externalEmbedJwtUserIdClaim.value || ""
       ).trim();
+    }
+    if (elements.settingsAllowUserRegistration) {
+      security.allow_user_registration = Boolean(elements.settingsAllowUserRegistration.checked);
     }
     if (elements.settingsAllowCommands) {
       security.allow_commands = normalizeTextList(elements.settingsAllowCommands.value);

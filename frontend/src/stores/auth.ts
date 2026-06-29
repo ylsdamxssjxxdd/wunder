@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia';
 
-import { fetchMe, login, loginDemo, logout as logoutRequest, register } from '@/api/auth';
+import {
+  fetchAuthSettings,
+  fetchMe,
+  login,
+  loginDemo,
+  logout as logoutRequest,
+  register
+} from '@/api/auth';
 import {
   ensureDemoIdentity,
   ensureDemoProfile,
@@ -17,6 +24,7 @@ import {
 } from '@/utils/authTokenStorage';
 
 let profileInFlight: Promise<any> | null = null;
+let authSettingsInFlight: Promise<any> | null = null;
 
 const shouldUpdateUser = (currentUser: any, nextUser: any): boolean => {
   if (!currentUser && !nextUser) return false;
@@ -40,9 +48,35 @@ export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: readAccessToken(),
     user: null,
-    loading: false
+    loading: false,
+    allowUserRegistration: true
   }),
   actions: {
+    async loadAuthSettings(options: { throwOnError?: boolean } = {}) {
+      if (authSettingsInFlight) {
+        return authSettingsInFlight;
+      }
+      authSettingsInFlight = (async () => {
+        try {
+          const { data } = await fetchAuthSettings();
+          const allowed = data?.data?.allow_user_registration;
+          this.allowUserRegistration = allowed !== false;
+        } catch (error) {
+          if (options?.throwOnError === true) {
+            throw error;
+          }
+          this.allowUserRegistration = true;
+        }
+        return {
+          allowUserRegistration: this.allowUserRegistration
+        };
+      })();
+      try {
+        return await authSettingsInFlight;
+      } finally {
+        authSettingsInFlight = null;
+      }
+    },
     async login(payload) {
       this.loading = true;
       try {

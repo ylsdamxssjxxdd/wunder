@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Proofread DOCX for common Chinese official document format and typo issues."""
+"""Proofread DOCX and produce format-preserving annotated revisions."""
 
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import re
 from dataclasses import asdict, dataclass
@@ -12,8 +13,10 @@ from typing import Iterable, Optional
 
 try:
     from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+    from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
+    from docx.text.run import Run
 except Exception as exc:  # pragma: no cover
     raise SystemExit(
         "python-docx is required. Please install it first: pip install python-docx\n"
@@ -93,6 +96,8 @@ HEADING_PATTERNS = (
 
 STRUCTURE_PREFIXES = ("主送：", "附件：", "落款：", "抄送：", "印发：", "签发人：", "发文字号：")
 
+DEFAULT_REVIEW_AUTHOR = "Wunder 文稿校对"
+
 
 @dataclass
 class Issue:
@@ -106,11 +111,94 @@ class Issue:
     suggestion: str
 
 
+@dataclass
+class TextBlock:
+    block_id: str
+    kind: str
+    location: str
+    text: str
+    normalized_text: str
+    style: str
+    char_count: int
+
+
+@dataclass
+class TextEdit:
+    block_id: str
+    before: str
+    after: str
+    reason: str
+    severity: str
+    category: str
+    occurrence: int = 1
+
+
+@dataclass
+class AppliedChange:
+    index: int
+    block_id: str
+    location: str
+    before: str
+    after: str
+    reason: str
+    severity: str
+    category: str
+    occurrence: int
+    status: str
+    message: str
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Proofread DOCX document formatting and typos.")
     parser.add_argument("docx", help="Input .docx path")
     parser.add_argument("--output-json", dest="output_json", help="Write result JSON to file")
     parser.add_argument("--output-md", dest="output_md", help="Write markdown report to file")
+    parser.add_argument(
+        "--output-blocks-json",
+        dest="output_blocks_json",
+        help="Write model-editable text blocks with stable block_id values.",
+    )
+    parser.add_argument(
+        "--extract-blocks-only",
+        action="store_true",
+        help="Only extract DOCX text blocks; skip format/typo scoring.",
+    )
+    parser.add_argument(
+        "--apply-edits",
+        dest="apply_edits",
+        help="Apply a JSON edit manifest to the original DOCX in place-preserving mode.",
+    )
+    parser.add_argument(
+        "--output-docx",
+        dest="output_docx",
+        help="Write annotated revised DOCX. Defaults to '<input>-标注修订版.docx' when --apply-edits is used.",
+    )
+    parser.add_argument(
+        "--output-clean-docx",
+        dest="output_clean_docx",
+        help="Optionally write a clean revised DOCX without highlight, comments, or change-list appendix.",
+    )
+    parser.add_argument(
+        "--output-changes-json",
+        dest="output_changes_json",
+        help="Write structured edit-application results to JSON.",
+    )
+    parser.add_argument(
+        "--output-changes-md",
+        dest="output_changes_md",
+        help="Write a Markdown change list for the revised document.",
+    )
+    parser.add_argument(
+        "--review-author",
+        default=DEFAULT_REVIEW_AUTHOR,
+        help=f"Author name for Word comments (default: {DEFAULT_REVIEW_AUTHOR}).",
+    )
+    parser.add_argument(
+        "--append-change-list",
+        dest="append_change_list",
+        action="store_true",
+        help="Append an internal change-list table to the annotated DOCX. Off by default.",
+    )
     parser.add_argument(
         "--max-findings",
         type=int,
@@ -160,6 +248,88 @@ def paragraph_text_items(document) -> list[tuple[int, str, object]]:
     return items
 
 
+def iter_document_text_paragraphs(document) -> list[tuple[str, str, str, object]]:
+    """Return stable text-bearing paragraph anchors for model edit manifests."""
+    items: list[tuple[str, str, str, object]] = []
+    for idx, paragraph in enumerate(document.paragraphs, start=1):
+        items.append((f"p{idx:04d}", "paragraph", f"正文第{idx}段", paragraph))
+
+    for table_idx, table in enumerate(document.tables, start=1):
+        for row_idx, row in enumerate(table.rows, start=1):
+            for cell_idx, cell in enumerate(row.cells, start=1):
+                for paragraph_idx, paragraph in enumerate(cell.paragraphs, start=1):
+                    block_id = f"t{table_idx:03d}r{row_idx:03d}c{cell_idx:03d}p{paragraph_idx:03d}"
+                    location = f"表{table_idx}第{row_idx}行第{cell_idx}列第{paragraph_idx}段"
+                    items.append((block_id, "table_cell", location, paragraph))
+
+    for section_idx, section in enumerate(document.sections, start=1):
+        header = section.header
+        for paragraph_idx, paragraph in enumerate(header.paragraphs, start=1):
+            block_id = f"s{section_idx:03d}h{paragraph_idx:03d}"
+            location = f"第{section_idx}节页眉第{paragraph_idx}段"
+            items.append((block_id, "header", location, paragraph))
+        footer = section.footer
+        for paragraph_idx, paragraph in enumerate(footer.paragraphs, start=1):
+            block_id = f"s{section_idx:03d}f{paragraph_idx:03d}"
+            location = f"第{section_idx}节页脚第{paragraph_idx}段"
+            items.append((block_id, "footer", location, paragraph))
+
+    return items
+
+
+def block_style_name(paragraph) -> str:
+    style = getattr(paragraph, "style", None)
+    name = getattr(style, "name", None)
+    return str(name or "").strip()
+
+
+def build_text_blocks(document) -> list[TextBlock]:
+    blocks = []
+    for block_id, kind, location, paragraph in iter_document_text_paragraphs(document):
+        text = paragraph.text or ""
+        normalized = normalize_text(text)
+        if not normalized:
+            continue
+        blocks.append(
+            TextBlock(
+                block_id=block_id,
+                kind=kind,
+                location=location,
+                text=text,
+                normalized_text=normalized,
+                style=block_style_name(paragraph),
+                char_count=len(text),
+            )
+        )
+    return blocks
+
+
+def extract_blocks_payload(path: Path) -> dict:
+    document = Document(str(path))
+    blocks = build_text_blocks(document)
+    return {
+        "ok": True,
+        "document": {
+            "path": str(path),
+            "block_count": len(blocks),
+        },
+        "edit_manifest_schema": {
+            "edits": [
+                {
+                    "block_id": "p0001",
+                    "before": "原文中的精确片段",
+                    "after": "修订后的文本",
+                    "reason": "修改原因，写给用户审阅",
+                    "severity": "low|medium|high",
+                    "category": "错别字|术语|标点|语病|格式|其他",
+                    "occurrence": 1,
+                }
+            ]
+        },
+        "blocks": [asdict(block) for block in blocks],
+    }
+
+
 def paragraph_level(text: str) -> Optional[str]:
     for level, pattern in HEADING_PATTERNS:
         if pattern.search(text):
@@ -167,38 +337,64 @@ def paragraph_level(text: str) -> Optional[str]:
     return None
 
 
-def extract_run_font_name(run) -> Optional[str]:
-    names = []
-    if run.font and run.font.name:
-        names.append(run.font.name)
+def extract_run_font_name(run, *, prefer_east_asia: bool = True) -> Optional[str]:
+    east_asia_names = []
+    fallback_names = []
     r_pr = getattr(run._element, "rPr", None)
     if r_pr is not None and getattr(r_pr, "rFonts", None) is not None:
-        for key in ("eastAsia", "ascii", "hAnsi", "cs"):
+        for key in ("eastAsia",):
             value = r_pr.rFonts.get(qn(f"w:{key}"))
             if value:
-                names.append(value)
-    for name in names:
+                east_asia_names.append(value)
+        for key in ("ascii", "hAnsi", "cs"):
+            value = r_pr.rFonts.get(qn(f"w:{key}"))
+            if value:
+                fallback_names.append(value)
+    if run.font and run.font.name:
+        fallback_names.append(run.font.name)
+
+    candidates = east_asia_names if prefer_east_asia else [*fallback_names, *east_asia_names]
+    for name in candidates:
         cleaned = str(name).strip()
         if cleaned:
             return cleaned
     return None
 
 
-def dominant_font(paragraph) -> Optional[str]:
+def style_font_name(style, *, prefer_east_asia: bool = True) -> Optional[str]:
+    if style is None:
+        return None
+    element = getattr(style, "element", None)
+    r_pr = getattr(element, "rPr", None)
+    if r_pr is not None and getattr(r_pr, "rFonts", None) is not None:
+        east_asia = r_pr.rFonts.get(qn("w:eastAsia"))
+        if prefer_east_asia and east_asia:
+            return str(east_asia).strip()
+        if prefer_east_asia:
+            return None
+        for key in ("ascii", "hAnsi", "cs"):
+            value = r_pr.rFonts.get(qn(f"w:{key}"))
+            if value:
+                return str(value).strip()
+        if east_asia:
+            return str(east_asia).strip()
+    font = getattr(style, "font", None)
+    name = getattr(font, "name", None)
+    return str(name).strip() if name else None
+
+
+def dominant_font(paragraph, *, prefer_east_asia: bool = True) -> Optional[str]:
     weights = {}
     for run in paragraph.runs:
         text_len = len(run.text.strip())
         if text_len == 0:
             continue
-        font_name = extract_run_font_name(run)
+        font_name = extract_run_font_name(run, prefer_east_asia=prefer_east_asia)
         if not font_name:
             continue
         weights[font_name] = weights.get(font_name, 0) + text_len
     if not weights:
-        style = getattr(paragraph, "style", None)
-        if style is not None and style.font is not None and style.font.name:
-            return str(style.font.name).strip()
-        return None
+        return style_font_name(getattr(paragraph, "style", None), prefer_east_asia=prefer_east_asia)
     return max(weights.items(), key=lambda item: item[1])[0]
 
 
@@ -327,7 +523,7 @@ def check_title(items: list[tuple[int, str, object]], title_index: int, issues: 
             suggestion="将标题段落设置为居中对齐。",
         )
     font_name = dominant_font(paragraph)
-    if not font_matches(font_name, EXPECTED["title_font_keywords"]):
+    if font_name is not None and not font_matches(font_name, EXPECTED["title_font_keywords"]):
         add_issue(
             issues,
             severity="high",
@@ -369,7 +565,7 @@ def check_body_and_headings(
         font_name = dominant_font(paragraph)
         size_pt = dominant_size_pt(paragraph)
 
-        if level == "heading1" and not font_matches(font_name, EXPECTED["heading1_font_keywords"]):
+        if level == "heading1" and font_name is not None and not font_matches(font_name, EXPECTED["heading1_font_keywords"]):
             add_issue(
                 issues,
                 "medium",
@@ -381,7 +577,7 @@ def check_body_and_headings(
                 font_name or "未检测到",
                 "将一级标题字体设为黑体。",
             )
-        elif level == "heading2" and not font_matches(font_name, EXPECTED["heading2_font_keywords"]):
+        elif level == "heading2" and font_name is not None and not font_matches(font_name, EXPECTED["heading2_font_keywords"]):
             add_issue(
                 issues,
                 "medium",
@@ -393,7 +589,7 @@ def check_body_and_headings(
                 font_name or "未检测到",
                 "将二级标题字体设为楷体_GB2312。",
             )
-        elif level in {"heading3", "heading4"} and not font_matches(font_name, EXPECTED["heading3_font_keywords"]):
+        elif level in {"heading3", "heading4"} and font_name is not None and not font_matches(font_name, EXPECTED["heading3_font_keywords"]):
             add_issue(
                 issues,
                 "low",
@@ -406,7 +602,7 @@ def check_body_and_headings(
                 "将三级/四级标题字体设为仿宋_GB2312。",
             )
         elif level is None:
-            if not font_matches(font_name, EXPECTED["body_font_keywords"]):
+            if font_name is not None and not font_matches(font_name, EXPECTED["body_font_keywords"]):
                 add_issue(
                     issues,
                     "low",
@@ -538,6 +734,395 @@ def detect_typos(items: list[tuple[int, str, object]]) -> list[Issue]:
                 "将半角标点替换为中文全角标点。",
             )
     return findings
+
+
+def load_edit_manifest(path: Path) -> list[TextEdit]:
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    raw_edits = payload.get("edits", payload) if isinstance(payload, dict) else payload
+    if not isinstance(raw_edits, list):
+        raise ValueError("edit manifest must be a JSON array or an object with an edits array")
+
+    edits: list[TextEdit] = []
+    for index, item in enumerate(raw_edits, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"edit #{index} must be an object")
+        block_id = str(item.get("block_id") or "").strip()
+        before = str(item.get("before") or "")
+        after = str(item.get("after") or "")
+        reason = str(item.get("reason") or "").strip()
+        severity = str(item.get("severity") or "medium").strip() or "medium"
+        category = str(item.get("category") or "文本").strip() or "文本"
+        occurrence = item.get("occurrence", 1)
+        try:
+            occurrence_int = int(occurrence)
+        except Exception:
+            occurrence_int = 1
+        if not block_id:
+            raise ValueError(f"edit #{index} missing block_id")
+        if before == "":
+            raise ValueError(f"edit #{index} missing before text")
+        edits.append(
+            TextEdit(
+                block_id=block_id,
+                before=before,
+                after=after,
+                reason=reason,
+                severity=severity,
+                category=category,
+                occurrence=max(1, occurrence_int),
+            )
+        )
+    return edits
+
+
+def paragraph_map(document) -> dict[str, tuple[str, str, object]]:
+    return {
+        block_id: (kind, location, paragraph)
+        for block_id, kind, location, paragraph in iter_document_text_paragraphs(document)
+    }
+
+
+def run_text(run) -> str:
+    return run.text or ""
+
+
+def clone_run_element(paragraph, source_run, text: str, highlight: bool) -> Run:
+    new_r = OxmlElement("w:r")
+    r_pr = getattr(source_run._r, "rPr", None)
+    if r_pr is not None:
+        new_r.append(deepcopy(r_pr))
+    new_run = Run(new_r, paragraph)
+    new_run.text = text
+    if highlight:
+        new_run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+    return new_run
+
+
+def insert_run_after(anchor_run, new_run: Run) -> None:
+    anchor_run._r.addnext(new_run._r)
+
+
+def remove_run(run) -> None:
+    parent = run._r.getparent()
+    if parent is not None:
+        parent.remove(run._r)
+
+
+def find_nth(haystack: str, needle: str, occurrence: int) -> int:
+    start = 0
+    for _ in range(max(1, occurrence)):
+        index = haystack.find(needle, start)
+        if index < 0:
+            return -1
+        start = index + len(needle)
+    return index
+
+
+def run_spans(paragraph) -> list[tuple[int, int, object, str]]:
+    spans = []
+    offset = 0
+    for run in paragraph.runs:
+        text = run_text(run)
+        end = offset + len(text)
+        spans.append((offset, end, run, text))
+        offset = end
+    return spans
+
+
+def split_replacement_piece(
+    replacement: str,
+    source_segments: list[tuple[object, str]],
+    highlight: bool,
+    paragraph,
+) -> list[Run]:
+    if not replacement:
+        return []
+
+    source_lengths = [len(text) for _, text in source_segments if text]
+    total = sum(source_lengths)
+    if total <= 0:
+        first_source = source_segments[0][0] if source_segments else paragraph.add_run("")
+        return [clone_run_element(paragraph, first_source, replacement, highlight)]
+
+    pieces: list[Run] = []
+    consumed = 0
+    for idx, (source_run, source_text) in enumerate(source_segments):
+        if not source_text:
+            continue
+        if idx == len(source_segments) - 1:
+            chunk = replacement[consumed:]
+        else:
+            proportional = round(len(replacement) * len(source_text) / total)
+            remaining_sources = len(source_segments) - idx - 1
+            max_end = len(replacement) - remaining_sources
+            end = min(max(consumed + proportional, consumed), max_end)
+            chunk = replacement[consumed:end]
+            consumed = end
+        if chunk:
+            pieces.append(clone_run_element(paragraph, source_run, chunk, highlight))
+    if not pieces:
+        pieces.append(clone_run_element(paragraph, source_segments[0][0], replacement, highlight))
+    return pieces
+
+
+def replace_text_in_paragraph(paragraph, before: str, after: str, occurrence: int, highlight: bool) -> list[Run]:
+    full_text = "".join(run_text(run) for run in paragraph.runs)
+    start = find_nth(full_text, before, occurrence)
+    if start < 0:
+        return []
+    end = start + len(before)
+
+    spans = run_spans(paragraph)
+    touched = [
+        (run_start, run_end, run, text)
+        for run_start, run_end, run, text in spans
+        if run_end > start and run_start < end
+    ]
+    if not touched:
+        return []
+
+    first_start, _, first_run, first_text = touched[0]
+    _, last_end, last_run, last_text = touched[-1]
+    prefix = first_text[: max(0, start - first_start)]
+    suffix = last_text[len(last_text) - max(0, last_end - end) :]
+
+    source_segments = []
+    for run_start, run_end, run, text in touched:
+        segment_start = max(start, run_start) - run_start
+        segment_end = min(end, run_end) - run_start
+        source_segments.append((run, text[segment_start:segment_end]))
+
+    first_run.text = prefix
+    anchor = first_run
+    inserted_runs = split_replacement_piece(after, source_segments, highlight, paragraph)
+    for new_run in inserted_runs:
+        insert_run_after(anchor, new_run)
+        anchor = new_run
+
+    if last_run is first_run:
+        if suffix:
+            suffix_run = clone_run_element(paragraph, first_run, suffix, highlight=False)
+            insert_run_after(anchor, suffix_run)
+            if not inserted_runs:
+                inserted_runs = [suffix_run]
+    else:
+        last_run.text = suffix
+        for _, _, run, _ in touched[1:-1]:
+            remove_run(run)
+        if not inserted_runs:
+            inserted_runs = [last_run] if suffix else [first_run]
+
+    return inserted_runs if inserted_runs else [first_run]
+
+
+def add_review_comment(document, runs: list[Run], edit: TextEdit, review_author: str) -> bool:
+    if not runs:
+        return False
+    text = f"{edit.before} -> {edit.after}"
+    if edit.reason:
+        text = f"{text}\n原因：{edit.reason}"
+    try:
+        document.add_comment(runs, text=text, author=review_author, initials="W")
+        return True
+    except Exception:
+        return False
+
+
+def apply_edits_to_document(
+    document,
+    edits: list[TextEdit],
+    *,
+    highlight: bool,
+    add_comments: bool,
+    review_author: str,
+) -> list[AppliedChange]:
+    blocks = paragraph_map(document)
+    results: list[AppliedChange] = []
+    for index, edit in enumerate(edits, start=1):
+        block = blocks.get(edit.block_id)
+        if block is None:
+            results.append(
+                AppliedChange(
+                    index=index,
+                    block_id=edit.block_id,
+                    location="",
+                    before=edit.before,
+                    after=edit.after,
+                    reason=edit.reason,
+                    severity=edit.severity,
+                    category=edit.category,
+                    occurrence=edit.occurrence,
+                    status="skipped",
+                    message="block_id not found",
+                )
+            )
+            continue
+        _, location, paragraph = block
+        inserted_runs = replace_text_in_paragraph(
+            paragraph,
+            edit.before,
+            edit.after,
+            edit.occurrence,
+            highlight=highlight,
+        )
+        if not inserted_runs:
+            results.append(
+                AppliedChange(
+                    index=index,
+                    block_id=edit.block_id,
+                    location=location,
+                    before=edit.before,
+                    after=edit.after,
+                    reason=edit.reason,
+                    severity=edit.severity,
+                    category=edit.category,
+                    occurrence=edit.occurrence,
+                    status="skipped",
+                    message="before text not found in target block",
+                )
+            )
+            continue
+        if add_comments:
+            add_review_comment(document, inserted_runs, edit, review_author)
+        results.append(
+            AppliedChange(
+                index=index,
+                block_id=edit.block_id,
+                location=location,
+                before=edit.before,
+                after=edit.after,
+                reason=edit.reason,
+                severity=edit.severity,
+                category=edit.category,
+                occurrence=edit.occurrence,
+                status="applied",
+                message="applied",
+            )
+        )
+    return results
+
+
+def append_change_list(document, changes: list[AppliedChange]) -> None:
+    applied = [change for change in changes if change.status == "applied"]
+    skipped = [change for change in changes if change.status != "applied"]
+    document.add_page_break()
+    document.add_heading("文稿校对修改清单", level=1)
+    document.add_paragraph(f"已应用修改：{len(applied)} 处；未应用：{len(skipped)} 处。")
+    if applied:
+        table = document.add_table(rows=1, cols=6)
+        table.style = "Table Grid"
+        headers = ["序号", "位置", "类型", "原文", "修订", "原因"]
+        for cell, header in zip(table.rows[0].cells, headers):
+            cell.text = header
+        for change in applied:
+            row = table.add_row().cells
+            row[0].text = str(change.index)
+            row[1].text = change.location
+            row[2].text = change.category
+            row[3].text = change.before
+            row[4].text = change.after
+            row[5].text = change.reason
+    if skipped:
+        document.add_paragraph("未应用修改")
+        for change in skipped:
+            document.add_paragraph(
+                f"{change.index}. {change.block_id}：{change.message}；原文片段：{change.before}",
+                style=None,
+            )
+
+
+def default_revised_docx_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}-标注修订版{path.suffix}")
+
+
+def default_clean_docx_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}-清洁修订版{path.suffix}")
+
+
+def changes_markdown(source_path: Path, output_docx: Path, changes: list[AppliedChange]) -> str:
+    applied = [change for change in changes if change.status == "applied"]
+    skipped = [change for change in changes if change.status != "applied"]
+    lines = [
+        "# 文稿校对修改清单",
+        "",
+        f"- 原文档：`{source_path}`",
+        f"- 标注版：`{output_docx}`",
+        f"- 已应用修改：{len(applied)} 处",
+        f"- 未应用修改：{len(skipped)} 处",
+        "",
+        "## 已应用修改",
+    ]
+    if not applied:
+        lines.append("- 无。")
+    else:
+        for change in applied:
+            lines.append(
+                f"- {change.index}. {change.location} [{change.category}/{change.severity}] "
+                f"`{change.before}` -> `{change.after}`；{change.reason or '未填写原因'}"
+            )
+    if skipped:
+        lines.extend(["", "## 未应用修改"])
+        for change in skipped:
+            lines.append(
+                f"- {change.index}. `{change.block_id}`：{change.message}；原文片段 `{change.before}`"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def apply_edit_manifest(
+    source_path: Path,
+    manifest_path: Path,
+    output_docx: Path,
+    *,
+    output_clean_docx: Optional[Path],
+    append_list: bool,
+    review_author: str,
+) -> dict:
+    edits = load_edit_manifest(manifest_path)
+    document = Document(str(source_path))
+    changes = apply_edits_to_document(
+        document,
+        edits,
+        highlight=True,
+        add_comments=True,
+        review_author=review_author,
+    )
+    if append_list:
+        append_change_list(document, changes)
+    output_docx.parent.mkdir(parents=True, exist_ok=True)
+    document.save(str(output_docx))
+
+    clean_path_value = None
+    if output_clean_docx is not None:
+        clean_document = Document(str(source_path))
+        apply_edits_to_document(
+            clean_document,
+            edits,
+            highlight=False,
+            add_comments=False,
+            review_author=review_author,
+        )
+        output_clean_docx.parent.mkdir(parents=True, exist_ok=True)
+        clean_document.save(str(output_clean_docx))
+        clean_path_value = str(output_clean_docx)
+
+    applied_count = sum(1 for change in changes if change.status == "applied")
+    skipped_count = len(changes) - applied_count
+    return {
+        "ok": skipped_count == 0,
+        "document": {
+            "source_path": str(source_path),
+            "annotated_docx_path": str(output_docx),
+            "clean_docx_path": clean_path_value,
+        },
+        "summary": {
+            "requested_edit_count": len(edits),
+            "applied_edit_count": applied_count,
+            "skipped_edit_count": skipped_count,
+        },
+        "changes": [asdict(change) for change in changes],
+    }
 
 
 def deduplicate_issues(issues: list[Issue]) -> list[Issue]:
@@ -743,6 +1328,47 @@ def main() -> int:
             )
         )
         return 2
+
+    if args.extract_blocks_only or args.output_blocks_json:
+        blocks_result = extract_blocks_payload(docx_path)
+        if args.output_blocks_json:
+            write_json(args.output_blocks_json, blocks_result)
+        if args.extract_blocks_only:
+            print(json.dumps(blocks_result, ensure_ascii=False, indent=2))
+            return 0
+
+    if args.apply_edits:
+        manifest_path = Path(args.apply_edits)
+        if not manifest_path.exists():
+            print(
+                json.dumps(
+                    {"ok": False, "error": f"修改清单不存在: {manifest_path}"},
+                    ensure_ascii=False,
+                )
+            )
+            return 2
+        output_docx = Path(args.output_docx) if args.output_docx else default_revised_docx_path(docx_path)
+        output_clean_docx = Path(args.output_clean_docx) if args.output_clean_docx else None
+        try:
+            apply_result = apply_edit_manifest(
+                docx_path,
+                manifest_path,
+                output_docx,
+                output_clean_docx=output_clean_docx,
+                append_list=args.append_change_list,
+                review_author=args.review_author,
+            )
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+        if args.output_changes_json:
+            write_json(args.output_changes_json, apply_result)
+        if args.output_changes_md:
+            write_text(args.output_changes_md, changes_markdown(docx_path, output_docx, [
+                AppliedChange(**item) for item in apply_result["changes"]
+            ]))
+        print(json.dumps(apply_result, ensure_ascii=False, indent=2))
+        return 0
 
     result = analyze_docx(docx_path, max_findings=args.max_findings)
     if args.output_json:

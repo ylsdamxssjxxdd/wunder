@@ -1,9 +1,9 @@
----
+﻿---
 title: 聊天 WebSocket
 summary: `/wunder/chat/ws` 是 Wunder 聊天唯一实时通道；实时会话不再提供 SSE 兜底。
 read_when:
-  - 你在开发聊天 UI 或桌面实时会话
-  - 你要处理 start/resume/watch/cancel/approval
+  - 用户在开发聊天 UI 或桌面实时会话
+  - 用户要处理 start/resume/watch/cancel/approval
 source_docs:
   - docs/API文档.md
   - docs/设计文档/01-系统总体设计.md

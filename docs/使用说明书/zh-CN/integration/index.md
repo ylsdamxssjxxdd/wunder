@@ -2,8 +2,8 @@
 title: 接入概览
 summary: Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。
 read_when:
-  - 你准备把 Wunder 接入业务系统
-  - 你不确定该从 `/wunder`、聊天域还是工作区接口开始
+  - 准备把 Wunder 接入业务系统
+  - 不确定该从 `/wunder`、聊天域还是工作区接口开始
 source_docs:
   - docs/API文档.md
   - docs/设计文档/01-系统总体设计.md
@@ -11,21 +11,21 @@ source_docs:
 
 # 接入概览
 
-接入 Wunder 的关键不是「记住所有接口」，而是**先选对接口域**。
+接入 Wunder 的关键是**先选对接口域**，再记具体接口。
 
 ---
 
-## 先做选型：你要做什么？
+## 接口域选型
 
-| 你的场景 | 推荐入口 | 为什么？ |
-|----------|----------|----------|
+| 场景 | 推荐入口 | 原因 |
+|------|----------|------|
 | 单次执行、轻量接入 | [wunder API](/docs/zh-CN/integration/wunder-api/) | 最短路径，一次请求出结果 |
 | 聊天产品化、会话管理 | [聊天会话](/docs/zh-CN/integration/chat-sessions/) + [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) | 完整会话生命周期 + 实时推送 |
 | 文件管理、产物落地 | [工作区 API](/docs/zh-CN/integration/workspace-api/) | 上传、下载、路由统一管理 |
 | 文档转换、临时下载 | [临时目录接口](/docs/zh-CN/integration/temp-dir/) | doc/pdf 转 md、临时文件分享 |
 | 外部渠道接入 | [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/) | 飞书、微信、QQ、XMPP 统一入口 |
 | 微信渠道选型（新旧区分） | [微信 iLink 渠道](/docs/zh-CN/integration/weixin-channel/) | 快速区分 `weixin` 与 `wechat/wechat_mp`，并给出扫码接入路径 |
-| 系统嵌入、免登 | [外部登录](/docs/zh-CN/integration/external-login/) | 免登录嵌入到你的系统 |
+| 系统嵌入、免登 | [外部登录](/docs/zh-CN/integration/external-login/) | 免登录嵌入到现有系统 |
 | 智能体互联互通 | [A2A 接口](/docs/zh-CN/integration/a2a/) | 标准协议，跨系统协同 |
 | 扩展工具生态 | [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/) | 挂载第三方 MCP 服务 |
 

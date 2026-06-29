@@ -1,8 +1,8 @@
----
+﻿---
 title: 最终回复
 summary: `final_response` 的唯一职责是结束当前轮次并给用户回复。
 read_when:
-  - 你已经完成工具调用和推理，准备正式回答用户
+  - 用户已经完成工具调用和推理，准备正式回答用户
 source_docs:
   - src/services/tools/dispatch.rs
   - src/services/tools/catalog.rs

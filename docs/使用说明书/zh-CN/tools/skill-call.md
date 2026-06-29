@@ -1,8 +1,8 @@
----
+﻿---
 title: 技能调用
 summary: `skill_call` 如何把技能正文、根目录和文件树返回给模型。
 read_when:
-  - 你要加载某个 `SKILL.md` 及其目录信息
+  - 用户要加载某个 `SKILL.md` 及其目录信息
 source_docs:
   - src/services/tools.rs
 updated_at: 2026-04-10
@@ -10,7 +10,7 @@ updated_at: 2026-04-10
 
 # 技能调用
 
-`skill_call` 的作用不是执行技能，而是**把技能内容加载进当前上下文**，让模型按技能流程继续工作。
+`skill_call` 的作用是**把技能内容加载进当前上下文**，让模型按技能流程继续工作。
 
 ## 最小参数
 

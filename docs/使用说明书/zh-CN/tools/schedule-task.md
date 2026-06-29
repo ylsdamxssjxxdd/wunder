@@ -1,8 +1,8 @@
----
+﻿---
 title: 定时任务
 summary: `schedule_task` 的推荐写法、线程投递语义与调度行为。
 read_when:
-  - 你要新增、更新、查询或触发定时任务
+  - 用户要新增、更新、查询或触发定时任务
 source_docs:
   - src/services/tools/dispatch.rs
   - src/services/cron.rs

@@ -26,7 +26,6 @@ required-features = ["desktop"]
 [[bin]]
 name = "wunder-desktop-bridge"
 path = "bridge_main.rs"
-test = false
 bench = false
 
 [dependencies]

@@ -2,8 +2,8 @@
 title: 快速开始
 summary: 用最短路径跑通 wunder 的第一个任务。默认推荐 desktop，其次按 server 或 cli 分流。
 read_when:
-  - 你第一次使用 wunder
-  - 你需要在 10 分钟内跑通一个可验证结果
+  - 用户第一次使用 wunder
+  - 用户需要快速跑通一个可验证结果
 source_docs:
   - README.md
   - docs/设计文档/01-系统总体设计.md
@@ -11,15 +11,15 @@ source_docs:
 
 # 快速开始
 
-这页只做一件事：**帮你在 10 分钟内完成第一个任务**。
+这页帮用户完成第一个任务，默认推荐 Desktop，其次按 Server 或 CLI 分流。
 
-## 第一步：选对你的路径
+## 第一步：选对路径
 
-| 你的情况 | 推荐入口 | 为什么 |
+| 场景 | 推荐入口 | 原因 |
 |----------|----------|--------|
-| 我只是想马上用起来 | [Desktop 入门](/docs/zh-CN/start/desktop/) | 门槛最低，下载即用 |
-| 我需要团队协作和管理 | [Server 部署](/docs/zh-CN/start/server/) | 多用户、权限、统一管理 |
-| 我是开发者，要做自动化 | [CLI 使用](/docs/zh-CN/start/cli/) | 终端驱动、脚本化 |
+| 想直接在本地用起来 | [Desktop 入门](/docs/zh-CN/start/desktop/) | 门槛最低，下载即用 |
+| 需要团队协作和管理 | [Server 部署](/docs/zh-CN/start/server/) | 多用户、权限、统一管理 |
+| 做自动化或脚本集成 | [CLI 使用](/docs/zh-CN/start/cli/) | 终端驱动、脚本化 |
 
 ---
 
@@ -30,12 +30,12 @@ source_docs:
 ### 5 步跑通
 
 1. **下载安装**
-   - 去 Releases 下载匹配你系统的安装包
+   - 去 Releases 下载匹配用户系统的安装包
    - 安装或解压后启动
 
 2. **配置模型**
    - 打开「系统设置」→「模型配置」
-   - 填入你的 API Key 和接口地址
+   - 填入用户的 API Key 和接口地址
    - 保存前点「测试连接」确认能用
 
 3. **发起第一次对话**
@@ -44,10 +44,10 @@ source_docs:
    - 回车发送
 
 4. **观察执行过程**
-   - 你会看到模型思考 → 调用工具 → 展示结果 → 给出回复
+   - 用户会看到模型思考 → 调用工具 → 展示结果 → 给出回复
 
 5. **验收通过**
-   - 看到了完整的执行过程和结果？恭喜，你已经跑通了！
+   - 看到完整的执行过程和结果，说明已跑通。
 
 ### Desktop 特有能力
 
@@ -140,6 +140,6 @@ wunder-cli
 ## 下一步
 
 - 想深入理解系统？→ [核心概览](/docs/zh-CN/concepts/)
-- 要接入到你的系统？→ [接入概览](/docs/zh-CN/integration/)
+- 要接入到现有系统？→ [接入概览](/docs/zh-CN/integration/)
 - 遇到问题了？→ [故障排查](/docs/zh-CN/help/troubleshooting/)
 - 想看所有工具？→ [工具总览](/docs/zh-CN/tools/)

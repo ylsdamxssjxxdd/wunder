@@ -1,8 +1,8 @@
----
+﻿---
 title: 应用补丁
 summary: `apply_patch` 的精确编辑语义、成功返回和 patch 失败码。
 read_when:
-  - 你要做小范围、可审查、可回放的精确修改
+  - 用户要做小范围、可审查、可回放的精确修改
 source_docs:
   - src/services/tools/apply_patch_tool.rs
   - src/services/tools/tool_apply_patch.lark
@@ -19,7 +19,7 @@ updated_at: 2026-05-14
 - 不是命令执行工具
 - 是结构化、小步、可验证的精确修改工具
 
-## 输入不是 JSON patch，而是 grammar 文本
+## 输入格式：grammar 文本
 
 最小示例：
 
@@ -171,7 +171,7 @@ updated_at: 2026-05-14
 - 不要让两个连续 hunk 复用同一组锚点
 - 纯插入 hunk 尽量同时保留头部和尾部未修改原文，避免只靠单侧锚点定位
 
-## 什么时候用它，什么时候别用它
+## 适用与不适用场景
 
 当前版本相比最早实现已经放宽了一些范围限制，允许单次补丁覆盖更多分散区域；但它依然更适合“中小批量精确编辑”，而不是整文件级重写。
 
@@ -198,5 +198,5 @@ updated_at: 2026-05-14
 - `apply_patch`：保留上下文，便于审查
 - `write_file`：直接覆盖最终内容
 
-如果你已经知道“整个文件的新内容就应该是什么”，用 `write_file` 更直接。  
-如果你只想做精确改动，`apply_patch` 更稳。
+如果用户已经知道“整个文件的新内容就应该是什么”，用 `write_file` 更直接。  
+如果用户只想做精确改动，`apply_patch` 更稳。

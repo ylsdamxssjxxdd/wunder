@@ -251,6 +251,30 @@
     "en-US": "LLM unavailable: {detail}",
     "zh-CN": "模型不可用: {detail}"
   },
+  "virtual_llm.random.log_name": {
+    "en-US": "Virtual random response",
+    "zh-CN": "虚拟随机回复"
+  },
+  "virtual_llm.random.reply.ready": {
+    "en-US": "Virtual model is ready. This is a random placeholder response because no replay JSONL is enabled.",
+    "zh-CN": "虚拟模型已就绪。当前未启用回放 JSONL，因此返回一条随机占位回复。"
+  },
+  "virtual_llm.random.reply.processing": {
+    "en-US": "Virtual response generated. Upload and enable a replay JSONL to reproduce a fixed conversation.",
+    "zh-CN": "已生成虚拟回复。上传并启用回放 JSONL 后，可复现固定对话。"
+  },
+  "virtual_llm.random.reply.received": {
+    "en-US": "Request received by the virtual model. No replay log matched, so this random response was used.",
+    "zh-CN": "虚拟模型已收到请求。没有匹配的回放日志，因此使用随机回复。"
+  },
+  "virtual_llm.random.reply.placeholder": {
+    "en-US": "This is a virtual-model placeholder reply for local testing.",
+    "zh-CN": "这是用于本地测试的虚拟模型占位回复。"
+  },
+  "virtual_llm.random.reply.no_log": {
+    "en-US": "No replay JSONL is configured. The virtual model returned a lightweight random reply.",
+    "zh-CN": "尚未配置回放 JSONL，虚拟模型返回了一条轻量随机回复。"
+  },
   "error.markdown_only": {
     "en-US": "Only Markdown files are supported",
     "zh-CN": "仅支持 Markdown 文件"

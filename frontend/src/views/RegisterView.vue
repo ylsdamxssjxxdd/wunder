@@ -2,6 +2,9 @@
   <div class="auth-page auth-page--user">
     <div class="auth-card auth-card--user">
       <h2 class="auth-title">{{ t('auth.register.title') }}</h2>
+      <p v-if="registrationDisabled" class="auth-alert" role="alert" aria-live="polite">
+        {{ t('auth.register.disabled') }}
+      </p>
       <form class="auth-form" @submit.prevent="handleRegister">
         <label class="auth-field">
           <span class="auth-label">{{ t('auth.register.username') }}</span>
@@ -49,7 +52,7 @@
           />
         </label>
         <div class="auth-actions auth-actions--user">
-          <button class="auth-submit-btn" type="submit" :disabled="loading">
+          <button class="auth-submit-btn" type="submit" :disabled="loading || registrationDisabled">
             {{ loading ? t('common.loading') : t('auth.register.submit') }}
           </button>
           <button class="auth-link-btn" type="button" @click="goLogin">
@@ -83,6 +86,7 @@ const form = reactive({
 });
 
 const loading = computed(() => authStore.loading);
+const registrationDisabled = computed(() => authStore.allowUserRegistration === false);
 const unitOptions = ref<Array<{ value: string; label: string }>>([]);
 const unitLoading = ref(false);
 
@@ -111,6 +115,10 @@ const loadUnits = async () => {
 };
 
 const handleRegister = async () => {
+  if (registrationDisabled.value) {
+    showApiError(new Error(t('auth.register.disabled')), t('auth.register.disabled'));
+    return;
+  }
   try {
     await authStore.register({
       username: form.username,
@@ -127,6 +135,17 @@ const handleRegister = async () => {
 const goLogin = () => router.push('/login');
 
 onMounted(() => {
-  loadUnits();
+  authStore
+    .loadAuthSettings()
+    .then((settings) => {
+      if (settings?.allowUserRegistration === false) {
+        setTimeout(() => router.replace('/login'), 1200);
+        return;
+      }
+      loadUnits();
+    })
+    .catch(() => {
+      loadUnits();
+    });
 });
 </script>

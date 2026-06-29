@@ -28,6 +28,6 @@ pub use services::{
     desktop_runtime_recovery, doc2md, drawio, goal, history, knowledge, llm, mcp, memory,
     multimodal_models, onlyoffice, org_units, presence, prompting, ragflow_knowledge, runtime,
     sim_lab, skills, swarm, tools, user_access, user_leveling, user_plaza, user_prompt_templates,
-    user_store, user_tools, user_world, vector_knowledge, workspace,
+    user_store, user_tools, user_world, vector_knowledge, virtual_llm, workspace,
 };
 pub use wunder_core as stable_core;

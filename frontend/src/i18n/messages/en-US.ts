@@ -885,6 +885,7 @@ export default {
   'auth.register.email': 'Email (optional)',
   'auth.register.unit': 'Organization unit',
   'auth.register.phone': 'Phone (optional)',
+  'auth.register.disabled': 'Self-service registration is disabled. Contact an administrator to create an account.',
   'auth.register.error': 'Registration failed',
   'auth.register.success': 'Registration succeeded',
   'auth.placeholder.username': 'Enter username',
@@ -1182,6 +1183,13 @@ export default {
   'desktop.system.languageRequired': 'Please choose a language',
   'desktop.system.baseUrlPlaceholder': 'Example: https://api.openai.com/v1',
   'desktop.system.modelNamePlaceholder': 'Example: gpt-4o-mini',
+  'desktop.system.virtualReplayModelPlaceholder': 'Optional: uploaded replay log ID, empty uses random replies',
+  'desktop.system.virtualReplayHint':
+    'Virtual model does not need Base URL or API Key. Model name can be an uploaded replay log ID; empty uses random replies.',
+  'desktop.system.virtualReplayCapabilities':
+    'Virtual model uses replay or random replies and does not need model capability toggles.',
+  'desktop.system.virtualReplayCompaction':
+    'Virtual model does not use a real context window, so history compaction is not needed.',
   'desktop.system.lan.title': 'LAN Mesh',
   'desktop.system.lan.hint': 'Enable peer discovery by subnet and exchange messages without a central server',
   'desktop.system.lan.enabled': 'Enabled',

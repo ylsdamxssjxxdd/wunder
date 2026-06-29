@@ -1,8 +1,8 @@
----
+﻿---
 title: 睡眠与让出
 summary: `sleep` 与 `sessions_yield` 的语义区别。
 read_when:
-  - 你要等待一段时间，或暂时让出当前轮次控制权
+  - 用户要等待一段时间，或暂时让出当前轮次控制权
 source_docs:
   - src/services/tools/sleep_tool.rs
   - src/services/tools/sessions_yield_tool.rs
@@ -79,7 +79,7 @@ updated_at: 2026-04-10
 
 它表示：**当前轮次让出控制权，不是最终回复。**
 
-## 怎么选
+## 选择建议
 
 - 只是轮询间隔：`sleep`
 - 需要明确告诉系统“这轮先停在这里”：`sessions_yield`

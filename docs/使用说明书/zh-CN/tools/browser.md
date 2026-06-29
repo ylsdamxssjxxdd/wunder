@@ -1,8 +1,8 @@
----
+﻿---
 title: 浏览器
 summary: 浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。
 read_when:
-  - 你要打开网页、点击、输入、截图或读取动态页面
+  - 用户要打开网页、点击、输入、截图或读取动态页面
 source_docs:
   - src/services/tools/browser_tool.rs
   - src/services/browser/runtime.rs
@@ -15,7 +15,7 @@ updated_at: 2026-04-10
 
 所以看它的返回时，不要机械地期待所有动作都长成统一骨架。
 
-## 什么时候用它
+## 适用场景
 
 - 页面是动态渲染的
 - 需要点击、输入、按键、等待
@@ -61,7 +61,7 @@ updated_at: 2026-04-10
 }
 ```
 
-## 返回结构怎么理解
+## 返回结构解读
 
 ### `status`
 

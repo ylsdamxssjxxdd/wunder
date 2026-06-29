@@ -2,8 +2,8 @@
 title: CLI 使用
 summary: 开发者和自动化场景的入口。终端驱动、脚本化、JSONL 输出。
 read_when:
-  - 你需要在终端中使用 wunder
-  - 你要把 wunder 集成到脚本或自动化流程
+  - 需要在终端中使用 wunder
+  - 要把 wunder 集成到脚本或自动化流程
 source_docs:
   - crates/wunder-cli/main.rs
   - crates/wunder-cli/tui/
@@ -14,7 +14,7 @@ updated_at: 2026-04-10
 
 CLI 是开发者和自动化场景的入口。在终端里直接用，不需要图形界面。
 
-## 什么时候选 CLI
+## 适用场景
 
 | 场景 | 选 CLI |
 |------|--------|
@@ -41,7 +41,7 @@ wunder-cli
 > 帮我写一个 Hello World 的 Python 脚本
 ```
 
-你会看到模型思考 → 调用工具 → 展示结果 → 给出回复。
+用户会看到模型思考 → 调用工具 → 展示结果 → 给出回复。
 
 ## 常用命令
 

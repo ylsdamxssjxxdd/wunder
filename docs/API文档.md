@@ -31,6 +31,7 @@
 - Docker compose 默认公开入口：`wunder-nginx` 发布 `18001`，`extra-mcp` 额外发布 `${MCP_PORT}`；`wunder-postgres` 与 `wunder-weaviate` 仍默认绑定 `127.0.0.1`。如需将 `extra-mcp` 收回仅本机访问，可设置 `MCP_BIND_HOST=127.0.0.1`。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当前也支持 `/login?user_id=<id>[&agent_name=<name>]` 无 token 直登。外链登录成功后统一进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）嵌入壳，并隐藏侧边栏与中栏；当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，前端进入嵌入态消息页并使用默认智能体 `agent_id=__default__` / `entry=default`；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入同一嵌入壳并聚焦该智能体。嵌入壳内消息页与智能体页都可访问，但左/中栏保持隐藏。`POST /wunder/auth/login`、`/wunder/auth/register`、`/wunder/auth/demo` 以及会直接签发用户 token 的 `/wunder/auth/external/*` 登录接口支持可选请求头 `X-Wunder-Session-Scope`；同一用户仅在同一 `session_scope` 内执行“新登录顶旧登录”，不同 scope（如 `user_web` 与 `admin_web`）互不影响。
 - 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及 Token 账户字段 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`；其中 `token_balance` 是用户当前可支配的 Token 资产余额，`token_granted_total` 记录累计发放与奖励总额，`token_used_total` 记录累计消耗。`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
+- 注册开关接口：`GET /wunder/auth/settings` 无需登录，返回 `data.allow_user_registration`，供用户侧前端决定是否展示注册入口。`security.allow_user_registration=false` 时，`POST /wunder/auth/register` 会返回 403，管理员仍可通过用户管理创建或批量导入账号。
 - 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页/蜂群页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[] / swarms[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，前端可用它在刷新后恢复用户自定义排序。
 - 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的主线程。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
@@ -1278,11 +1279,13 @@
   - `llm.default_asr`：默认声转文模型配置名称（可选）
   - `llm.default_tts`：默认文转声模型配置名称（可选）
   - `llm.default_image`：默认图像生成模型配置名称（可选）
+- `llm.virtual_replay`：虚拟模型回放配置；`logs_root` 为 JSONL 日志保存目录，`enabled_logs` 为已登记日志列表。
 - `llm.models`：模型配置映射；所有类型通用字段为 `model_type/provider/base_url/api_key/model/enable/mock_if_unconfigured`。
   - 说明：模型调用失败重试与流式断线恢复已收敛为服务端内部固定策略，不再暴露单模型 `retry` 参数。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：若流式响应在没有任何可用内容、推理或 `tool_calls` 的情况下结束，服务端会先自动补拉一次非流式请求；若补拉仍为空，则同样按 `LLM_UNAVAILABLE` 处理并进入重试。
-  - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
+  - 说明：`provider` 支持预置（`virtual_replay/openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
+  - 说明：`provider=virtual_replay` 表示虚拟模型回放，`model` 可填已上传回放日志的 `id`，不需要 `base_url/api_key`；执行时优先按当前用户轮次与模型轮次从 JSONL 中回放 `llm_output`、`tool_calls` 与用量信息。未配置或未启用匹配 JSONL 时，会自动返回轻量随机虚拟回复，便于本地连通性测试。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=llm` 表示对话模型，额外支持 `api_mode/temperature/timeout_s/max_rounds/max_context/max_output/thinking_token_budget/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop`。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
@@ -1302,7 +1305,30 @@
 - `POST` 入参：
   - `llm.default`：默认对话模型配置名称
   - `llm.default_embedding/default_asr/default_tts/default_image/default_video`：默认嵌入/声转文/语音/绘图/视频模型配置名称（可选）
+  - `llm.virtual_replay.enabled_logs`：虚拟回放日志列表；普通模型配置保存会保留已有日志配置。
   - `llm.models`：模型配置映射，用于保存与下发
+
+### 4.1.6.0 `/wunder/admin/llm/virtual_logs`
+
+- 方法：`GET/POST`
+- `GET` 返回（JSON）：
+  - `logs[]`：已登记虚拟回放日志，字段包括 `id/name/enabled/format/user_rounds/size_bytes/uploaded_at`。
+- `POST` 入参（multipart/form-data）：
+  - `file`：JSONL 回放日志文件，最大 32 MiB，必须为 UTF-8。
+  - `name`：显示名称（可选；未传时使用文件名）。
+- `POST` 返回（JSON）：
+  - `log`：本次上传后的日志摘要。
+  - `logs[]`：更新后的日志列表。
+- 说明：支持 Wunder 会话导出的 `llm_output` 事件 JSONL，也支持简单 `role=user/assistant` 对话 JSONL。
+
+### 4.1.6.0.1 `/wunder/admin/llm/virtual_logs/{log_id}`
+
+- 方法：`POST/DELETE`
+- `POST` 入参（JSON）：
+  - `enabled`：是否启用该回放日志。
+- 返回（JSON）：
+  - `logs[]`：更新后的日志列表。
+- `DELETE` 说明：删除日志登记并移除对应 JSONL 文件。
 
 ### 4.1.6.1 `/wunder/admin/llm/context_window`
 
@@ -1430,6 +1456,7 @@
   - `server.max_active_sessions`：全局最大并发会话数
   - `server.stream_chunk_size`：流式输出分片大小（字节）
 - `security.api_key`：API Key（未配置时为 null）
+- `security.allow_user_registration`：是否允许用户侧自助注册；关闭后用户侧注册入口隐藏，`POST /wunder/auth/register` 返回 403。
 - `security.external_auth_key`：外部系统嵌入登录密钥（为空时自动回退到 `security.api_key`）
 - `security.external_embed_preset_agent_name`：外链嵌入预制智能体名称（为空表示未配置）
 - `security.external_embed_jwt_secret`：外链 JWT 直登密钥（为空时自动回退到 `security.external_auth_key` / `security.api_key`）
@@ -2028,7 +2055,7 @@
 
 - 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
-- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/token_adjustment`、`/wunder/admin/user_accounts/{user_id}/logout`、`/wunder/admin/user_accounts/{user_id}/login_token`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
+- 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/import`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/token_adjustment`、`/wunder/admin/user_accounts/{user_id}/logout`、`/wunder/admin/user_accounts/{user_id}/login_token`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
@@ -2040,6 +2067,7 @@
 - `GET /wunder/admin/user_accounts`：管理员分页读取用户账号列表。
   - 入参（Query）：`keyword`、`offset`、`limit`，可选 `activity_days`（近几天活跃度窗口，默认 7）。
   - 返回（JSON）：`data.items[]` 中除用户基础资料与 Token 字段外，额外包含 `activity_series[]`，每项为 `{ date, tokens }`，表示近几天按日聚合的 Token 消耗，可直接用于管理端绘制用户活跃度小曲线图。
+- `POST /wunder/admin/user_accounts/import`：管理员通过 multipart `file` 上传 Excel 批量创建用户，支持 `.xlsx/.xls/.xlsm/.xlsb/.ods`，文件上限 8MB，单次最多 1000 行。首行需包含 `username` 与 `password`（也支持 `用户名/账号`、`密码`），可选列为 `email/mail/邮箱/邮件`、`unit_id/unit/org_unit/单位id/单位`、`status/状态`、`roles/role/角色/权限`。返回 `data.created/data.failed/data.items/data.errors`，行级失败不会回滚已成功创建的账号。
 - `POST /wunder/admin/user_accounts/{user_id}/token_adjustment`：管理员对指定用户执行 Token 发放或扣除。
   - 入参（JSON）：`action=grant|deduct`、`amount`
   - 行为：`grant` 会增加余额与累计获得；`deduct` 会减少余额并增加累计消耗；两者都会先结转当天应发放但尚未入账的每日 Token。

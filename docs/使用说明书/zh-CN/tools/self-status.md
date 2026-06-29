@@ -1,8 +1,8 @@
----
+﻿---
 title: 自我状态
 summary: `self_status` 用于查看当前会话、模型、事件与线程运行态。
 read_when:
-  - 你要查看当前会话到底跑到了哪一步
+  - 用户要查看当前会话到底跑到了哪一步
 source_docs:
   - src/services/tools/self_status_tool.rs
 updated_at: 2026-04-10

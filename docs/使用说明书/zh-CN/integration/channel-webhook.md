@@ -1,9 +1,9 @@
----
+﻿---
 title: 渠道 Webhook
 summary: Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。
 read_when:
-  - 你要把飞书、企业微信、QQBot、XMPP 等渠道接进 Wunder
-  - 你想知道 Webhook、长连接和 outbox 的关系
+  - 用户要把飞书、企业微信、QQBot、XMPP 等渠道接进 Wunder
+  - 用户想知道 Webhook、长连接和 outbox 的关系
 source_docs:
   - docs/API文档.md
   - docs/设计文档/01-系统总体设计.md
@@ -14,7 +14,7 @@ source_docs:
 
 # 渠道 Webhook
 
-渠道接入在 Wunder 里不是“外设功能”，而是正式入口之一。
+渠道接入在 Wunder 里是正式入口之一。
 
 它的统一入口是：
 
@@ -49,7 +49,7 @@ source_docs:
 
 用于走统一注册表分发。
 
-## 为什么要有统一入口
+## 统一入口的作用
 
 如果每个渠道都各写一套入站主链路，会很快失控：
 
@@ -60,7 +60,7 @@ source_docs:
 
 所以 Wunder 当前用 `ChannelAdapterRegistry` 统一装配适配器。
 
-## Webhook 进来之后发生什么
+## Webhook 接入后的流程
 
 推荐把它理解成四步：
 
@@ -74,7 +74,7 @@ source_docs:
 - Webhook 不应该长时间卡在模型推理上
 - 出站失败也不应该反过来拖死入站
 
-## 长连接和 Webhook 是对立关系吗
+## 长连接与 Webhook 的关系
 
 不是。
 
@@ -86,9 +86,9 @@ source_docs:
 - QQBot 长连接
 - XMPP 长连接
 
-所以你不该把“渠道接入”简单理解成只有一个 Webhook URL。
+所以用户不该把“渠道接入”简单理解成只有一个 Webhook URL。
 
-## outbox 是做什么的
+## outbox 的作用
 
 outbox 是出站缓冲层。
 
@@ -101,7 +101,7 @@ outbox 是出站缓冲层。
 
 这让渠道链路从“同步请求-同步返回”变成真正的可恢复异步系统。
 
-## 文件为什么会被改写成下载链接
+## 文件改写为下载链接的原因
 
 很多渠道客户端不能直接理解 Wunder 内部工作区路径。
 
@@ -115,9 +115,9 @@ outbox 是出站缓冲层。
 
 这样外部渠道客户端才能真正点开。
 
-## 管理端看什么
+## 管理端查看内容
 
-如果你在排查渠道问题，管理员侧最应该先看：
+如果用户在排查渠道问题，管理员侧最应该先看：
 
 - 渠道监控页
 - 账号运行态

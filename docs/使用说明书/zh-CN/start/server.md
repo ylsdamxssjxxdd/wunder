@@ -2,8 +2,8 @@
 title: Server 部署
 summary: 团队和组织的选择。多用户、权限管理、渠道接入、统一治理。
 read_when:
-  - 你需要多人共用 wunder
-  - 你需要管理员后台和统一管理
+  - 需要多人共用 wunder
+  - 需要管理员后台和统一管理
 source_docs:
   - docs/API文档.md
   - packaging/docker/
@@ -12,9 +12,9 @@ updated_at: 2026-04-10
 
 # Server 部署
 
-Server 是团队和组织的选择。多用户协作、权限管理、渠道接入——都需要先部署 Server。
+Server 面向团队和组织。多用户协作、权限管理、渠道接入都需要先部署 Server。
 
-## 什么时候选 Server
+## 适用场景
 
 | 场景 | 选 Server |
 |------|-----------|

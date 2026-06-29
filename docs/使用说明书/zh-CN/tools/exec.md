@@ -1,8 +1,8 @@
----
+﻿---
 title: 执行命令
 summary: `execute_command` 的预算、dry-run、输出守卫与返回结构。
 read_when:
-  - 你要运行 shell 命令、编译、测试或调用现成 CLI
+  - 用户要运行 shell 命令、编译、测试或调用现成 CLI
 source_docs:
   - src/services/tools.rs
 updated_at: 2026-04-10
@@ -135,7 +135,7 @@ updated_at: 2026-04-10
 }
 ```
 
-## 什么时候别用它
+## 不适用场景
 
 - 只想小范围改文件：用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
 - 纯 Python 临时程序：用 [ptc](/docs/zh-CN/tools/ptc/)

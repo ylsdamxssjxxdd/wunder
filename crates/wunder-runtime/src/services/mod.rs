@@ -66,6 +66,7 @@ pub mod user_store;
 pub mod user_tools;
 pub mod user_world;
 pub mod vector_knowledge;
+pub mod virtual_llm;
 pub mod visibility;
 pub mod work_state_reset;
 pub mod worker_card_files;

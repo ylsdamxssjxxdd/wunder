@@ -372,6 +372,7 @@ let companionState = {
   messageVisible: false
 }
 const companionRuntimes = new Map()
+let lastRendererStage = ''
 const COMPANION_COMMAND_CHANNEL = 'wunder:companion-command'
 const COMPANION_FRAME_WIDTH = 192
 const COMPANION_FRAME_HEIGHT = 208
@@ -2363,19 +2364,75 @@ const readJsonFile = (filePath, fallback = {}) => {
   }
 }
 
-const writeJsonFile = (filePath, value) => {
+const writeJsonFile = (filePath, value, options = {}) => {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
     fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    fs.renameSync(tempPath, filePath)
+    const backupPath = options?.backupPath ? String(options.backupPath) : ''
+    if (backupPath && fs.existsSync(filePath)) {
+      fs.copyFileSync(filePath, backupPath)
+    }
+    try {
+      fs.renameSync(tempPath, filePath)
+    } catch (initialError) {
+      try {
+        fs.rmSync(filePath, { force: true })
+      } catch {
+        // Ignore cleanup failures and let rename report the final error.
+      }
+      fs.renameSync(tempPath, filePath)
+      if (initialError?.message) {
+        console.warn('[desktop-settings] replaced settings after initial rename failure:', initialError.message)
+      }
+    }
   } catch {
     // Ignore desktop preference persistence failures.
   }
 }
 
+const resolveDesktopSettingsBackupPath = (settingsPath) => `${settingsPath}.bak`
+
+const resolveDesktopSettingsInvalidPath = (settingsPath) =>
+  `${settingsPath}.invalid-${Date.now()}`
+
+const tryReadJsonObject = (filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return { ok: true, value: {}, missing: true }
+    }
+    const raw = fs.readFileSync(filePath, 'utf8')
+    if (!raw.trim()) {
+      return { ok: true, value: {} }
+    }
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return { ok: true, value: parsed }
+    }
+    return { ok: true, value: {} }
+  } catch (error) {
+    return { ok: false, value: {}, error }
+  }
+}
+
+const archiveInvalidDesktopSettings = (settingsPath) => {
+  try {
+    if (!settingsPath || !fs.existsSync(settingsPath)) {
+      return
+    }
+    const invalidPath = resolveDesktopSettingsInvalidPath(settingsPath)
+    fs.renameSync(settingsPath, invalidPath)
+    console.warn(`[desktop-settings] archived invalid settings: ${settingsPath} -> ${invalidPath}`)
+  } catch (error) {
+    console.warn('[desktop-settings] failed to archive invalid settings:', error?.message || error)
+  }
+}
+
 const writeDesktopSettings = (value) => {
-  writeJsonFile(resolveDesktopSettingsPath(), value)
+  const settingsPath = resolveDesktopSettingsPath()
+  writeJsonFile(settingsPath, value, {
+    backupPath: resolveDesktopSettingsBackupPath(settingsPath)
+  })
 }
 
 const resolveExistingFilePath = (value, appDir) => {
@@ -2395,19 +2452,33 @@ const resolveToolFile = (value, appDir) => resolveExistingFilePath(value, appDir
 
 const readDesktopSettings = () => {
   const settingsPath = resolveDesktopSettingsPath()
-  if (!settingsPath || !fs.existsSync(settingsPath)) {
+  if (!settingsPath) {
     return {}
   }
-  try {
-    const raw = fs.readFileSync(settingsPath, 'utf8')
-    if (!raw.trim()) {
-      return {}
+  const primary = tryReadJsonObject(settingsPath)
+  if (primary.ok) {
+    if (primary.missing) {
+      const backup = tryReadJsonObject(resolveDesktopSettingsBackupPath(settingsPath))
+      if (backup.ok && !backup.missing) {
+        writeDesktopSettings(backup.value)
+        return backup.value
+      }
     }
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
+    return primary.value
   }
+  const backupPath = resolveDesktopSettingsBackupPath(settingsPath)
+  const backup = tryReadJsonObject(backupPath)
+  if (backup.ok && !backup.missing) {
+    archiveInvalidDesktopSettings(settingsPath)
+    writeDesktopSettings(backup.value)
+    console.warn(`[desktop-settings] recovered settings from backup: ${backupPath}`)
+    return backup.value
+  }
+  archiveInvalidDesktopSettings(settingsPath)
+  if (primary.error?.message) {
+    console.warn('[desktop-settings] settings parse failed, using defaults:', primary.error.message)
+  }
+  return {}
 }
 
 const resolveBundledPipBin = (appDir) => {
@@ -5147,6 +5218,153 @@ const createSafeModeHtml = () => `<!doctype html>
 </body>
 </html>`
 
+const escapeDiagnosticText = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+const createRendererFailureHtml = (payload = {}) => {
+  const title = escapeDiagnosticText(payload.title || 'Wunder Desktop renderer stopped')
+  const reason = escapeDiagnosticText(payload.reason || 'unknown')
+  const detail = escapeDiagnosticText(payload.detail || '')
+  const stage = escapeDiagnosticText(payload.stage || '')
+  const retryLabel = escapeDiagnosticText(payload.retryLabel || 'Reload')
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wunder Desktop</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .shell {
+      width: min(720px, calc(100vw - 32px));
+      padding: 24px;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 18px 60px rgba(15, 23, 42, 0.16);
+    }
+    .title {
+      font-size: 18px;
+      line-height: 1.35;
+      font-weight: 650;
+      margin-bottom: 10px;
+    }
+    .desc {
+      font-size: 14px;
+      line-height: 1.65;
+      color: #475569;
+    }
+    .meta {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.55;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    button {
+      min-height: 36px;
+      padding: 0 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #fff;
+      font: inherit;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #fff;
+      color: #0f172a;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="title">${title}</div>
+    <div class="desc">The desktop window recovered from a renderer failure instead of staying blank.</div>
+    <div class="meta">reason=${reason}${stage ? `\nstage=${stage}` : ''}${detail ? `\ndetail=${detail}` : ''}</div>
+    <div class="actions">
+      <button type="button" onclick="retryDesktop()">${retryLabel}</button>
+      <button class="secondary" type="button" onclick="window.close()">Close</button>
+    </div>
+  </div>
+  <script>
+    function retryDesktop() {
+      const bridge = window.wunderDesktop;
+      if (bridge && typeof bridge.reloadDesktop === 'function') {
+        Promise.resolve(bridge.reloadDesktop()).catch(function(error) {
+          const meta = document.querySelector('.meta');
+          if (meta) {
+            meta.textContent += '\\nretry=' + String(error && error.message ? error.message : error).slice(0, 240);
+          }
+        });
+        return;
+      }
+      location.reload();
+    }
+  </script>
+</body>
+</html>`
+}
+
+const loadRendererFailurePage = async (payload = {}) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+      return
+    }
+    await mainWindow.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(createRendererFailureHtml(payload))}`
+    )
+    if (!mainWindow.isVisible()) {
+      mainWindow.show()
+    }
+  } catch (error) {
+    console.error('[desktop-debug][electron] load renderer failure page failed', error?.message || error)
+  }
+}
+
+const reloadDesktopWindow = async () => {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return false
+  }
+  if (!bridgePort || !bridgeProcess) {
+    await restartBridge()
+  }
+  const target = bridgeWebBase
+    ? `${bridgeWebBase}/`
+    : bridgePort
+      ? `http://127.0.0.1:${bridgePort}/`
+      : ''
+  if (!target) {
+    return false
+  }
+  await mainWindow.loadURL(target)
+  return true
+}
+
 const createWindow = async () => {
   const createWindowNs = process.hrtime.bigint()
   logStartupPoint('electron', 'create_window_begin')
@@ -5255,14 +5473,23 @@ const createWindow = async () => {
       compatibleGraphics: oomLike ? true : rendererCompatibilityModeEnabled,
       lastReason: reason,
       lastExitCode: Number(details?.exitCode) || 0,
-      lastGoneAt: Date.now()
+      lastGoneAt: Date.now(),
+      lastStage: lastRendererStage
     })
     console.error('[desktop-debug][electron] render-process-gone', {
       reason,
       exitCode: details?.exitCode,
       killed: details?.killed === true,
       crashed: details?.reason === 'crashed',
+      lastStage: lastRendererStage,
       compatibilityModeNextStart: oomLike || rendererCompatibilityModeEnabled
+    })
+    void loadRendererFailurePage({
+      title: 'Wunder Desktop recovered from a renderer failure',
+      reason: reason || 'render-process-gone',
+      detail: `exitCode=${Number(details?.exitCode) || 0}`,
+      stage: lastRendererStage,
+      retryLabel: 'Reload desktop'
     })
   })
   mainWindow.webContents.on('child-process-gone', (_event, details) => {
@@ -5381,11 +5608,20 @@ const createWindow = async () => {
         clearTimeout(shellTimer)
         shellTimer = null
       }
+      if (bridgeProcess) {
+        bridgeProcess.removeAllListeners('exit')
+        stopBridge()
+      }
       logStartupPoint('electron', 'start_bridge_and_load_failed', {
         message: err?.message || String(err)
       })
-      dialog.showErrorBox('Wunder Desktop', err?.message || String(err))
-      app.quit()
+      await loadRendererFailurePage({
+        title: 'Wunder Desktop bridge failed to start',
+        reason: err?.message || String(err),
+        detail: 'local bridge startup',
+        stage: lastRendererStage || 'bridge-start',
+        retryLabel: 'Retry'
+      })
     }
   }
   void startBridgeAndLoad()
@@ -5417,6 +5653,7 @@ if (!gotLock) {
       screen.on('display-metrics-changed', renderCompanionWindow)
       const registerIpcNs = process.hrtime.bigint()
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
+      ipcMain.handle('wunder:desktop-reload', () => reloadDesktopWindow())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {
           mainWindowVisibilityGuard.markManualMinimize()
@@ -5468,10 +5705,33 @@ if (!gotLock) {
         if (!stage) {
           return false
         }
+        lastRendererStage = stage
+        const stagePayload = sanitizeRendererStagePayload(source.payload)
         console.info('[desktop-debug][renderer-stage]', {
           stage,
-          ...sanitizeRendererStagePayload(source.payload)
+          ...stagePayload
         })
+        if (stage === 'renderer-error' || stage === 'bootstrap-error') {
+          const message = String(stagePayload.message || stagePayload.reason || '').slice(0, 240)
+          const fatal = stage === 'bootstrap-error' || stagePayload.fatal === true
+          writeRendererCrashState({
+            lastReason: stage,
+            lastMessage: message,
+            lastStage: String(stagePayload.stage || lastRendererStage || '').slice(0, 96),
+            lastGoneAt: Date.now()
+          })
+          if (fatal) {
+            void loadRendererFailurePage({
+              title: stage === 'bootstrap-error'
+                ? 'Wunder Desktop failed during startup'
+                : 'Wunder Desktop recovered from a UI error',
+              reason: message || stage,
+              detail: String(stagePayload.source || '').slice(0, 160),
+              stage: String(stagePayload.stage || lastRendererStage || '').slice(0, 96),
+              retryLabel: 'Reload desktop'
+            })
+          }
+        }
         return true
       })
       ipcMain.handle('wunder:bridge-restart', () => restartBridge())

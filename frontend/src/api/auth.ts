@@ -37,6 +37,7 @@ export const register = (payload: ApiPayload) =>
 export const loginDemo = (payload: ApiPayload) =>
   api.post('/auth/demo', payload, buildAuthConfig());
 export const resetPassword = (payload: ApiPayload) => api.post('/auth/reset_password', payload);
+export const fetchAuthSettings = () => api.get('/auth/settings');
 export const fetchMe = () => api.get('/auth/me');
 export const logout = () => api.post('/auth/logout', {}, buildAuthConfig());
 export const updateProfile = (payload: ApiPayload) => api.patch('/auth/me', payload);

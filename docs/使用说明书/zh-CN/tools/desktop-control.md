@@ -1,8 +1,8 @@
----
+﻿---
 title: 桌面控制
 summary: `desktop_controller` 与 `desktop_monitor` 的最新行为和返回结构。
 read_when:
-  - 你要控制本机桌面或观察桌面截图
+  - 用户要控制本机桌面或观察桌面截图
 source_docs:
   - src/services/tools/desktop_control.rs
 updated_at: 2026-04-10

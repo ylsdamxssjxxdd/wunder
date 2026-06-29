@@ -1,9 +1,9 @@
----
+﻿---
 title: MCP 入口
 summary: Wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。
 read_when:
-  - 你要把 Wunder 作为 MCP 服务暴露出去
-  - 你要理解 Wunder 内部 MCP 与 extra_mcp 的关系
+  - 用户要把 Wunder 作为 MCP 服务暴露出去
+  - 用户要理解 Wunder 内部 MCP 与 extra_mcp 的关系
 source_docs:
   - docs/API文档.md
   - docs/设计文档/01-系统总体设计.md
@@ -13,9 +13,9 @@ source_docs:
 
 # MCP 入口
 
-MCP 在 Wunder 里不是附属能力，而是正式接入面。
+MCP 在 Wunder 里是正式接入面。
 
-当前你需要先分清两件事：
+当前用户需要先分清两件事：
 
 1. Wunder 自己暴露的 MCP 服务是 `/wunder/mcp`
 2. Wunder 也可以作为 MCP 客户端去接别的服务，比如 `extra_mcp`
@@ -32,7 +32,7 @@ MCP 在 Wunder 里不是附属能力，而是正式接入面。
 
 注意，工具名当前实际就是 `excute`，文档需要按代码现状理解，不要自行改写成 `execute`。
 
-## 自托管 MCP 适合什么
+## 自托管 MCP 的适用场景
 
 适合这些场景：
 
@@ -70,7 +70,7 @@ mcp:
 - `/wunder/mcp` 偏“Wunder 自己暴露出去”
 - `extra_mcp` 偏“Wunder 去接进来的外部能力”
 
-## 管理端怎么看 MCP
+## 管理端查看 MCP
 
 管理端已有一套 MCP 配置和调试入口，用来：
 

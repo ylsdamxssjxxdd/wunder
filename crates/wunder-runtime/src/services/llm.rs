@@ -832,6 +832,9 @@ pub fn build_llm_client(config: &LlmModelConfig, http: Client) -> LlmClient {
 }
 
 pub fn is_llm_configured(config: &LlmModelConfig) -> bool {
+    if crate::services::virtual_llm::is_virtual_replay_provider(config.provider.as_deref()) {
+        return true;
+    }
     resolve_base_url(config)
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false)
@@ -1696,6 +1699,19 @@ mod tests {
             .and_then(|value| value.to_str().ok());
         assert_eq!(auth, Some("Bearer sk-test"));
         assert_eq!(x_api_key, Some("sk-test"));
+    }
+
+    #[test]
+    fn virtual_replay_is_configured_without_model_or_base_url() {
+        let config = LlmModelConfig {
+            provider: Some("virtual_replay".to_string()),
+            model: None,
+            base_url: None,
+            api_key: None,
+            ..Default::default()
+        };
+
+        assert!(is_llm_configured(&config));
     }
 
     #[test]

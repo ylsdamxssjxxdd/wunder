@@ -39,7 +39,7 @@ DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8").lstrip("\ufeff")
 
 
 def write_text(path: Path, content: str) -> None:

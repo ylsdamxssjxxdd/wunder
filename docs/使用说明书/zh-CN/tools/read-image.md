@@ -1,8 +1,8 @@
----
+﻿---
 title: 读图工具
 summary: `read_image` 的用途与返回结构。
 read_when:
-  - 你要把本地视觉媒体送入当前模型上下文
+  - 用户要把本地视觉媒体送入当前模型上下文
 source_docs:
   - src/services/tools/read_image_tool.rs
 updated_at: 2026-06-05

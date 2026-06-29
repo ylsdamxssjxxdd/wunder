@@ -671,6 +671,28 @@ impl Orchestrator {
         });
         let context_cache_probe =
             build_context_cache_probe(&chat_messages.messages, tools, request_payload.as_ref());
+        let virtual_turn = if crate::services::virtual_llm::is_virtual_replay_provider(
+            effective_config.provider.as_deref(),
+        ) {
+            let app_config = self.config_store.get().await;
+            Some(
+                crate::services::virtual_llm::load_turn_for_round(
+                    app_config,
+                    &effective_config,
+                    round_info.user_round,
+                    round_info.model_round,
+                )
+                .await
+                .map_err(|err| {
+                    OrchestratorError::llm_unavailable(i18n::t_with_params(
+                        "error.llm_unavailable",
+                        &HashMap::from([("detail".to_string(), err.to_string())]),
+                    ))
+                })?,
+            )
+        } else {
+            None
+        };
 
         if emit_events {
             let mut request_payload = if log_payload {
@@ -707,6 +729,13 @@ impl Orchestrator {
                         Value::String(reason.to_string()),
                     );
                 }
+                if let Some(turn) = virtual_turn.as_ref() {
+                    if let Value::Object(meta) =
+                        crate::services::virtual_llm::build_virtual_request_meta(turn)
+                    {
+                        map.extend(meta);
+                    }
+                }
                 round_info.insert_into(map);
             }
             emitter.emit("llm_request", request_payload).await;
@@ -717,6 +746,121 @@ impl Orchestrator {
         } else {
             self.resolve_llm_timeout_s(&effective_config)
         };
+        if let Some(virtual_turn) = virtual_turn {
+            let request_started_at = Instant::now();
+            let output_timing = Arc::new(parking_lot::Mutex::new(OutputTiming::default()));
+            let will_stream = initial_will_stream;
+            if will_stream {
+                let emitter_snapshot = emitter.clone();
+                let timing_snapshot = Arc::clone(&output_timing);
+                let on_delta = move |delta: String, reasoning_delta: String| {
+                    let emitter = emitter_snapshot.clone();
+                    let timing = Arc::clone(&timing_snapshot);
+                    async move {
+                        timing.lock().mark_output(Instant::now());
+                        if emit_events && (!delta.is_empty() || !reasoning_delta.is_empty()) {
+                            let mut payload = serde_json::Map::new();
+                            if !delta.is_empty() {
+                                payload.insert("delta".to_string(), Value::String(delta));
+                            }
+                            if !reasoning_delta.is_empty() {
+                                payload.insert(
+                                    "reasoning_delta".to_string(),
+                                    Value::String(reasoning_delta),
+                                );
+                            }
+                            round_info.insert_into(&mut payload);
+                            emitter
+                                .emit("llm_output_delta", Value::Object(payload))
+                                .await;
+                        }
+                        Ok(())
+                    }
+                };
+                let fut = crate::services::virtual_llm::emit_virtual_deltas(
+                    &virtual_turn,
+                    true,
+                    None,
+                    on_delta,
+                );
+                self.await_with_cancel(session_id, timeout_s, fut)
+                    .await?
+                    .map_err(|err| {
+                        OrchestratorError::llm_unavailable(i18n::t_with_params(
+                            "error.llm_unavailable",
+                            &HashMap::from([("detail".to_string(), err.to_string())]),
+                        ))
+                    })?;
+            }
+            let response_finished_at = Instant::now();
+            let content = virtual_turn.content.clone();
+            let reasoning = virtual_turn.reasoning.clone();
+            let tool_calls = virtual_turn.tool_calls.clone();
+            let usage = crate::services::virtual_llm::estimate_virtual_usage(
+                &request_messages,
+                &virtual_turn,
+            );
+            let (prefill_duration_s, decode_duration_s) = if will_stream {
+                output_timing
+                    .lock()
+                    .durations(request_started_at, response_finished_at)
+            } else {
+                (None, None)
+            };
+            let decode_output_tokens = usage.total.saturating_sub(usage.input);
+            let round_speed = LlmSpeedSummary::from_usage_and_durations(
+                Some(usage.input),
+                Some(decode_output_tokens),
+                prefill_duration_s,
+                decode_duration_s,
+            );
+            if emit_events {
+                let mut output_payload = json!({
+                    "content": content,
+                    "reasoning": reasoning,
+                    "usage": usage,
+                    "decode_output_tokens": decode_output_tokens,
+                    "tool_calls": tool_calls,
+                    "prefill_duration_s": prefill_duration_s,
+                    "decode_duration_s": decode_duration_s,
+                });
+                if let Value::Object(ref mut map) = output_payload {
+                    if let Value::Object(meta) =
+                        crate::services::virtual_llm::build_virtual_request_meta(&virtual_turn)
+                    {
+                        map.extend(meta);
+                    }
+                    round_info.insert_into(map);
+                    round_speed.insert_into_map(map);
+                }
+                emitter.emit("llm_output", output_payload).await;
+                let mut usage_payload = json!({
+                    "input_tokens": usage.input,
+                    "output_tokens": usage.output,
+                    "total_tokens": usage.total,
+                    "decode_output_tokens": decode_output_tokens,
+                    "prefill_duration_s": prefill_duration_s,
+                    "decode_duration_s": decode_duration_s,
+                });
+                if let Value::Object(ref mut map) = usage_payload {
+                    round_info.insert_into(map);
+                    round_speed.insert_into_map(map);
+                }
+                emitter.emit("token_usage", usage_payload).await;
+            }
+            if !is_admin {
+                let consumed_tokens = usage.total.min(i64::MAX as u64) as i64;
+                self.consume_user_tokens(
+                    user_id,
+                    consumed_tokens,
+                    emitter,
+                    round_info,
+                    emit_quota_events,
+                )
+                .await?;
+            }
+            return Ok((content, reasoning, usage, tool_calls, round_speed));
+        }
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
         let mut force_non_stream_retry = false;

@@ -92,7 +92,7 @@ fn default_prompt_templates_root() -> String {
     "./config/data/prompt_templates".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     pub api_key: Option<String>,
     pub external_auth_key: Option<String>,
@@ -111,6 +111,30 @@ pub struct SecurityConfig {
     /// Server deployments typically leave this unset and rely on allow_paths/deny_globs + auth.
     #[serde(default)]
     pub approval_mode: Option<String>,
+    #[serde(default = "default_allow_user_registration")]
+    pub allow_user_registration: bool,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            external_auth_key: None,
+            external_embed_preset_agent_name: None,
+            external_embed_jwt_secret: None,
+            external_embed_jwt_user_id_claim: None,
+            allow_commands: Vec::new(),
+            allow_paths: Vec::new(),
+            deny_globs: Vec::new(),
+            exec_policy_mode: None,
+            approval_mode: None,
+            allow_user_registration: default_allow_user_registration(),
+        }
+    }
+}
+
+fn default_allow_user_registration() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -192,6 +216,49 @@ pub struct LlmConfig {
     pub default_video: Option<String>,
     #[serde(default)]
     pub models: HashMap<String, LlmModelConfig>,
+    #[serde(default)]
+    pub virtual_replay: VirtualLlmConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualLlmConfig {
+    #[serde(default = "default_virtual_llm_logs_root")]
+    pub logs_root: String,
+    #[serde(default)]
+    pub enabled_logs: Vec<VirtualLlmLogConfig>,
+}
+
+impl Default for VirtualLlmConfig {
+    fn default() -> Self {
+        Self {
+            logs_root: default_virtual_llm_logs_root(),
+            enabled_logs: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VirtualLlmLogConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub file: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub user_rounds: usize,
+    #[serde(default)]
+    pub size_bytes: u64,
+    #[serde(default)]
+    pub uploaded_at: String,
+}
+
+fn default_virtual_llm_logs_root() -> String {
+    "./config/data/virtual_llm_logs".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

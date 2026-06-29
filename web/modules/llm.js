@@ -17,9 +17,11 @@ let lastTtsVoiceProbeKey = "";
 let lastTtsVoiceOptions = [];
 const FLOAT_INPUT_PRECISION = 7;
 const DEFAULT_PROVIDER_ID = "openai_compatible";
+const VIRTUAL_REPLAY_PROVIDER_ID = "virtual_replay";
 const DEFAULT_MODEL_PROVIDER_IDS = new Set(["openai_compatible", "vllm_omni"]);
 const PROVIDER_PRESETS_BY_TYPE = {
   llm: [
+    { id: VIRTUAL_REPLAY_PROVIDER_ID, label: "virtual_replay", baseUrl: "" },
     { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
     { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
     { id: "anthropic", label: "anthropic", baseUrl: "https://api.anthropic.com/v1" },
@@ -91,6 +93,13 @@ const normalizeProviderId = (value) => {
       return "qwen";
     case "lm_studio":
       return "lmstudio";
+    case "virtual":
+    case "virtual_llm":
+    case "virtual_model":
+    case "replay":
+    case "jsonl_replay":
+    case "mock_replay":
+      return VIRTUAL_REPLAY_PROVIDER_ID;
     default:
       return normalized;
   }
@@ -256,6 +265,9 @@ const resolveDefaultModelNameByType = (desiredName, modelType, models, order) =>
 const getDefaultProviderIdForType = (modelType) =>
   normalizeModelType(modelType) === "llm" ? DEFAULT_PROVIDER_ID : "vllm_omni";
 
+const isVirtualReplayProvider = (provider) =>
+  normalizeProviderId(provider) === VIRTUAL_REPLAY_PROVIDER_ID;
+
 const renderProviderOptions = (activeProvider) => {
   if (!elements.llmProvider) {
     return;
@@ -292,6 +304,17 @@ const updateBaseUrlPlaceholder = (provider) => {
 
 const applyProviderDefaults = (provider, options = {}) => {
   const normalized = normalizeProviderId(provider);
+  if (isVirtualReplayProvider(normalized)) {
+    updateBaseUrlPlaceholder(normalized);
+    if (elements.llmBaseUrl) {
+      elements.llmBaseUrl.value = "";
+    }
+    if (elements.llmApiKey) {
+      elements.llmApiKey.value = "";
+    }
+    updateVirtualReplayVisibility();
+    return;
+  }
   const presetBaseUrl = resolveProviderBaseUrl(normalized);
   const forceBaseUrl = options.forceBaseUrl === true;
   updateBaseUrlPlaceholder(normalized);
@@ -305,6 +328,7 @@ const applyProviderDefaults = (provider, options = {}) => {
   if (shouldReplace) {
     elements.llmBaseUrl.value = presetBaseUrl;
   }
+  updateVirtualReplayVisibility();
 };
 
 const syncToolCallModeForProvider = (nextProvider, previousProvider) => {
@@ -406,6 +430,131 @@ const renderTtsVoiceOptions = (voices) => {
 };
 
 // 规范化 LLM 配置，避免空值影响展示。
+const normalizeVirtualReplayLogs = (logs) =>
+  (Array.isArray(logs) ? logs : [])
+    .map((item) => ({
+      id: String(item?.id || "").trim(),
+      name: String(item?.name || item?.id || "").trim(),
+      enabled: item?.enabled !== false,
+      format: String(item?.format || "").trim(),
+      user_rounds: Number.isFinite(Number(item?.user_rounds)) ? Number(item.user_rounds) : 0,
+      size_bytes: Number.isFinite(Number(item?.size_bytes)) ? Number(item.size_bytes) : 0,
+      uploaded_at: String(item?.uploaded_at || "").trim(),
+    }))
+    .filter((item) => item.id);
+
+const getSelectedVirtualReplayLog = () => {
+  const fallbackModel = isVirtualReplayProvider(elements.llmProvider?.value)
+    ? elements.llmModel?.value
+    : "";
+  const selectedId = String(elements.llmVirtualReplaySelect?.value || fallbackModel || "").trim();
+  return state.llm.virtualLogs.find((log) => log.id === selectedId) || null;
+};
+
+const renderVirtualReplayOptions = () => {
+  if (!elements.llmVirtualReplaySelect) {
+    return;
+  }
+  const virtualSelected = isVirtualReplayProvider(elements.llmProvider?.value);
+  const currentValue = String(
+    (virtualSelected ? elements.llmModel?.value : elements.llmVirtualReplaySelect.value) ||
+      elements.llmVirtualReplaySelect.value ||
+      ""
+  ).trim();
+  elements.llmVirtualReplaySelect.textContent = "";
+  if (!state.llm.virtualLogs.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = t("llm.virtual.empty");
+    elements.llmVirtualReplaySelect.appendChild(option);
+  } else {
+    state.llm.virtualLogs.forEach((log) => {
+      const option = document.createElement("option");
+      option.value = log.id;
+      option.textContent = `${log.name || log.id}${log.enabled ? "" : ` (${t("llm.virtual.disabled")})`} - ${t("llm.virtual.rounds", {
+        rounds: log.user_rounds || 0,
+      })}`;
+      elements.llmVirtualReplaySelect.appendChild(option);
+    });
+  }
+  const hasCurrent = Array.from(elements.llmVirtualReplaySelect.options).some(
+    (option) => option.value === currentValue
+  );
+  if (currentValue && hasCurrent) {
+    elements.llmVirtualReplaySelect.value = currentValue;
+  } else {
+    elements.llmVirtualReplaySelect.value =
+      state.llm.virtualLogs.find((log) => log.enabled)?.id || state.llm.virtualLogs[0]?.id || "";
+  }
+  if (virtualSelected && elements.llmModel) {
+    elements.llmModel.value = elements.llmVirtualReplaySelect.value;
+  }
+  const selected = getSelectedVirtualReplayLog();
+  if (elements.llmVirtualReplayStatus) {
+    elements.llmVirtualReplayStatus.textContent = selected
+      ? t("llm.virtual.status", {
+          id: selected.id,
+          rounds: selected.user_rounds || 0,
+          state: selected.enabled ? t("llm.virtual.enabled") : t("llm.virtual.disabled"),
+        })
+      : t("llm.virtual.empty");
+  }
+};
+
+const loadVirtualReplayLogs = async (options = {}) => {
+  if (state.llm.virtualLogsLoaded && options.force !== true) {
+    renderVirtualReplayOptions();
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const response = await fetch(`${wunderBase}/admin/llm/virtual_logs`);
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  state.llm.virtualLogs = normalizeVirtualReplayLogs(result.logs);
+  state.llm.virtualLogsLoaded = true;
+  renderVirtualReplayOptions();
+};
+
+const updateVirtualReplayVisibility = () => {
+  const isLlm = normalizeModelType(elements.llmModelType?.value || "llm") === "llm";
+  const virtualSelected = isLlm && isVirtualReplayProvider(elements.llmProvider?.value);
+  if (elements.llmVirtualReplayRows) {
+    elements.llmVirtualReplayRows.style.display = virtualSelected ? "" : "none";
+  }
+  if (elements.llmBaseUrl) {
+    elements.llmBaseUrl.disabled = virtualSelected;
+  }
+  if (elements.llmApiKey) {
+    elements.llmApiKey.disabled = virtualSelected;
+  }
+  if (elements.llmModel) {
+    elements.llmModel.readOnly = virtualSelected;
+  }
+  if (elements.llmProbeContextBtn) {
+    elements.llmProbeContextBtn.disabled = virtualSelected;
+  }
+  if (virtualSelected) {
+    if (elements.llmBaseUrl) {
+      elements.llmBaseUrl.value = "";
+    }
+    if (elements.llmApiKey) {
+      elements.llmApiKey.value = "";
+    }
+    if (elements.llmModel && elements.llmVirtualReplaySelect?.value) {
+      elements.llmModel.value = elements.llmVirtualReplaySelect.value;
+    }
+  }
+  if (virtualSelected && !state.llm.virtualLogsLoaded) {
+    loadVirtualReplayLogs().catch((error) => {
+      appendLog(t("llm.virtual.loadFailed", { message: error.message }));
+    });
+  } else if (virtualSelected) {
+    renderVirtualReplayOptions();
+  }
+};
+
 const normalizeLlmConfig = (raw) => {
   const modelType = normalizeModelType(raw?.model_type);
   const provider = normalizeProviderId(raw?.provider || getDefaultProviderIdForType(modelType));
@@ -655,6 +804,7 @@ const clearLlmForm = () => {
   applyProviderDefaults(defaultProvider, { forceBaseUrl: false });
   lastProviderSelection = defaultProvider;
   updateLlmTypeVisibility("llm");
+  updateVirtualReplayVisibility();
 };
 
 const updateLlmTypeVisibility = (modelType) => {
@@ -699,6 +849,7 @@ const updateLlmTypeVisibility = (modelType) => {
     elements.llmGenerationTitle.textContent = t(titleKey);
   }
   renderProviderOptions(elements.llmProvider?.value || DEFAULT_PROVIDER_ID);
+  updateVirtualReplayVisibility();
 };
 
 // 将 LLM 配置渲染到表单。
@@ -803,6 +954,11 @@ const applyLlmConfigToForm = (name, config) => {
     forceBaseUrl: !llm.base_url,
     previousProvider: lastProviderSelection,
   });
+  if (isVirtualReplayProvider(llm.provider) && elements.llmModel) {
+    elements.llmModel.value = llm.model;
+  }
+  updateVirtualReplayVisibility();
+  renderVirtualReplayOptions();
   lastProviderSelection = llm.provider;
 };
 
@@ -843,7 +999,11 @@ const updateDetailHeader = () => {
       parts.push(t("llm.default"));
     }
     if (config.model) {
-      parts.push(t("llm.modelLabel", { model: config.model }));
+      parts.push(
+        isVirtualReplayProvider(config.provider)
+          ? `JSONL: ${config.model}`
+          : t("llm.modelLabel", { model: config.model })
+      );
     }
     if (config.base_url) {
       parts.push(config.base_url);
@@ -953,9 +1113,12 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const historyCompactionRatio = parseFloatInput(elements.llmHistoryCompactionRatio, 0.9);
   const modelType = normalizeModelType(elements.llmModelType?.value || base.model_type);
   const provider = normalizeProviderId(elements.llmProvider.value || base.provider);
-  const baseUrl = elements.llmBaseUrl.value.trim();
-  const apiKey = elements.llmApiKey.value.trim();
-  const model = elements.llmModel.value.trim();
+  const virtualSelected = modelType === "llm" && isVirtualReplayProvider(provider);
+  const baseUrl = virtualSelected ? "" : elements.llmBaseUrl.value.trim();
+  const apiKey = virtualSelected ? "" : elements.llmApiKey.value.trim();
+  const model = virtualSelected
+    ? String(elements.llmVirtualReplaySelect?.value || elements.llmModel.value || "").trim()
+    : elements.llmModel.value.trim();
   const timeoutValue = Number.isFinite(timeout) ? timeout : 120;
   const reasoningEffort = normalizeReasoningEffort(
     elements.llmReasoningEffort?.value || base.reasoning_effort
@@ -1044,12 +1207,14 @@ const buildLlmConfigFromForm = (baseConfig) => {
 
 const buildLlmConfigForPayload = (rawConfig) => {
   const config = normalizeLlmConfig(rawConfig || {});
+  const provider = normalizeProviderId(config.provider);
+  const virtualReplay = normalizeModelType(config.model_type) === "llm" && isVirtualReplayProvider(provider);
   const commonConfig = {
     enable: config.enable,
     model_type: normalizeModelType(config.model_type),
-    provider: normalizeProviderId(config.provider),
-    base_url: config.base_url || undefined,
-    api_key: config.api_key || undefined,
+    provider,
+    base_url: virtualReplay ? undefined : config.base_url || undefined,
+    api_key: virtualReplay ? undefined : config.api_key || undefined,
     model: config.model || undefined,
     mock_if_unconfigured: config.mock_if_unconfigured,
   };
@@ -1161,6 +1326,95 @@ const syncActiveConfigToState = () => {
   state.llm.configs[activeName] = buildLlmConfigFromForm(state.llm.configs[activeName]);
 };
 
+const handleVirtualReplaySelection = () => {
+  if (!elements.llmVirtualReplaySelect) {
+    return;
+  }
+  if (isVirtualReplayProvider(elements.llmProvider?.value) && elements.llmModel) {
+    elements.llmModel.value = elements.llmVirtualReplaySelect.value || "";
+    syncActiveConfigToState();
+  }
+  renderVirtualReplayOptions();
+};
+
+const uploadVirtualReplayLog = async () => {
+  const file = elements.llmVirtualReplayUploadInput?.files?.[0];
+  if (!file) {
+    notify(t("llm.virtual.fileRequired"), "warn");
+    return;
+  }
+  const form = new FormData();
+  form.append("file", file);
+  form.append("name", file.name);
+  const wunderBase = getWunderBase();
+  const response = await fetch(`${wunderBase}/admin/llm/virtual_logs`, {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  state.llm.virtualLogs = normalizeVirtualReplayLogs(result.logs);
+  state.llm.virtualLogsLoaded = true;
+  const uploadedId = String(result.log?.id || "").trim();
+  if (uploadedId && elements.llmVirtualReplaySelect) {
+    elements.llmVirtualReplaySelect.value = uploadedId;
+  }
+  handleVirtualReplaySelection();
+  if (elements.llmVirtualReplayUploadInput) {
+    elements.llmVirtualReplayUploadInput.value = "";
+  }
+};
+
+const setSelectedVirtualReplayEnabled = async () => {
+  const selected = getSelectedVirtualReplayLog();
+  if (!selected) {
+    notify(t("llm.virtual.selectFirst"), "warn");
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const response = await fetch(
+    `${wunderBase}/admin/llm/virtual_logs/${encodeURIComponent(selected.id)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !selected.enabled }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  state.llm.virtualLogs = normalizeVirtualReplayLogs(result.logs);
+  state.llm.virtualLogsLoaded = true;
+  renderVirtualReplayOptions();
+};
+
+const deleteSelectedVirtualReplayLog = async () => {
+  const selected = getSelectedVirtualReplayLog();
+  if (!selected) {
+    notify(t("llm.virtual.selectFirst"), "warn");
+    return;
+  }
+  if (!window.confirm(t("llm.virtual.deleteConfirm", { name: selected.name || selected.id }))) {
+    return;
+  }
+  const wunderBase = getWunderBase();
+  const response = await fetch(
+    `${wunderBase}/admin/llm/virtual_logs/${encodeURIComponent(selected.id)}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) {
+    throw new Error(t("common.requestFailed", { status: response.status }));
+  }
+  const result = await response.json();
+  state.llm.virtualLogs = normalizeVirtualReplayLogs(result.logs);
+  state.llm.virtualLogsLoaded = true;
+  renderVirtualReplayOptions();
+  handleVirtualReplaySelection();
+};
+
 const selectLlmConfig = (name) => {
   if (!name || name === state.llm.activeName) {
     return;
@@ -1181,6 +1435,9 @@ const buildContextProbePayload = () => {
     return null;
   }
   const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
+  if (isVirtualReplayProvider(provider)) {
+    return null;
+  }
   const baseUrl = elements.llmBaseUrl.value.trim() || resolveProviderBaseUrl(provider);
   const model = elements.llmModel.value.trim();
   const apiKey = elements.llmApiKey.value.trim();
@@ -1202,6 +1459,9 @@ const buildTtsVoiceProbePayload = () => {
     return null;
   }
   const provider = normalizeProviderId(elements.llmProvider.value || DEFAULT_PROVIDER_ID);
+  if (isVirtualReplayProvider(provider)) {
+    return null;
+  }
   const baseUrl = elements.llmBaseUrl.value.trim() || resolveProviderBaseUrl(provider);
   const model = elements.llmModel.value.trim();
   const apiKey = elements.llmApiKey.value.trim();
@@ -1426,6 +1686,8 @@ const applyLlmSet = (raw, options = {}) => {
   state.llm.defaultTtsName = normalized.defaultTtsName;
   state.llm.defaultImageName = normalized.defaultImageName;
   state.llm.defaultVideoName = normalized.defaultVideoName;
+  state.llm.virtualLogs = normalizeVirtualReplayLogs(raw?.virtual_replay?.enabled_logs);
+  state.llm.virtualLogsLoaded = true;
   state.llm.loaded = true;
   state.llm.nameEdits = {};
   const desiredActive = state.llm.activeName;
@@ -1624,6 +1886,9 @@ const buildLlmPayload = () => {
     default_tts: defaultTtsName || undefined,
     default_image: defaultImageName || undefined,
     default_video: defaultVideoName || undefined,
+    virtual_replay: {
+      enabled_logs: state.llm.virtualLogs,
+    },
     models,
   };
 };
@@ -1889,6 +2154,36 @@ export const initLlmPanel = () => {
     }
     requestContextWindow(true);
   });
+  elements.llmVirtualReplaySelect?.addEventListener("change", handleVirtualReplaySelection);
+  elements.llmVirtualReplayRefreshBtn?.addEventListener("click", async () => {
+    try {
+      await loadVirtualReplayLogs({ force: true });
+    } catch (error) {
+      notify(t("llm.virtual.loadFailed", { message: error.message }), "error");
+    }
+  });
+  elements.llmVirtualReplayUploadBtn?.addEventListener("click", async () => {
+    try {
+      await uploadVirtualReplayLog();
+      notify(t("llm.virtual.uploaded"), "success");
+    } catch (error) {
+      notify(t("llm.virtual.uploadFailed", { message: error.message }), "error");
+    }
+  });
+  elements.llmVirtualReplayToggleBtn?.addEventListener("click", async () => {
+    try {
+      await setSelectedVirtualReplayEnabled();
+    } catch (error) {
+      notify(t("llm.virtual.updateFailed", { message: error.message }), "error");
+    }
+  });
+  elements.llmVirtualReplayDeleteBtn?.addEventListener("click", async () => {
+    try {
+      await deleteSelectedVirtualReplayLog();
+    } catch (error) {
+      notify(t("llm.virtual.deleteFailed", { message: error.message }), "error");
+    }
+  });
 
   const handleProbeInput = () => {
     scheduleContextProbe();
@@ -1904,6 +2199,7 @@ export const initLlmPanel = () => {
     syncToolCallModeForProvider(nextProvider, previousProvider);
     applyProviderDefaults(nextProvider, { previousProvider: lastProviderSelection });
     lastProviderSelection = nextProvider;
+    updateVirtualReplayVisibility();
     handleProbeInput();
   });
   elements.llmBaseUrl.addEventListener("blur", () => requestContextWindow(true));

@@ -1,8 +1,8 @@
----
+﻿---
 title: 渠道工具
 summary: `channel_tool` 的联系人查询、发信与同步/异步回执结构。
 read_when:
-  - 你要列外部渠道联系人或发送渠道消息
+  - 用户要列外部渠道联系人或发送渠道消息
 source_docs:
   - src/services/tools/channel_tool.rs
 updated_at: 2026-04-10
@@ -105,4 +105,4 @@ updated_at: 2026-04-10
 ## 重点
 
 - 正文统一用 `content`
-- `wait` 决定你拿到的是“已送达结果”还是“已排队结果”
+- `wait` 决定用户拿到的是“已送达结果”还是“已排队结果”

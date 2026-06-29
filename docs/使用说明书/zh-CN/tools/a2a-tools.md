@@ -1,8 +1,8 @@
----
+﻿---
 title: A2A 工具
 summary: `a2a@service`、`a2a_observe`、`a2a_wait` 的当前返回结构。
 read_when:
-  - 你要调用外部 A2A 服务并跟踪任务状态
+  - 用户要调用外部 A2A 服务并跟踪任务状态
 source_docs:
   - src/services/tools.rs
 updated_at: 2026-04-10

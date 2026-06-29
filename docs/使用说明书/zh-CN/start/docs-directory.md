@@ -1,22 +1,22 @@
 ---
 title: 常用说明目录
-summary: 按用途列出的文档索引，帮你快速定位到具体页面。
+summary: 按用途列出的文档索引，帮助快速定位到具体页面。
 read_when:
-  - 你知道想看什么但不确定在哪
-  - 你想了解文档全貌
+  - 知道想看什么但不确定在哪
+  - 想了解文档全貌
 source_docs:
   - docs/wunder补全文档落地方案.md
 ---
 
 # 常用说明目录
 
-按用途分类，帮你快速定位。
+按用途分类，帮助快速定位。
 
 ## 入门
 
 | 页面 | 内容 |
 |------|------|
-| [快速开始](/docs/zh-CN/start/quickstart/) | 10 分钟跑通第一个任务 |
+| [快速开始](/docs/zh-CN/start/quickstart/) | 跑通第一个任务 |
 | [Desktop 入门](/docs/zh-CN/start/desktop/) | 下载安装就能用 |
 | [CLI 使用](/docs/zh-CN/start/cli/) | 终端驱动、自动化 |
 | [Server 部署](/docs/zh-CN/start/server/) | 多人共用、统一管理 |
@@ -52,7 +52,7 @@ source_docs:
 
 | 页面 | 内容 |
 |------|------|
-| [接入概览](/docs/zh-CN/integration/) | 找到适合你的接入方式 |
+| [接入概览](/docs/zh-CN/integration/) | 找到适合的接入方式 |
 | [工具总览](/docs/zh-CN/tools/) | 按任务选工具 |
 
 ## 运维

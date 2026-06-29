@@ -6,6 +6,7 @@ import { notify } from "./notify.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { t } from "./i18n.js?v=20260516-01";
 import { ensureOrgUnitsLoaded, getOrgUnitMap, getOrgUnitOptions } from "./org-units.js?v=20260210-01";
+import { getAuthHeaders } from "./admin-auth.js?v=20260120-01";
 
 const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
 const DEFAULT_TEST_USER_PASSWORD = "Test@123456";
@@ -13,6 +14,7 @@ const DEFAULT_TEST_USER_PER_UNIT = 1;
 const MAX_TEST_USERS_PER_UNIT = 200;
 const USER_ACCOUNT_ONLINE_REFRESH_MS = 12000;
 let userAccountOnlineRefreshTimer = null;
+let importBusy = false;
 
 const USER_FRONTEND_PORT_BY_ADMIN_PORT = {
   "18000": "18001",
@@ -80,6 +82,9 @@ const ensureUserAccountElements = () => {
     "userAccountModalClose",
     "userAccountModalCancel",
     "userAccountModalSave",
+    "userAccountImportFile",
+    "userAccountImportBtn",
+    "userAccountImportResult",
     "userAccountSeedModal",
     "userAccountSeedModalClose",
     "userAccountSeedModalCancel",
@@ -629,6 +634,53 @@ const setUserAccountsLoading = (loading) => {
   }
 };
 
+const setImportBusy = (busy) => {
+  importBusy = busy;
+  if (elements.userAccountImportBtn) {
+    elements.userAccountImportBtn.disabled = busy;
+    elements.userAccountImportBtn.classList.toggle("is-loading", busy);
+  }
+  if (elements.userAccountImportFile) {
+    elements.userAccountImportFile.disabled = busy;
+  }
+};
+
+const resetImportPanel = () => {
+  if (elements.userAccountImportFile) {
+    elements.userAccountImportFile.value = "";
+  }
+  if (elements.userAccountImportResult) {
+    elements.userAccountImportResult.textContent = "";
+    elements.userAccountImportResult.classList.remove("is-error", "is-success");
+  }
+  setImportBusy(false);
+};
+
+const renderImportResult = (data) => {
+  if (!elements.userAccountImportResult) {
+    return;
+  }
+  const created = Number(data?.created) || 0;
+  const failed = Number(data?.failed) || 0;
+  const total = Number(data?.total_rows) || created + failed;
+  const errors = Array.isArray(data?.errors) ? data.errors : [];
+  const summary = t("userAccounts.import.result", { total, created, failed });
+  const errorText = errors
+    .slice(0, 5)
+    .map((item) =>
+      t("userAccounts.import.errorLine", {
+        row: item?.row ?? "-",
+        message: item?.message || t("common.unknownError"),
+      })
+    )
+    .join("\n");
+  elements.userAccountImportResult.textContent = errorText
+    ? `${summary}\n${errorText}`
+    : summary;
+  elements.userAccountImportResult.classList.toggle("is-error", failed > 0);
+  elements.userAccountImportResult.classList.toggle("is-success", created > 0 && failed === 0);
+};
+
 export const loadUserAccounts = async () => {
   ensureUserAccountsState();
   if (!ensureUserAccountElements()) {
@@ -760,6 +812,7 @@ const openCreateModal = () => {
   elements.userAccountFormPassword.value = "";
   syncUnitSelect(elements.userAccountFormUnit, "");
   elements.userAccountFormStatus.value = "active";
+  resetImportPanel();
   if (elements.userAccountModalTitle) {
     elements.userAccountModalTitle.textContent = t("userAccounts.modal.create.title");
   }
@@ -799,6 +852,65 @@ const submitCreateUser = async () => {
     await loadUserAccounts();
   } catch (error) {
     notify(t("userAccounts.toast.createFailed", { status: error.message }), "error");
+  }
+};
+
+const submitImportUsers = async () => {
+  if (importBusy) {
+    return;
+  }
+  const file = elements.userAccountImportFile?.files?.[0] || null;
+  if (!file) {
+    notify(t("userAccounts.toast.importRequired"), "warn");
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", file);
+  setImportBusy(true);
+  if (elements.userAccountImportResult) {
+    elements.userAccountImportResult.textContent = t("common.loading");
+    elements.userAccountImportResult.classList.remove("is-error", "is-success");
+  }
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/import`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: formData,
+    });
+    if (!response.ok) {
+      const message = await extractResponseMessage(
+        response,
+        t("common.requestFailed", { status: response.status })
+      );
+      notify(t("userAccounts.toast.importFailed", { message }), "error");
+      if (elements.userAccountImportResult) {
+        elements.userAccountImportResult.textContent = message;
+        elements.userAccountImportResult.classList.add("is-error");
+      }
+      return;
+    }
+    const payload = await response.json();
+    const data = payload?.data || {};
+    renderImportResult(data);
+    notify(
+      t("userAccounts.toast.importSuccess", {
+        created: Number(data.created) || 0,
+        failed: Number(data.failed) || 0,
+      }),
+      "success"
+    );
+    await loadUserAccounts();
+  } catch (error) {
+    const message = error?.message || t("common.unknownError");
+    notify(t("userAccounts.toast.importFailed", { message }), "error");
+    if (elements.userAccountImportResult) {
+      elements.userAccountImportResult.textContent = message;
+      elements.userAccountImportResult.classList.add("is-error");
+    }
+  } finally {
+    setImportBusy(false);
   }
 };
 
@@ -1346,6 +1458,7 @@ export const initUserAccountsPanel = () => {
   elements.userAccountModalClose?.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalCancel.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalSave.addEventListener("click", submitCreateUser);
+  elements.userAccountImportBtn.addEventListener("click", submitImportUsers);
   elements.userAccountSeedModalClose?.addEventListener("click", () =>
     closeModal(elements.userAccountSeedModal)
   );

@@ -81,7 +81,7 @@
               v-if="selectedProviderUsesManualModelInput"
               v-model="selectedModel.model"
               class="desktop-model-settings-input"
-              :placeholder="t('desktop.system.modelNamePlaceholder')"
+              :placeholder="modelNamePlaceholder"
               @input="handleModelInput"
               @blur="handleModelBlur"
             />
@@ -91,7 +91,7 @@
               class="desktop-model-settings-input"
               popper-class="desktop-model-settings-popper"
               :fetch-suggestions="queryModelSuggestions"
-              :placeholder="t('desktop.system.modelNamePlaceholder')"
+              :placeholder="modelNamePlaceholder"
               :trigger-on-focus="false"
               clearable
               @input="handleModelInput"
@@ -99,14 +99,91 @@
               @blur="handleModelBlur"
             />
           </label>
-          <label class="desktop-model-settings-field desktop-model-settings-field--full">
+          <div v-if="selectedProviderIsVirtualReplay" class="desktop-model-settings-field-hint desktop-model-settings-field--full">
+            {{ t('desktop.system.virtualReplayHint') }}
+          </div>
+          <div v-if="selectedProviderIsVirtualReplay" class="desktop-model-settings-virtual desktop-model-settings-field--full">
+            <div class="desktop-model-settings-virtual-head">
+              <span class="desktop-model-settings-field-label">{{ t('desktop.system.virtualReplayLogs') }}</span>
+              <div class="desktop-model-settings-actions">
+                <el-button
+                  class="desktop-model-settings-btn"
+                  size="small"
+                  :loading="loadingVirtualLogs"
+                  @click="loadVirtualReplayLogs(true)"
+                >
+                  {{ t('common.refresh') }}
+                </el-button>
+                <el-upload
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  accept=".jsonl,application/jsonlines,application/json"
+                  :on-change="handleVirtualReplayFileChange"
+                >
+                  <el-button
+                    class="desktop-model-settings-btn"
+                    size="small"
+                    :loading="uploadingVirtualLog"
+                  >
+                    {{ t('common.upload') }}
+                  </el-button>
+                </el-upload>
+              </div>
+            </div>
+            <div class="desktop-model-settings-inline">
+              <el-select
+                v-model="selectedVirtualReplayLogId"
+                class="desktop-model-settings-input"
+                popper-class="desktop-model-settings-popper"
+                :loading="loadingVirtualLogs"
+                clearable
+                :placeholder="t('desktop.system.virtualReplayEmpty')"
+                @change="handleVirtualReplayLogSelection"
+              >
+                <el-option
+                  v-for="log in virtualReplayLogs"
+                  :key="log.id"
+                  :label="formatVirtualReplayLogLabel(log)"
+                  :value="log.id"
+                />
+              </el-select>
+              <div class="desktop-model-settings-actions">
+                <el-button
+                  class="desktop-model-settings-btn"
+                  size="small"
+                  :disabled="!selectedVirtualReplayLog"
+                  :loading="updatingVirtualLog"
+                  @click="toggleSelectedVirtualReplayLog"
+                >
+                  {{
+                    selectedVirtualReplayLog?.enabled
+                      ? t('desktop.system.virtualReplayDisable')
+                      : t('desktop.system.virtualReplayEnable')
+                  }}
+                </el-button>
+                <el-button
+                  class="desktop-model-settings-btn desktop-model-settings-btn--danger"
+                  size="small"
+                  :disabled="!selectedVirtualReplayLog"
+                  :loading="deletingVirtualLog"
+                  @click="deleteSelectedVirtualReplayLog"
+                >
+                  {{ t('common.delete') }}
+                </el-button>
+              </div>
+            </div>
+            <div class="desktop-model-settings-field-hint">
+              {{ selectedVirtualReplayStatus }}
+            </div>
+          </div>
+          <label v-if="!selectedProviderIsVirtualReplay" class="desktop-model-settings-field desktop-model-settings-field--full">
             <span class="desktop-model-settings-field-label">{{ t('desktop.system.baseUrl') }}</span>
             <el-input
               v-model="selectedModel.base_url"
               :placeholder="modelBaseUrlPlaceholder"
             />
           </label>
-          <label class="desktop-model-settings-field desktop-model-settings-field--full">
+          <label v-if="!selectedProviderIsVirtualReplay" class="desktop-model-settings-field desktop-model-settings-field--full">
             <span class="desktop-model-settings-field-label">{{ t('desktop.system.apiKey') }}</span>
             <el-input v-model="selectedModel.api_key" show-password />
           </label>
@@ -144,6 +221,7 @@
               <el-button
                 class="desktop-model-settings-btn"
                 :loading="probingContext"
+                :disabled="selectedProviderIsVirtualReplay"
                 @click="probeMaxContext"
               >
                 {{ t('desktop.system.maxContextProbe') }}
@@ -328,7 +406,7 @@
             <span>{{ t('desktop.system.section.capabilities') }}</span>
           </div>
         </div>
-        <div v-if="selectedModel.model_type === 'llm'" class="desktop-model-settings-grid">
+        <div v-if="selectedModel.model_type === 'llm' && !selectedProviderIsVirtualReplay" class="desktop-model-settings-grid">
           <div class="desktop-model-settings-field desktop-model-settings-field--full">
             <span class="desktop-model-settings-field-label">{{ t('desktop.system.capabilityToggle') }}</span>
             <div class="desktop-model-settings-checkbox-group">
@@ -376,7 +454,11 @@
           </label>
         </div>
         <div v-else class="desktop-model-settings-section-empty">
-          {{ t('desktop.system.sectionLlmOnly') }}
+          {{
+            selectedProviderIsVirtualReplay
+              ? t('desktop.system.virtualReplayCapabilities')
+              : t('desktop.system.sectionLlmOnly')
+          }}
         </div>
       </div>
 
@@ -387,14 +469,18 @@
             <span>{{ t('desktop.system.section.compaction') }}</span>
           </div>
         </div>
-        <div v-if="selectedModel.model_type === 'llm'" class="desktop-model-settings-grid">
+        <div v-if="selectedModel.model_type === 'llm' && !selectedProviderIsVirtualReplay" class="desktop-model-settings-grid">
           <label class="desktop-model-settings-field">
             <span class="desktop-model-settings-field-label">{{ t('desktop.system.historyCompactionRatio') }}</span>
             <el-input v-model="selectedModel.history_compaction_ratio" />
           </label>
         </div>
         <div v-else class="desktop-model-settings-section-empty">
-          {{ t('desktop.system.sectionLlmOnly') }}
+          {{
+            selectedProviderIsVirtualReplay
+              ? t('desktop.system.virtualReplayCompaction')
+              : t('desktop.system.sectionLlmOnly')
+          }}
         </div>
       </div>
     </section>
@@ -491,6 +577,7 @@ const ASR_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_asr_model';
 const TTS_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_tts_model';
 const IMAGE_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_image_model';
 const VIDEO_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_video_model';
+const VIRTUAL_REPLAY_PROVIDER_ID = 'virtual_replay';
 
 const props = withDefaults(
   defineProps<{
@@ -539,6 +626,7 @@ const PROVIDER_PRESETS_BY_TYPE: Record<
   Array<{ id: string; label: string; baseUrl: string }>
 > = {
   llm: [
+    { id: VIRTUAL_REPLAY_PROVIDER_ID, label: 'virtual_replay', baseUrl: '' },
     { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
     { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
     { id: 'anthropic', label: 'anthropic', baseUrl: 'https://api.anthropic.com/v1' },
@@ -683,11 +771,20 @@ const normalizeProviderId = (value: unknown): string => {
       return 'whisper_cpp';
     case 'lm_studio':
       return 'lmstudio';
+    case 'virtual':
+    case 'virtual_llm':
+    case 'virtual_model':
+    case 'replay':
+    case 'jsonl_replay':
+    case 'mock_replay':
+      return VIRTUAL_REPLAY_PROVIDER_ID;
     default:
       return normalized;
   }
 };
 
+const isVirtualReplayProvider = (provider: unknown): boolean =>
+  normalizeProviderId(provider) === VIRTUAL_REPLAY_PROVIDER_ID;
 const getDefaultProviderIdForType = (modelType: ModelType): string =>
   modelType === 'llm' ? DEFAULT_PROVIDER_ID : 'vllm_omni';
 const getProviderPresetsForType = (
@@ -966,6 +1063,8 @@ const providerOptionsForSelectedModel = computed(() => {
   return options;
 });
 
+const selectedProviderIsVirtualReplay = computed(() => isVirtualReplayProvider(selectedModel.value?.provider));
+
 const selectedProviderUsesManualModelInput = computed(() => {
   const current = selectedModel.value;
   if (!current) return true;
@@ -973,7 +1072,7 @@ const selectedProviderUsesManualModelInput = computed(() => {
   if (modelType !== 'llm') {
     return true;
   }
-  return normalizeProviderId(current.provider) === 'openai_compatible';
+  return normalizeProviderId(current.provider) === 'openai_compatible' || isVirtualReplayProvider(current.provider);
 });
 
 const modelOptionsForSelectedModel = computed(() => {
@@ -1017,6 +1116,12 @@ const modelBaseUrlPlaceholder = computed(() => {
   return resolveProviderBaseUrl(provider) || t('desktop.system.baseUrlPlaceholder');
 });
 
+const modelNamePlaceholder = computed(() =>
+  selectedProviderIsVirtualReplay.value
+    ? t('desktop.system.virtualReplayModelPlaceholder')
+    : t('desktop.system.modelNamePlaceholder')
+);
+
 const setCurrentDefaultLabel = computed(() => {
   const current = selectedModel.value;
   if (!current) return t('desktop.system.setDefaultChatModel');
@@ -1058,6 +1163,10 @@ const handleProviderChange = (value: string) => {
   const previousProvider = current.provider;
   const nextProvider = normalizeProviderId(value);
   current.provider = nextProvider;
+  if (isVirtualReplayProvider(nextProvider)) {
+    current.base_url = '';
+    current.api_key = '';
+  }
   const prevDefault = resolveDefaultToolCallMode(previousProvider);
   const currentMode = normalizeToolCallMode(current.tool_call_mode, previousProvider);
   if (!current.tool_call_mode || currentMode === prevDefault) {
@@ -1293,9 +1402,12 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
   };
 
   setText('model_type', row.model_type);
-  setText('provider', normalizeProviderId(row.provider));
-  setText('base_url', row.base_url);
-  setText('api_key', row.api_key);
+  const provider = normalizeProviderId(row.provider);
+  setText('provider', provider);
+  if (!isVirtualReplayProvider(provider)) {
+    setText('base_url', row.base_url);
+    setText('api_key', row.api_key);
+  }
   setText('model', row.model);
 
   if (row.model_type === 'llm') {
@@ -1502,9 +1614,14 @@ const saveModelSettings = async (options: { allowEmpty?: boolean } = {}): Promis
   }
 
   const defaultModelConfig = models[currentDefaultModel] || {};
+  const defaultProvider = String(defaultModelConfig.provider || '').trim();
   const defaultBaseUrl = String(defaultModelConfig.base_url || '').trim();
   const defaultModelName = String(defaultModelConfig.model || '').trim();
-  if (currentDefaultModel && (!defaultBaseUrl || !defaultModelName)) {
+  if (
+    currentDefaultModel &&
+    !isVirtualReplayProvider(defaultProvider) &&
+    (!defaultBaseUrl || !defaultModelName)
+  ) {
     ElMessage.warning(t('desktop.system.defaultModelConfigRequired'));
     return false;
   }

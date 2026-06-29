@@ -1,8 +1,8 @@
----
+﻿---
 title: 记忆管理
 summary: 说明 `memory_manager` 的当前动作、精简结构，以及“短索引注入 + get 取全文”的使用方式。
 read_when:
-  - 你要新增、检索、读取、更新或删除长期记忆碎片
+  - 用户要新增、检索、读取、更新或删除长期记忆碎片
 source_docs:
   - src/services/tools/memory_manager_tool.rs
   - src/services/memory_fragments.rs

@@ -1,9 +1,9 @@
----
+﻿---
 title: A2A 接口
 summary: Wunder 通过 `/a2a` 提供 A2A JSON-RPC 标准接入，并通过 AgentCard 暴露能力发现入口。
 read_when:
-  - 你要让 Wunder 被别的智能体系统调用
-  - 你要把外部 A2A 服务接进 Wunder 的工具体系
+  - 用户要让 Wunder 被别的智能体系统调用
+  - 用户要把外部 A2A 服务接进 Wunder 的工具体系
 source_docs:
   - docs/API文档.md
   - docs/设计文档/01-系统总体设计.md
@@ -35,11 +35,11 @@ A2A 解决的是“智能体系统之间如何标准化互通”。
 - 支持 AgentCard 能力发现
 - 当配置了 `api_key` 时，AgentCard 会同时声明 API Key 安全方案
 
-## AgentCard 有什么用
+## AgentCard 的作用
 
 AgentCard 主要用于告诉外部系统：
 
-- 你的服务叫什么
+- 用户的服务叫什么
 - 它的入口 URL 是什么
 - 它支持哪些技能
 - 它支持哪些工具类别
@@ -47,7 +47,7 @@ AgentCard 主要用于告诉外部系统：
 
 也就是说，AgentCard 是“发现和介绍自己”的那一层。
 
-## `POST /a2a` 适合什么场景
+## `POST /a2a` 的适用场景
 
 适合这些场景：
 
@@ -60,11 +60,11 @@ AgentCard 主要用于告诉外部系统：
 - `/wunder` 更像 Wunder 自己的统一执行入口
 - `/a2a` 更像对外互操作协议入口
 
-如果你接的是业务系统内部调用，通常先用 `/wunder`。
+如果用户接的是业务系统内部调用，通常先用 `/wunder`。
 
-如果你接的是“另一套智能体系统”，再优先考虑 `/a2a`。
+如果用户接的是“另一套智能体系统”，再优先考虑 `/a2a`。
 
-## 在 Wunder 内部怎么使用外部 A2A
+## 在 Wunder 内部使用外部 A2A
 
 配置文件里可以声明外部 A2A 服务：
 

@@ -1,4 +1,5 @@
 use crate::config::LlmModelConfig;
+use crate::services::virtual_llm::VIRTUAL_REPLAY_PROVIDER;
 use reqwest::header::HeaderMap;
 use url::Url;
 
@@ -44,6 +45,13 @@ pub fn normalize_provider(provider: Option<&str>) -> String {
         "ollama" => "ollama".to_string(),
         "lm_studio" => "lmstudio".to_string(),
         "lmstudio" => "lmstudio".to_string(),
+        "virtual"
+        | "virtual_llm"
+        | "virtual_model"
+        | "replay"
+        | "jsonl_replay"
+        | "mock_replay"
+        | VIRTUAL_REPLAY_PROVIDER => VIRTUAL_REPLAY_PROVIDER.to_string(),
         other => other.to_string(),
     }
 }

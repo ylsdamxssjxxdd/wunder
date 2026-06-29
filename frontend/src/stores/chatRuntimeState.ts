@@ -155,6 +155,11 @@ import {
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 import { chatWatcherSharedState } from './chatSharedState';
+import {
+  pruneDesktopChatMemoryCaches,
+  shouldUseDesktopChatMemoryGuard,
+  touchDesktopChatSession
+} from './chatDesktopMemoryGuard';
 
 import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
 import { DEFAULT_AGENT_KEY, applyMainSession, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
@@ -207,6 +212,38 @@ const isSessionEventsSnapshotCacheKeyForSession = (cacheKey: string, sessionKey:
 export const SESSION_RUNTIME_SHADOW_LOG_COOLDOWN_MS = 1500;
 
 export const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
+
+const isRuntimeHotForDesktopMemory = (sessionId: string): boolean => {
+  const runtime = sessionRuntime.get(sessionId);
+  return Boolean(
+    runtime?.sendController ||
+      runtime?.resumeController ||
+      runtime?.watchController ||
+      isThreadRuntimeBusy(runtime?.threadStatus)
+  );
+};
+
+const pruneDesktopChatMemoryForStore = (
+  store: { activeSessionId?: unknown; runtimeProjection?: ChatRuntimeProjection | null } | null = null,
+  activeSessionId: unknown = null
+): void => {
+  if (!shouldUseDesktopChatMemoryGuard()) return;
+  pruneDesktopChatMemoryCaches({
+    activeSessionId: resolveSessionKey(activeSessionId ?? store?.activeSessionId),
+    sessionMessages,
+    sessionDetailSnapshotCache,
+    sessionEventsSnapshotCache,
+    sessionHydratedMessageVersion,
+    sessionDetailWarmState,
+    sessionHistoryState,
+    sessionWorkflowState,
+    sessionProtectedRealtimeMessages,
+    sessionSubagentsCache,
+    sessionRuntimeShadowState,
+    runtimeProjection: store?.runtimeProjection || null,
+    isHotSession: isRuntimeHotForDesktopMemory
+  });
+};
 
 export const buildHistoryState = () => ({
   beforeId: null,
@@ -462,9 +499,39 @@ export const cloneSessionEventsPayload = (payload) => {
   return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
 };
 
+const buildSessionEventsCachePayload = (cloned) => {
+  if (
+    shouldUseDesktopChatMemoryGuard() &&
+    cloned &&
+    typeof cloned === 'object'
+  ) {
+    return {
+      ...(cloned as Record<string, unknown>),
+      events: [],
+      rounds: []
+    };
+  }
+  return cloned;
+};
+
 export const cloneSessionDetailPayload = (payload) => {
   const cloned = cloneSerializable(payload, null);
   return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
+};
+
+const buildSessionDetailCachePayload = (cloned) => {
+  if (
+    shouldUseDesktopChatMemoryGuard() &&
+    cloned &&
+    typeof cloned === 'object' &&
+    Array.isArray((cloned as Record<string, unknown>).transcript)
+  ) {
+    const { transcript: _transcript, ...rest } = cloned as Record<string, unknown>;
+    return {
+      ...rest
+    };
+  }
+  return cloned;
 };
 
 export const appendFingerprintHash = (seed, value) => {
@@ -604,12 +671,17 @@ export const clearSessionEventsSnapshot = (sessionId, options: { keepInFlight?: 
 export const cacheSessionDetailSnapshot = (sessionId, payload) => {
   const sessionKey = resolveSessionKey(sessionId);
   if (!sessionKey) return null;
+  touchDesktopChatSession(sessionKey);
   const clonedPayload = cloneSessionDetailPayload(payload);
+  const cachedPayload = buildSessionDetailCachePayload(clonedPayload);
   sessionDetailSnapshotCache.set(sessionKey, {
     cachedAt: Date.now(),
-    payload: clonedPayload
+    payload: cachedPayload
   });
-  return cloneSessionDetailPayload(clonedPayload);
+  pruneDesktopChatMemoryForStore(null, null);
+  return shouldUseDesktopChatMemoryGuard()
+    ? clonedPayload
+    : cloneSessionDetailPayload(clonedPayload);
 };
 
 export const readSessionDetailSnapshot = (sessionId) => {
@@ -617,6 +689,9 @@ export const readSessionDetailSnapshot = (sessionId) => {
   if (!sessionKey) return null;
   const entry = sessionDetailSnapshotCache.get(sessionKey);
   if (!entry) return null;
+  if (shouldUseDesktopChatMemoryGuard()) {
+    return null;
+  }
   if (!Number.isFinite(entry.cachedAt) || Date.now() - entry.cachedAt > SESSION_DETAIL_SNAPSHOT_TTL_MS) {
     sessionDetailSnapshotCache.delete(sessionKey);
     return null;
@@ -630,19 +705,25 @@ export const cacheSessionEventsSnapshot = (sessionId, payload) => {
     payload?.limit ?? payload?.requested_limit ?? null
   );
   if (!sessionKey) return null;
+  const baseSessionKey = resolveSessionKey(sessionId);
+  touchDesktopChatSession(baseSessionKey);
   const clonedPayload = cloneSessionEventsPayload(payload);
+  const cachedPayload = buildSessionEventsCachePayload(clonedPayload);
   sessionEventsSnapshotCache.set(sessionKey, {
     cachedAt: Date.now(),
     limit: normalizeSessionEventsSnapshotLimit(
-      clonedPayload?.limit ?? clonedPayload?.requested_limit ?? null
+      cachedPayload?.limit ?? cachedPayload?.requested_limit ?? null
     ),
-    running: clonedPayload?.running === true,
+    running: cachedPayload?.running === true,
     lastEventId: normalizeStreamEventId(
-      clonedPayload?.last_event_id ?? clonedPayload?.lastEventId
+      cachedPayload?.last_event_id ?? cachedPayload?.lastEventId
     ),
-    payload: clonedPayload
+    payload: cachedPayload
   });
-  return cloneSessionEventsPayload(clonedPayload);
+  pruneDesktopChatMemoryForStore(null, null);
+  return shouldUseDesktopChatMemoryGuard()
+    ? clonedPayload
+    : cloneSessionEventsPayload(clonedPayload);
 };
 
 export const readSessionEventsSnapshot = (
@@ -651,6 +732,9 @@ export const readSessionEventsSnapshot = (
 ) => {
   const baseSessionKey = resolveSessionKey(sessionId);
   if (!baseSessionKey) return null;
+  if (shouldUseDesktopChatMemoryGuard()) {
+    return null;
+  }
   const sessionKey = resolveSessionEventsSnapshotCacheKey(baseSessionKey, options.limit);
   const entry = sessionEventsSnapshotCache.get(sessionKey);
   if (!entry) return null;
@@ -684,6 +768,8 @@ export const loadSessionEventsSnapshot = (
     dedupeInFlight?: boolean;
     limit?: unknown;
     minLastEventId?: unknown;
+    signal?: AbortSignal;
+    shouldCache?: () => boolean;
   } = {}
 ) => {
   const sessionKey = resolveSessionKey(sessionId);
@@ -707,14 +793,23 @@ export const loadSessionEventsSnapshot = (
     return inFlight;
   }
   const requestApi = Number.isFinite(limit) && limit > 0
-    ? getSessionEventsWithParams(sessionKey, { limit })
-    : getSessionEvents(sessionKey);
+    ? getSessionEventsWithParams(sessionKey, { limit }, { signal: options.signal })
+    : getSessionEvents(sessionKey, { signal: options.signal });
   const request = requestApi.then((response) => {
     const payload = response?.data?.data;
     const normalizedPayload =
       payload && typeof payload === 'object' && !Array.isArray(payload)
         ? payload
         : {};
+    const shouldCache = typeof options.shouldCache === 'function'
+      ? options.shouldCache()
+      : true;
+    if (!shouldCache) {
+      return {
+        ...normalizedPayload,
+        requested_limit: Number.isFinite(limit) && limit > 0 ? limit : null
+      };
+    }
     return cacheSessionEventsSnapshot(sessionKey, {
       ...normalizedPayload,
       requested_limit: Number.isFinite(limit) && limit > 0 ? limit : null
@@ -1487,8 +1582,10 @@ export const resolveSessionMessageArray = (store, sessionId, fallbackMessages = 
 export const cacheSessionMessages = (sessionId, messages) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
+  touchDesktopChatSession(key);
   dedupeAssistantMessagesInPlace(messages);
   sessionMessages.set(key, messages);
+  pruneDesktopChatMemoryForStore(null, null);
 };
 
 export const hasSubmittedUserMessage = (messages) =>
@@ -1722,6 +1819,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return;
+  touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
   const targetMessages = Array.isArray(messages)
     ? messages
@@ -1755,6 +1853,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
       reason: 'legacy-reconcile'
     });
   }
+  pruneDesktopChatMemoryForStore(store);
 };
 
 export const syncChatRuntimeProjectionStatus = (
@@ -1766,6 +1865,7 @@ export const syncChatRuntimeProjectionStatus = (
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return;
+  touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
   const result = applyChatRuntimeEvent(projection, {
     event_type: options.eventType || 'session_runtime',
@@ -1781,6 +1881,7 @@ export const syncChatRuntimeProjectionStatus = (
       reason: 'runtime-status'
     });
   }
+  pruneDesktopChatMemoryForStore(store);
   inspectChatRuntimeShadow(store, key, null, {
     phase: options.eventType || 'session_runtime',
     legacyBusy: isThreadRuntimeBusy(status)
@@ -1865,6 +1966,7 @@ export const applyCanonicalStreamRuntimeEvent = (
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return [];
+  touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
   const events = buildCanonicalStreamRuntimeEvents({
     sessionId: key,
@@ -1894,6 +1996,7 @@ export const applyCanonicalStreamRuntimeEvent = (
       : 'pending_event_seq_gap';
     options.onSyncRequired(reason);
   }
+  pruneDesktopChatMemoryForStore(store);
   return events;
 };
 
@@ -1910,6 +2013,7 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
   const key = resolveSessionKey(payload?.sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return null;
+  touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
   const event = buildCanonicalClientMessageSubmittedEvent({
     sessionId: key,
@@ -1926,6 +2030,7 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
       reason: 'client-submitted'
     });
   }
+  pruneDesktopChatMemoryForStore(store);
   return event;
 };
 
@@ -1938,6 +2043,7 @@ export const applyCanonicalSessionEventsSnapshot = (
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return [];
+  touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
   const events = buildCanonicalSessionEventsSnapshot({
     sessionId: key,
@@ -1953,6 +2059,7 @@ export const applyCanonicalSessionEventsSnapshot = (
   inspectChatRuntimeShadow(store, key, null, {
     phase: options.phase || 'session-events-snapshot'
   });
+  pruneDesktopChatMemoryForStore(store);
   return events;
 };
 

@@ -1,8 +1,8 @@
----
+﻿---
 title: ptc
 summary: Python 临时脚本执行工具的当前行为与返回结构。
 read_when:
-  - 你要用一段完整 Python 脚本完成局部任务
+  - 用户要用一段完整 Python 脚本完成局部任务
 source_docs:
   - src/services/tools.rs
   - src/services/tools/catalog.rs

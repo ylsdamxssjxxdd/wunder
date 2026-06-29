@@ -259,6 +259,16 @@ export const chatCacheActions = {
       if (!targetId) return null;
       const force = options.force === true;
       const syncActive = options.syncActive !== false;
+      const activeSessionId = resolveSessionKey(this.activeSessionId);
+      if (isDesktopModeEnabled() && !force && targetId !== activeSessionId) {
+        chatDebugLog('chat.store.preload', 'desktop-skip-background-detail', {
+          sessionId: targetId,
+          activeSessionId,
+          force,
+          syncActive
+        });
+        return this.sessions.find((session) => session.id === targetId) || null;
+      }
       if (!hasKnownSessionInStore(this, targetId)) {
         chatDebugLog('chat.store.preload', 'skip-unknown-session', {
           sessionId: targetId,
@@ -297,7 +307,7 @@ export const chatCacheActions = {
           force,
           syncActive,
           knownEventFloor,
-          activeSessionId: resolveSessionKey(this.activeSessionId),
+          activeSessionId,
           detailLimit
         });
         try {

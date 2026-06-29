@@ -4,13 +4,14 @@ use crate::config::Config;
 use crate::i18n;
 use crate::llm;
 use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID};
+use crate::services::virtual_llm;
 use crate::state::AppState;
 use crate::user_store::UserStore;
 use crate::{
     org_units,
     storage::{ExternalLinkRecord, OrgUnitRecord, UserAccountRecord},
 };
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State};
 use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
@@ -34,6 +35,7 @@ pub(crate) use integration_admin::{
 };
 
 const MAX_ORG_UNIT_LEVEL: i32 = 4;
+const MAX_VIRTUAL_LLM_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
 pub(super) const DEFAULT_TEST_USER_PASSWORD: &str = "Test@123456";
 pub(super) const DEFAULT_TEST_USER_PREFIX: &str = "test_user";
 pub(super) const MAX_TEST_USERS_PER_UNIT: i64 = 200;
@@ -55,6 +57,16 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/llm/context_window",
             post(admin_llm_context_window),
+        )
+        .route(
+            "/wunder/admin/llm/virtual_logs",
+            get(admin_virtual_llm_logs_get)
+                .post(admin_virtual_llm_logs_upload)
+                .layer(DefaultBodyLimit::max(MAX_VIRTUAL_LLM_UPLOAD_BYTES)),
+        )
+        .route(
+            "/wunder/admin/llm/virtual_logs/{log_id}",
+            post(admin_virtual_llm_log_enable).delete(admin_virtual_llm_log_delete),
         )
         .route("/wunder/admin/llm/tts_voices", post(admin_llm_tts_voices))
         .route(
@@ -80,11 +92,96 @@ async fn admin_llm_update(
     let updated = state
         .config_store
         .update(|config| {
+            let virtual_replay = config.llm.virtual_replay.clone();
             config.llm = payload.llm.clone();
+            config.llm.virtual_replay = virtual_replay;
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({ "llm": updated.llm })))
+}
+
+async fn admin_virtual_llm_logs_get(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let logs = virtual_llm::list_logs(config)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "logs": virtual_llm::logs_payload(logs) })))
+}
+
+async fn admin_virtual_llm_logs_upload(
+    State(state): State<Arc<AppState>>,
+    multipart: Multipart,
+) -> Result<Json<Value>, Response> {
+    let upload = virtual_llm::parse_upload_multipart(multipart)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let config = state.config_store.get().await;
+    let (next_config, summary) = virtual_llm::store_uploaded_log(config, upload)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let next_virtual = next_config.llm.virtual_replay.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.llm.virtual_replay = next_virtual;
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let logs = virtual_llm::list_logs(updated)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "log": summary,
+        "logs": virtual_llm::logs_payload(logs),
+    })))
+}
+
+async fn admin_virtual_llm_log_enable(
+    State(state): State<Arc<AppState>>,
+    AxumPath(log_id): AxumPath<String>,
+    Json(payload): Json<VirtualLlmLogEnableRequest>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let next_config = virtual_llm::set_log_enabled(config, log_id, payload.enabled)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let next_virtual = next_config.llm.virtual_replay.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.llm.virtual_replay = next_virtual;
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let logs = virtual_llm::list_logs(updated)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "logs": virtual_llm::logs_payload(logs) })))
+}
+
+async fn admin_virtual_llm_log_delete(
+    State(state): State<Arc<AppState>>,
+    AxumPath(log_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let next_config = virtual_llm::delete_log(config, log_id)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let next_virtual = next_config.llm.virtual_replay.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.llm.virtual_replay = next_virtual;
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let logs = virtual_llm::list_logs(updated)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "logs": virtual_llm::logs_payload(logs) })))
 }
 
 async fn admin_llm_context_window(
@@ -203,6 +300,7 @@ fn build_system_settings_payload(config: &Config) -> Value {
         },
         "security": {
             "api_key": config.api_key(),
+            "allow_user_registration": config.security.allow_user_registration,
             "external_auth_key": config.external_auth_key(),
             "external_embed_preset_agent_name": config.external_embed_preset_agent_name(),
             "external_embed_jwt_secret": config.external_embed_jwt_secret(),
@@ -322,6 +420,9 @@ async fn admin_system_update(
                     } else {
                         config.security.api_key = Some(cleaned);
                     }
+                }
+                if let Some(allow_user_registration) = security.allow_user_registration {
+                    config.security.allow_user_registration = allow_user_registration;
                 }
                 if let Some(external_auth_key) = security.external_auth_key {
                     let cleaned = external_auth_key.trim().to_string();
@@ -1005,6 +1106,11 @@ struct LlmUpdateRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct VirtualLlmLogEnableRequest {
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct LlmContextProbeRequest {
     #[serde(default)]
     provider: Option<String>,
@@ -1048,6 +1154,8 @@ struct SystemServerUpdateRequest {
 struct SystemSecurityUpdateRequest {
     #[serde(default)]
     api_key: Option<String>,
+    #[serde(default)]
+    allow_user_registration: Option<bool>,
     #[serde(default)]
     external_auth_key: Option<String>,
     #[serde(default)]

@@ -1,9 +1,9 @@
----
+﻿---
 title: 工作区 API
 summary: `/wunder/workspace*` 不只是文件接口，它决定文件到底落在哪个隔离工作区。
 read_when:
-  - 你在做工作区面板、文件上传下载或产物回传
-  - 你要理解 `container_id` 为什么会覆盖 `agent_id`
+  - 用户在做工作区面板、文件上传下载或产物回传
+  - 用户要理解 `container_id` 为什么会覆盖 `agent_id`
 source_docs:
   - docs/API文档.md
   - src/api/workspace.rs
@@ -12,7 +12,7 @@ source_docs:
 
 # 工作区 API
 
-如果你要做文件树、编辑器、上传下载或产物面板，这页先看。
+如果用户要做文件树、编辑器、上传下载或产物面板，这页先看。
 
 `/wunder/workspace*` 不只是文件读写接口，它决定文件到底落在哪个隔离空间。
 
@@ -30,9 +30,9 @@ source_docs:
 2. 否则看 `agent_id` 绑定的 `sandbox_container_id`
 3. 再回退到默认用户工作区或旧兼容路由
 
-所以当你显式传了 `container_id`，它的优先级高于 `agent_id`。
+所以当用户显式传了 `container_id`，它的优先级高于 `agent_id`。
 
-## 这组接口用在什么地方
+## 接口使用场景
 
 - 文件树和目录浏览
 - 文件预览和编辑
@@ -40,7 +40,7 @@ source_docs:
 - 工具产物的持久化回传
 - 按容器隔离不同智能体的文件空间
 
-## 最常用的接口怎么分
+## 常用接口分类
 
 - `GET/DELETE /wunder/workspace`
 - `GET /wunder/workspace/content`
@@ -54,7 +54,7 @@ source_docs:
 - `POST /wunder/workspace/batch`
 - `POST /wunder/workspace/file`
 
-如果你在做一个文件面板，可以这样理解：
+如果用户在做一个文件面板，可以这样理解：
 
 - 目录页：`GET /wunder/workspace`
 - 文件预览：`GET /wunder/workspace/content`

@@ -1,8 +1,8 @@
----
+﻿---
 title: 子智能体控制
 summary: `subagent_control` 的动作、等待语义、状态语义与返回结构。
 read_when:
-  - 你要在当前会话内派生子智能体临时工作
+  - 用户要在当前会话内派生子智能体临时工作
 source_docs:
   - src/services/tools/subagent_control.rs
 updated_at: 2026-04-10
@@ -169,4 +169,4 @@ updated_at: 2026-04-10
 - `accepted` 不等于完成
 - `status` 是看快照
 - `wait` 才是等待收敛
-- 有 `next_step_hint` 时，说明系统明确希望你继续跟进而不是直接收尾
+- 有 `next_step_hint` 时，说明系统明确希望用户继续跟进而不是直接收尾
