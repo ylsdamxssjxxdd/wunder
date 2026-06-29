@@ -42,7 +42,7 @@ The goal: keep the system **running stably for 10+ years**, not just "it started
   </a>
   <a class="docs-card" href="/docs/en/ops/wunderbench/">
     <strong>WunderBench Model Evaluation</strong>
-    <span>Three profiles, scoring, exports, and task extension.</span>
+    <span>Full-suite evaluation, scoring, exports, and task extension.</span>
   </a>
   <a class="docs-card" href="/docs/en/ops/desktop-local-mode/">
     <strong>Desktop Local Mode</strong>

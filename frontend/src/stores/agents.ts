@@ -10,6 +10,16 @@ import {
 } from '@/api/agents';
 
 const inflightAgentRequests = new Map<string, Promise<Record<string, unknown> | null>>();
+const agentMutationVersions = new Map<string, number>();
+const pendingAgentMutations = new Map<string, Promise<Record<string, unknown> | null>>();
+
+const bumpAgentMutationVersion = (key: string): number => {
+  const next = (agentMutationVersions.get(key) || 0) + 1;
+  agentMutationVersions.set(key, next);
+  return next;
+};
+
+const resolveAgentMutationVersion = (key: string): number => agentMutationVersions.get(key) || 0;
 
 export const useAgentStore = defineStore('agents', {
   state: () => ({
@@ -118,10 +128,18 @@ export const useAgentStore = defineStore('agents', {
       if (inflightRequest) {
         return inflightRequest;
       }
+      const requestVersion = resolveAgentMutationVersion(key);
       const request = (async () => {
       try {
         const { data } = await getAgentApi(key);
         const agent = data?.data || null;
+        if (requestVersion !== resolveAgentMutationVersion(key)) {
+          const pendingMutation = pendingAgentMutations.get(key);
+          if (pendingMutation) {
+            return (await pendingMutation.catch(() => null)) || this.agentMap[key] || null;
+          }
+          return this.agentMap[key] || null;
+        }
         if (agent) {
           this.agentMap = { ...this.agentMap, [key]: agent };
         }
@@ -150,16 +168,32 @@ export const useAgentStore = defineStore('agents', {
 
     async updateAgent(id, payload) {
       const key = String(id || '').trim();
-      const { data } = await updateAgentApi(id, payload);
-      const agent = data?.data;
-      if (key && agent) {
-        this.agentMap = { ...this.agentMap, [key]: agent };
+      if (key) {
+        bumpAgentMutationVersion(key);
+        inflightAgentRequests.delete(key);
       }
-      await this.loadAgents();
-      if (key && agent) {
-        this.agentMap = { ...this.agentMap, [key]: agent };
+      const mutation = (async () => {
+        const { data } = await updateAgentApi(id, payload);
+        const agent = data?.data || null;
+        if (key && agent) {
+          this.agentMap = { ...this.agentMap, [key]: agent };
+        }
+        await this.loadAgents();
+        if (key && agent) {
+          this.agentMap = { ...this.agentMap, [key]: agent };
+        }
+        return agent;
+      })();
+      if (key) {
+        pendingAgentMutations.set(key, mutation);
       }
-      return agent;
+      try {
+        return await mutation;
+      } finally {
+        if (key && pendingAgentMutations.get(key) === mutation) {
+          pendingAgentMutations.delete(key);
+        }
+      }
     },
 
     async deleteAgent(id) {

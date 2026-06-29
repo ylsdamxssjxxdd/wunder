@@ -20,7 +20,6 @@ export const state = {
     promptReloadTimer: null,
     promptNeedsRefresh: false,
     promptReloadHandler: null,
-    monitorToolsView: "heatmap",
     llmOutput: {
       globalRound: 0,
       currentRound: null,

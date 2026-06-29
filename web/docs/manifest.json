@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-06-29T03:24:28.403426+00:00",
+  "generated_at": "2026-06-29T09:48:10.792966+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -537,7 +537,7 @@
                   {
                     "slug": "zh-CN/ops/wunderbench",
                     "title": "WunderBench 模型评测",
-                    "summary": "使用三档评测自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
+                    "summary": "使用全量题库自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
                     "url": "/docs/zh-CN/ops/wunderbench/"
                   },
                   {
@@ -1241,7 +1241,7 @@
                   {
                     "slug": "en/ops/wunderbench",
                     "title": "WunderBench Model Evaluation",
-                    "summary": "Use three evaluation profiles to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
+                    "summary": "Use the full benchmark suite to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
                     "url": "/docs/en/ops/wunderbench/"
                   },
                   {
@@ -7321,7 +7321,7 @@
       "slug": "zh-CN/ops/wunderbench",
       "language": "zh-CN",
       "title": "WunderBench 模型评测",
-      "summary": "使用三档评测自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
+      "summary": "使用全量题库自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
       "updated_at": "2026-06-29",
       "read_when": [
         "用户需要评估模型在 Wunder 中的真实任务完成能力",
@@ -7353,7 +7353,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "三个评测档位"
+          "text": "评测范围"
         },
         {
           "id": "section-4",
@@ -14756,7 +14756,7 @@
       "language": "en",
       "title": "Operations Overview",
       "summary": "Wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just \"it started successfully.\"",
-      "updated_at": "2026-05-13",
+      "updated_at": "2026-06-29",
       "read_when": [
         "You are deploying or taking over a Wunder runtime environment",
         "You need to quickly locate operations and governance entry points"
@@ -15247,7 +15247,7 @@
       "language": "en",
       "title": "Monitoring and WunderBench",
       "summary": "Wunder's observability surface is not a single monitoring page, but composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and WunderBench together.",
-      "updated_at": "2026-05-13",
+      "updated_at": "2026-06-29",
       "read_when": [
         "You are troubleshooting thread, tool, or model pipeline issues",
         "You need to distinguish the responsibilities of monitor, throughput, performance, and WunderBench"
@@ -15354,8 +15354,8 @@
       "slug": "en/ops/wunderbench",
       "language": "en",
       "title": "WunderBench Model Evaluation",
-      "summary": "Use three evaluation profiles to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
-      "updated_at": "2026-05-13",
+      "summary": "Use the full benchmark suite to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
+      "updated_at": "2026-06-29",
       "read_when": [
         "You need to evaluate model quality inside Wunder's real agent pipeline",
         "You need to export full benchmark records with model logs, tool calls, and workspace artifacts",
@@ -15386,7 +15386,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Three Profiles"
+          "text": "Evaluation Scope"
         },
         {
           "id": "section-4",

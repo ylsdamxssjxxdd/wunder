@@ -5,11 +5,30 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub fn default_tasks_dir() -> PathBuf {
-    PathBuf::from("./config/benchmark/tasks")
+    resolve_config_path("config/benchmark/tasks")
 }
 
 pub fn default_assets_dir() -> PathBuf {
-    PathBuf::from("./config/benchmark/assets")
+    resolve_config_path("config/benchmark/assets")
+}
+
+fn resolve_config_path(relative: &str) -> PathBuf {
+    let cwd_path = PathBuf::from(relative);
+    if cwd_path.exists() {
+        return cwd_path;
+    }
+
+    if let Some(manifest_dir) = option_env!("CARGO_MANIFEST_DIR") {
+        let manifest_path = Path::new(manifest_dir);
+        for ancestor in manifest_path.ancestors() {
+            let candidate = ancestor.join(relative);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    cwd_path
 }
 
 pub fn load_task_specs(dir: &Path) -> Result<Vec<BenchmarkTaskSpec>> {

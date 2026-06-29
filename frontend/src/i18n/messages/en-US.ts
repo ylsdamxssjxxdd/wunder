@@ -1186,6 +1186,27 @@ export default {
   'desktop.system.virtualReplayModelPlaceholder': 'Optional: uploaded replay log ID, empty uses random replies',
   'desktop.system.virtualReplayHint':
     'Virtual model does not need Base URL or API Key. Model name can be an uploaded replay log ID; empty uses random replies.',
+  'desktop.system.virtualReplayLogs': 'Replay JSONL',
+  'desktop.system.virtualReplayEmpty': 'No JSONL selected, use random replies',
+  'desktop.system.virtualReplayEmptyHint':
+    'No replay logs yet. If no JSONL is uploaded or selected, the virtual model uses random replies.',
+  'desktop.system.virtualReplayRandomOption': 'Random replies (no JSONL)',
+  'desktop.system.virtualReplayRandomStatus': 'No replay log is bound. Random replies will be used.',
+  'desktop.system.virtualReplayEnabled': 'Enabled',
+  'desktop.system.virtualReplayDisabled': 'Disabled',
+  'desktop.system.virtualReplayRounds': '{rounds} user rounds',
+  'desktop.system.virtualReplayStatus': 'Log {id}, {rounds} user rounds, {state}',
+  'desktop.system.virtualReplayEnable': 'Enable',
+  'desktop.system.virtualReplayDisable': 'Disable',
+  'desktop.system.virtualReplayFileRequired': 'Select a JSONL file first',
+  'desktop.system.virtualReplayLoadFailed': 'Failed to load replay logs',
+  'desktop.system.virtualReplayUploadSuccess': 'Replay log uploaded',
+  'desktop.system.virtualReplayUploadFailed': 'Failed to upload replay log',
+  'desktop.system.virtualReplayUpdateSuccess': 'Replay log state updated',
+  'desktop.system.virtualReplayUpdateFailed': 'Failed to update replay log',
+  'desktop.system.virtualReplayDeleteSuccess': 'Replay log deleted',
+  'desktop.system.virtualReplayDeleteFailed': 'Failed to delete replay log',
+  'desktop.system.virtualReplayDeleteConfirm': 'Delete replay log {name}?',
   'desktop.system.virtualReplayCapabilities':
     'Virtual model uses replay or random replies and does not need model capability toggles.',
   'desktop.system.virtualReplayCompaction':

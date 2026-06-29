@@ -549,6 +549,19 @@ export const chatSessionOpenLoadActions = {
       const targetSessionId = resolveSessionKey(sessionId);
       if (!targetSessionId) return null;
       return withSessionDetailLoadInFlight(targetSessionId, options, async () => {
+        const perfEnabled = chatPerf.enabled();
+        const perfStart = perfEnabled ? performance.now() : 0;
+        let perfFetchStart = 0;
+        let perfFetchMs: number | null = null;
+        let perfHydrateStart = 0;
+        let perfHydrateMs: number | null = null;
+        let perfForegroundSyncStart = 0;
+        let perfForegroundSyncMs: number | null = null;
+        let perfReusedHydratedMessages = false;
+        let perfRemoteRunning = false;
+        let perfTranscriptCount = 0;
+        let perfEventCount = 0;
+        let perfRoundCount = 0;
         const previousSessionId = this.activeSessionId;
         const previousSessionKey = resolveSessionKey(previousSessionId);
         const previousForegroundMessages = Array.isArray(this.messages) ? this.messages : [];
@@ -659,6 +672,7 @@ export const chatSessionOpenLoadActions = {
         }
         try {
           if (!sessionDetail || !eventsPayload) {
+            perfFetchStart = perfEnabled ? performance.now() : 0;
             [sessionRes, eventsPayload] = await Promise.all([
               getSessionWithParams(
                 targetSessionId,
@@ -682,6 +696,9 @@ export const chatSessionOpenLoadActions = {
             ]);
             if (detailAbortController?.signal.aborted || isStaleDesktopSessionDetailLoad(this, targetSessionId, preserveWatcher)) {
               return null;
+            }
+            if (perfEnabled) {
+              perfFetchMs = performance.now() - perfFetchStart;
             }
             sessionDetail = sessionRes?.data?.data || null;
             cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
@@ -708,6 +725,8 @@ export const chatSessionOpenLoadActions = {
         const detailEventCount = Array.isArray(eventsPayload?.events)
           ? eventsPayload.events.length
           : 0;
+        perfTranscriptCount = detailTranscriptCount;
+        perfEventCount = detailEventCount;
         syncGoalFromSessionRecord(this, sessionDetail);
         const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
         hydrateSessionCommandSessions(
@@ -755,6 +774,8 @@ export const chatSessionOpenLoadActions = {
           filterSessionsByAgent(resolvedAgentIdText, this.sessions)
         );
         const rounds = eventsPayload?.rounds || [];
+        perfRemoteRunning = remoteRunning;
+        perfRoundCount = Array.isArray(rounds) ? rounds.length : 0;
         chatDebugLog('chat.store.detail', 'payload-loaded', {
           sessionId: targetSessionId,
           desktopMode: isDesktopModeEnabled(),
@@ -788,7 +809,9 @@ export const chatSessionOpenLoadActions = {
           Array.isArray(finalCachedMessages) &&
           finalCachedMessages.length > 0 &&
           previousHydratedVersion === hydratedVersion;
+        perfReusedHydratedMessages = canReuseHydratedMessages;
         let messages = finalCachedMessages;
+        perfHydrateStart = perfEnabled ? performance.now() : 0;
         if (canReuseHydratedMessages) {
           getSessionWorkflowState(targetSessionId, { reset: true });
           messages = mergeFinalTranscriptAssistantDuplicates(
@@ -809,6 +832,9 @@ export const chatSessionOpenLoadActions = {
             messages = dedupeAssistantMessages(messages);
           }
           messages = mergeFinalTranscriptAssistantDuplicates(messages);
+        }
+        if (perfEnabled) {
+          perfHydrateMs = performance.now() - perfHydrateStart;
         }
         if (compactionHydrationRounds.length > 0) {
           chatDebugLog('chat.compaction.hydrate', 'load-session-detail', {
@@ -1013,6 +1039,7 @@ export const chatSessionOpenLoadActions = {
         if (activeSessionKey !== targetSessionId) {
           return sessionDetail;
         }
+        perfForegroundSyncStart = perfEnabled ? performance.now() : 0;
         this.draftAgentId = resolvedAgentIdText;
         persistActiveSession(targetSessionId, resolvedAgentIdText);
         this.draftToolOverrides = null;
@@ -1027,6 +1054,9 @@ export const chatSessionOpenLoadActions = {
         });
         applyMessageWindow(this, targetSessionId, this.messages);
         syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
+        if (perfEnabled) {
+          perfForegroundSyncMs = performance.now() - perfForegroundSyncStart;
+        }
         if (hydrateForegroundMessages) {
           const pendingMessage = findPendingAssistantMessage(this.messages);
           if (pendingMessage && remoteRunning) {
@@ -1090,6 +1120,22 @@ export const chatSessionOpenLoadActions = {
           startSessionWatcher(this, targetSessionId);
         }
         void this.refreshSessionSubagents(targetSessionId).catch(() => null);
+        if (perfEnabled) {
+          chatPerf.recordDuration('chat_session_detail_load', performance.now() - perfStart, {
+            sessionId: targetSessionId,
+            desktopMode: isDesktopModeEnabled(),
+            fetchMs: perfFetchMs === null ? null : Number(perfFetchMs.toFixed(1)),
+            hydrateMs: perfHydrateMs === null ? null : Number(perfHydrateMs.toFixed(1)),
+            foregroundSyncMs:
+              perfForegroundSyncMs === null ? null : Number(perfForegroundSyncMs.toFixed(1)),
+            reusedHydratedMessages: perfReusedHydratedMessages,
+            remoteRunning: perfRemoteRunning,
+            transcriptCount: perfTranscriptCount,
+            eventCount: perfEventCount,
+            roundCount: perfRoundCount,
+            messageCount: Array.isArray(this.messages) ? this.messages.length : 0
+          });
+        }
         return sessionDetail;
       });
     },

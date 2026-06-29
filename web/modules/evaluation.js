@@ -17,7 +17,7 @@ const benchmarkState = {
   activeStatus: "idle",
   viewRunId: "",
   viewDetail: null,
-  selectedProfileId: "quick",
+  selectedProfileId: "full",
   progress: { completedAttempts: 0, totalAttempts: 0, currentTaskId: "", hint: "" },
   refreshTimer: null,
   elapsedTimer: null,
@@ -350,11 +350,9 @@ function renderProfileOptions() {
   const profiles = benchmarkState.profiles.length
     ? benchmarkState.profiles
     : [
-        { id: "quick", name: "Quick Smoke", task_count: 0, recommended_runs: 1 },
-        { id: "core", name: "Core Capability", task_count: 0, recommended_runs: 2 },
         { id: "full", name: "Full Suite", task_count: 0, recommended_runs: 2 },
       ];
-  const fallback = profiles.find((profile) => profile.default)?.id || profiles[0]?.id || "quick";
+  const fallback = profiles.find((profile) => profile.default)?.id || profiles[0]?.id || "full";
   if (!profiles.some((profile) => profile.id === benchmarkState.selectedProfileId)) {
     benchmarkState.selectedProfileId = fallback;
   }
@@ -378,17 +376,13 @@ function renderProfileOptions() {
 
 function formatProfileName(profileId, fallback) {
   return {
-    quick: "快速",
-    core: "标准",
     full: "全量",
   }[profileId] || fallback || profileId || "-";
 }
 
 function formatProfileDescription(profileId, fallback) {
   return {
-    quick: "快速巡检，适合日常验证",
-    core: "标准评估，适合模型对比",
-    full: "全量回归，适合发布前确认",
+    full: "运行全部可用题目，适合发布前确认和模型对比",
   }[profileId] || fallback || "";
 }
 
@@ -491,7 +485,7 @@ function clearDetail() {
   }
 
   if (refs.summaryText) {
-    refs.summaryText.textContent = "暂无运行。选择快速、标准或全量档位后开始评测。";
+    refs.summaryText.textContent = "暂无运行。WunderBench 将运行全量题库。";
   }
   refs.progressFill.style.width = "0%";
   refs.progressText.textContent = "0 / 0";
@@ -661,7 +655,7 @@ async function loadCatalog() {
   benchmarkState.catalogLoaded = true;
   renderProfileOptions();
   updatePrimaryAction();
-  setFormStatus("选择快速、标准或全量后开始评测");
+  setFormStatus("WunderBench 现在统一运行全量题库");
 }
 
 async function loadHistory() {
@@ -724,7 +718,7 @@ function buildStartPayload() {
 
   return {
     user_id: userId,
-    profile: benchmarkState.selectedProfileId || "quick",
+    profile: "full",
     model_name: String(refs.modelSelect?.value || "").trim() || undefined,
     judge_model_name: String(refs.judgeModelSelect?.value || "").trim() || undefined,
     capture_artifacts: true,
@@ -892,7 +886,7 @@ function bindEvents() {
     if (!button) {
       return;
     }
-    benchmarkState.selectedProfileId = String(button.dataset.profileId || "quick") || "quick";
+    benchmarkState.selectedProfileId = String(button.dataset.profileId || "full") || "full";
     renderProfileOptions();
     const selected = benchmarkState.profiles.find((profile) => profile.id === benchmarkState.selectedProfileId);
     setFormStatus(`当前档位：${formatProfileName(benchmarkState.selectedProfileId, selected?.name)}`);

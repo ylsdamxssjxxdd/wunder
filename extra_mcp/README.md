@@ -1,10 +1,10 @@
 ﻿# MCP Server (FastMCP)
 
-`extra_mcp` 是 wunder 的独立 MCP 服务（Python/FastMCP），用于提供数据库与知识库工具。  
+`extra_mcp` 是 wunder 的独立 MCP 服务（Python/FastMCP），用于提供数据库、知识库与 PPT 生成工具。  
 和主服务内置 MCP 的关系如下：
 
 - 内置 `wunder` MCP（Rust，`src/services/mcp.rs`）：端点 `/wunder/mcp`，工具固定为 `excute`、`doc2md`
-- 独立 `extra_mcp`（本目录）：默认端点 `/mcp`，工具按 `config/mcp_config.json` 动态生成（`db_query*`、`db_export*`、`kb_query*`）
+- 独立 `extra_mcp`（本目录）：默认端点 `/mcp`，工具按 `config/mcp_config.json` 动态生成（`db_query*`、`db_export*`、`kb_query*`），并内置 `ppt_write`、`ppt_refine`、`ppt_read`、`ppt_template_read`、`ppt_delete`
 
 ## 1. 启动 `extra_mcp`
 
@@ -36,6 +36,9 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 若 `db_export*` 的 `path` 使用 `/workspaces/{user_id}/exports/...`（提示词里会自动替换成当前工作区根路径），导出文件会直接落到智能体当前工作区，并在结果中返回精简后的 `path` 与 `workspace_relative_path`
 - 可用 `database.export_root` 或环境变量 `EXTRA_MCP_EXPORT_ROOT` 配置导出根目录（默认 `exports/extra_mcp`）；`db_export*` 的 `path` 参数必须是相对该根目录的相对路径
 - 若希望 `db_export*` 直接写入 Wunder 工作区，`extra-mcp` 进程必须能看到与 `wunder-server` 相同的工作区根目录；Docker Compose 已通过共享 `wunder_workspaces:/workspaces` 卷打通该路径
+- PPT 工具产物默认写入 `/workspaces/.extra_mcp/ppt/<presentation_id>/`；也可以把 `ppt_write`/`ppt_refine`/`ppt_delete` 的 `output_path` 写成 `/workspaces/{user_id}/exports/report.pptx`，让文件直接落到当前工作区
+- PPT 工具内置 6 套可选模板：`amber_clear`、`executive_green`、`research_blue`、`finance_ink`、`creative_coral`、`minimal_gray`。模型可先调用 `ppt_template_read` 空参数读取模板列表，再把选定的 `template_id` 传给 `ppt_write` 或 `ppt_refine`
+- 可用 `ppt.root` 或环境变量 `EXTRA_MCP_PPT_ROOT` 覆盖 PPT 产物根目录；Docker Compose 已把 `/workspaces` 挂到 `extra-mcp` 容器内
 
 ## 2. `mcp_config.json` 最小示例
 
@@ -72,6 +75,11 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
         "dataset_ids": ["REPLACE_WITH_DATASET_ID"]
       }
     }
+  },
+  "ppt": {
+    "root": "/workspaces/.extra_mcp/ppt",
+    "workspace_root": "/workspaces",
+    "workspace_public_root": "/workspaces"
   }
 }
 ```
@@ -125,6 +133,16 @@ mcp:
 
 首次接入 `extra_mcp` 后，请在管理端 MCP 页面执行一次“连接/刷新工具”，把拉取到的 `tool_specs` 保存到配置中，避免模型侧无可用工具描述。
 如果修改了 `database.tables[*].key`、`database.tables[*].name`、`knowledge.targets[*].key`、`knowledge.targets[*].name`、`table` 或目标 `key`，也需要重新刷新一次工具规格。
+新增或升级 PPT 工具后，同样需要刷新一次工具规格；如果 `allow_tools` 不是空列表，请至少加入 `ppt_write`、`ppt_refine`、`ppt_read`、`ppt_template_read`、`ppt_delete`。
+
+### PPT 生成任务推荐流程
+
+1. 如需选择内置风格，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。
+2. 首次生成调用 `ppt_write`，传入豆包式 XML：`<slides><slide><prompt>...</prompt></slide></slides>`，并按需传入 `template_id`。
+3. 保存返回的 `presentation_id` 与每页 `slide_id`；后续局部修改或整体换模板用 `ppt_refine`。
+4. 如需读取已有内容或确认页面 ID，用 `ppt_read`。
+5. 如用户提供模板或已有 PPTX，先用 `ppt_template_read` 读取页面摘要。
+6. 产物优先写入 `/workspaces/{user_id}/exports/...`，便于 Wunder 工作区直接展示和 OnlyOffice 打开。
 
 ### 导出型任务推荐流程
 

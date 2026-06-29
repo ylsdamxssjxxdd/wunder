@@ -954,7 +954,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
                   }
                   ctx.hydrateWorkspaceResources();
               });
-          }, 90);
+          }, ctx.desktopMode?.value ? 180 : 90);
       });
   };
 

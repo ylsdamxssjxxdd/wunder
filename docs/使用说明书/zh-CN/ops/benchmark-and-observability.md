@@ -78,7 +78,7 @@ Wunder 的观测分为四类各有分工的能力：
 - 工具调用成功率、稳定性、效率与上下文消耗
 - 不同模型的能力对比
 - 版本间的能力回归检测
-- `quick`、`core`、`full` 三档自动任务选择
+- `full` 全量题库评测，也可按任务组或任务 ID 手动筛选复查
 
 ### 与压测的区别
 
@@ -180,6 +180,6 @@ Server 模式下，运行日志保存在 `config/data/logs/server/`：
 ## 延伸阅读
 
 - [可观测性](/docs/zh-CN/concepts/core-observability/) —— 观测的设计原则
-- [WunderBench 模型评测](/docs/zh-CN/ops/wunderbench/) —— 三档评测、导出和题库扩展
+- [WunderBench 模型评测](/docs/zh-CN/ops/wunderbench/) —— 全量题库评测、导出和题库扩展
 - [会话状态说明](/docs/zh-CN/reference/stream-events/) —— 状态指标含义
 - [管理端面板指南](/docs/zh-CN/reference/admin-panels/) —— 监控入口

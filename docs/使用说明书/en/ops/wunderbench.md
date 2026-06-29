@@ -1,6 +1,6 @@
 ---
 title: WunderBench Model Evaluation
-summary: Use three evaluation profiles to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.
+summary: Use the full benchmark suite to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.
 read_when:
   - You need to evaluate model quality inside Wunder's real agent pipeline
   - You need to export full benchmark records with model logs, tool calls, and workspace artifacts
@@ -28,7 +28,7 @@ Open **Debug / WunderBench** in the admin console.
 
 The page has four main operations:
 
-- **Choose a profile**: quick, core, or full.
+- **Run the full suite**: WunderBench runs every available task by default; quick, core, and full profile tiers are no longer separate choices.
 - **Choose the tested model**: the model that actually performs the task.
 - **Choose the judge model**: used only by `llm_judge` and `hybrid` tasks.
 - **Export evaluation record**: download a JSON package with run details, attempts, task specs, and model logs.
@@ -45,21 +45,19 @@ Admin APIs are also available:
 | Export record | `GET /wunder/admin/wunderbench/runs/{run_id}/export` |
 | Cancel run | `POST /wunder/admin/wunderbench/runs/{run_id}/cancel` |
 
-## Three Profiles
+## Evaluation Scope
 
-WunderBench intentionally exposes only three profiles so the workflow stays easy to remember.
+WunderBench now exposes a single evaluation scope: `full`. It runs every available task so model comparison is consistent across runs.
 
-| Profile | Purpose | Selection Rule | Recommended Runs |
-|---------|---------|----------------|------------------|
-| `quick` | Fast smoke test for model and tool readiness | Selects one lightweight high-priority task per suite | 1 |
-| `core` | Regular regression check across core capabilities | Starts from quick and adds more key tasks | 2 |
-| `full` | Release or deep comparison run | Runs every available task | 2 |
+| Scope | Purpose | Selection Rule | Recommended Runs |
+|-------|---------|----------------|------------------|
+| `full` | Model selection, release validation, and regression comparison | Runs every available task | 2 |
 
-Recommended usage:
+Compatibility notes:
 
-- Run `quick` after everyday development changes to catch obvious pipeline failures.
-- Run `core` after changing models, prompts, or tool policies.
-- Run `full` before releases, major model switches, or benchmark changes, then export the record.
+- `/wunder/admin/wunderbench/profiles` returns only `full`.
+- Old clients or scripts may still send `quick`, `core`, or `standard`; the backend normalizes those values to `full`.
+- You can still pass `suite_ids` or `task_ids` to manually narrow the task set when investigating a suite or failed task.
 
 ## Tested Model and Judge Model
 
@@ -76,7 +74,7 @@ The **judge model** assists scoring. It does not execute the task and is only us
 
 Built-in task specs live in `config/benchmark/tasks/*.md`; optional assets live in `config/benchmark/assets/`.
 
-Current suites cover four areas:
+Current suites cover these areas:
 
 | Suite | Main Capability | Current Focus |
 |-------|-----------------|---------------|
@@ -84,6 +82,10 @@ Current suites cover four areas:
 | `coding-agent` | Code understanding, bug fixing, command validation | Locate defects, edit code, run checks, explain changes |
 | `office-workflow` | Office writing, triage, response drafting | Understand constraints, extract priorities, produce usable text |
 | `knowledge-memory` | Multi-document comparison, summarization, structured extraction | Extract changes, identify impact, produce concise conclusions |
+| `data-analysis` | CSV metric calculation, threshold detection, structured insight | Aggregate tables, flag risk, and write concise summaries |
+| `ops-observability` | Log anomaly analysis and runbook drafting | Parse logs, apply rules, and produce troubleshooting guidance |
+| `devops-workflow` | CI configuration repair and pipeline constraints | Make minimal config fixes while preserving critical steps |
+| `security-triage` | Dependency risk ranking and remediation guidance | Assign priorities and actions from a fixed policy |
 
 The current benchmark is a practical early baseline for Wunder's core agent abilities. It is not a general model leaderboard. Future suites should add long-context tasks, multi-turn collaboration, browser operations, channel workflows, complex tool chains, and recovery-from-failure cases.
 
@@ -219,7 +221,7 @@ Common frontmatter fields:
 |-------|-------------|
 | `id` | Globally unique task id; `task_` prefix is recommended |
 | `name` | Display name |
-| `suite` | Suite id for profile selection and weak-suite aggregation |
+| `suite` | Suite id for manual filtering and weak-suite aggregation |
 | `category` | Task category |
 | `grading_type` | `automated`, `llm_judge`, or `hybrid` |
 | `timeout_seconds` | Attempt timeout; internally clamped to at least 30 seconds |
@@ -268,7 +270,7 @@ Good WunderBench tasks should be:
 - **Gradable**: at least part of the result can be checked automatically.
 - **Bounded**: explicitly require all reads and writes to stay inside `{attempt_root}`.
 - **Diagnosable**: scoring items distinguish understanding failures, tool failures, format failures, and missing artifacts.
-- **Cost-controlled**: avoid making quick/core runs slow because of a few oversized tasks.
+- **Cost-controlled**: avoid letting a few oversized tasks slow down full-suite runs.
 
 Avoid tasks that:
 

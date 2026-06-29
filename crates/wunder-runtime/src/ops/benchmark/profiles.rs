@@ -1,9 +1,7 @@
-use super::spec::{BenchmarkGradingType, BenchmarkTaskSpec};
+use super::spec::BenchmarkTaskSpec;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
-const PROFILE_QUICK: &str = "quick";
-const PROFILE_CORE: &str = "core";
 const PROFILE_FULL: &str = "full";
 
 #[derive(Debug, Clone)]
@@ -14,35 +12,14 @@ pub struct BenchmarkProfileSelection {
 }
 
 pub fn available_profiles(tasks: &[BenchmarkTaskSpec]) -> Vec<Value> {
-    let quick_count = select_quick_tasks(tasks).len();
-    let core_count = select_core_tasks(tasks).len();
-    let full_count = tasks.len();
-    vec![
-        json!({
-            "id": PROFILE_QUICK,
-            "name": "Quick Smoke",
-            "description": "Fast automated pass for model/tool readiness.",
-            "task_count": quick_count,
-            "recommended_runs": 1,
-            "default": true,
-        }),
-        json!({
-            "id": PROFILE_CORE,
-            "name": "Core Capability",
-            "description": "Balanced Wunder task coverage with automated and judge scoring.",
-            "task_count": core_count,
-            "recommended_runs": 2,
-            "default": false,
-        }),
-        json!({
-            "id": PROFILE_FULL,
-            "name": "Full Suite",
-            "description": "All available WunderBench tasks.",
-            "task_count": full_count,
-            "recommended_runs": 2,
-            "default": false,
-        }),
-    ]
+    vec![json!({
+        "id": PROFILE_FULL,
+        "name": "Full Suite",
+        "description": "Runs every available WunderBench task.",
+        "task_count": tasks.len(),
+        "recommended_runs": 2,
+        "default": true,
+    })]
 }
 
 pub fn resolve_profile_tasks(
@@ -56,12 +33,7 @@ pub fn resolve_profile_tasks(
     let selected = if manual_filter {
         filter_tasks(tasks, suite_ids, task_ids)
     } else {
-        match profile.as_str() {
-            PROFILE_QUICK => select_quick_tasks(&tasks),
-            PROFILE_CORE => select_core_tasks(&tasks),
-            PROFILE_FULL => tasks,
-            _ => select_quick_tasks(&tasks),
-        }
+        tasks
     };
     let suite_ids = collect_suite_ids(&selected);
     BenchmarkProfileSelection {
@@ -94,18 +66,13 @@ pub fn build_scorecard(task_aggregates: &[Value], attempts: &[Value]) -> Value {
 }
 
 fn normalize_profile(profile: Option<&str>) -> String {
-    let raw = profile
+    let _ = profile
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(PROFILE_QUICK)
+        .unwrap_or(PROFILE_FULL)
         .to_lowercase();
-    match raw.as_str() {
-        "smoke" | "fast" => PROFILE_QUICK.to_string(),
-        "standard" | "balanced" => PROFILE_CORE.to_string(),
-        "all" | "complete" => PROFILE_FULL.to_string(),
-        PROFILE_QUICK | PROFILE_CORE | PROFILE_FULL => raw,
-        _ => PROFILE_QUICK.to_string(),
-    }
+    // Historical quick/core/standard aliases are accepted but now all map to the only profile.
+    PROFILE_FULL.to_string()
 }
 
 fn has_non_empty(values: &[String]) -> bool {
@@ -136,65 +103,6 @@ fn filter_tasks(
                     || task_filter.contains(&task.frontmatter.id.to_lowercase()))
         })
         .collect()
-}
-
-fn select_quick_tasks(tasks: &[BenchmarkTaskSpec]) -> Vec<BenchmarkTaskSpec> {
-    let mut by_suite = BTreeMap::<String, Vec<&BenchmarkTaskSpec>>::new();
-    for task in tasks {
-        by_suite
-            .entry(task.frontmatter.suite.clone())
-            .or_default()
-            .push(task);
-    }
-    let mut selected = Vec::new();
-    for (_, mut suite_tasks) in by_suite {
-        suite_tasks.sort_by_key(|task| task_sort_key(task));
-        if let Some(task) = suite_tasks.first() {
-            selected.push((*task).clone());
-        }
-    }
-    selected
-}
-
-fn select_core_tasks(tasks: &[BenchmarkTaskSpec]) -> Vec<BenchmarkTaskSpec> {
-    let mut selected = select_quick_tasks(tasks);
-    let mut selected_ids = selected
-        .iter()
-        .map(|task| task.id().to_string())
-        .collect::<HashSet<_>>();
-    let mut ranked = tasks.iter().collect::<Vec<_>>();
-    ranked.sort_by_key(|task| task_sort_key(task));
-    for task in ranked {
-        if selected_ids.contains(task.id()) {
-            continue;
-        }
-        selected_ids.insert(task.id().to_string());
-        selected.push(task.clone());
-        if selected.len() >= tasks.len().min(8) {
-            break;
-        }
-    }
-    selected
-}
-
-fn task_sort_key(task: &BenchmarkTaskSpec) -> (u8, u8, u64, String) {
-    let grading_rank = match task.grading_type() {
-        BenchmarkGradingType::Automated => 0,
-        BenchmarkGradingType::Hybrid => 1,
-        BenchmarkGradingType::LlmJudge => 2,
-    };
-    let difficulty_rank = match task.frontmatter.difficulty.trim().to_lowercase().as_str() {
-        "easy" => 0,
-        "medium" => 1,
-        "hard" => 2,
-        _ => 1,
-    };
-    (
-        grading_rank,
-        difficulty_rank,
-        task.timeout_seconds(),
-        task.id().to_string(),
-    )
 }
 
 fn collect_suite_ids(tasks: &[BenchmarkTaskSpec]) -> Vec<String> {
@@ -378,7 +286,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn quick_profile_selects_one_fast_task_per_suite() {
+    fn any_profile_selects_the_full_task_set() {
         let tasks = vec![
             task(
                 "task_a",
@@ -408,8 +316,8 @@ mod tests {
             .iter()
             .map(|task| task.id())
             .collect::<Vec<_>>();
-        assert_eq!(selection.profile, "quick");
-        assert_eq!(ids, vec!["task_b", "task_c"]);
+        assert_eq!(selection.profile, "full");
+        assert_eq!(ids, vec!["task_a", "task_b", "task_c"]);
         assert_eq!(selection.suite_ids, vec!["suite-a", "suite-b"]);
     }
 

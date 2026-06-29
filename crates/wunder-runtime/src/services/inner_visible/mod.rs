@@ -45,6 +45,18 @@ const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const FILE_TIME_EPSILON_S: f64 = 0.001;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InnerVisibleSyncMode {
+    Bidirectional,
+    RuntimeToFiles,
+}
+
+impl InnerVisibleSyncMode {
+    fn allows_file_import(self) -> bool {
+        matches!(self, Self::Bidirectional)
+    }
+}
+
 #[derive(Clone)]
 pub struct InnerVisibleService {
     config_store: ConfigStore,
@@ -107,22 +119,38 @@ impl InnerVisibleService {
     }
 
     pub async fn sync_user_state(&self, user_id: &str) -> Result<()> {
+        self.sync_user_state_with_mode(user_id, InnerVisibleSyncMode::Bidirectional)
+            .await
+    }
+
+    pub async fn materialize_user_state(&self, user_id: &str) -> Result<()> {
+        self.sync_user_state_with_mode(user_id, InnerVisibleSyncMode::RuntimeToFiles)
+            .await
+    }
+
+    async fn sync_user_state_with_mode(
+        &self,
+        user_id: &str,
+        mode: InnerVisibleSyncMode,
+    ) -> Result<()> {
         let user_lock = self.ensure_user_sync_lock(user_id).await;
         let _guard = user_lock.lock().await;
         let paths = self.ensure_scaffold(user_id)?;
         self.user_store.ensure_default_hive(user_id)?;
         self.user_tool_store.ensure_materialized(user_id)?;
-        self.validate_json_file(
-            tooling_path(&paths),
-            "failed to parse user global tooling config",
-        );
-        self.validate_worker_card_file(
-            defaults_worker_card_path(&paths),
-            "failed to parse global defaults worker-card",
-        );
 
         let config = self.config_store.get().await;
-        self.ensure_declared_skills_enabled_from_worker_cards(user_id, &paths, &config)?;
+        if mode.allows_file_import() {
+            self.validate_json_file(
+                tooling_path(&paths),
+                "failed to parse user global tooling config",
+            );
+            self.validate_worker_card_file(
+                defaults_worker_card_path(&paths),
+                "failed to parse global defaults worker-card",
+            );
+            self.ensure_declared_skills_enabled_from_worker_cards(user_id, &paths, &config)?;
+        }
         let skills = self.skills.read().await.clone();
         let bindings = self
             .user_tool_manager
@@ -136,6 +164,7 @@ impl InnerVisibleService {
             &allowed_tool_names,
             &worker_card_skill_names,
             &bindings,
+            mode,
         )?;
         self.sync_regular_agents(
             user_id,
@@ -143,6 +172,7 @@ impl InnerVisibleService {
             &allowed_tool_names,
             &worker_card_skill_names,
             &bindings,
+            mode,
         )?;
         Ok(())
     }
@@ -241,6 +271,7 @@ impl InnerVisibleService {
         allowed_tool_names: &HashSet<String>,
         worker_card_skill_names: &HashSet<String>,
         bindings: &UserToolBindings,
+        mode: InnerVisibleSyncMode,
     ) -> Result<()> {
         let mut config = self.load_default_agent_config(user_id, allowed_tool_names)?;
         let has_persisted_state = self.has_persisted_default_agent_state(user_id)?;
@@ -251,8 +282,12 @@ impl InnerVisibleService {
             .unwrap_or(0.0);
 
         // File changes win only when they are strictly newer than the runtime snapshot.
-        if latest_file_mtime + FILE_TIME_EPSILON_S >= config.updated_at
-            || (!has_persisted_state && latest_file_mtime > 0.0)
+        if mode.allows_file_import()
+            && should_apply_worker_card_file(
+                latest_file_mtime,
+                config.updated_at,
+                has_persisted_state,
+            )
         {
             match self.apply_default_agent_file(
                 user_id,
@@ -297,6 +332,7 @@ impl InnerVisibleService {
         allowed_tool_names: &HashSet<String>,
         worker_card_skill_names: &HashSet<String>,
         bindings: &UserToolBindings,
+        mode: InnerVisibleSyncMode,
     ) -> Result<()> {
         let mut by_id: HashMap<String, UserAgentRecord> = self
             .user_store
@@ -307,7 +343,9 @@ impl InnerVisibleService {
             .collect();
         let mut agent_ids = BTreeSet::new();
         agent_ids.extend(by_id.keys().cloned());
-        agent_ids.extend(discover_agent_ids(&paths.agents_dir)?);
+        if mode.allows_file_import() {
+            agent_ids.extend(discover_agent_ids(&paths.agents_dir)?);
+        }
 
         for agent_id in agent_ids {
             if agent_id == DEFAULT_AGENT_ID_ALIAS {
@@ -321,10 +359,15 @@ impl InnerVisibleService {
                 .unwrap_or(0.0);
             let record_updated_at = record.as_ref().map(|item| item.updated_at).unwrap_or(0.0);
 
-            let final_record = if let Some(worker_card_file) = worker_card_file
-                .as_ref()
-                .filter(|_| worker_card_mtime + FILE_TIME_EPSILON_S >= record_updated_at)
-            {
+            let final_record = if let Some(worker_card_file) =
+                worker_card_file.as_ref().filter(|_| {
+                    mode.allows_file_import()
+                        && should_apply_worker_card_file(
+                            worker_card_mtime,
+                            record_updated_at,
+                            record.is_some(),
+                        )
+                }) {
                 match self.apply_agent_files(
                     user_id,
                     &agent_id,
@@ -1062,6 +1105,20 @@ fn file_modified_ts(path: &Path) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn should_apply_worker_card_file(
+    worker_card_mtime: f64,
+    record_updated_at: f64,
+    has_persisted_record: bool,
+) -> bool {
+    if worker_card_mtime <= 0.0 {
+        return false;
+    }
+    if !has_persisted_record || record_updated_at <= 0.0 {
+        return true;
+    }
+    worker_card_mtime > record_updated_at + FILE_TIME_EPSILON_S
+}
+
 fn now_ts() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1290,6 +1347,80 @@ mod tests {
 
         let scoped_user_id = workspace.scoped_user_id_by_container("alice", 0);
         assert_eq!(workspace.workspace_root(&scoped_user_id), private_root);
+    }
+
+    #[tokio::test]
+    async fn sync_user_state_keeps_saved_agent_settings_over_stale_worker_card() {
+        let (_temp, user_store, service, _workspace) = build_service().await;
+        let user_id = "alice";
+        let agent_id = "agent_saved_settings";
+        let now = now_ts();
+        user_store
+            .upsert_user_agent(&UserAgentRecord {
+                agent_id: agent_id.to_string(),
+                user_id: user_id.to_string(),
+                hive_id: DEFAULT_HIVE_ID.to_string(),
+                name: "Before Save".to_string(),
+                description: "desc".to_string(),
+                system_prompt: "old prompt".to_string(),
+                preview_skill: false,
+                model_name: None,
+                ability_items: Vec::new(),
+                tool_names: Vec::new(),
+                declared_tool_names: Vec::new(),
+                declared_skill_names: Vec::new(),
+                visible_unit_ids: Vec::new(),
+                preset_questions: Vec::new(),
+                access_level: "A".to_string(),
+                approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+                is_shared: false,
+                status: DEFAULT_AGENT_STATUS.to_string(),
+                icon: None,
+                sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+                created_at: now,
+                updated_at: now,
+                preset_binding: None,
+                silent: false,
+                prefer_mother: false,
+            })
+            .expect("seed agent");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("initial sync");
+
+        let mut saved = user_store
+            .get_user_agent(user_id, agent_id)
+            .expect("query agent")
+            .expect("agent exists");
+        saved.name = "After Save".to_string();
+        saved.system_prompt = "saved prompt".to_string();
+        saved.updated_at = file_modified_ts(&find_worker_card_file(
+            &service.private_root(user_id),
+            agent_id,
+        ));
+        user_store
+            .upsert_user_agent(&saved)
+            .expect("save updated agent");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("sync after save");
+        let updated = user_store
+            .get_user_agent(user_id, agent_id)
+            .expect("query updated agent")
+            .expect("agent exists");
+        assert_eq!(updated.name, "After Save");
+        assert_eq!(updated.system_prompt, "saved prompt");
+
+        let worker_card_file = find_worker_card_file(&service.private_root(user_id), agent_id);
+        let document: WorkerCardDocument =
+            serde_json::from_str(&fs::read_to_string(worker_card_file).expect("read card"))
+                .expect("parse card");
+        assert_eq!(document.metadata.name, "After Save");
+        assert_eq!(document.extra_prompt, Some("saved prompt".to_string()));
     }
 
     #[tokio::test]

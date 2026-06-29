@@ -280,7 +280,7 @@ impl BenchmarkManager {
         let profile = run_payload
             .get("profile")
             .and_then(Value::as_str)
-            .unwrap_or("quick")
+            .unwrap_or("full")
             .to_string();
         let summary = build_run_summary(
             cleaned,
@@ -867,11 +867,8 @@ fn resolve_model_name(requested: Option<&str>, config: &Config) -> Option<String
         .map(|(name, _)| name.clone())
 }
 
-fn default_runs_per_task(profile: &str) -> u32 {
-    match profile {
-        "quick" => 1,
-        _ => 2,
-    }
+fn default_runs_per_task(_profile: &str) -> u32 {
+    2
 }
 
 fn read_string_list(value: Option<&Value>) -> Vec<String> {

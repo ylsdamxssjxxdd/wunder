@@ -2326,7 +2326,7 @@ fn save_default_agent_config(
 }
 
 async fn sync_inner_visible_after_user_change(state: &AppState, user_id: &str) {
-    if let Err(err) = state.inner_visible.sync_user_state(user_id).await {
+    if let Err(err) = state.inner_visible.materialize_user_state(user_id).await {
         tracing::warn!("failed to sync inner-visible state for {user_id}: {err}");
     }
 }

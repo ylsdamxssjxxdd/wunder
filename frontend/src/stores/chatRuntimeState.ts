@@ -499,6 +499,11 @@ export const cloneSessionEventsPayload = (payload) => {
   return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
 };
 
+const asSessionPayloadRecord = (payload) =>
+  payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : null;
+
 const buildSessionEventsCachePayload = (cloned) => {
   if (
     shouldUseDesktopChatMemoryGuard() &&
@@ -517,6 +522,26 @@ const buildSessionEventsCachePayload = (cloned) => {
 export const cloneSessionDetailPayload = (payload) => {
   const cloned = cloneSerializable(payload, null);
   return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
+};
+
+const buildDesktopSessionEventsCachePayload = (payload): Record<string, unknown> | null => {
+  const record = asSessionPayloadRecord(payload);
+  if (!record) return null;
+  const { events: _events, rounds: _rounds, ...rest } = record as Record<string, unknown>;
+  return {
+    ...rest,
+    events: [],
+    rounds: []
+  };
+};
+
+const buildDesktopSessionDetailCachePayload = (payload): Record<string, unknown> | null => {
+  const record = asSessionPayloadRecord(payload);
+  if (!record) return null;
+  const { transcript: _transcript, ...rest } = record as Record<string, unknown>;
+  return {
+    ...rest
+  };
 };
 
 const buildSessionDetailCachePayload = (cloned) => {
@@ -672,6 +697,16 @@ export const cacheSessionDetailSnapshot = (sessionId, payload) => {
   const sessionKey = resolveSessionKey(sessionId);
   if (!sessionKey) return null;
   touchDesktopChatSession(sessionKey);
+  if (shouldUseDesktopChatMemoryGuard()) {
+    const payloadRecord = asSessionPayloadRecord(payload);
+    if (!payloadRecord) return null;
+    sessionDetailSnapshotCache.set(sessionKey, {
+      cachedAt: Date.now(),
+      payload: buildDesktopSessionDetailCachePayload(payloadRecord)
+    });
+    pruneDesktopChatMemoryForStore(null, null);
+    return payloadRecord;
+  }
   const clonedPayload = cloneSessionDetailPayload(payload);
   const cachedPayload = buildSessionDetailCachePayload(clonedPayload);
   sessionDetailSnapshotCache.set(sessionKey, {
@@ -707,6 +742,24 @@ export const cacheSessionEventsSnapshot = (sessionId, payload) => {
   if (!sessionKey) return null;
   const baseSessionKey = resolveSessionKey(sessionId);
   touchDesktopChatSession(baseSessionKey);
+  if (shouldUseDesktopChatMemoryGuard()) {
+    const payloadRecord = asSessionPayloadRecord(payload);
+    if (!payloadRecord) return null;
+    const cachedPayload = buildDesktopSessionEventsCachePayload(payloadRecord);
+    sessionEventsSnapshotCache.set(sessionKey, {
+      cachedAt: Date.now(),
+      limit: normalizeSessionEventsSnapshotLimit(
+        cachedPayload?.limit ?? cachedPayload?.requested_limit ?? null
+      ),
+      running: cachedPayload?.running === true,
+      lastEventId: normalizeStreamEventId(
+        cachedPayload?.last_event_id ?? cachedPayload?.lastEventId
+      ),
+      payload: cachedPayload
+    });
+    pruneDesktopChatMemoryForStore(null, null);
+    return payloadRecord;
+  }
   const clonedPayload = cloneSessionEventsPayload(payload);
   const cachedPayload = buildSessionEventsCachePayload(clonedPayload);
   sessionEventsSnapshotCache.set(sessionKey, {

@@ -1237,237 +1237,6 @@ const renderServiceMetrics = (service) => {
   }
 };
 
-const sumBy = (items, key) =>
-  (Array.isArray(items) ? items : []).reduce((sum, item) => sum + (Number(item?.[key]) || 0), 0);
-
-const maxBy = (items, key) =>
-  (Array.isArray(items) ? items : []).reduce(
-    (max, item) => Math.max(max, Number(item?.[key]) || 0),
-    0
-  );
-
-const formatMs = (value) => {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) {
-    return "0ms";
-  }
-  if (number >= 1000) {
-    return `${(number / 1000).toFixed(1)}s`;
-  }
-  return `${Math.round(number)}ms`;
-};
-
-const MONITOR_RUNTIME_SOURCE_LABELS = {
-  blocking: "阻塞入口",
-  queue: "队列",
-  long_task: "长任务",
-  runtime: "运行时",
-};
-
-const MONITOR_RUNTIME_KIND_LABELS = {
-  db: "数据库",
-  fs: "文件系统",
-  cpu: "CPU",
-  external: "外部调用",
-};
-
-const MONITOR_RUNTIME_LABELS = {
-  "api.a2a.message.run": "A2A 消息执行",
-  "api.a2a.message.stream": "A2A 消息流",
-  "api.a2a.task.subscribe": "A2A 任务订阅",
-  "api.chat.events.load_stream": "聊天事件流加载",
-  "api.chat.events.tail": "聊天事件尾部读取",
-  "api.chat_ws.approval_forward": "聊天审批转发",
-  "api.chat_ws.resume_stream": "聊天流恢复",
-  "api.chat_ws.stream_request": "聊天流式请求",
-  "api.chat_ws.watch_stream": "聊天流观察",
-  "api.core_ws.resume_stream": "核心流恢复",
-  "api.core_ws.stream_request": "核心流式请求",
-  "api.external_workflows.accepted_run": "外部工作流接收执行",
-  "api.external_workflows.stream_run": "外部工作流流式执行",
-  "api.user_context.authenticate_token": "用户令牌认证",
-  "api.user_context.get_user": "用户信息读取",
-  "api.ws_helpers.resume_stream_events": "流事件恢复读取",
-  "channels.outbox.bootstrap_accounts": "渠道出站账号启动",
-  "cron.action.list_jobs": "定时任务列表",
-  "goal.get": "目标读取",
-  "goal.list": "目标列表",
-  "orchestrator.execute.session_lock_heartbeat": "会话锁心跳",
-  "orchestrator.limiter.acquire": "编排限流获取",
-  "orchestrator.limiter.release": "编排限流释放",
-  "orchestrator.limiter.touch": "编排限流续期",
-  "orchestrator.memory.auto_extract.enabled": "记忆自动抽取开关读取",
-  "orchestrator.request.runner": "编排请求执行",
-  "orchestrator.request.stream_offset": "流事件偏移读取",
-  "orchestrator.stream_pump": "编排流转发",
-  "runtime.mission.execute_team_run": "任务运行执行",
-  "runtime.thread.execute_task": "线程任务执行",
-  "runtime.thread.goal_continuation.run": "目标续跑执行",
-  "server.auth_guard.authenticate_token": "管理令牌认证",
-  "services.history.load_messages": "历史消息加载",
-  "workspace.flush_writes": "工作区写入刷新",
-  "workspace.list_entries": "工作区目录读取",
-  "workspace.load_session_context_limit_hint": "会话上下文上限读取",
-  "workspace.load_session_context_overflow": "会话上下文溢出读取",
-  "workspace.load_session_context_tokens": "会话上下文 Token 读取",
-  "workspace.load_session_frozen_tool_overrides": "会话冻结工具覆盖读取",
-  "workspace.load_session_system_prompt": "会话系统提示读取",
-  "workspace.save_session_context_tokens": "会话上下文 Token 保存",
-};
-
-const MONITOR_RUNTIME_TEXT_REPLACEMENTS = [
-  [/queue_timeouts?/gi, "排队超时"],
-  [/exec_timeouts?/gi, "执行超时"],
-  [/join_errors?/gi, "任务错误"],
-  [/max_queue_ms/gi, "最大排队耗时"],
-  [/max_exec_ms/gi, "最大执行耗时"],
-  [/max_wait_ms/gi, "最大等待耗时"],
-  [/max_elapsed_ms/gi, "最大耗时"],
-  [/avg_queue_ms/gi, "平均排队耗时"],
-  [/avg_exec_ms/gi, "平均执行耗时"],
-  [/in_flight/gi, "进行中"],
-  [/warnings?/gi, "慢任务告警"],
-  [/panics?/gi, "异常退出"],
-  [/failed/gi, "失败"],
-  [/closed/gi, "已关闭"],
-  [/busy/gi, "忙碌"],
-  [/queue/gi, "队列"],
-  [/blocking/gi, "阻塞执行"],
-  [/long_task/gi, "长任务"],
-];
-
-const replaceRuntimeMetricText = (value) =>
-  MONITOR_RUNTIME_TEXT_REPLACEMENTS.reduce(
-    (result, [pattern, replacement]) => result.replace(pattern, replacement),
-    String(value || "").trim().replace(/[._]/g, " ")
-  );
-
-const formatRuntimeMetricLabel = (value) => {
-  const text = String(value || "").trim();
-  if (!text) {
-    return "-";
-  }
-  const lower = text.toLowerCase();
-  if (MONITOR_RUNTIME_LABELS[lower]) {
-    return MONITOR_RUNTIME_LABELS[lower];
-  }
-  if (MONITOR_RUNTIME_KIND_LABELS[lower]) {
-    return MONITOR_RUNTIME_KIND_LABELS[lower];
-  }
-  if (text.includes(".")) {
-    const segments = text
-      .split(".")
-      .map((segment) => replaceRuntimeMetricText(segment))
-      .filter(Boolean);
-    if (segments.length > 0) {
-      return segments.join(" · ");
-    }
-  }
-  return replaceRuntimeMetricText(text);
-};
-
-const formatRuntimeMetricSource = (value) => {
-  const key = String(value || "").trim().toLowerCase();
-  return MONITOR_RUNTIME_SOURCE_LABELS[key] || formatRuntimeMetricLabel(key);
-};
-
-const getMonitorToolsView = () => {
-  const value = String(state.runtime?.monitorToolsView || "heatmap").toLowerCase();
-  return value === "runtime" ? "runtime" : "heatmap";
-};
-
-const syncMonitorToolsView = () => {
-  const view = getMonitorToolsView();
-  if (elements.monitorToolsHeatmapBtn) {
-    elements.monitorToolsHeatmapBtn.classList.toggle("active", view === "heatmap");
-    elements.monitorToolsHeatmapBtn.setAttribute("aria-pressed", String(view === "heatmap"));
-  }
-  if (elements.monitorToolsRuntimeBtn) {
-    elements.monitorToolsRuntimeBtn.classList.toggle("active", view === "runtime");
-    elements.monitorToolsRuntimeBtn.setAttribute("aria-pressed", String(view === "runtime"));
-  }
-  if (elements.monitorToolsHeatmapPanel) {
-    elements.monitorToolsHeatmapPanel.classList.toggle("active", view === "heatmap");
-  }
-  if (elements.monitorToolsRuntimePanel) {
-    elements.monitorToolsRuntimePanel.classList.toggle("active", view === "runtime");
-  }
-};
-
-const setMonitorToolsView = (view) => {
-  state.runtime.monitorToolsView = view === "runtime" ? "runtime" : "heatmap";
-  syncMonitorToolsView();
-};
-
-const renderRuntimeMetrics = (runtime) => {
-  if (!elements.runtimeBlockingSummary) {
-    return;
-  }
-  const blocking = Array.isArray(runtime?.blocking) ? runtime.blocking : [];
-  const queues = Array.isArray(runtime?.queues) ? runtime.queues : [];
-  const longTasks = Array.isArray(runtime?.long_tasks) ? runtime.long_tasks : [];
-  const alerts = Array.isArray(runtime?.alerts) ? runtime.alerts : [];
-
-  const blockingCalls = sumBy(blocking, "calls");
-  const blockingInFlight = sumBy(blocking, "in_flight");
-  const blockingTimeouts =
-    sumBy(blocking, "queue_timeouts") + sumBy(blocking, "exec_timeouts") + sumBy(blocking, "join_errors");
-  elements.runtimeBlockingSummary.textContent = `${blockingCalls}`;
-  elements.runtimeBlockingDetail.textContent = `当前执行 ${blockingInFlight} / 最大排队 ${formatMs(
-    maxBy(blocking, "max_queue_ms")
-  )} / 最大执行 ${formatMs(maxBy(blocking, "max_exec_ms"))} / 超时 ${blockingTimeouts}`;
-
-  const queueEnqueued = sumBy(queues, "enqueued");
-  const queueBusy = sumBy(queues, "busy");
-  elements.runtimeQueueSummary.textContent = `${queueEnqueued}`;
-  elements.runtimeQueueDetail.textContent = `忙碌 ${queueBusy} / 失败 ${sumBy(
-    queues,
-    "failed"
-  )} / 最大等待 ${formatMs(maxBy(queues, "max_wait_ms"))}`;
-
-  const longStarted = sumBy(longTasks, "started");
-  const longWarnings = sumBy(longTasks, "warnings");
-  elements.runtimeLongTaskSummary.textContent = `${longStarted}`;
-  elements.runtimeLongTaskDetail.textContent = `当前运行 ${sumBy(
-    longTasks,
-    "in_flight"
-  )} / SLA 告警 ${longWarnings} / 最大完成耗时 ${formatMs(maxBy(longTasks, "max_elapsed_ms"))}`;
-
-  if (elements.runtimeMetricsAlertBadge) {
-    elements.runtimeMetricsAlertBadge.textContent = alerts.length ? `${alerts.length}` : "0";
-    elements.runtimeMetricsAlertBadge.dataset.status = alerts.some(
-      (item) => item?.severity === "critical"
-    )
-      ? "error"
-      : alerts.length
-        ? "warning"
-        : "ok";
-  }
-  if (!elements.runtimeMetricsAlerts) {
-    return;
-  }
-  elements.runtimeMetricsAlerts.textContent = "";
-  if (!alerts.length) {
-    const item = document.createElement("div");
-    item.className = "runtime-alert-item runtime-alert-item--ok";
-    item.textContent = t("monitor.runtime.alerts.empty");
-    elements.runtimeMetricsAlerts.appendChild(item);
-    return;
-  }
-  alerts.slice(0, 6).forEach((alert) => {
-    const item = document.createElement("div");
-    item.className = `runtime-alert-item runtime-alert-item--${alert.severity || "warning"}`;
-    item.textContent = [
-      formatRuntimeMetricSource(alert.source || "runtime"),
-      formatRuntimeMetricLabel(alert.label || "-"),
-      replaceRuntimeMetricText(alert.message || ""),
-    ]
-      .filter(Boolean)
-      .join(" | ");
-    elements.runtimeMetricsAlerts.appendChild(item);
-  });
-};
-
 // 渲染用户看板指标，复用用户管理页统计并加 TTL 避免频繁请求
 const ensureUserDashboardState = () => {
   if (!state.users || typeof state.users !== "object") {
@@ -2877,7 +2646,6 @@ export const loadMonitorData = async (options = {}) => {
     if (mode === "full") {
       renderMonitorMetrics(result.system);
       renderServiceMetrics(result.service);
-      renderRuntimeMetrics(result.runtime);
       refreshUserDashboardSummary({ silent: true });
       state.monitor.serviceSnapshot = result.service || null;
       state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];
@@ -4329,7 +4097,6 @@ export const initMonitorPanel = () => {
   bindMonitorPagination();
   bindMonitorSessionFilters();
   syncMonitorSessionFilterInputs();
-  syncMonitorToolsView();
   window.addEventListener("resize", resizeMonitorCharts);
   if (elements.monitorTimeRange) {
     applyMonitorTimeRange(elements.monitorTimeRange.value || state.monitor.timeRangeHours);
@@ -4431,12 +4198,6 @@ export const initMonitorPanel = () => {
         closeMonitorToolModal();
       }
     });
-  }
-  if (elements.monitorToolsHeatmapBtn) {
-    elements.monitorToolsHeatmapBtn.addEventListener("click", () => setMonitorToolsView("heatmap"));
-  }
-  if (elements.monitorToolsRuntimeBtn) {
-    elements.monitorToolsRuntimeBtn.addEventListener("click", () => setMonitorToolsView("runtime"));
   }
 };
 

@@ -342,58 +342,12 @@
                     <span data-role="title" data-i18n="monitor.chart.toolHeatmap.default">
                       近 3 小时工具调用热力图
                     </span>
-                    <div class="monitor-tools-switch" role="group" aria-label="监控视图切换">
-                      <button
-                        id="monitorToolsHeatmapBtn"
-                        class="monitor-switch-btn active"
-                        type="button"
-                        data-view="heatmap"
-                        data-i18n="monitor.switch.heatmap"
-                      >
-                        工具
-                      </button>
-                      <button
-                        id="monitorToolsRuntimeBtn"
-                        class="monitor-switch-btn"
-                        type="button"
-                        data-view="runtime"
-                        data-i18n="monitor.switch.runtime"
-                      >
-                        边界
-                      </button>
-                    </div>
                   </div>
-                  <div id="monitorToolsHeatmapPanel" class="monitor-tools-panel active">
-                    <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
-                      <div id="toolHeatmapGrid" class="tool-heatmap"></div>
-                    </div>
-                    <div id="toolHeatmapEmpty" class="tool-heatmap-empty" data-i18n="monitor.toolHeatmap.empty">
-                      暂无工具调用
-                    </div>
+                  <div id="toolHeatmapWrap" class="tool-heatmap-scroll">
+                    <div id="toolHeatmapGrid" class="tool-heatmap"></div>
                   </div>
-                  <div id="monitorToolsRuntimePanel" class="monitor-tools-panel">
-                    <div class="runtime-panel-head">
-                      <span data-i18n="monitor.runtime.title">运行时边界</span>
-                      <span id="runtimeMetricsAlertBadge" class="monitor-status runtime-alert-badge">-</span>
-                    </div>
-                    <div class="runtime-metrics-grid">
-                      <div class="runtime-metric-card">
-                        <div class="stat-label" data-i18n="monitor.runtime.blocking">阻塞入口累计</div>
-                        <div id="runtimeBlockingSummary" class="stat-value">-</div>
-                        <div id="runtimeBlockingDetail" class="monitor-subtext"></div>
-                      </div>
-                      <div class="runtime-metric-card">
-                        <div class="stat-label" data-i18n="monitor.runtime.queue">有界队列</div>
-                        <div id="runtimeQueueSummary" class="stat-value">-</div>
-                        <div id="runtimeQueueDetail" class="monitor-subtext"></div>
-                      </div>
-                      <div class="runtime-metric-card">
-                        <div class="stat-label" data-i18n="monitor.runtime.longTask">长任务</div>
-                        <div id="runtimeLongTaskSummary" class="stat-value">-</div>
-                        <div id="runtimeLongTaskDetail" class="monitor-subtext"></div>
-                      </div>
-                    </div>
-                    <div id="runtimeMetricsAlerts" class="runtime-alert-list"></div>
+                  <div id="toolHeatmapEmpty" class="tool-heatmap-empty" data-i18n="monitor.toolHeatmap.empty">
+                    暂无工具调用
                   </div>
                 </div>
               <div class="monitor-block monitor-block-token">
@@ -4487,7 +4441,7 @@
               <div class="evaluation-results benchmark-results">
                 <div class="monitor-block benchmark-summary-card">
                   <div class="monitor-block-title"><i class="fa-solid fa-flag-checkered"></i><span>运行概览</span></div>
-                  <pre id="benchmarkSummaryText" class="benchmark-summary-text">暂无运行。选择快速、标准或全量档位后开始评测。</pre>
+                  <pre id="benchmarkSummaryText" class="benchmark-summary-text">暂无运行。WunderBench 将运行全量题库。</pre>
                   <div class="evaluation-progress">
                     <div class="evaluation-progress-bar"><span id="benchmarkProgressFill"></span></div>
                     <div id="benchmarkProgressText" class="muted">0 / 0</div>

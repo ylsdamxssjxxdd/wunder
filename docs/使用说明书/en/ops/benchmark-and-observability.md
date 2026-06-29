@@ -78,11 +78,10 @@ Main endpoint:
 
 It is model evaluation for Wunder's real agent pipeline. It prepares tasks, runs the model through tools and workspace operations, captures artifacts, and produces automated scores plus a scorecard.
 
-Built-in profiles:
+Evaluation scope:
 
-- `quick`: fast readiness smoke test
-- `core`: balanced capability coverage
 - `full`: all available tasks
+- Optional `suite_ids` or `task_ids` filters for focused reruns
 
 Key scorecard fields:
 

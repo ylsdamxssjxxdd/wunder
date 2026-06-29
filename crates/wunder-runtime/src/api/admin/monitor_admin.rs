@@ -130,7 +130,6 @@ async fn admin_monitor(
     let response = Json(json!({
         "system": system,
         "service": service,
-        "runtime": runtime_metrics::snapshot(),
         "sandbox": sandbox,
         "sessions": sessions,
         "tool_stats": tool_stats

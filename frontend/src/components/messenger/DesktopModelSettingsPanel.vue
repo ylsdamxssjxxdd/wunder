@@ -141,6 +141,10 @@
                 @change="handleVirtualReplayLogSelection"
               >
                 <el-option
+                  :label="t('desktop.system.virtualReplayRandomOption')"
+                  value=""
+                />
+                <el-option
                   v-for="log in virtualReplayLogs"
                   :key="log.id"
                   :label="formatVirtualReplayLogLabel(log)"
@@ -506,9 +510,14 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
+  deleteDesktopVirtualReplayLog,
   fetchDesktopSettings,
+  listDesktopVirtualReplayLogs,
   probeDesktopLlmContextWindow,
   probeDesktopTtsVoices,
+  setDesktopVirtualReplayLogEnabled,
+  type DesktopVirtualReplayLog,
+  uploadDesktopVirtualReplayLog,
   updateDesktopSettings
 } from '@/api/desktop';
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
@@ -618,6 +627,13 @@ const selectedModelUid = ref('');
 const probingTtsVoices = ref(false);
 const ttsVoiceOptions = ref<string[]>([]);
 const lastTtsVoiceProbeKey = ref('');
+const virtualReplayLogs = ref<DesktopVirtualReplayLog[]>([]);
+const selectedVirtualReplayLogId = ref('');
+const loadingVirtualLogs = ref(false);
+const uploadingVirtualLog = ref(false);
+const updatingVirtualLog = ref(false);
+const deletingVirtualLog = ref(false);
+const virtualLogsLoaded = ref(false);
 let nextModelUid = 1;
 
 const DEFAULT_PROVIDER_ID = 'openai_compatible';
@@ -1122,6 +1138,179 @@ const modelNamePlaceholder = computed(() =>
     : t('desktop.system.modelNamePlaceholder')
 );
 
+const selectedVirtualReplayLog = computed(() => {
+  const id = String(selectedVirtualReplayLogId.value || '').trim();
+  if (!id) return null;
+  return virtualReplayLogs.value.find((log) => log.id === id) || null;
+});
+
+const selectedVirtualReplayStatus = computed(() => {
+  if (!virtualReplayLogs.value.length) {
+    return t('desktop.system.virtualReplayEmptyHint');
+  }
+  const selected = selectedVirtualReplayLog.value;
+  if (!selected) {
+    return t('desktop.system.virtualReplayRandomStatus');
+  }
+  return t('desktop.system.virtualReplayStatus', {
+    id: selected.id,
+    rounds: selected.user_rounds || 0,
+    state: selected.enabled
+      ? t('desktop.system.virtualReplayEnabled')
+      : t('desktop.system.virtualReplayDisabled')
+  });
+});
+
+const normalizeVirtualReplayLogs = (items: unknown): DesktopVirtualReplayLog[] =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const raw = (item || {}) as Record<string, unknown>;
+      return {
+        id: String(raw.id || '').trim(),
+        name: String(raw.name || raw.id || '').trim(),
+        enabled: raw.enabled !== false,
+        format: String(raw.format || '').trim(),
+        user_rounds: Number.isFinite(Number(raw.user_rounds)) ? Number(raw.user_rounds) : 0,
+        size_bytes: Number.isFinite(Number(raw.size_bytes)) ? Number(raw.size_bytes) : 0,
+        uploaded_at: String(raw.uploaded_at || '').trim()
+      };
+    })
+    .filter((log) => log.id);
+
+const resolveRequestErrorMessage = (error: unknown, fallbackKey: string): string => {
+  const responseDetail = (error as { response?: { data?: { detail?: unknown; message?: unknown } } })?.response
+    ?.data;
+  return (
+    String(responseDetail?.detail || responseDetail?.message || (error as { message?: unknown })?.message || '').trim() ||
+    t(fallbackKey)
+  );
+};
+
+const syncVirtualReplaySelectionFromModel = () => {
+  if (!selectedProviderIsVirtualReplay.value) {
+    selectedVirtualReplayLogId.value = '';
+    return;
+  }
+  const model = String(selectedModel.value?.model || '').trim();
+  selectedVirtualReplayLogId.value = virtualReplayLogs.value.some((log) => log.id === model) ? model : '';
+};
+
+const loadVirtualReplayLogs = async (force = false) => {
+  if (loadingVirtualLogs.value) return;
+  if (virtualLogsLoaded.value && !force) {
+    syncVirtualReplaySelectionFromModel();
+    return;
+  }
+  loadingVirtualLogs.value = true;
+  try {
+    const response = await listDesktopVirtualReplayLogs();
+    virtualReplayLogs.value = normalizeVirtualReplayLogs(response?.data?.logs);
+    virtualLogsLoaded.value = true;
+    syncVirtualReplaySelectionFromModel();
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(resolveRequestErrorMessage(error, 'desktop.system.virtualReplayLoadFailed'));
+  } finally {
+    loadingVirtualLogs.value = false;
+  }
+};
+
+const formatVirtualReplayLogLabel = (log: DesktopVirtualReplayLog): string => {
+  const name = log.name || log.id;
+  const state = log.enabled
+    ? t('desktop.system.virtualReplayEnabled')
+    : t('desktop.system.virtualReplayDisabled');
+  return `${name} - ${t('desktop.system.virtualReplayRounds', { rounds: log.user_rounds || 0 })} - ${state}`;
+};
+
+const handleVirtualReplayLogSelection = (value: string | number) => {
+  const current = selectedModel.value;
+  if (!current || !selectedProviderIsVirtualReplay.value) return;
+  const id = String(value || '').trim();
+  selectedVirtualReplayLogId.value = id;
+  current.model = id;
+};
+
+const handleVirtualReplayFileChange = async (uploadFile: { raw?: File; name?: string }) => {
+  const file = uploadFile?.raw;
+  if (!file) {
+    ElMessage.warning(t('desktop.system.virtualReplayFileRequired'));
+    return;
+  }
+  uploadingVirtualLog.value = true;
+  try {
+    const response = await uploadDesktopVirtualReplayLog(file, uploadFile.name || file.name);
+    virtualReplayLogs.value = normalizeVirtualReplayLogs(response?.data?.logs);
+    virtualLogsLoaded.value = true;
+    const uploadedId = String(response?.data?.log?.id || '').trim();
+    if (uploadedId) {
+      handleVirtualReplayLogSelection(uploadedId);
+    } else {
+      syncVirtualReplaySelectionFromModel();
+    }
+    ElMessage.success(t('desktop.system.virtualReplayUploadSuccess'));
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(resolveRequestErrorMessage(error, 'desktop.system.virtualReplayUploadFailed'));
+  } finally {
+    uploadingVirtualLog.value = false;
+  }
+};
+
+const toggleSelectedVirtualReplayLog = async () => {
+  const selected = selectedVirtualReplayLog.value;
+  if (!selected || updatingVirtualLog.value) return;
+  updatingVirtualLog.value = true;
+  try {
+    const response = await setDesktopVirtualReplayLogEnabled(selected.id, !selected.enabled);
+    virtualReplayLogs.value = normalizeVirtualReplayLogs(response?.data?.logs);
+    virtualLogsLoaded.value = true;
+    syncVirtualReplaySelectionFromModel();
+    ElMessage.success(t('desktop.system.virtualReplayUpdateSuccess'));
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(resolveRequestErrorMessage(error, 'desktop.system.virtualReplayUpdateFailed'));
+  } finally {
+    updatingVirtualLog.value = false;
+  }
+};
+
+const deleteSelectedVirtualReplayLog = async () => {
+  const selected = selectedVirtualReplayLog.value;
+  if (!selected || deletingVirtualLog.value) return;
+  try {
+    await ElMessageBox.confirm(
+      t('desktop.system.virtualReplayDeleteConfirm', { name: selected.name || selected.id }),
+      t('common.delete'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
+        confirmButtonClass: 'el-button--danger'
+      }
+    );
+  } catch {
+    return;
+  }
+  deletingVirtualLog.value = true;
+  try {
+    const response = await deleteDesktopVirtualReplayLog(selected.id);
+    virtualReplayLogs.value = normalizeVirtualReplayLogs(response?.data?.logs);
+    virtualLogsLoaded.value = true;
+    if (selectedModel.value?.model === selected.id) {
+      handleVirtualReplayLogSelection('');
+    } else {
+      syncVirtualReplaySelectionFromModel();
+    }
+    ElMessage.success(t('desktop.system.virtualReplayDeleteSuccess'));
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(resolveRequestErrorMessage(error, 'desktop.system.virtualReplayDeleteFailed'));
+  } finally {
+    deletingVirtualLog.value = false;
+  }
+};
+
 const setCurrentDefaultLabel = computed(() => {
   const current = selectedModel.value;
   if (!current) return t('desktop.system.setDefaultChatModel');
@@ -1166,6 +1355,8 @@ const handleProviderChange = (value: string) => {
   if (isVirtualReplayProvider(nextProvider)) {
     current.base_url = '';
     current.api_key = '';
+    syncVirtualReplaySelectionFromModel();
+    void loadVirtualReplayLogs();
   }
   const prevDefault = resolveDefaultToolCallMode(previousProvider);
   const currentMode = normalizeToolCallMode(current.tool_call_mode, previousProvider);
@@ -1830,6 +2021,22 @@ watch(
 );
 
 watch(
+  () => {
+    const current = selectedModel.value;
+    return current ? `${current.uid}|${current.provider}|${current.model}` : '';
+  },
+  () => {
+    if (!selectedProviderIsVirtualReplay.value) {
+      selectedVirtualReplayLogId.value = '';
+      return;
+    }
+    void loadVirtualReplayLogs();
+    syncVirtualReplaySelectionFromModel();
+  },
+  { immediate: true }
+);
+
+watch(
   () => buildModelRowsSnapshot(),
   () => {
     emitModelRowsChange();
@@ -1937,8 +2144,34 @@ onMounted(() => {
   color: var(--portal-muted);
 }
 
+.desktop-model-settings-field-hint {
+  min-width: 0;
+  color: var(--portal-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .desktop-model-settings-input {
   width: 100%;
+}
+
+.desktop-model-settings-virtual {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #dfe5ee;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.desktop-model-settings-virtual-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .desktop-model-settings-inline {
@@ -2023,6 +2256,11 @@ onMounted(() => {
 
   .desktop-model-settings-inline {
     grid-template-columns: 1fr;
+  }
+
+  .desktop-model-settings-virtual-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

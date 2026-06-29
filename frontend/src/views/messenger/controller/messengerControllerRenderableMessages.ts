@@ -593,8 +593,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       if (!ctx.isAgentConversationActive.value) {
           return [];
       }
-      const renderableMessages = (ctx.agentRenderableMessages?.value || [])
-          .map((item) => item.message as Record<string, unknown>);
       if (ctx.shouldVirtualizeMessages?.value && ctx.agentVirtualWindow?.value?.enabled) {
           const renderable = [
               ...(ctx.visibleAgentRenderableMessages?.value || []),
@@ -602,6 +600,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           ];
           return ctx.collectUserAttachmentWorkspacePaths(renderable.map((item) => item.message));
       }
+      const renderableMessages = (ctx.agentRenderableMessages?.value || [])
+          .map((item) => item.message as Record<string, unknown>);
       return ctx.collectUserAttachmentWorkspacePaths(renderableMessages);
   });
 
