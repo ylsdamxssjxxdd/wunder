@@ -21,13 +21,13 @@ Organized by purpose. Quickly find what you need.
 | [CLI Usage](/docs/en/start/cli/) | Terminal-driven, automation |
 | [Server Deployment](/docs/en/start/server/) | Multi-user, unified management |
 
-## Interface
+## Hive & surfaces
 
 | Page | Content |
 |------|---------|
-| [User Interface](/docs/en/surfaces/frontend/) | Chat, files, agents, tools |
-| [Desktop Interface](/docs/en/surfaces/desktop-ui/) | Local-first workbench |
-| [Orchestration](/docs/en/surfaces/orchestration/) | Dedicated workbench for continuous swarm tasks |
+| [Hive Interface](/docs/en/surfaces/frontend/) | Chat, files, agents, tools |
+| [Desktop Interface](/docs/en/surfaces/desktop-ui/) | Hive's desktop form |
+| [Orchestration](/docs/en/surfaces/orchestration/) | Dedicated workspace for continuous swarm tasks |
 | [Admin Interface](/docs/en/surfaces/web-admin/) | Admin backend |
 
 ## Help

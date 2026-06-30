@@ -16,6 +16,7 @@ use crate::services::llm::is_llm_model;
 use crate::services::orchestration_context::{
     active_orchestration_for_agent, build_locked_thread_message, ORCHESTRATION_THREAD_LOCKED_CODE,
 };
+use crate::services::tools::resolve_tool_name;
 use crate::services::user_store::build_default_agent_record_from_storage;
 use crate::state::AppState;
 use crate::storage::{
@@ -1118,7 +1119,11 @@ async fn create_agent(
     };
     let mut tool_names = ability_selection.tool_names.clone();
     if !tool_names.is_empty() {
-        tool_names = filter_allowed_tools(&tool_names, &allowed_tool_names);
+        tool_names = filter_allowed_tools(
+            &tool_names,
+            &allowed_tool_names,
+            allow_desktop_control_tool_selection(&tool_context.config),
+        );
     }
 
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
@@ -1272,7 +1277,11 @@ async fn update_agent(
                 payload.declared_skill_names.clone(),
                 &skill_name_keys,
             );
-            config.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
+            config.tool_names = filter_allowed_tools(
+                &selection.tool_names,
+                &allowed,
+                allow_desktop_control_tool_selection(&tool_context.config),
+            );
             config.ability_items = selection.ability_items;
             config.declared_tool_names = selection.declared_tool_names;
             config.declared_skill_names = selection.declared_skill_names;
@@ -1358,7 +1367,11 @@ async fn update_agent(
             payload.declared_skill_names.clone(),
             &skill_name_keys,
         );
-        record.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
+        record.tool_names = filter_allowed_tools(
+            &selection.tool_names,
+            &allowed,
+            allow_desktop_control_tool_selection(&context.config),
+        );
         record.ability_items = selection.ability_items;
         record.declared_tool_names = selection.declared_tool_names;
         record.declared_skill_names = selection.declared_skill_names;
@@ -1784,12 +1797,51 @@ fn normalize_preset_questions(values: Vec<String>) -> Vec<String> {
     output
 }
 
-fn filter_allowed_tools(values: &[String], allowed: &HashSet<String>) -> Vec<String> {
-    values
+fn allow_desktop_control_tool_selection(config: &crate::config::Config) -> bool {
+    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+}
+
+fn filter_allowed_tools(
+    values: &[String],
+    allowed: &HashSet<String>,
+    allow_desktop_control_tools: bool,
+) -> Vec<String> {
+    let allowed_canonical: HashSet<String> = allowed
         .iter()
-        .filter(|name| allowed.contains(*name))
-        .cloned()
-        .collect()
+        .map(|name| resolve_tool_name(name.trim()))
+        .filter(|name| !name.is_empty())
+        .collect();
+    let desktop_control_tool_names = allow_desktop_control_tools.then(|| {
+        HashSet::from([
+            resolve_tool_name("desktop_controller"),
+            resolve_tool_name("desktop_monitor"),
+        ])
+    });
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let cleaned = raw.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let canonical = resolve_tool_name(cleaned);
+        let name = if allowed_canonical.contains(&canonical) {
+            canonical
+        } else if allowed.contains(cleaned) {
+            cleaned.to_string()
+        } else if desktop_control_tool_names
+            .as_ref()
+            .is_some_and(|names| names.contains(&canonical))
+        {
+            canonical
+        } else {
+            continue;
+        };
+        if seen.insert(name.clone()) {
+            output.push(name);
+        }
+    }
+    output
 }
 
 fn normalize_agent_status(raw: Option<&str>) -> String {
@@ -2511,8 +2563,8 @@ struct AgentUpdateRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_agent_payload, has_active_runtime_evidence, requested_create_ability_items,
-        AgentCreateRequest, DefaultAgentConfig,
+        default_agent_payload, filter_allowed_tools, has_active_runtime_evidence,
+        requested_create_ability_items, AgentCreateRequest, DefaultAgentConfig,
     };
     use crate::storage::SessionLockRecord;
     use serde_json::json;
@@ -2594,6 +2646,35 @@ mod tests {
         assert_eq!(payload["tool_names"], json!(["read_file", "planner"]));
         assert_eq!(payload["declared_tool_names"], json!(["read_file"]));
         assert_eq!(payload["declared_skill_names"], json!(["planner"]));
+    }
+
+    #[test]
+    fn filter_allowed_tools_keeps_desktop_tools_in_desktop_mode() {
+        let requested = vec![
+            "desktop_controller".to_string(),
+            "desktop_monitor".to_string(),
+            "unknown_tool".to_string(),
+        ];
+        let allowed = HashSet::new();
+
+        assert_eq!(
+            filter_allowed_tools(&requested, &allowed, true),
+            vec![
+                crate::tools::resolve_tool_name("desktop_controller"),
+                crate::tools::resolve_tool_name("desktop_monitor"),
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_allowed_tools_still_rejects_desktop_tools_outside_desktop_mode() {
+        let requested = vec![
+            "desktop_controller".to_string(),
+            "desktop_monitor".to_string(),
+        ];
+        let allowed = HashSet::new();
+
+        assert!(filter_allowed_tools(&requested, &allowed, false).is_empty());
     }
 
     #[test]

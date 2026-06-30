@@ -1,21 +1,21 @@
 ---
-title: User Interface
-summary: Your main workbench. Left navigation, middle list, right workspace — all daily work happens here.
+title: Hive Interface
+summary: Hive is your workbench. Left navigation, middle list, right workspace — all daily work happens here.
 ---
 
-# User Interface
+# Hive Interface
 
-The user interface is your main workbench. Conversations, file management, agent configuration, tool usage — it all happens here.
+Hive is your workbench. Conversations, file management, agent configuration, tool usage — it all happens here. Individuals open it via the [desktop app](/docs/en/start/desktop/); team members open it in a web browser. The interface and capabilities are identical.
 
-## Three-Column Layout
+## Three-column layout
 
-- **Left column**: Navigation (Chat, Files, Agents, Tools, Scheduled Tasks, Settings, Help)
-- **Middle column**: Lists (Session list, File list, Agent list, etc.)
-- **Right column**: Workspace (Chat, File preview, Settings panel, etc.)
+- **Left column**: navigation (Chat, Files, Agents, Tools, Scheduled Tasks, Settings, Help)
+- **Middle column**: lists (Session list, File list, Agent list, etc.)
+- **Right column**: workspace (Chat, File preview, Settings panel, etc.)
 
 ## Chat
 
-### Input Area
+### Input area
 
 More than just a text box:
 
@@ -28,7 +28,7 @@ More than just a text box:
 | **Audio upload** | Automatically transcribed to text |
 | **Video upload** | Frames extracted for analysis |
 
-### Slash Commands
+### Slash commands
 
 | Command | Action |
 |---------|--------|
@@ -37,13 +37,13 @@ More than just a text box:
 | `/compact` | Manually compress conversation |
 | `/help` | Open help docs |
 
-### Protection Mechanisms
+### Protection mechanisms
 
-- **Attachment processing**: Send button disabled until processing completes
-- **Thread running**: New thread button disabled until current one finishes or is stopped
-- **Orchestration mode**: Orchestration threads are read-only in the chat page; go to the orchestration page to operate
+- **Attachment processing**: send button disabled until processing completes
+- **Thread running**: new thread button disabled until current one finishes or is stopped
+- **Orchestration mode**: orchestration threads are read-only in the chat page; go to the orchestration page to operate
 
-## Orchestration Workbench
+## Orchestration workspace
 
 The orchestration page is for swarm tasks that need continuous advancement:
 
@@ -68,43 +68,43 @@ See [Orchestration](/docs/en/surfaces/orchestration/) for details.
 - Add dedicated memory
 - Each agent can have multiple threads
 
-## Tools & Skills
+## Tools & skills
 
 - View available tools list
 - Configure skills (capability packages)
 - Add knowledge bases for agent reference
 
-## Scheduled Tasks
+## Scheduled tasks
 
 - Create scheduled tasks
 - View execution history
 - Manage, pause, delete tasks
 - Manually trigger an execution
 
-## My Profile & Settings
+## My profile & settings
 
-### My Profile
+### My profile
 
 - Avatar, username, level
 - Experience progress bar
 - Usage statistics (sessions, tool calls, Token consumption)
 - Token account balance and trends
 
-### Account Management
+### Account management
 
 - Change username, email, password
 - View organization membership
 
-### System Settings
+### System settings
 
 - Interface language switching
 - Reset workspace state (for recovery)
 
-### Help Manual
+### Help manual
 
-- Embedded docs access without leaving the workbench
+- Embedded docs access without leaving Hive
 
-## Status Indicators
+## Status indicators
 
 Watch for status indicators in the interface:
 
@@ -112,8 +112,9 @@ Watch for status indicators in the interface:
 - ⏳ Waiting = Needs your input or approval
 - ✅ Complete = Ready to continue
 
-## Further Reading
+## Further reading
 
 - [Desktop Guide](/docs/en/start/desktop/)
+- [Desktop Interface](/docs/en/surfaces/desktop-ui/)
 - [Orchestration](/docs/en/surfaces/orchestration/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

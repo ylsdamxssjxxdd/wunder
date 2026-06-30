@@ -70,6 +70,8 @@ $buildArgs = @(
   'wunder-desktop',
   '--bin',
   'wunder-desktop-bridge',
+  '--features',
+  'desktop-control',
   '-Zbuild-std=std,panic_abort',
   '--target',
   $context.Target

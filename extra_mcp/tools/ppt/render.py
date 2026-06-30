@@ -24,10 +24,16 @@ BODY_FONT = "Microsoft YaHei"
 
 
 def render_manifest(manifest: PresentationManifest, output_path: Path) -> None:
+    manifest_template_id = str(manifest.theme.get("template_id") or "")
+    from .master_templates import is_master_template, render_master_manifest
+
+    if is_master_template(manifest_template_id):
+        render_master_manifest(manifest, output_path, manifest_template_id)
+        return
+
     prs = Presentation()
     prs.slide_width = Inches(SLIDE_W)
     prs.slide_height = Inches(SLIDE_H)
-    manifest_template_id = str(manifest.theme.get("template_id") or "")
 
     for index, slide in enumerate(manifest.slides, start=1):
         template_id = slide.template_id or manifest_template_id

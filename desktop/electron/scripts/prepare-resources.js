@@ -182,7 +182,7 @@ const ensureLinuxIconSet = () => {
 
 if (!fs.existsSync(bridgeSource)) {
   console.error(`[prepare] bridge binary not found: ${bridgeSource}`)
-  console.error('[prepare] build it first: cargo build --release -p wunder-desktop --bin wunder-desktop-bridge')
+  console.error('[prepare] build it first: cargo build --release -p wunder-desktop --bin wunder-desktop-bridge --features desktop-control')
   process.exit(1)
 }
 

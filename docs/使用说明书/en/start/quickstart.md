@@ -1,80 +1,78 @@
 ---
 title: Quick Start
-summary: The shortest path to complete your first task in wunder. Desktop by default, then Server or CLI.
+summary: The shortest path to open Hive, configure a model, and complete your first task.
 read_when:
   - You're using wunder for the first time
-  - You need to verify a working setup in 10 minutes
+  - You need to verify a working setup
 source_docs:
   - README.md
 ---
 
 # Quick Start
 
-This page does one thing: **help you complete your first task in 10 minutes**.
+This page helps you open Hive and complete your first task. Hive is where you work — individuals use the desktop app, team members use the web browser.
 
-## Step 1: Pick Your Path
+## Step 1: Open Hive
 
-| Your Situation | Recommended Path | Why |
-|----------------|-----------------|-----|
-| I just want to start using it now | [Desktop Guide](/docs/en/start/desktop/) | Lowest barrier, download and go |
-| I need team collaboration and management | [Server Deployment](/docs/en/start/server/) | Multi-user, permissions, unified management |
-| I'm a developer, I want automation | [CLI Usage](/docs/en/start/cli/) | Terminal-driven, scriptable |
+| Situation | What to do |
+|----------|--------|
+| Personal use | Install the [desktop app](/docs/en/start/desktop/), launch and go |
+| Team member | After an admin [deploys the server](/docs/en/start/server/), open Hive in a browser |
+| Automation / scripting | Use the [CLI](/docs/en/start/cli/) from a terminal |
 
----
+Not sure which to pick? Default to the desktop app — lowest barrier.
 
-## Shortest Path: Desktop (Recommended)
+## Shortest path: Desktop app
 
-For: Individual users, local demos
+For individual users, download and go.
 
-### 5 Steps to Get Running
+### 5 steps to get running
 
-1. **Download and Install**
+1. **Download and install**
    - Get the installer for your system from Releases
    - Install or extract, then launch
 
-2. **Configure Model**
+2. **Configure the model**
    - Open "System Settings" → "Model Configuration"
    - Enter your API Key and endpoint URL
    - Click "Test Connection" before saving
 
-3. **Start Your First Conversation**
+3. **Start your first conversation**
    - Go back to the chat interface
    - Type: `List the files in the current directory`
    - Press Enter
 
-4. **Watch It Work**
-   - You'll see: model thinks → calls tools → shows results → gives reply
+4. **Watch it work**
+   - Model thinks → calls tools → shows results → replies
 
 5. **Verify**
-   - Saw the full execution process and results? Congratulations, you're up and running!
+   - Saw the full execution process and results? You're up and running.
 
-### Desktop-Only Capabilities
+### Desktop-only capabilities
 
-- **Local-first**: Runs locally by default, can also connect to a remote server
-- **Desktop control**: Can operate local windows, files, browsers
-- **Persistent workspace**: Files are not auto-cleaned
-- **Direct agent editing**: Adjust agent configuration and prompts anytime
+- **Local-first**: runs locally by default, can also connect to a remote server
+- **Desktop control**: can operate local windows, files, browsers
+- **Persistent workspace**: files are not auto-cleaned
+- **Direct agent editing**: adjust agent configuration and prompts anytime
 
----
+## Team path: Web browser
 
-## Team Path: Server
-
-For: Multi-user collaboration, organizational governance
+For multi-user collaboration and organizational governance.
 
 ### Prerequisites
 
 - Docker and Docker Compose (recommended)
 - At least 4GB available memory
 
-### 3 Steps to Deploy
+### 3 steps to deploy
 
-1. **Get the Code**
+1. **Get the code**
    ```bash
    git clone <repo-url>
    cd wunder
    ```
 
-2. **Start the Service**
+2. **Start the service**
    ```bash
    # x86 architecture
    docker-compose -f docker-compose-x86.yml up -d
@@ -83,24 +81,24 @@ For: Multi-user collaboration, organizational governance
    docker-compose -f docker-compose-arm.yml up -d
    ```
 
-3. **Access the System**
-   - User frontend: http://localhost:18002
+3. **Open Hive**
+   - Hive: http://localhost:18002
    - Admin & docs: http://localhost:18000
    - Default admin: admin / admin
 
-### Server Core Capabilities
+Once deployed, team members open Hive in a browser — no client install needed.
 
-- **Multi-tenancy**: Users, organizations, layered permission management
+### Server core capabilities
+
+- **Multi-tenancy**: layered management of users, organizations, permissions
 - **Channel integration**: Feishu, WeChat, QQ, and more
-- **Observability**: Monitoring, benchmarking, capability evaluation
+- **Observability**: monitoring, benchmarking, capability evaluation
 
----
+## Developer path: CLI
 
-## Developer Path: CLI
+For developers and automation scripts.
 
-For: Developers, automation scripts
-
-### Install and Run
+### Install and run
 
 ```bash
 # Build (requires Rust)
@@ -110,22 +108,20 @@ cargo build --release
 ./target/release/wunder-cli
 ```
 
-### First Session
+### First session
 
 ```bash
 wunder-cli
 > Write a Hello World Python script
 ```
 
-### CLI-Only Capabilities
+### CLI-only capabilities
 
-- **TUI interface**: Terminal interaction similar to Codex
+- **TUI interface**: terminal interaction
 - **Session management**: `/fork`, `/compact`, `/resume`
-- **JSONL output**: Easy pipe and automation integration
+- **JSONL output**: easy pipe and automation integration
 
----
-
-## Verification Checklist
+## Verification checklist
 
 No matter which path you chose, confirm:
 
@@ -134,11 +130,10 @@ No matter which path you chose, confirm:
 - [ ] You can get the final result
 - [ ] You know what to read next
 
----
+## Next steps
 
-## Next Steps
-
-- Want to understand the system? → [Core Concepts](/docs/en/concepts/)
-- Need to integrate with your system? → [Integration Overview](/docs/en/integration/)
-- Running into issues? → [Troubleshooting](/docs/en/help/troubleshooting/)
-- Want to see all tools? → [Tools Overview](/docs/en/tools/)
+- Meet Hive → [Hive Interface](/docs/en/surfaces/frontend/)
+- Understand the system → [Core Concepts](/docs/en/concepts/)
+- Integrate with existing systems → [Integration Overview](/docs/en/integration/)
+- See all tools → [Tools Overview](/docs/en/tools/)
+- Running into issues → [Troubleshooting](/docs/en/help/troubleshooting/)

@@ -502,6 +502,7 @@ impl Orchestrator {
                             None,
                             None,
                             None,
+                            request_round,
                         );
                     }
                     user_message_appended = true;
@@ -695,6 +696,7 @@ impl Orchestrator {
                                     &user_id,
                                     &session_id,
                                     &messages,
+                                    round_info,
                                 );
                             }
                             return Err(err);
@@ -855,6 +857,7 @@ impl Orchestrator {
                             Some(&reasoning),
                             None,
                             None,
+                            round_info,
                         );
                     }
                     if answer.is_empty() {
@@ -924,6 +927,7 @@ impl Orchestrator {
                         Some(&assistant_reasoning),
                         assistant_history.persisted_tool_calls.as_ref(),
                         None,
+                        round_info,
                     );
                 }
 
@@ -1311,6 +1315,7 @@ impl Orchestrator {
                                 &session_id,
                                 &followup_message,
                                 "read_image_followup",
+                                round_info,
                             );
                             messages.push(followup_message);
                         }
@@ -1325,6 +1330,7 @@ impl Orchestrator {
                                 &session_id,
                                 &followup_message,
                                 "desktop_followup",
+                                round_info,
                             );
                             messages.push(followup_message);
                         }
@@ -1338,6 +1344,7 @@ impl Orchestrator {
                             None,
                             None,
                             history_tool_call_id.as_deref(),
+                            round_info,
                         );
 
                         self.append_tool_log(
@@ -1475,6 +1482,7 @@ impl Orchestrator {
                                 None,
                                 None,
                                 None,
+                                round_info,
                             );
                         }
                         if let Some(meta) = sessions_yield_meta.as_ref() {
@@ -1493,6 +1501,7 @@ impl Orchestrator {
                                 None,
                                 None,
                                 None,
+                                round_info,
                             );
                         }
 
@@ -1641,6 +1650,7 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        round_info,
                                     );
                                     should_finish = true;
                                     break;
@@ -1771,6 +1781,7 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        round_info,
                                     );
                                 }
                                 should_finish = true;
@@ -1852,6 +1863,7 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        round_info,
                                     );
                                 }
                                 should_finish = true;

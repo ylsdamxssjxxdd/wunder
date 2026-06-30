@@ -8,6 +8,7 @@ from pathlib import Path
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.oxml.ns import qn
 
 
 def _install_mcp_stub_if_missing() -> None:
@@ -188,3 +189,89 @@ def test_ppt_doubao_radar_template_supports_images(tmp_path, monkeypatch):
 
     prs = Presentation(created["output_path"])
     assert any(shape.shape_type == MSO_SHAPE_TYPE.PICTURE for shape in prs.slides[0].shapes)
+
+
+def test_ppt_master_template_uses_layouts_and_fonts(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    monkeypatch.setenv("EXTRA_MCP_PPT_ROOT", str(tmp_path / "ppt"))
+    monkeypatch.setenv("WUNDER_WORKSPACE_ROOT", str(workspace_root))
+
+    templates = _template_read_sync(template_id="", path="", max_slides=30)
+    master_ids = {item["template_id"] for item in templates["templates"] if item.get("type") == "master_template"}
+    assert "black_times_default" in master_ids
+
+    content = """
+    <slides>
+      <slide>
+        <type>cover</type>
+        <title>中文黑体与 Times New Roman</title>
+        <subtitle>Master Template Demo</subtitle>
+        <prompt>封面</prompt>
+      </slide>
+      <slide>
+        <type>toc</type>
+        <title>目录</title>
+        <bullet>母版复用</bullet>
+        <bullet>版式选择</bullet>
+        <bullet>字体规则</bullet>
+        <prompt>目录页</prompt>
+      </slide>
+      <slide>
+        <type>comparison</type>
+        <title>方案对比</title>
+        <item><title>代码模板</title><body>速度快；复刻灵活</body></item>
+        <item><title>母版模板</title><body>复用强；品牌一致</body></item>
+        <prompt>对比页</prompt>
+      </slide>
+      <slide>
+        <type>closing</type>
+        <title>结束页</title>
+        <body>最后一页强制使用结尾版式。</body>
+        <prompt>结尾</prompt>
+      </slide>
+    </slides>
+    """
+    created = _write_sync(
+        presentation_id="",
+        presentation_name="master-demo",
+        insert_before="",
+        content=content,
+        lang="xml",
+        template_id="black_times_default",
+        output_path="/workspaces/u1/exports/master-demo.pptx",
+        overwrite=True,
+    )
+    assert created["ok"] is True
+    assert created["template_id"] == "black_times_default"
+    assert created["slide_count"] == 4
+    assert Path(created["output_path"]).exists()
+
+    prs = Presentation(created["output_path"])
+    assert len(prs.slides) == 4
+    first_text = "\n".join(
+        shape.text for shape in prs.slides[0].shapes if getattr(shape, "has_text_frame", False)
+    )
+    last_text = "\n".join(
+        shape.text for shape in prs.slides[-1].shapes if getattr(shape, "has_text_frame", False)
+    )
+    assert "中文黑体与 Times New Roman" in first_text
+    assert "结束页" in last_text
+
+    run = _first_text_run(prs)
+    assert run is not None
+    fonts = run.font._element
+    assert fonts.find(qn("a:latin")).get("typeface") == "Times New Roman"
+    assert fonts.find(qn("a:ea")).get("typeface") == "SimHei"
+
+
+def _first_text_run(prs):
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    if run.text:
+                        return run
+    return None

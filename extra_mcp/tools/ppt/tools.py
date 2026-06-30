@@ -16,6 +16,12 @@ from .model import (
     normalize_slide_ids,
     parse_slides_payload,
 )
+from .master_templates import (
+    is_master_template,
+    list_master_templates,
+    master_template_summary,
+    normalize_master_template_id,
+)
 from .render import render_manifest, summarize_pptx
 from .storage import (
     create_presentation_dir,
@@ -32,6 +38,13 @@ from .templates import (
     list_builtin_templates,
     normalize_template_id,
 )
+
+
+def _normalize_any_template_id(template_id: str) -> str:
+    master_id = normalize_master_template_id(template_id)
+    if master_id:
+        return master_id
+    return normalize_template_id(template_id)
 
 
 def _error_response(exc: Exception) -> dict[str, Any]:
@@ -82,7 +95,7 @@ def _write_sync(
         if presentation_name.strip():
             manifest.presentation_name = presentation_name.strip()
         if template_id.strip():
-            manifest.theme["template_id"] = normalize_template_id(template_id)
+            manifest.theme["template_id"] = _normalize_any_template_id(template_id)
         existing = list(manifest.slides)
         if insert_before.strip():
             target_id = insert_before.strip()
@@ -101,7 +114,7 @@ def _write_sync(
             presentation_id=pid,
             presentation_name=presentation_name.strip() or "presentation",
             slides=normalize_slide_ids(new_slides),
-            theme={"template_id": normalize_template_id(template_id)},
+            theme={"template_id": _normalize_any_template_id(template_id)},
         )
 
     destination, metadata = resolve_output_path(
@@ -131,7 +144,7 @@ def _refine_sync(
     config = get_ppt_config()
     manifest = load_manifest(config, presentation_id)
     if template_id.strip():
-        manifest.theme["template_id"] = normalize_template_id(template_id)
+        manifest.theme["template_id"] = _normalize_any_template_id(template_id)
     updates = parse_slides_payload(content, lang)
     by_id = {slide.slide_id: slide for slide in manifest.slides}
     changed: list[str] = []
@@ -222,10 +235,20 @@ def _read_sync(*, presentation_id: str, path: str, slide_ids: list[str], max_sli
 def _template_read_sync(*, template_id: str, path: str, max_slides: int) -> dict[str, Any]:
     target = path.strip() or template_id.strip()
     if not target:
+        templates = list_builtin_templates()
+        master_templates = list_master_templates()
+        if master_templates:
+            templates.extend(master_templates)
         return {
             "ok": True,
             "type": "builtin_template_list",
-            "templates": list_builtin_templates(),
+            "templates": templates,
+        }
+    if is_master_template(target) and not path.strip():
+        return {
+            "ok": True,
+            "type": "master_template",
+            "template": master_template_summary(target),
         }
     if is_builtin_template(target) and not path.strip():
         return {
@@ -248,6 +271,7 @@ def register_tools(mcp: FastMCP) -> None:
             "使用方式对齐豆包 lark-ppt：content 优先传 XML，根节点为 <slides>，每个 <slide> 至少包含 <prompt>，"
             "也可包含 <type>/<title>/<subtitle>/<body>/<bullet>/<item>/<metric>/<template_id>/<template_slide_id>。"
             "可用 template_id 选择内置模板：amber_clear、executive_green、research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar。"
+            "也可选择 config/ppt_templates/<template_id>/template.json 定义的真实 PPTX 母版模板包，例如 black_times_default。"
             "页面可通过 <image src=\"/workspaces/.../image.png\"/> 或 JSON images 数组插入本地/工作区图片。"
             "请在 prompt 中详细写明主题、版式、文案、图表、配色、字体和素材使用要求。"
             "返回 presentation_id、pptx 路径与 slide_id，后续用 ppt_refine 精修。"
@@ -301,7 +325,8 @@ def register_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "内置模板 ID。可选：amber_clear、executive_green、research_blue、"
-                    "finance_ink、creative_coral、minimal_gray、doubao_radar。为空时使用 amber_clear。"
+                    "finance_ink、creative_coral、minimal_gray、doubao_radar；也可传 config/ppt_templates 下的母版模板包 ID。"
+                    "为空时使用 amber_clear。"
                 ),
                 title="模板 ID",
             ),
@@ -373,7 +398,7 @@ def register_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "可选内置模板 ID，用于重渲染整份 PPT 风格。可选：amber_clear、executive_green、"
-                    "research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar。"
+                    "research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar；也可传母版模板包 ID。"
                 ),
                 title="模板 ID",
             ),

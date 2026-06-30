@@ -1,11 +1,11 @@
 ---
 title: Desktop Interface
-summary: The main entry for individual users. Local-first workbench with direct file access and one-click reset.
+summary: Hive's desktop form. Local-first, with direct file access and one-click reset.
 ---
 
 # Desktop Interface
 
-Desktop is the main entry for individual users. It's not just a "shell" for the web — it's a local-first complete workbench.
+Desktop is Hive's local form, the main entry for individual users. It's not just a "shell" for the web — it's a local-first complete workbench.
 
 ## Desktop Features
 
@@ -28,7 +28,7 @@ Reset workspace state with one click when things go wrong.
 
 ## Interface Structure
 
-Desktop reuses the user interface's three-column layout, with additional desktop-specific features:
+Desktop reuses Hive's three-column layout, with additional desktop-specific features:
 
 - **Left column**: Navigation (Chat, Files, Agents, Tools, Settings, Desktop Settings, Reset)
 - **Middle column**: Lists
@@ -104,5 +104,5 @@ Yes. Copy the working directory and database files, then configure the paths on 
 ## Further Reading
 
 - [Desktop Guide](/docs/en/start/desktop/)
-- [User Interface](/docs/en/surfaces/frontend/)
+- [Hive Interface](/docs/en/surfaces/frontend/)
 - [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)

@@ -1414,6 +1414,64 @@ const toolSections = computed<ToolSection[]>(() =>
   }))
 );
 
+const DESKTOP_CONTROLLER_TOOL_NAME = '\u684c\u9762\u63a7\u5236\u5668';
+const DESKTOP_MONITOR_TOOL_NAME = '\u684c\u9762\u76d1\u89c6\u5668';
+
+const resolveDesktopToolKind = (value: unknown): 'controller' | 'monitor' | '' => {
+  const text = String(value || '').trim();
+  const normalized = text.toLowerCase();
+  if (
+    text === DESKTOP_CONTROLLER_TOOL_NAME ||
+    normalized === 'desktop_controller' ||
+    normalized === 'controller'
+  ) {
+    return 'controller';
+  }
+  if (
+    text === DESKTOP_MONITOR_TOOL_NAME ||
+    normalized === 'desktop_monitor' ||
+    normalized === 'monitor'
+  ) {
+    return 'monitor';
+  }
+  return '';
+};
+
+const resolveDesktopToolCatalogValues = () => {
+  const values = {
+    controller: '',
+    monitor: ''
+  };
+  for (const section of toolSections.value) {
+    for (const group of section.groups) {
+      for (const option of group.options) {
+        const kind = resolveDesktopToolKind(option.value);
+        if (kind && !values[kind]) {
+          values[kind] = option.value;
+        }
+      }
+    }
+  }
+  return values;
+};
+
+const normalizeAgentToolNamesForCatalog = (toolNames: unknown): string[] => {
+  const selected = filterUserAgentToolNames(toolNames, USER_AGENT_TOOL_CATALOG_OPTIONS);
+  const desktopValues = resolveDesktopToolCatalogValues();
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const name of selected) {
+    const desktopKind = resolveDesktopToolKind(name);
+    const value = desktopKind ? desktopValues[desktopKind] || name : name;
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    output.push(value);
+  }
+  return output;
+};
+
 const toolSearchNormalized = computed(() => String(toolSearchKeyword.value || '').trim().toLowerCase());
 
 const isToolOptionMatched = (option: ToolOption, keyword: string): boolean => {
@@ -1608,7 +1666,7 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     form.is_shared = false;
     form.system_prompt = String(agent.system_prompt || '');
     form.model_name = resolveConfiguredModelName(currentAgent.value);
-    form.tool_names = filterUserAgentToolNames(agent.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
+    form.tool_names = normalizeAgentToolNamesForCatalog(agent.tool_names);
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(
       agent.hive_id,

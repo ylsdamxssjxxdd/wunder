@@ -1,4 +1,4 @@
-﻿﻿---
+﻿﻿﻿﻿﻿---
 title: Desktop 入门
 summary: 个人用户优先看这页。下载安装即可使用，不需要先搭服务器。
 read_when:
@@ -13,7 +13,7 @@ updated_at: 2026-04-10
 
 # Desktop 入门
 
-Desktop 适合个人本地使用，不需要先搭 server，打开即是一套完整的智能体工作台。
+Desktop 是蜂巢的桌面端形态，适合个人本地使用，不需要先搭 server，打开即是完整的智能体工作台。
 
 ## 适用场景
 
@@ -101,7 +101,7 @@ Desktop 本地模式下，聊天区还会看到：
 
 ## 下一步
 
-- 想理解界面分区：[用户端界面](/docs/zh-CN/surfaces/frontend/)
+- 想理解界面分区：[蜂巢界面](/docs/zh-CN/surfaces/frontend/)
 - 想理解本地模式边界：[Desktop 本地模式](/docs/zh-CN/ops/desktop-local-mode/)
 - 想看蜂群协作：[蜂群协作](/docs/zh-CN/concepts/swarm/)
 - 遇到问题：[故障排查](/docs/zh-CN/help/troubleshooting/)

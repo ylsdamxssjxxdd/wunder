@@ -41,6 +41,12 @@ struct VisibleTranscriptPage {
     history_before_id: Option<i64>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct RunningTurnHint {
+    user_round: Option<i64>,
+    model_round: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 struct SessionModelRuntime {
     config_key: Option<String>,
@@ -400,7 +406,11 @@ async fn get_session(
     let session_running = monitor_active || !active_queue_tasks.is_empty();
     let mut transcript = std::mem::take(&mut transcript_page.transcript);
     project_queued_session_messages(&mut transcript, &active_queue_tasks, pure_queue_phase);
-    apply_session_running_state(&mut transcript, session_running);
+    apply_session_running_state(
+        &mut transcript,
+        session_running,
+        running_turn_hint(monitor_record.as_ref()),
+    );
     let transcript = transcript
         .into_iter()
         .enumerate()
@@ -1281,10 +1291,45 @@ fn project_queued_session_messages(
     }
 }
 
-fn apply_session_running_state(messages: &mut Vec<Value>, session_running: bool) {
+fn apply_session_running_state(
+    messages: &mut Vec<Value>,
+    session_running: bool,
+    turn_hint: RunningTurnHint,
+) {
     if !session_running {
         return;
     }
+    if let Some(user_turn_id) = resolve_running_user_turn_id(messages, turn_hint) {
+        let model_turn_id = resolve_running_model_turn_id(user_turn_id.as_str(), turn_hint);
+        if mark_existing_running_message(messages, user_turn_id.as_str(), model_turn_id.as_str()) {
+            return;
+        }
+        let mut placeholder = json!({
+            "role": "assistant",
+            "content": "",
+            "created_at": format_ts(now_ts()),
+            "message_id": format!("runtime:{user_turn_id}:assistant"),
+            "user_turn_id": user_turn_id,
+            "model_turn_id": model_turn_id,
+            "turn_index": i64::MAX,
+            "status": "streaming",
+            "stream_incomplete": true,
+        });
+        if let Value::Object(ref mut map) = placeholder {
+            if let Some(user_round) = turn_hint.user_round {
+                map.insert("user_turn_index".to_string(), json!(user_round));
+                map.insert("user_round".to_string(), json!(user_round));
+            }
+            if let Some(model_round) = turn_hint.model_round {
+                map.insert("model_turn_index".to_string(), json!(model_round));
+                map.insert("model_round".to_string(), json!(model_round));
+            }
+        }
+        let insert_at = running_placeholder_insert_index(messages, user_turn_id.as_str());
+        messages.insert(insert_at, placeholder);
+        return;
+    }
+
     let last_role = messages
         .last()
         .and_then(|item| item.get("role").and_then(Value::as_str))
@@ -1315,6 +1360,132 @@ fn apply_session_running_state(messages: &mut Vec<Value>, session_running: bool)
     }) {
         map.insert("stream_incomplete".to_string(), json!(true));
     }
+}
+
+fn mark_existing_running_message(
+    messages: &mut [Value],
+    user_turn_id: &str,
+    model_turn_id: &str,
+) -> bool {
+    let Some(Value::Object(map)) = messages.iter_mut().rev().find(|item| {
+        item.get("role")
+            .and_then(Value::as_str)
+            .map(|value| value == "assistant")
+            .unwrap_or(false)
+            && item
+                .get("user_turn_id")
+                .and_then(Value::as_str)
+                .map(|value| value == user_turn_id)
+                .unwrap_or(false)
+            && item
+                .get("model_turn_id")
+                .and_then(Value::as_str)
+                .map(|value| value == model_turn_id)
+                .unwrap_or(model_turn_id.is_empty())
+    }) else {
+        return false;
+    };
+    map.insert("stream_incomplete".to_string(), json!(true));
+    map.insert("status".to_string(), json!("streaming"));
+    true
+}
+
+fn running_placeholder_insert_index(messages: &[Value], user_turn_id: &str) -> usize {
+    let mut insert_at = None;
+    for (index, item) in messages.iter().enumerate() {
+        let item_user_turn_id = item.get("user_turn_id").and_then(Value::as_str);
+        if item_user_turn_id == Some(user_turn_id) {
+            insert_at = Some(index + 1);
+            continue;
+        }
+        if insert_at.is_some() && item_user_turn_id.is_some() {
+            break;
+        }
+    }
+    insert_at.unwrap_or(messages.len())
+}
+
+fn resolve_running_model_turn_id(user_turn_id: &str, turn_hint: RunningTurnHint) -> String {
+    let Some(model_round) = turn_hint.model_round else {
+        return format!("runtime:{user_turn_id}:model");
+    };
+    let Some(user_round) = turn_hint.user_round else {
+        return format!("runtime:{user_turn_id}:model:{model_round}");
+    };
+    let Some(session_id) = user_turn_id
+        .strip_prefix("user-turn:")
+        .and_then(|rest| rest.strip_suffix(format!(":round:{user_round}").as_str()))
+        .map(str::to_string)
+    else {
+        return format!("runtime:{user_turn_id}:model:{model_round}");
+    };
+    format!("model-turn:{session_id}:user:{user_round}:model:{model_round}")
+}
+
+fn resolve_running_user_turn_id(messages: &[Value], turn_hint: RunningTurnHint) -> Option<String> {
+    let user_round = turn_hint.user_round?;
+    messages
+        .iter()
+        .find(|item| {
+            item.get("role")
+                .and_then(Value::as_str)
+                .map(|role| role == "user")
+                .unwrap_or(false)
+                && item
+                    .get("user_turn_index")
+                    .and_then(Value::as_i64)
+                    .map(|index| index == user_round)
+                    .unwrap_or(false)
+        })
+        .and_then(|item| item.get("user_turn_id").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+fn running_turn_hint(record: Option<&Value>) -> RunningTurnHint {
+    let mut hint = RunningTurnHint::default();
+    let Some(record) = record else {
+        return hint;
+    };
+    if let Some(events) = record.get("events").and_then(Value::as_array) {
+        for event in events.iter().rev() {
+            let data = event.get("data").unwrap_or(event);
+            let Some(user_round) = positive_i64(data.get("user_round")) else {
+                continue;
+            };
+            hint.user_round = Some(user_round);
+            hint.model_round = positive_i64(data.get("model_round"));
+            break;
+        }
+        for event in events.iter().rev() {
+            let data = event.get("data").unwrap_or(event);
+            if hint.user_round.is_some() && positive_i64(data.get("user_round")) != hint.user_round
+            {
+                continue;
+            }
+            if hint.model_round.is_none() {
+                hint.model_round = positive_i64(data.get("model_round"));
+            }
+            if hint.model_round.is_some() {
+                break;
+            }
+        }
+    }
+    if hint.user_round.is_none() {
+        hint.user_round =
+            positive_i64(record.get("user_rounds")).or_else(|| positive_i64(record.get("rounds")));
+    }
+    hint
+}
+
+fn positive_i64(value: Option<&Value>) -> Option<i64> {
+    let parsed = value.and_then(|value| {
+        value.as_i64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<i64>().ok())
+        })
+    })?;
+    (parsed > 0).then_some(parsed)
 }
 
 fn extract_monitor_message_feedback_map(record: Option<&Value>) -> HashMap<i64, Value> {
@@ -1597,7 +1768,7 @@ mod tests {
         build_projected_queue_user_message, has_active_queue_task, history_page_cursor_after_merge,
         is_session_stream_active_or_queued, merge_visible_transcript_page,
         normalize_history_before_id, project_queued_session_messages,
-        raw_history_page_from_loaded_history,
+        raw_history_page_from_loaded_history, RunningTurnHint,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -1802,7 +1973,7 @@ mod tests {
         ];
 
         project_queued_session_messages(&mut messages, &[task], true);
-        apply_session_running_state(&mut messages, true);
+        apply_session_running_state(&mut messages, true, RunningTurnHint::default());
 
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[1]["role"], json!("assistant"));
@@ -1844,12 +2015,87 @@ mod tests {
         })];
 
         project_queued_session_messages(&mut messages, &[task], true);
-        apply_session_running_state(&mut messages, true);
+        apply_session_running_state(&mut messages, true, RunningTurnHint::default());
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], json!("user"));
         assert_eq!(messages[1]["role"], json!("assistant"));
         assert_eq!(messages[1]["stream_incomplete"], json!(true));
+    }
+
+    #[test]
+    fn running_state_uses_monitor_user_round_hint() {
+        let mut messages = vec![
+            json!({
+                "role": "user",
+                "content": "first",
+                "user_turn_id": "user-turn:sess_run:round:1",
+                "user_turn_index": 1,
+            }),
+            json!({
+                "role": "user",
+                "content": "second",
+                "user_turn_id": "user-turn:sess_run:round:2",
+                "user_turn_index": 2,
+            }),
+        ];
+
+        apply_session_running_state(
+            &mut messages,
+            true,
+            RunningTurnHint {
+                user_round: Some(1),
+                model_round: Some(2),
+            },
+        );
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], json!("assistant"));
+        assert_eq!(
+            messages[1]["user_turn_id"],
+            json!("user-turn:sess_run:round:1")
+        );
+        assert_eq!(
+            messages[1]["model_turn_id"],
+            json!("model-turn:sess_run:user:1:model:2")
+        );
+        assert_eq!(messages[2]["content"], json!("second"));
+    }
+
+    #[test]
+    fn running_state_inserts_placeholder_after_hinted_user_round() {
+        let mut messages = vec![
+            json!({
+                "role": "user",
+                "content": "first",
+                "user_turn_id": "user-turn:sess_run:round:1",
+                "user_turn_index": 1,
+            }),
+            json!({
+                "role": "user",
+                "content": "second",
+                "user_turn_id": "user-turn:sess_run:round:2",
+                "user_turn_index": 2,
+            }),
+        ];
+
+        apply_session_running_state(
+            &mut messages,
+            true,
+            RunningTurnHint {
+                user_round: Some(1),
+                model_round: Some(1),
+            },
+        );
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["content"], json!("first"));
+        assert_eq!(messages[1]["role"], json!("assistant"));
+        assert_eq!(
+            messages[1]["user_turn_id"],
+            json!("user-turn:sess_run:round:1")
+        );
+        assert_eq!(messages[2]["content"], json!("second"));
     }
 
     #[test]

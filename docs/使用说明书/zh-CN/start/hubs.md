@@ -1,6 +1,6 @@
 ﻿﻿---
 title: 说明书总览
-summary: 按角色快速找到用户需要的文档入口。
+summary: 按角色找到需要的文档入口。
 read_when:
   - 用户不确定先看哪一页
   - 用户希望按角色快速进入正确文档
@@ -10,7 +10,7 @@ source_docs:
 
 # 说明书总览
 
-这页是导航页，按角色直接带用户到可执行页面。
+这页是导航页，按角色直接带用户到可执行页面。所有人都在[蜂巢](/docs/zh-CN/surfaces/frontend/)里工作，区别只是如何打开蜂巢、能看到哪些管理能力。
 
 ## 我是普通用户
 
@@ -19,13 +19,13 @@ source_docs:
     <strong>快速开始</strong>
     <span>跑通第一个任务。</span>
   </a>
-  <a class="docs-card" href="/docs/zh-CN/start/desktop/">
-    <strong>Desktop 入门</strong>
-    <span>下载安装就能用。</span>
-  </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
-    <strong>用户端界面</strong>
+    <strong>蜂巢界面</strong>
     <span>聊天、文件、智能体、工具怎么用。</span>
+  </a>
+  <a class="docs-card" href="/docs/zh-CN/start/desktop/">
+    <strong>桌面端安装</strong>
+    <span>个人用户下载安装就能用。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/help/faq/">
     <strong>FAQ</strong>
@@ -37,7 +37,7 @@ source_docs:
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">
-    <strong>Server 部署</strong>
+    <strong>服务端部署</strong>
     <span>多人共用，统一管理。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
@@ -67,7 +67,7 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/">
     <strong>接入概览</strong>
-    <span>找到适合用户的接入方式。</span>
+    <span>找到适合的接入方式。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/tools/">
     <strong>工具总览</strong>

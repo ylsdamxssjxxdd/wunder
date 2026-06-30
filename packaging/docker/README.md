@@ -106,7 +106,7 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
   set -euo pipefail
   export CARGO_HOME=/app/.cargo/x86-20
   export CARGO_TARGET_DIR=/app/target/x86-20
-  cargo build --release -p wunder-desktop --bin wunder-desktop-bridge
+  cargo build --release -p wunder-desktop --bin wunder-desktop-bridge --features desktop-control
   cd /app
   npm install --prefer-offline --no-audit --no-fund --workspace wunder-desktop-electron
   cd /app/desktop/electron

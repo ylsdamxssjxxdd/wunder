@@ -21,7 +21,7 @@ The older topic pages were not removed. They were moved under [Reference Overvie
 
 - wunder is not centered on one-off answers. It is centered on whether a thread can keep running stably over time.
 - wunder does not bury capabilities inside prompts when it can instead formalize them as tools, events, and governance constraints.
-- wunder is not built for only one chat entry. Server, desktop, cli, and channel adapters are meant to share one kernel.
+- wunder is not built for only one chat entry. Hive (desktop app or web browser), the CLI, and channel adapters all reach the same shared kernel.
 - wunder does not add governance after feature work. It starts from concurrent multi-user access, long conversations, and high-risk toolchains by default.
 
 ## Why these eleven are core rather than ordinary features

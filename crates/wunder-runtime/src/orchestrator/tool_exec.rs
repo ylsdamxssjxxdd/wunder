@@ -23,6 +23,7 @@ impl Orchestrator {
         reasoning: Option<&str>,
         tool_calls: Option<&Value>,
         tool_call_id: Option<&str>,
+        round_info: RoundInfo,
     ) {
         let timestamp = Local::now().to_rfc3339();
         let content_value = content
@@ -39,6 +40,16 @@ impl Orchestrator {
             "session_id": session_id,
             "timestamp": timestamp,
         });
+        let has_round_info = round_info.user_round.is_some() || round_info.model_round.is_some();
+        if let Value::Object(ref mut map) = payload {
+            round_info.insert_into(map);
+            if has_round_info {
+                map.insert(
+                    "round_info_source".to_string(),
+                    Value::String("orchestrator".to_string()),
+                );
+            }
+        }
         if let Some(reasoning) = reasoning {
             let cleaned = reasoning.trim();
             if !cleaned.is_empty() {
@@ -94,6 +105,7 @@ impl Orchestrator {
         session_id: &str,
         message: &Value,
         source: &str,
+        round_info: RoundInfo,
     ) {
         let Some(payload) = normalize_model_context_message(message.clone()) else {
             return;
@@ -127,6 +139,7 @@ impl Orchestrator {
             payload.get("reasoning_content").and_then(Value::as_str),
             payload.get("tool_calls"),
             payload.get("tool_call_id").and_then(Value::as_str),
+            round_info,
         );
     }
 

@@ -69,8 +69,12 @@ pub(crate) fn persist_user_cancelled_turn_marker_sync(
     {
         return Ok(false);
     }
+    let user_round = history
+        .get(last_user_index)
+        .and_then(resolve_history_user_round);
     let now = now_ts();
-    let marker = build_user_cancelled_turn_marker_payload(session_id, cancel_source, now);
+    let marker =
+        build_user_cancelled_turn_marker_payload(session_id, cancel_source, now, user_round);
     workspace.append_chat(user_id, &marker)?;
     let _ = workspace.flush_writes();
     touch_session_after_cancel_marker(user_store, user_id, session_id, now);
@@ -127,6 +131,7 @@ pub(crate) fn build_user_cancelled_turn_marker_payload(
     session_id: &str,
     cancel_source: &str,
     now: f64,
+    user_round: Option<i64>,
 ) -> Value {
     let mut meta = json!({
         "type": CHAT_CANCEL_MARKER_META_TYPE,
@@ -140,14 +145,39 @@ pub(crate) fn build_user_cancelled_turn_marker_payload(
             map.insert("cancel_source".to_string(), json!(cleaned_source));
         }
     }
-    json!({
+    let mut payload = json!({
         "role": "assistant",
         "content": i18n::t("error.session_cancelled"),
         "session_id": session_id,
         "timestamp": format_ts(now),
         "stop_reason": CHAT_CANCEL_MARKER_STOP_REASON,
         "meta": meta,
-    })
+    });
+    if let (Some(user_round), Value::Object(ref mut map)) = (user_round, &mut payload) {
+        map.insert("user_round".to_string(), json!(user_round));
+        map.insert(
+            "round_info_source".to_string(),
+            Value::String("cancel_marker".to_string()),
+        );
+    }
+    payload
+}
+
+fn resolve_history_user_round(item: &Value) -> Option<i64> {
+    positive_i64(item.get("user_round"))
+        .or_else(|| positive_i64(item.get("userRound")))
+        .or_else(|| positive_i64(item.get("round")))
+}
+
+fn positive_i64(value: Option<&Value>) -> Option<i64> {
+    let parsed = value.and_then(|value| {
+        value.as_i64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<i64>().ok())
+        })
+    })?;
+    (parsed > 0).then_some(parsed)
 }
 
 pub(crate) fn is_visible_cancelled_turn_marker(item: &Value) -> bool {
@@ -582,12 +612,52 @@ mod tests {
     #[test]
     fn cancelled_turn_marker_builder_sets_visible_stop_reason() {
         let marker =
-            build_user_cancelled_turn_marker_payload("sess_cancel_payload", "ws_cancel", 1.0);
+            build_user_cancelled_turn_marker_payload("sess_cancel_payload", "ws_cancel", 1.0, None);
 
         assert!(is_visible_cancelled_turn_marker(&marker));
         assert_eq!(marker["role"], json!("assistant"));
         assert_eq!(marker["stop_reason"], json!("user_stop"));
         assert_eq!(marker["meta"]["type"], json!("session_cancelled"));
         assert_eq!(marker["meta"]["cancel_source"], json!("ws_cancel"));
+    }
+
+    #[test]
+    fn cancelled_turn_marker_inherits_last_user_round() {
+        let storage = build_chat_storage();
+        storage.ensure_initialized().expect("init storage");
+        let workspace = WorkspaceManager::new(
+            std::env::temp_dir().to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        );
+        let user_store = UserStore::new(storage.clone());
+        storage
+            .append_chat(
+                "user_cancel",
+                &json!({
+                    "role": "user",
+                    "content": "hello",
+                    "session_id": "sess_cancel_round",
+                    "timestamp": "2026-05-21T10:00:00+08:00",
+                    "user_round": 3
+                }),
+            )
+            .expect("append user");
+
+        assert!(persist_user_cancelled_turn_marker_sync(
+            &workspace,
+            &user_store,
+            "user_cancel",
+            "sess_cancel_round",
+            "rest_cancel"
+        )
+        .expect("persist marker"));
+        let history = storage
+            .load_chat_history("user_cancel", "sess_cancel_round", None)
+            .expect("load history");
+
+        assert_eq!(history[1]["user_round"], json!(3));
+        assert_eq!(history[1]["round_info_source"], json!("cancel_marker"));
     }
 }

@@ -669,6 +669,8 @@ pub(crate) async fn spawn_session_run(
                     elapsed,
                     model_name.as_deref(),
                     announce.label.as_deref(),
+                    announce.parent_user_round,
+                    announce.parent_model_round,
                 );
             }
             if announce.emit_parent_events || announce.auto_wake {

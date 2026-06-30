@@ -1086,6 +1086,11 @@ pub(super) fn apply_tool_overrides(
 }
 
 fn resolve_override_name_with_allowed(raw: &str, allowed: &HashSet<String>) -> Option<String> {
+    let allowed_canonical: HashSet<String> = allowed
+        .iter()
+        .map(|name| crate::tools::resolve_tool_name(name.trim()))
+        .filter(|name| !name.is_empty())
+        .collect();
     let cleaned = raw.trim();
     if cleaned.is_empty() {
         return None;
@@ -1093,10 +1098,18 @@ fn resolve_override_name_with_allowed(raw: &str, allowed: &HashSet<String>) -> O
     if allowed.contains(cleaned) {
         return Some(cleaned.to_string());
     }
+    let canonical = crate::tools::resolve_tool_name(cleaned);
+    if canonical != cleaned && allowed_canonical.contains(&canonical) {
+        return Some(canonical);
+    }
     for (index, _) in cleaned.match_indices('@') {
         let suffix = cleaned[index + 1..].trim();
         if !suffix.is_empty() && allowed.contains(suffix) {
             return Some(suffix.to_string());
+        }
+        let canonical_suffix = crate::tools::resolve_tool_name(suffix);
+        if !suffix.is_empty() && allowed_canonical.contains(&canonical_suffix) {
+            return Some(canonical_suffix);
         }
     }
     None

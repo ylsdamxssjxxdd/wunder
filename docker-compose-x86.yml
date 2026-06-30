@@ -187,6 +187,7 @@ services:
     volumes:
       - ./:/app
       - ./config/data/workspaces:/workspaces
+      - ./config/fonts:/usr/share/fonts/wunder:ro
     ports:
       - "${MCP_BIND_HOST:-0.0.0.0}:${MCP_PORT:-18004}:${MCP_PORT:-18004}"
     environment:
@@ -195,6 +196,7 @@ services:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=${MCP_PORT:-18004}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
+      - FONTCONFIG_FILE=/app/config/fonts.conf
     command: ["bash", "-lc", "python3 -m extra_mcp.main"]
     restart: always
 

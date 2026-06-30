@@ -153,7 +153,7 @@ $bridgeBinary = if ($env:WUNDER_BRIDGE_BIN -and (Test-Path $env:WUNDER_BRIDGE_BI
   )
 }
 if (-not (Test-Path $bridgeBinary)) {
-  throw "bridge binary is missing for $Arch.`nBuild it first, for example: cargo build --release -p wunder-desktop --bin wunder-desktop-bridge --target $bridgeArchDir"
+  throw "bridge binary is missing for $Arch.`nBuild it first, for example: cargo build --release -p wunder-desktop --bin wunder-desktop-bridge --features desktop-control --target $bridgeArchDir"
 }
 
 $stageRoot = Join-Path $LabRoot ("electron-win7-{0}" -f $Arch)

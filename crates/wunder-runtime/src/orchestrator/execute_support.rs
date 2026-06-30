@@ -328,6 +328,7 @@ pub(super) fn append_cancelled_generation_context_marker(
     user_id: &str,
     session_id: &str,
     messages: &[Value],
+    round_info: RoundInfo,
 ) {
     if !should_append_cancelled_generation_context_marker(messages) {
         return;
@@ -342,6 +343,7 @@ pub(super) fn append_cancelled_generation_context_marker(
         session_id,
         &marker_message,
         "cancelled_generation_marker",
+        round_info,
     );
 }
 

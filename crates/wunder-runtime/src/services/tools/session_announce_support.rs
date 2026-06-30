@@ -101,6 +101,8 @@ pub(crate) fn append_child_announce(
     elapsed_s: f64,
     model_name: Option<&str>,
     label: Option<&str>,
+    parent_user_round: Option<i64>,
+    parent_model_round: Option<i64>,
 ) {
     let result_text = if status == "success" {
         answer.unwrap_or("ok").trim()
@@ -134,18 +136,43 @@ pub(crate) fn append_child_announce(
         "run_id": run_id,
         "child_session_id": child_session_id,
         "status": status,
-        "elapsed_s": elapsed_s
+        "elapsed_s": elapsed_s,
+        "parent_user_round": parent_user_round,
+        "parent_model_round": parent_model_round
     });
-    let payload = json!({
+    let mut payload = json!({
         "role": "assistant",
         "content": content,
         "session_id": parent_session_id,
         "timestamp": timestamp,
-        "meta": meta,
+        "meta": meta.clone(),
     });
+    if let Value::Object(ref mut map) = payload {
+        if let Some(user_round) = resolve_positive_i64_from_meta(&meta, "parent_user_round") {
+            map.insert("user_round".to_string(), json!(user_round));
+            map.insert(
+                "round_info_source".to_string(),
+                Value::String("subagent_announce".to_string()),
+            );
+        }
+        if let Some(model_round) = resolve_positive_i64_from_meta(&meta, "parent_model_round") {
+            map.insert("model_round".to_string(), json!(model_round));
+        }
+    }
     let _ = workspace.append_chat(user_id, &payload);
     let now = now_ts();
     let _ = storage.touch_chat_session(user_id, parent_session_id, now, now);
+}
+
+fn resolve_positive_i64_from_meta(meta: &Value, key: &str) -> Option<i64> {
+    let parsed = meta.get(key).and_then(|value| {
+        value.as_i64().or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<i64>().ok())
+        })
+    })?;
+    (parsed > 0).then_some(parsed)
 }
 
 pub(crate) fn should_skip_announce(answer: Option<&str>) -> bool {

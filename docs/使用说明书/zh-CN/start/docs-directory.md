@@ -17,15 +17,15 @@ source_docs:
 | 页面 | 内容 |
 |------|------|
 | [快速开始](/docs/zh-CN/start/quickstart/) | 跑通第一个任务 |
-| [Desktop 入门](/docs/zh-CN/start/desktop/) | 下载安装就能用 |
+| [桌面端安装](/docs/zh-CN/start/desktop/) | 个人用户下载即用 |
+| [服务端部署](/docs/zh-CN/start/server/) | 多人共用、统一管理 |
 | [CLI 使用](/docs/zh-CN/start/cli/) | 终端驱动、自动化 |
-| [Server 部署](/docs/zh-CN/start/server/) | 多人共用、统一管理 |
 
-## 界面
+## 蜂巢与界面
 
 | 页面 | 内容 |
 |------|------|
-| [用户端界面](/docs/zh-CN/surfaces/frontend/) | 聊天、文件、智能体、工具 |
+| [蜂巢界面](/docs/zh-CN/surfaces/frontend/) | 聊天、文件、智能体、工具 |
 | [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/) | 本地优先的工作台 |
 | [编排功能](/docs/zh-CN/surfaces/orchestration/) | 蜂群持续推进的专用工作台 |
 | [管理端界面](/docs/zh-CN/surfaces/web-admin/) | 管理员后台 |

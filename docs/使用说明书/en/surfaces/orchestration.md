@@ -1,11 +1,11 @@
 ---
 title: Orchestration
-summary: The orchestration page is a dedicated workbench for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.
+summary: The orchestration page is a dedicated workspace for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.
 ---
 
 # Orchestration
 
-Orchestration is the dedicated workbench for swarms in "continuous advancement mode".
+Orchestration is the dedicated workspace for swarms in "continuous advancement mode".
 
 The regular swarm page is for one-time collaboration. The orchestration page is for scenarios that need **multi-round advancement, round-by-round records, and branching from old rounds**.
 
@@ -134,6 +134,6 @@ When you open an inactive historical run, you can click "Start" to reactivate it
 
 ## Further Reading
 
-- [User Interface](/docs/en/surfaces/frontend/)
+- [Hive Interface](/docs/en/surfaces/frontend/)
 - [Swarm Collaboration](/docs/en/concepts/swarm/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)

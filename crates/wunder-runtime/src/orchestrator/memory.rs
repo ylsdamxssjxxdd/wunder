@@ -729,6 +729,7 @@ impl Orchestrator {
             None,
             None,
             None,
+            compaction_round,
         );
 
         if guard_stats.applied {

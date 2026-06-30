@@ -1,0 +1,57 @@
+{
+  "id": "black_times_default",
+  "name": "Black Times Default",
+  "description": "Master-template PPTX pack using SimHei for Chinese and Times New Roman for Latin text.",
+  "file": "template.pptx",
+  "aliases": [
+    "master_default",
+    "simhei_times",
+    "black_times"
+  ],
+  "fonts": {
+    "east_asian": "SimHei",
+    "latin": "Times New Roman"
+  },
+  "layouts": {
+    "cover": {
+      "index": 0,
+      "layout_name": "Title Slide"
+    },
+    "content": {
+      "index": 1,
+      "layout_name": "Title and Content"
+    },
+    "toc": {
+      "index": 1,
+      "layout_name": "Title and Content"
+    },
+    "section": {
+      "index": 2,
+      "layout_name": "Section Header"
+    },
+    "content_image": {
+      "index": 8,
+      "layout_name": "Picture with Caption"
+    },
+    "timeline": {
+      "index": 1,
+      "layout_name": "Title and Content"
+    },
+    "comparison": {
+      "index": 4,
+      "layout_name": "Comparison"
+    },
+    "data": {
+      "index": 1,
+      "layout_name": "Title and Content"
+    },
+    "closing": {
+      "index": 2,
+      "layout_name": "Section Header"
+    },
+    "default": {
+      "index": 1,
+      "layout_name": "Title and Content"
+    }
+  }
+}

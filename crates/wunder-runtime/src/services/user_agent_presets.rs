@@ -125,11 +125,31 @@ pub fn normalize_agent_status(raw: Option<&str>) -> String {
 }
 
 pub fn filter_allowed_tools(values: &[String], allowed: &HashSet<String>) -> Vec<String> {
-    values
+    let allowed_canonical: HashSet<String> = allowed
         .iter()
-        .filter(|name| allowed.contains(*name))
-        .cloned()
-        .collect()
+        .map(|name| crate::tools::resolve_tool_name(name.trim()))
+        .filter(|name| !name.is_empty())
+        .collect();
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let cleaned = raw.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let canonical = crate::tools::resolve_tool_name(cleaned);
+        let name = if allowed_canonical.contains(&canonical) {
+            canonical
+        } else if allowed.contains(cleaned) {
+            cleaned.to_string()
+        } else {
+            continue;
+        };
+        if seen.insert(name.clone()) {
+            output.push(name);
+        }
+    }
+    output
 }
 
 pub fn build_requested_tool_names_for_sync(

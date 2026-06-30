@@ -38,6 +38,8 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 若希望 `db_export*` 直接写入 Wunder 工作区，`extra-mcp` 进程必须能看到与 `wunder-server` 相同的工作区根目录；Docker Compose 已通过共享 `wunder_workspaces:/workspaces` 卷打通该路径
 - PPT 工具产物默认写入 `/workspaces/.extra_mcp/ppt/<presentation_id>/`；也可以把 `ppt_write`/`ppt_refine`/`ppt_delete` 的 `output_path` 写成 `/workspaces/{user_id}/exports/report.pptx`，让文件直接落到当前工作区
 - PPT 工具内置 7 套可选模板：`amber_clear`、`executive_green`、`research_blue`、`finance_ink`、`creative_coral`、`minimal_gray`、`doubao_radar`。模型可先调用 `ppt_template_read` 空参数读取模板列表，再把选定的 `template_id` 传给 `ppt_write` 或 `ppt_refine`
+- PPT 工具支持真实母版模板包：把 `template.pptx` 与 `template.json` 放到 `config/ppt_templates/<template_id>/` 后，可直接把该目录名或 `template.json` 中的 `id` 作为 `template_id`。第一页固定使用封面版式，最后一页固定使用结尾版式，中间页按 `type` / `layout` / `template_slide_id` 选择目录、正文、图文、时间线、对比、数据等版式
+- 默认母版模板包 `black_times_default` 使用中文 `SimHei`、英文 `Times New Roman`。Docker 已挂载 `config/fonts/`；如使用自定义字体，请把合法字体文件放入该目录并重启相关容器，避免 LibreOffice / OnlyOffice 自动替换字体
 - PPT 页面支持图片：XML 可写 `<image src="/workspaces/{user_id}/assets/demo.png" />`，JSON 可传 `images: [{"src": "..."}]`；当前支持本地或共享工作区内的常见位图格式，远程图片需先下载到工作区
 - 可用 `ppt.root` 或环境变量 `EXTRA_MCP_PPT_ROOT` 覆盖 PPT 产物根目录；Docker Compose 已把 `/workspaces` 挂到 `extra-mcp` 容器内
 
@@ -138,12 +140,45 @@ mcp:
 
 ### PPT 生成任务推荐流程
 
-1. 如需选择内置风格，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。复刻豆包相控阵雷达类技术介绍 PPT 时优先使用 `doubao_radar`。
+1. 如需选择风格或母版，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。复刻豆包相控阵雷达类技术介绍 PPT 时优先使用 `doubao_radar`；需要真实 PPTX 母版和统一字体时优先使用 `black_times_default` 或自定义母版模板包。
 2. 首次生成调用 `ppt_write`，传入豆包式 XML：`<slides><slide><prompt>...</prompt></slide></slides>`，并按需传入 `template_id`。
 3. 保存返回的 `presentation_id` 与每页 `slide_id`；后续局部修改或整体换模板用 `ppt_refine`。
 4. 如需读取已有内容或确认页面 ID，用 `ppt_read`。
-5. 如用户提供模板或已有 PPTX，先用 `ppt_template_read` 读取页面摘要。
+5. 如用户提供模板或已有 PPTX，先用 `ppt_template_read` 读取页面摘要；若要长期复用，请整理为 `config/ppt_templates/<template_id>/template.pptx` + `template.json`。
 6. 产物优先写入 `/workspaces/{user_id}/exports/...`，便于 Wunder 工作区直接展示和 OnlyOffice 打开。
+
+### 自定义 PPT 母版模板包
+
+目录结构：
+
+```text
+config/ppt_templates/my_template/
+  template.pptx
+  template.json
+```
+
+`template.pptx` 是真实 PowerPoint 模板文件，建议提前在 PowerPoint / WPS / LibreOffice 中做好 Slide Master 与多个 Layout。`template.json` 示例：
+
+```json
+{
+  "id": "my_template",
+  "name": "My Template",
+  "file": "template.pptx",
+  "fonts": {
+    "east_asian": "SimHei",
+    "latin": "Times New Roman"
+  },
+  "layouts": {
+    "cover": {"layout_name": "Cover"},
+    "content": {"layout_name": "Title and Content"},
+    "content_image": {"layout_name": "Picture with Caption"},
+    "comparison": {"layout_name": "Comparison"},
+    "closing": {"layout_name": "Closing"}
+  }
+}
+```
+
+生成规则：第一页强制走 `cover`，最后一页强制走 `closing`；中间页优先按每页的 `layout` 或 `template_slide_id` 选择，其次按 `type` 选择，找不到时回退到 `content` / `default`。
 
 ### 导出型任务推荐流程
 

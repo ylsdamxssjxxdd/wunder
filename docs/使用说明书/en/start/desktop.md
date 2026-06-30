@@ -3,7 +3,7 @@ title: Desktop Guide
 summary: The first choice for individual users. Download, install, and start — no server needed.
 read_when:
   - You want to get wunder running right away
-  - You care more about the desktop workbench than deploying a full server
+  - You care more about Hive's desktop form than deploying a full server
 source_docs:
   - docs/API文档.md
 updated_at: 2026-04-10
@@ -11,7 +11,7 @@ updated_at: 2026-04-10
 
 # Desktop Guide
 
-If you want to start using it right away, don't set up a server first — just use Desktop.
+Desktop is Hive's desktop form. If you want to start using it right away, don't set up a server first — just use Desktop.
 
 Open it and you have a complete agent workbench. No server required.
 
@@ -101,7 +101,7 @@ Left column → More → Help Manual. You can browse docs without leaving the ap
 
 ## Next Steps
 
-- Understand the interface: [User Interface](/docs/en/surfaces/frontend/)
+- Understand the interface: [Hive Interface](/docs/en/surfaces/frontend/)
 - Understand local mode boundaries: [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)
 - See swarm collaboration: [Swarm Collaboration](/docs/en/concepts/swarm/)
 - Running into issues: [Troubleshooting](/docs/en/help/troubleshooting/)

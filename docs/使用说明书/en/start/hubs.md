@@ -10,22 +10,22 @@ source_docs:
 
 # Documentation Hub
 
-This is a navigation page. Jump directly to actionable pages by role.
+This is a navigation page. Jump directly to actionable pages by role. Everyone works in [Hive](/docs/en/surfaces/frontend/) — the only difference is how you open it and which admin capabilities you see.
 
-## I'm a Regular User
+## I'm a regular user
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/quickstart/">
     <strong>Quick Start</strong>
-    <span>Complete your first task in 10 minutes.</span>
-  </a>
-  <a class="docs-card" href="/docs/en/start/desktop/">
-    <strong>Desktop Guide</strong>
-    <span>Download and start using.</span>
+    <span>Complete your first task.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/frontend/">
-    <strong>User Interface</strong>
-    <span>Chat, files, agents, tools.</span>
+    <strong>Hive Interface</strong>
+    <span>Chat, files, agents, and tools.</span>
+  </a>
+  <a class="docs-card" href="/docs/en/start/desktop/">
+    <strong>Desktop install</strong>
+    <span>Individual users download and go.</span>
   </a>
   <a class="docs-card" href="/docs/en/help/faq/">
     <strong>FAQ</strong>
@@ -33,55 +33,55 @@ This is a navigation page. Jump directly to actionable pages by role.
   </a>
 </div>
 
-## I'm an Administrator
+## I'm an administrator
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/server/">
-    <strong>Server Deployment</strong>
+    <strong>Server deployment</strong>
     <span>Multi-user, unified management.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/web-admin/">
-    <strong>Admin Interface</strong>
+    <strong>Admin interface</strong>
     <span>Model, tool, user, channel management panels.</span>
   </a>
   <a class="docs-card" href="/docs/en/ops/deployment/">
-    <strong>Deployment & Operations</strong>
+    <strong>Deployment & operations</strong>
     <span>Key checks before and after going live.</span>
   </a>
   <a class="docs-card" href="/docs/en/ops/auth-and-security/">
-    <strong>Authentication & Security</strong>
+    <strong>Authentication & security</strong>
     <span>Tokens, auth, sandbox, and approval policies.</span>
   </a>
 </div>
 
-## I'm a Developer / Integrator
+## I'm a developer / integrator
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/cli/">
-    <strong>CLI Usage</strong>
+    <strong>CLI usage</strong>
     <span>Terminal-driven, scriptable, automation.</span>
   </a>
   <a class="docs-card" href="/docs/en/concepts/">
-    <strong>Core Concepts</strong>
+    <strong>Core concepts</strong>
     <span>Understand the system's running model.</span>
   </a>
   <a class="docs-card" href="/docs/en/integration/">
-    <strong>Integration Overview</strong>
+    <strong>Integration overview</strong>
     <span>Find the right integration approach.</span>
   </a>
   <a class="docs-card" href="/docs/en/tools/">
-    <strong>Tools Overview</strong>
+    <strong>Tools overview</strong>
     <span>Pick tools by task.</span>
   </a>
 </div>
 
-## I'm Troubleshooting
+## I'm troubleshooting
 
 - [Help Center](/docs/en/help/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)
 - [Configuration Reference](/docs/en/reference/config/)
 
-## Further Reading
+## Further reading
 
 - [Docs Directory](/docs/en/start/docs-directory/)
 - [API Index](/docs/en/reference/api-index/)
