@@ -1,6 +1,11 @@
 use super::PostgresStorage;
 use crate::i18n;
-use crate::services::output_quality;
+use crate::services::{
+    chat_payload_sanitizer::{
+        parse_sanitized_persisted_chat_payload, sanitize_persisted_chat_payload,
+    },
+    output_quality,
+};
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -76,12 +81,13 @@ impl PostgresConversationLogStorage for PostgresStorage {
             return Ok(());
         }
         let payload = output_quality::annotate_chat_payload(payload);
+        let payload = sanitize_persisted_chat_payload(&payload);
         let content = Self::parse_string(payload.get("content"));
         let timestamp = Self::parse_string(payload.get("timestamp"));
         let meta = payload
             .get("meta")
             .and_then(|value| serde_json::to_string(value).ok());
-        let payload_text = Self::json_to_string(payload.as_ref());
+        let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
         let mut conn = self.conn()?;
         conn.execute(
@@ -122,7 +128,8 @@ impl PostgresConversationLogStorage for PostgresStorage {
         if role.is_empty() {
             return Ok(());
         }
-        let payload_text = Self::json_to_string(payload);
+        let payload = sanitize_persisted_chat_payload(payload);
+        let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
         let mut conn = self.conn()?;
         conn.execute(
@@ -161,7 +168,8 @@ impl PostgresConversationLogStorage for PostgresStorage {
             if role.is_empty() {
                 continue;
             }
-            let payload_text = Self::json_to_string(payload);
+            let payload = sanitize_persisted_chat_payload(payload);
+            let payload_text = Self::json_to_string(&payload);
             let now = Self::now_ts();
             tx.execute(
                 "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time) \
@@ -267,32 +275,43 @@ impl PostgresConversationLogStorage for PostgresStorage {
         }
         let limit_value = limit.filter(|value| *value > 0);
         let mut conn = self.conn()?;
-        let mut rows: Vec<String> = if let Some(limit_value) = limit_value {
-            conn.query(
-                "SELECT payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
-                &[&cleaned_user, &cleaned_session, &limit_value],
-            )?
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect()
-        } else {
-            conn.query(
-                "SELECT payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
-                &[&cleaned_user, &cleaned_session],
-            )?
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect()
-        };
-        if limit_value.is_some() {
-            rows.reverse();
-        }
         let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
+        let mut repairs = Vec::new();
+        if let Some(limit_value) = limit_value {
+            let rows = conn.query(
+                "SELECT id, payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
+                &[&cleaned_user, &cleaned_session, &limit_value],
+            )?;
+            for row in rows {
+                let entry_id = row.get::<_, i64>(0);
+                let payload = row.get::<_, String>(1);
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((entry_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
+            }
+            records.reverse();
+        } else {
+            let rows = conn.query(
+                "SELECT id, payload FROM model_context_entries WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
+                &[&cleaned_user, &cleaned_session],
+            )?;
+            for row in rows {
+                let entry_id = row.get::<_, i64>(0);
+                let payload = row.get::<_, String>(1);
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((entry_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
             }
         }
+        repair_model_context_payloads(&mut conn, repairs);
         Ok(records)
     }
 
@@ -305,32 +324,43 @@ impl PostgresConversationLogStorage for PostgresStorage {
         self.ensure_initialized()?;
         let limit_value = limit.filter(|value| *value > 0);
         let mut conn = self.conn()?;
-        let mut rows: Vec<String> = if let Some(limit_value) = limit_value {
-            conn.query(
-                "SELECT payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
-                &[&user_id, &session_id, &limit_value],
-            )?
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect()
-        } else {
-            conn.query(
-                "SELECT payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
-                &[&user_id, &session_id],
-            )?
-            .into_iter()
-            .map(|row| row.get::<_, String>(0))
-            .collect()
-        };
-        if limit_value.is_some() {
-            rows.reverse();
-        }
         let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
+        let mut repairs = Vec::new();
+        if let Some(limit_value) = limit_value {
+            let rows = conn.query(
+                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
+                &[&user_id, &session_id, &limit_value],
+            )?;
+            for row in rows {
+                let history_id = row.get::<_, i64>(0);
+                let payload = row.get::<_, String>(1);
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
+            }
+            records.reverse();
+        } else {
+            let rows = conn.query(
+                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id ASC",
+                &[&user_id, &session_id],
+            )?;
+            for row in rows {
+                let history_id = row.get::<_, i64>(0);
+                let payload = row.get::<_, String>(1);
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
             }
         }
+        repair_chat_history_payloads(&mut conn, repairs);
         Ok(records)
     }
 
@@ -347,33 +377,51 @@ impl PostgresConversationLogStorage for PostgresStorage {
         }
         let before_id = before_id.filter(|value| *value > 0);
         let mut conn = self.conn()?;
-        let mut rows: Vec<(i64, String)> = if let Some(before_id) = before_id {
-            conn.query(
+        let mut records = Vec::new();
+        let mut repairs = Vec::new();
+        if let Some(before_id) = before_id {
+            let rows = conn.query(
                 "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 AND id < $3 ORDER BY id DESC LIMIT $4",
                 &[&user_id, &session_id, &before_id, &limit],
-            )?
-            .into_iter()
-            .map(|row| (row.get::<_, i64>(0), row.get::<_, String>(1)))
-            .collect()
-        } else {
-            conn.query(
-                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
-                &[&user_id, &session_id, &limit],
-            )?
-            .into_iter()
-            .map(|row| (row.get::<_, i64>(0), row.get::<_, String>(1)))
-            .collect()
-        };
-        rows.reverse();
-        let mut records = Vec::new();
-        for (history_id, payload) in rows {
-            if let Some(mut value) = Self::json_from_str(&payload) {
-                if let Value::Object(ref mut map) = value {
+            )?;
+            for row in rows {
+                let history_id = row.get::<_, i64>(0);
+                let payload = row.get::<_, String>(1);
+                let (mut value, repaired_payload) =
+                    parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(Value::Object(ref mut map)) = value {
                     map.insert("_history_id".to_string(), json!(history_id));
                 }
-                records.push(value);
+                if let Some(value) = value {
+                    records.push(value);
+                }
+            }
+        } else {
+            let rows = conn.query(
+                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
+                &[&user_id, &session_id, &limit],
+            )?;
+            for row in rows {
+                let history_id = row.get::<_, i64>(0);
+                let payload = row.get::<_, String>(1);
+                let (mut value, repaired_payload) =
+                    parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(Value::Object(ref mut map)) = value {
+                    map.insert("_history_id".to_string(), json!(history_id));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
             }
         }
+        records.reverse();
+        repair_chat_history_payloads(&mut conn, repairs);
         Ok(records)
     }
 
@@ -457,5 +505,23 @@ impl PostgresConversationLogStorage for PostgresStorage {
             }
         }
         Ok(None)
+    }
+}
+
+fn repair_chat_history_payloads(conn: &mut super::PgConn<'_>, repairs: Vec<(i64, String)>) {
+    for (history_id, payload) in repairs {
+        let _ = conn.execute(
+            "UPDATE chat_history SET payload = $1 WHERE id = $2",
+            &[&payload, &history_id],
+        );
+    }
+}
+
+fn repair_model_context_payloads(conn: &mut super::PgConn<'_>, repairs: Vec<(i64, String)>) {
+    for (entry_id, payload) in repairs {
+        let _ = conn.execute(
+            "UPDATE model_context_entries SET payload = $1 WHERE id = $2",
+            &[&payload, &entry_id],
+        );
     }
 }

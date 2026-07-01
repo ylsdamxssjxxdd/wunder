@@ -1,6 +1,11 @@
 use super::SqliteStorage;
 use crate::i18n;
-use crate::services::output_quality;
+use crate::services::{
+    chat_payload_sanitizer::{
+        parse_sanitized_persisted_chat_payload, sanitize_persisted_chat_payload,
+    },
+    output_quality,
+};
 use crate::storage::StorageLifecycle;
 use anyhow::Result;
 use rusqlite::{params, TransactionBehavior};
@@ -77,12 +82,13 @@ impl SqliteConversationLogStorage for SqliteStorage {
             return Ok(());
         }
         let payload = output_quality::annotate_chat_payload(payload);
+        let payload = sanitize_persisted_chat_payload(&payload);
         let content = Self::parse_string(payload.get("content"));
         let timestamp = Self::parse_string(payload.get("timestamp"));
         let meta = payload
             .get("meta")
             .and_then(|value| serde_json::to_string(value).ok());
-        let payload_text = Self::json_to_string(payload.as_ref());
+        let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
         let conn = self.open()?;
         conn.execute(
@@ -123,7 +129,8 @@ impl SqliteConversationLogStorage for SqliteStorage {
         if role.is_empty() {
             return Ok(());
         }
-        let payload_text = Self::json_to_string(payload);
+        let payload = sanitize_persisted_chat_payload(payload);
+        let payload_text = Self::json_to_string(&payload);
         let now = Self::now_ts();
         let conn = self.open()?;
         conn.execute(
@@ -166,7 +173,8 @@ impl SqliteConversationLogStorage for SqliteStorage {
                 if role.is_empty() {
                     continue;
                 }
-                let payload_text = Self::json_to_string(payload);
+                let payload = sanitize_persisted_chat_payload(payload);
+                let payload_text = Self::json_to_string(&payload);
                 let now = Self::now_ts();
                 stmt.execute(params![
                     cleaned_user,
@@ -275,36 +283,46 @@ impl SqliteConversationLogStorage for SqliteStorage {
         }
         let limit_value = limit.filter(|value| *value > 0);
         let conn = self.open()?;
-        let mut rows = if let Some(limit_value) = limit_value {
+        let mut records = Vec::new();
+        let mut repairs = Vec::new();
+        if let Some(limit_value) = limit_value {
             let mut stmt = conn.prepare(
-                "SELECT payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
+                "SELECT id, payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
             )?;
             let rows = stmt
                 .query_map(params![cleaned_user, cleaned_session, limit_value], |row| {
-                    row.get::<_, String>(0)
-                })?
-                .collect::<std::result::Result<Vec<String>, _>>()?;
-            rows
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?;
+            for row in rows {
+                let (entry_id, payload) = row?;
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((entry_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
+            }
+            records.reverse();
         } else {
             let mut stmt = conn.prepare(
-                "SELECT payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
+                "SELECT id, payload FROM model_context_entries WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
             )?;
-            let rows = stmt
-                .query_map(params![cleaned_user, cleaned_session], |row| {
-                    row.get::<_, String>(0)
-                })?
-                .collect::<std::result::Result<Vec<String>, _>>()?;
-            rows
-        };
-        if limit_value.is_some() {
-            rows.reverse();
-        }
-        let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
+            let rows = stmt.query_map(params![cleaned_user, cleaned_session], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (entry_id, payload) = row?;
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((entry_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
             }
         }
+        repair_model_context_payloads(&conn, repairs);
         Ok(records)
     }
 
@@ -317,34 +335,45 @@ impl SqliteConversationLogStorage for SqliteStorage {
         self.ensure_initialized()?;
         let limit_value = limit.filter(|value| *value > 0);
         let conn = self.open()?;
-        let mut rows = if let Some(limit_value) = limit_value {
+        let mut records = Vec::new();
+        let mut repairs = Vec::new();
+        if let Some(limit_value) = limit_value {
             let mut stmt = conn.prepare(
-                "SELECT payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
+                "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
             )?;
-            let rows = stmt
-                .query_map(params![user_id, session_id, limit_value], |row| {
-                    row.get::<_, String>(0)
-                })?
-                .collect::<std::result::Result<Vec<String>, _>>()?;
-            rows
+            let rows = stmt.query_map(params![user_id, session_id, limit_value], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (history_id, payload) = row?;
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
+            }
+            records.reverse();
         } else {
             let mut stmt = conn.prepare(
-                "SELECT payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
+                "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id ASC",
             )?;
-            let rows = stmt
-                .query_map(params![user_id, session_id], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<String>, _>>()?;
-            rows
-        };
-        if limit_value.is_some() {
-            rows.reverse();
-        }
-        let mut records = Vec::new();
-        for payload in rows {
-            if let Some(value) = Self::json_from_str(&payload) {
-                records.push(value);
+            let rows = stmt.query_map(params![user_id, session_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (history_id, payload) = row?;
+                let (value, repaired_payload) = parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
             }
         }
+        repair_chat_history_payloads(&conn, repairs);
         Ok(records)
     }
 
@@ -361,37 +390,53 @@ impl SqliteConversationLogStorage for SqliteStorage {
         }
         let before_id = before_id.filter(|value| *value > 0);
         let conn = self.open()?;
-        let mut rows: Vec<(i64, String)> = if let Some(before_id) = before_id {
+        let mut records = Vec::new();
+        let mut repairs = Vec::new();
+        if let Some(before_id) = before_id {
             let mut stmt = conn.prepare(
                 "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
             )?;
-            let rows = stmt
-                .query_map(params![user_id, session_id, before_id, limit], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
-            rows
+            let rows = stmt.query_map(params![user_id, session_id, before_id, limit], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (history_id, payload) = row?;
+                let (mut value, repaired_payload) =
+                    parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(Value::Object(ref mut map)) = value {
+                    map.insert("_history_id".to_string(), json!(history_id));
+                }
+                if let Some(value) = value {
+                    records.push(value);
+                }
+            }
         } else {
             let mut stmt = conn.prepare(
                 "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
             )?;
-            let rows = stmt
-                .query_map(params![user_id, session_id, limit], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                })?
-                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
-            rows
-        };
-        rows.reverse();
-        let mut records = Vec::new();
-        for (history_id, payload) in rows {
-            if let Some(mut value) = Self::json_from_str(&payload) {
-                if let Value::Object(ref mut map) = value {
+            let rows = stmt.query_map(params![user_id, session_id, limit], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (history_id, payload) = row?;
+                let (mut value, repaired_payload) =
+                    parse_sanitized_persisted_chat_payload(&payload);
+                if let Some(repaired_payload) = repaired_payload {
+                    repairs.push((history_id, repaired_payload));
+                }
+                if let Some(Value::Object(ref mut map)) = value {
                     map.insert("_history_id".to_string(), json!(history_id));
                 }
-                records.push(value);
+                if let Some(value) = value {
+                    records.push(value);
+                }
             }
         }
+        records.reverse();
+        repair_chat_history_payloads(&conn, repairs);
         Ok(records)
     }
 
@@ -476,5 +521,23 @@ impl SqliteConversationLogStorage for SqliteStorage {
             }
         }
         Ok(None)
+    }
+}
+
+fn repair_chat_history_payloads(conn: &rusqlite::Connection, repairs: Vec<(i64, String)>) {
+    for (history_id, payload) in repairs {
+        let _ = conn.execute(
+            "UPDATE chat_history SET payload = ? WHERE id = ?",
+            params![payload, history_id],
+        );
+    }
+}
+
+fn repair_model_context_payloads(conn: &rusqlite::Connection, repairs: Vec<(i64, String)>) {
+    for (entry_id, payload) in repairs {
+        let _ = conn.execute(
+            "UPDATE model_context_entries SET payload = ? WHERE id = ?",
+            params![payload, entry_id],
+        );
     }
 }

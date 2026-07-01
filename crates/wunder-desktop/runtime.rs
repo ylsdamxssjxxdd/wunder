@@ -25,6 +25,8 @@ const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
 const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
 const BUILTIN_SKILLS_STAMP_NAME: &str = ".wunder_builtin_skills_stamp.json";
+const DESKTOP_CONTROLLER_MIN_NORM_WIDTH: i32 = 1000;
+const DESKTOP_CONTROLLER_MIN_NORM_HEIGHT: i32 = 1000;
 
 #[derive(Clone)]
 pub struct DesktopRuntime {
@@ -1380,6 +1382,16 @@ fn apply_desktop_defaults(
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
     config.tools.desktop_controller.enabled = true;
+    config.tools.desktop_controller.norm_width = config
+        .tools
+        .desktop_controller
+        .norm_width
+        .max(DESKTOP_CONTROLLER_MIN_NORM_WIDTH);
+    config.tools.desktop_controller.norm_height = config
+        .tools
+        .desktop_controller
+        .norm_height
+        .max(DESKTOP_CONTROLLER_MIN_NORM_HEIGHT);
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制器");
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面监视器");
     config.tools.browser.enabled = true;
@@ -1763,6 +1775,34 @@ mod tests {
         assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
+    }
+
+    #[test]
+    fn apply_desktop_defaults_restores_controller_capture_precision() {
+        let mut config = Config::default();
+        config.tools.desktop_controller.norm_width = 768;
+        config.tools.desktop_controller.norm_height = 768;
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let temp_root = PathBuf::from("/tmp/wunder-temp");
+        let repo_root = PathBuf::from("/tmp/wunder-repo");
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert_eq!(config.tools.desktop_controller.norm_width, 1000);
+        assert_eq!(config.tools.desktop_controller.norm_height, 1000);
     }
 
     #[test]

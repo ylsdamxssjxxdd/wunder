@@ -1305,6 +1305,12 @@ impl Orchestrator {
                             &observation_model_message,
                         );
                         if let Some(followup_message) = read_image_followup {
+                            let mut followup_message = followup_message;
+                            self.mark_internal_model_context_message(
+                                &mut followup_message,
+                                "read_image_followup",
+                                round_info,
+                            );
                             self.append_model_context_entry(
                                 &user_id,
                                 &session_id,
@@ -1320,6 +1326,12 @@ impl Orchestrator {
                             messages.push(followup_message);
                         }
                         if let Some(followup_message) = desktop_followup {
+                            let mut followup_message = followup_message;
+                            self.mark_internal_model_context_message(
+                                &mut followup_message,
+                                "desktop_followup",
+                                round_info,
+                            );
                             self.append_model_context_entry(
                                 &user_id,
                                 &session_id,
@@ -1333,6 +1345,10 @@ impl Orchestrator {
                                 round_info,
                             );
                             messages.push(followup_message);
+                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
+                                &mut messages,
+                                "desktop_followup",
+                            );
                         }
                         self.append_chat(
                             &user_id,

@@ -1,6 +1,7 @@
 use crate::services::chat_cancel_marker::{
     is_tool_call_meta, is_tool_payload_text, is_tool_payload_value, normalize_message_content,
 };
+use crate::services::chat_payload_sanitizer::sanitize_loaded_chat_record;
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -65,10 +66,15 @@ fn map_transcript_message(
     page_user_rounds: &HashSet<i64>,
     cursor: &mut TranscriptCursor,
 ) -> Option<Value> {
-    let role = item.get("role").and_then(Value::as_str)?;
+    let role = item.get("role").and_then(Value::as_str)?.to_string();
     if role == "system" || role == "tool" {
         return None;
     }
+    let hidden_internal = is_hidden_internal_history_message(&item);
+    if hidden_internal {
+        return None;
+    }
+    let item = sanitize_loaded_chat_record(item);
     let raw_content = item.get("content").cloned().unwrap_or(Value::Null);
     let content = normalize_message_content(&raw_content);
     let reasoning = if role == "assistant" {
@@ -95,9 +101,8 @@ fn map_transcript_message(
     let raw_user_round = resolve_history_user_round(&item);
     let raw_model_round =
         positive_i64(item.get("model_round")).or_else(|| positive_i64(item.get("modelRound")));
-    let hidden_internal = is_hidden_internal_history_message(&item);
     let trusted_user_round = is_trusted_history_user_round(
-        role,
+        role.as_str(),
         &item,
         raw_user_round,
         hidden_internal,
@@ -105,7 +110,7 @@ fn map_transcript_message(
         cursor,
     );
     let (user_turn_index, model_turn_index) = resolve_transcript_turn_indexes(
-        role,
+        role.as_str(),
         raw_user_round,
         trusted_user_round,
         raw_model_round,
@@ -117,8 +122,8 @@ fn map_transcript_message(
     let user_turn_id = format!("user-turn:{session_id}:round:{user_turn_index}");
     let model_turn_id = model_turn_index
         .map(|index| format!("model-turn:{session_id}:user:{user_turn_index}:model:{index}"));
-    let message_id = resolve_message_id(session_id, role, history_id, turn_index);
-    let status = resolve_message_status(role, &item);
+    let message_id = resolve_message_id(session_id, role.as_str(), history_id, turn_index);
+    let status = resolve_message_status(role.as_str(), &item);
     let mut message = json!({
         "role": role,
         "content": content,
@@ -159,9 +164,6 @@ fn map_transcript_message(
         }
         if role == "assistant" && !reasoning.is_empty() {
             map.insert("reasoning".to_string(), json!(reasoning));
-        }
-        if hidden_internal {
-            map.insert("hiddenInternal".to_string(), Value::Bool(true));
         }
         if let Some(panel) = extract_question_panel(&item) {
             map.insert("questionPanel".to_string(), panel);
@@ -458,9 +460,16 @@ fn is_hidden_internal_history_message(item: &Value) -> bool {
         .map(|meta| {
             meta.get("type")
                 .and_then(Value::as_str)
-                .map(|value| value == crate::services::subagents::HIDDEN_HISTORY_META_TYPE)
+                .map(|value| {
+                    value == crate::services::subagents::HIDDEN_HISTORY_META_TYPE
+                        || value == "model_context_internal"
+                })
                 .unwrap_or(false)
                 || meta.get("hidden").and_then(Value::as_bool).unwrap_or(false)
+                || meta
+                    .get("internal_user")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
         })
         .unwrap_or(false)
 }
@@ -596,13 +605,54 @@ mod tests {
 
         let transcript = build_chat_transcript("sess", history, &HashMap::new());
 
-        assert_eq!(transcript.len(), 3);
-        assert_eq!(transcript[1]["hiddenInternal"], json!(true));
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[0]["content"], json!("visible"));
+        assert_eq!(transcript[1]["content"], json!("answer"));
         assert_eq!(transcript[1]["user_turn_index"], json!(1));
-        assert_eq!(transcript[2]["user_turn_index"], json!(1));
         assert_eq!(
-            transcript[2]["model_turn_id"],
+            transcript[1]["model_turn_id"],
             json!("model-turn:sess:user:1:model:1")
         );
+    }
+
+    #[test]
+    fn transcript_omits_hidden_internal_inline_image_followups() {
+        let history = vec![json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+            ],
+            "timestamp": "2026-04-30T02:14:07Z",
+            "meta": {"type": "model_context_internal", "hidden": true, "internal_user": true},
+            "_history_id": 31
+        })];
+
+        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+
+        assert!(transcript.is_empty());
+    }
+
+    #[test]
+    fn transcript_sanitizes_legacy_visible_inline_image_data_urls() {
+        let history = vec![json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+            ],
+            "timestamp": "2026-04-30T02:14:07Z",
+            "_history_id": 32
+        })];
+
+        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+
+        assert_eq!(transcript.len(), 1);
+        assert!(!transcript[0].to_string().contains("data:image/png;base64"));
+        assert!(transcript[0]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("inline image omitted"));
     }
 }

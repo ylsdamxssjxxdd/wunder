@@ -172,7 +172,11 @@ pub(super) fn normalize_model_context_message(message: Value) -> Option<Value> {
         return None;
     }
 
-    Some(Value::Object(normalized))
+    Some(
+        crate::services::chat_payload_sanitizer::sanitize_persisted_model_context_message(
+            Value::Object(normalized),
+        ),
+    )
 }
 
 fn normalize_model_context_content(content: Option<Value>) -> Value {
@@ -597,5 +601,22 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0]["role"], json!("user"));
         assert_eq!(entries[1]["role"], json!("assistant"));
+    }
+
+    #[test]
+    fn model_context_normalization_omits_inline_image_data_urls() {
+        let message = json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+            ]
+        });
+
+        let normalized = normalize_model_context_message(message).expect("context message");
+        let serialized = normalized.to_string();
+
+        assert!(!serialized.contains("data:image/png;base64"));
+        assert!(serialized.contains("inline image omitted"));
     }
 }

@@ -550,4 +550,81 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn legacy_inline_image_payloads_are_sanitized_and_repaired_on_load() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-inline-image.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+
+        let legacy_payload = json!({
+            "session_id": "session-a",
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+            ]
+        })
+        .to_string();
+
+        {
+            let conn = Connection::open(&db_path).expect("open sqlite");
+            conn.execute(
+                "INSERT INTO chat_history (user_id, session_id, role, payload, created_time)
+                 VALUES (?, ?, ?, ?, ?)",
+                params![
+                    "user-a",
+                    "session-a",
+                    "user",
+                    legacy_payload.as_str(),
+                    1.0_f64
+                ],
+            )
+            .expect("insert legacy chat payload");
+            conn.execute(
+                "INSERT INTO model_context_entries (user_id, session_id, role, payload, created_time)
+                 VALUES (?, ?, ?, ?, ?)",
+                params![
+                    "user-a",
+                    "session-a",
+                    "user",
+                    legacy_payload.as_str(),
+                    1.0_f64
+                ],
+            )
+            .expect("insert legacy context payload");
+        }
+
+        let chat_history = storage
+            .load_chat_history("user-a", "session-a", None)
+            .expect("load chat history");
+        let model_context = storage
+            .load_model_context_entries("user-a", "session-a", None)
+            .expect("load model context");
+
+        assert_eq!(chat_history.len(), 1);
+        assert_eq!(model_context.len(), 1);
+        assert!(!chat_history[0]
+            .to_string()
+            .contains("data:image/png;base64"));
+        assert!(!model_context[0]
+            .to_string()
+            .contains("data:image/png;base64"));
+        assert!(chat_history[0].to_string().contains("inline image omitted"));
+        assert!(model_context[0]
+            .to_string()
+            .contains("inline image omitted"));
+
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        let repaired_chat: String = conn
+            .query_row("SELECT payload FROM chat_history", [], |row| row.get(0))
+            .expect("load repaired chat payload");
+        let repaired_context: String = conn
+            .query_row("SELECT payload FROM model_context_entries", [], |row| {
+                row.get(0)
+            })
+            .expect("load repaired context payload");
+        assert!(!repaired_chat.contains("data:image/png;base64"));
+        assert!(!repaired_context.contains("data:image/png;base64"));
+    }
 }

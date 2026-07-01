@@ -77,6 +77,8 @@ impl Orchestrator {
                 payload["attachments"] = value;
             }
         }
+        let payload =
+            crate::services::chat_payload_sanitizer::sanitize_persisted_chat_payload(&payload);
         if let Err(err) = self.workspace.append_chat(user_id, &payload) {
             warn!("append chat failed for session {session_id} role {role}: {err}");
         }
@@ -141,6 +143,33 @@ impl Orchestrator {
             payload.get("tool_call_id").and_then(Value::as_str),
             round_info,
         );
+    }
+
+    pub(super) fn mark_internal_model_context_message(
+        &self,
+        message: &mut Value,
+        source: &str,
+        round_info: RoundInfo,
+    ) {
+        let Some(obj) = message.as_object_mut() else {
+            return;
+        };
+        let mut meta = json!({
+            "type": MODEL_CONTEXT_INTERNAL_META_TYPE,
+            "hidden": true,
+            "internal_user": obj.get("role").and_then(Value::as_str) == Some("user"),
+            "source": source,
+        });
+        if let Value::Object(ref mut map) = meta {
+            if let Some(tool_call_id) = obj.get("tool_call_id").and_then(Value::as_str) {
+                map.insert(
+                    "tool_call_id".to_string(),
+                    Value::String(tool_call_id.to_string()),
+                );
+            }
+            round_info.insert_into(map);
+        }
+        obj.insert("meta".to_string(), meta);
     }
 
     pub(super) fn build_tool_observation(

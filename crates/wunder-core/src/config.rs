@@ -1260,7 +1260,7 @@ fn default_desktop_controller_norm_height() -> i32 {
 }
 
 fn default_desktop_controller_max_frames() -> usize {
-    6
+    3
 }
 
 fn default_desktop_controller_capture_timeout_ms() -> u64 {
