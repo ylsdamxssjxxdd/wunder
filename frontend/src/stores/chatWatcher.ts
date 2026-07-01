@@ -139,7 +139,7 @@ import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBas
 import { chatWatcherSharedState } from './chatSharedState';
 import { clearAllChatSnapshots, clearScheduledChatSnapshot } from './chatSnapshot';
 import { buildMessage, resolveTimestampMs } from './chatStats';
-import { assignStreamEventId, getRuntimeLastEventId, normalizeFlag, normalizeStreamEventId, normalizeStreamRound, parseSegmentedDelta, resolveEventRoundNumber, setRuntimeLastEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
+import { assignStreamEventId, getRuntimeLastEventId, normalizeFlag, normalizeStreamEventId, normalizeStreamRound, parseSegmentedDelta, resolveEventUserRoundNumber, setRuntimeLastEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
 import { buildDetail, getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, sessionWorkflowState } from './chatWorkflowHydration';
 import { createWorkflowProcessor } from './chatWorkflowProcessor';
 
@@ -398,7 +398,7 @@ export const startSessionWatcher = (store, sessionId) => {
     data,
     isRoundStart
   ) => {
-    const directRound = resolveEventRoundNumber(payload, data);
+    const directRound = resolveEventUserRoundNumber(payload, data);
     if (directRound !== null) {
       maxKnownRound = Math.max(maxKnownRound, directRound);
       return directRound;
@@ -798,7 +798,7 @@ export const startSessionWatcher = (store, sessionId) => {
       }
     }
     const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
-    const directRoundNumber = resolveEventRoundNumber(payload, data);
+    const directRoundNumber = resolveEventUserRoundNumber(payload, data);
     const isRoundStart =
       normalizedEventType === 'round_start' ||
       normalizedEventType === 'received' ||

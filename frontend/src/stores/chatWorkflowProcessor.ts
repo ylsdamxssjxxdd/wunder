@@ -134,7 +134,7 @@ import { applyDesktopOverlayEvent } from './chatPersist';
 import { STREAM_FLUSH_BASE_MS, STREAM_FLUSH_MAX_MS } from './chatRuntimeControls';
 import { resolveSessionKey, sessionSubagentsCache } from './chatRuntimeState';
 import { buildWorkflowModelRoundUsageMeta, buildWorkflowTimingMeta, buildWorkflowUsageMeta, clearAssistantRetryState, collectSubagentPayloads, collectWorkspacePathHints, combineWorkflowUsageMeta, ensureMessageStats, estimateStreamOutputTokens, hasWorkflowUsageConsumedTokens, markAssistantRetryState, markAssistantWaitingOutputVisible, mergeWorkflowUsageSnapshot, normalizeContextTokens, normalizeContextTotalTokens, normalizeDurationValue, normalizeMessageSubagents, normalizeQuotaSnapshot, normalizeSpeedValue, normalizeStatsCount, normalizeSubagentEventStatus, normalizeUsagePayload, parseOptionalCount, resetAssistantWaitingOutputPhase, resolveContextPreviewTokens, resolveExplicitContextTokens, resolveInteractionDuration, resolveTimestampMs, resolveUsageConsumedTokensFromPayload, summarizeWorkflowUsageDebug, touchAssistantWaitingActivity, upsertMessageSubagent } from './chatStats';
-import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments } from './chatStreamIds';
+import { normalizeFlag, normalizeStreamRound, parseSegmentedDelta, readDeltaSegments, resolveEventModelRoundNumber } from './chatStreamIds';
 import { NormalizedUsagePayload, QuestionPanelApplyOptions, UsageStatsOptions, WorkflowProcessorOptions } from './chatTypes';
 import { buildDetail, cloneCompactionDebugPayload, createThinkTagStreamParser, extractFinalAnswerFromToolCalls, isFailedResult, normalizeAssistantOutput, normalizeReasoningText, normalizeSessionWorkflowState, pickString, pickText, resolveAssistantReasoning, resolveEventType, resolveToolCategory, toOptionalInt, updateWorkflowItem } from './chatWorkflowHydration';
 import { handleWorkflowProcessorEvent } from './chatWorkflowProcessorEvents';
@@ -171,7 +171,9 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   let activeCompactionWorkflowRef = null;
   let compactionAnonymousRefSeq = 0;
   let compactionTerminalStatusHint: 'completed' | 'failed' | null = null;
-  const initialRound = normalizeStreamRound(assistantMessage.stream_round);
+  const initialRound =
+    normalizeStreamRound(assistantMessage.model_round ?? assistantMessage.modelRound) ??
+    normalizeStreamRound(assistantMessage.stream_round);
   let visibleRound = initialRound;
   // 参照调试面板：记录模型输出轮次与内容，方便还原事件日志
   const outputState = {
@@ -1732,13 +1734,17 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     roundState.currentRound = roundNumber;
   };
 
+  const updateMessageModelRound = (roundNumber) => {
+    const normalizedRound = normalizeStreamRound(roundNumber);
+    if (normalizedRound === null) {
+      return null;
+    }
+    assistantMessage.model_round = normalizedRound;
+    return normalizedRound;
+  };
+
   const resolveModelRound = (payload, data) => {
-    const directRound = normalizeStreamRound(
-      data?.model_round ??
-        payload?.model_round ??
-        data?.round ??
-        payload?.round
-    );
+    const directRound = resolveEventModelRoundNumber(payload, data);
     if (directRound !== null) {
       return directRound;
     }
@@ -1774,6 +1780,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
   const advanceModelRound = () => {
     const nextRound = (Number.isFinite(roundState.globalRound) ? roundState.globalRound : 0) + 1;
     updateRoundState(nextRound);
+    updateMessageModelRound(nextRound);
     return nextRound;
   };
 
@@ -1949,7 +1956,6 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     outputReasoningFallback = '';
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
-    assistantMessage.stream_round = null;
     syncReasoningToMessage();
     if (outputItemId) {
       updateWorkflowItem(assistantMessage.workflowItems, outputItemId, {
@@ -2042,7 +2048,7 @@ export const createWorkflowProcessor = (assistantMessage, workflowState, onSnaps
     buildToolCallRawDetail,
     isContextOverflowText, markCompactionProgressFailed, finalizeCompactionProgressItem,
     appendCompactionOutcomeNotice, finalizeLingeringCompactionProgressItems, shouldKeepCompactionMarkerLayout, resolveActiveCompactionWorkflowRef, resolveStandaloneCompactionWorkflowRef, ensureCompactionProgressItem,
-    clearCompactionProgressRef, normalizeSubagentWorkflowStatus, ensureSubagentDispatchItem, upsertSubagentPayloads, resolveRound, advanceModelRound, buildOutputDetail, thinkStreamParser,
+    clearCompactionProgressRef, normalizeSubagentWorkflowStatus, ensureSubagentDispatchItem, upsertSubagentPayloads, resolveRound, advanceModelRound, updateMessageModelRound, buildOutputDetail, thinkStreamParser,
     flushStream, scheduleStreamFlush, notifySnapshot, clearVisibleOutput, ensureOutputItem,
     applyQuestionPanelPayload, assistantMessage, options,
     get outputItemId() { return outputItemId; }, get toolFailureGuardNotified() { return toolFailureGuardNotified; },

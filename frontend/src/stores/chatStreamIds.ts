@@ -181,8 +181,54 @@ export const readDeltaSegments = (value) => {
   if (value.data && typeof value.data === 'object' && Array.isArray(value.data.segments)) {
     return value.data.segments;
   }
+  if (
+    value.data &&
+    typeof value.data === 'object' &&
+    value.data.data &&
+    typeof value.data.data === 'object' &&
+    Array.isArray(value.data.data.segments)
+  ) {
+    return value.data.data.segments;
+  }
   return [];
 };
+
+const asObjectRecord = (value) =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+
+const collectEventPayloadSources = (payload, data) => {
+  const sources = [];
+  const push = (value) => {
+    const record = asObjectRecord(value);
+    if (!record) return;
+    const inner = asObjectRecord(record.data);
+    if (inner && inner !== record) {
+      push(inner);
+    }
+    if (!sources.includes(record)) {
+      sources.push(record);
+    }
+  };
+  push(data);
+  push(payload);
+  return sources;
+};
+
+const resolveFirstPositiveRound = (source, keys) => {
+  const record = asObjectRecord(source);
+  if (!record) return null;
+  for (const key of keys) {
+    const round = normalizeStreamRound(record[key]);
+    if (round !== null) return round;
+  }
+  return null;
+};
+
+const hasExplicitUserRound = (source) =>
+  resolveFirstPositiveRound(source, ['user_round', 'userRound', 'user_turn_index', 'userTurnIndex']) !== null;
+
+const hasExplicitModelRound = (source) =>
+  resolveFirstPositiveRound(source, ['model_round', 'modelRound', 'model_turn_index', 'modelTurnIndex']) !== null;
 
 export const parseSegmentedDelta = (payload, data) => {
   const candidates = [data, payload];
@@ -191,7 +237,9 @@ export const parseSegmentedDelta = (payload, data) => {
     if (!segments.length) continue;
     let delta = '';
     let reasoningDelta = '';
-    let round = null;
+    let userRound = null;
+    let modelRound = null;
+    let genericRound = null;
     segments.forEach((segment) => {
       if (!segment || typeof segment !== 'object') return;
       if (typeof segment.delta === 'string' && segment.delta) {
@@ -203,32 +251,95 @@ export const parseSegmentedDelta = (payload, data) => {
       if (typeof segment.think_delta === 'string' && segment.think_delta) {
         reasoningDelta += segment.think_delta;
       }
-      const segmentRound = normalizeStreamRound(
-        segment.user_round ?? segment.model_round ?? segment.round
-      );
-      if (segmentRound !== null) {
-        round = segmentRound;
+      const segmentUserRound = resolveFirstPositiveRound(segment, ['user_round', 'userRound']);
+      if (segmentUserRound !== null) {
+        userRound = segmentUserRound;
+      }
+      const segmentModelRound = resolveFirstPositiveRound(segment, ['model_round', 'modelRound']);
+      if (segmentModelRound !== null) {
+        modelRound = segmentModelRound;
+      }
+      const segmentGenericRound = normalizeStreamRound(segment.round);
+      if (segmentGenericRound !== null) {
+        genericRound = segmentGenericRound;
       }
     });
-    return { delta, reasoningDelta, round };
+    return {
+      delta,
+      reasoningDelta,
+      userRound,
+      modelRound,
+      round: userRound ?? genericRound ?? modelRound
+    };
   }
   return null;
 };
 
-export const resolveEventRoundNumber = (payload, data) => {
-  const directRound = normalizeStreamRound(
-    data?.user_round ??
-      payload?.user_round ??
-      data?.model_round ??
-      payload?.model_round ??
-      data?.round ??
-      payload?.round
-  );
-  if (directRound !== null) {
-    return directRound;
+export const resolveEventUserRoundNumber = (payload, data) => {
+  const sources = collectEventPayloadSources(payload, data);
+  for (const source of sources) {
+    const directRound = resolveFirstPositiveRound(source, [
+      'user_round',
+      'userRound',
+      'user_turn_index',
+      'userTurnIndex'
+    ]);
+    if (directRound !== null) {
+      return directRound;
+    }
   }
-  return parseSegmentedDelta(payload, data)?.round ?? null;
+  for (const source of sources) {
+    const segments = readDeltaSegments(source);
+    for (const segment of segments) {
+      const segmentRound = resolveFirstPositiveRound(segment, ['user_round', 'userRound']);
+      if (segmentRound !== null) {
+        return segmentRound;
+      }
+    }
+  }
+  for (const source of sources) {
+    if (hasExplicitModelRound(source)) continue;
+    const fallbackRound = normalizeStreamRound(source.round);
+    if (fallbackRound !== null) {
+      return fallbackRound;
+    }
+  }
+  return null;
 };
+
+export const resolveEventModelRoundNumber = (payload, data) => {
+  const sources = collectEventPayloadSources(payload, data);
+  for (const source of sources) {
+    const directRound = resolveFirstPositiveRound(source, [
+      'model_round',
+      'modelRound',
+      'model_turn_index',
+      'modelTurnIndex'
+    ]);
+    if (directRound !== null) {
+      return directRound;
+    }
+  }
+  for (const source of sources) {
+    const segments = readDeltaSegments(source);
+    for (const segment of segments) {
+      const segmentRound = resolveFirstPositiveRound(segment, ['model_round', 'modelRound']);
+      if (segmentRound !== null) {
+        return segmentRound;
+      }
+    }
+  }
+  for (const source of sources) {
+    if (hasExplicitUserRound(source)) continue;
+    const fallbackRound = normalizeStreamRound(source.round);
+    if (fallbackRound !== null) {
+      return fallbackRound;
+    }
+  }
+  return null;
+};
+
+export const resolveEventRoundNumber = resolveEventUserRoundNumber;
 
 export const assignStreamEventId = (message, eventId) => {
   if (!message || typeof message !== 'object') return;

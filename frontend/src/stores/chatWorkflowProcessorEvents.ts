@@ -895,7 +895,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
         clearAssistantRetryState(ctx.assistantMessage);
         if (round !== null) {
           ctx.lastRound = round;
-          ctx.assistantMessage.stream_round = round;
+          ctx.updateMessageModelRound(round);
         }
         if (round !== null && ctx.blockedRounds.has(round)) {
           return;
@@ -974,7 +974,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
         );
         if (round !== null) {
           ctx.lastRound = round;
-          ctx.assistantMessage.stream_round = round;
+          ctx.updateMessageModelRound(round);
           ctx.applyModelRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         }
         if (round !== null && ctx.blockedRounds.has(round)) {
@@ -1187,9 +1187,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
               : null);
           ctx.appendToolFailureGuardWorkflowItem(stopMeta ?? {}, 0);
         }
-        if (ctx.lastRound !== null) {
-          ctx.assistantMessage.stream_round = ctx.lastRound;
-        }
+        ctx.updateMessageModelRound(ctx.lastRound);
         ctx.updateRoundUsageStats(finalPayload ?? data ?? payload ?? {});
         ctx.updateBackendTurnSpeedStats(finalPayload);
         ctx.outputState.streaming = false;
@@ -1238,9 +1236,7 @@ export const handleWorkflowProcessorEvent = (ctx: any, eventName, raw) => {
         if (stopReason) {
           ctx.assistantMessage.stop_reason = stopReason;
         }
-        if (ctx.lastRound !== null) {
-          ctx.assistantMessage.stream_round = ctx.lastRound;
-        }
+        ctx.updateMessageModelRound(ctx.lastRound);
         ctx.outputState.streaming = false;
         ctx.outputState.reasoningStreaming = false;
         ctx.syncReasoningToMessage();

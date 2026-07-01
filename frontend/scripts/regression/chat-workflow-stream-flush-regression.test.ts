@@ -173,6 +173,74 @@ test('workflow processor force flushes pending stream text on final output', () 
   assert.equal(frameQueue.length, 0);
 });
 
+test('workflow processor keeps user stream round separate from model round', () => {
+  frameQueue.length = 0;
+  timerQueue.length = 0;
+  const assistantMessage = createAssistantMessage();
+  assistantMessage.stream_round = 1;
+  const processor = createWorkflowProcessor(
+    assistantMessage,
+    { globalRound: 0, currentRound: null },
+    null,
+    {
+      streamFlushMs: 80,
+      finalizeWithNow: false,
+      commandSessionStore: {
+        upsertSnapshot: () => null,
+        appendDelta: () => null
+      }
+    }
+  );
+
+  processor.handleEvent(
+    'llm_output',
+    JSON.stringify({
+      content: 'model loop output',
+      user_round: 1,
+      model_round: 4
+    })
+  );
+
+  assert.equal(assistantMessage.stream_round, 1);
+  assert.equal(assistantMessage.model_round, 4);
+  assert.equal(assistantMessage.content, 'model loop output');
+});
+
+test('workflow processor reads nested model round without changing user stream round', () => {
+  frameQueue.length = 0;
+  timerQueue.length = 0;
+  const assistantMessage = createAssistantMessage();
+  assistantMessage.stream_round = 1;
+  const processor = createWorkflowProcessor(
+    assistantMessage,
+    { globalRound: 0, currentRound: null },
+    null,
+    {
+      streamFlushMs: 80,
+      finalizeWithNow: false,
+      commandSessionStore: {
+        upsertSnapshot: () => null,
+        appendDelta: () => null
+      }
+    }
+  );
+
+  processor.handleEvent(
+    'llm_output',
+    JSON.stringify({
+      data: {
+        content: 'nested model loop output',
+        user_round: 1,
+        model_round: 7
+      }
+    })
+  );
+
+  assert.equal(assistantMessage.stream_round, 1);
+  assert.equal(assistantMessage.model_round, 7);
+  assert.equal(assistantMessage.content, 'nested model loop output');
+});
+
 test('session snapshot version ignores invisible stream bookkeeping changes', () => {
   frameQueue.length = 0;
   timerQueue.length = 0;

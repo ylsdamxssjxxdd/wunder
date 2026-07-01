@@ -536,6 +536,12 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import {
+  canonicalizeAgentToolName,
+  normalizeAgentToolNamesForSettings,
+  normalizeAgentToolNamesForSettingsSnapshot,
+  resolveDesktopToolKind
+} from '@/utils/agentSettingsSnapshot';
 import { isAbilitySkillGroup } from '@/utils/abilityVisuals';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { downloadWorkerCard } from '@/utils/workerCard';
@@ -924,6 +930,22 @@ const buildCurrentIconConfig = (): AgentAvatarIconConfig => {
   };
 };
 
+const applyCompanionOverrideToForm = (): void => {
+  if (form.icon_kind !== 'companion' || !String(form.companion_id || '').trim()) {
+    return;
+  }
+  const override = companionStore.getAgentOverride(normalizedAgentId.value);
+  if (!override) {
+    return;
+  }
+  if ('show' in override) {
+    form.companion_show = override.show !== false;
+  }
+  if ('scale' in override) {
+    form.companion_scale = normalizeCompanionScale(override.scale);
+  }
+};
+
 const buildAgentAvatarOptionLabel = (key: string): string => {
   const match = String(key || '').trim().match(/^avatar-(\d{3})$/);
   if (match) {
@@ -1225,22 +1247,30 @@ const normalizeStringArrayForSnapshot = (value: unknown): string[] => {
     if (!text) return;
     unique.add(text);
   });
-  return Array.from(unique).sort((left, right) => left.localeCompare(right));
+  return Array.from(unique).sort();
 };
+
+const buildCurrentDeclaredDependencyPayload = () =>
+  buildDeclaredDependencyPayload(
+    normalizeAgentToolNamesForSettings(form.tool_names),
+    currentAgent.value,
+    toolSummary.value
+  );
 
 const buildFormSnapshot = (): AgentFormSnapshot => {
   const groupPayload = buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value);
   const iconConfig = buildCurrentIconConfig();
+  const dependencyPayload = buildCurrentDeclaredDependencyPayload();
   return {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
-    tool_names: normalizeStringArrayForSnapshot(
+    tool_names: normalizeAgentToolNamesForSettingsSnapshot(
       filterUserAgentToolNames(form.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS)
     ),
-    declared_tool_names: normalizeStringArrayForSnapshot(currentAgent.value?.declared_tool_names),
-    declared_skill_names: normalizeStringArrayForSnapshot(currentAgent.value?.declared_skill_names),
+    declared_tool_names: normalizeStringArrayForSnapshot(dependencyPayload.declared_tool_names),
+    declared_skill_names: normalizeStringArrayForSnapshot(dependencyPayload.declared_skill_names),
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
     hive_id: String(groupPayload.hive_id || '').trim(),
     hive_name: String(groupPayload.hive_name || '').trim(),
@@ -1275,21 +1305,7 @@ const addPresetQuestion = () => {
 const hasUnsavedChanges = computed(() => {
   if (!canEdit.value || !loadedSnapshot.value) return false;
   const current = buildFormSnapshot();
-  if (JSON.stringify(current) !== JSON.stringify(loadedSnapshot.value)) {
-    return true;
-  }
-  if (current.icon_kind === 'companion' && current.companion_id) {
-    const override = companionStore.getAgentOverride(normalizedAgentId.value);
-    const effectiveShow = override?.show ?? true;
-    const effectiveScale = normalizeCompanionScale(override?.scale ?? current.companion_scale);
-    if (effectiveShow !== current.companion_show) {
-      return true;
-    }
-    if (effectiveScale !== current.companion_scale) {
-      return true;
-    }
-  }
-  return false;
+  return JSON.stringify(current) !== JSON.stringify(loadedSnapshot.value);
 });
 
 watch(
@@ -1354,14 +1370,14 @@ const resolveConfiguredModelName = (agent: Record<string, unknown>): string => {
 const normalizeOption = (item: unknown): ToolOption | null => {
   if (!item) return null;
   if (typeof item === 'string') {
-    const value = item.trim();
+    const value = canonicalizeAgentToolName(item);
     if (!value) return null;
     return { label: value, value, description: '', hint: value };
   }
   const source = item as Record<string, unknown>;
-  const value = String(
+  const value = canonicalizeAgentToolName(String(
     source.runtime_name || source.runtimeName || source.name || source.tool_name || source.toolName || source.id || ''
-  ).trim();
+  ).trim());
   if (!value) return null;
   const label = String(source.display_name || source.displayName || source.title || source.label || value).trim() || value;
   const option: ToolOption = {
@@ -1414,29 +1430,6 @@ const toolSections = computed<ToolSection[]>(() =>
   }))
 );
 
-const DESKTOP_CONTROLLER_TOOL_NAME = '\u684c\u9762\u63a7\u5236\u5668';
-const DESKTOP_MONITOR_TOOL_NAME = '\u684c\u9762\u76d1\u89c6\u5668';
-
-const resolveDesktopToolKind = (value: unknown): 'controller' | 'monitor' | '' => {
-  const text = String(value || '').trim();
-  const normalized = text.toLowerCase();
-  if (
-    text === DESKTOP_CONTROLLER_TOOL_NAME ||
-    normalized === 'desktop_controller' ||
-    normalized === 'controller'
-  ) {
-    return 'controller';
-  }
-  if (
-    text === DESKTOP_MONITOR_TOOL_NAME ||
-    normalized === 'desktop_monitor' ||
-    normalized === 'monitor'
-  ) {
-    return 'monitor';
-  }
-  return '';
-};
-
 const resolveDesktopToolCatalogValues = () => {
   const values = {
     controller: '',
@@ -1462,7 +1455,9 @@ const normalizeAgentToolNamesForCatalog = (toolNames: unknown): string[] => {
   const seen = new Set<string>();
   for (const name of selected) {
     const desktopKind = resolveDesktopToolKind(name);
-    const value = desktopKind ? desktopValues[desktopKind] || name : name;
+    const value = desktopKind
+      ? canonicalizeAgentToolName(desktopValues[desktopKind] || name)
+      : canonicalizeAgentToolName(name);
     if (!value || seen.has(value)) {
       continue;
     }
@@ -1685,6 +1680,10 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     form.companion_show = avatarConfig.show !== false;
     form.companion_message_hints = avatarConfig.messageHints !== false;
     form.companion_scale = normalizeCompanionScale(avatarConfig.scale);
+    if (avatarConfig.kind === 'companion') {
+      await companionStore.hydrate().catch(() => undefined);
+      applyCompanionOverrideToForm();
+    }
     markFormClean();
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
@@ -1725,13 +1724,13 @@ const saveAgent = async () => {
   }
   saving.value = true;
   try {
-    const dependencyPayload = buildDeclaredDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
+    const dependencyPayload = buildCurrentDeclaredDependencyPayload();
     const payload: Record<string, unknown> = {
       name,
       description: String(form.description || '').trim(),
       is_shared: false,
       tool_names: filterUserAgentToolNames(
-        dependencyPayload.tool_names,
+        normalizeAgentToolNamesForSettings(dependencyPayload.tool_names),
         USER_AGENT_TOOL_CATALOG_OPTIONS
       ),
       declared_tool_names: dependencyPayload.declared_tool_names,
@@ -1751,6 +1750,9 @@ const saveAgent = async () => {
     if (!payload.hive_description) delete payload.hive_description;
     const updated = await agentStore.updateAgent(normalizedAgentId.value, payload);
     currentAgent.value = (updated as Record<string, unknown> | null) || currentAgent.value;
+    form.tool_names = normalizeAgentToolNamesForSettings(
+      (currentAgent.value?.tool_names as unknown) || payload.tool_names
+    );
     if (form.icon_kind === 'companion' && String(form.companion_id || '').trim()) {
       companionStore.setAgentOverride(normalizedAgentId.value, {
         show: form.companion_show !== false,
@@ -1772,7 +1774,11 @@ const saveAgent = async () => {
 
 const exportWorkerCard = () => {
   const groupPayload = buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value);
-  const dependencyPayload = buildWorkerCardDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
+  const dependencyPayload = buildWorkerCardDependencyPayload(
+    normalizeAgentToolNamesForSettings(form.tool_names),
+    currentAgent.value,
+    toolSummary.value
+  );
   const filename = downloadWorkerCard({
     id: normalizedAgentId.value,
     name: String(form.name || '').trim() || normalizedAgentId.value,
@@ -1781,7 +1787,7 @@ const exportWorkerCard = () => {
     model_name: String(form.model_name || '').trim(),
     icon: stringifyAgentAvatarIconConfig(buildCurrentIconConfig()),
     tool_names: filterUserAgentToolNames(
-      dependencyPayload.tool_names,
+      normalizeAgentToolNamesForSettings(dependencyPayload.tool_names),
       USER_AGENT_TOOL_CATALOG_OPTIONS
     ),
     declared_tool_names: dependencyPayload.declared_tool_names,
@@ -1863,7 +1869,13 @@ onMounted(() => {
       return;
     }
     invalidateUserToolsCatalogCache();
-    void loadToolSummary({ force: true });
+    const wasClean = !hasUnsavedChanges.value;
+    void loadToolSummary({ force: true }).then(() => {
+      if (wasClean) {
+        form.tool_names = normalizeAgentToolNamesForCatalog(form.tool_names);
+        markFormClean();
+      }
+    });
   });
   window.addEventListener('beforeunload', handleBeforeUnload);
   window.addEventListener('keydown', handleGlobalKeydown);

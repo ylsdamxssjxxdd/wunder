@@ -319,16 +319,19 @@ const resolveEventTitle = (eventType: string, payload: unknown): string => {
   return fallback || '-';
 };
 
-const normalizeSession = (sessionId: string, value: unknown): SessionDetail => {
+export const normalizeSessionForLogExport = (sessionId: string, value: unknown): SessionDetail => {
   const source =
     value && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  const messages = Array.isArray(source.messages)
-    ? source.messages
+  const transcriptSource = Array.isArray(source.transcript)
+    ? source.transcript
+    : Array.isArray(source.messages)
+      ? source.messages
+      : [];
+  const messages = transcriptSource
         .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
-        .map((item) => item as Record<string, unknown>)
-    : [];
+        .map((item) => item as Record<string, unknown>);
   return {
     id: String(source.id || sessionId),
     title: String(source.title || ''),
@@ -539,7 +542,7 @@ const fetchSessionExportBundle = async (sessionId: string): Promise<SessionExpor
   const eventPayload = (eventsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
   const parsedLastEventId = Number.parseInt(String(eventPayload?.last_event_id ?? 0), 10);
   return {
-    session: normalizeSession(targetId, sessionData),
+    session: normalizeSessionForLogExport(targetId, sessionData),
     rounds: normalizeRounds(eventPayload?.rounds),
     running: Boolean(eventPayload?.running),
     lastEventId: Number.isFinite(parsedLastEventId) && parsedLastEventId > 0 ? parsedLastEventId : 0
@@ -584,7 +587,7 @@ export const downloadSessionLogLines = (
     filenamePrefix?: string;
   }
 ) => {
-  const session = normalizeSession(options.sessionId, {
+  const session = normalizeSessionForLogExport(options.sessionId, {
     id: options.sessionId,
     agent_id: '',
     agent_name: options.agentName || '',
