@@ -1396,6 +1396,7 @@ impl Orchestrator {
                             map.remove("trace_id");
                             map.remove("user_round");
                             map.remove("model_round");
+                            round_info.insert_into(map);
                         }
                         emitter.emit("tool_result", tool_result_payload).await;
                         if let Some(tree_version) = result

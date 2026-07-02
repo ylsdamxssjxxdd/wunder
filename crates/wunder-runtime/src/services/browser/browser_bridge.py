@@ -76,7 +76,7 @@ class BridgeSession:
         if action in ("tabs", "list_tabs"):
             return self.list_tabs()
         if action in ("open", "open_tab"):
-            return self.open_tab(raw.get("url"))
+            return self.open_tab(raw.get("url"), raw.get("timeout_ms"))
         if action in ("focus", "focus_tab"):
             return self.focus_tab(raw.get("target_id"))
         if action in ("close", "close_tab"):
@@ -85,7 +85,7 @@ class BridgeSession:
                 return self.close_tab(target_id)
             return {"success": True, "data": {"status": "closing"}}
         if action == "navigate":
-            return self.navigate(raw.get("url"), raw.get("target_id"))
+            return self.navigate(raw.get("url"), raw.get("target_id"), raw.get("timeout_ms"))
         if action == "snapshot":
             return self.snapshot(
                 target_id=raw.get("target_id"),
@@ -131,7 +131,7 @@ class BridgeSession:
             },
         }
 
-    def open_tab(self, url=None):
+    def open_tab(self, url=None, timeout_ms=None):
         if len(self.pages) >= max(int(self.args.max_tabs), 1):
             return {
                 "success": False,
@@ -139,7 +139,7 @@ class BridgeSession:
             }
         target_id, page = self._new_page()
         if url:
-            page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+            page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
         return {
             "success": True,
             "data": {
@@ -189,11 +189,11 @@ class BridgeSession:
             },
         }
 
-    def navigate(self, url, target_id=None):
+    def navigate(self, url, target_id=None, timeout_ms=None):
         if not url:
             return {"success": False, "error": "Missing 'url' parameter"}
         page, target_id = self._resolve_page(target_id)
-        page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+        page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
         self.refs[target_id] = {}
         return {
             "success": True,
@@ -274,7 +274,7 @@ class BridgeSession:
         if kind == "close":
             return self.close_tab(target_id)
         locator = self._resolve_locator(page, target_id, request)
-        timeout_ms = int(request.get("timeout_ms") or self.timeout_ms)
+        timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if kind == "click":
             if bool(request.get("double_click", False)):
                 locator.dblclick(timeout=timeout_ms)
@@ -358,6 +358,20 @@ class BridgeSession:
             pass
         return target_id, page
 
+    def _timeout_ms(self, value=None, seconds=None):
+        if value is None and seconds is not None:
+            try:
+                return max(int(seconds) * 1000, 1)
+            except Exception:
+                return self.timeout_ms
+        if value is None:
+            return self.timeout_ms
+        try:
+            timeout_ms = int(value)
+        except Exception:
+            return self.timeout_ms
+        return max(timeout_ms, 1)
+
     def _resolve_page(self, target_id=None):
         if target_id:
             target_id = str(target_id)
@@ -406,7 +420,7 @@ class BridgeSession:
         raise ValueError("Browser action requires 'ref' or 'selector'")
 
     def _wait(self, page, target_id, request):
-        timeout_ms = int(request.get("timeout_ms") or self.timeout_ms)
+        timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if request.get("wait_ms") is not None:
             page.wait_for_timeout(int(request.get("wait_ms")))
             return self._action_result(page, target_id, "wait", extra={"wait_ms": request.get("wait_ms")})

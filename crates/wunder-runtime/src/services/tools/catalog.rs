@@ -1076,13 +1076,16 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "browser_session_id": { "type": "string", "description": t("tool.spec.browser.args.browser_session_id") },
                     "target_id": { "type": "string", "description": t("tool.spec.browser.args.target_id") },
                     "url": { "type": "string", "description": t("tool.spec.browser.args.url") },
+                    "path": { "type": "string", "description": t("tool.spec.browser.args.path") },
                     "format": { "type": "string", "description": t("tool.spec.browser.args.format") },
                     "ref": { "type": "string", "description": t("tool.spec.browser.args.ref") },
                     "selector": { "type": "string", "description": t("tool.spec.browser.args.selector") },
                     "text": { "type": "string", "description": t("tool.spec.browser.args.text") },
                     "key": { "type": "string", "description": t("tool.spec.browser.args.key") },
                     "full_page": { "type": "boolean", "description": t("tool.spec.browser.args.full_page") },
-                    "max_chars": { "type": "integer", "minimum": 1, "description": t("tool.spec.browser.args.max_chars") }
+                    "max_chars": { "type": "integer", "minimum": 1, "description": t("tool.spec.browser.args.max_chars") },
+                    "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 120000, "description": t("tool.spec.browser.args.timeout_ms") },
+                    "timeout_secs": { "type": "integer", "minimum": 1, "maximum": 120, "description": t("tool.spec.browser.args.timeout_secs") }
                 },
                 "required": ["action"],
                 "additionalProperties": false
@@ -2518,9 +2521,7 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "浏览器")
             .expect("browser spec");
-        assert!(spec
-            .description
-            .contains("start/open -> snapshot/read_page"));
+        assert!(spec.description.contains("start -> open/navigate"));
         let actions = spec.input_schema["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum");
@@ -2530,6 +2531,10 @@ mod tests {
         assert!(spec.input_schema["allOf"].is_null());
         assert!(spec.input_schema["properties"]["selector"].is_object());
         assert!(spec.input_schema["properties"]["url"].is_object());
+        assert!(spec.input_schema["properties"]["path"].is_object());
+        assert!(spec.input_schema["properties"]["timeout_ms"].is_object());
+        assert!(spec.input_schema["properties"]["timeout_secs"].is_object());
+        assert!(spec.description.contains("先用 start"));
         assert_eq!(
             spec.input_schema["additionalProperties"].as_bool(),
             Some(false)

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-02T03:20:28.452894+00:00",
+  "generated_at": "2026-07-02T09:44:34.368683+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -4143,7 +4143,7 @@
       "language": "zh-CN",
       "title": "浏览器",
       "summary": "浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-07-02",
       "read_when": [
         "用户要打开网页、点击、输入、截图或读取动态页面"
       ],
@@ -12335,7 +12335,7 @@
       "language": "en",
       "title": "Browser",
       "summary": "The actions, return characteristics, and division of labor between browser automation and `web_fetch`.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-07-02",
       "read_when": [
         "You need to open a webpage, click, type, take screenshots, or read dynamic pages"
       ],

@@ -2005,6 +2005,10 @@ const resolveModelTurnIdentity = (
   if (!modelTurnId) return '';
   const existing = session.modelTurnById[modelTurnId];
   if (existing) return modelTurnId;
+  if (shouldUseActiveModelTurnForWeakRuntimeTurn(session, modelTurnId, userTurnId)) {
+    const activeTurn = resolveLatestActiveAssistantModelTurn(session);
+    if (activeTurn) return activeTurn.id;
+  }
   const existingForUserTurn = resolveReusableModelTurnForUserTurn(session, userTurnId);
   if (
     existingForUserTurn &&
@@ -2013,6 +2017,79 @@ const resolveModelTurnIdentity = (
     return existingForUserTurn.id;
   }
   return modelTurnId;
+};
+
+const shouldUseActiveModelTurnForWeakRuntimeTurn = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string
+): boolean =>
+  Boolean(resolveLatestActiveAssistantModelTurn(session)) &&
+  (isWeakGeneratedUserTurnId(session, userTurnId) ||
+    isWeakGeneratedModelTurnId(session, modelTurnId, userTurnId));
+
+const isWeakGeneratedUserTurnId = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string
+): boolean => {
+  if (!userTurnId) return true;
+  return (
+    userTurnId === `user-turn:${session.sessionId}:unknown` ||
+    userTurnId.startsWith(`user-turn:${session.sessionId}:request:`) ||
+    userTurnId.startsWith('orphan-user-turn:')
+  );
+};
+
+const isWeakGeneratedModelTurnId = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string
+): boolean => {
+  if (!modelTurnId) return true;
+  return (
+    modelTurnId === `model-turn:${userTurnId}` ||
+    modelTurnId === `model-turn:user-turn:${session.sessionId}:unknown` ||
+    modelTurnId.startsWith(`model-turn:${session.sessionId}:request:`) ||
+    modelTurnId.startsWith(`model-turn:${session.sessionId}:model:`) ||
+    modelTurnId.startsWith(`model-turn:${userTurnId}:`) ||
+    (
+      isWeakGeneratedUserTurnId(session, userTurnId) &&
+      modelTurnId.startsWith('model-turn:')
+    )
+  );
+};
+
+const resolveLatestActiveAssistantModelTurn = (
+  session: ChatRuntimeSessionProjection
+): ChatRuntimeModelTurnProjection | null => {
+  const activeTurns = session.modelTurns
+    .map((turnId) => session.modelTurnById[turnId])
+    .filter((turn): turn is ChatRuntimeModelTurnProjection =>
+      Boolean(turn) &&
+      (
+        turn.status === 'created' ||
+        turn.status === 'waiting_first_output' ||
+        turn.status === 'streaming' ||
+        turn.status === 'tool_running' ||
+        turn.status === 'finalizing'
+      ) &&
+      turn.messageIds.some((messageId) => session.messageById[messageId]?.role === 'assistant')
+    );
+  if (activeTurns.length === 0) return null;
+  return activeTurns.sort((left, right) =>
+    resolveModelTurnLatestMessageSeq(session, right) - resolveModelTurnLatestMessageSeq(session, left) ||
+    right.createdSeq - left.createdSeq
+  )[0] || null;
+};
+
+const resolveModelTurnLatestMessageSeq = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeModelTurnProjection
+): number => {
+  const seqs = turn.messageIds
+    .map((messageId) => session.messageById[messageId]?.updatedSeq)
+    .filter((value): value is number => Number.isFinite(value));
+  return seqs.length > 0 ? Math.max(...seqs) : turn.createdSeq;
 };
 
 const resolveReusableModelTurnForUserTurn = (

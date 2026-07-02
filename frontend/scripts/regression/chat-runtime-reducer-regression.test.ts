@@ -731,6 +731,78 @@ test('assistant created confirmation reuses an existing local assistant placehol
   assert.equal(projection.sessions['session-1'].messages.length, 2);
 });
 
+test('tool result and final events with weak turn ids fold into the active tool assistant bubble', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const modelTurnId = 'model-turn:session-1:user:1:model:1';
+  const toolAssistantId = 'assistant-message:tool-call-turn';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-user-tool',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    message_id: 'user-message-tool',
+    content: 'use a tool'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-call',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: toolAssistantId,
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool: 'sample_tool',
+        tool_call_id: 'call-1'
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_completed',
+    event_id: 'evt-tool-result',
+    event_seq: 3,
+    user_turn_id: 'user-turn:session-1:request:req-1',
+    model_turn_id: 'model-turn:session-1:request:req-1',
+    message_id: 'assistant-message:model-turn:session-1:request:req-1',
+    payload: {
+      source_event_type: 'tool_result',
+      data: {
+        tool: 'sample_tool',
+        tool_call_id: 'call-1',
+        status: 'completed'
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-final-after-tool',
+    event_seq: 4,
+    user_turn_id: 'user-turn:session-1:request:req-1',
+    model_turn_id: 'model-turn:session-1:request:req-1',
+    message_id: 'assistant-message:model-turn:session-1:request:req-1',
+    content: 'tool-backed answer'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:use a tool', 'assistant:tool-backed answer']
+  );
+  assert.equal(visible[1].id, toolAssistantId);
+  assert.equal(
+    visible.filter((message) => message.role === 'assistant').length,
+    1
+  );
+  assert.equal(visible[1].workflowItems?.length, 1);
+  assert.equal(
+    projection.sessions['session-1'].messages.length,
+    2
+  );
+});
+
 test('legacy reconcile keeps historical assistant separate from later completed answer after refresh', () => {
   const projection = createChatRuntimeProjection();
   const greeting = {

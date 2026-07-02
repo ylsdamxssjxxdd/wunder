@@ -1760,8 +1760,8 @@
     "zh-CN": "在工作区内执行 CLI 命令。`workdir` 仅用于指定工作区内的相对目录。"
   },
   "tool.spec.browser.description": {
-    "en-US": "Browser automation tool. Common flow: start/open -> snapshot/read_page -> click/type/press -> wait/screenshot. Prefer browser_session_id, target_id, url, selector, text, key, format, and max_chars.",
-    "zh-CN": "浏览器自动化工具。常用流程：start/open -> snapshot/read_page -> click/type/press -> wait/screenshot。优先使用 browser_session_id、target_id、url、selector、text、key、format、max_chars。"
+    "en-US": "Browser automation tool. Prefer start first to warm up or reuse the session, then open/navigate; for slow pages pass timeout_ms. Common flow: start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot. Screenshots from agent tool calls are saved to the workspace by default.",
+    "zh-CN": "浏览器自动化工具。优先先用 start 预热或复用会话，再 open/navigate；慢页面可传 timeout_ms。常用流程：start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot。智能体工具调用截图默认保存到工作区。"
   },
   "tool.spec.browser.args.action": {
     "en-US": "Action: status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page.",
@@ -1782,6 +1782,10 @@
   "tool.spec.browser.args.url": {
     "en-US": "The URL to open (http/https only).",
     "zh-CN": "要打开的网页地址（http/https）。"
+  },
+  "tool.spec.browser.args.path": {
+    "en-US": "Optional workspace-relative screenshot path for screenshot actions. Defaults to browser/screenshots/browser_shot_<id>.png.",
+    "zh-CN": "可选，screenshot 动作保存截图的工作区相对路径；默认 browser/screenshots/browser_shot_<id>.png。"
   },
   "tool.spec.browser.args.format": {
     "en-US": "Snapshot format: role/aria/ai.",
@@ -1810,6 +1814,14 @@
   "tool.spec.browser.args.max_chars": {
     "en-US": "Optional maximum characters for snapshot/read_page output.",
     "zh-CN": "可选，snapshot/read_page 输出的最大字符数。"
+  },
+  "tool.spec.browser.args.timeout_ms": {
+    "en-US": "Optional per-call timeout in milliseconds for open/navigate and waits; use for slow pages after starting the session.",
+    "zh-CN": "可选，open/navigate 与等待动作的单次调用超时时间（毫秒）；慢页面建议先 start 后再传入。"
+  },
+  "tool.spec.browser.args.timeout_secs": {
+    "en-US": "Optional per-call timeout in seconds for open/navigate and waits. timeout_ms takes precedence when both are present.",
+    "zh-CN": "可选，open/navigate 与等待动作的单次调用超时时间（秒）；同时传入时 timeout_ms 优先。"
   },
   "tool.spec.browser.args.request": {
     "en-US": "Structured act request. Usually contains kind/target_id/ref/selector/text/key and batch steps.",

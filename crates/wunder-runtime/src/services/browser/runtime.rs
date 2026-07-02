@@ -169,6 +169,7 @@ impl BrowserControlService {
         let url = optional_string(args, "url")
             .map(|value| self.normalize_url(value))
             .transpose()?;
+        let timeout_ms = optional_timeout_ms(args, self.config.timeout_secs);
         let response = self
             .bridge
             .send_command(
@@ -177,6 +178,7 @@ impl BrowserControlService {
                     "action": "open",
                     "profile": scope.profile_name().unwrap_or_else(|| self.config.default_profile.clone()),
                     "url": url,
+                    "timeout_ms": timeout_ms,
                 }),
             )
             .await
@@ -227,6 +229,7 @@ impl BrowserControlService {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let url = self.normalize_url(required_string(args, "url")?)?;
+        let timeout_ms = optional_timeout_ms(args, self.config.timeout_secs);
         let response = self
             .bridge
             .send_command(
@@ -235,6 +238,7 @@ impl BrowserControlService {
                     "action": "navigate",
                     "target_id": optional_string(args, "target_id"),
                     "url": url,
+                    "timeout_ms": timeout_ms,
                 }),
             )
             .await
@@ -347,6 +351,9 @@ impl BrowserControlService {
                 "Browser screenshot exceeds download limit ({} bytes)",
                 self.config.max_download_bytes
             ));
+        }
+        if optional_bool(args, "save_to_workspace").unwrap_or(false) {
+            return Ok(data);
         }
         let (filename, download_url) = save_screenshot(&bytes)?;
         if let Value::Object(ref mut map) = data {
@@ -461,6 +468,7 @@ fn build_direct_request(args: &Value) -> Value {
         "load_state",
         "wait_ms",
         "timeout_ms",
+        "timeout_secs",
         "full_page",
         "expression",
         "script",
@@ -506,6 +514,14 @@ fn optional_u64(args: &Value, key: &str) -> Option<u64> {
             None
         }
     })
+}
+
+fn optional_timeout_ms(args: &Value, default_timeout_secs: u64) -> Option<u64> {
+    let value = optional_u64(args, "timeout_ms").or_else(|| {
+        optional_u64(args, "timeout_secs").map(|seconds| seconds.saturating_mul(1000))
+    })?;
+    let default_ms = default_timeout_secs.max(1).saturating_mul(1000);
+    Some(value.clamp(1, default_ms.saturating_mul(4)))
 }
 
 fn save_screenshot(bytes: &[u8]) -> Result<(String, String)> {
@@ -574,14 +590,32 @@ fn is_private_host(host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{browser_service, is_private_host, BrowserControlService};
+    use super::{browser_service, is_private_host, optional_timeout_ms, BrowserControlService};
     use crate::config::Config;
+    use serde_json::json;
 
     #[test]
     fn detects_private_hosts() {
         assert!(is_private_host("127.0.0.1"));
         assert!(is_private_host("localhost"));
         assert!(!is_private_host("example.com"));
+    }
+
+    #[test]
+    fn browser_timeout_accepts_ms_and_secs_with_bound() {
+        assert_eq!(
+            optional_timeout_ms(&json!({ "timeout_ms": 60_000 }), 30),
+            Some(60_000)
+        );
+        assert_eq!(
+            optional_timeout_ms(&json!({ "timeout_secs": 45 }), 30),
+            Some(45_000)
+        );
+        assert_eq!(
+            optional_timeout_ms(&json!({ "timeout_ms": 999_000 }), 30),
+            Some(120_000)
+        );
+        assert_eq!(optional_timeout_ms(&json!({}), 30), None);
     }
 
     #[test]

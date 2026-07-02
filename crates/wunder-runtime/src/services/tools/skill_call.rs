@@ -219,7 +219,11 @@ fn build_skill_tree(root: &Path) -> Vec<String> {
             continue;
         }
         let mut display = name.replace('\\', "/");
-        if entry.file_type().map(|file_type| file_type.is_dir()).unwrap_or(false) {
+        if entry
+            .file_type()
+            .map(|file_type| file_type.is_dir())
+            .unwrap_or(false)
+        {
             display.push('/');
         }
         items.push(display);
@@ -302,8 +306,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let root = dir.path();
         std::fs::write(root.join("SKILL.md"), "# Demo").expect("write skill");
-        std::fs::create_dir_all(root.join("references").join("nested"))
-            .expect("create references");
+        std::fs::create_dir_all(root.join("references").join("nested")).expect("create references");
         std::fs::write(root.join("references").join("guide.md"), "# Guide").expect("write guide");
         std::fs::write(
             root.join("references").join("nested").join("deep.md"),
@@ -311,8 +314,7 @@ mod tests {
         )
         .expect("write nested guide");
         std::fs::create_dir_all(root.join("scripts")).expect("create scripts");
-        std::fs::write(root.join("scripts").join("tool.py"), "print('ok')")
-            .expect("write script");
+        std::fs::write(root.join("scripts").join("tool.py"), "print('ok')").expect("write script");
 
         assert_eq!(
             build_skill_tree(root),

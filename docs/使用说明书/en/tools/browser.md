@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools/browser_tool.rs
   - src/services/browser/runtime.rs
-updated_at: 2026-04-10
+updated_at: 2026-07-02
 ---
 
 # Browser
@@ -41,13 +41,34 @@ Do not assume every browser action will look exactly like the standard tool enve
 
 ## Minimum argument examples
 
+Warm up a session:
+
+```json
+{
+  "action": "start",
+  "browser_session_id": "sess_xxx"
+}
+```
+
+Open a slow page:
+
+```json
+{
+  "action": "open",
+  "browser_session_id": "sess_xxx",
+  "url": "https://example.com",
+  "timeout_ms": 60000
+}
+```
+
 Navigate:
 
 ```json
 {
   "action": "navigate",
   "browser_session_id": "sess_xxx",
-  "url": "https://example.com"
+  "url": "https://example.com",
+  "timeout_ms": 60000
 }
 ```
 
@@ -77,10 +98,11 @@ This looks more like a runtime status snapshot:
   "limits": { ... },
   "playwright": { ... },
   "docker": { ... },
-  "control": { ... },
   "sessions": ["sess_xxx"]
 }
 ```
+
+The model-facing browser tool does not return local control endpoint fields. Admin HTTP status endpoints may include `control.host` / `control.port`; those are internal Wunder browser-control settings, not file download URLs, and models should not use them as browsing targets.
 
 ### `stop`
 
@@ -94,16 +116,20 @@ This looks more like a runtime status snapshot:
 
 ### `screenshot`
 
-The tool converts the bridge-layer `image_base64` into a real file and then returns download metadata. Typical fields include:
+When called by an agent tool, the bridge-layer `image_base64` is saved into the current agent workspace. The default path is `browser/screenshots/browser_shot_<id>.png`; pass `path` to choose another workspace-relative path. Typical fields include:
 
 ```json
 {
   "ok": true,
-  "filename": "browser_xxx.png",
-  "download_url": "/wunder/temp_dir/download?...",
+  "filename": "browser_shot_xxx.png",
+  "path": "browser/screenshots/browser_shot_xxx.png",
+  "public_path": "/workspaces/<workspace_id>/browser/screenshots/browser_shot_xxx.png",
+  "saved_to": "workspace",
   "...": "other browser runtime fields"
 }
 ```
+
+Direct HTTP calls to `/wunder/browser/screenshot` still write to `temp_dir` and return a `/wunder/temp_dir/download?...` URL for admin/debug workflows.
 
 ### `read_page`, `snapshot`, `navigate`, `tabs`
 
@@ -116,3 +142,5 @@ The exact fields are defined by the browser bridge. In practice, they usually in
 
 If you only need the main content of a public webpage, start with [Web Fetch](/docs/en/tools/web-fetch/).  
 Only switch to the browser when the page depends on frontend rendering, verification steps, or real interaction.
+
+For pages that often time out, call `start` first to warm up or reuse the session, then call `open` or `navigate` with `timeout_ms` or `timeout_secs` as needed.

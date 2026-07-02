@@ -6,7 +6,7 @@ read_when:
 source_docs:
   - src/services/tools/browser_tool.rs
   - src/services/browser/runtime.rs
-updated_at: 2026-04-10
+updated_at: 2026-07-02
 ---
 
 # 浏览器
@@ -41,13 +41,34 @@ updated_at: 2026-04-10
 
 ## 最小参数示例
 
+预热会话：
+
+```json
+{
+  "action": "start",
+  "browser_session_id": "sess_xxx"
+}
+```
+
+打开慢页面：
+
+```json
+{
+  "action": "open",
+  "browser_session_id": "sess_xxx",
+  "url": "https://example.com",
+  "timeout_ms": 60000
+}
+```
+
 导航：
 
 ```json
 {
   "action": "navigate",
   "browser_session_id": "sess_xxx",
-  "url": "https://example.com"
+  "url": "https://example.com",
+  "timeout_ms": 60000
 }
 ```
 
@@ -77,10 +98,11 @@ updated_at: 2026-04-10
   "limits": { ... },
   "playwright": { ... },
   "docker": { ... },
-  "control": { ... },
   "sessions": ["sess_xxx"]
 }
 ```
+
+模型侧浏览器工具不会返回本地控制端点字段。管理端 HTTP 状态接口可能包含 `control.host` / `control.port`，它们只是 Wunder 内部浏览器控制配置，不是文件下载地址，也不应让模型拿去访问。
 
 ### `stop`
 
@@ -94,16 +116,20 @@ updated_at: 2026-04-10
 
 ### `screenshot`
 
-会把桥接层回传的 `image_base64` 落成文件，再返回下载信息，典型字段包括：
+通过智能体工具调用时，会把桥接层回传的 `image_base64` 保存到当前智能体工作区，默认路径为 `browser/screenshots/browser_shot_<id>.png`；也可以传 `path` 指定工作区相对路径。典型字段包括：
 
 ```json
 {
   "ok": true,
-  "filename": "browser_xxx.png",
-  "download_url": "/wunder/temp_dir/download?...",
+  "filename": "browser_shot_xxx.png",
+  "path": "browser/screenshots/browser_shot_xxx.png",
+  "public_path": "/workspaces/<workspace_id>/browser/screenshots/browser_shot_xxx.png",
+  "saved_to": "workspace",
   "...": "other browser runtime fields"
 }
 ```
+
+如果直接调用浏览器 HTTP 控制接口 `/wunder/browser/screenshot`，返回仍会写入 `temp_dir` 并提供 `/wunder/temp_dir/download?...` 下载链接，用于管理端或调试端临时取图。
 
 ### `read_page` / `snapshot` / `navigate` / `tabs`
 
@@ -116,3 +142,5 @@ updated_at: 2026-04-10
 
 如果只是读公开网页正文，先用 [网页抓取](/docs/zh-CN/tools/web-fetch/)。  
 只有在页面依赖前端渲染、验证流程或必须交互时，再切到浏览器。
+
+对容易超时的页面，优先先执行 `start` 预热或复用已有会话，再执行 `open` 或 `navigate`，并按需传 `timeout_ms` 或 `timeout_secs`。
