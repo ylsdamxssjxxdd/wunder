@@ -240,7 +240,7 @@ impl BrowserBridge {
             .arg("--timeout")
             .arg(self.config.timeout_secs.to_string());
         for arg in self.launch_args() {
-            command.arg("--launch-arg").arg(arg);
+            command.arg(format!("--launch-arg={arg}"));
         }
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());

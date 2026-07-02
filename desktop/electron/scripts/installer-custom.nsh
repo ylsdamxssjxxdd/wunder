@@ -1,3 +1,11 @@
+!macro customHeader
+  !ifdef BUILD_UNINSTALLER
+    ShowUninstDetails show
+  !else
+    ShowInstDetails show
+  !endif
+!macroend
+
 !macro customInstall
   SetShellVarContext current
   Delete "$LOCALAPPDATA\wunder-desktop-electron-win7-updater\installer.exe"

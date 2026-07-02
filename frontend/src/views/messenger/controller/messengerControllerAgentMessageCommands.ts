@@ -226,12 +226,6 @@ import {
   parseWorldVoicePayload
 } from '@/views/messenger/worldVoice';
 import {
-  buildAgentApprovalOptions,
-  normalizeAgentApprovalMode,
-  useComposerApprovalMode,
-  type AgentApprovalMode
-} from '@/views/messenger/composerApprovalMode';
-import {
   buildUnitTreeFromFlat,
   buildUnitTreeRows,
   collectUnitNodeIds,
@@ -969,7 +963,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
           await ctx.chatStore.sendMessage(finalContent, {
               attachments,
               suppressQueuedNotice: hasInquirySelection,
-              approvalMode: normalizeAgentApprovalMode(ctx.composerApprovalMode.value || ctx.activeAgentApprovalMode.value)
+              approvalMode: 'full_auto'
           });
           ctx.setRuntimeStateOverride(targetAgentId, 'idle', 0);
           if (ctx.chatStore.activeSessionId) {

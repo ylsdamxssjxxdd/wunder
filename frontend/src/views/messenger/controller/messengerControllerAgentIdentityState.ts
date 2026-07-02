@@ -986,7 +986,7 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
       return ctx.resolveCompactApprovalOptionLabel(optionLabel) || optionLabel;
   }));
 
-  ctx.showAgentComposerApprovalSelector = computed(() => ctx.isAgentConversationActive.value);
+  ctx.showAgentComposerApprovalSelector = computed(() => false);
 
   ctx.resolveComposerApprovalPersistAgentId = () => ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value || ctx.chatStore.draftAgentId) ||
       DEFAULT_AGENT_KEY;
@@ -1014,7 +1014,7 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
   ctx.composerApprovalModeSyncing = composerApprovalModeSyncing;
   ctx.updateComposerApprovalMode = updateComposerApprovalMode;
 
-  ctx.agentComposerApprovalHintMode = computed<AgentApprovalMode>(() => ctx.showAgentComposerApprovalSelector.value ? ctx.composerApprovalMode.value : ctx.activeAgentApprovalMode.value);
+  ctx.agentComposerApprovalHintMode = computed<AgentApprovalMode>(() => 'full_auto');
 
   ctx.agentComposerApprovalHintLabel = computed(() => {
       const optionLabel = ctx.t(`portal.agent.permission.option.${ctx.agentComposerApprovalHintMode.value}`);
@@ -1022,7 +1022,7 @@ export function installMessengerControllerAgentIdentityState(ctx: MessengerContr
       return `${ctx.t('portal.agent.permission.title')}: ${compactOption}`;
   });
 
-  ctx.showAgentComposerApprovalHint = computed(() => ctx.isAgentConversationActive.value);
+  ctx.showAgentComposerApprovalHint = computed(() => false);
 
   ctx.activeSessionApproval = computed(() => {
       if (!ctx.isAgentConversationActive.value)

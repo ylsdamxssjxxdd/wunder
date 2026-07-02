@@ -8,7 +8,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 pub(crate) const SKILL_ROOT_PLACEHOLDER: &str = "{{SKILL_ROOT}}";
 
@@ -211,18 +210,21 @@ fn find_skill_spec_in_root_by_name(root: &Path, raw_name: &str) -> Option<SkillS
 
 fn build_skill_tree(root: &Path) -> Vec<String> {
     let mut items = Vec::new();
-    for entry in WalkDir::new(root)
-        .min_depth(1)
-        .into_iter()
-        .filter_map(|item| item.ok())
-    {
-        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path());
-        let mut display = rel.to_string_lossy().replace('\\', "/");
-        if entry.file_type().is_dir() {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return items;
+    };
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let mut display = name.replace('\\', "/");
+        if entry.file_type().map(|file_type| file_type.is_dir()).unwrap_or(false) {
             display.push('/');
         }
         items.push(display);
     }
+    items.sort();
     items
 }
 
@@ -292,6 +294,33 @@ mod tests {
         assert_eq!(
             parse_skill_name_candidates("planner"),
             vec!["planner".to_string()]
+        );
+    }
+
+    #[test]
+    fn build_skill_tree_only_lists_root_children() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::write(root.join("SKILL.md"), "# Demo").expect("write skill");
+        std::fs::create_dir_all(root.join("references").join("nested"))
+            .expect("create references");
+        std::fs::write(root.join("references").join("guide.md"), "# Guide").expect("write guide");
+        std::fs::write(
+            root.join("references").join("nested").join("deep.md"),
+            "# Deep",
+        )
+        .expect("write nested guide");
+        std::fs::create_dir_all(root.join("scripts")).expect("create scripts");
+        std::fs::write(root.join("scripts").join("tool.py"), "print('ok')")
+            .expect("write script");
+
+        assert_eq!(
+            build_skill_tree(root),
+            vec![
+                "SKILL.md".to_string(),
+                "references/".to_string(),
+                "scripts/".to_string()
+            ]
         );
     }
 

@@ -1,6 +1,6 @@
 ---
 title: Skill Call
-summary: How `skill_call` returns the skill body, root directory, and file tree to the model.
+summary: How `skill_call` returns the skill body, root directory, and top-level file tree to the model.
 read_when:
   - You need to load a `SKILL.md` file and its directory context
 source_docs:
@@ -48,7 +48,7 @@ updated_at: 2026-04-10
 - `content` is rendered in a form that is easier for the model to read
 - `root` explicitly returns the skill root directory
 - `{{SKILL_ROOT}}` can be used as a placeholder inside the content
-- `tree` tells the model what additional files exist under the skill directory
+- `tree` lists only top-level files and folders under the skill root so the model can decide which supporting resources to read next
 
 ## Common failures
 

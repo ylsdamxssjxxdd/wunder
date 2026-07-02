@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-06-29T09:48:10.792966+00:00",
+  "generated_at": "2026-07-02T03:20:28.452894+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -31,7 +31,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder 心舰",
-                    "summary": "wunder 是一个智能体系统，有桌面端、服务端、命令行三种用法。先按角色选入口。",
+                    "summary": "wunder 是会执行任务的智能体系统。用户在蜂巢里描述目标，智能体拆解任务、调用工具、交付结果。",
                     "url": "/docs/"
                   }
                 ]
@@ -42,7 +42,7 @@
                   {
                     "slug": "zh-CN/start/quickstart",
                     "title": "快速开始",
-                    "summary": "用最短路径跑通 wunder 的第一个任务。默认推荐 desktop，其次按 server 或 cli 分流。",
+                    "summary": "用最短路径打开蜂巢、配置模型、跑通第一个任务。",
                     "url": "/docs/zh-CN/start/quickstart/"
                   },
                   {
@@ -71,7 +71,7 @@
                   {
                     "slug": "zh-CN/start/hubs",
                     "title": "说明书总览",
-                    "summary": "按角色快速找到用户需要的文档入口。",
+                    "summary": "按角色找到需要的文档入口。",
                     "url": "/docs/zh-CN/start/hubs/"
                   },
                   {
@@ -224,7 +224,7 @@
                   {
                     "slug": "zh-CN/tools/skill-call",
                     "title": "技能调用",
-                    "summary": "`skill_call` 如何把技能正文、根目录和文件树返回给模型。",
+                    "summary": "`skill_call` 如何把技能正文、根目录和一级文件树返回给模型。",
                     "url": "/docs/zh-CN/tools/skill-call/"
                   }
                 ]
@@ -450,7 +450,7 @@
                   {
                     "slug": "zh-CN/surfaces/index",
                     "title": "界面概览",
-                    "summary": "Wunder 有三个界面：用户端、管理端、桌面端。用户端做日常工作，管理端做系统治理，桌面端是个人主入口。",
+                    "summary": "用户在蜂巢里工作，管理员用管理端治理。蜂巢有桌面端和网页端两种打开方式。",
                     "url": "/docs/zh-CN/surfaces/"
                   }
                 ]
@@ -460,8 +460,8 @@
                 "pages": [
                   {
                     "slug": "zh-CN/surfaces/frontend",
-                    "title": "用户端界面",
-                    "summary": "用户的主要工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
+                    "title": "蜂巢界面",
+                    "summary": "蜂巢是用户的工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
                     "url": "/docs/zh-CN/surfaces/frontend/"
                   },
                   {
@@ -479,7 +479,7 @@
                   {
                     "slug": "zh-CN/surfaces/desktop-ui",
                     "title": "桌面端界面",
-                    "summary": "个人用户的主入口。本地优先的工作台，可以直接访问本机文件，有一键重置功能。",
+                    "summary": "蜂巢的桌面端形态。本地优先，可以直接访问本机文件，有一键重置功能。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
                   }
                 ]
@@ -612,7 +612,7 @@
                   {
                     "slug": "zh-CN/concepts/architecture",
                     "title": "系统架构",
-                    "summary": "Wunder 的整体结构：三层架构、统一内核、多种形态，用一张图建立全局认知。",
+                    "summary": "Wunder 的整体结构：用户在蜂巢里工作，蜂巢背后是统一内核与数据地基。",
                     "url": "/docs/zh-CN/concepts/architecture/"
                   },
                   {
@@ -735,7 +735,7 @@
                   {
                     "slug": "en/index",
                     "title": "wunder",
-                    "summary": "An agent system that gets things done. You set the goal, it breaks it down, calls tools, and delivers results.",
+                    "summary": "wunder is an agent system that executes tasks. You describe a goal in Hive, and agents break it down, call tools, and deliver results.",
                     "url": "/docs/en/"
                   }
                 ]
@@ -746,7 +746,7 @@
                   {
                     "slug": "en/start/quickstart",
                     "title": "Quick Start",
-                    "summary": "The shortest path to complete your first task in wunder. Desktop by default, then Server or CLI.",
+                    "summary": "The shortest path to open Hive, configure a model, and complete your first task.",
                     "url": "/docs/en/start/quickstart/"
                   },
                   {
@@ -928,7 +928,7 @@
                   {
                     "slug": "en/tools/skill-call",
                     "title": "Skill Call",
-                    "summary": "How `skill_call` returns the skill body, root directory, and file tree to the model.",
+                    "summary": "How `skill_call` returns the skill body, root directory, and top-level file tree to the model.",
                     "url": "/docs/en/tools/skill-call/"
                   }
                 ]
@@ -1154,7 +1154,7 @@
                   {
                     "slug": "en/surfaces/index",
                     "title": "Interface Overview",
-                    "summary": "Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.",
+                    "summary": "Users work in Hive; admins govern in the admin interface. Hive opens via the desktop app or a web browser.",
                     "url": "/docs/en/surfaces/"
                   }
                 ]
@@ -1164,14 +1164,14 @@
                 "pages": [
                   {
                     "slug": "en/surfaces/frontend",
-                    "title": "User Interface",
-                    "summary": "Your main workbench. Left navigation, middle list, right workspace — all daily work happens here.",
+                    "title": "Hive Interface",
+                    "summary": "Hive is your workbench. Left navigation, middle list, right workspace — all daily work happens here.",
                     "url": "/docs/en/surfaces/frontend/"
                   },
                   {
                     "slug": "en/surfaces/orchestration",
                     "title": "Orchestration",
-                    "summary": "The orchestration page is a dedicated workbench for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
+                    "summary": "The orchestration page is a dedicated workspace for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
                     "url": "/docs/en/surfaces/orchestration/"
                   },
                   {
@@ -1183,7 +1183,7 @@
                   {
                     "slug": "en/surfaces/desktop-ui",
                     "title": "Desktop Interface",
-                    "summary": "The main entry for individual users. Local-first workbench with direct file access and one-click reset.",
+                    "summary": "Hive's desktop form. Local-first, with direct file access and one-click reset.",
                     "url": "/docs/en/surfaces/desktop-ui/"
                   }
                 ]
@@ -1316,7 +1316,7 @@
                   {
                     "slug": "en/concepts/architecture",
                     "title": "Architecture",
-                    "summary": "wunder uses one unified orchestration kernel to support three runtime forms: server, cli, and desktop.",
+                    "summary": "wunder uses one unified orchestration kernel. Hive is how users reach that kernel; the deployment form decides where the kernel runs.",
                     "url": "/docs/en/concepts/architecture/"
                   },
                   {
@@ -1624,12 +1624,11 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder 心舰",
-      "summary": "wunder 是一个智能体系统，有桌面端、服务端、命令行三种用法。先按角色选入口。",
-      "updated_at": "2026-06-29",
+      "summary": "wunder 是会执行任务的智能体系统。用户在蜂巢里描述目标，智能体拆解任务、调用工具、交付结果。",
+      "updated_at": "2026-06-30",
       "read_when": [
         "第一次了解 wunder",
-        "需要快速判断先看 desktop、server 还是 cli",
-        "要定位接入、运维和工具文档入口"
+        "需要快速判断从哪里开始"
       ],
       "source_docs": [
         "README.md",
@@ -1650,17 +1649,17 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "wunder 概述"
+          "text": "蜂巢：用户的工作台"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "能力范围"
+          "text": "能做什么"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "系统结构"
+          "text": "工作台与系统结构"
         },
         {
           "id": "section-5",
@@ -1679,26 +1678,6 @@
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "第一次使用"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "深入理解"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "接入开发"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "遇到问题"
-        },
-        {
-          "id": "section-12",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -1712,8 +1691,8 @@
       "slug": "zh-CN/start/quickstart",
       "language": "zh-CN",
       "title": "快速开始",
-      "summary": "用最短路径跑通 wunder 的第一个任务。默认推荐 desktop，其次按 server 或 cli 分流。",
-      "updated_at": "2026-06-29",
+      "summary": "用最短路径打开蜂巢、配置模型、跑通第一个任务。",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户第一次使用 wunder",
         "用户需要快速跑通一个可验证结果"
@@ -1737,12 +1716,12 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "第一步：选对路径"
+          "text": "第一步：打开蜂巢"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "最短路径：Desktop（推荐）"
+          "text": "最短路径：桌面端"
         },
         {
           "id": "section-4",
@@ -1752,12 +1731,12 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "Desktop 特有能力"
+          "text": "桌面端额外能力"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "团队路径：Server"
+          "text": "团队路径：网页端"
         },
         {
           "id": "section-7",
@@ -1772,7 +1751,7 @@
         {
           "id": "section-9",
           "level": 3,
-          "text": "Server 核心能力"
+          "text": "服务端核心能力"
         },
         {
           "id": "section-10",
@@ -2096,8 +2075,8 @@
       "slug": "zh-CN/start/hubs",
       "language": "zh-CN",
       "title": "说明书总览",
-      "summary": "按角色快速找到用户需要的文档入口。",
-      "updated_at": "2026-06-29",
+      "summary": "按角色找到需要的文档入口。",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户不确定先看哪一页",
         "用户希望按角色快速进入正确文档"
@@ -2153,7 +2132,7 @@
       "language": "zh-CN",
       "title": "常用说明目录",
       "summary": "按用途列出的文档索引，帮助快速定位到具体页面。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "知道想看什么但不确定在哪",
         "想了解文档全貌"
@@ -2181,7 +2160,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "界面"
+          "text": "蜂巢与界面"
         },
         {
           "id": "section-4",
@@ -2219,7 +2198,7 @@
       "language": "zh-CN",
       "title": "核心概览",
       "summary": "理解 Wunder，先抓住 11 个核心。它们定义的是系统必须守住的设计原则，而非功能清单。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -2280,7 +2259,7 @@
       "language": "zh-CN",
       "title": "智能体循环",
       "summary": "智能体不只是\"收到问题→给出回答\"。它是一个持续运行的循环：思考、行动、观察、继续，直到任务完成。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -2381,7 +2360,7 @@
       "language": "zh-CN",
       "title": "工具",
       "summary": "智能体不只会说话，还能做事。工具是智能体执行能力的统一接口——读文件、写代码、搜索网页，都是工具。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -2467,7 +2446,7 @@
       "language": "zh-CN",
       "title": "蜂群",
       "summary": "复杂任务拆解给多个智能体协作完成：母蜂调度、工蜂执行、结果归并，过程持续可见。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -2891,7 +2870,7 @@
       "language": "zh-CN",
       "title": "定时任务",
       "summary": "让智能体在指定时间自动执行任务。是系统级的异步调度能力。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -3214,7 +3193,7 @@
       "language": "zh-CN",
       "title": "稳定性",
       "summary": "出错不扩散，失败能恢复。系统在各种边界情况下保持稳定运行，而不是直接崩溃。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "核心",
@@ -4042,7 +4021,7 @@
       "slug": "zh-CN/tools/skill-call",
       "language": "zh-CN",
       "title": "技能调用",
-      "summary": "`skill_call` 如何把技能正文、根目录和文件树返回给模型。",
+      "summary": "`skill_call` 如何把技能正文、根目录和一级文件树返回给模型。",
       "updated_at": "2026-04-10",
       "read_when": [
         "用户要加载某个 `SKILL.md` 及其目录信息"
@@ -5095,7 +5074,7 @@
       "language": "zh-CN",
       "title": "接入概览",
       "summary": "Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "准备把 Wunder 接入业务系统",
         "不确定该从 `/wunder`、聊天域还是工作区接口开始"
@@ -5197,7 +5176,7 @@
       "language": "zh-CN",
       "title": "wunder API",
       "summary": "`/wunder` 是统一执行入口，适合能力调用；当用户要做完整聊天产品时，优先切到 `/wunder/chat/*`。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户要从业务系统接入 Wunder",
         "用户要判断该走 `/wunder` 还是 `/wunder/chat/*`"
@@ -5429,7 +5408,7 @@
       "language": "zh-CN",
       "title": "工作区 API",
       "summary": "`/wunder/workspace*` 不只是文件接口，它决定文件到底落在哪个隔离工作区。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户在做工作区面板、文件上传下载或产物回传",
         "用户要理解 `container_id` 为什么会覆盖 `agent_id`"
@@ -5492,7 +5471,7 @@
       "language": "zh-CN",
       "title": "临时目录与文档转换",
       "summary": "`/wunder/temp_dir/*` 负责临时上传、下载和中转；文档转换与聊天附件预处理分别走公共转换、调试转换和聊天域转换接口。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户要给外部系统发下载链接",
         "用户要区分工作区、temp_dir 和 doc2md 的职责"
@@ -5582,7 +5561,7 @@
       "language": "zh-CN",
       "title": "用户世界接口",
       "summary": "`/wunder/user_world/*` 是 Wunder 里的用户到用户通信域，与用户到智能体会话域并行存在。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户要接用户之间的单聊或群聊",
         "用户想分清 user_world 和 chat 两套接口的边界"
@@ -5686,7 +5665,7 @@
       "language": "zh-CN",
       "title": "渠道 Webhook",
       "summary": "Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户要把飞书、企业微信、QQBot、XMPP 等渠道接进 Wunder",
         "用户想知道 Webhook、长连接和 outbox 的关系"
@@ -5862,7 +5841,7 @@
       "language": "zh-CN",
       "title": "外部登录与免登嵌入",
       "summary": "Wunder 保留 `/wunder/auth/external/*` 作为外部系统嵌入和免登接入面。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户要从外部系统直接进入 Wunder",
         "用户想分清 external login、launch 和 token_login 的用途"
@@ -6020,7 +5999,7 @@
       "language": "zh-CN",
       "title": "MCP 入口",
       "summary": "Wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "用户要把 Wunder 作为 MCP 服务暴露出去",
         "用户要理解 Wunder 内部 MCP 与 extra_mcp 的关系"
@@ -6088,8 +6067,8 @@
       "slug": "zh-CN/surfaces/index",
       "language": "zh-CN",
       "title": "界面概览",
-      "summary": "Wunder 有三个界面：用户端、管理端、桌面端。用户端做日常工作，管理端做系统治理，桌面端是个人主入口。",
-      "updated_at": "2026-04-18",
+      "summary": "用户在蜂巢里工作，管理员用管理端治理。蜂巢有桌面端和网页端两种打开方式。",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6107,55 +6086,45 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "界面入口"
+          "text": "蜂巢：用户工作台"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "界面关系"
+          "text": "管理端：治理后台"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "用户端 vs 管理端"
+          "level": 2,
+          "text": "界面入口"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "桌面端 vs 用户端"
+          "level": 2,
+          "text": "蜂巢的三栏布局"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "三栏布局"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "关键工作台"
-        },
-        {
-          "id": "section-8",
           "level": 2,
           "text": "按角色选择"
         },
         {
-          "id": "section-9",
+          "id": "section-7",
           "level": 3,
           "text": "普通用户"
         },
         {
-          "id": "section-10",
+          "id": "section-8",
           "level": 3,
           "text": "管理员"
         },
         {
-          "id": "section-11",
+          "id": "section-9",
           "level": 2,
           "text": "常见误区"
         },
         {
-          "id": "section-12",
+          "id": "section-10",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6168,9 +6137,9 @@
     "zh-CN/surfaces/frontend": {
       "slug": "zh-CN/surfaces/frontend",
       "language": "zh-CN",
-      "title": "用户端界面",
-      "summary": "用户的主要工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
-      "updated_at": "2026-06-29",
+      "title": "蜂巢界面",
+      "summary": "蜂巢是用户的工作台。左栏导航、中栏列表、右栏工作区，所有日常工作都在这里完成。",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6183,7 +6152,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "用户端界面"
+          "text": "蜂巢界面"
         },
         {
           "id": "section-2",
@@ -6281,7 +6250,7 @@
       "language": "zh-CN",
       "title": "编排功能",
       "summary": "编排页是蜂群持续推进任务的专用工作台。按轮次推进、查看历史、生成分支。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6477,8 +6446,8 @@
       "slug": "zh-CN/surfaces/desktop-ui",
       "language": "zh-CN",
       "title": "桌面端界面",
-      "summary": "个人用户的主入口。本地优先的工作台，可以直接访问本机文件，有一键重置功能。",
-      "updated_at": "2026-06-29",
+      "summary": "蜂巢的桌面端形态。本地优先，可以直接访问本机文件，有一键重置功能。",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6584,7 +6553,7 @@
       "language": "zh-CN",
       "title": "运维概览",
       "summary": "部署、存储、安全、渠道、监控五条主线。目标：让系统可持续稳定运行。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -6786,7 +6755,7 @@
       "language": "zh-CN",
       "title": "数据与存储",
       "summary": "分清数据库、工作区、向量库和临时目录各自的职责，该持久化的不丢，该清理的不留。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -7005,7 +6974,7 @@
       "language": "zh-CN",
       "title": "账户与安全",
       "summary": "分清不同账户类型和权限层级，配置好安全边界，让系统在可控范围内运行。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -7156,7 +7125,7 @@
       "language": "zh-CN",
       "title": "监控与 WunderBench",
       "summary": "观测能力各有分工：会话监控看线程、工具统计看热点、性能采样看链路、WunderBench 看模型能力质量。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -8177,7 +8146,7 @@
       "language": "zh-CN",
       "title": "提示词与个性化",
       "summary": "如何定制智能体的回答风格，让智能体更贴合用户的需求和偏好。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -8528,8 +8497,8 @@
       "slug": "zh-CN/concepts/architecture",
       "language": "zh-CN",
       "title": "系统架构",
-      "summary": "Wunder 的整体结构：三层架构、统一内核、多种形态，用一张图建立全局认知。",
-      "updated_at": "2026-06-29",
+      "summary": "Wunder 的整体结构：用户在蜂巢里工作，蜂巢背后是统一内核与数据地基。",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -8567,7 +8536,7 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "三种运行形态"
+          "text": "部署形态"
         },
         {
           "id": "section-7",
@@ -8645,7 +8614,7 @@
       "language": "zh-CN",
       "title": "工作区与容器",
       "summary": "文件空间的隔离策略。每个用户有独立工作区，工作区内按容器区分个人文件和智能体文件。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -8741,7 +8710,7 @@
       "language": "zh-CN",
       "title": "会话与轮次",
       "summary": "对话由会话、线程、用户轮次和模型轮次组成的层级结构。理解这个结构，就理解了对话的组织方式。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -10046,10 +10015,16 @@
       "slug": "en/index",
       "language": "en",
       "title": "wunder",
-      "summary": "An agent system that gets things done. You set the goal, it breaks it down, calls tools, and delivers results.",
-      "updated_at": "2026-06-29",
-      "read_when": [],
-      "source_docs": [],
+      "summary": "wunder is an agent system that executes tasks. You describe a goal in Hive, and agents break it down, call tools, and deliver results.",
+      "updated_at": "2026-06-30",
+      "read_when": [
+        "First time learning about wunder",
+        "Need to quickly decide where to start"
+      ],
+      "source_docs": [
+        "README.md",
+        "docs/设计文档/01-系统总体设计.md"
+      ],
       "tab": "Getting Started",
       "group": "Home",
       "group_path": [
@@ -10065,22 +10040,37 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "System Structure"
+          "text": "Hive: your workbench"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Quick Start"
+          "text": "What it can do"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "Documentation"
+          "text": "Workbench and system structure"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Key Concepts"
+          "text": "Pick your entry by role"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Key features"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Quick navigation"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Further reading"
         }
       ],
       "prev_slug": "zh-CN/help/glossary",
@@ -10092,11 +10082,11 @@
       "slug": "en/start/quickstart",
       "language": "en",
       "title": "Quick Start",
-      "summary": "The shortest path to complete your first task in wunder. Desktop by default, then Server or CLI.",
-      "updated_at": "2026-06-29",
+      "summary": "The shortest path to open Hive, configure a model, and complete your first task.",
+      "updated_at": "2026-06-30",
       "read_when": [
         "You're using wunder for the first time",
-        "You need to verify a working setup in 10 minutes"
+        "You need to verify a working setup"
       ],
       "source_docs": [
         "README.md"
@@ -10116,27 +10106,27 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Step 1: Pick Your Path"
+          "text": "Step 1: Open Hive"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Shortest Path: Desktop (Recommended)"
+          "text": "Shortest path: Desktop app"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "5 Steps to Get Running"
+          "text": "5 steps to get running"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "Desktop-Only Capabilities"
+          "text": "Desktop-only capabilities"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Team Path: Server"
+          "text": "Team path: Web browser"
         },
         {
           "id": "section-7",
@@ -10146,42 +10136,42 @@
         {
           "id": "section-8",
           "level": 3,
-          "text": "3 Steps to Deploy"
+          "text": "3 steps to deploy"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "Server Core Capabilities"
+          "text": "Server core capabilities"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Developer Path: CLI"
+          "text": "Developer path: CLI"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "Install and Run"
+          "text": "Install and run"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "First Session"
+          "text": "First session"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "CLI-Only Capabilities"
+          "text": "CLI-only capabilities"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "Verification Checklist"
+          "text": "Verification checklist"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Next Steps"
+          "text": "Next steps"
         }
       ],
       "prev_slug": "en/index",
@@ -10197,7 +10187,7 @@
       "updated_at": "2026-04-10",
       "read_when": [
         "You want to get wunder running right away",
-        "You care more about the desktop workbench than deploying a full server"
+        "You care more about Hive's desktop form than deploying a full server"
       ],
       "source_docs": [
         "docs/API文档.md"
@@ -10472,7 +10462,7 @@
       "language": "en",
       "title": "Documentation Hub",
       "summary": "Find the docs you need by role.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "You're not sure where to start",
         "You want to jump to the right docs by role"
@@ -10495,27 +10485,27 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "I'm a Regular User"
+          "text": "I'm a regular user"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "I'm an Administrator"
+          "text": "I'm an administrator"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "I'm a Developer / Integrator"
+          "text": "I'm a developer / integrator"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "I'm Troubleshooting"
+          "text": "I'm troubleshooting"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Further Reading"
+          "text": "Further reading"
         }
       ],
       "prev_slug": "en/start/cli",
@@ -10528,7 +10518,7 @@
       "language": "en",
       "title": "Docs Directory",
       "summary": "Documentation index by purpose. Quickly locate the page you need.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "You know what you want but aren't sure where it is",
         "You want an overview of all documentation"
@@ -10556,7 +10546,7 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Interface"
+          "text": "Hive & surfaces"
         },
         {
           "id": "section-4",
@@ -10594,7 +10584,7 @@
       "language": "en",
       "title": "Core Concepts",
       "summary": "The eleven core concepts are not eleven feature bullets. They are the structural boundaries wunder establishes for long-running threads, concurrent users, and multiple entry surfaces.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-06-30",
       "read_when": [
         "You are trying to understand wunder systematically for the first time",
         "You are preparing for integration, operations, or tool development and need one shared perspective",
@@ -12223,7 +12213,7 @@
       "slug": "en/tools/skill-call",
       "language": "en",
       "title": "Skill Call",
-      "summary": "How `skill_call` returns the skill body, root directory, and file tree to the model.",
+      "summary": "How `skill_call` returns the skill body, root directory, and top-level file tree to the model.",
       "updated_at": "2026-04-10",
       "read_when": [
         "You need to load a `SKILL.md` file and its directory context"
@@ -14269,16 +14259,10 @@
       "slug": "en/surfaces/index",
       "language": "en",
       "title": "Interface Overview",
-      "summary": "Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.",
-      "updated_at": "2026-04-30",
-      "read_when": [
-        "You want to quickly understand what the user frontend, admin frontend, and desktop each do",
-        "You are looking for which interface a particular feature belongs to"
-      ],
-      "source_docs": [
-        "docs/设计文档/01-系统总体设计.md",
-        "docs/API文档.md"
-      ],
+      "summary": "Users work in Hive; admins govern in the admin interface. Hive opens via the desktop app or a web browser.",
+      "updated_at": "2026-06-30",
+      "read_when": [],
+      "source_docs": [],
       "tab": "Surfaces",
       "group": "Overview",
       "group_path": [
@@ -14294,42 +14278,47 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Quick Entry"
+          "text": "Hive: user work surface"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Responsibilities of Each Surface"
+          "text": "Admin interface: governance backend"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "By Role"
+          "text": "Surface entries"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "Regular Users"
+          "level": 2,
+          "text": "Hive's three-column layout"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "Administrators"
+          "level": 2,
+          "text": "Pick by role"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Integration Developers"
+          "text": "Regular users"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "Common Misconceptions"
+          "level": 3,
+          "text": "Administrators"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Further Reading"
+          "text": "Common misconceptions"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further reading"
         }
       ],
       "prev_slug": "en/integration/mcp-endpoint",
@@ -14340,9 +14329,9 @@
     "en/surfaces/frontend": {
       "slug": "en/surfaces/frontend",
       "language": "en",
-      "title": "User Interface",
-      "summary": "Your main workbench. Left navigation, middle list, right workspace — all daily work happens here.",
-      "updated_at": "2026-04-24",
+      "title": "Hive Interface",
+      "summary": "Hive is your workbench. Left navigation, middle list, right workspace — all daily work happens here.",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -14355,12 +14344,12 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "User Interface"
+          "text": "Hive Interface"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "Three-Column Layout"
+          "text": "Three-column layout"
         },
         {
           "id": "section-3",
@@ -14370,22 +14359,22 @@
         {
           "id": "section-4",
           "level": 3,
-          "text": "Input Area"
+          "text": "Input area"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "Slash Commands"
+          "text": "Slash commands"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "Protection Mechanisms"
+          "text": "Protection mechanisms"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Orchestration Workbench"
+          "text": "Orchestration workspace"
         },
         {
           "id": "section-8",
@@ -14400,47 +14389,47 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "Tools & Skills"
+          "text": "Tools & skills"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Scheduled Tasks"
+          "text": "Scheduled tasks"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "My Profile & Settings"
+          "text": "My profile & settings"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "My Profile"
+          "text": "My profile"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "Account Management"
+          "text": "Account management"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "System Settings"
+          "text": "System settings"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "Help Manual"
+          "text": "Help manual"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "Status Indicators"
+          "text": "Status indicators"
         },
         {
           "id": "section-18",
           "level": 2,
-          "text": "Further Reading"
+          "text": "Further reading"
         }
       ],
       "prev_slug": "en/surfaces/index",
@@ -14452,8 +14441,8 @@
       "slug": "en/surfaces/orchestration",
       "language": "en",
       "title": "Orchestration",
-      "summary": "The orchestration page is a dedicated workbench for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
-      "updated_at": "2026-04-24",
+      "summary": "The orchestration page is a dedicated workspace for swarm tasks that need continuous advancement. Advance by rounds, view history, generate branches.",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -14649,8 +14638,8 @@
       "slug": "en/surfaces/desktop-ui",
       "language": "en",
       "title": "Desktop Interface",
-      "summary": "The main entry for individual users. Local-first workbench with direct file access and one-click reset.",
-      "updated_at": "2026-04-24",
+      "summary": "Hive's desktop form. Local-first, with direct file access and one-click reset.",
+      "updated_at": "2026-06-30",
       "read_when": [],
       "source_docs": [],
       "tab": "Surfaces",
@@ -16121,8 +16110,8 @@
       "slug": "en/concepts/architecture",
       "language": "en",
       "title": "Architecture",
-      "summary": "wunder uses one unified orchestration kernel to support three runtime forms: server, cli, and desktop.",
-      "updated_at": "2026-06-29",
+      "summary": "wunder uses one unified orchestration kernel. Hive is how users reach that kernel; the deployment form decides where the kernel runs.",
+      "updated_at": "2026-06-30",
       "read_when": [
         "You want to understand wunder as a whole system",
         "You need to see how APIs, orchestration, tools, frontends, and storage cooperate"
@@ -16145,45 +16134,65 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "Top-level structure"
+          "text": "Hive and deployment forms"
         },
         {
           "id": "section-3",
-          "level": 2,
-          "text": "Access layer"
+          "level": 3,
+          "text": "Server (service-side)"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "Orchestration layer"
+          "level": 3,
+          "text": "Desktop (desktop client)"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "Tools and capability layer"
+          "level": 3,
+          "text": "CLI (command line)"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "Storage and workspace layer"
+          "text": "Top-level structure"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Frontend and desktop-shell layer"
+          "text": "Access layer"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "The most important architectural constraints right now"
+          "text": "Orchestration layer"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Diagram"
+          "text": "Tools and capability layer"
         },
         {
           "id": "section-10",
+          "level": 2,
+          "text": "Storage and workspace layer"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Frontend and desktop-shell layer"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "The most important architectural constraints right now"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Diagram"
+        },
+        {
+          "id": "section-14",
           "level": 2,
           "text": "Further reading"
         }

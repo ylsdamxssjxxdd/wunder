@@ -206,6 +206,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     file wget xdg-utils \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Keep a browser seed outside /ms-playwright because docker-compose mounts
+# host cache there and can hide the image-installed Chromium.
+ENV WUNDER_PLAYWRIGHT_SEED_PATH=/opt/ms-playwright
+RUN set -eux; \
+    mkdir -p "$WUNDER_PLAYWRIGHT_SEED_PATH"; \
+    if find /ms-playwright -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then \
+      cp -a /ms-playwright/. "$WUNDER_PLAYWRIGHT_SEED_PATH"/; \
+    fi
+
 WORKDIR /workspaces
 
 CMD ["/bin/bash"]

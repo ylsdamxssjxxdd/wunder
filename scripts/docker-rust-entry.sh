@@ -5,6 +5,26 @@ mode="${1:-}"
 binary="${CARGO_TARGET_DIR:-/tmp/cargo-target}/release/wunder-server"
 prefer_prebuilt="${WUNDER_PREFER_PREBUILT_BIN:-0}"
 
+ensure_playwright_browsers() {
+  local target="${PLAYWRIGHT_BROWSERS_PATH:-}"
+  local seed="${WUNDER_PLAYWRIGHT_SEED_PATH:-/opt/ms-playwright}"
+
+  if [ -z "${target}" ] || [ ! -d "${seed}" ]; then
+    return 0
+  fi
+
+  mkdir -p "${target}"
+  if find "${target}" -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  if ! find "${seed}" -maxdepth 1 -type d -name 'chromium*' -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  printf '%s\n' "[docker][browser] seeding Playwright Chromium into ${target}" >&2
+  cp -a "${seed}/." "${target}/"
+}
+
 binary_is_ready() {
   if [ ! -x "${binary}" ]; then
     return 1
@@ -19,6 +39,7 @@ binary_is_ready() {
 }
 
 run_binary() {
+  ensure_playwright_browsers
   exec "${binary}"
 }
 
