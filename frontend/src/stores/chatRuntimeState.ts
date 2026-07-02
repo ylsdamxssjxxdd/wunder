@@ -2061,6 +2061,8 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
     clientMessageId: string;
     createdAt?: unknown;
     userTurnId?: string;
+    modelTurnId?: string;
+    assistantMessageId?: string;
   }
 ) => {
   const key = resolveSessionKey(payload?.sessionId);
@@ -2077,7 +2079,27 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
     userTurnId: payload.userTurnId
   });
   const result = applyChatRuntimeEvent(projection, event);
-  if (result.applied) {
+  const assistantMessageId = String(payload.assistantMessageId || '').trim();
+  const modelTurnId = String(payload.modelTurnId || '').trim();
+  const assistantResult =
+    assistantMessageId && modelTurnId
+      ? applyChatRuntimeEvent(projection, {
+          event_type: 'assistant_message_created',
+          source: 'local',
+          strict: false,
+          session_id: key,
+          agent_id: resolveProjectionAgentId(store, key),
+          event_id: `local:${key}:${assistantMessageId}:placeholder`,
+          user_turn_id: payload.userTurnId || event.user_turn_id,
+          model_turn_id: modelTurnId,
+          message_id: assistantMessageId,
+          created_at: payload.createdAt,
+          payload: {
+            client_message_id: assistantMessageId
+          }
+        })
+      : null;
+  if (result.applied || assistantResult?.applied) {
     markRuntimeProjectionChanged(store, {
       immediate: true,
       reason: 'client-submitted'

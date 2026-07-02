@@ -1482,6 +1482,46 @@ test('canonical client submit event materializes the local user turn', () => {
   assert.equal(selectSessionBusy(projection, 'session-1'), true);
 });
 
+test('local client submit can materialize one assistant placeholder for projection render', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'hello',
+      clientMessageId: 'client-message-1',
+      createdAt: '2026-04-30T02:14:06.000Z',
+      userTurnId: 'user-turn-1'
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local:assistant-placeholder-1',
+    user_turn_id: 'user-turn-1',
+    model_turn_id: 'model-turn-1',
+    message_id: 'assistant-placeholder-1',
+    created_at: '2026-04-30T02:14:06.000Z'
+  });
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-assistant-created',
+    event_seq: 1,
+    user_turn_id: 'user-turn-1',
+    model_turn_id: 'model-turn-1',
+    message_id: 'server-assistant-1'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.status}:${message.id}`),
+    ['user:final:client-message-1', 'assistant:waiting_first_output:assistant-placeholder-1']
+  );
+  assert.equal(projection.sessions['session-1'].messages.length, 2);
+});
+
 test('chat runtime reducer projects tool workflow lifecycle onto assistant message', () => {
   const projection = createChatRuntimeProjection();
 

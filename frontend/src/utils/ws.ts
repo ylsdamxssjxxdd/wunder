@@ -118,6 +118,7 @@ const isTerminalEventType = (
   if (
     normalized === 'final' ||
     normalized === 'error' ||
+    normalized === 'queue_finish' ||
     normalized === 'queue_fail' ||
     normalized === 'turn_terminal'
   ) {
@@ -573,6 +574,8 @@ export const createWsMultiplexer = (
       entry.onEvent(eventType, dataText, eventId);
       const queuedFlag =
         normalizedEventType === 'queued' ||
+        normalizedEventType === 'queue_enter' ||
+        normalizedEventType === 'queue_update' ||
         eventPayload.queued === true ||
         asPayloadRecord(eventPayload.data).queued === true;
       if (entry.resolveOnQueued && queuedFlag) {

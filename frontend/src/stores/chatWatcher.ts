@@ -322,8 +322,14 @@ export const startSessionWatcher = (store, sessionId) => {
     const createdAt = Number.isFinite(eventTimestampMs)
       ? new Date(eventTimestampMs).toISOString()
       : undefined;
+    // Derive a stable message_id from the session key and stream round so the
+    // render key never falls back to an index. This keeps the pending assistant
+    // bubble mounted across history prepend / sibling splices.
+    const watchAssistantMessageId = `local-assistant:watch:${key}:round:${normalizedRound}`;
     const assistantMessage = {
       ...buildMessage('assistant', '', createdAt),
+      message_id: watchAssistantMessageId,
+      client_message_id: watchAssistantMessageId,
       workflowItems: [],
       workflowStreaming: true,
       stream_incomplete: true,
@@ -898,11 +904,15 @@ export const startSessionWatcher = (store, sessionId) => {
     const hiddenInternalUser = resolveHiddenInternalUserEvent(payload, data);
     const shouldPreinsertUserMessage =
       (isRoundStart || normalizedEventType === 'received') && Boolean(userContent);
+    // Use the event id as a dedupe key so a replayed round_start/received event
+    // (e.g. after a watch reconnect) does not insert a second user bubble.
+    const userInsertDedupeKey = normalizedEventId != null ? `evt:${normalizedEventId}` : null;
     if (shouldPreinsertUserMessage) {
       // Insert the new user turn before allocating the assistant round so stale pending
       // assistant content from the previous turn cannot be reused as the current response shell.
       insertWatchUserMessage(store, key, sessionMessagesRef, userContent, eventTimestampMs, null, {
-        hiddenInternal: hiddenInternalUser
+        hiddenInternal: hiddenInternalUser,
+        dedupeKey: userInsertDedupeKey
       });
     }
     const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber, {
@@ -919,7 +929,7 @@ export const startSessionWatcher = (store, sessionId) => {
           userContent,
           eventTimestampMs,
           state.message,
-          { hiddenInternal: hiddenInternalUser }
+          { hiddenInternal: hiddenInternalUser, dedupeKey: userInsertDedupeKey }
         );
         state.userInserted = true;
       }

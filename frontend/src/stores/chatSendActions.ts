@@ -273,7 +273,15 @@ export const chatSendActions = {
       });
       Object.assign(assistantMessageRaw as Record<string, unknown>, {
         user_turn_id: localUserTurnId,
-        model_turn_id: localModelTurnId
+        model_turn_id: localModelTurnId,
+        // Assign a stable message_id derived from model_turn_id so the render
+        // key never degrades to an index-based fallback. This prevents full
+        // remounts (and streaming-state loss) when history is prepended or when
+        // a user message is spliced in ahead of the pending assistant bubble.
+        // The reducer reuses this id when the backend assistant_message_created
+        // event arrives (matched via model_turn_id), so no duplicate is created.
+        message_id: `local-assistant:${localModelTurnId}`,
+        client_message_id: `local-assistant:${localModelTurnId}`
       });
       if (!bootstrappingDraftSession) {
         this.messages.push(userMessage);
@@ -288,7 +296,9 @@ export const chatSendActions = {
         content,
         clientMessageId,
         createdAt: userMessage.created_at,
-        userTurnId: localUserTurnId
+        userTurnId: localUserTurnId,
+        modelTurnId: localModelTurnId,
+        assistantMessageId: `local-assistant:${localModelTurnId}`
       });
       chatDebugLog('messenger.send', 'store-placeholder-appended', {
         sessionId,
@@ -461,14 +471,18 @@ export const chatSendActions = {
             return;
           }
           const queuedFlag =
-            normalizedEventType === 'queued' || payload?.queued === true || payload?.data?.queued === true;
+            normalizedEventType === 'queued' ||
+            normalizedEventType === 'queue_enter' ||
+            normalizedEventType === 'queue_update' ||
+            payload?.queued === true ||
+            payload?.data?.queued === true;
           if (queuedFlag) {
             if (!queued) {
               queued = true;
               if (!suppressQueuedNotice) {
                 assistantMessage.workflowItems.push(
                   buildWorkflowItem(t('chat.workflow.queued'), buildDetail(payload?.data ?? payload), 'pending', {
-                    eventType: 'queued'
+                    eventType: normalizedEventType || 'queued'
                   })
                 );
                 notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
@@ -554,8 +568,8 @@ export const chatSendActions = {
           onEvent,
           signal: runtime?.sendController?.signal,
           closeOnFinal: true,
-          resolveOnQueued: true,
-          keepPendingAfterQueuedAck: true,
+          resolveOnQueued: false,
+          keepPendingAfterQueuedAck: false,
           cancelOnAbort: false
         });
       } catch (error) {

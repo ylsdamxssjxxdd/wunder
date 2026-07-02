@@ -467,8 +467,13 @@ export const ensurePendingAssistantMessage = (store, sessionId, messages, baseEv
   if (!Array.isArray(messages)) return null;
   const existing = findPendingAssistantMessage(messages);
   if (existing) return existing;
+  // Stable id keeps the render key from degrading to an index; avoids remounts
+  // when neighboring messages are inserted or prepended.
+  const placeholderId = `local-assistant:pending:${sessionId}:${baseEventId || 0}`;
   const placeholder = {
     ...buildMessage('assistant', ''),
+    message_id: placeholderId,
+    client_message_id: placeholderId,
     workflowItems: [],
     workflowStreaming: false,
     stream_incomplete: true,
@@ -594,13 +599,32 @@ export const isWindowingEnabled = () => {
   }
 };
 
-export const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs) => {
+export const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs, dedupeKey) => {
   if (!Array.isArray(messages) || !content) return false;
+  // Normalize whitespace so trailing/leading spaces or CRLF differences between
+  // the local optimistic user message and the backend round_start payload do
+  // not defeat deduplication (a common cause of duplicate user bubbles).
+  const normalizeForCompare = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const normalizedContent = normalizeForCompare(content);
+  // Primary dedupe: if a dedupeKey (client_message_id or event_id) is provided,
+  // skip insertion when an existing user message already carries the same key.
+  if (dedupeKey) {
+    const key = String(dedupeKey);
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message?.role !== 'user') continue;
+      const existingKey =
+        message.client_message_id || message.clientMessageId || message.message_id || message.id;
+      if (existingKey && String(existingKey) === key) {
+        return false;
+      }
+    }
+  }
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
     if (message?.role !== 'user') continue;
-    const lastContent = String(message.content || '');
-    if (lastContent !== content) {
+    const lastContent = normalizeForCompare(message.content);
+    if (lastContent !== normalizedContent) {
       return true;
     }
     const lastTimestamp = resolveTimestampMs(message.created_at);
@@ -656,10 +680,11 @@ export const insertWatchUserMessage = (
 ) => {
   const optionRecord: Record<string, unknown> =
     options && typeof options === 'object' ? (options as Record<string, unknown>) : {};
+  const dedupeKey = optionRecord.dedupeKey;
   if (hasAnchoredWatchUserMessage(messages, anchor, content)) {
     return;
   }
-  if (!shouldInsertWatchUserMessage(messages, content, eventTimestampMs)) {
+  if (!shouldInsertWatchUserMessage(messages, content, eventTimestampMs, dedupeKey)) {
     return;
   }
   const createdAt = Number.isFinite(eventTimestampMs)
@@ -668,6 +693,11 @@ export const insertWatchUserMessage = (
   const userMessage = buildMessage('user', content, createdAt, {
     hiddenInternal: normalizeHiddenInternalMessage(optionRecord.hiddenInternal)
   });
+  // Stamp the dedupe key onto the inserted message so subsequent replay of the
+  // same round_start event (e.g. after a watch reconnect) is suppressed.
+  if (dedupeKey) {
+    (userMessage as Record<string, unknown>).client_message_id = String(dedupeKey);
+  }
   const anchorIndex = anchor ? messages.indexOf(anchor) : -1;
   if (anchorIndex >= 0) {
     messages.splice(anchorIndex, 0, userMessage);

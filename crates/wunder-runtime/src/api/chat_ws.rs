@@ -3,10 +3,10 @@ use crate::api::chat_goal::apply_goal_command;
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
-    parse_payload, resolve_session_id, resume_stream_events, send_ws_error, send_ws_error_payload,
-    send_ws_event, send_ws_pong, send_ws_ready, ws_error_payload_from_anyhow, ws_protocol_info,
-    WsEnvelope, WsFeatures, WsPolicy, WsQuery, WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES,
-    WS_PROTOCOL_VERSION,
+    parse_payload, resolve_session_id, resume_queued_stream_events, resume_stream_events,
+    send_ws_error, send_ws_error_payload, send_ws_event, send_ws_pong, send_ws_ready,
+    ws_error_payload_from_anyhow, ws_protocol_info, WsEnvelope, WsFeatures, WsPolicy, WsQuery,
+    WsReadyPayload, WsSender, WS_MAX_MESSAGE_BYTES, WS_PROTOCOL_VERSION,
 };
 use crate::api::ws_log::{
     log_ws_close, log_ws_handshake, log_ws_handshake_error, log_ws_message, log_ws_open,
@@ -21,7 +21,6 @@ use crate::core::approval_registry::{
 use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
-use crate::schemas::StreamEvent;
 use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::goal::{self, GoalCommand};
 use crate::services::runtime::thread::ThreadSubmitOutcome;
@@ -476,22 +475,60 @@ async fn handle_ws(
 
                         let (request, lease, approval_rx) = match outcome {
                             ThreadSubmitOutcome::Queued(info) => {
-                                let payload = json!({
-                                    "queued": true,
-                                    "queue_id": info.task_id,
-                                    "thread_id": info.thread_id,
-                                    "session_id": info.session_id,
-                                    "queue_ahead": info.queue_ahead,
-                                    "queue_total": info.queue_total,
+                                // The task was enqueued and will be executed by the
+                                // thread runtime's dispatch loop. The queue_enter /
+                                // queue_start / queue_finish events (and all stream
+                                // events produced during execution) are persisted to
+                                // the stream_events table by emit_queue_event and the
+                                // orchestrator's stream pump.
+                                //
+                                // Previously we only sent an ephemeral "queued" event
+                                // (no event_id, not persisted) and continued, leaving
+                                // the client with no push channel for the duration of
+                                // the queued task. That made the UI appear frozen until
+                                // the user manually refreshed.
+                                //
+                                // Now we register a WS task and spawn a queue-scoped
+                                // resume loop. It starts from the queue_after_event_id
+                                // chosen by ThreadRuntime and waits for this task's
+                                // queue terminal event, so old session events cannot be
+                                // replayed into the current pending assistant message.
+                                let queue_after_event_id = info.queue_after_event_id;
+                                let queue_id = info.task_id.clone();
+                                let (cancel, task_id) = register_ws_task(
+                                    &tasks,
+                                    &request_id,
+                                    Some(session_id.clone()),
+                                    true,
+                                )
+                                .await;
+                                let resume_state = state.clone();
+                                let resume_session = session_id.clone();
+                                let resume_tx = ws_tx.clone();
+                                let resume_request_id = request_id.clone();
+                                let resume_task_id = task_id.clone();
+                                let resume_tasks = tasks.clone();
+                                let resume_request_id_cleanup = request_id.clone();
+                                long_task::spawn("api.chat_ws.queued_auto_resume", async move {
+                                    resume_queued_stream_events(
+                                        resume_state,
+                                        resume_session,
+                                        queue_id,
+                                        queue_after_event_id,
+                                        Some(&resume_request_id),
+                                        resume_tx,
+                                        Some(cancel),
+                                    )
+                                    .await;
+                                    // cleanup: only remove if our task_id still owns
+                                    // the entry (avoids clobbering a newer task).
+                                    let _ = cleanup_ws_task(
+                                        &resume_tasks,
+                                        &resume_request_id_cleanup,
+                                        &resume_task_id,
+                                    )
+                                    .await;
                                 });
-                                let queued_event = StreamEvent {
-                                    event: "queued".to_string(),
-                                    data: payload,
-                                    id: None,
-                                    timestamp: Some(Utc::now()),
-                                };
-                                let _ =
-                                    send_ws_event(&ws_tx, Some(&request_id), queued_event).await;
                                 continue;
                             }
                             ThreadSubmitOutcome::Run(request, lease) => {

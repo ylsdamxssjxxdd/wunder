@@ -1,21 +1,22 @@
 ---
 name: PPTX生成器
-description: "生成、编辑与读取 PowerPoint 演示文稿。可基于 PptxGenJS 从零创建（封面、目录、内容、章节分隔、总结页），也可通过 XML 工作流编辑现有 PPTX，或用 markitdown 提取文本。触发词：PPT、PPTX、PowerPoint、演示文稿、幻灯片、Deck。"
+description: "生成、编辑与读取 PowerPoint 演示文稿。若当前环境提供 ppt_write、ppt_refine、ppt_read、ppt_template_read 等 PPT 生成工具，必须优先使用工具生成和精修；无工具时再基于 PptxGenJS 或 python-pptx 从零创建，也可通过 XML 工作流编辑现有 PPTX，或用 markitdown 提取文本。触发词：PPT、PPTX、PowerPoint、演示文稿、幻灯片、Deck。"
 ---
 
 # PPTX 生成与编辑
 
 ## 概述
 
-本技能覆盖 PowerPoint 全流程任务：读取/分析已有演示文稿、通过 XML 改写模板型 PPTX、以及基于 PptxGenJS 从零生成演示文稿。技能内置设计系统（配色、字体、样式配方）和各页面类型的实现规范。
+本技能覆盖 PowerPoint 全流程任务：优先通过可用 PPT 生成工具创建、读取、精修演示文稿；无工具时读取/分析已有演示文稿、通过 XML 改写模板型 PPTX，或基于 PptxGenJS 从零生成演示文稿。技能内置设计系统（配色、字体、样式配方）和各页面类型的实现规范。
 
 ## 快速参考
 
 | 任务 | 推荐方式 |
 |------|----------|
+| 有 `ppt_write` 等 PPT 生成工具 | 优先走 [PPT 生成工具优先流程](#ppt-生成工具优先流程) |
 | 读取/分析内容 | `python -m markitdown presentation.pptx` |
 | 编辑模板或现有文稿 | 见 [编辑演示文稿](references/editing.md) |
-| 从零创建 | 见下方 [从零创建工作流](#从零创建工作流) |
+| 无 PPT 生成工具时从零创建 | 见下方 [从零创建工作流](#从零创建工作流) |
 
 | 项目 | 约定值 |
 |------|--------|
@@ -37,6 +38,43 @@ description: "生成、编辑与读取 PowerPoint 演示文稿。可基于 PptxG
 | [editing.md](references/editing.md) | 基于模板编辑流程、XML 修改方法、格式规则与常见问题 |
 | [pitfalls.md](references/pitfalls.md) | QA 流程、常见错误、PptxGenJS 关键陷阱 |
 | [pptxgenjs.md](references/pptxgenjs.md) | PptxGenJS API 速查 |
+| [pptxgenjs-fallback.md](references/pptxgenjs-fallback.md) | 没有 PPT 生成工具时的 PptxGenJS / python-pptx 脚本兜底流程 |
+
+---
+
+## PPT 生成工具优先流程（强约束）
+
+如果当前环境、MCP、函数调用或工具列表中存在 `ppt_write`、`ppt_refine`、`ppt_read`、`ppt_template_read`、`ppt_delete` 之一，默认使用这些工具完成 PPT 任务；不要先手写 PptxGenJS / python-pptx 脚本。只有确认没有可用 PPT 工具，或工具无法满足用户明确要求时，才进入后文脚本工作流。
+
+推荐流程：
+
+1. **读取模板能力**：先调用 `ppt_template_read` 空参数，查看可用内置模板和真实 PPTX 母版模板包。需要统一字体和母版复用时优先选择母版模板包，例如 `black_times_default` 或用户自定义 `config/ppt_templates/<template_id>/`。
+2. **规划页面结构**：根据用户资料规划封面、目录、章节、内容、图文、数据、对比、时间线、总结/结尾等页面。第一页按封面处理，最后一页按结尾处理，中间页按 `type`、`layout` 或 `template_slide_id` 选择版式。
+3. **生成初稿**：调用 `ppt_write`，优先传结构化 XML：
+
+```xml
+<slides>
+  <slide>
+    <type>cover</type>
+    <title>标题</title>
+    <subtitle>副标题</subtitle>
+    <prompt>封面页设计要求</prompt>
+  </slide>
+  <slide>
+    <type>content_image</type>
+    <title>图文页标题</title>
+    <body>正文要点</body>
+    <image src="/workspaces/.../image.png" />
+    <prompt>图文页设计要求</prompt>
+  </slide>
+</slides>
+```
+
+4. **写入工作区**：`output_path` 优先使用当前工作区下的导出路径，例如 `/workspaces/<workspace_id>/pptx/output/presentation.pptx`。不要把最终产物写到技能目录或临时目录。
+5. **读取核验**：生成后调用 `ppt_read` 检查页数、标题、页面摘要和 `slide_id`，确认结构完整。
+6. **迭代精修**：需要局部调整时调用 `ppt_refine`，传入目标 `slide_id` 和修改后的结构化内容；需要整体换风格时传新的 `template_id`。删除页面用 `ppt_delete`。
+7. **图片处理**：图片必须先位于本地或工作区路径，再通过 XML `<image src="..." />` 或 JSON `images` 数组传给工具；不要在 PPT 内容里直接嵌远程 URL 或 base64 大块数据。
+8. **交付用户**：默认只交付最终 `.pptx` 路径；只有用户要求时再提供 PDF、预览图、生成过程或修改清单。
 
 ---
 
@@ -49,74 +87,11 @@ description: "生成、编辑与读取 PowerPoint 演示文稿。可基于 PptxG
 - 路径优先使用工作区相对路径。
 - 若工具必须传绝对路径，先在当前会话执行 `pwd` 获取实际工作区根（通常为 `/workspaces/<workspace_id>`）后再拼接；不要手写 `/workspaces/{user_id}`。
 
-### 推荐目录约定（工作区内）
+### 输出路径约定（工作区内）
 
-```text
-pptx/
-├── input/        # 用户提供的原始资料
-├── slides/       # 逐页脚本与素材
-│   ├── imgs/
-│   └── compile.js
-└── output/       # 最终产物（pptx/pdf/中间文件）
-```
-
----
-
-## 离线依赖自检（必做）
-
-在开始生成/编辑前先做自检；失败时直接降级，不要安装依赖。
-
-```bash
-# 1) Python 依赖：markitdown + python-pptx
-python3 - <<'PY'
-import importlib.util
-need = ["markitdown", "pptx"]
-missing = [m for m in need if importlib.util.find_spec(m) is None]
-print("missing:", missing)
-raise SystemExit(1 if missing else 0)
-PY
-
-# 2) Node 依赖：优先使用镜像中的全局包
-export NODE_PATH="$(npm root -g):${NODE_PATH}"
-node -e "require('pptxgenjs'); console.log('pptxgenjs ok')"
-```
-
-若 `pptxgenjs` 不可用，则改用 `python-pptx` 方案生成（保持同样的目录与产物路径约定）。
-
----
-
-## 渲染引擎选择（质量关键）
-
-- 默认强制优先 `PptxGenJS`，仅在当前执行环境确认为不可用时才降级 `python-pptx`。
-- 自检要在**同一执行环境**内完成（同一个 sandbox 会话），避免“宿主机不可用、容器可用”的误判。
-- `python-pptx` 作为兜底时，必须使用卡片化布局和形状系统，不可退化为“纯标题 + 纯项目符号”。
-
----
-
-## 质量基线（强约束）
-
-- 页数建议：`8-12` 页（封面 1 页 + 目录/章节/内容/总结）。
-- 每个非封面页至少包含：`1` 个结构底板 + `2` 个以上内容容器 + 右下页码徽标。
-- 版式变化要求：同一 deck 至少使用 `3` 种不同布局（例如目录宫格、时间轴、对比卡片、总结页）。
-- 文本密度要求：单页正文不超过 `6` 个长段落，优先卡片短句与分层标题。
-- 视觉密度基线（经验阈值）：平均每页 `>= 10` 个 shape，平均每页 `>= 6` 个文本框；低于阈值视为“信息图形化不足”。
-- 形状类型必须使用 `pres.shapes.*` 枚举常量（如 `pres.shapes.OVAL`），不要传入不受支持的字符串（例如 `"oval"`），否则可能生成 PowerPoint 不可修复文件。
-- 导出前必须执行自动质量检查，不通过则返工页面布局。
-
----
-
-## 自动质量检查（必做）
-
-```bash
-python {{SKILL_ROOT}}/scripts/pptx_quality_check.py \
-  pptx/output/presentation.pptx \
-  --min-slides 8 \
-  --min-avg-shapes 10 \
-  --min-avg-text-boxes 6 \
-  --check-page-badge
-```
-
-若检查失败，优先重做“低密度页面”（通常是目录页和信息列表页），再重新导出与复检。
+- 用户提供的原始资料优先放在 `pptx/input/`。
+- 最终产物优先放在 `pptx/output/`。
+- 脚本兜底方案的 `slides/`、`imgs/`、编译脚本等细节只在 [pptxgenjs-fallback.md](references/pptxgenjs-fallback.md) 中说明。
 
 ---
 
@@ -131,196 +106,9 @@ python -m markitdown presentation.pptx
 
 ## 从零创建工作流
 
-**适用场景：没有模板或参考演示文稿，需从头生成。**
+**适用场景：确认没有可用 PPT 生成工具，且没有模板或参考演示文稿，需从头生成。**
 
-### 步骤 1：需求研究
-
-先明确用户需求：主题、受众、用途、语气、内容深度。信息来源仅限用户输入、当前会话附件与工作区内文件；不要把联网检索作为默认前置步骤。
-
-### 步骤 2：选择配色与字体
-
-从 [设计系统配色](references/design-system.md#color-palette-reference) 选择与主题匹配的色板；从 [字体参考](references/design-system.md#font-reference) 选择中英文字体组合。
-
-### 步骤 3：选择视觉风格
-
-从 [样式配方](references/design-system.md#style-recipes) 中选择风格（Sharp / Soft / Rounded / Pill），保证整体一致。
-
-### 步骤 4：规划页面大纲
-
-将**每一页**归类为 [5 种页面类型](references/slide-types.md) 之一，并规划该页内容与布局。务必保证视觉变化，不要每页都套同一版式。
-
-### 步骤 5：生成每页 JS 文件
-
-在工作区建议目录 `pptx/slides/` 中每页创建一个 JS 文件。每个文件必须导出同步函数 `createSlide(pres, theme)`。遵循本文 [页面输出格式](#页面输出格式) 以及 [slide-types.md](references/slide-types.md) 的具体类型约束。
-
-可并行生成（若支持子代理，一次最多并行 5 页）时，统一约束：
-1. 文件命名：`pptx/slides/slide-01.js`、`pptx/slides/slide-02.js`...
-2. 图片目录：`pptx/slides/imgs/`
-3. 最终输出：`pptx/output/`
-4. 画布尺寸：10" x 5.625"（`LAYOUT_16x9`）
-5. 字体：中文 `Microsoft YaHei`，英文 `Arial`（或批准替代）
-6. 颜色：6 位十六进制且不带 `#`
-7. 必须遵守 [主题对象契约](#主题对象契约)
-8. API 以 [pptxgenjs.md](references/pptxgenjs.md) 为准
-
-### 步骤 6：合并编译为最终 PPTX
-
-创建 `pptx/slides/compile.js` 汇总所有页面模块：
-
-```javascript
-// pptx/slides/compile.js
-const path = require('path');
-const pptxgen = require('pptxgenjs');
-const pres = new pptxgen();
-pres.layout = 'LAYOUT_16x9';
-
-const theme = {
-  primary: "22223b",    // 深色：背景/标题文本
-  secondary: "4a4e69",  // 次级强调
-  accent: "9a8c98",     // 高亮色
-  light: "c9ada7",      // 浅强调
-  bg: "f2e9e4"          // 背景色
-};
-
-for (let i = 1; i <= 12; i++) { // 按实际页数调整
-  const num = String(i).padStart(2, '0');
-  const slideModule = require(`./slide-${num}.js`);
-  slideModule.createSlide(pres, theme);
-}
-
-const outputPath = path.join(__dirname, '..', 'output', 'presentation.pptx');
-pres.writeFile({ fileName: outputPath });
-```
-
-执行（离线沙盒建议）：
-
-```bash
-export NODE_PATH="$(npm root -g):${NODE_PATH}"
-node pptx/slides/compile.js
-```
-
-### 步骤 7：质量检查（必做）
-
-详见 [QA 流程](references/pitfalls.md#qa-process)。
-
-### 输出目录结构
-
-```text
-pptx/
-├── slides/
-│   ├── slide-01.js      # 单页模块
-│   ├── slide-02.js
-│   ├── ...
-│   ├── imgs/            # 页面用图
-│   └── compile.js
-└── output/
-    └── presentation.pptx
-```
-
----
-
-## 页面输出格式
-
-每一页都应是一个**可独立运行**的 JS 文件：
-
-```javascript
-// slide-01.js
-const pptxgen = require("pptxgenjs");
-
-const slideConfig = {
-  type: 'cover',
-  index: 1,
-  title: '演示标题'
-};
-
-// 必须是同步函数（不要用 async）
-function createSlide(pres, theme) {
-  const slide = pres.addSlide();
-  slide.background = { color: theme.bg };
-
-  slide.addText(slideConfig.title, {
-    x: 0.5, y: 2, w: 9, h: 1.2,
-    fontSize: 48, fontFace: "Arial",
-    color: theme.primary, bold: true, align: "center"
-  });
-
-  return slide;
-}
-
-// 独立预览（使用页面专属文件名）
-if (require.main === module) {
-  const pres = new pptxgen();
-  pres.layout = 'LAYOUT_16x9';
-  const theme = {
-    primary: "22223b",
-    secondary: "4a4e69",
-    accent: "9a8c98",
-    light: "c9ada7",
-    bg: "f2e9e4"
-  };
-  createSlide(pres, theme);
-  pres.writeFile({ fileName: "slide-01-preview.pptx" });
-}
-
-module.exports = { createSlide, slideConfig };
-```
-
----
-
-## 主题对象契约（强制）
-
-`compile.js` 传入 `theme` 时，必须使用以下固定键名：
-
-| 键名 | 含义 | 示例 |
-|-----|------|------|
-| `theme.primary` | 最深色，标题/重点文本 | `"22223b"` |
-| `theme.secondary` | 次深色，正文强调 | `"4a4e69"` |
-| `theme.accent` | 中间强调色 | `"9a8c98"` |
-| `theme.light` | 浅强调色 | `"c9ada7"` |
-| `theme.bg` | 背景色 | `"f2e9e4"` |
-
-不要使用其它键名（如 `background`、`text`、`muted`、`darkest`、`lightest`）。
-
----
-
-## 页码徽标（必需）
-
-除封面外，所有页面必须在右下角显示页码徽标：
-
-- 位置：x `9.3"`，y `5.1"`
-- 仅显示当前页码（如 `3` 或 `03`），不要显示 `3/12`
-- 颜色需与主题协调，避免喧宾夺主
-
-### 圆形徽标（默认）
-
-```javascript
-slide.addShape(pres.shapes.OVAL, {
-  x: 9.3, y: 5.1, w: 0.4, h: 0.4,
-  fill: { color: theme.accent }
-});
-slide.addText("3", {
-  x: 9.3, y: 5.1, w: 0.4, h: 0.4,
-  fontSize: 12, fontFace: "Arial",
-  color: "FFFFFF", bold: true,
-  align: "center", valign: "middle"
-});
-```
-
-### 胶囊徽标
-
-```javascript
-slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-  x: 9.1, y: 5.15, w: 0.6, h: 0.35,
-  fill: { color: theme.accent },
-  rectRadius: 0.15
-});
-slide.addText("03", {
-  x: 9.1, y: 5.15, w: 0.6, h: 0.35,
-  fontSize: 11, fontFace: "Arial",
-  color: "FFFFFF", bold: true,
-  align: "center", valign: "middle"
-});
-```
+此时读取 [pptxgenjs-fallback.md](references/pptxgenjs-fallback.md)，再按其中的 PptxGenJS / python-pptx 脚本兜底流程执行。不要把脚本兜底流程作为默认路径。
 
 ---
 
@@ -328,4 +116,4 @@ slide.addText("03", {
 
 - 本技能按 wunder 沙盒“预装依赖”运行，不在执行阶段安装依赖。
 - 已预装（见 Dockerfile）：`markitdown[docx,pptx,xlsx]`、`python-pptx`、`pptxgenjs`、`react-icons`、`react`、`react-dom`、`sharp`。
-- 执行前请先完成上文“离线依赖自检（必做）”。
+- 仅在没有可用 PPT 生成工具、必须走脚本兜底方案时，才读取 [pptxgenjs-fallback.md](references/pptxgenjs-fallback.md) 并执行离线依赖自检。

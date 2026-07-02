@@ -66,7 +66,15 @@ export const resolveChatRuntimeProjectionRenderMode = (): ChatRuntimeProjectionR
   if (readRuntimeRenderNamedFlag(RENDER_SHADOW_STORAGE_KEYS) || readRuntimeRenderNamedSearchFlag(RENDER_SHADOW_SEARCH_KEYS)) {
     return 'shadow';
   }
-  return 'legacy';
+  // Default to projection rendering: the runtime projection carries strict
+  // event_id / event_seq dedup, client_message_id optimistic-merge, snapshot
+  // full-replace and turn-ordered message selection — none of which the legacy
+  // array path enforces. materializeChatRuntimeMessage reuses the underlying
+  // legacy message object whenever it is still in sync with the projection
+  // (canReuseLegacyMessage), so no render fields are lost. When the projection
+  // has no data yet it transparently falls back to the legacy array
+  // (projection-empty-fallback), so empty/loading states render correctly.
+  return 'projection';
 };
 
 export const materializeChatRuntimeMessages = (

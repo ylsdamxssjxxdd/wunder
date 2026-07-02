@@ -15,8 +15,13 @@ struct StreamPersistTask {
     cleanup_cutoff: Option<f64>,
 }
 
+enum StreamPersistCommand {
+    Task(StreamPersistTask),
+    Barrier(SyncSender<()>),
+}
+
 struct StreamPersistQueue {
-    sender: SyncSender<StreamPersistTask>,
+    sender: SyncSender<StreamPersistCommand>,
     fallback_writes: AtomicU64,
 }
 
@@ -35,26 +40,31 @@ impl StreamPersistQueue {
         }
     }
 
-    fn run(receiver: std_mpsc::Receiver<StreamPersistTask>) {
-        while let Ok(task) = receiver.recv() {
+    fn run(receiver: std_mpsc::Receiver<StreamPersistCommand>) {
+        while let Ok(command) = receiver.recv() {
             let mut batch = Vec::with_capacity(STREAM_EVENT_WRITE_BATCH_SIZE);
-            batch.push(task);
+            batch.push(command);
             while batch.len() < STREAM_EVENT_WRITE_BATCH_SIZE {
                 match receiver.try_recv() {
-                    Ok(task) => batch.push(task),
+                    Ok(command) => batch.push(command),
                     Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
                 }
             }
-            for task in batch {
-                Self::apply_task(task);
+            for command in batch {
+                match command {
+                    StreamPersistCommand::Task(task) => Self::apply_task(task),
+                    StreamPersistCommand::Barrier(done) => {
+                        let _ = done.send(());
+                    }
+                }
             }
         }
     }
 
     fn enqueue(&self, task: StreamPersistTask) {
-        match self.sender.try_send(task) {
+        match self.sender.try_send(StreamPersistCommand::Task(task)) {
             Ok(()) => {}
-            Err(TrySendError::Full(task)) | Err(TrySendError::Disconnected(task)) => {
+            Err(TrySendError::Full(StreamPersistCommand::Task(task))) => {
                 let fallback_writes =
                     self.fallback_writes.fetch_add(1, AtomicOrdering::Relaxed) + 1;
                 if fallback_writes == 1 || fallback_writes.is_multiple_of(1000) {
@@ -62,25 +72,17 @@ impl StreamPersistQueue {
                         "stream event persist queue saturated, using fallback writes {fallback_writes} times"
                     );
                 }
-                Self::spawn_fallback(task);
+                // Preserve event-id ordering under saturation. A detached fallback
+                // can race a later terminal event and make replay observe gaps.
+                let _ = self.sender.send(StreamPersistCommand::Task(task));
             }
-        }
-    }
-
-    fn spawn_fallback(task: StreamPersistTask) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                let _ = crate::core::blocking::run_db(
-                    "orchestrator.stream_persist.fallback",
-                    move || {
-                        Self::apply_task(task);
-                        Ok(())
-                    },
-                )
-                .await;
-            });
-        } else {
-            Self::apply_task(task);
+            Err(TrySendError::Disconnected(StreamPersistCommand::Task(task))) => {
+                Self::apply_task(task);
+            }
+            Err(TrySendError::Full(StreamPersistCommand::Barrier(done)))
+            | Err(TrySendError::Disconnected(StreamPersistCommand::Barrier(done))) => {
+                let _ = done.send(());
+            }
         }
     }
 
@@ -134,6 +136,21 @@ pub(super) fn enqueue_stream_event_persist(
         event_type,
         cleanup_cutoff,
     });
+}
+
+pub(crate) async fn flush_stream_event_persist_queue() {
+    let sender = stream_persist_queue().sender.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let (done_tx, done_rx) = std_mpsc::sync_channel(1);
+        if sender.send(StreamPersistCommand::Barrier(done_tx)).is_err() {
+            return;
+        }
+        let _ = done_rx.recv();
+    })
+    .await;
+    if let Err(err) = outcome {
+        warn!("failed to join stream event persist flush barrier: {err}");
+    }
 }
 
 #[cfg(test)]
@@ -196,5 +213,44 @@ mod tests {
             .load_stream_events("sess_queue_cleanup", 0, 16)
             .expect("load stream events");
         assert!(records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn flush_barrier_waits_for_preceding_stream_events() {
+        let storage = build_storage();
+        enqueue_stream_event_persist(
+            storage.clone(),
+            "sess_flush_barrier".to_string(),
+            "user_flush_barrier".to_string(),
+            1,
+            json!({
+                "event": "progress",
+                "data": { "summary": "first" },
+                "timestamp": "2026-03-07T00:00:00+08:00"
+            }),
+            "progress".to_string(),
+            None,
+        );
+
+        flush_stream_event_persist_queue().await;
+        storage
+            .append_stream_event(
+                "sess_flush_barrier",
+                "user_flush_barrier",
+                2,
+                &json!({
+                    "event": "queue_finish",
+                    "data": { "queue_id": "queue_flush_barrier" },
+                    "timestamp": "2026-03-07T00:00:01+08:00"
+                }),
+            )
+            .expect("append terminal event");
+
+        let records = storage
+            .load_stream_events("sess_flush_barrier", 0, 16)
+            .expect("load stream events");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["event"], json!("progress"));
+        assert_eq!(records[1]["event"], json!("queue_finish"));
     }
 }

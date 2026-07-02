@@ -438,6 +438,8 @@ async fn handle_ws(
                                     "session_id": info.session_id,
                                     "queue_ahead": info.queue_ahead,
                                     "queue_total": info.queue_total,
+                                    "queue_event_id": info.queue_event_id,
+                                    "queue_after_event_id": info.queue_after_event_id,
                                 });
                                 let queued_event = StreamEvent {
                                     event: "queued".to_string(),

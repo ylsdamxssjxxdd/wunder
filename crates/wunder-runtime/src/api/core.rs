@@ -85,6 +85,8 @@ async fn wunder_entry(
                 "session_id": info.session_id,
                 "queue_ahead": info.queue_ahead,
                 "queue_total": info.queue_total,
+                "queue_event_id": info.queue_event_id,
+                "queue_after_event_id": info.queue_after_event_id,
             });
             if wants_stream {
                 let mapped = tokio_stream::iter(vec![Ok::<Event, std::convert::Infallible>(

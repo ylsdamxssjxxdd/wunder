@@ -164,6 +164,62 @@ test('ws multiplexer can keep pending entry alive after queued ack resolve', asy
   }
 });
 
+test('ws multiplexer keeps queued stream open until queue_finish when not resolving on queue', async () => {
+  const restore = installWebSocketMock();
+  try {
+    const { createWsMultiplexer } = await import('../../src/utils/ws');
+    const socket = new FakeWebSocket();
+    const events: string[] = [];
+    let resolved = false;
+    const client = createWsMultiplexer(() => socket as unknown as WebSocket, {
+      idleTimeoutMs: 0,
+      pingIntervalMs: 0
+    });
+
+    const requestPromise = client.request({
+      requestId: 'request-queue-finish',
+      resolveOnQueued: false,
+      closeOnFinal: true,
+      message: { type: 'run', request_id: 'request-queue-finish' },
+      onEvent: (eventType, data) => {
+        events.push(`${eventType}:${data}`);
+      }
+    }).then(() => {
+      resolved = true;
+    });
+
+    socket.open();
+    socket.emit({
+      type: 'event',
+      request_id: 'request-queue-finish',
+      payload: { event: 'queue_enter', data: { queue_id: 'queue-1' } }
+    });
+    await sleep(0);
+    assert.equal(resolved, false);
+
+    socket.emit({
+      type: 'event',
+      request_id: 'request-queue-finish',
+      payload: { event: 'delta', data: { text: 'after queue' } }
+    });
+    socket.emit({
+      type: 'event',
+      request_id: 'request-queue-finish',
+      payload: { event: 'queue_finish', data: { queue_id: 'queue-1' } }
+    });
+
+    await requestPromise;
+    assert.equal(resolved, true);
+    assert.deepEqual(events, [
+      'queue_enter:{"queue_id":"queue-1"}',
+      'delta:{"text":"after queue"}',
+      'queue_finish:{"queue_id":"queue-1"}'
+    ]);
+  } finally {
+    restore();
+  }
+});
+
 test('ws multiplexer removes kept queued request on explicit cancel', async () => {
   const restore = installWebSocketMock();
   try {

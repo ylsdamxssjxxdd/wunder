@@ -100,6 +100,7 @@ pub(crate) use error::OrchestratorError;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
+pub(crate) use stream_persist::flush_stream_event_persist_queue;
 use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;

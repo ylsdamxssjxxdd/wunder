@@ -127,9 +127,10 @@
 - `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
 - 约束：注册用户按累计 Token 余额限额，按每次模型调用的实际 `total_tokens` 扣减；`token_balance` 可累计、可消费，语义上等价于用户持有的 Token 货币余额。余额不足返回 429（`detail.code=USER_TOKEN_INSUFFICIENT`）。
 - 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
-- 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`），SSE/WS 返回 `queued` 事件。
-- 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。
-- WS 接管语义：客户端收到 `queued` 后应立即切换到 `watch`，而不是继续等待原始 `start` 请求流结束。
+- 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。
+- 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。队列终止事件写入前会先 flush 当前任务已产生的流式事件持久化队列，避免恢复端先看到 `queue_finish` 再补到旧增量。
+- 聊天 WS 排队语义：`/wunder/chat/ws` 的 `start` 被排队后，服务端会沿同一个 request-scoped WS 流从 `queue_after_event_id` 继续转发本 `queue_id` 的 `queue_enter -> queue_start -> 模型/工具流式事件 -> queue_finish/queue_fail`；客户端不要在收到 `queue_enter` 或 queued ack 后主动切换到 `watch`。队列回放在匹配本 `queue_id` 的 `queue_start` 前不会转发无 `queue_id` 的模型/工具事件，遇到本 `queue_id` 的 `queue_finish/queue_fail` 会立即截断，避免旧任务尾部或下一轮事件混入当前请求。
+- WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
 - 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。
 

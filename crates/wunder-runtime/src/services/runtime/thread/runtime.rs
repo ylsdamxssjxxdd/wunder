@@ -42,6 +42,8 @@ pub struct QueueInfo {
     pub session_id: String,
     pub queue_ahead: usize,
     pub queue_total: usize,
+    pub queue_event_id: i64,
+    pub queue_after_event_id: i64,
 }
 
 #[derive(Debug)]
@@ -757,27 +759,39 @@ impl ThreadRuntime {
             &record.session_id,
             THREAD_STATUS_WAITING,
         );
-        self.emit_queue_event(
-            &record.session_id,
-            &record.user_id,
-            "queue_enter",
-            json!({
-                "queue_id": record.task_id,
-                "thread_id": record.thread_id,
-                "session_id": record.session_id,
-                "agent_id": record.agent_id,
-                "user_id": record.user_id,
-                "queue_ahead": queue_stats.queue_ahead,
-                "queue_total": queue_stats.queue_total,
-            }),
-        )
-        .await;
+        let queue_before_event_id = self
+            .stream_events
+            .tail_event_id(&record.session_id)
+            .await
+            .unwrap_or(0);
+        let queue_event_id = self
+            .emit_queue_event(
+                &record.session_id,
+                &record.user_id,
+                "queue_enter",
+                json!({
+                    "queue_id": record.task_id,
+                    "thread_id": record.thread_id,
+                    "session_id": record.session_id,
+                    "agent_id": record.agent_id,
+                    "user_id": record.user_id,
+                    "queue_ahead": queue_stats.queue_ahead,
+                    "queue_total": queue_stats.queue_total,
+                }),
+            )
+            .await;
         Ok(QueueInfo {
             task_id: record.task_id,
             thread_id: record.thread_id,
             session_id: record.session_id,
             queue_ahead: queue_stats.queue_ahead,
             queue_total: queue_stats.queue_total,
+            queue_event_id,
+            queue_after_event_id: if queue_event_id > 0 {
+                queue_event_id.saturating_sub(1)
+            } else {
+                queue_before_event_id
+            },
         })
     }
 
@@ -923,32 +937,36 @@ impl ThreadRuntime {
         user_id: &str,
         event_type: &str,
         payload: Value,
-    ) {
+    ) -> i64 {
         let cleaned_session = session_id.trim();
         let cleaned_user = user_id.trim();
         let cleaned_event = event_type.trim();
         if cleaned_session.is_empty() || cleaned_event.is_empty() {
-            return;
+            return 0;
         }
         self.monitor
             .record_event(cleaned_session, cleaned_event, &payload);
         if cleaned_user.is_empty() {
-            return;
+            return 0;
         }
         let stream_payload = json!({
             "event": cleaned_event,
             "data": payload,
             "timestamp": Utc::now().to_rfc3339(),
         });
-        if let Err(err) = self
+        match self
             .stream_events
             .append_event(cleaned_session, cleaned_user, stream_payload)
             .await
         {
-            warn!(
-                "append queue stream event failed: session_id={}, event_type={}, error={err}",
-                cleaned_session, cleaned_event
-            );
+            Ok(event_id) => event_id,
+            Err(err) => {
+                warn!(
+                    "append queue stream event failed: session_id={}, event_type={}, error={err}",
+                    cleaned_session, cleaned_event
+                );
+                0
+            }
         }
     }
 
@@ -1112,6 +1130,7 @@ impl ThreadRuntime {
                     }
                     // drain
                 }
+                crate::orchestrator::flush_stream_event_persist_queue().await;
                 let finished_at = now_ts();
                 let _ = self
                     .user_store
@@ -1201,6 +1220,7 @@ impl ThreadRuntime {
     }
 
     async fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
+        crate::orchestrator::flush_stream_event_persist_queue().await;
         let now = now_ts();
         self.user_store
             .update_agent_task_status(UpdateAgentTaskStatusParams {

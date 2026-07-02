@@ -194,6 +194,7 @@ export const isTerminalStreamEventType = (eventType) => {
   return (
     normalized === 'final' ||
     normalized === 'error' ||
+    normalized === 'queue_finish' ||
     normalized === 'queue_fail' ||
     normalized === 'turn_terminal'
   );

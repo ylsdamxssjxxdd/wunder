@@ -39,10 +39,8 @@ impl Orchestrator {
             prepared.config_overrides.as_ref(),
             subagents::HIDE_START_QUESTION_CONFIG_KEY,
         );
-        let skip_stream_clear = subagents::config_flag(
-            prepared.config_overrides.as_ref(),
-            subagents::SKIP_STREAM_CLEAR_CONFIG_KEY,
-        );
+        // skip_stream_clear is no longer needed: stream events are reclaimed
+        // by the TTL cleanup instead of being wiped at the start of each round.
         let hidden_internal_user = subagents::config_flag(
             prepared.config_overrides.as_ref(),
             subagents::HIDDEN_USER_MESSAGE_CONFIG_KEY,
@@ -104,21 +102,9 @@ impl Orchestrator {
                 }
             }
 
-            if prepared.stream && !is_admin && !skip_stream_clear {
-                let cleanup_session = session_id.clone();
-                let storage = self.storage.clone();
-                match crate::core::blocking::run_db(
-                    "orchestrator.execute.clear_stream",
-                    move || storage.delete_stream_events_by_session(&cleanup_session),
-                )
-                .await
-                {
-                    Ok(_) => {}
-                    Err(err) => {
-                        warn!("failed to clear stream events for session {session_id}: {err}");
-                    }
-                }
-            }
+            // Stream events are kept across rounds and reclaimed by the TTL
+            // cleanup (constants::STREAM_EVENT_TTL_S). Clearing them per round
+            // broke the event_id sequence and caused resume gaps on the client.
             // Keep renewing the session lock heartbeat for long-running requests.
             let heartbeat_limiter = limiter.clone();
             if acquired {

@@ -512,10 +512,10 @@ test('chat runtime render adapter reports known empty projection sessions', () =
   assert.equal(hasChatRuntimeRenderSession(projection, 'session-empty'), true);
 });
 
-test('chat runtime render mode defaults to legacy and requires debug projection opt-in', () => {
+test('chat runtime render mode defaults to projection and supports explicit legacy rollback', () => {
   withWindowFlags({}, () => {
-    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'legacy');
-    assert.equal(isChatRuntimeProjectionRenderEnabled(), false);
+    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'projection');
+    assert.equal(isChatRuntimeProjectionRenderEnabled(), true);
   });
   withWindowFlags({ 'wunder:chat-runtime-render': 'legacy' }, () => {
     assert.equal(resolveChatRuntimeProjectionRenderMode(), 'legacy');
