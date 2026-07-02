@@ -4,6 +4,8 @@ set -euo pipefail
 mode="${1:-}"
 binary="${CARGO_TARGET_DIR:-/tmp/cargo-target}/release/wunder-server"
 prefer_prebuilt="${WUNDER_PREFER_PREBUILT_BIN:-0}"
+feature_stamp="${binary}.features"
+server_features="${WUNDER_SERVER_FEATURES:-mcp}"
 
 ensure_playwright_browsers() {
   local target="${PLAYWRIGHT_BROWSERS_PATH:-}"
@@ -34,7 +36,11 @@ binary_is_ready() {
     return 0
   fi
 
-  ! find Cargo.toml Cargo.lock crates/wunder-core crates/wunder-runtime crates/wunder-server patches/tokio-xmpp \
+  if [ ! -f "${feature_stamp}" ] || [ "$(cat "${feature_stamp}" 2>/dev/null || true)" != "${server_features}" ]; then
+    return 1
+  fi
+
+  ! find Cargo.toml Cargo.lock crates/wunder-core crates/wunder-runtime crates/wunder-server patches/tokio-xmpp scripts/docker-rust-entry.sh \
     -type f -newer "${binary}" -print -quit 2>/dev/null | grep -q .
 }
 
@@ -66,7 +72,8 @@ case "${mode}" in
       run_binary
     fi
 
-    cargo build --release -p wunder-server --bin wunder-server
+    cargo build --release -p wunder-server --bin wunder-server --features "${server_features}"
+    printf '%s' "${server_features}" > "${feature_stamp}"
     run_binary
     ;;
   *)

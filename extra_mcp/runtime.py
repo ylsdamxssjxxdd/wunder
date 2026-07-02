@@ -15,6 +15,7 @@ class McpRuntimeConfig:
     transport: Transport
     host: str
     port: int
+    stateless_http: bool
 
 
 def validate_transport(value: str) -> Transport:
@@ -38,4 +39,20 @@ def get_mcp_runtime_config() -> McpRuntimeConfig:
         os.getenv("MCP_PORT") or str(get_section_value(config, "port") or ""),
         8000,
     )
-    return McpRuntimeConfig(transport=transport, host=host, port=port)
+    stateless_http_raw = (
+        os.getenv("MCP_STATELESS_HTTP")
+        or get_section_value(config, "stateless_http")
+        or "true"
+    )
+    stateless_http = str(stateless_http_raw).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    return McpRuntimeConfig(
+        transport=transport,
+        host=host,
+        port=port,
+        stateless_http=stateless_http,
+    )

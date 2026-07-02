@@ -1208,7 +1208,7 @@ fn default_browser_viewport_height() -> u32 {
 }
 
 fn default_browser_timeout_secs() -> u64 {
-    30
+    60
 }
 
 fn default_browser_idle_timeout_secs() -> u64 {

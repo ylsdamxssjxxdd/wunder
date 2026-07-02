@@ -219,10 +219,18 @@ type RuntimeStreamAbortReason = 'user_stop' | 'local_recovery' | 'teardown';
 type ClearRuntimeStreamStateOptions = {
   abort?: boolean;
   abortReason?: RuntimeStreamAbortReason;
+  requestId?: string | null;
 };
 
 export function clearRuntimeSendStreamState(runtime, options: ClearRuntimeStreamStateOptions = {}) {
   if (!runtime) return false;
+  const expectedRequestId = String(options.requestId || '').trim();
+  if (expectedRequestId) {
+    const currentRequestId = String(runtime.sendRequestId || '').trim();
+    if (currentRequestId !== expectedRequestId) {
+      return false;
+    }
+  }
   const controller = runtime.sendController;
   if (!controller) return false;
   if (options.abort === true && controller?.signal?.aborted !== true) {
@@ -238,6 +246,13 @@ export function clearRuntimeSendStreamState(runtime, options: ClearRuntimeStream
 
 export function clearRuntimeResumeStreamState(runtime, options: ClearRuntimeStreamStateOptions = {}) {
   if (!runtime) return false;
+  const expectedRequestId = String(options.requestId || '').trim();
+  if (expectedRequestId) {
+    const currentRequestId = String(runtime.resumeRequestId || '').trim();
+    if (currentRequestId !== expectedRequestId) {
+      return false;
+    }
+  }
   const controller = runtime.resumeController;
   if (!controller) return false;
   if (options.abort === true && controller?.signal?.aborted !== true) {

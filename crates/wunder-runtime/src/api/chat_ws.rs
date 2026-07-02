@@ -869,8 +869,15 @@ async fn handle_ws(
                                 )
                                 .await;
                                 let cancel_source = cancel_source.unwrap_or("ws_cancel");
-                                let _ =
-                                    state.monitor.cancel_with_source(&session_id, cancel_source);
+                                let _ = state
+                                    .kernel
+                                    .thread_runtime
+                                    .cancel_session_activity(
+                                        &user.user_id,
+                                        &session_id,
+                                        cancel_source,
+                                    )
+                                    .await;
                                 let _ = persist_user_cancelled_turn_marker(
                                     state.workspace.clone(),
                                     state.user_store.clone(),

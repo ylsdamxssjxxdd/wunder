@@ -25,14 +25,24 @@ from .tools import register_all
 
 def build_server() -> FastMCP:
     runtime = get_mcp_runtime_config()
-    mcp = FastMCP("extra_mcp", host=runtime.host, port=runtime.port)
+    mcp = FastMCP(
+        "extra_mcp",
+        host=runtime.host,
+        port=runtime.port,
+        stateless_http=runtime.stateless_http,
+    )
     register_all(mcp)
     return mcp
 
 
 def main() -> None:
     runtime = get_mcp_runtime_config()
-    mcp = FastMCP("extra_mcp", host=runtime.host, port=runtime.port)
+    mcp = FastMCP(
+        "extra_mcp",
+        host=runtime.host,
+        port=runtime.port,
+        stateless_http=runtime.stateless_http,
+    )
     register_all(mcp)
     mcp.run(transport=runtime.transport)
 

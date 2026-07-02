@@ -13,6 +13,19 @@ import {
 import { settleTerminalAssistantArtifacts } from '../../src/stores/chatTerminalArtifacts';
 import { settleStoppedRuntimeLocalState } from '../../src/stores/chatRuntimeStopSettlement';
 
+const installBrowserStorageStub = () => {
+  if (typeof globalThis.localStorage !== 'undefined') return;
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: () => null,
+      setItem: () => undefined,
+      removeItem: () => undefined,
+      clear: () => undefined
+    }
+  });
+};
+
 test('merged busy state keeps running when projection is stale idle but runtime is running', () => {
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
@@ -386,7 +399,7 @@ test('user stop settlement clears local runtime locks that would keep composer b
   assert.equal(runtime.activeTurnId, '');
   assert.equal(runtime.pendingApprovalCount, 0);
   assert.equal(runtime.waitingForUserInput, false);
-  assert.equal(runtime.stopRequested, false);
+  assert.equal(runtime.stopRequested, true);
   assert.equal(runtime.threadStatus, 'idle');
   assert.equal(runtime.streamLifecycle, 'idle');
   assert.equal(
@@ -401,4 +414,30 @@ test('user stop settlement clears local runtime locks that would keep composer b
     }),
     false
   );
+});
+
+test('stale send finalizer cannot clear a newer send controller', async () => {
+  installBrowserStorageStub();
+  const { clearRuntimeSendStreamState } = await import('../../src/stores/chatRuntimeControls');
+  const nextSendController = new AbortController();
+  const runtime = {
+    sendController: nextSendController,
+    sendRequestId: 'req_next_send',
+    sendStartedAt: 100,
+    sendLastEventAt: 120,
+    sendAbortReason: ''
+  };
+
+  assert.equal(clearRuntimeSendStreamState(runtime, { requestId: 'req_old_send' }), false);
+  assert.equal(runtime.sendController, nextSendController);
+  assert.equal(nextSendController.signal.aborted, false);
+  assert.equal(runtime.sendRequestId, 'req_next_send');
+  assert.equal(runtime.sendStartedAt, 100);
+  assert.equal(runtime.sendLastEventAt, 120);
+
+  assert.equal(clearRuntimeSendStreamState(runtime, { requestId: 'req_next_send' }), true);
+  assert.equal(runtime.sendController, null);
+  assert.equal(runtime.sendRequestId, null);
+  assert.equal(runtime.sendStartedAt, 0);
+  assert.equal(runtime.sendLastEventAt, 0);
 });

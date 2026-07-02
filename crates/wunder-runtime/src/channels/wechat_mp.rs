@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde_json::{json, Value};
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
@@ -320,8 +320,10 @@ pub async fn send_outbound(
     });
     let send_url = format!("{base_url}/cgi-bin/message/custom/send");
     let response = http
-        .post(send_url)
-        .query(&[("access_token", access_token.as_str())])
+        .post(build_api_url(
+            &send_url,
+            &[("access_token", access_token.as_str())],
+        )?)
         .json(&payload)
         .send()
         .await?;
@@ -362,12 +364,14 @@ async fn fetch_access_token(http: &Client, config: &WechatMpConfig) -> Result<St
     }
     let token_url = format!("{base_url}/cgi-bin/token");
     let response = http
-        .get(token_url)
-        .query(&[
+        .get(build_api_url(
+            &token_url,
+            &[
             ("grant_type", "client_credential"),
             ("appid", app_id),
             ("secret", app_secret),
-        ])
+            ],
+        )?)
         .send()
         .await?;
     if !response.status().is_success() {
@@ -411,6 +415,17 @@ fn resolve_api_base_url(config: &WechatMpConfig) -> String {
     } else {
         format!("https://{}", domain.trim_end_matches('/'))
     }
+}
+
+fn build_api_url(url: &str, params: &[(&str, &str)]) -> Result<Url> {
+    let mut parsed = Url::parse(url).map_err(|err| anyhow!("wechat mp url invalid: {err}"))?;
+    {
+        let mut pairs = parsed.query_pairs_mut();
+        for (key, value) in params {
+            pairs.append_pair(key, value);
+        }
+    }
+    Ok(parsed)
 }
 
 fn decode_encoding_aes_key(raw: &str) -> Result<Vec<u8>> {

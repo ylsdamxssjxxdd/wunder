@@ -626,7 +626,12 @@ async fn cancel_session(
     )
     .await
     .unwrap_or(false);
-    let cancelled = state.monitor.cancel_with_source(&session_id, "rest_cancel");
+    let cancel_settlement = state
+        .kernel
+        .thread_runtime
+        .cancel_session_activity(&resolved.user.user_id, &session_id, "rest_cancel")
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let marker_persisted = persist_user_cancelled_turn_marker(
         state.workspace.clone(),
         state.user_store.clone(),
@@ -637,7 +642,17 @@ async fn cancel_session(
     .await
     .unwrap_or(false);
     Ok(Json(
-        json!({ "data": { "cancelled": cancelled, "goal_cleared": goal_cleared, "marker_persisted": marker_persisted } }),
+        json!({
+            "data": {
+                "cancelled": cancel_settlement.monitor_cancelled,
+                "goal_cleared": goal_cleared,
+                "marker_persisted": marker_persisted,
+                "queued_tasks_cancelled": cancel_settlement.queued_tasks_cancelled,
+                "running_tasks_marked_cancelled": cancel_settlement.running_tasks_marked_cancelled,
+                "thread_status_reset": cancel_settlement.thread_status_reset,
+                "settlement_event_id": cancel_settlement.settlement_event_id,
+            }
+        }),
     ))
 }
 

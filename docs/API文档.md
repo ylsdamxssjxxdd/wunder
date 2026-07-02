@@ -257,7 +257,7 @@
   - `PUT /wunder/chat/sessions/{session_id}/goal`：请求体支持 `objective/token_budget/status`；设置或恢复 active 时会尝试启动续跑。
   - `DELETE /wunder/chat/sessions/{session_id}/goal`：清除当前目标。
 - `chat/ws` 新增 `goal.get / goal.set / goal` 消息类型；响应类型为 `goal`。
-- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。
+- `POST /wunder/chat/sessions/{session_id}/cancel` 在终止当前会话运行时会同步清除目标态，并返回 `goal_cleared`。若最近一轮用户消息之后尚无可见智能体回复，服务端会追加一条可恢复的 assistant 取消标记，刷新后仍能看到该轮次已被用户终止；响应会返回 `marker_persisted` 表示本次是否新写入该标记。取消结算会同时收敛 monitor、目标续跑、队列任务、运行中任务和 `agent_thread` 状态，响应额外包含 `queued_tasks_cancelled`、`running_tasks_marked_cancelled`、`thread_status_reset`、`settlement_event_id`。
 - 目标事件：`goal_updated / goal_cleared / goal_continuation_started / goal_budget_limited / goal_continuation_ready`。
 - 目标续跑通过隐藏内部用户消息触发，不改写 frozen system prompt；目标在 `paused / budget_limited / complete` 状态下停止自动续跑。
 
@@ -1753,7 +1753,7 @@
 - `session.context_tokens/context_tokens_peak` 汇总优先采用模型服务端返回的显式 `context_occupancy_tokens/context_tokens` 作为有效占用；上下文压缩触发也只使用已观测上下文占用，不再叠加本地 token 估算或工具 schema 开销。压缩完成后在下一次模型 usage 返回前，上下文占用会标记为未观测。
 - `round_usage.context_occupancy_tokens` 表示当前线程上下文占用；`round_usage.total_tokens` 与 `request_consumed_tokens` 表示本轮请求消耗，多模型轮次时会累加每次模型调用的用量。
 - 新接入展示“当前上下文占用”时优先读取 `context_occupancy_tokens`，展示“单次请求消耗”或扣费统计时读取 `request_consumed_tokens`/`round_usage.total_tokens`。
-- 取消请求会在 `session.cancel_source`、`cancel` 事件、最终 `cancelled` 事件和 `CANCELLED.detail.cancel_source` 中记录来源。REST 停止使用 `rest_cancel`，WebSocket 停止默认使用 `ws_cancel`/`core_ws_cancel`，客户端本地 Abort 若确实转成后端取消会使用 `client_abort`。当取消发生在用户消息已持久化但模型尚未产生可见回复的窗口，服务端会幂等写入 `meta.type=session_cancelled`、`stop_reason=user_stop` 的 assistant 历史标记，避免刷新后只剩用户消息。
+- 取消请求会在 `session.cancel_source`、`cancel` 事件、最终 `cancelled` 事件和 `CANCELLED.detail.cancel_source` 中记录来源。REST 停止使用 `rest_cancel`，WebSocket 停止默认使用 `ws_cancel`/`core_ws_cancel`，客户端本地 Abort 若确实转成后端取消会使用 `client_abort`。当取消发生在用户消息已持久化但模型尚未产生可见回复的窗口，服务端会幂等写入 `meta.type=session_cancelled`、`stop_reason=user_stop` 的 assistant 历史标记，避免刷新后只剩用户消息。REST/WS 会话取消还会写入持久化 `thread_status` 事件，`status/thread_status=cancelled`，并为被取消的 queued/running 任务发送 `queue_fail` 终态事件，便于客户端断线补水后清除停止按钮、排队提示和尾部 pending 气泡。
 - Token 余额不足时返回 `USER_TOKEN_INSUFFICIENT`，错误明细会附带 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`，便于客户端直接刷新 Token 账户视图。
 
 

@@ -60,7 +60,9 @@ export const settleStoppedRuntimeLocalState = (
   runtime.slowClientResumeTimer = null;
   runtime.slowClientResumeAfterEventId = 0;
   runtime.streamLifecycle = 'idle';
-  runtime.stopRequested = false;
+  // Keep the stop marker until the in-flight send/resume coroutine observes it
+  // in its own finally block. Clearing it here lets a stale coroutine revive
+  // loading=true after the UI has already settled the manual stop.
   runtime.sendAbortReason = '';
   runtime.resumeAbortReason = '';
   runtime.activeTurnId = '';

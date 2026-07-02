@@ -14,7 +14,7 @@ use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
@@ -44,6 +44,15 @@ pub struct QueueInfo {
     pub queue_total: usize,
     pub queue_event_id: i64,
     pub queue_after_event_id: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ThreadCancelSettlement {
+    pub monitor_cancelled: bool,
+    pub queued_tasks_cancelled: usize,
+    pub running_tasks_marked_cancelled: usize,
+    pub thread_status_reset: bool,
+    pub settlement_event_id: i64,
 }
 
 #[derive(Debug)]
@@ -567,6 +576,118 @@ impl ThreadRuntime {
         Ok(())
     }
 
+    pub async fn cancel_session_activity(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cancel_source: &str,
+    ) -> Result<ThreadCancelSettlement> {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return Err(anyhow!(i18n::t("error.content_required")));
+        }
+        let source = cancel_source.trim();
+        let source = if source.is_empty() {
+            "thread_cancel"
+        } else {
+            source
+        };
+
+        let monitor_cancelled = self.monitor.cancel_with_source(cleaned_session, source);
+        self.cancel_pending_goal_continuation(cleaned_session);
+
+        let thread_id = format!("thread_{cleaned_session}");
+        let tasks = self
+            .user_store
+            .list_agent_tasks_by_thread(&thread_id, None, 64)?;
+        let mut queued_tasks_cancelled = 0usize;
+        let mut running_tasks_marked_cancelled = 0usize;
+        let mut agent_id = String::new();
+        for task in tasks {
+            if task.user_id.trim() != cleaned_user {
+                continue;
+            }
+            if agent_id.is_empty() && !task.agent_id.trim().is_empty() {
+                agent_id = task.agent_id.clone();
+            }
+            let status = task.status.trim().to_ascii_lowercase();
+            if status == TASK_STATUS_PENDING || status == TASK_STATUS_RETRY {
+                self.cancel_task(&task.task_id)?;
+                queued_tasks_cancelled = queued_tasks_cancelled.saturating_add(1);
+                self.emit_queue_event(
+                    cleaned_session,
+                    cleaned_user,
+                    "queue_fail",
+                    json!({
+                        "queue_id": task.task_id,
+                        "thread_id": task.thread_id,
+                        "session_id": task.session_id,
+                        "agent_id": task.agent_id,
+                        "user_id": task.user_id,
+                        "status": TASK_STATUS_CANCELLED,
+                        "error": "cancelled",
+                        "queue_ahead": 0,
+                        "queue_total": 0,
+                    }),
+                )
+                .await;
+            } else if status == TASK_STATUS_RUNNING {
+                self.cancel_task(&task.task_id)?;
+                running_tasks_marked_cancelled = running_tasks_marked_cancelled.saturating_add(1);
+                self.emit_queue_event(
+                    cleaned_session,
+                    cleaned_user,
+                    "queue_fail",
+                    json!({
+                        "queue_id": task.task_id,
+                        "thread_id": task.thread_id,
+                        "session_id": task.session_id,
+                        "agent_id": task.agent_id,
+                        "user_id": task.user_id,
+                        "status": TASK_STATUS_CANCELLED,
+                        "error": "cancelled",
+                        "queue_ahead": 0,
+                        "queue_total": 0,
+                    }),
+                )
+                .await;
+            }
+        }
+
+        if agent_id.is_empty() {
+            if let Ok(Some(session)) = self.user_store.get_chat_session(cleaned_user, cleaned_session)
+            {
+                agent_id = session.agent_id.unwrap_or_default();
+            }
+        }
+
+        let mut thread_status_reset = false;
+        if !agent_id.trim().is_empty() {
+            self.update_thread_status(cleaned_user, &agent_id, cleaned_session, THREAD_STATUS_IDLE)?;
+            thread_status_reset = true;
+        }
+        let settlement_event_id = self
+            .emit_thread_status_event(
+                cleaned_session,
+                cleaned_user,
+                "cancelled",
+                source,
+                queued_tasks_cancelled,
+                running_tasks_marked_cancelled,
+            )
+            .await;
+        let _ = self.queue_tx.try_send(());
+
+        Ok(ThreadCancelSettlement {
+            monitor_cancelled,
+            queued_tasks_cancelled,
+            running_tasks_marked_cancelled,
+            thread_status_reset,
+            settlement_event_id,
+        })
+    }
+
     async fn resolve_or_create_main_session(
         &self,
         user_id: &str,
@@ -970,6 +1091,65 @@ impl ThreadRuntime {
         }
     }
 
+    async fn emit_thread_status_event(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        status: &str,
+        cancel_source: &str,
+        queued_tasks_cancelled: usize,
+        running_tasks_marked_cancelled: usize,
+    ) -> i64 {
+        let cleaned_session = session_id.trim();
+        let cleaned_user = user_id.trim();
+        let cleaned_status = status.trim();
+        if cleaned_session.is_empty() || cleaned_status.is_empty() {
+            return 0;
+        }
+
+        let mut data = Map::new();
+        data.insert("session_id".to_string(), json!(cleaned_session));
+        data.insert("thread_id".to_string(), json!(format!("thread_{cleaned_session}")));
+        data.insert("status".to_string(), json!(cleaned_status));
+        data.insert("thread_status".to_string(), json!(cleaned_status));
+        data.insert("loaded".to_string(), json!(true));
+        data.insert("active_turn_id".to_string(), Value::Null);
+        data.insert("cancel_source".to_string(), json!(cancel_source));
+        data.insert(
+            "queued_tasks_cancelled".to_string(),
+            json!(queued_tasks_cancelled),
+        );
+        data.insert(
+            "running_tasks_marked_cancelled".to_string(),
+            json!(running_tasks_marked_cancelled),
+        );
+        let payload = Value::Object(data);
+        self.monitor
+            .record_event(cleaned_session, "thread_status", &payload);
+        if cleaned_user.is_empty() {
+            return 0;
+        }
+        let stream_payload = json!({
+            "event": "thread_status",
+            "data": payload,
+            "timestamp": Utc::now().to_rfc3339(),
+        });
+        match self
+            .stream_events
+            .append_event(cleaned_session, cleaned_user, stream_payload)
+            .await
+        {
+            Ok(event_id) => event_id,
+            Err(err) => {
+                warn!(
+                    "append thread status stream event failed: session_id={}, status={}, error={err}",
+                    cleaned_session, cleaned_status
+                );
+                0
+            }
+        }
+    }
+
     async fn run_loop(self: Arc<Self>) {
         let mut rx = {
             let mut guard = self.queue_rx.lock().await;
@@ -1131,6 +1311,17 @@ impl ThreadRuntime {
                     // drain
                 }
                 crate::orchestrator::flush_stream_event_persist_queue().await;
+                if self.is_task_cancelled(&task.task_id) {
+                    let _ = self.update_thread_status(
+                        &task.user_id,
+                        &task.agent_id,
+                        &task.session_id,
+                        THREAD_STATUS_IDLE,
+                    );
+                    self.finish_thread(&task.thread_id).await;
+                    let _ = self.queue_tx.try_send(());
+                    return;
+                }
                 let finished_at = now_ts();
                 let _ = self
                     .user_store
@@ -1257,6 +1448,20 @@ impl ThreadRuntime {
         )
         .await;
         Ok(())
+    }
+
+    fn is_task_cancelled(&self, task_id: &str) -> bool {
+        let cleaned = task_id.trim();
+        if cleaned.is_empty() {
+            return false;
+        }
+        self.user_store
+            .get_agent_task(cleaned)
+            .map(|task| {
+                task.map(|record| record.status.trim().eq_ignore_ascii_case(TASK_STATUS_CANCELLED))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
     }
 
     async fn finish_thread(&self, thread_id: &str) {

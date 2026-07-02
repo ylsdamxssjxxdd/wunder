@@ -143,4 +143,4 @@ updated_at: 2026-07-02
 如果只是读公开网页正文，先用 [网页抓取](/docs/zh-CN/tools/web-fetch/)。  
 只有在页面依赖前端渲染、验证流程或必须交互时，再切到浏览器。
 
-对容易超时的页面，优先先执行 `start` 预热或复用已有会话，再执行 `open` 或 `navigate`，并按需传 `timeout_ms` 或 `timeout_secs`。
+浏览器动作默认超时为 60 秒。对容易超时的页面，优先先执行 `start` 预热或复用已有会话，再执行 `open` 或 `navigate`，并按需传 `timeout_ms` 或 `timeout_secs` 覆盖单次调用。

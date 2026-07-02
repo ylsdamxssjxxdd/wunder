@@ -648,31 +648,50 @@ export const chatSendActions = {
         }
         this.dismissPendingInquiryPanel();
       } finally {
-        const stopped = interruptedByStop || Boolean(runtime?.stopRequested);
+        const currentSendRequestId = String(runtime?.sendRequestId || '').trim();
+        const ownsCurrentSendState = Boolean(runtime) && currentSendRequestId === sendRequestId;
+        const sendControllerAlreadyCleared =
+          Boolean(runtime) && !runtime.sendController && currentSendRequestId !== sendRequestId;
+        const sendStateAlreadySettledForThisRequest =
+          Boolean(runtime) && !runtime.sendController && !currentSendRequestId;
+        const stopped =
+          interruptedByStop ||
+          Boolean(runtime?.stopRequested) ||
+          sendControllerAlreadyCleared;
         const terminalSeen = finalSeen || errorSeen;
         let keepStreaming = recoveredByRealtime || (!stopped && !terminalSeen);
-        const finishedRequestId = runtime?.sendRequestId || '';
+        const finishedRequestId = ownsCurrentSendState ? currentSendRequestId : sendRequestId;
         assistantMessage.workflowStreaming = keepStreaming;
         assistantMessage.reasoningStreaming = false;
         assistantMessage.stream_incomplete = keepStreaming;
         if (runtime) {
-          clearRuntimeSendStreamState(runtime);
-          runtime.sendAbortReason = '';
-          runtime.stopRequested = false;
+          const clearedOwnSendState = clearRuntimeSendStreamState(runtime, {
+            requestId: sendRequestId
+          });
+          const canSettleStopMarker = clearedOwnSendState || sendStateAlreadySettledForThisRequest;
+          if (canSettleStopMarker) {
+            runtime.sendAbortReason = '';
+            runtime.stopRequested = false;
+          }
           refreshRuntimeStreamLifecycle(runtime);
-          if (!keepStreaming) {
+          if (canSettleStopMarker && !keepStreaming) {
             clearSlowClientResume(runtime);
           }
         }
-        if (!keepStreaming) {
+        const canApplyGlobalSendSettlement = ownsCurrentSendState || sendStateAlreadySettledForThisRequest;
+        if (canApplyGlobalSendSettlement && !keepStreaming) {
           settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
             failed: errorSeen || stopped
           });
         }
-        setSessionLoading(this, sessionId, keepStreaming);
+        if (canApplyGlobalSendSettlement) {
+          setSessionLoading(this, sessionId, keepStreaming);
+        }
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
-        this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
+        if (canApplyGlobalSendSettlement) {
+          this.clearPendingApprovals({ requestId: finishedRequestId || sendRequestId, sessionId });
+        }
         syncDemoChatCache({
           sessions: this.sessions,
           sessionId,

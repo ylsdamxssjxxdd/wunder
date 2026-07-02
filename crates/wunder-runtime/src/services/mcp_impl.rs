@@ -16,11 +16,11 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION}
 use rmcp::handler::client::ClientHandler;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, ClientCapabilities, ClientJsonRpcMessage,
+    CallToolRequestParams, CallToolResult, ClientCapabilities, ClientJsonRpcMessage,
     ClientNotification, ClientRequest, ErrorData as McpError, Implementation,
-    InitializeRequestParam, InitializedNotification, JsonObject, ListToolsRequest, ListToolsResult,
-    PaginatedRequestParam, ProtocolVersion, Request, RequestId, ServerCapabilities, ServerInfo,
-    ServerJsonRpcMessage, ServerResult, Tool,
+    InitializeRequestParams, InitializedNotification, JsonObject, ListToolsRequest,
+    ListToolsResult, PaginatedRequestParams, ProtocolVersion, Request, RequestId,
+    ServerCapabilities, ServerInfo, ServerJsonRpcMessage, ServerResult, Tool,
 };
 use rmcp::service::{serve_client, RequestContext, RoleServer};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -157,19 +157,18 @@ impl WunderMcpServer {
 
 impl ServerHandler for WunderMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
-            instructions: Some(MCP_INSTRUCTIONS.to_string()),
-            ..ServerInfo::default()
-        }
+        )
+        .with_instructions(MCP_INSTRUCTIONS.to_string())
     }
 
     fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         let tools = vec![Self::execute_tool(), Self::doc2md_tool()];
@@ -184,7 +183,7 @@ impl ServerHandler for WunderMcpServer {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let tool_name = request.name.as_ref();
@@ -244,12 +243,7 @@ impl ServerHandler for WunderMcpServer {
             "uid": response.uid,
             "a2ui": response.a2ui,
         });
-        Ok(CallToolResult {
-            content: Vec::new(),
-            structured_content: Some(payload),
-            is_error: Some(false),
-            meta: None,
-        })
+        Ok(CallToolResult::structured(payload))
     }
 }
 
@@ -390,18 +384,13 @@ impl WunderMcpServer {
         .await;
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         let (conversion, content) = result?;
-        Ok(CallToolResult {
-            content: Vec::new(),
-            structured_content: Some(json!({
+        Ok(CallToolResult::structured(json!({
                 "ok": true,
                 "name": name,
                 "content": content,
                 "converter": conversion.converter,
                 "warnings": conversion.warnings,
-            })),
-            is_error: Some(false),
-            meta: None,
-        })
+        })))
     }
 }
 
@@ -622,12 +611,15 @@ pub async fn call_tool_with_server(
     let transport = build_transport(config, server)?;
     let service = serve_client(NoopClientHandler, transport).await?;
     let result = service
-        .call_tool(CallToolRequestParam {
-            name: Cow::Owned(tool_name.to_string()),
-            arguments: normalize_mcp_arguments(args),
-        })
+        .call_tool(build_call_tool_request_params(tool_name, args))
         .await?;
     Ok(serialize_tool_result(result))
+}
+
+fn build_call_tool_request_params(tool_name: &str, args: &Value) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new(Cow::Owned(tool_name.to_string()));
+    params.arguments = normalize_mcp_arguments(args);
+    params
 }
 
 fn normalize_mcp_arguments(args: &Value) -> Option<JsonObject> {
@@ -795,11 +787,11 @@ impl SseClientSession {
     }
 
     async fn initialize(&mut self) -> Result<()> {
-        let params = InitializeRequestParam {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation::from_build_env(),
-        };
+        let params = InitializeRequestParams::new(
+            ClientCapabilities::default(),
+            Implementation::from_build_env(),
+        )
+        .with_protocol_version(ProtocolVersion::V_2024_11_05);
         let request = ClientRequest::InitializeRequest(Request::new(params));
         let result = self.request(request).await?;
         match result {
@@ -825,10 +817,7 @@ impl SseClientSession {
     }
 
     async fn call_tool(&mut self, tool_name: &str, args: &Value) -> Result<CallToolResult> {
-        let params = CallToolRequestParam {
-            name: Cow::Owned(tool_name.to_string()),
-            arguments: normalize_mcp_arguments(args),
-        };
+        let params = build_call_tool_request_params(tool_name, args);
         let request = ClientRequest::CallToolRequest(Request::new(params));
         let result = self.request(request).await?;
         match result {
@@ -893,14 +882,18 @@ impl SseClientSession {
                     debug!("忽略 MCP SSE 未匹配响应: {}", response.id);
                 }
                 ServerJsonRpcMessage::Error(error) => {
-                    if request_id_matches(&request_id, &error.id) {
+                    if error
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| request_id_matches(&request_id, id))
+                    {
                         return Err(anyhow!(
                             "MCP SSE 响应错误: {} ({:?})",
                             error.error.message,
                             error.error.data
                         ));
                     }
-                    debug!("忽略 MCP SSE 未匹配错误: {}", error.id);
+                    debug!("忽略 MCP SSE 未匹配错误: {:?}", error.id);
                 }
                 ServerJsonRpcMessage::Request(request) => {
                     warn!(

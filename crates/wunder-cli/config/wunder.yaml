@@ -89,7 +89,7 @@ tools:
     headless: true
     viewport_width: 1280
     viewport_height: 720
-    timeout_secs: 30
+    timeout_secs: 60
     idle_timeout_secs: 300
     max_sessions: 5
     python_path: null
@@ -118,7 +118,7 @@ browser:
     headless: true
     viewport_width: 1280
     viewport_height: 720
-    timeout_secs: 30
+    timeout_secs: 60
     python_path: null
     browsers_path: null
     launch_args: []

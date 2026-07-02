@@ -143,4 +143,4 @@ The exact fields are defined by the browser bridge. In practice, they usually in
 If you only need the main content of a public webpage, start with [Web Fetch](/docs/en/tools/web-fetch/).  
 Only switch to the browser when the page depends on frontend rendering, verification steps, or real interaction.
 
-For pages that often time out, call `start` first to warm up or reuse the session, then call `open` or `navigate` with `timeout_ms` or `timeout_secs` as needed.
+Browser actions default to a 60-second timeout. For pages that often time out, call `start` first to warm up or reuse the session, then call `open` or `navigate` with `timeout_ms` or `timeout_secs` when a single call needs a different timeout.
