@@ -165,6 +165,9 @@ export const materializeChatRuntimeMessage = (
     return null;
   }
   const raw = isPlainRecord(message.raw) ? message.raw : null;
+  if (raw && isSyntheticGreetingRaw(raw)) {
+    return null;
+  }
   if (raw && canReuseLegacyMessage(raw, message)) {
     return raw;
   }
@@ -199,6 +202,9 @@ export const materializeChatRuntimeMessage = (
 
   return base;
 };
+
+const isSyntheticGreetingRaw = (message: ChatMessageLike): boolean =>
+  message.isGreeting === true || message.is_greeting === true;
 
 export const resolveChatRuntimeMessageRenderKey = (
   message: ChatMessageLike | null | undefined

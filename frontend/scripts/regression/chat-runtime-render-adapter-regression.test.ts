@@ -175,6 +175,47 @@ test('chat runtime render adapter preserves compatible legacy raw message refere
   assert.deepEqual(materialized[1].feedback, { vote: 'up' });
 });
 
+test('chat runtime render adapter never materializes synthetic greeting from projection', () => {
+  const greeting = {
+    role: 'assistant',
+    content: 'synthetic greeting',
+    isGreeting: true,
+    created_at: '2026-04-30T02:14:01.000Z'
+  };
+  const user = {
+    message_id: 'message-user-1',
+    role: 'user',
+    content: 'hello',
+    created_at: '2026-04-30T02:14:06.000Z'
+  };
+  const projection = apply([
+    {
+      event_type: 'legacy_messages_reconciled',
+      source: 'legacy',
+      strict: false,
+      session_id: 'session-1',
+      messages: [greeting, user],
+      loading: false,
+      running: false
+    }
+  ]);
+
+  const materialized = materializeChatRuntimeMessages(projection, 'session-1');
+  const renderable = buildChatRuntimeRenderableMessages({
+    projection,
+    sessionId: 'session-1'
+  });
+
+  assert.deepEqual(
+    materialized.map((message) => `${message.role}:${message.content}`),
+    ['user:hello']
+  );
+  assert.deepEqual(
+    renderable.map((item) => `${item.message.role}:${item.message.content}`),
+    ['user:hello']
+  );
+});
+
 test('chat runtime render adapter patches stale raw streaming flags without mutating legacy raw', () => {
   const assistant = {
     message_id: 'message-assistant-1',

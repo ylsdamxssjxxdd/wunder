@@ -638,9 +638,14 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
   };
 
-  const buildLegacyAgentRenderableMessages = (): AgentRenderableMessage[] => ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
+  const buildLegacyAgentRenderableMessages = (): AgentRenderableMessage[] => {
+      const renderable = ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
       const message = (rawMessage || {}) as Record<string, unknown>;
       if (!ctx.shouldRenderAgentMessage(message)) {
+          return acc;
+      }
+      if (ctx.isGreetingMessage(message) &&
+          acc.some((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>))) {
           return acc;
       }
       acc.push({
@@ -649,21 +654,24 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           message
       });
       return acc;
-  }, []);
+      }, []);
+      const firstGreeting = renderable.find((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
+      if (!firstGreeting) {
+          return renderable;
+      }
+      return [
+          firstGreeting,
+          ...renderable.filter((item) => item !== firstGreeting && !ctx.isGreetingMessage(item.message as Record<string, unknown>))
+      ];
+  };
 
   const mergeProjectionRenderableWithSyntheticUiMessages = (
       legacyRenderable: AgentRenderableMessage[],
       projectionRenderable: AgentRenderableMessage[]
   ): AgentRenderableMessage[] => {
-      const synthetic = legacyRenderable.filter((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
-      if (!synthetic.length) {
-          return projectionRenderable;
-      }
-      const projectedHasGreeting = projectionRenderable.some((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
-      if (projectedHasGreeting) {
-          return projectionRenderable;
-      }
-      return [...synthetic, ...projectionRenderable];
+      const syntheticGreeting = legacyRenderable.find((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
+      const projectedWithoutGreeting = projectionRenderable.filter((item) => !ctx.isGreetingMessage(item.message as Record<string, unknown>));
+      return syntheticGreeting ? [syntheticGreeting, ...projectedWithoutGreeting] : projectedWithoutGreeting;
   };
 
   let lastAgentRenderSourceSignature = '';

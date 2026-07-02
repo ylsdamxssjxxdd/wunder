@@ -57,6 +57,7 @@ export const selectVisibleMessageProjections = (
     if (!messageId || seen.has(messageId)) return;
     const message = session.messageById[messageId];
     if (!message) return;
+    if (isSyntheticGreetingProjection(message)) return;
     ordered.push(message);
     seen.add(messageId);
   };
@@ -86,6 +87,10 @@ export const selectVisibleMessageProjections = (
     return left.createdSeq - right.createdSeq;
   });
 };
+
+const isSyntheticGreetingProjection = (
+  message: ChatRuntimeMessageProjection | null | undefined
+): boolean => Boolean(message?.raw?.isGreeting === true || message?.raw?.is_greeting === true);
 
 export const selectLatestAssistantForTurn = (
   projection: ChatRuntimeProjection | null | undefined,

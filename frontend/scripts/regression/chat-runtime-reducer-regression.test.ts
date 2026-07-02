@@ -617,6 +617,120 @@ test('legacy reconcile folds completed optimistic round without duplicating user
   assert.equal(projection.sessions['session-1'].messages.length, 2);
 });
 
+test('legacy reconcile keeps synthetic greeting out of runtime projection while preserving live turn order', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'hello',
+      clientMessageId: 'local-user:session-1:2000',
+      createdAt: '2026-04-30T02:14:06.000Z',
+      userTurnId: 'user-turn:session-1:round:1'
+    })
+  );
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-local-assistant',
+    event_seq: 1,
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: 'model-turn:session-1:user:1:model:1',
+    message_id: 'local-assistant:model-turn:session-1:user:1:model:1'
+  }));
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'legacy_messages_reconciled',
+    source: 'legacy',
+    strict: false,
+    session_id: 'session-1',
+    messages: [
+      {
+        role: 'assistant',
+        content: 'synthetic greeting',
+        isGreeting: true,
+        created_at: '2026-04-30T02:14:01.000Z'
+      },
+      {
+        role: 'user',
+        content: 'hello',
+        stream_round: 1,
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        role: 'assistant',
+        content: '',
+        stream_round: 1,
+        stream_incomplete: true,
+        workflowStreaming: true,
+        created_at: '2026-04-30T02:14:07.000Z'
+      }
+    ],
+    loading: true,
+    running: true
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:hello', 'assistant:']
+  );
+  assert.equal(visible.some((message) => message.raw?.isGreeting === true), false);
+  assert.equal(projection.sessions['session-1'].messages.length, 2);
+});
+
+test('assistant created confirmation reuses an existing local assistant placeholder for the same model turn', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const modelTurnId = 'model-turn:session-1:user:1:model:1';
+  const localAssistantId = `local-assistant:${modelTurnId}`;
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-user-placeholder',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    message_id: 'user-message-1',
+    content: 'hello'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-local-placeholder',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: localAssistantId
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-server-confirm',
+    event_seq: 3,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: 'server-assistant-message-1'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-server-delta',
+    event_seq: 4,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: 'server-assistant-message-1',
+    delta: 'answer'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:hello', 'assistant:answer']
+  );
+  assert.equal(visible[1].id, localAssistantId);
+  assert.equal(
+    visible.filter((message) => message.role === 'assistant').length,
+    1
+  );
+  assert.equal(projection.sessions['session-1'].messages.length, 2);
+});
+
 test('legacy reconcile keeps historical assistant separate from later completed answer after refresh', () => {
   const projection = createChatRuntimeProjection();
   const greeting = {

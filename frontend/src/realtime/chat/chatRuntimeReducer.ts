@@ -1388,6 +1388,7 @@ const buildLegacyMessagePlans = (
   const plans: LegacyMessagePlan[] = [];
   messages.forEach((raw, index) => {
     if (!raw || typeof raw !== 'object') return;
+    if (isSyntheticGreetingRawMessage(raw)) return;
     const role = normalizeRole(raw.role);
     if (role !== 'user' && role !== 'assistant') return;
     const id = resolveLegacyMessageId(raw, index);
@@ -2097,11 +2098,25 @@ const resolveAssistantMessageIdForModelTurn = (
   eventMessageId: string
 ): string => {
   if (modelTurn.finalMessageId) return modelTurn.finalMessageId;
+  const eventMessage = eventMessageId ? session.messageById[eventMessageId] : null;
+  if (eventMessage?.role === 'assistant') {
+    return eventMessage.id;
+  }
   const existingAssistantId = modelTurn.messageIds.find((messageId) => {
     const message = session.messageById[messageId];
     return message?.role === 'assistant';
   });
   if (existingAssistantId) return existingAssistantId;
+  const reusablePendingAssistant = Object.values(session.messageById)
+    .filter((message) =>
+      message.role === 'assistant' &&
+      message.modelTurnId === modelTurn.id &&
+      isActiveMessageStatus(message.status)
+    )
+    .sort((left, right) => right.createdSeq - left.createdSeq)[0];
+  if (reusablePendingAssistant) {
+    return reusablePendingAssistant.id;
+  }
   return eventMessageId || `local-assistant:${modelTurn.id}`;
 };
 

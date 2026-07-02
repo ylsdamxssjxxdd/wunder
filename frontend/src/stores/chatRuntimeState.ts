@@ -1878,7 +1878,7 @@ export const syncChatRuntimeProjectionFromLegacy = (
     ? messages
     : getSessionMessages(key) || (resolveSessionKey(store?.activeSessionId) === key ? store?.messages : []);
   const projectionMessages = Array.isArray(targetMessages)
-    ? targetMessages
+    ? targetMessages.filter((message) => !isSyntheticUiOnlyMessage(message))
     : [];
   const runtime = getRuntime(key);
   const loading =
@@ -1908,6 +1908,15 @@ export const syncChatRuntimeProjectionFromLegacy = (
   }
   pruneDesktopChatMemoryForStore(store);
 };
+
+const isSyntheticUiOnlyMessage = (message: unknown): boolean =>
+  Boolean(
+    message &&
+      typeof message === 'object' &&
+      !Array.isArray(message) &&
+      ((message as Record<string, unknown>).isGreeting === true ||
+        (message as Record<string, unknown>).is_greeting === true)
+  );
 
 export const syncChatRuntimeProjectionStatus = (
   store,
