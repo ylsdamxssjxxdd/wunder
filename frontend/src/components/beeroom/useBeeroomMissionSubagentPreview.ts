@@ -37,6 +37,7 @@ type SessionWorkflowFetchMeta = {
 const SUBAGENT_POLL_INTERVAL_MS = 1400;
 const SUBAGENT_LIST_LIMIT = 64;
 const RECENT_TASK_SUBAGENT_POLL_GRACE_S = 18;
+const RECENT_SUBAGENT_WORKFLOW_POLL_GRACE_S = 18;
 
 const clipDebugText = (value: unknown, limit = 120) => {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -159,6 +160,17 @@ export const shouldPollBeeroomTaskSubagents = (
   const updatedTime = Number(resolveBeeroomTaskMoment(task) || 0);
   if (!updatedTime || !Number.isFinite(updatedTime)) return false;
   return nowSeconds - updatedTime <= RECENT_TASK_SUBAGENT_POLL_GRACE_S;
+};
+
+const shouldPollBeeroomSubagentWorkflow = (
+  item: BeeroomMissionSubagentItem,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): boolean => {
+  if (ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status)) return true;
+  const updatedTime = Number(item.updatedTime || 0);
+  return Number.isFinite(updatedTime) &&
+    updatedTime > 0 &&
+    nowSeconds - updatedTime <= RECENT_SUBAGENT_WORKFLOW_POLL_GRACE_S;
 };
 
 const buildTaskRequestKey = (task: BeeroomMissionTask): string =>
@@ -331,12 +343,12 @@ export const useBeeroomMissionSubagentPreview = (options: {
       item.summary
     ].join('|');
     const previous = workflowFetchMeta.get(workflowKey);
-    const isActiveSubagent = ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status);
+    const shouldPollWorkflow = shouldPollBeeroomSubagentWorkflow(item);
 
     if (
       !force &&
       previous?.requestKey === requestKey &&
-      (!isActiveSubagent || Date.now() - previous.fetchedAt < SUBAGENT_POLL_INTERVAL_MS - 120)
+      (!shouldPollWorkflow || Date.now() - previous.fetchedAt < SUBAGENT_POLL_INTERVAL_MS - 120)
     ) {
       return;
     }
@@ -524,7 +536,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
       shouldPollBeeroomTaskSubagents(task, rawSubagentsByTask.value[normalizeText(task.task_id)] || [])
     );
     const hasActiveSubagent = Object.values(rawSubagentsByTask.value).some((items) =>
-      items.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))
+      items.some((item) => shouldPollBeeroomSubagentWorkflow(item))
     );
     if (!hasPollableTask && !hasActiveSubagent) return;
     syncTimer = window.setTimeout(() => {

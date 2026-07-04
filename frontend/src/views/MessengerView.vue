@@ -471,6 +471,8 @@
               :agents="beeroomStore.activeAgents"
               :missions="beeroomStore.activeMissions"
               :active="sessionHub.activeSection === 'swarms'"
+              :active-chat-session-id="beeroomActiveChatSessionId"
+              :active-chat-agent-id="beeroomActiveChatAgentId"
               :available-agents="beeroomCandidateAgents"
               :loading="beeroomStore.detailLoading || beeroomStore.loading"
               :refreshing="beeroomStore.refreshing"
@@ -1839,7 +1841,7 @@ defineOptions({
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
 import SkillMarkdownPreview from '@/components/messenger/SkillMarkdownPreview.vue';
-import { ref as vueRef } from 'vue';
+import { computed as vueComputed, ref as vueRef, watch as vueWatch } from 'vue';
 import { reportDesktopRendererStage } from '@/config/desktop';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
@@ -2938,6 +2940,32 @@ const SESSION_DETAIL_PREFETCH_DELAY_MS = controller.SESSION_DETAIL_PREFETCH_DELA
 const SESSION_OPEN_RECOVERY_ATTEMPTS = controller.SESSION_OPEN_RECOVERY_ATTEMPTS;
 const sessionDetailPrefetchTimer = controller.sessionDetailPrefetchTimer;
 const sessionHub = controller.sessionHub;
+const lastMessageSectionSessionId = vueRef('');
+const lastMessageSectionAgentId = vueRef('');
+const beeroomActiveChatSessionId = vueComputed(() => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  return activeSessionId || lastMessageSectionSessionId.value;
+});
+const beeroomActiveChatAgentId = vueComputed(() => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (activeSessionId) {
+    return String(activeAgentId.value || '').trim();
+  }
+  return lastMessageSectionAgentId.value;
+});
+vueWatch(
+  () => [
+    sessionHub.activeSection,
+    String(chatStore.activeSessionId || '').trim(),
+    String(activeAgentId.value || '').trim()
+  ] as const,
+  ([section, sessionId, agentId]) => {
+    if (section !== 'messages' || !sessionId) return;
+    lastMessageSectionSessionId.value = sessionId;
+    lastMessageSectionAgentId.value = agentId;
+  },
+  { immediate: true }
+);
 const setAgentMainReadAt = controller.setAgentMainReadAt;
 const setAgentMainUnreadCount = controller.setAgentMainUnreadCount;
 const setContactVirtualListRef = controller.setContactVirtualListRef;

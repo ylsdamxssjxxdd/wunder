@@ -153,3 +153,106 @@ test('store visibleMessages getter materializes projection without legacy raw fa
   assert.ok(!renderAdapter.includes('raw ? { ...raw } : {}'));
   assert.ok(!renderAdapter.includes('__runtime_raw_message'));
 });
+
+test('cached session message readers use projection materialization for secondary views', () => {
+  const cacheActions = readSource('src/stores/chatCacheActions.ts');
+  const beeroomRuntime = readSource('src/components/beeroom/useBeeroomMissionCanvasRuntime.ts');
+  const messengerView = readSource('src/views/MessengerView.vue');
+  const beeroomWorkbench = readSource('src/components/beeroom/BeeroomWorkbench.vue');
+  const beeroomCanvas = readSource('src/components/beeroom/BeeroomMissionCanvas.vue');
+  const swarmCanvasModel = readSource('src/components/beeroom/canvas/swarmCanvasModel.ts');
+  const sharedHelpers = readSource('src/views/messenger/controller/messengerControllerSharedHelpers.ts');
+
+  const cacheHelperStart = cacheActions.indexOf('getCachedSessionMessages(sessionId)');
+  assert.ok(cacheHelperStart >= 0);
+  const cacheHelperEnd = cacheActions.indexOf('getCachedSessions(agentId)', cacheHelperStart);
+  assert.ok(cacheHelperEnd > cacheHelperStart);
+  const cacheHelperSource = cacheActions.slice(cacheHelperStart, cacheHelperEnd);
+
+  assert.ok(cacheActions.includes("from '@/realtime/chat/chatRuntimeRenderAdapter';"));
+  assert.ok(cacheHelperSource.includes('const _projectionVersion = this.runtimeProjectionVersion;'));
+  assert.ok(cacheHelperSource.includes('materializeChatRuntimeMessages(this.runtimeProjection, targetId);'));
+  assert.ok(cacheHelperSource.includes('if (projected.length > 0)'));
+  assert.ok(cacheHelperSource.includes('const cachedMessages = Array.isArray(cached) ? cached : [];'));
+  assert.ok(cacheHelperSource.includes('activeSessionId === targetId'));
+  assert.ok(cacheHelperSource.includes('Array.isArray(this.messages) && this.messages.length > 0'));
+  assert.ok(cacheHelperSource.includes('const resolveMessageTime = (message: Record<string, unknown> | null | undefined) =>'));
+  assert.ok(cacheHelperSource.includes('cachedLatest > activeLatest'));
+  assert.ok(cacheHelperSource.includes('getSessionMessages(targetId)'));
+  assert.ok(!cacheHelperSource.includes('getSessionMessages(sessionId)'));
+
+  const readDispatchStart = beeroomRuntime.indexOf('const readDispatchSessionMessages = (sessionId: string)');
+  assert.ok(readDispatchStart >= 0);
+  const readDispatchEnd = beeroomRuntime.indexOf('const nextManualMessageKey', readDispatchStart);
+  assert.ok(readDispatchEnd > readDispatchStart);
+  const readDispatchSource = beeroomRuntime.slice(readDispatchStart, readDispatchEnd);
+
+  assert.ok(readDispatchSource.includes('chatStore.getCachedSessionMessages(targetId)'));
+  assert.ok(!readDispatchSource.includes('chatStore.messages'));
+
+  const mapDispatchStart = beeroomRuntime.indexOf('const mapSessionChatMessage = (');
+  assert.ok(mapDispatchStart >= 0);
+  const mapDispatchEnd = beeroomRuntime.indexOf('const readDispatchSessionMessages = (sessionId: string)', mapDispatchStart);
+  assert.ok(mapDispatchEnd > mapDispatchStart);
+  const mapDispatchSource = beeroomRuntime.slice(mapDispatchStart, mapDispatchEnd);
+  assert.ok(mapDispatchSource.includes('if (!body) return null;'));
+  assert.ok(!mapDispatchSource.includes('const assistantStillRunning ='));
+  assert.ok(!mapDispatchSource.includes("if (role === 'assistant' && !historyId"));
+  assert.ok(!mapDispatchSource.includes('streamEventId > 0 ||'));
+
+  assert.ok(beeroomRuntime.includes('function resolveDispatchProjectionWorkflowItems(sessionId: unknown): BeeroomWorkflowItem[]'));
+  assert.ok(beeroomRuntime.includes('function resolveDispatchProjectionMessageUserTurnId(message: Record<string, unknown> | null): string'));
+  assert.ok(beeroomRuntime.includes('latestAssistantTurnId'));
+  assert.ok(beeroomRuntime.includes('const _projectionVersion = Number(chatStore.runtimeProjectionVersion || 0);'));
+  assert.ok(beeroomRuntime.includes('chatStore.getCachedSessionMessages(targetId)'));
+  assert.ok(beeroomRuntime.includes('Array.isArray(message.workflowItems)'));
+  assert.ok(beeroomRuntime.includes('Array.isArray(message.workflow_items)'));
+  assert.ok(beeroomRuntime.includes('workflowItems'));
+  assert.ok(beeroomRuntime.includes('...overlaid,'));
+  assert.ok(beeroomRuntime.includes('applyCanonicalClientMessageSubmittedRuntimeEvent(chatStore, {'));
+  assert.ok(beeroomRuntime.includes('applyCanonicalStreamRuntimeEvent('));
+  assert.ok(beeroomRuntime.includes("phase: 'beeroom-dispatch'"));
+  assert.ok(beeroomRuntime.includes('cancelOnAbort: false'));
+  assert.ok(beeroomRuntime.includes('const detachedLocally = error?.name === \'AbortError\' && !dispatchStopRequested;'));
+  assert.ok(beeroomRuntime.includes('keepSending: preserveLiveDispatch'));
+  assert.ok(messengerView.includes(':active-chat-session-id="beeroomActiveChatSessionId"'));
+  assert.ok(messengerView.includes(':active-chat-agent-id="beeroomActiveChatAgentId"'));
+  assert.ok(messengerView.includes('lastMessageSectionSessionId'));
+  assert.ok(messengerView.includes("section !== 'messages' || !sessionId"));
+  assert.ok(beeroomWorkbench.includes(':active-chat-session-id="activeChatSessionId"'));
+  assert.ok(beeroomWorkbench.includes(':active-chat-agent-id="activeChatAgentId"'));
+  assert.ok(beeroomCanvas.includes('activeChatSessionId?: string;'));
+  assert.ok(beeroomCanvas.includes('activeChatAgentId?: string;'));
+  assert.ok(beeroomCanvas.includes('fixedMotherDispatchSessionId: activeChatSessionIdRef'));
+  assert.ok(beeroomCanvas.includes('fixedMotherDispatchAgentId: activeChatAgentIdRef'));
+  assert.ok(beeroomRuntime.includes('fixedMotherDispatchAgentId?: Ref<unknown>;'));
+  assert.ok(beeroomRuntime.includes('const fixedMotherDispatchAgentId = computed(() =>'));
+  assert.ok(beeroomRuntime.includes('const explicitFixedAgentId = String(fixedMotherDispatchAgentId.value || \'\').trim();'));
+  assert.ok(beeroomRuntime.includes('const currentDispatchAgentId ='));
+  assert.ok(beeroomRuntime.includes('explicitFixedAgentId ||'));
+  assert.ok(beeroomRuntime.includes('const next = loadOptions.forceReplace === true'));
+  assert.ok(beeroomRuntime.includes('forceReplace: Boolean(fixedMotherDispatchSessionId.value)'));
+  assert.ok(beeroomRuntime.includes('if (!isTool) {'));
+  assert.ok(swarmCanvasModel.includes('workflowItems?: BeeroomWorkflowItem[];'));
+  assert.ok(swarmCanvasModel.includes('const filterToolWorkflowItems = (items: unknown): BeeroomWorkflowItem[]'));
+  assert.ok(swarmCanvasModel.includes('filterToolWorkflowItems(preview.workflowItems)'));
+  assert.ok(swarmCanvasModel.includes('{ includeEventFallback: false }'));
+  assert.ok(!swarmCanvasModel.includes('includeEventFallback: true'));
+  assert.ok(!swarmCanvasModel.includes('return workflowLines.length > 0 ? workflowLines : buildSubagentSummaryLines'));
+  assert.ok(swarmCanvasModel.includes('const dispatchWorkflowLines = buildDispatchPreviewLines(runtimeDispatch, statusLabel, options.t);'));
+  assert.ok(swarmCanvasModel.includes('runtimeTargetNode.workflowLines = dispatchWorkflowLines;'));
+  assert.ok(readSource('src/components/beeroom/useBeeroomDispatchSessionPreview.ts').includes('workflowItems = buildSessionWorkflowItems('));
+
+  assert.ok(beeroomRuntime.includes('Number(chatStore.runtimeProjectionVersion || 0)'));
+  assert.ok(beeroomRuntime.includes("scheduleDispatchMessageRefresh('runtime-projection', {"));
+  assert.ok(beeroomRuntime.includes('hydrate: false,'));
+
+  const activityStart = sharedHelpers.indexOf('ctx.resolveSessionActivityTimestamp = function resolveSessionActivityTimestamp');
+  assert.ok(activityStart >= 0);
+  const activityEnd = sharedHelpers.indexOf('ctx.resolveSessionRecordById', activityStart);
+  assert.ok(activityEnd > activityStart);
+  const activitySource = sharedHelpers.slice(activityStart, activityEnd);
+  assert.ok(activitySource.includes('ctx.chatStore.getCachedSessionMessages(sessionId)'));
+  assert.ok(activitySource.includes('ctx.resolveLatestConversationMessageTimestamp'));
+  assert.ok(activitySource.includes('return Math.max(fieldTimestamp, messageTimestamp);'));
+});

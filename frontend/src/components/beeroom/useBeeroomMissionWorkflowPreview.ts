@@ -27,6 +27,7 @@ type MotherWorkflowFetchMeta = {
 };
 
 const WORKFLOW_POLL_INTERVAL_MS = 1200;
+const RECENT_WORKFLOW_POLL_GRACE_S = 18;
 
 const normalizeText = (value: unknown): string => String(value || '').trim();
 
@@ -96,6 +97,18 @@ const buildWorkflowItemsFingerprint = (items: BeeroomWorkflowItem[]): string =>
 
 const isMissionWorkflowActive = (mission: BeeroomMission | null | undefined): boolean =>
   isBeeroomTaskStatusActive(mission?.completion_status || mission?.status);
+
+const isRecentWorkflowMoment = (value: unknown, nowSeconds = Math.floor(Date.now() / 1000)): boolean => {
+  const moment = Number(value || 0);
+  return Number.isFinite(moment) && moment > 0 && nowSeconds - moment <= RECENT_WORKFLOW_POLL_GRACE_S;
+};
+
+const shouldPollTaskWorkflow = (task: BeeroomMissionTask): boolean =>
+  isBeeroomTaskStatusActive(task.status) || isRecentWorkflowMoment(resolveBeeroomTaskMoment(task));
+
+const shouldPollMotherWorkflow = (mission: BeeroomMission | null | undefined): boolean =>
+  isMissionWorkflowActive(mission) ||
+  isRecentWorkflowMoment(mission?.updated_time || mission?.finished_time || mission?.started_time);
 
 const pickMissionTasks = (mission: BeeroomMission | null | undefined): BeeroomMissionTask[] => {
   const source = Array.isArray(mission?.tasks) ? mission.tasks : [];
@@ -251,12 +264,12 @@ export const useBeeroomMissionWorkflowPreview = (options: {
     const sessionId = resolveTaskSessionId(task);
     const requestKey = buildTaskRequestKey(task);
     const previous = fetchMeta.get(taskId);
-    const isActive = isBeeroomTaskStatusActive(task.status);
+    const shouldPoll = shouldPollTaskWorkflow(task);
 
     if (
       !force &&
       previous?.requestKey === requestKey &&
-      (!isActive || Date.now() - previous.fetchedAt < WORKFLOW_POLL_INTERVAL_MS - 120)
+      (!shouldPoll || Date.now() - previous.fetchedAt < WORKFLOW_POLL_INTERVAL_MS - 120)
     ) {
       return;
     }
@@ -313,12 +326,12 @@ export const useBeeroomMissionWorkflowPreview = (options: {
 
     const requestKey = buildMissionRequestKey(mission);
     const previous = motherFetchMeta;
-    const isActive = isMissionWorkflowActive(mission);
+    const shouldPoll = shouldPollMotherWorkflow(mission);
 
     if (
       !force &&
       previous?.requestKey === requestKey &&
-      (!isActive || Date.now() - previous.fetchedAt < WORKFLOW_POLL_INTERVAL_MS - 120)
+      (!shouldPoll || Date.now() - previous.fetchedAt < WORKFLOW_POLL_INTERVAL_MS - 120)
     ) {
       return;
     }
@@ -381,8 +394,8 @@ export const useBeeroomMissionWorkflowPreview = (options: {
     clearSyncTimer();
     if (!mounted || disposed || typeof window === 'undefined') return;
     if (
-      !missionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status)) &&
-      !isMissionWorkflowActive(options.mission.value)
+      !missionTasks.value.some((task) => shouldPollTaskWorkflow(task)) &&
+      !shouldPollMotherWorkflow(options.mission.value)
     ) {
       return;
     }

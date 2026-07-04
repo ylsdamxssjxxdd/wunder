@@ -539,7 +539,16 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
 
   ctx.resolveSessionActivityTimestamp = function resolveSessionActivityTimestamp(session: Record<string, unknown>): number {
       // Keep conversation ordering aligned to real message activity to avoid list jumps on UI-only updates.
-      return ctx.normalizeTimestamp(session.last_message_at || session.updated_at || session.created_at);
+      const fieldTimestamp = ctx.normalizeTimestamp(session.last_message_at || session.updated_at || session.created_at);
+      const sessionId = String(session?.id || session?.session_id || '').trim();
+      if (!sessionId) {
+          return fieldTimestamp;
+      }
+      const cachedMessages = ctx.chatStore.getCachedSessionMessages(sessionId);
+      const messageTimestamp = ctx.resolveLatestConversationMessageTimestamp(
+          Array.isArray(cachedMessages) ? cachedMessages as unknown[] : []
+      );
+      return Math.max(fieldTimestamp, messageTimestamp);
   };
 
   ctx.resolveSessionRecordById = function resolveSessionRecordById(sessionId: unknown): Record<string, unknown> | null {

@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   isStaleRealtimeUpdate,
@@ -20,6 +22,11 @@ import {
 } from '../../src/components/beeroom/beeroomMissionChatStateCache';
 
 const terminalTaskStatuses = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
+
+const frontendRoot = resolve(process.cwd());
+
+const readSource = (relativePath: string): string =>
+  readFileSync(resolve(frontendRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 
 const isTerminalTaskStatus = (status: string): boolean =>
   terminalTaskStatuses.has(String(status || '').trim().toLowerCase());
@@ -189,6 +196,29 @@ test('realtime cursor accepts payload resume fields for reconnect continuity', (
     }),
     29
   );
+});
+
+test('beeroom terminal workflow previews keep a short post-completion poll window', () => {
+  const workflowPreview = readSource('src/components/beeroom/useBeeroomMissionWorkflowPreview.ts');
+  const subagentPreview = readSource('src/components/beeroom/useBeeroomMissionSubagentPreview.ts');
+  const dispatchPreview = readSource('src/components/beeroom/useBeeroomDispatchSessionPreview.ts');
+
+  assert.ok(workflowPreview.includes('const RECENT_WORKFLOW_POLL_GRACE_S = 18;'));
+  assert.ok(workflowPreview.includes('const shouldPollTaskWorkflow = (task: BeeroomMissionTask): boolean =>'));
+  assert.ok(workflowPreview.includes('isRecentWorkflowMoment(resolveBeeroomTaskMoment(task))'));
+  assert.ok(workflowPreview.includes('const shouldPollMotherWorkflow = (mission: BeeroomMission | null | undefined): boolean =>'));
+  assert.ok(workflowPreview.includes('!missionTasks.value.some((task) => shouldPollTaskWorkflow(task))'));
+
+  assert.ok(subagentPreview.includes('const RECENT_SUBAGENT_WORKFLOW_POLL_GRACE_S = 18;'));
+  assert.ok(subagentPreview.includes('const shouldPollBeeroomSubagentWorkflow = ('));
+  assert.ok(subagentPreview.includes('nowSeconds - updatedTime <= RECENT_SUBAGENT_WORKFLOW_POLL_GRACE_S'));
+  assert.ok(subagentPreview.includes('const shouldPollWorkflow = shouldPollBeeroomSubagentWorkflow(item);'));
+  assert.ok(subagentPreview.includes('items.some((item) => shouldPollBeeroomSubagentWorkflow(item))'));
+
+  assert.ok(dispatchPreview.includes('const RECENT_DISPATCH_PREVIEW_POLL_GRACE_S = 18;'));
+  assert.ok(dispatchPreview.includes('const isRecentDispatchPreviewMoment = ('));
+  assert.ok(dispatchPreview.includes('nowSeconds - moment <= RECENT_DISPATCH_PREVIEW_POLL_GRACE_S'));
+  assert.ok(dispatchPreview.includes('isRecentDispatchPreviewMoment(updatedTime)'));
 });
 
 test('mission chat state keeps realtime cursor even without dispatch snapshot', () => {

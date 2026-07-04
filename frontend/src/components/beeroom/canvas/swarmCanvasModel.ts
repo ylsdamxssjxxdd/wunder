@@ -138,6 +138,7 @@ export type BeeroomSwarmDispatchPreview = {
   dispatchLabel: string;
   updatedTime: number;
   subagents: BeeroomMissionSubagentItem[];
+  workflowItems?: BeeroomWorkflowItem[];
 };
 
 type HoneycombSlot = {
@@ -446,37 +447,23 @@ const resolveNodeWorkflowTone = (value: unknown): BeeroomWorkflowTone => {
   return 'completed';
 };
 
+const isToolWorkflowItem = (item: BeeroomWorkflowItem): boolean => {
+  const eventType = String(item.eventType || '').trim().toLowerCase();
+  return item.isTool === true || eventType === 'tool_call' || eventType === 'tool_result';
+};
+
+const filterToolWorkflowItems = (items: unknown): BeeroomWorkflowItem[] =>
+  (Array.isArray(items) ? (items as BeeroomWorkflowItem[]) : []).filter(isToolWorkflowItem);
+
 const buildDispatchPreviewLines = (
   preview: BeeroomSwarmDispatchPreview,
-  statusLabel: string,
-  t: TranslationFn
+  _statusLabel: string,
+  _t: TranslationFn
 ): BeeroomNodeWorkflowLine[] => {
-  const lines: BeeroomNodeWorkflowLine[] = [];
-  const sessionId = String(preview.sessionId || '').trim();
-  const label = trimText(preview.dispatchLabel || preview.summary || preview.targetName, 30);
-  lines.push({
-    key: `${sessionId}:dispatch`,
-    main: statusLabel,
-    detail: label || '-',
-    title: preview.dispatchLabel || preview.summary || preview.targetName || statusLabel
-  });
-  if (sessionId) {
-    lines.push({
-      key: `${sessionId}:session`,
-      main: t('beeroom.task.sessionId'),
-      detail: trimText(sessionId, 30),
-      title: sessionId
-    });
-  }
-  if (preview.summary) {
-    lines.push({
-      key: `${sessionId}:summary`,
-      main: t('beeroom.canvas.subagentSummary'),
-      detail: trimText(preview.summary, 30),
-      title: preview.summary
-    });
-  }
-  return lines.slice(0, 3);
+  return buildNodeWorkflowPreviewLines(
+    filterToolWorkflowItems(preview.workflowItems),
+    { includeEventFallback: false }
+  );
 };
 
 const hasExplicitAvatarIcon = (value: unknown): boolean => {
@@ -549,24 +536,14 @@ const buildWorkflowSnapshot = (options: {
 
 const buildWorkerShadowWorkflowLines = (
   item: BeeroomMissionSubagentItem,
-  statusLabel: string,
-  t: TranslationFn
+  _statusLabel: string,
+  _t: TranslationFn
 ) => {
   const workflowLines = buildNodeWorkflowPreviewLines(
-    (Array.isArray(item.workflowItems) ? item.workflowItems : []) as BeeroomWorkflowItem[],
-    { includeEventFallback: true }
+    filterToolWorkflowItems(item.workflowItems),
+    { includeEventFallback: false }
   );
-  if (workflowLines.length > 0) {
-    return workflowLines;
-  }
-  return buildSubagentSummaryLines(item, resolveSubagentVisualState(item, t), t).map((line, index) =>
-    index === 0
-      ? {
-          ...line,
-          main: statusLabel
-        }
-      : line
-  );
+  return workflowLines;
 };
 
 const buildSubagentSummaryLines = (
@@ -612,15 +589,15 @@ const buildSubagentSummaryLines = (
 
 const buildSubagentWorkflowLines = (
   item: BeeroomMissionSubagentItem,
-  visualState: SubagentVisualState,
-  t: TranslationFn
+  _visualState: SubagentVisualState,
+  _t: TranslationFn
 ): BeeroomNodeWorkflowLine[] => {
   // Subagent workflow items are hydrated lazily and remain structurally compatible here.
   const workflowLines = buildNodeWorkflowPreviewLines(
-    (Array.isArray(item.workflowItems) ? item.workflowItems : []) as BeeroomWorkflowItem[],
-    { includeEventFallback: true }
+    filterToolWorkflowItems(item.workflowItems),
+    { includeEventFallback: false }
   );
-  return workflowLines.length > 0 ? workflowLines : buildSubagentSummaryLines(item, visualState, t);
+  return workflowLines;
 };
 
 const resolveSubagentVisualState = (item: BeeroomMissionSubagentItem, t: TranslationFn): SubagentVisualState => {
@@ -904,7 +881,7 @@ export const buildBeeroomSwarmProjection = (options: {
     });
     const statusLabel = resolveStatusLabel(status, options.t);
     const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
-      includeEventFallback: true
+      includeEventFallback: false
     });
     const meta: CanvasNodeMeta = {
       id: nodeId,
@@ -1025,11 +1002,12 @@ export const buildBeeroomSwarmProjection = (options: {
     runtimeTargetNode.status = previewStatus;
     runtimeTargetNode.statusLabel = statusLabel;
     runtimeTargetNode.workflowTone = resolveDispatchPreviewTone(previewStatus);
-    // Keep the mother's real workflow tool trace visible when it already exists.
-    // Dispatch preview lines are only a coarse fallback and should not replace
-    // the mother node's tool-driven workflow surface.
-    if (runtimeTargetNode.role !== 'mother' || runtimeTargetNode.workflowLines.length === 0) {
-      runtimeTargetNode.workflowLines = buildDispatchPreviewLines(runtimeDispatch, statusLabel, options.t);
+    const dispatchWorkflowLines = buildDispatchPreviewLines(runtimeDispatch, statusLabel, options.t);
+    const hasDispatchWorkflowItems = filterToolWorkflowItems(runtimeDispatch.workflowItems).length > 0;
+    // Keep the mother's real workflow trace unless the active dispatch session has
+    // concrete tool items from the runtime projection.
+    if (hasDispatchWorkflowItems || runtimeTargetNode.role !== 'mother' || runtimeTargetNode.workflowLines.length === 0) {
+      runtimeTargetNode.workflowLines = dispatchWorkflowLines;
     }
     const targetMeta = nodeMetaMap.get(runtimeTargetNode.id);
     if (targetMeta) {

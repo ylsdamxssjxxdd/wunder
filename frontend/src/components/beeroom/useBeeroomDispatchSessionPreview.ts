@@ -25,7 +25,7 @@ import {
   type BeeroomMissionSubagentItem,
   normalizeBeeroomMissionSubagentItem
 } from '@/components/beeroom/beeroomMissionSubagentState';
-import { buildSessionWorkflowItems } from '@/components/beeroom/beeroomTaskWorkflow';
+import { buildSessionWorkflowItems, type BeeroomWorkflowItem } from '@/components/beeroom/beeroomTaskWorkflow';
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
 
@@ -38,6 +38,7 @@ export type BeeroomDispatchSessionPreview = {
   dispatchLabel: string;
   updatedTime: number;
   subagents: BeeroomMissionSubagentItem[];
+  workflowItems?: BeeroomWorkflowItem[];
 };
 
 type BeeroomDispatchSessionPreviewCacheRecord = {
@@ -67,7 +68,16 @@ const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
 ]);
 const ACTIVE_PREVIEW_STATUSES = new Set(['queued', 'running']);
 const POLLING_PREVIEW_STATUSES = new Set(['queued', 'running']);
+const RECENT_DISPATCH_PREVIEW_POLL_GRACE_S = 18;
 const normalizeText = (value: unknown): string => String(value || '').trim();
+
+const isRecentDispatchPreviewMoment = (
+  value: unknown,
+  nowSeconds = Math.floor(Date.now() / 1000)
+): boolean => {
+  const moment = Number(value || 0);
+  return Number.isFinite(moment) && moment > 0 && nowSeconds - moment <= RECENT_DISPATCH_PREVIEW_POLL_GRACE_S;
+};
 
 const resolvePreviewCacheStorage = (): Storage | null => {
   if (typeof window === 'undefined') return null;
@@ -181,7 +191,8 @@ const cloneDispatchPreview = (
       (Array.isArray(preview.subagents) ? preview.subagents : [])
         .map((item) => normalizeBeeroomMissionSubagentItem(item))
         .filter((item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item))
-    )
+    ),
+    workflowItems: Array.isArray(preview.workflowItems) ? [...preview.workflowItems] : []
   };
 };
 
@@ -667,6 +678,10 @@ export const useBeeroomDispatchSessionPreview = (options: {
               null) as Record<string, unknown> | null)
           : null) || null;
       const events = flattenBeeroomSessionEventRounds(eventsPayload.rounds);
+      const workflowItems = buildSessionWorkflowItems(
+        Array.isArray(eventsPayload.rounds) ? eventsPayload.rounds : [],
+        options.t
+      );
       const running = eventsPayload.running === true;
       const liveSubagents = (Array.isArray(subagentsResponse?.data?.data?.items)
         ? subagentsResponse.data.data.items
@@ -736,7 +751,8 @@ export const useBeeroomDispatchSessionPreview = (options: {
         summary,
         dispatchLabel: persistedDispatchLabel || resolveDispatchLabel(events, summary),
         updatedTime,
-        subagents
+        subagents,
+        workflowItems
       };
       setCachedDispatchPreview(
         sessionId,
@@ -769,7 +785,8 @@ export const useBeeroomDispatchSessionPreview = (options: {
         running ||
         ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value) ||
         POLLING_PREVIEW_STATUSES.has(previewStatus) ||
-        subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status));
+        subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status)) ||
+        isRecentDispatchPreviewMoment(updatedTime);
       logDispatchPreview('sync-result', {
         sessionId,
         targetAgentId,

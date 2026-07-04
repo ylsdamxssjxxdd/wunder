@@ -129,6 +129,8 @@ const props = defineProps<{
   refreshing?: boolean;
   hideStandbyWhenMissionEmpty?: boolean;
   active?: boolean;
+  activeChatSessionId?: string;
+  activeChatAgentId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -164,6 +166,8 @@ const requestCanvasRevealReplay = () => {
 const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
 const agentsRef = toRef(props, 'agents');
+const activeChatSessionIdRef = toRef(props, 'activeChatSessionId');
+const activeChatAgentIdRef = toRef(props, 'activeChatAgentId');
 const agentOutputPreviewVisible = ref(false);
 const agentOutputPreviewAgentId = ref('');
 const agentOutputPreviewTitle = ref('');
@@ -208,7 +212,11 @@ const {
   mission: missionRef,
   agents: agentsRef,
   t,
-  onRefresh: () => emit('refresh')
+  onRefresh: () => emit('refresh'),
+  runtimeOverrides: {
+    fixedMotherDispatchSessionId: activeChatSessionIdRef,
+    fixedMotherDispatchAgentId: activeChatAgentIdRef
+  }
 });
 
 const agentOutputPreviewMessages = computed(() =>

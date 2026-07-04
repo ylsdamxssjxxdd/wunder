@@ -71,6 +71,9 @@ import {
   applyChatRuntimeEvent
 } from '@/realtime/chat/chatRuntimeReducer';
 import {
+  materializeChatRuntimeMessages
+} from '@/realtime/chat/chatRuntimeRenderAdapter';
+import {
   selectLegacyMessageStatus,
   selectVisibleMessageProjections,
   selectSessionBusy,
@@ -175,8 +178,36 @@ export const chatCacheActions = {
       return Array.isArray(cached) && cached.length > 0;
     },
     getCachedSessionMessages(sessionId) {
-      const cached = getSessionMessages(sessionId);
-      return Array.isArray(cached) ? cached : [];
+      const targetId = resolveSessionKey(sessionId);
+      if (!targetId) return [];
+      const _projectionVersion = this.runtimeProjectionVersion;
+      const projected = materializeChatRuntimeMessages(this.runtimeProjection, targetId);
+      if (projected.length > 0) {
+        return projected;
+      }
+      const cached = getSessionMessages(targetId);
+      const cachedMessages = Array.isArray(cached) ? cached : [];
+      const activeSessionId = resolveSessionKey(this.activeSessionId);
+      if (activeSessionId === targetId && Array.isArray(this.messages) && this.messages.length > 0) {
+        if (cachedMessages.length > 0) {
+          const resolveMessageTime = (message: Record<string, unknown> | null | undefined) => {
+            const raw = message?.created_at ?? message?.createdAt ?? message?.updated_at ?? message?.updatedAt ?? message?.time;
+            const numeric = typeof raw === 'number' ? raw : Date.parse(String(raw || ''));
+            return Number.isFinite(numeric) ? numeric : 0;
+          };
+          const activeLatest = Math.max(
+            ...this.messages.map((message) => resolveMessageTime(message as Record<string, unknown>))
+          );
+          const cachedLatest = Math.max(
+            ...cachedMessages.map((message) => resolveMessageTime(message as Record<string, unknown>))
+          );
+          if (cachedLatest > activeLatest || (cachedLatest === activeLatest && cachedMessages.length > this.messages.length)) {
+            return cachedMessages;
+          }
+        }
+        return this.messages;
+      }
+      return cachedMessages;
     },
     getCachedSessions(agentId) {
       const cached = readSessionListCache(agentId);
