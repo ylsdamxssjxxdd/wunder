@@ -178,33 +178,104 @@ const buildDebugText = (toolName: string, args: UnknownObject): string => {
   return normalizeDetailText(normalized);
 };
 
+const isExecuteCommandEntry = (entry: RawToolRun): boolean =>
+  [
+    entry.toolName,
+    entry.toolFunctionName,
+    entry.toolRuntimeName,
+    entry.toolDisplayName
+  ].some((name) => {
+    const normalized = String(name || '').trim().toLowerCase();
+    return isExecuteCommandTool(normalized) ||
+      normalized.includes('execute_command') ||
+      normalized.includes('执行命令');
+  });
+
+const readToolCallRawDetail = (...items: Array<WorkflowItem | null>): string => {
+  for (const item of items) {
+    const rawDetail = normalizeDetailText(
+      item?.toolCallRawDetail ?? item?.tool_call_raw_detail
+    );
+    if (rawDetail) return rawDetail;
+  }
+  return '';
+};
+
+const readToolResultRawDetail = (...items: Array<WorkflowItem | null>): string => {
+  for (const item of items) {
+    const rawDetail = normalizeDetailText(
+      item?.toolResultRawDetail ?? item?.tool_result_raw_detail
+    );
+    if (rawDetail) return rawDetail;
+  }
+  return '';
+};
+
+const findFirstExplicitArgs = (...items: Array<WorkflowItem | null>): UnknownObject | null => {
+  for (const item of items) {
+    const explicitArgs = extractExplicitCallArgs(item);
+    if (explicitArgs) return explicitArgs;
+  }
+  return null;
+};
+
+const findFirstWorkflowCallArgs = (...items: Array<WorkflowItem | null>): UnknownObject | null => {
+  for (const item of items) {
+    const callArgs = extractWorkflowCallArgs(item);
+    if (callArgs) return callArgs;
+  }
+  return null;
+};
+
+const findFirstBareCommandArgs = (...items: Array<WorkflowItem | null>): UnknownObject | null => {
+  for (const item of items) {
+    const bareArgs = extractBareCommandArgs(item);
+    if (bareArgs) return bareArgs;
+  }
+  return null;
+};
+
+const findFirstCommand = (...items: Array<WorkflowItem | null>): string => {
+  for (const item of items) {
+    const command = extractCommandFromItem(item);
+    if (command) return command;
+  }
+  return '';
+};
+
 export const buildWorkflowToolCallDebugText = (entry: RawToolRun): string => {
   const toolName = entry.toolFunctionName || entry.toolName;
-  if (isExecuteCommandTool(entry.toolName)) {
-    const rawDetail = normalizeDetailText(
-      entry.callItem?.toolCallRawDetail ?? entry.callItem?.tool_call_raw_detail
-    );
+  const debugItems = [entry.callItem, entry.resultItem, entry.outputItem];
+  if (isExecuteCommandEntry(entry)) {
+    const rawDetail = readToolCallRawDetail(...debugItems);
     if (rawDetail) {
       return rawDetail;
     }
-    const explicitArgs = extractExplicitCallArgs(entry.callItem);
+    const explicitArgs = findFirstExplicitArgs(...debugItems);
     if (explicitArgs) {
       return buildDebugText(toolName, explicitArgs);
     }
-    const bareArgs = extractBareCommandArgs(entry.callItem);
+    const bareArgs = findFirstBareCommandArgs(...debugItems);
     if (bareArgs) {
       return buildDebugText(toolName, bareArgs);
     }
-    const command = pickString(extractCommandFromItem(entry.callItem));
+    const command = pickString(findFirstCommand(...debugItems));
     if (command) {
       return buildDebugText(toolName, { content: command });
     }
+    const resultDetail = readToolResultRawDetail(entry.resultItem, entry.outputItem);
+    if (resultDetail) return resultDetail;
     return '';
   }
 
-  const callArgs = extractWorkflowCallArgs(entry.callItem);
+  const rawDetail = readToolCallRawDetail(...debugItems);
+  if (rawDetail) {
+    return rawDetail;
+  }
+  const callArgs = findFirstWorkflowCallArgs(...debugItems);
   if (callArgs) {
     return buildDebugText(toolName, callArgs);
   }
-  return normalizeDetailText(entry.callItem?.detail);
+  return readToolResultRawDetail(entry.resultItem, entry.outputItem) ||
+    normalizeDetailText(entry.callItem?.detail ?? entry.resultItem?.detail ?? entry.outputItem?.detail);
 };

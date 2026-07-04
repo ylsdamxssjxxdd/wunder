@@ -3810,3 +3810,202 @@ test('strict runtime reducer expires small event_seq gaps and asks for replay', 
     Date.now = originalNow;
   }
 });
+
+test('legacy snapshot without workflow metadata keeps canonical tool projection', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-call',
+    event_seq: 1,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'execute_command',
+        tool_function_name: 'execute_command',
+        args: {
+          content: 'npm run check'
+        }
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_completed',
+    event_id: 'evt-tool-result',
+    event_seq: 2,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    payload: {
+      source_event_type: 'tool_result',
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'execute_command',
+        tool_function_name: 'execute_command',
+        model_observation: '{"ok":true}'
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    event_id: 'evt-usage',
+    event_seq: 3,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    payload: {
+      source_event_type: 'round_usage',
+      data: {
+        round_usage: {
+          input_tokens: 12,
+          output_tokens: 8,
+          total_tokens: 20
+        },
+        avg_model_round_speed_tps: 42.25,
+        context_occupancy_tokens: 128
+      }
+    }
+  }));
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_snapshot',
+    event_id: 'legacy-snapshot',
+    event_seq: 4,
+    snapshot_seq: 4,
+    running: false,
+    authoritative: true,
+    messages: [
+      {
+        message_id: 'um-1',
+        role: 'user',
+        content: 'question',
+        user_turn_id: 'ut-1',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        message_id: 'am-1',
+        role: 'assistant',
+        content: 'answer',
+        user_turn_id: 'ut-1',
+        model_turn_id: 'mt-1',
+        workflowItems: [],
+        subagents: [],
+        created_at: '2026-04-30T02:14:07.000Z'
+      }
+    ]
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.workflowItems?.[0]?.eventType, 'tool_result');
+  assert.equal(assistant?.workflowItems?.[0]?.toolCallRawDetail, JSON.stringify({
+    tool: 'execute_command',
+    arguments: {
+      content: 'npm run check'
+    }
+  }, null, 2));
+  assert.equal(assistant?.workflowItems?.[0]?.toolResultRawDetail, '{"ok":true}');
+  assert.equal(assistant?.display?.stats?.toolCalls, 1);
+  assert.equal(assistant?.display?.stats?.avg_model_round_speed_tps, 42.25);
+  assert.equal(assistant?.display?.stats?.contextTokens, 128);
+});
+
+test('folded legacy snapshot merge keeps projected workflow stats aliases', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-call-merge',
+    event_seq: 1,
+    user_turn_id: 'ut-merge',
+    model_turn_id: 'mt-merge',
+    message_id: 'am-merge',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-merge',
+        tool: 'execute_command',
+        tool_function_name: 'execute_command',
+        args: {
+          content: 'npm run test'
+        }
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    event_id: 'evt-usage-merge',
+    event_seq: 2,
+    user_turn_id: 'ut-merge',
+    model_turn_id: 'mt-merge',
+    message_id: 'am-merge',
+    payload: {
+      source_event_type: 'round_usage',
+      data: {
+        round_usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          total_tokens: 15
+        },
+        avg_model_round_speed_tps: 33.5
+      }
+    }
+  }));
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_snapshot',
+    event_id: 'legacy-snapshot-merge',
+    event_seq: 3,
+    snapshot_seq: 3,
+    running: false,
+    authoritative: true,
+    messages: [
+      {
+        message_id: 'um-merge',
+        role: 'user',
+        content: 'question',
+        user_turn_id: 'ut-merge',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        message_id: 'am-merge',
+        role: 'assistant',
+        content: 'answer',
+        user_turn_id: 'ut-merge',
+        model_turn_id: 'mt-merge',
+        workflowItems: [],
+        subagents: [],
+        stats: {},
+        toolCalls: 0,
+        avg_model_round_speed_tps: 0,
+        created_at: '2026-04-30T02:14:07.000Z'
+      },
+      {
+        message_id: 'am-merge',
+        role: 'assistant',
+        content: 'answer',
+        user_turn_id: 'ut-merge',
+        model_turn_id: 'mt-merge',
+        workflowItems: [],
+        subagents: [],
+        stats: {},
+        toolCalls: 0,
+        avg_model_round_speed_tps: 0,
+        created_at: '2026-04-30T02:14:08.000Z'
+      }
+    ]
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.display?.stats?.toolCalls, 1);
+  assert.equal(assistant?.display?.toolCalls, 1);
+  assert.equal(assistant?.display?.stats?.avg_model_round_speed_tps, 33.5);
+  assert.equal(assistant?.display?.avg_model_round_speed_tps, 33.5);
+});

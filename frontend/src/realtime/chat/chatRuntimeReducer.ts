@@ -2090,23 +2090,15 @@ const patchMessageFromRaw = (
   status: ChatRuntimeMessageStatus,
   seq: number
 ): void => {
-  message.display = buildMessageDisplayProjection(raw);
+  message.display = patchMessageDisplayProjectionFromRaw(message.display, raw);
   message.content = String(raw.content ?? '');
   message.reasoning = String(raw.reasoning ?? '');
   message.status = status;
   message.final = status === 'final';
   message.failed = status === 'failed';
   message.cancelled = status === 'cancelled';
-  if (Array.isArray(raw.workflowItems)) {
-    message.workflowItems = raw.workflowItems
-      .filter(isPlainRecord)
-      .map((item) => ({ ...item }));
-  }
-  if (Array.isArray(raw.subagents)) {
-    message.subagents = raw.subagents
-      .filter(isPlainRecord)
-      .map((item) => ({ ...item }));
-  }
+  patchProjectionRecordsFromRaw(message, 'workflowItems', raw.workflowItems);
+  patchProjectionRecordsFromRaw(message, 'subagents', raw.subagents);
   message.updatedSeq = Math.max(message.updatedSeq, seq);
 };
 
@@ -2116,10 +2108,7 @@ const mergeMessageFromRaw = (
   status: ChatRuntimeMessageStatus,
   seq: number
 ): void => {
-  message.display = {
-    ...(message.display || {}),
-    ...buildMessageDisplayProjection(raw)
-  };
+  message.display = patchMessageDisplayProjectionFromRaw(message.display, raw);
   const nextContent = String(raw.content ?? '');
   const nextReasoning = String(raw.reasoning ?? '');
   if (nextContent) {
@@ -2193,6 +2182,23 @@ const mergeProjectionRecords = (
     : dedupeProjectionRecords([...existing, ...incoming]);
 };
 
+const patchProjectionRecordsFromRaw = (
+  message: ChatRuntimeMessageProjection,
+  field: 'workflowItems' | 'subagents',
+  value: unknown
+): void => {
+  if (!Array.isArray(value)) return;
+  const incoming = value.filter(isPlainRecord).map((item) => ({ ...item }));
+  const existing = Array.isArray(message[field]) ? message[field] || [] : [];
+  // Empty legacy snapshots mean "metadata not included", not "clear canonical projection".
+  if (incoming.length === 0 && existing.length > 0) return;
+  if (field === 'workflowItems') {
+    message.workflowItems = incoming as ChatRuntimeWorkflowItemProjection[];
+  } else {
+    message.subagents = incoming as ChatRuntimeSubagentProjection[];
+  }
+};
+
 const MESSAGE_DISPLAY_OWNED_FIELDS = new Set([
   'id',
   'message_id',
@@ -2215,6 +2221,44 @@ const MESSAGE_DISPLAY_OWNED_FIELDS = new Set([
   'subagents'
 ]);
 
+const PROJECTED_STATS_DISPLAY_FIELDS = [
+  'usage',
+  'tokenUsage',
+  'token_usage',
+  'roundUsage',
+  'round_usage',
+  'round_usage_total',
+  'quotaConsumed',
+  'quota_consumed',
+  'partialQuotaConsumed',
+  'partial_quota_consumed',
+  'toolCalls',
+  'tool_calls',
+  'quotaSnapshot',
+  'quota',
+  'quota_usage',
+  'quotaUsage',
+  'contextTokens',
+  'context_tokens',
+  'context_occupancy_tokens',
+  'contextOccupancyTokens',
+  'contextTotalTokens',
+  'context_total_tokens',
+  'context_max_tokens',
+  'max_context',
+  'context_usage',
+  'prefill_duration_s',
+  'decode_duration_s',
+  'prefill_duration_total_s',
+  'decode_duration_total_s',
+  'avg_model_round_speed_tps',
+  'avg_model_round_decode_speed_tps',
+  'avg_model_round_speed_rounds',
+  'interaction_start_ms',
+  'interaction_end_ms',
+  'interaction_duration_s'
+];
+
 const buildMessageDisplayProjection = (
   raw: ChatRuntimeRawMessage
 ): Record<string, unknown> => {
@@ -2225,6 +2269,27 @@ const buildMessageDisplayProjection = (
     display[key] = cloneProjectionDisplayValue(value);
   });
   return display;
+};
+
+const patchMessageDisplayProjectionFromRaw = (
+  existing: unknown,
+  raw: ChatRuntimeRawMessage
+): Record<string, unknown> => {
+  const next = buildMessageDisplayProjection(raw);
+  if (!isPlainRecord(existing)) return next;
+  const existingStats = asRecord(existing.stats);
+  if (Object.keys(existingStats).length > 0) {
+    const mergedStats = mergeProjectedDisplayMetadata(asRecord(next.stats), existingStats);
+    if (mergedStats) {
+      next.stats = mergedStats;
+      mirrorProjectedStatsDisplay(next, mergedStats);
+    }
+  }
+  PROJECTED_STATS_DISPLAY_FIELDS.forEach((key) => {
+    if (next[key] !== undefined || existing[key] === undefined) return;
+    next[key] = cloneProjectionDisplayValue(existing[key]);
+  });
+  return next;
 };
 
 const cloneProjectionDisplayValue = (value: unknown): unknown => {
@@ -2893,6 +2958,36 @@ const upsertToolWorkflowItem = (
     payload.tool_name,
     payload.toolName
   );
+  const toolDisplayName = firstText(
+    data.tool_display_name,
+    data.toolDisplayName,
+    data.display_name,
+    data.displayName,
+    payload.tool_display_name,
+    payload.toolDisplayName,
+    payload.display_name,
+    payload.displayName
+  );
+  const toolRuntimeName = firstText(
+    data.tool_runtime_name,
+    data.toolRuntimeName,
+    data.runtime_name,
+    data.runtimeName,
+    payload.tool_runtime_name,
+    payload.toolRuntimeName,
+    payload.runtime_name,
+    payload.runtimeName
+  );
+  const toolFunctionName = firstText(
+    data.tool_function_name,
+    data.toolFunctionName,
+    data.function_name,
+    data.functionName,
+    payload.tool_function_name,
+    payload.toolFunctionName,
+    payload.function_name,
+    payload.functionName
+  );
   const toolCallId = resolveToolWorkflowRef(event, payload, data);
   const commandSessionId = firstText(
     data.command_session_id,
@@ -2928,6 +3023,24 @@ const upsertToolWorkflowItem = (
     next.toolName = toolName;
     next.tool = toolName;
   }
+  if (toolDisplayName) {
+    next.toolDisplayName = toolDisplayName;
+    next.tool_display_name = toolDisplayName;
+    next.displayName = toolDisplayName;
+    next.display_name = toolDisplayName;
+  }
+  if (toolRuntimeName) {
+    next.toolRuntimeName = toolRuntimeName;
+    next.tool_runtime_name = toolRuntimeName;
+    next.runtimeName = toolRuntimeName;
+    next.runtime_name = toolRuntimeName;
+  }
+  if (toolFunctionName) {
+    next.toolFunctionName = toolFunctionName;
+    next.tool_function_name = toolFunctionName;
+    next.functionName = toolFunctionName;
+    next.function_name = toolFunctionName;
+  }
   if (toolCallId) {
     next.toolCallId = toolCallId;
     next.tool_call_id = toolCallId;
@@ -2939,6 +3052,16 @@ const upsertToolWorkflowItem = (
   if (approvalId) {
     next.approvalId = approvalId;
     next.approval_id = approvalId;
+  }
+  const rawCallDetail = buildProjectedToolCallRawDetail(detailSource, toolFunctionName || toolRuntimeName || toolName);
+  if (rawCallDetail && (eventType === 'tool_call' || !next.toolCallRawDetail)) {
+    next.toolCallRawDetail = rawCallDetail;
+    next.tool_call_raw_detail = rawCallDetail;
+  }
+  const rawResultDetail = buildProjectedToolResultRawDetail(detailSource);
+  if (rawResultDetail && eventType === 'tool_result') {
+    next.toolResultRawDetail = rawResultDetail;
+    next.tool_result_raw_detail = rawResultDetail;
   }
 
   if (existing) {
@@ -4398,6 +4521,54 @@ const resolveExplicitToolWorkflowRef = (
   payload.tool_run_id,
   payload.toolRunId
 );
+
+const buildProjectedToolCallRawDetail = (
+  source: Record<string, unknown>,
+  toolName: string
+): string => {
+  const nestedFunction = asRecord(source.function);
+  const args = parseProjectedToolCallArgs(
+    source.args ??
+      source.arguments ??
+      source.input ??
+      nestedFunction.arguments
+  );
+  if (!args) return '';
+  return stringifyWorkflowDetail({
+    tool: toolName || firstText(source.tool, source.name, nestedFunction.name),
+    arguments: args
+  });
+};
+
+const parseProjectedToolCallArgs = (value: unknown): unknown => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed[0] === '{' || trimmed[0] === '[') {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return { content: trimmed };
+      }
+    }
+    return { content: trimmed };
+  }
+  if (typeof value === 'object') return value;
+  return { content: String(value) };
+};
+
+const buildProjectedToolResultRawDetail = (
+  source: Record<string, unknown>
+): string => {
+  const observation = firstText(source.model_observation, source.modelObservation);
+  if (observation) return observation;
+  const data = source.data !== undefined ? source.data : source.result;
+  if (data !== undefined) {
+    return stringifyWorkflowDetail(data);
+  }
+  return '';
+};
 
 const stringifyWorkflowDetail = (value: unknown): string => {
   if (typeof value === 'string') return value;

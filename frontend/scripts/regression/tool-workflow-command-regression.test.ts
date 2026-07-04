@@ -128,3 +128,42 @@ test('command tool call debug text prefers saved original model call over later 
   assert.ok(debugText.includes('"workdir": "C:\\\\workspace"'));
   assert.ok(!debugText.includes('stdout_tail'));
 });
+
+test('command tool call debug text reads saved model call from result-only row', () => {
+  const original = JSON.stringify(
+    {
+      tool: 'execute_command',
+      arguments: {
+        content: 'rm "/workspace/file.txt"'
+      }
+    },
+    null,
+    2
+  );
+  const debugText = buildWorkflowToolCallDebugText({
+    key: 'cmd-3',
+    toolName: '执行命令',
+    toolDisplayName: '执行命令',
+    toolRuntimeName: '执行命令',
+    toolFunctionName: 'execute_command',
+    callItem: null,
+    outputItem: null,
+    resultItem: {
+      id: 'call-3',
+      eventType: 'tool_result',
+      toolName: '执行命令',
+      toolFunctionName: 'execute_command',
+      toolCallId: 'call-3',
+      toolCallRawDetail: original,
+      toolResultRawDetail: '{"ok":true}',
+      detail: JSON.stringify({
+        model_observation: '{"ok":true}',
+        command_session_id: 'cmd-3'
+      })
+    }
+  });
+
+  assert.equal(debugText, original);
+  assert.ok(debugText.includes('rm'));
+  assert.ok(!debugText.includes('model_observation'));
+});

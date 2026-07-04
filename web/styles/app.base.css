@@ -2209,19 +2209,6 @@ button.btn-with-icon[aria-busy="true"] i {
   white-space: nowrap;
 }
 
-.monitor-metric-title-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.monitor-inline-action {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
 .throughput-model-select {
   width: 100%;
   text-align: left;
@@ -2278,6 +2265,49 @@ button.btn-with-icon[aria-busy="true"] i {
 
 .monitor-block-summary .monitor-kv-table td .monitor-subtext::before {
   content: none;
+}
+
+.monitor-system-table .monitor-tooltip-host {
+  position: relative;
+  cursor: help;
+}
+
+.monitor-system-table .monitor-tooltip-host .monitor-subtext {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 150px;
+  max-width: min(260px, 70vw);
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+}
+
+.monitor-system-table tr:hover .monitor-tooltip-host .monitor-subtext,
+.monitor-system-table .monitor-tooltip-host:focus-within .monitor-subtext {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.monitor-system-table .monitor-tooltip-host .monitor-subtext:empty {
+  display: none;
 }
 
 .monitor-section-title {
