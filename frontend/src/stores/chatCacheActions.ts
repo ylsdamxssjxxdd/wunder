@@ -77,15 +77,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -97,8 +89,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -121,10 +111,6 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
@@ -132,7 +118,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
 import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveSessionDetailMessageLimit } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeSessionProtectedRealtimeMessages, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -361,7 +347,7 @@ export const chatCacheActions = {
           runtime,
           remoteLastEventId
         );
-        const cachedHydratedMessages = dedupeAssistantMessages(getSessionMessages(targetId));
+        const cachedHydratedMessages = getSessionMessages(targetId) || [];
         const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
         const canReuseHydratedMessages =
           !hasCanonicalTranscript &&
@@ -380,18 +366,12 @@ export const chatCacheActions = {
             rounds
           );
           messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
-          if (!hasCanonicalTranscript) {
-            messages = dedupeAssistantMessages(messages);
-          }
         }
         dismissStaleInquiryPanels(messages);
         const greetingMessages = ensureGreetingMessage(messages, {
           createdAt: sessionDetail?.created_at,
           greeting: this.greetingOverride
         });
-        if (remoteRunning) {
-          mergeSessionProtectedRealtimeMessages(targetId, greetingMessages);
-        }
         if (!remoteRunning) {
           clearCompletedAssistantStreamingState(greetingMessages);
         }

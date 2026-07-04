@@ -269,6 +269,7 @@ async fn main() -> Result<()> {
         question: format!(
             "{MOTHER_MARKER}: parse this request, dispatch worker swarm, gather results, then finish"
         ),
+        client_message_id: None,
         tool_names: vec!["agent_swarm".to_string()],
         skip_tool_calls: false,
         stream: false,

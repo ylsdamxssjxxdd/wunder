@@ -1,67 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-import { shouldWatchdogReconcileDrift } from '../../src/stores/chatWatchdogRecovery';
+const watcherSource = readFileSync(
+  resolve(process.cwd(), 'src/stores/chatWatcher.ts'),
+  'utf8'
+);
 
-test('watchdog reconciles drift after stream stops when server event id is newer', () => {
-  assert.equal(
-    shouldWatchdogReconcileDrift({
-      remoteLastEventId: 19,
-      localLastEventId: 17,
-      hasPendingMessage: false
-    }),
-    true
+test('watchdog no longer depends on a content-level recovery helper', () => {
+  assert.equal(watcherSource.includes("from './chatWatchdogRecovery'"), false);
+  assert.equal(watcherSource.includes('shouldWatchdogReconcileDrift'), false);
+});
+
+test('watchdog drift is based on projection cursor versus remote tail', () => {
+  assert.ok(
+    watcherSource.includes(
+      'Number.isFinite(remoteLastEventId) && remoteLastEventId > localLastEventId'
+    )
   );
 });
 
-test('watchdog does not reconcile while a pending assistant should resume instead', () => {
-  assert.equal(
-    shouldWatchdogReconcileDrift({
-      remoteLastEventId: 19,
-      localLastEventId: 17,
-      hasPendingMessage: true
-    }),
-    false
-  );
-});
-
-test('watchdog ignores non-advancing or invalid event ids', () => {
-  assert.equal(
-    shouldWatchdogReconcileDrift({
-      remoteLastEventId: 17,
-      localLastEventId: 17,
-      hasPendingMessage: false
-    }),
-    false
-  );
-  assert.equal(
-    shouldWatchdogReconcileDrift({
-      remoteLastEventId: 'not-a-number',
-      localLastEventId: 17,
-      hasPendingMessage: false
-    }),
-    false
-  );
-});
-
-test('watchdog ignores single-step terminal drift after hydrate', () => {
-  assert.equal(
-    shouldWatchdogReconcileDrift({
-      remoteLastEventId: 15,
-      localLastEventId: 14,
-      hasPendingMessage: false
-    }),
-    false
-  );
-});
-
-test('watchdog still reconciles meaningful drift after hydrate', () => {
-  assert.equal(
-    shouldWatchdogReconcileDrift({
-      remoteLastEventId: 16,
-      localLastEventId: 14,
-      hasPendingMessage: false
-    }),
-    true
-  );
+test('watchdog no longer resumes from a legacy pending assistant bubble', () => {
+  assert.equal(watcherSource.includes('chat_watchdog_resume'), false);
+  assert.equal(watcherSource.includes('resumeStream(key, pendingMessage'), false);
+  assert.equal(watcherSource.includes('hasPendingMessage'), false);
 });

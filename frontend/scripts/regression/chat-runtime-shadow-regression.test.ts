@@ -27,8 +27,8 @@ test('chat runtime shadow accepts matching projection and legacy messages', () =
   };
   const projection = apply([
     {
-      event_type: 'legacy_messages_reconciled',
-      source: 'legacy',
+      event_type: 'session_snapshot',
+      source: 'snapshot',
       strict: false,
       session_id: 'session-1',
       messages: [user, assistant],
@@ -129,8 +129,8 @@ test('chat runtime shadow reports order drift for matched messages', () => {
   };
   const projection = apply([
     {
-      event_type: 'legacy_messages_reconciled',
-      source: 'legacy',
+      event_type: 'session_snapshot',
+      source: 'snapshot',
       strict: false,
       session_id: 'session-1',
       messages: [user, assistant],

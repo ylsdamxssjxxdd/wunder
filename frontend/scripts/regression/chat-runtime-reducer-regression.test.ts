@@ -11,6 +11,7 @@ import {
   selectSessionBusy,
   selectSessionRuntimeStatus,
   selectLegacyMessageStatus,
+  selectRuntimeLastAppliedEventId,
   selectVisibleMessageProjections
 } from '../../src/realtime/chat/chatRuntimeSelectors';
 import type { ChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeTypes';
@@ -189,6 +190,62 @@ test('terminal turn event clears session busy state', () => {
   assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'idle');
 });
 
+test('local terminal events materialize assistant failure and cancellation text', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'client_message_submitted',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-submit-1',
+    user_turn_id: 'ut-local-1',
+    message_id: 'um-local-1',
+    content: 'question'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-assistant-1',
+    user_turn_id: 'ut-local-1',
+    model_turn_id: 'mt-local-1',
+    message_id: 'am-local-1'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_failed',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-failed-1',
+    user_turn_id: 'ut-local-1',
+    model_turn_id: 'mt-local-1',
+    message_id: 'am-local-1',
+    content: 'request failed'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_cancelled',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-cancelled-1',
+    user_turn_id: 'ut-local-2',
+    model_turn_id: 'mt-local-2',
+    message_id: 'am-local-2',
+    content: 'request aborted'
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const failed = visible.find((message) => message.id === 'am-local-1');
+  const cancelled = visible.find((message) => message.id === 'am-local-2');
+  assert.equal(failed?.status, 'failed');
+  assert.equal(failed?.content, 'request failed');
+  assert.equal(cancelled?.status, 'cancelled');
+  assert.equal(cancelled?.content, 'request aborted');
+  assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
 test('chat runtime reducer keeps appliedSeq monotonic and ignores stale events', () => {
   const projection = createChatRuntimeProjection();
 
@@ -239,8 +296,8 @@ test('legacy projection clears stale streaming flags after terminal reconcile', 
   };
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -259,8 +316,8 @@ test('legacy projection clears stale streaming flags after terminal reconcile', 
   staleAssistant.stream_incomplete = false;
   staleAssistant.workflowStreaming = false;
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -301,8 +358,8 @@ test('authoritative stopped legacy reconcile prunes projection-only assistant tu
   };
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [localUser, visibleAssistant],
@@ -341,8 +398,8 @@ test('authoritative stopped legacy reconcile prunes projection-only assistant tu
   visibleAssistant.stream_incomplete = false;
   visibleAssistant.workflowStreaming = false;
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [localUser, visibleAssistant],
@@ -427,8 +484,8 @@ test('visible projection order can map back to original raw message references',
   };
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [assistant, user],
@@ -459,8 +516,8 @@ test('legacy reconcile uses timestamps to bind a reversed assistant after its us
   };
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [assistant, user],
@@ -492,8 +549,8 @@ test('legacy reconcile keeps same stream_round user before assistant even when a
   };
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [assistant, user],
@@ -523,8 +580,8 @@ test('legacy reconcile without timestamps keeps deterministic message ids across
   ];
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages,
@@ -535,8 +592,8 @@ test('legacy reconcile without timestamps keeps deterministic message ids across
   const firstIds = firstVisible.map((message) => message.id);
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages,
@@ -585,8 +642,8 @@ test('legacy reconcile folds completed optimistic round without duplicating user
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -639,8 +696,8 @@ test('legacy reconcile keeps synthetic greeting out of runtime projection while 
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -803,6 +860,60 @@ test('tool result and final events with weak turn ids fold into the active tool 
   );
 });
 
+test('chat runtime projection order follows event sequence instead of wall clock timestamps', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-clock-1',
+    event_seq: 1,
+    user_turn_id: 'ut-clock-1',
+    message_id: 'um-clock-1',
+    content: 'first question',
+    created_at: '2026-04-30T02:19:06.000Z'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-clock-2',
+    event_seq: 2,
+    user_turn_id: 'ut-clock-1',
+    model_turn_id: 'mt-clock-1',
+    message_id: 'am-clock-1',
+    content: 'first answer',
+    created_at: '2026-04-30T02:19:07.000Z'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-clock-3',
+    event_seq: 3,
+    user_turn_id: 'ut-clock-2',
+    message_id: 'um-clock-2',
+    content: 'second question',
+    created_at: '2026-04-30T02:14:06.000Z'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-clock-4',
+    event_seq: 4,
+    user_turn_id: 'ut-clock-2',
+    model_turn_id: 'mt-clock-2',
+    message_id: 'am-clock-2',
+    content: 'second answer',
+    created_at: '2026-04-30T02:14:07.000Z'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    [
+      'user:first question',
+      'assistant:first answer',
+      'user:second question',
+      'assistant:second answer'
+    ]
+  );
+});
+
 test('legacy reconcile keeps historical assistant separate from later completed answer after refresh', () => {
   const projection = createChatRuntimeProjection();
   const greeting = {
@@ -812,8 +923,8 @@ test('legacy reconcile keeps historical assistant separate from later completed 
   };
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [greeting],
@@ -851,8 +962,8 @@ test('legacy reconcile keeps historical assistant separate from later completed 
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -876,10 +987,10 @@ test('legacy reconcile keeps historical assistant separate from later completed 
   const visible = selectVisibleMessageProjections(projection, 'session-1');
   assert.deepEqual(
     visible.map((message) => `${message.role}:${message.content}:${message.reasoning}`),
-    ['assistant:ready prompt:', 'user:question:', 'assistant:answer:thinking']
+    ['user:question:', 'assistant:answer:thinking', 'assistant:ready prompt:']
   );
-  assert.equal(visible[0].modelTurnId.startsWith('legacy-model-turn:'), true);
-  assert.equal(visible[2].id, 'assistant-message:model-turn:session-1:user:1:model:1');
+  assert.equal(visible[1].id, 'assistant-message:model-turn:session-1:user:1:model:1');
+  assert.equal(visible[2].modelTurnId.startsWith('legacy-model-turn:'), true);
   assert.equal(projection.sessions['session-1'].messages.length, 3);
 });
 
@@ -906,8 +1017,8 @@ test('authoritative legacy reconcile prunes event snapshot residues and preserve
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     authoritative: true,
@@ -966,8 +1077,8 @@ test('authoritative legacy reconcile reorders same-count refresh snapshots to le
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     authoritative: true,
@@ -993,8 +1104,8 @@ test('authoritative legacy reconcile reorders same-count refresh snapshots to le
   });
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     authoritative: true,
@@ -1022,7 +1133,7 @@ test('authoritative legacy reconcile reorders same-count refresh snapshots to le
   const visible = selectVisibleMessageProjections(projection, 'session-1');
   assert.deepEqual(
     visible.map((message) => `${message.role}:${message.content}`),
-    ['assistant:greeting', 'user:question', 'assistant:answer']
+    ['user:question', 'assistant:answer', 'assistant:greeting']
   );
   assert.equal(projection.sessions['session-1'].messages.length, 3);
 });
@@ -1052,8 +1163,8 @@ test('legacy reconcile replaces repeated full assistant snapshots without inflat
 
   const reconcile = (content: string, reasoning: string) => {
     applyChatRuntimeEvent(projection, {
-      event_type: 'legacy_messages_reconciled',
-      source: 'legacy',
+      event_type: 'session_snapshot',
+      source: 'snapshot',
       strict: false,
       session_id: 'session-1',
       messages: [
@@ -1111,8 +1222,8 @@ test('late historical greeting keeps chronological order before an existing user
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -1139,7 +1250,7 @@ test('late historical greeting keeps chronological order before an existing user
   const visible = selectVisibleMessageProjections(projection, 'session-1');
   assert.deepEqual(
     visible.map((message) => `${message.role}:${message.content}`),
-    ['assistant:ready prompt', 'user:question', 'assistant:answer']
+    ['user:question', 'assistant:answer', 'assistant:ready prompt']
   );
   assert.equal(projection.sessions['session-1'].messages.length, 3);
 });
@@ -1198,8 +1309,8 @@ test('cancelled user turn does not absorb a later same-text user turn after refr
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     authoritative: true,
@@ -1257,12 +1368,11 @@ test('canonical stream adapter maps deltas and final events into one stable assi
   const streamEvents = [
     ...buildCanonicalChatRuntimeEvents({
       sessionId: 'session-1',
-      eventType: 'llm_output_delta',
+      eventType: 'think_delta',
       eventId: 1,
       requestId: 'req-1',
       payload: {
         data: {
-          delta: 'hello',
           reasoning_delta: 'thinking',
           model_round: 1
         }
@@ -1270,8 +1380,32 @@ test('canonical stream adapter maps deltas and final events into one stable assi
     }),
     ...buildCanonicalChatRuntimeEvents({
       sessionId: 'session-1',
-      eventType: 'llm_output_delta',
+      eventType: 'reasoning_delta',
       eventId: 2,
+      requestId: 'req-1',
+      payload: {
+        data: {
+          think_delta: ' more',
+          model_round: 1
+        }
+      }
+    }),
+    ...buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      eventId: 3,
+      requestId: 'req-1',
+      payload: {
+        data: {
+          delta: 'hello',
+          model_round: 1
+        }
+      }
+    }),
+    ...buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      eventId: 4,
       requestId: 'req-1',
       payload: {
         data: {
@@ -1283,7 +1417,7 @@ test('canonical stream adapter maps deltas and final events into one stable assi
     ...buildCanonicalChatRuntimeEvents({
       sessionId: 'session-1',
       eventType: 'final',
-      eventId: 3,
+      eventId: 5,
       requestId: 'req-1',
       payload: {
         data: {
@@ -1300,9 +1434,83 @@ test('canonical stream adapter maps deltas and final events into one stable assi
   assert.equal(visible.length, 1);
   assert.equal(visible[0].role, 'assistant');
   assert.equal(visible[0].content, 'hello world');
-  assert.equal(visible[0].reasoning, 'thinking');
+  assert.equal(visible[0].reasoning, 'thinking more');
   assert.equal(visible[0].final, true);
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
+test('canonical llm_output snapshot updates assistant without legacy workflow processor', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_output',
+    eventId: 10,
+    requestId: 'req-output',
+    payload: {
+      data: {
+        content: 'draft answer',
+        reasoning: 'draft reasoning',
+        model_round: 1,
+        usage: {
+          input_tokens: 3,
+          output_tokens: 5
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  let visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].content, 'draft answer');
+  assert.equal(visible[0].reasoning, 'draft reasoning');
+  assert.equal(visible[0].status, 'streaming');
+  assert.equal(visible[0].final, false);
+  assert.deepEqual(visible[0].display?.stats?.usage, { input: 3, output: 5, total: 8 });
+  assert.equal(selectSessionBusy(projection, 'session-1'), true);
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_output',
+    eventId: 11,
+    requestId: 'req-output',
+    payload: {
+      data: {
+        content: 'final answer',
+        stop_reason: 'stop',
+        model_round: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].content, 'final answer');
+  assert.equal(visible[0].status, 'final');
+  assert.equal(visible[0].final, true);
+});
+
+test('canonical stream adapter projects unknown stream events as workflow items', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'custom_unknown_event',
+    eventId: 12,
+    requestId: 'req-unknown',
+    payload: {
+      data: {
+        detail: 'kept visible'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].role, 'assistant');
+  assert.equal(visible[0].status, 'tooling');
+  assert.equal(visible[0].workflowItems?.[0]?.eventType, 'custom_unknown_event');
+  assert.match(String(visible[0].workflowItems?.[0]?.detail || ''), /kept visible/);
 });
 
 test('runtime reducer folds unstable delta message ids into one model turn bubble', () => {
@@ -1348,8 +1556,8 @@ test('legacy reconcile folds streamed assistant fragments from one round into on
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -1397,8 +1605,8 @@ test('legacy reconcile does not reuse a stale stream_round across later user tur
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -1444,8 +1652,8 @@ test('legacy reconcile keeps two same-round assistant replies separate across a 
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -1498,8 +1706,8 @@ test('canonical transcript snapshot rebuilds refresh order from backend turn ind
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     payload: {
@@ -1594,8 +1802,8 @@ test('legacy reconcile overlaps text fragments without duplicating shared spans'
   }));
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -1637,6 +1845,13 @@ test('canonical stream adapter keeps queued request running until terminal event
 
   assert.equal(selectSessionBusy(projection, 'session-1'), true);
   assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'queued');
+  const visibleWhileQueued = selectVisibleMessageProjections(projection, 'session-1');
+  const queuedAssistant = visibleWhileQueued.find((message) => message.role === 'assistant');
+  assert.ok(queuedAssistant);
+  assert.equal(queuedAssistant.status, 'tooling');
+  assert.equal(queuedAssistant.workflowItems?.[0]?.id, 'queue:status');
+  assert.equal(queuedAssistant.workflowItems?.[0]?.eventType, 'queued');
+  assert.equal(queuedAssistant.workflowItems?.[0]?.status, 'pending');
 
   buildCanonicalChatRuntimeEvents({
     sessionId: 'session-1',
@@ -1666,6 +1881,50 @@ test('canonical client submit event materializes the local user turn', () => {
   assert.equal(visible[0].role, 'user');
   assert.equal(visible[0].content, 'hello');
   assert.equal(selectSessionBusy(projection, 'session-1'), true);
+});
+
+test('canonical round start and channel user events materialize user messages', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'round_start',
+    eventId: 10,
+    requestId: 'req-round',
+    payload: { data: { message: 'round question', user_round: 1 } }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'channel_message',
+    eventId: 11,
+    requestId: 'req-channel',
+    payload: { data: { role: 'user', content: 'channel question', user_round: 2 } }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:round question', 'user:channel question']
+  );
+});
+
+test('canonical channel assistant event materializes terminal assistant reply', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'channel_message',
+    eventId: 12,
+    requestId: 'req-channel',
+    payload: { data: { role: 'assistant', content: 'channel answer', user_round: 1 } }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].role, 'assistant');
+  assert.equal(visible[0].content, 'channel answer');
+  assert.equal(visible[0].status, 'final');
+  assert.equal(selectSessionBusy(projection, 'session-1'), false);
 });
 
 test('local client submit can materialize one assistant placeholder for projection render', () => {
@@ -1760,6 +2019,359 @@ test('chat runtime reducer projects tool workflow lifecycle onto assistant messa
   assert.equal(visible[0].workflowItems?.[0]?.status, 'completed');
   assert.equal(visible[0].workflowItems?.[0]?.eventType, 'tool_result');
   assert.equal(visible[0].workflowItems?.[0]?.toolCallId, 'call-1');
+});
+
+test('canonical tool output events project without legacy workflow processor state', () => {
+  const projection = createChatRuntimeProjection();
+  const events = buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'tool_output_delta',
+    eventId: 21,
+    requestId: 'req-tool-output',
+    payload: {
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'execute_command',
+        command_session_id: 'cmd-1',
+        output: 'partial output'
+      }
+    }
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_type, 'tool_call_delta');
+  events.forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.status, 'tooling');
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.status, 'loading');
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'tool_output_delta');
+  assert.equal(assistant.workflowItems?.[0]?.toolCallId, 'call-1');
+  assert.equal(assistant.workflowItems?.[0]?.commandSessionId, 'cmd-1');
+});
+
+test('canonical visible workflow events project retry slow-client and compaction state', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_request',
+    eventId: 30,
+    requestId: 'req-workflow',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        payload_summary: { messages: 2 }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_stream_retry',
+    eventId: 31,
+    requestId: 'req-workflow',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        attempt: 2,
+        max_attempts: 5,
+        delay_s: 1.5,
+        retry_reason: 'rate_limit',
+        timestamp: '2026-04-30T02:14:07.000Z'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  let visible = selectVisibleMessageProjections(projection, 'session-1');
+  let assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 2);
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'llm_request');
+  assert.equal(assistant.workflowItems?.[0]?.status, 'completed');
+  assert.equal(assistant.workflowItems?.[1]?.eventType, 'llm_stream_retry');
+  assert.equal(assistant.workflowItems?.[1]?.status, 'loading');
+  assert.equal(assistant.workflowItems?.[1]?.attempt, 2);
+  assert.equal(assistant.display?.retry_attempt, 2);
+  assert.equal(assistant.display?.retry_max_attempts, 5);
+  assert.equal(assistant.display?.retry_delay_s, 1.5);
+  assert.equal(assistant.display?.retry_reason, 'rate_limit');
+  assert.equal(assistant.display?.retry_started_at_ms, Date.parse('2026-04-30T02:14:07.000Z'));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'progress',
+    eventId: 32,
+    requestId: 'req-workflow',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        round: 1,
+        stage: 'context_guard',
+        summary: 'guarding context'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  visible = selectVisibleMessageProjections(projection, 'session-1');
+  assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  const compactionProgress = assistant.workflowItems?.find((item) => item.eventType === 'compaction_progress');
+  assert.ok(compactionProgress);
+  assert.equal(compactionProgress.status, 'loading');
+  assert.equal(compactionProgress.toolName, 'context_compaction');
+  assert.equal(assistant.display?.manual_compaction_marker, true);
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'slow_client',
+    eventId: 33,
+    requestId: 'req-workflow',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        reason: 'queue_full_resume_required',
+        queue_capacity: 2
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  visible = selectVisibleMessageProjections(projection, 'session-1');
+  assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  const slowClient = assistant.workflowItems?.find((item) => item.eventType === 'slow_client');
+  assert.ok(slowClient);
+  assert.equal(slowClient.status, 'failed');
+  assert.equal(assistant.status, 'final');
+  assert.equal(assistant.failed, false);
+  assert.equal(assistant.display?.slow_client, true);
+  assert.equal(assistant.display?.resume_available, true);
+  assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
+test('canonical command session events project without replacing command store side effects', () => {
+  const projection = createChatRuntimeProjection();
+  const events = buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'command_session_summary',
+    eventId: 40,
+    requestId: 'req-command',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        command_session_id: 'cmd-1',
+        command: 'run',
+        status: 'completed',
+        stdout: 'ok'
+      }
+    }
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_type, 'workflow_event');
+  events.forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'command_session_summary');
+  assert.equal(assistant.workflowItems?.[0]?.status, 'completed');
+  assert.equal(assistant.workflowItems?.[0]?.commandSessionId, 'cmd-1');
+  assert.equal(assistant.workflowItems?.[0]?.isTool, true);
+});
+
+test('canonical thread control event projects a workflow item', () => {
+  const projection = createChatRuntimeProjection();
+  const events = buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'thread_control',
+    eventId: 45,
+    requestId: 'req-thread-control',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        action: 'switch',
+        switch_session: {
+          id: 'session-target',
+          title: 'Target'
+        }
+      }
+    }
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event_type, 'workflow_event');
+  events.forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'thread_control');
+  assert.equal(assistant.workflowItems?.[0]?.status, 'completed');
+});
+
+test('canonical plan and question panel events project visible display state', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'plan_update',
+    eventId: 50,
+    requestId: 'req-panels',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        explanation: 'planned route',
+        plan: [
+          { step: 'collect input', status: 'completed' },
+          { step: 'run task', status: 'in_progress' },
+          { step: 'summarize', status: 'pending' }
+        ]
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'question_panel',
+    eventId: 51,
+    requestId: 'req-panels',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        question: 'Pick a route',
+        routes: [
+          { label: 'Fast', description: 'Use default settings', recommended: true },
+          { label: 'Careful', description: 'Use extended checks' }
+        ],
+        multiple: false
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.display?.plan?.explanation, 'planned route');
+  assert.equal(Array.isArray((assistant.display?.plan as { steps?: unknown[] } | undefined)?.steps), true);
+  assert.equal((assistant.display?.plan as { steps?: Array<{ status?: string }> })?.steps?.[1]?.status, 'in_progress');
+  assert.equal(assistant.display?.questionPanel?.question, 'Pick a route');
+  assert.equal((assistant.display?.questionPanel as { status?: string })?.status, 'pending');
+  assert.equal((assistant.display?.questionPanel as { routes?: Array<{ label?: string; recommended?: boolean }> })?.routes?.[0]?.label, 'Fast');
+  assert.equal((assistant.display?.questionPanel as { routes?: Array<{ label?: string; recommended?: boolean }> })?.routes?.[0]?.recommended, true);
+  assert.equal(assistant.workflowItems?.some((item) => item.eventType === 'plan_update'), true);
+  assert.equal(assistant.workflowItems?.some((item) => item.eventType === 'question_panel'), true);
+});
+
+test('canonical usage and context events project assistant stats display state', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-usage-1',
+    event_seq: 1,
+    user_turn_id: 'ut-usage-1',
+    model_turn_id: 'mt-usage-1',
+    message_id: 'am-usage-1'
+  }));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'token_usage',
+    eventId: 2,
+    requestId: 'req-usage',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        input_tokens: 90,
+        output_tokens: 10,
+        total_tokens: 100,
+        context_occupancy_tokens: 120,
+        max_context: 1000,
+        decode_duration_s: 2,
+        avg_model_round_speed_tps: 5,
+        avg_model_round_speed_rounds: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'round_usage',
+    eventId: 3,
+    requestId: 'req-usage',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        input_tokens: 110,
+        output_tokens: 15,
+        total_tokens: 125,
+        request_consumed_tokens: 125,
+        context_occupancy_tokens: 150,
+        max_context: 1000
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'quota_usage',
+    eventId: 4,
+    requestId: 'req-usage',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        consumed: 125,
+        daily_quota: 5000,
+        used: 1250,
+        remaining: 3750,
+        date: '2026-04-30'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-usage-5',
+    event_seq: 5,
+    user_turn_id: 'ut-usage-1',
+    model_turn_id: 'mt-usage-1',
+    message_id: 'am-usage-1',
+    content: 'done'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.status, 'final');
+  assert.equal(assistant.workflowItems?.length ?? 0, 0);
+  assert.deepEqual(assistant.display?.stats?.usage, { input: 90, output: 10, total: 100 });
+  assert.deepEqual(assistant.display?.stats?.roundUsage, { input: 110, output: 15, total: 125 });
+  assert.equal(assistant.display?.stats?.contextTokens, 150);
+  assert.equal(assistant.display?.stats?.context_occupancy_tokens, 150);
+  assert.equal(assistant.display?.stats?.contextTotalTokens, 1000);
+  assert.equal(assistant.display?.stats?.quotaConsumed, 125);
+  assert.equal((assistant.display?.stats?.quotaSnapshot as { remaining?: number })?.remaining, 3750);
+  assert.equal(assistant.display?.context_occupancy_tokens, 150);
+  assert.equal(assistant.display?.quotaConsumed, 125);
+  assert.equal(assistant.display?.stats?.decode_duration_s, 2);
+  assert.equal(assistant.display?.stats?.avg_model_round_speed_tps, 5);
 });
 
 test('chat runtime reducer keeps failed tool workflow detail terminal', () => {
@@ -1989,8 +2601,8 @@ test('terminal turn settles projected subagents even without workflow items', ()
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -2036,8 +2648,8 @@ test('legacy reconcile treats active subagents as tooling even without workflow 
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -2270,6 +2882,7 @@ test('strict runtime reducer buffers small event_seq gaps until missing deltas a
   assert.equal(pending.applied, false);
   assert.equal(visible[0].content, 'A');
   assert.equal(projection.sessions['session-1'].appliedSeq, 1);
+  assert.equal(selectRuntimeLastAppliedEventId(projection, 'session-1'), 0);
   assert.equal(projection.sessions['session-1'].pendingSequentialEvents.length, 1);
 
   const drain = applyChatRuntimeEvent(projection, baseEvent({
@@ -2287,7 +2900,46 @@ test('strict runtime reducer buffers small event_seq gaps until missing deltas a
   assert.equal(drain.drained, 1);
   assert.equal(visible[0].content, 'ABC');
   assert.equal(projection.sessions['session-1'].appliedSeq, 3);
+  assert.equal(selectRuntimeLastAppliedEventId(projection, 'session-1'), 0);
   assert.equal(projection.sessions['session-1'].pendingSequentialEvents.length, 0);
+});
+
+test('runtime reducer exposes only applied numeric event ids as replay cursor', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 41,
+    event_seq: 41,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    delta: 'A'
+  }));
+  const pending = applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 43,
+    event_seq: 43,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    delta: 'C'
+  }));
+
+  assert.equal(pending.pending, true);
+  assert.equal(selectRuntimeLastAppliedEventId(projection, 'session-1'), 41);
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 42,
+    event_seq: 42,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    delta: 'B'
+  }));
+
+  assert.equal(selectRuntimeLastAppliedEventId(projection, 'session-1'), 43);
 });
 
 test('strict runtime reducer keeps final event behind buffered deltas', () => {
@@ -2381,8 +3033,8 @@ test('runtime reducer folds legacy-confirmed user message into local optimistic 
     })
   );
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -2450,8 +3102,8 @@ test('runtime reducer folds multiple model rounds and legacy fragments into one 
     }
   }));
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [
@@ -2500,4 +3152,104 @@ test('runtime reducer folds multiple model rounds and legacy fragments into one 
   assert.equal(visible[1].reasoning, 'think more');
   assert.equal(visible[1].workflowItems?.length, 1);
   assert.equal(projection.sessions['session-1'].messages.length, 2);
+});
+
+test('runtime selector orders turns by event sequence instead of wall clock', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-user-1',
+    event_seq: 1,
+    user_turn_id: 'ut-1',
+    message_id: 'um-1',
+    content: 'first',
+    created_at: '2026-04-30T02:20:00.000Z'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-assistant-1',
+    event_seq: 2,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    content: 'first answer',
+    created_at: '2026-04-30T02:20:01.000Z'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-user-2',
+    event_seq: 3,
+    user_turn_id: 'ut-2',
+    message_id: 'um-2',
+    content: 'second',
+    created_at: '2026-04-30T02:10:00.000Z'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-assistant-2',
+    event_seq: 4,
+    user_turn_id: 'ut-2',
+    model_turn_id: 'mt-2',
+    message_id: 'am-2',
+    content: 'second answer',
+    created_at: '2026-04-30T02:10:01.000Z'
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:first', 'assistant:first answer', 'user:second', 'assistant:second answer']
+  );
+});
+
+test('strict runtime reducer expires small event_seq gaps and asks for replay', () => {
+  const projection = createChatRuntimeProjection();
+  const originalNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+  try {
+    applyChatRuntimeEvent(projection, baseEvent({
+      event_type: 'assistant_delta',
+      event_id: 'evt-1',
+      event_seq: 1,
+      user_turn_id: 'ut-1',
+      model_turn_id: 'mt-1',
+      message_id: 'am-1',
+      delta: 'A'
+    }));
+    const pending = applyChatRuntimeEvent(projection, baseEvent({
+      event_type: 'assistant_delta',
+      event_id: 'evt-3',
+      event_seq: 3,
+      user_turn_id: 'ut-1',
+      model_turn_id: 'mt-1',
+      message_id: 'am-1',
+      delta: 'C'
+    }));
+    assert.equal(pending.pending, true);
+    assert.equal(projection.sessions['session-1'].pendingSequentialEvents.length, 1);
+
+    now += 801;
+    const timeout = applyChatRuntimeEvent(projection, baseEvent({
+      event_type: 'assistant_delta',
+      event_id: 'evt-4',
+      event_seq: 4,
+      user_turn_id: 'ut-1',
+      model_turn_id: 'mt-1',
+      message_id: 'am-1',
+      delta: 'D'
+    }));
+
+    const session = projection.sessions['session-1'];
+    const visible = selectVisibleMessageProjections(projection, 'session-1');
+    assert.equal(timeout.applied, true);
+    assert.equal(timeout.reason, 'event_seq_gap_timeout');
+    assert.equal(session.syncRequired, true);
+    assert.equal(session.pendingSequentialEvents.length, 0);
+    assert.equal(visible[0].content, 'AD');
+    assert.ok(session.invariantViolations.some((violation) => violation.code === 'event_seq_gap_timeout'));
+  } finally {
+    Date.now = originalNow;
+  }
 });

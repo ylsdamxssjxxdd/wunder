@@ -969,7 +969,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
 
   watch(() => [
       ctx.agentRenderableMessages.value.length,
-      ctx.chatStore.messageMutationVersion,
       ctx.chatStore.runtimeProjectionVersion,
       ctx.userWorldStore.activeMessages.length,
       ctx.sessionHub.activeConversationKey
@@ -1021,7 +1020,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       const latestMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
       return [
           ctx.chatStore.activeSessionId,
-          ctx.chatStore.messageMutationVersion,
           ctx.chatStore.runtimeProjectionVersion,
           ctx.latestAgentRenderableMessageKey.value,
           ctx.buildLatestAssistantLayoutSignature(latestMessage)

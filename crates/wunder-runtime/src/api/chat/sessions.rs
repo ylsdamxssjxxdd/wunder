@@ -1176,15 +1176,25 @@ fn build_projected_queue_user_message(task: &crate::storage::AgentTaskRecord) ->
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
+    let client_message_id = queue_task_client_message_id(task);
+    let message_id = match client_message_id.as_deref() {
+        Some(value) => value.to_string(),
+        None => format!("queue:{}:user", task.task_id),
+    };
     let mut message = json!({
         "role": "user",
         "content": content,
         "created_at": format_ts(task.created_at),
-        "message_id": format!("queue:{}:user", task.task_id),
+        "message_id": message_id,
         "user_turn_id": format!("queue-turn:{}:user", task.task_id),
         "turn_index": i64::MAX - 1,
         "status": "queued",
     });
+    if let Some(client_message_id) = client_message_id {
+        if let Value::Object(ref mut map) = message {
+            map.insert("client_message_id".to_string(), json!(client_message_id));
+        }
+    }
     if let Some(attachments) =
         normalize_queue_task_attachments(task.request_payload.get("attachments"))
     {
@@ -1262,12 +1272,25 @@ fn build_projected_queue_workflow_event(
     });
     if let Value::Object(ref mut map) = data {
         map.insert("status".to_string(), json!(task.status));
+        if let Some(client_message_id) = queue_task_client_message_id(task) {
+            map.insert("client_message_id".to_string(), json!(client_message_id));
+        }
     }
     json!({
         "event": event_type,
         "timestamp": format_ts(timestamp),
         "data": data,
     })
+}
+
+fn queue_task_client_message_id(task: &crate::storage::AgentTaskRecord) -> Option<String> {
+    task.request_payload
+        .get("client_message_id")
+        .or_else(|| task.request_payload.get("clientMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn project_queued_session_messages(
@@ -2119,6 +2142,38 @@ mod tests {
                     "content": "hello"
                 }
             ])
+        );
+    }
+
+    #[test]
+    fn projected_queue_messages_keep_client_message_id() {
+        let mut task = build_queue_task(
+            "task_proj_client",
+            "sess_proj_client",
+            "pending",
+            "queued",
+            8.0,
+        );
+        if let Value::Object(ref mut map) = task.request_payload {
+            map.insert("client_message_id".to_string(), json!("client_msg_generic"));
+        }
+
+        let user_message =
+            build_projected_queue_user_message(&task).expect("projected user message");
+        let assistant_message = build_projected_queue_assistant_message(&task);
+        let events = assistant_message
+            .get("workflow_events")
+            .and_then(Value::as_array)
+            .expect("workflow events");
+
+        assert_eq!(user_message["message_id"], json!("client_msg_generic"));
+        assert_eq!(
+            user_message["client_message_id"],
+            json!("client_msg_generic")
+        );
+        assert_eq!(
+            events[0]["data"]["client_message_id"],
+            json!("client_msg_generic")
         );
     }
 

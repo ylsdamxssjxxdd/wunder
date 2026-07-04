@@ -36,6 +36,7 @@ const parseBoolean = (value) => {
 };
 
 const skipDistBuild = parseBoolean(process.env.FRONTEND_SKIP_DIST_BUILD);
+const runDevServer = parseBoolean(process.env.FRONTEND_RUN_DEV_SERVER);
 
 const hasPath = async (targetPath) => {
   try {
@@ -465,6 +466,10 @@ const keepContainerAlive = async (reason) => {
   await new Promise(() => {});
 };
 
+const completeBuildOnly = () => {
+  log('frontend build completed; exiting because FRONTEND_RUN_DEV_SERVER is not enabled');
+};
+
 const main = async () => {
   let viteEntry = '';
   let dependencyProfileStale = false;
@@ -482,6 +487,10 @@ const main = async () => {
     console.warn(
       `[frontend][docker] dependency bootstrap failed, reusing existing dist without vite dev server: ${error.message}`
     );
+    if (!runDevServer) {
+      completeBuildOnly();
+      return;
+    }
     await keepContainerAlive('reusing existing frontend/dist for nginx static serving');
     return;
   }
@@ -516,6 +525,10 @@ const main = async () => {
       await writeCurrentDependencyFingerprint();
       log('frontend dependency profile accepted after successful build');
     }
+  }
+  if (!runDevServer) {
+    completeBuildOnly();
+    return;
   }
   await waitBackend();
   await startDevServer();

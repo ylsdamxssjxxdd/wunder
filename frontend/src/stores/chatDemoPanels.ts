@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -78,15 +78,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +90,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -122,10 +112,6 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
@@ -216,7 +202,7 @@ export const resolveGreetingTimestamp = (messages, createdAt) => {
 export const ensureGreetingMessage = (messages, options: GreetingMessageOptions = {}) => {
   const safeMessages = Array.isArray(messages) ? messages : [];
   const greetingText = resolveGreetingContent(options?.greeting);
-  // 无论历史会话与否，都补一条问候语，保证提示词预览入口稳定可见
+  // 鏃犺鍘嗗彶浼氳瘽涓庡惁锛岄兘琛ヤ竴鏉￠棶鍊欒锛屼繚璇佹彁绀鸿瘝棰勮鍏ュ彛绋冲畾鍙
   const greetingIndex = safeMessages.findIndex((message) => message?.isGreeting);
   if (greetingIndex >= 0) {
     if (safeMessages[greetingIndex]?.content !== greetingText) {
@@ -353,7 +339,7 @@ export const isRecommendedLabel = (label) => {
   const normalized = String(label || '').trim();
   if (!normalized) return false;
   const lowered = normalized.toLowerCase();
-  const keywords = new Set(['推荐', 'recommended', t('chat.inquiry.recommended')]);
+  const keywords = new Set(['鎺ㄨ崘', 'recommended', t('chat.inquiry.recommended')]);
   for (const keyword of keywords) {
     if (!keyword) continue;
     if (lowered.includes(String(keyword).toLowerCase())) {
@@ -459,7 +445,7 @@ export const dismissStaleInquiryPanels = (messages = []) => {
 export const isQuestionPanelToolName = (name) => {
   const raw = String(name || '').trim();
   if (!raw) return false;
-  if (raw === '问询面板') return true;
+  if (raw === '闂闈㈡澘') return true;
   const lower = raw.toLowerCase();
   return lower === 'question_panel' || lower === 'ask_panel';
 };
@@ -549,4 +535,4 @@ export const clearSessionCommandSessions = (sessionId) => {
   useCommandSessionStore().clearSession(targetId);
 };
 
-// 会话级模型轮次状态，保证同一会话的轮次连续递增
+// 浼氳瘽绾фā鍨嬭疆娆＄姸鎬侊紝淇濊瘉鍚屼竴浼氳瘽鐨勮疆娆¤繛缁€掑

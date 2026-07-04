@@ -12,6 +12,8 @@ pub use wunder_core::schemas::{
 pub struct WunderRequest {
     pub user_id: String,
     pub question: String,
+    #[serde(default, alias = "clientMessageId")]
+    pub client_message_id: Option<String>,
     #[serde(default)]
     pub tool_names: Vec<String>,
     #[serde(default)]

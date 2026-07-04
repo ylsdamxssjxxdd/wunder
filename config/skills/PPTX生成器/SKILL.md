@@ -48,7 +48,7 @@ description: "生成、编辑与读取 PowerPoint 演示文稿。若当前环境
 
 推荐流程：
 
-1. **读取模板能力**：先调用 `ppt_template_read` 空参数，查看可用内置模板和真实 PPTX 母版模板包。需要统一字体和母版复用时优先选择母版模板包，例如 `black_times_default` 或用户自定义 `config/ppt_templates/<template_id>/`。
+1. **读取模板能力**：先调用 `ppt_template_read` 空参数，查看可用内置模板和真实 PPTX 母版模板包。需要统一字体和母版复用时优先选择母版模板包，例如 `black_times_default`、`top_title_section` 或用户自定义 `config/ppt_templates/<template_id>/`；用户要求封面页、顶部全宽大标题、顶部左侧一级标题、下方正文/图片内容区时，优先使用 `top_title_section`。使用 `top_title_section` 时，第一页写 `type=cover` 并只表达封面标题/副标题；第二页开始的 `title` 是顶部大标题，`subtitle` 是左上一级标题，`body`、`bullet`、`item` 和 `image` 放入下方内容区。
 2. **规划页面结构**：根据用户资料规划封面、目录、章节、内容、图文、数据、对比、时间线、总结/结尾等页面。第一页按封面处理，最后一页按结尾处理，中间页按 `type`、`layout` 或 `template_slide_id` 选择版式。
 3. **生成初稿**：调用 `ppt_write`，优先传结构化 XML：
 

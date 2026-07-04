@@ -41,19 +41,21 @@ export type ChatRuntimeMessageStatus =
 export type ChatRuntimeEventType =
   | 'connection_state'
   | 'client_message_submitted'
-  | 'legacy_messages_reconciled'
   | 'session_snapshot'
   | 'session_runtime'
   | 'user_message_created'
   | 'assistant_message_created'
   | 'assistant_delta'
   | 'assistant_reasoning_delta'
+  | 'assistant_output_snapshot'
   | 'assistant_final'
   | 'tool_call_started'
   | 'tool_call_delta'
   | 'tool_call_completed'
   | 'tool_call_failed'
   | 'workflow_event'
+  | 'usage_stats'
+  | 'queue_status'
   | 'turn_completed'
   | 'turn_failed'
   | 'turn_cancelled'
@@ -67,6 +69,8 @@ export type ChatRuntimeRawMessage = Record<string, unknown>;
 export type ChatRuntimeWorkflowItemProjection = Record<string, unknown>;
 
 export type ChatRuntimeSubagentProjection = Record<string, unknown>;
+
+export type ChatRuntimeMessageDisplayProjection = Record<string, unknown>;
 
 export type ChatRuntimeEvent = {
   event_type: ChatRuntimeEventType | string;
@@ -120,6 +124,7 @@ export type ChatRuntimePendingSequentialEvent = {
   eventId: string;
   eventType: string;
   receivedAt: number;
+  deadlineAt: number;
   event: ChatRuntimeEvent;
 };
 
@@ -139,6 +144,7 @@ export type ChatRuntimeMessageProjection = {
   cancelled: boolean;
   workflowItems?: ChatRuntimeWorkflowItemProjection[];
   subagents?: ChatRuntimeSubagentProjection[];
+  display?: ChatRuntimeMessageDisplayProjection;
   legacyKey?: string;
   raw?: ChatRuntimeRawMessage;
 };
@@ -164,6 +170,7 @@ export type ChatRuntimeSessionProjection = {
   sessionId: string;
   agentId: string;
   appliedSeq: number;
+  lastAppliedEventId: number;
   snapshotSeq: number;
   localSeq: number;
   syncRequired: boolean;

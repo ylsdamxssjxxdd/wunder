@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   buildAssistantMessageStatsEntries,
@@ -50,6 +52,13 @@ const findEntryValue = (
   const matched = entries.find((item) => item.label === label);
   return matched ? String(matched.value || '') : null;
 };
+
+test('subagent ownership no longer imports chatMessageLookup round helpers', () => {
+  const source = readFileSync(resolve(process.cwd(), 'src/stores/chatStats.ts'), 'utf8');
+  assert.equal(source.includes("from './chatMessageLookup'"), false);
+  assert.equal(source.includes('findAssistantMessageByUserRound'), false);
+  assert.equal(source.includes('findAssistantMessageByRound'), false);
+});
 
 const ensureBrowserRuntimeStub = (): void => {
   const root = globalThis as typeof globalThis & {

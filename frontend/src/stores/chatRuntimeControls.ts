@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -76,17 +76,10 @@ import {
   selectVisibleMessageProjections,
   selectSessionBusy,
   selectSessionBusyReason,
+  selectRuntimeLastAppliedEventId,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +91,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -122,17 +113,13 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
-import { buildWorkflowItem, dismissStaleInquiryPanels } from './chatDemoPanels';
-import { applyRuntimeDerivedStatus, buildRuntimeDebugSnapshot, ensureRuntime, getRuntime, getSessionMessages, notifySessionSnapshot, refreshRuntimeStreamLifecycle, resolveSessionKey, syncChatRuntimeProjectionFromLegacy, touchSessionUpdatedAt } from './chatRuntimeState';
+import { buildWorkflowItem } from './chatDemoPanels';
+import { applyRuntimeDerivedStatus, buildRuntimeDebugSnapshot, ensureRuntime, getRuntime, getSessionMessages, refreshRuntimeStreamLifecycle, resolveSessionKey, syncChatRuntimeProjectionStatus } from './chatRuntimeState';
 import { chatWatcherSharedState } from './chatSharedState';
-import { buildMessage, normalizeHiddenInternalMessage, parseErrorText, resolveTimestampMs } from './chatStats';
+import { parseErrorText, resolveTimestampMs } from './chatStats';
 import { getRuntimeLastEventId, normalizeStreamEventId, normalizeStreamRound } from './chatStreamIds';
 
 export const setSessionLoading = (store, sessionId, value) => {
@@ -146,9 +133,8 @@ export const setSessionLoading = (store, sessionId, value) => {
   } else if (store.loadingBySession[key]) {
     delete store.loadingBySession[key];
   }
-  syncChatRuntimeProjectionFromLegacy(store, key, null, {
-    loading: Boolean(value),
-    running: Boolean(value)
+  syncChatRuntimeProjectionStatus(store, key, value ? 'running' : 'completed', {
+    eventType: value ? 'session_runtime' : 'session_idle'
   });
   if (!runtime) return;
   if (value) {
@@ -324,10 +310,12 @@ export function recoverRuntimeInteractiveControllers(
     (resolveSessionKey(store?.activeSessionId) === key && Array.isArray(store?.messages)
       ? store.messages
       : null);
+  const projectionLastEventId = selectRuntimeLastAppliedEventId(store?.runtimeProjection, key);
   const localLastEventId = Math.max(
     normalizeStreamEventId(options.localLastEventId) || 0,
     resolveMaterializedMessageEventId(localSessionMessages),
-    getRuntimeLastEventId(runtime)
+    projectionLastEventId,
+    projectionLastEventId > 0 ? 0 : getRuntimeLastEventId(runtime)
   );
   const remoteLastEventId = normalizeStreamEventId(options.remoteLastEventId) || 0;
   const loading = Boolean(store?.loadingBySession?.[key]);
@@ -478,28 +466,6 @@ export const resolveMaxStreamRound = (messages) => {
   return maxRound > 0 ? maxRound : null;
 };
 
-export const ensurePendingAssistantMessage = (store, sessionId, messages, baseEventId) => {
-  if (!Array.isArray(messages)) return null;
-  const existing = findPendingAssistantMessage(messages);
-  if (existing) return existing;
-  // Stable id keeps the render key from degrading to an index; avoids remounts
-  // when neighboring messages are inserted or prepended.
-  const placeholderId = `local-assistant:pending:${sessionId}:${baseEventId || 0}`;
-  const placeholder = {
-    ...buildMessage('assistant', ''),
-    message_id: placeholderId,
-    client_message_id: placeholderId,
-    workflowItems: [],
-    workflowStreaming: false,
-    stream_incomplete: true,
-    stream_event_id: baseEventId || 0,
-    stream_round: null
-  };
-  messages.push(placeholder);
-  notifySessionSnapshot(store, sessionId, messages, true);
-  return placeholder;
-};
-
 export const isDraftSessionBootstrapMessage = (message) =>
   Boolean(message && typeof message === 'object' && message.draft_session_bootstrap === true);
 
@@ -552,7 +518,6 @@ export const resolveLastAssistantTimestampMs = (messages) => {
   return null;
 };
 
-export const WATCH_USER_MESSAGE_DEDUP_MS = 2000;
 export const WATCHDOG_IDLE_MS_ACTIVE = 1500;
 export const WATCHDOG_IDLE_MS_BACKGROUND = 14000;
 export const WATCHDOG_IDLE_MS_HIDDEN = 26000;
@@ -614,43 +579,6 @@ export const isWindowingEnabled = () => {
   }
 };
 
-export const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs, dedupeKey) => {
-  if (!Array.isArray(messages) || !content) return false;
-  // Normalize whitespace so trailing/leading spaces or CRLF differences between
-  // the local optimistic user message and the backend round_start payload do
-  // not defeat deduplication (a common cause of duplicate user bubbles).
-  const normalizeForCompare = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-  const normalizedContent = normalizeForCompare(content);
-  // Primary dedupe: if a dedupeKey (client_message_id or event_id) is provided,
-  // skip insertion when an existing user message already carries the same key.
-  if (dedupeKey) {
-    const key = String(dedupeKey);
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i];
-      if (message?.role !== 'user') continue;
-      const existingKey =
-        message.client_message_id || message.clientMessageId || message.message_id || message.id;
-      if (existingKey && String(existingKey) === key) {
-        return false;
-      }
-    }
-  }
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message?.role !== 'user') continue;
-    const lastContent = normalizeForCompare(message.content);
-    if (lastContent !== normalizedContent) {
-      return true;
-    }
-    const lastTimestamp = resolveTimestampMs(message.created_at);
-    if (!Number.isFinite(eventTimestampMs) || !Number.isFinite(lastTimestamp)) {
-      return false;
-    }
-    return Math.abs(eventTimestampMs - lastTimestamp) > WATCH_USER_MESSAGE_DEDUP_MS;
-  }
-  return true;
-};
-
 export const isDocumentHidden = () =>
   typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
@@ -675,52 +603,3 @@ export const resolveWatchdogProfile = (store, sessionId) => {
   };
 };
 
-export const hasAnchoredWatchUserMessage = (messages, anchor, content) => {
-  if (!Array.isArray(messages) || !anchor || !content) return false;
-  const anchorIndex = messages.indexOf(anchor);
-  if (anchorIndex <= 0) return false;
-  const previous = messages[anchorIndex - 1];
-  if (previous?.role !== 'user') return false;
-  return String(previous.content || '') === content;
-};
-
-export const insertWatchUserMessage = (
-  store,
-  sessionId,
-  messages,
-  content,
-  eventTimestampMs,
-  anchor,
-  options = {}
-) => {
-  const optionRecord: Record<string, unknown> =
-    options && typeof options === 'object' ? (options as Record<string, unknown>) : {};
-  const dedupeKey = optionRecord.dedupeKey;
-  if (hasAnchoredWatchUserMessage(messages, anchor, content)) {
-    return;
-  }
-  if (!shouldInsertWatchUserMessage(messages, content, eventTimestampMs, dedupeKey)) {
-    return;
-  }
-  const createdAt = Number.isFinite(eventTimestampMs)
-    ? new Date(eventTimestampMs).toISOString()
-    : undefined;
-  const userMessage = buildMessage('user', content, createdAt, {
-    hiddenInternal: normalizeHiddenInternalMessage(optionRecord.hiddenInternal)
-  });
-  // Stamp the dedupe key onto the inserted message so subsequent replay of the
-  // same round_start event (e.g. after a watch reconnect) is suppressed.
-  if (dedupeKey) {
-    (userMessage as Record<string, unknown>).client_message_id = String(dedupeKey);
-  }
-  const anchorIndex = anchor ? messages.indexOf(anchor) : -1;
-  if (anchorIndex >= 0) {
-    messages.splice(anchorIndex, 0, userMessage);
-  } else {
-    messages.push(userMessage);
-  }
-  clearSupersededPendingAssistantMessages(messages);
-  dismissStaleInquiryPanels(messages);
-  touchSessionUpdatedAt(store, sessionId, eventTimestampMs ?? Date.now());
-  notifySessionSnapshot(store, sessionId, messages, true);
-};

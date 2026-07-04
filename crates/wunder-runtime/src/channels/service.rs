@@ -1034,6 +1034,7 @@ impl ChannelHub {
         let mut request = WunderRequest {
             user_id: session_info.user_id.clone(),
             question,
+            client_message_id: None,
             tool_names: tool_names.clone(),
             skip_tool_calls: false,
             stream: true,

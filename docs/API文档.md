@@ -18,7 +18,7 @@
 - RAGFlow 知识库通过 `ragflow.*` 接入，知识库可按 `literal/vector/ragflow` 运行；RAGFlow 文档管理与检索由后端直连远端 Dataset。
 - docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。`docker-compose-win.yml` 额外用 `wunder_win_data` 兜底整个 `/app/config/data`，并对 `workspaces/browser/user_tools/vector_knowledge/temp_dir` 等热点目录继续做子卷覆盖。
 - 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。`wunder-frontend` 启动时还会比对当前 `package-lock.json` 与已挂载依赖树的指纹，若发现 ARM profile 过旧或跨平台污染，会自动重装对应 workspace 依赖。
-- `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
+- `wunder-frontend` 在 docker compose 中是一次性静态构建任务：先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`，成功后容器退出并由 `wunder-nginx` 提供静态站点，避免 Vite dev server 常驻占用 CPU；如需调试 Vite，可显式设置 `FRONTEND_RUN_DEV_SERVER=1` 并按需暴露 `FRONTEND_PORT`。构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址；compose 下 `wunder-sandbox` 默认不再启用容器级只读根文件系统，确需恢复 Docker `read_only` 时设置 `WUNDER_SANDBOX_DOCKER_READ_ONLY=true`。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
@@ -28,7 +28,7 @@
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
 - compose 镜像策略：`docker-compose-x86.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 仍使用本地镜像并保留 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。`docker-compose-arm.yml` 改为直接引用现成的 `wunder-arm` 镜像，不再声明 `build:` / `pull_policy:`，以兼容较老的 docker-compose 解析器和 ARM 服务器上的预置镜像启动方式。
 - ARM compose 防漂移：`docker-compose-arm.yml` 仍保留 `platform: linux/arm64` 与启动期架构校验，`wunder-server` / `wunder-sandbox` / `extra-mcp` / `wunder-frontend` / `wunder-nginx` 运行时若非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
-- 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
+- 前端入口：管理端调试 UI `http://127.0.0.1:18000`，用户侧前端 `http://127.0.0.1:18001`（Nginx 静态站点，默认入口）；仅在显式启用 `FRONTEND_RUN_DEV_SERVER=1` 并暴露端口时，才通过 `FRONTEND_PORT` 访问 Vite dev server。
 - Docker compose 默认公开入口：`wunder-nginx` 发布 `18001`，`extra-mcp` 额外发布 `${MCP_PORT}`；`wunder-postgres` 与 `wunder-weaviate` 仍默认绑定 `127.0.0.1`。如需将 `extra-mcp` 收回仅本机访问，可设置 `MCP_BIND_HOST=127.0.0.1`。
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当前也支持 `/login?user_id=<id>[&agent_name=<name>]` 无 token 直登。外链登录成功后统一进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）嵌入壳，并隐藏侧边栏与中栏；当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，前端进入嵌入态消息页并使用默认智能体 `agent_id=__default__` / `entry=default`；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入同一嵌入壳并聚焦该智能体。嵌入壳内消息页与智能体页都可访问，但左/中栏保持隐藏。`POST /wunder/auth/login`、`/wunder/auth/register`、`/wunder/auth/demo` 以及会直接签发用户 token 的 `/wunder/auth/external/*` 登录接口支持可选请求头 `X-Wunder-Session-Scope`；同一用户仅在同一 `session_scope` 内执行“新登录顶旧登录”，不同 scope（如 `user_web` 与 `admin_web`）互不影响。
 - 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及 Token 账户字段 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`；其中 `token_balance` 是用户当前可支配的 Token 资产余额，`token_granted_total` 记录累计发放与奖励总额，`token_used_total` 记录累计消耗。`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
@@ -116,6 +116,7 @@
 - 入参（JSON）：
   - `user_id`：字符串，用户唯一标识
   - `question`：字符串，用户问题
+  - `client_message_id`：字符串，可选，兼容 `clientMessageId`；用于客户端乐观用户消息与后端事件、队列事件、刷新投影精确合并，服务端会去除首尾空白并最多保留 128 个字符。请求进入运行轮次后，服务端会把该值原样写入本轮所有对象型流事件 payload（如 `progress`、`llm_output_delta`、`final`、`tool_*`、`thread_status`），前端可按该精确键升级本地占位。
   - `tool_names`：字符串列表，可选，指定启用的内置工具/MCP/技能名称
   - `skip_tool_calls`：布尔，可选，是否忽略模型输出中的工具调用并直接结束（默认 false）
   - `stream`：布尔，可选，是否流式输出（默认 true）
@@ -127,7 +128,7 @@
 - `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
 - 约束：注册用户按累计 Token 余额限额，按每次模型调用的实际 `total_tokens` 扣减；`token_balance` 可累计、可消费，语义上等价于用户持有的 Token 货币余额。余额不足返回 429（`detail.code=USER_TOKEN_INSUFFICIENT`）。
 - 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
-- 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。
+- 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。请求带 `client_message_id` 时，`queue_enter.data.client_message_id` 与后续同轮对象型流事件会原样使用服务端归一化后的值。
 - 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。队列终止事件写入前会先 flush 当前任务已产生的流式事件持久化队列，避免恢复端先看到 `queue_finish` 再补到旧增量。
 - 聊天 WS 排队语义：`/wunder/chat/ws` 的 `start` 被排队后，服务端会沿同一个 request-scoped WS 流从 `queue_after_event_id` 继续转发本 `queue_id` 的 `queue_enter -> queue_start -> 模型/工具流式事件 -> queue_finish/queue_fail`；客户端不要在收到 `queue_enter` 或 queued ack 后主动切换到 `watch`。队列回放在匹配本 `queue_id` 的 `queue_start` 前不会转发无 `queue_id` 的模型/工具事件，遇到本 `queue_id` 的 `queue_finish/queue_fail` 会立即截断，避免旧任务尾部或下一轮事件混入当前请求。
 - WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
@@ -2866,6 +2867,7 @@
   - `reasoning`：助手思考内容（仅存在时返回）
   - `created_at`：本地时区 RFC3339 时间
   - `message_id`：稳定消息身份，历史消息为 `history:{history_id}`，运行中临时投影也会生成稳定临时 id
+  - `client_message_id`：客户端提交消息时提供的可选身份；队列投影中的用户消息会优先使用该值作为 `message_id`，便于刷新/重连后与本地乐观气泡合并。
   - `history_id`：落库历史 id（仅真实历史消息存在）
   - `user_turn_id`：用户轮次身份
   - `model_turn_id`：模型轮次身份（仅 `assistant`）
@@ -2876,9 +2878,9 @@
   - `stop_reason`：停止原因，例如用户终止时为 `user_stop`
   - `attachments`、`questionPanel`、`hiddenInternal`、`feedback`：附件、询问面板、内部隐藏标记与消息反馈
 - 当会话仅处于队列等待阶段、最新用户消息尚未落入历史时，`GET /wunder/chat/sessions/{session_id}` 会基于活跃 `agent_tasks` 追加一组临时消息视图：
-  - 最新用户消息会按请求体中的 `question/attachments` 投影到 `data.transcript[]`
+  - 最新用户消息会按请求体中的 `question/attachments/client_message_id` 投影到 `data.transcript[]`
   - 对应助手占位会带 `stream_incomplete=true`
-  - 对应助手占位会附带队列 workflow 事件（如 `queue_enter`，必要时包含 `queue_start`），便于刷新后立即恢复“排队中/开始处理”的可见状态
+  - 对应助手占位会附带队列 workflow 事件（如 `queue_enter`，必要时包含 `queue_start`）；请求带 `client_message_id` 时，workflow event 的 `data.client_message_id` 与用户投影保持一致，便于刷新后立即恢复“排队中/开始处理”的可见状态
   - 该投影仅用于刷新/重连后的实时态恢复，不写回历史；一旦真实历史落库，会以真实消息为准
 - 当消息为 `assistant` 且已反馈时，`transcript[].feedback` 结构如下：
   - `vote`：`up` / `down`
@@ -3009,6 +3011,7 @@
 
 - `POST /wunder/chat/sessions/{session_id}/messages`
 - 请求体新增可选字段 `debug_payload`（兼容 `debugPayload`），仅用于调试模式下把本轮实际下发给模型的请求结构体透出到前端调试日志，不影响正常对话行为。
+- 请求体支持可选字段 `client_message_id`（兼容 `clientMessageId`），语义同 `/wunder` 请求；`/wunder/chat/ws` 与 `/wunder/ws` 的 `start` payload 也支持该字段。服务端会在本轮对象型流事件和队列事件中回带该值，供实时投影按精确键合并用户消息、排队占位和后续模型/工具输出。
 - 现支持“仅附件、无正文”的提交方式：
   - 只要 `attachments[]` 中存在非空 `content` 或 `public_path`，即可不传文本正文。
   - 这同样适用于图片、文档、音频转写结果以及视频拆帧结果。

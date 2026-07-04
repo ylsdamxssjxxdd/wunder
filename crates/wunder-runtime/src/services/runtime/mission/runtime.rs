@@ -1287,6 +1287,7 @@ fn build_task_request(
     WunderRequest {
         user_id: run.user_id.clone(),
         question,
+        client_message_id: None,
         tool_names,
         skip_tool_calls: false,
         stream: true,

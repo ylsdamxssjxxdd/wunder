@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -78,15 +78,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +90,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -122,10 +112,6 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
@@ -200,45 +186,16 @@ export type SessionWorkflowStateOptions = {
   reset?: boolean;
 };
 
-export type WorkflowEventRawPayload = {
-  data: unknown;
-  timestamp?: unknown;
-};
-
 export type ThreadControlSession = Record<string, unknown> & {
   id: string;
   status?: unknown;
   agent_id?: unknown;
 };
 
-export type WorkflowProcessorOptions = {
-  finalizeWithNow?: boolean;
-  streamFlushMs?: number;
-  sessionId?: string | null;
-  initialContextTokens?: number | null;
-  commandSessionStore?: {
-    upsertSnapshot?: (...args: unknown[]) => unknown;
-    appendDelta?: (...args: unknown[]) => unknown;
-  } | null;
-  onThreadControl?: (payload: unknown) => void | Promise<void>;
-  onContextUsage?: (contextTokens: number, contextTotalTokens?: number | null) => void;
-};
-
-export type UsageStatsOptions = {
-  updateUsage?: boolean;
-  round?: number | null;
-  accumulateDurations?: boolean;
-  includeInRoundAverage?: boolean;
-};
-
 export type NormalizedUsagePayload = {
   input: number;
   output: number;
   total: number;
-};
-
-export type QuestionPanelApplyOptions = {
-  appendWorkflow?: boolean;
 };
 
 export type InquiryPanelPatch = {

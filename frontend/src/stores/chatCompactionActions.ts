@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -78,15 +78,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +90,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -122,10 +112,6 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
@@ -309,7 +295,7 @@ export const chatCompactionActions = {
             {
               isTool: true,
               eventType: 'compaction_progress',
-              toolName: '上下文压缩',
+              toolName: '涓婁笅鏂囧帇缂?,
               toolCallId: workflowRef
             }
           )
@@ -355,7 +341,7 @@ export const chatCompactionActions = {
             {
               isTool: true,
               eventType: 'compaction',
-              toolName: '上下文压缩',
+              toolName: '涓婁笅鏂囧帇缂?,
               toolCallId: workflowRef
             }
           )
@@ -404,7 +390,7 @@ export const chatCompactionActions = {
             {
               isTool: true,
               eventType: 'compaction',
-              toolName: '上下文压缩',
+              toolName: '涓婁笅鏂囧帇缂?,
               toolCallId: workflowRef
             }
           )

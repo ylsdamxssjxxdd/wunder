@@ -45,6 +45,8 @@ struct WsStartPayload {
     #[serde(default)]
     user_id: Option<String>,
     question: String,
+    #[serde(default, alias = "clientMessageId")]
+    client_message_id: Option<String>,
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
@@ -393,6 +395,7 @@ async fn handle_ws(
                         let request = WunderRequest {
                             user_id,
                             question,
+                            client_message_id: payload.client_message_id,
                             tool_names: payload.tool_names,
                             skip_tool_calls: payload.skip_tool_calls,
                             stream,

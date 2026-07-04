@@ -23,6 +23,7 @@ from .render import (
     _first_image,
     _format_number,
     _image,
+    _compact_prompt,
     _resolve_image_path,
     re_split_list,
 )
@@ -50,6 +51,7 @@ class MasterTemplate:
     description: str
     root: Path
     pptx_path: Path
+    fill_mode: str = ""
     fonts: FontSpec = field(default_factory=FontSpec)
     layouts: dict[str, LayoutSpec] = field(default_factory=dict)
     aliases: tuple[str, ...] = ()
@@ -88,6 +90,7 @@ def load_master_template(template_id: str | None) -> MasterTemplate | None:
             description=str(data.get("description") or ""),
             root=template_dir,
             pptx_path=pptx_path,
+            fill_mode=str(data.get("fill_mode") or data.get("mode") or "").strip().lower(),
             fonts=FontSpec(
                 east_asian=str(fonts.get("east_asian") or fonts.get("ea") or "SimHei"),
                 latin=str(fonts.get("latin") or "Times New Roman"),
@@ -123,6 +126,7 @@ def master_template_summary(template_id: str) -> dict[str, Any]:
         "description": template.description,
         "type": "master_template",
         "path": str(template.pptx_path),
+        "fill_mode": template.fill_mode,
         "fonts": {
             "east_asian": template.fonts.east_asian,
             "latin": template.fonts.latin,
@@ -165,6 +169,10 @@ def render_master_manifest(manifest: PresentationManifest, output_path: Path, te
 
 
 def _fill_slide(slide: Any, spec: SlideSpec, index: int, total: int, role: str, template: MasterTemplate) -> None:
+    if template.fill_mode == "top_title_section":
+        _fill_top_title_section_slide(slide, spec, index, total, role, template)
+        return
+
     placeholders = _placeholders(slide)
     _set_placeholder_text(placeholders, {"title", "center_title"}, spec.title, template.fonts, bold=True)
     _set_placeholder_text(placeholders, {"subtitle"}, spec.subtitle or spec.body, template.fonts)
@@ -179,6 +187,98 @@ def _fill_slide(slide: Any, spec: SlideSpec, index: int, total: int, role: str, 
 
     if role in {"timeline", "comparison", "data"}:
         _append_structured_text(slide, spec, role, template.fonts)
+
+
+def _fill_top_title_section_slide(
+    slide: Any,
+    spec: SlideSpec,
+    index: int,
+    total: int,
+    role: str,
+    template: MasterTemplate,
+) -> None:
+    placeholders = _placeholders(slide)
+    title = spec.title or template.name
+    section_title = spec.subtitle or _top_section_title(spec, role, index, total)
+    _set_placeholder_text(placeholders, {"title", "center_title"}, title, template.fonts, inherit_style=True)
+    _set_placeholder_text(placeholders, {"subtitle"}, section_title, template.fonts, inherit_style=True)
+    _set_placeholder_text(placeholders, {"footer"}, f"{index:02d}/{total:02d}", template.fonts)
+
+    image = _first_image(spec)
+    has_image = bool(image and _image(slide, image, 7.52, 2.22, 4.82, 3.62))
+    content_w = 6.55 if has_image else 10.92
+    content_text = _top_section_body_text(spec, role)
+    if content_text:
+        box = slide.shapes.add_textbox(Inches(1.16), Inches(2.24), Inches(content_w), Inches(3.65))
+        _set_text_frame(box.text_frame, content_text, template.fonts, size=18 if role == "cover" else 15, bold=False)
+
+    if role == "data" and spec.metrics:
+        _append_top_section_metrics(slide, spec, template.fonts, has_image)
+    elif role in {"timeline", "comparison"} and (spec.items or spec.bullets):
+        _append_top_section_items(slide, spec, template.fonts, has_image)
+
+
+def _top_section_title(spec: SlideSpec, role: str, index: int, total: int) -> str:
+    if role == "cover":
+        return spec.body or spec.prompt or "Overview"
+    if role == "closing":
+        return "Summary"
+    if role == "toc":
+        return "Contents"
+    if role == "section":
+        return f"Section {index:02d}"
+    if total > 1:
+        return f"{index:02d}"
+    return "Key Point"
+
+
+def _top_section_body_text(spec: SlideSpec, role: str) -> str:
+    if role == "closing":
+        parts = [spec.body or _compact_prompt(spec.prompt)]
+        parts.extend(spec.bullets[:4])
+        return "\n".join(part for part in parts if part)
+    if role == "toc":
+        items = _content_items_for_top_section(spec, 8)
+        return "\n".join(
+            f"{idx:02d}  {item.get('title') or item.get('text') or item.get('label') or ''}".rstrip()
+            for idx, item in enumerate(items, start=1)
+        )
+    return _body_text(spec, role)
+
+
+def _content_items_for_top_section(spec: SlideSpec, fallback_count: int) -> list[dict[str, Any]]:
+    if spec.items:
+        return spec.items
+    if spec.sections:
+        return spec.sections
+    bullets = spec.bullets or []
+    if not bullets and spec.body:
+        bullets = [part.strip() for part in re_split_list(spec.body) if part.strip()]
+    return [{"title": item, "body": ""} for item in bullets[:fallback_count]]
+
+
+def _append_top_section_items(slide: Any, spec: SlideSpec, fonts: FontSpec, has_image: bool) -> None:
+    items = _content_items_for_top_section(spec, 4)[:4]
+    if not items:
+        return
+    x = 1.16
+    y = 5.95
+    width = 6.55 if has_image else 10.92
+    text = "   ".join(str(item.get("title") or item.get("label") or item.get("text") or "") for item in items)
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(width), Inches(0.72))
+    _set_text_frame(box.text_frame, text, fonts, size=12, bold=False)
+
+
+def _append_top_section_metrics(slide: Any, spec: SlideSpec, fonts: FontSpec, has_image: bool) -> None:
+    metrics = spec.metrics[:4]
+    if not metrics:
+        return
+    x = 1.16
+    y = 5.86
+    width = 6.55 if has_image else 10.92
+    text = "   ".join(f"{item.get('label', '')}: {_metric_text(item)}" for item in metrics)
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(width), Inches(0.72))
+    _set_text_frame(box.text_frame, text, fonts, size=12, bold=True)
 
 
 def _append_structured_text(slide: Any, spec: SlideSpec, role: str, fonts: FontSpec) -> None:
@@ -228,6 +328,7 @@ def _set_placeholder_text(
     fonts: FontSpec,
     *,
     bold: bool = False,
+    inherit_style: bool = False,
 ) -> bool:
     text = str(value or "").strip()
     if not text:
@@ -236,10 +337,18 @@ def _set_placeholder_text(
         for shape in placeholders.get(role, []):
             if not getattr(shape, "has_text_frame", False):
                 continue
+            if inherit_style:
+                _set_placeholder_inherited_text(shape, text)
+                return True
             size = 34 if role in {"title", "center_title"} else 15
             _set_text_frame(shape.text_frame, text, fonts, size=size, bold=bold)
             return True
     return False
+
+
+def _set_placeholder_inherited_text(shape: Any, value: str) -> None:
+    # Preserve the placeholder's master/layout text style by avoiding explicit run formatting.
+    shape.text = value
 
 
 def _set_text_frame(text_frame: Any, value: str, fonts: FontSpec, *, size: float, bold: bool) -> None:

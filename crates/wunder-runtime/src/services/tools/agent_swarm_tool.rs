@@ -54,6 +54,7 @@ async fn dispatch_swarm_batch_task(
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: task.message,
+        client_message_id: None,
         tool_names: task.tool_names,
         skip_tool_calls: false,
         stream: false,

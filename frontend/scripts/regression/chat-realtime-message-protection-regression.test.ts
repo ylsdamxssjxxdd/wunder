@@ -1,165 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from '../../src/stores/chatRealtimeMessageProtection';
+const frontendRoot = resolve(process.cwd());
+const removedModulePath = resolve(frontendRoot, 'src/stores/chatRealtimeMessageProtection.ts');
 
-const normalizeEventId = (value: unknown): number | null => {
-  const parsed = Number.parseInt(String(value ?? ''), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-};
+const readSource = (relativePath: string): string =>
+  readFileSync(resolve(frontendRoot, relativePath), 'utf8');
 
-const buildMessage = (
-  role: 'user' | 'assistant',
-  content: string,
-  createdAt?: string,
-  meta: Record<string, unknown> = {}
-) => ({
-  role,
-  content,
-  created_at: createdAt,
-  ...meta
+test('legacy realtime protected-message patch module is removed', () => {
+  assert.equal(existsSync(removedModulePath), false);
 });
 
-test('protected realtime messages are restored when detail refresh misses the channel turn', () => {
-  const entries = upsertProtectedRealtimeMessage(
-    [],
-    {
-      eventId: 41,
-      role: 'user',
-      content: 'from channel',
-      createdAt: '2026-04-03T09:00:00.000Z'
-    },
-    normalizeEventId
-  );
-  const messages: Record<string, any>[] = [
-    { role: 'assistant', content: '', stream_incomplete: true, workflowStreaming: true }
-  ];
-
-  const result = mergeProtectedRealtimeMessages({
-    messages,
-    entries,
-    normalizeEventId,
-    buildMessage,
-    assignStreamEventId: (message, eventId) => {
-      message.stream_event_id = eventId;
-    }
+test('session hydration no longer reinserts protected realtime messages into legacy transcript', () => {
+  [
+    'src/stores/chatRuntimeState.ts',
+    'src/stores/chatSessionOpenLoadActions.ts',
+    'src/stores/chatCacheActions.ts'
+  ].forEach((relativePath) => {
+    const source = readSource(relativePath);
+    assert.equal(source.includes("from './chatRealtimeMessageProtection'"), false, relativePath);
+    assert.equal(source.includes('mergeProtectedRealtimeMessages'), false, relativePath);
+    assert.equal(source.includes('upsertProtectedRealtimeMessage'), false, relativePath);
+    assert.equal(source.includes('mergeSessionProtectedRealtimeMessages'), false, relativePath);
   });
-
-  assert.equal(result.mutated, true);
-  assert.equal(messages.length, 2);
-  assert.deepEqual(
-    messages.map((message) => message.role),
-    ['user', 'assistant']
-  );
-  assert.equal(messages[0].stream_event_id, 41);
-  assert.equal(messages[0].realtime_protected, true);
-  assert.equal(result.retainedEntries.length, 1);
-});
-
-test('protected realtime entries are released once history includes the same stream event', () => {
-  const entries = upsertProtectedRealtimeMessage(
-    [],
-    {
-      eventId: 41,
-      role: 'user',
-      content: 'from channel',
-      createdAt: '2026-04-03T09:00:00.000Z'
-    },
-    normalizeEventId
-  );
-  const messages: Record<string, any>[] = [
-    { role: 'user', content: 'from channel', stream_event_id: 41 },
-    { role: 'assistant', content: 'server reply', stream_event_id: 42 }
-  ];
-
-  const result = mergeProtectedRealtimeMessages({
-    messages,
-    entries,
-    normalizeEventId,
-    buildMessage,
-    assignStreamEventId: (message, eventId) => {
-      message.stream_event_id = eventId;
-    }
-  });
-
-  assert.equal(result.mutated, false);
-  assert.equal(result.retainedEntries.length, 0);
-  assert.equal(messages.length, 2);
-});
-
-test('protected entries keep local copies that are already marked as realtime protected', () => {
-  const entries = upsertProtectedRealtimeMessage(
-    [],
-    {
-      eventId: 41,
-      role: 'user',
-      content: 'from channel',
-      createdAt: '2026-04-03T09:00:00.000Z'
-    },
-    normalizeEventId
-  );
-  const messages: Record<string, any>[] = [
-    {
-      role: 'user',
-      content: 'from channel',
-      stream_event_id: 41,
-      realtime_protected: true
-    }
-  ];
-
-  const result = mergeProtectedRealtimeMessages({
-    messages,
-    entries,
-    normalizeEventId,
-    buildMessage,
-    assignStreamEventId: (message, eventId) => {
-      message.stream_event_id = eventId;
-    }
-  });
-
-  assert.equal(result.mutated, false);
-  assert.equal(result.retainedEntries.length, 1);
-});
-
-test('protected entries backfill history messages without stream event ids', () => {
-  const entries = upsertProtectedRealtimeMessage(
-    [],
-    {
-      eventId: 52,
-      role: 'user',
-      content: 'from channel',
-      createdAt: '2026-04-04T00:14:15.183Z'
-    },
-    normalizeEventId
-  );
-  const messages: Record<string, any>[] = [
-    {
-      role: 'user',
-      content: 'from channel',
-      created_at: '2026-04-04T00:14:15.183Z'
-    },
-    {
-      role: 'assistant',
-      content: 'reply'
-    }
-  ];
-
-  const result = mergeProtectedRealtimeMessages({
-    messages,
-    entries,
-    normalizeEventId,
-    buildMessage,
-    assignStreamEventId: (message, eventId) => {
-      message.stream_event_id = eventId;
-    }
-  });
-
-  assert.equal(result.mutated, true);
-  assert.equal(result.retainedEntries.length, 0);
-  assert.equal(messages.length, 2);
-  assert.equal(messages[0].stream_event_id, 52);
-  assert.equal(messages[0].realtime_protected, undefined);
 });

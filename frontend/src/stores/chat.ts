@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -69,19 +69,12 @@ import {
   applyChatRuntimeEvent
 } from '@/realtime/chat/chatRuntimeReducer';
 import {
-  selectLegacyMessageStatus,
-  selectVisibleMessageProjections,
+  materializeChatRuntimeMessages
+} from '@/realtime/chat/chatRuntimeRenderAdapter';
+import {
   selectSessionBusyReason
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -93,8 +86,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -117,17 +108,12 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { isGoalActiveForLock } from './chatPersist';
 import { getHistoryState, getRuntime, getSessionMessages, hasRuntimeControllers, resolveSessionKey } from './chatRuntimeState';
 import { PendingApproval, SessionGoal } from './chatTypes';
-import { resolveLegacyMessageRuntimeStatusFromStore, resolveProjectedVisibleMessagesFromStore } from './chatWatcher';
 import {
   resolveMergedSessionBusy,
   resolveMergedSessionRuntimeStatus
@@ -148,7 +134,6 @@ export const useChatStore = defineStore('chat', {
     sessions: [],
     activeSessionId: null,
     messages: [],
-    messageMutationVersion: 0,
     runtimeProjectionVersion: 0,
     sessionsLoadedAt: 0,
     loadingBySession: {},
@@ -214,13 +199,9 @@ export const useChatStore = defineStore('chat', {
       if (!key) return false;
       return isGoalActiveForLock(state.sessionGoals[key]);
     },
-    messageRuntimeStatus: (state) => (sessionId, message) => {
-      const _projectionVersion = state.runtimeProjectionVersion;
-      return resolveLegacyMessageRuntimeStatusFromStore(state, sessionId, message);
-    },
     visibleMessages: (state) => (sessionId = null) => {
       const _projectionVersion = state.runtimeProjectionVersion;
-      return resolveProjectedVisibleMessagesFromStore(state, sessionId || state.activeSessionId);
+      return materializeChatRuntimeMessages(state.runtimeProjection, sessionId || state.activeSessionId);
     },
     historyLoading: () => (sessionId) => {
       const state = getHistoryState(sessionId);

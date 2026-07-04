@@ -39,7 +39,7 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - PPT 工具产物默认写入 `/workspaces/.extra_mcp/ppt/<presentation_id>/`；也可以把 `ppt_write`/`ppt_refine`/`ppt_delete` 的 `output_path` 写成 `/workspaces/{user_id}/exports/report.pptx`，让文件直接落到当前工作区
 - PPT 工具内置 7 套可选模板：`amber_clear`、`executive_green`、`research_blue`、`finance_ink`、`creative_coral`、`minimal_gray`、`doubao_radar`。模型可先调用 `ppt_template_read` 空参数读取模板列表，再把选定的 `template_id` 传给 `ppt_write` 或 `ppt_refine`
 - PPT 工具支持真实母版模板包：把 `template.pptx` 与 `template.json` 放到 `config/ppt_templates/<template_id>/` 后，可直接把该目录名或 `template.json` 中的 `id` 作为 `template_id`。第一页固定使用封面版式，最后一页固定使用结尾版式，中间页按 `type` / `layout` / `template_slide_id` 选择目录、正文、图文、时间线、对比、数据等版式
-- 默认母版模板包 `black_times_default` 使用中文 `SimHei`、英文 `Times New Roman`。Docker 已挂载 `config/fonts/`；如使用自定义字体，请把合法字体文件放入该目录并重启相关容器，避免 LibreOffice / OnlyOffice 自动替换字体
+- 默认母版模板包 `black_times_default` 使用中文 `SimHei`、英文 `Times New Roman`；`top_title_section` 参考用户提供的 PPTX 母版，第一页使用封面版式，第二页开始采用顶部全宽大标题、顶部左侧一级标题、下方正文/图片内容区结构。Docker 已挂载 `config/fonts/`；如使用自定义字体，请把合法字体文件放入该目录并重启相关容器，避免 LibreOffice / OnlyOffice 自动替换字体
 - PPT 页面支持图片：XML 可写 `<image src="/workspaces/{user_id}/assets/demo.png" />`，JSON 可传 `images: [{"src": "..."}]`；当前支持本地或共享工作区内的常见位图格式，远程图片需先下载到工作区
 - 可用 `ppt.root` 或环境变量 `EXTRA_MCP_PPT_ROOT` 覆盖 PPT 产物根目录；Docker Compose 已把 `/workspaces` 挂到 `extra-mcp` 容器内
 
@@ -140,7 +140,7 @@ mcp:
 
 ### PPT 生成任务推荐流程
 
-1. 如需选择风格或母版，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。复刻豆包相控阵雷达类技术介绍 PPT 时优先使用 `doubao_radar`；需要真实 PPTX 母版和统一字体时优先使用 `black_times_default` 或自定义母版模板包。
+1. 如需选择风格或母版，先调用 `ppt_template_read` 空参数读取模板列表，选择 `template_id`。复刻豆包相控阵雷达类技术介绍 PPT 时优先使用 `doubao_radar`；需要真实 PPTX 母版和统一字体时优先使用 `black_times_default`，需要封面页 + 顶部大标题 + 顶部左侧一级标题结构时使用 `top_title_section`，或使用其他自定义母版模板包。
 2. 首次生成调用 `ppt_write`，传入豆包式 XML：`<slides><slide><prompt>...</prompt></slide></slides>`，并按需传入 `template_id`。
 3. 保存返回的 `presentation_id` 与每页 `slide_id`；后续局部修改或整体换模板用 `ppt_refine`。
 4. 如需读取已有内容或确认页面 ID，用 `ppt_read`。

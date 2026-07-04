@@ -37,6 +37,12 @@ impl Orchestrator {
         }
         self.workspace.touch_user_session(&workspace_id);
         let question = request.question.trim().to_string();
+        let client_message_id = request
+            .client_message_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(128).collect::<String>());
         let has_attachments = request
             .attachments
             .as_ref()
@@ -83,6 +89,7 @@ impl Orchestrator {
             user_id,
             workspace_id,
             question,
+            client_message_id,
             session_id,
             tool_names,
             skip_tool_calls: request.skip_tool_calls,
@@ -150,6 +157,7 @@ impl Orchestrator {
             self.monitor.clone(),
             prepared.is_admin,
             0,
+            prepared.client_message_id.clone(),
         );
         let response = i18n::with_language(language, async {
             self.execute_request(prepared, emitter).await
@@ -191,6 +199,7 @@ impl Orchestrator {
             self.monitor.clone(),
             prepared.is_admin,
             start_event_id,
+            prepared.client_message_id.clone(),
         );
         let _ = self.thread_runtime.attach_subscriber(&prepared.session_id);
         let runner = {

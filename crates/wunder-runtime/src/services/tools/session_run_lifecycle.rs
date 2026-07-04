@@ -285,6 +285,7 @@ pub(crate) fn prepare_child_session(
         request: WunderRequest {
             user_id: user_id.to_string(),
             question: cleaned_task.to_string(),
+            client_message_id: None,
             tool_names: child_tool_names,
             skip_tool_calls: false,
             stream: true,

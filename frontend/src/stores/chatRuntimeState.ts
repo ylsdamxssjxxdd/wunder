@@ -94,19 +94,11 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import {
   compareChatRuntimeShadow,
   summarizeChatRuntimeShadowReport
 } from '@/realtime/chat/chatRuntimeShadow';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -118,8 +110,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -148,10 +138,6 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 import { chatWatcherSharedState } from './chatSharedState';
@@ -162,9 +148,9 @@ import {
 } from './chatDesktopMemoryGuard';
 
 import { clearSessionCommandSessions, ensureGreetingMessage, removeDemoChatSession, sortSessionsByActivity, syncDemoChatCache } from './chatDemoPanels';
-import { DEFAULT_AGENT_KEY, applyMainSession, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
+import { DEFAULT_AGENT_KEY, applyDesktopOverlayEvent, applyMainSession, normalizeAgentKey, patchSessionRuntimeFields, persistAgentSession, persistDraftSession, resolvePersistedSessionId } from './chatPersist';
 import { abortWatchStream, clearRuntimeInteractiveControllers, clearSessionWatcher, clearWatchdog, isWindowingEnabled, resolveMessageWindowLimit, resolveMessageWindowThreshold, setSessionLoading } from './chatRuntimeControls';
-import { clearChatSnapshot, findLiveAssistantInsertionIndex, findSnapshotAssistantIndexExcluding, mergeSnapshotAssistant, scheduleChatSnapshot } from './chatSnapshot';
+import { clearChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { buildMessage, clearAssistantRetryState, normalizeContextTokens, normalizeContextTotalTokens, normalizeMessageSubagents, parseOptionalCount, resolveTimestampIso, resolveTimestampMs } from './chatStats';
 import { assignStreamEventId, normalizeFlag, normalizeStreamEventId, normalizeStreamRound } from './chatStreamIds';
 import { SessionDetailSnapshotCacheEntry, SessionEventsSnapshotCacheEntry, ThreadControlSession } from './chatTypes';
@@ -882,103 +868,6 @@ export const resolveTerminableSubagentSessionIds = (items: unknown[]): string[] 
     .map((item) => String(item.session_id || '').trim())
     .filter(Boolean);
 
-export const readProtectedRealtimeMessages = (sessionId) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  if (!sessionKey) return [];
-  const entries = sessionProtectedRealtimeMessages.get(sessionKey);
-  return Array.isArray(entries) ? entries.slice() : [];
-};
-
-export const writeProtectedRealtimeMessages = (sessionId, entries) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  if (!sessionKey) return [];
-  const nextEntries = Array.isArray(entries) ? entries.slice() : [];
-  if (!nextEntries.length) {
-    sessionProtectedRealtimeMessages.delete(sessionKey);
-    return [];
-  }
-  sessionProtectedRealtimeMessages.set(sessionKey, nextEntries);
-  return nextEntries;
-};
-
-export const trackSessionProtectedRealtimeMessage = (
-  sessionId,
-  entry: {
-    eventId?: unknown;
-    role?: unknown;
-    content?: unknown;
-    createdAt?: unknown;
-    hiddenInternal?: unknown;
-  }
-) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  if (!sessionKey) return [];
-  const nextEntries = upsertProtectedRealtimeMessage(
-    readProtectedRealtimeMessages(sessionKey),
-    entry,
-    normalizeStreamEventId
-  );
-  return writeProtectedRealtimeMessages(sessionKey, nextEntries);
-};
-
-export const mergeSessionProtectedRealtimeMessages = (sessionId, messages) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  if (!sessionKey || !Array.isArray(messages)) {
-    return messages;
-  }
-  const entries = readProtectedRealtimeMessages(sessionKey);
-  if (!entries.length) {
-    return messages;
-  }
-  const result = mergeProtectedRealtimeMessages({
-    messages,
-    entries,
-    normalizeEventId: normalizeStreamEventId,
-    buildMessage,
-    assignStreamEventId
-  });
-  writeProtectedRealtimeMessages(sessionKey, result.retainedEntries);
-  return messages;
-};
-
-export const protectRealtimeChannelMessage = (
-  sessionId,
-  messages,
-  eventId,
-  role,
-  content,
-  eventTimestampMs,
-  hiddenInternal = false
-) => {
-  const sessionKey = resolveSessionKey(sessionId);
-  const normalizedEventId = normalizeStreamEventId(eventId);
-  const normalizedRole = String(role || '').trim().toLowerCase();
-  const normalizedContent = String(content || '').trim();
-  if (
-    !sessionKey ||
-    !Array.isArray(messages) ||
-    normalizedEventId === null ||
-    (normalizedRole !== 'user' && normalizedRole !== 'assistant') ||
-    !normalizedContent
-  ) {
-    return;
-  }
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role !== normalizedRole) continue;
-    if (normalizeStreamEventId(message?.stream_event_id) !== normalizedEventId) continue;
-    message.realtime_protected = true;
-    break;
-  }
-  trackSessionProtectedRealtimeMessage(sessionKey, {
-    eventId: normalizedEventId,
-    role: normalizedRole,
-    content: normalizedContent,
-    createdAt: Number.isFinite(eventTimestampMs) ? new Date(eventTimestampMs).toISOString() : undefined,
-    hiddenInternal: normalizedRole === 'user' && hiddenInternal === true
-  });
-};
-
 export const filterSessionsByAgent = (agentId, sourceSessions = []) => {
   const normalizedAgentIdRaw = String(agentId || '').trim();
   const normalizedAgentId =
@@ -1568,16 +1457,6 @@ export function settleUserStoppedSessionRuntime(store, sessionId) {
     store.clearPendingApprovals({ sessionId: targetId });
   }
   setSessionLoading(store, targetId, false);
-  if (Array.isArray(targetMessages)) {
-    // A local stop ends the live surface immediately. Reconcile from the
-    // visible transcript before later watcher/server terminal events arrive.
-    syncChatRuntimeProjectionFromLegacy(store, targetId, targetMessages, {
-      immediate: true,
-      loading: false,
-      running: false,
-      authoritative: true
-    });
-  }
   syncChatRuntimeProjectionStatus(store, targetId, 'cancelled', {
     eventType: 'session_runtime'
   });
@@ -1636,7 +1515,6 @@ export const cacheSessionMessages = (sessionId, messages) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
   touchDesktopChatSession(key);
-  dedupeAssistantMessagesInPlace(messages);
   sessionMessages.set(key, messages);
   pruneDesktopChatMemoryForStore(null, null);
 };
@@ -1740,111 +1618,20 @@ export const syncSessionContextTokens = (store, sessionId, contextTokens, contex
   syncDemoChatCache({ sessions: store.sessions });
 };
 
-const messageRuntimeSignatureCache = new WeakMap<object, string>();
-
-const buildVisibleMessageMutationSignature = (message: unknown): string => {
-  if (!message || typeof message !== 'object') {
-    return '';
-  }
-  const record = message as Record<string, unknown>;
-  const stats = (record.stats && typeof record.stats === 'object'
-    ? record.stats
-    : {}) as Record<string, unknown>;
-  const usage = (stats.usage && typeof stats.usage === 'object'
-    ? stats.usage
-    : {}) as Record<string, unknown>;
-  const workflowItems = Array.isArray(record.workflowItems) ? record.workflowItems : [];
-  const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
-  const subagents = Array.isArray(record.subagents) ? record.subagents : [];
-  const lastSubagent = subagents[subagents.length - 1] as Record<string, unknown> | undefined;
-  return [
-    String(record.role || '').trim(),
-    String(record.id || record.message_id || record.localId || '').trim(),
-    String(record.content || '').length,
-    String(record.reasoning || '').length,
-    Boolean(record.workflowStreaming),
-    Boolean(record.reasoningStreaming),
-    Boolean(record.stream_incomplete),
-    Boolean(record.failed),
-    Boolean(record.cancelled),
-    Boolean(record.resume_available),
-    Boolean(record.slow_client),
-    Number(stats.contextTokens ?? stats.context_tokens ?? stats.contextPreviewTokens ?? 0) || 0,
-    Number(stats.contextTotalTokens ?? stats.context_total_tokens ?? 0) || 0,
-    Number(stats.partialQuotaConsumed ?? stats.partial_quota_consumed ?? 0) || 0,
-    Number(usage.total ?? usage.total_tokens ?? 0) || 0,
-    Number(usage.input ?? usage.input_tokens ?? 0) || 0,
-    Number(usage.output ?? usage.output_tokens ?? 0) || 0,
-    Number(stats.prefill_duration_s ?? 0) || 0,
-    Number(stats.decode_duration_s ?? 0) || 0,
-    Number(stats.avg_model_round_speed_tps ?? 0) || 0,
-    workflowItems.length,
-    lastWorkflowItem
-      ? [
-          String(lastWorkflowItem.id || lastWorkflowItem.toolCallId || lastWorkflowItem.eventType || '').trim(),
-          String(lastWorkflowItem.status || '').trim(),
-          String(lastWorkflowItem.title || lastWorkflowItem.toolName || '').length,
-          String(lastWorkflowItem.detail || '').length
-        ].join(':')
-      : '',
-    subagents.length,
-    lastSubagent
-      ? [
-          String(lastSubagent.key || lastSubagent.run_id || lastSubagent.session_id || '').trim(),
-          String(lastSubagent.status || '').trim(),
-          String(lastSubagent.summary || '').length
-        ].join(':')
-      : ''
-  ].join('::');
-};
-
-const hasVisibleMessageMutation = (messages: unknown[]): boolean => {
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return false;
-  }
-  let changed = false;
-  messages.forEach((message) => {
-    if (!message || typeof message !== 'object') {
-      return;
-    }
-    const signature = buildVisibleMessageMutationSignature(message);
-    const previous = messageRuntimeSignatureCache.get(message);
-    if (previous !== signature) {
-      changed = true;
-      messageRuntimeSignatureCache.set(message, signature);
-    }
-  });
-  return changed;
-};
-
 export const notifySessionSnapshot = (store, sessionId, messages, immediate = false, options: { skipWindowing?: boolean } = {}) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
   dedupeTerminalCompactionMarkersInPlace(messages);
-  const visibleChanged = hasVisibleMessageMutation(messages);
-  const shouldPropagateVisibleChange = immediate || visibleChanged;
   cacheSessionMessages(key, messages);
-  if (shouldPropagateVisibleChange) {
-    syncChatRuntimeProjectionFromLegacy(store, key, messages, {
-      immediate
-    });
-    inspectChatRuntimeShadow(store, key, messages, {
-      phase: 'legacy-snapshot'
-    });
-  }
+  inspectChatRuntimeShadow(store, key, messages, {
+    phase: 'legacy-snapshot'
+  });
   const activeKey = resolveSessionKey(store?.activeSessionId);
   if (activeKey && activeKey === key) {
-    if (store && typeof store === 'object') {
-      if (shouldPropagateVisibleChange) {
-        store.messageMutationVersion = Number(store.messageMutationVersion || 0) + 1;
-      }
-    }
-    if (shouldPropagateVisibleChange && options.skipWindowing !== true) {
+    if (options.skipWindowing !== true) {
       applyMessageWindow(store, key, messages);
     }
-    if (shouldPropagateVisibleChange) {
-      scheduleChatSnapshot(store, immediate);
-    }
+    scheduleChatSnapshot(store, immediate);
   }
 };
 
@@ -1863,7 +1650,7 @@ export const resolveProjectionAgentId = (store, sessionId): string => {
   return String(session?.agent_id || '').trim();
 };
 
-export const syncChatRuntimeProjectionFromLegacy = (
+export const syncChatRuntimeProjectionFromSnapshot = (
   store,
   sessionId,
   messages = null,
@@ -1889,21 +1676,24 @@ export const syncChatRuntimeProjectionFromLegacy = (
     options.running === undefined
       ? loading || isThreadRuntimeBusy(runtime?.threadStatus)
       : Boolean(options.running);
-  const result = applyChatRuntimeEvent(
-    projection,
-    buildLegacyMessagesReconciledEvent({
-      sessionId: key,
-      agentId: resolveProjectionAgentId(store, key),
-      messages: projectionMessages,
-      loading,
-      running,
+  const result = applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    messages: projectionMessages,
+    payload: {
+      transcript: projectionMessages,
+      runtime_status: running || loading ? 'running' : 'idle',
       authoritative: options.authoritative === true
-    })
-  );
+    },
+    authoritative: options.authoritative === true
+  });
   if (result.applied) {
     markRuntimeProjectionChanged(store, {
       immediate: options.immediate === true || options.loading !== undefined || options.running !== undefined,
-      reason: 'legacy-reconcile'
+      reason: 'snapshot-reconcile'
     });
   }
   pruneDesktopChatMemoryForStore(store);
@@ -1917,6 +1707,237 @@ const isSyntheticUiOnlyMessage = (message: unknown): boolean =>
       ((message as Record<string, unknown>).isGreeting === true ||
         (message as Record<string, unknown>).is_greeting === true)
   );
+
+const isUsageContextStreamEvent = (eventType) => {
+  const normalized = String(eventType || '').trim().toLowerCase();
+  return (
+    normalized === 'token_usage' ||
+    normalized === 'round_usage' ||
+    normalized === 'context_usage' ||
+    normalized === 'quota_usage'
+  );
+};
+
+const syncSessionContextTokensFromRuntimeProjection = (store, sessionId) => {
+  const key = resolveSessionKey(sessionId);
+  const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
+  if (!key || !projection) return;
+  const assistant = [...selectVisibleMessageProjections(projection, key)]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.display?.stats);
+  if (!assistant) return;
+  const stats = assistant.display?.stats as Record<string, unknown> | undefined;
+  const contextTokens = normalizeContextTokens(
+    stats?.contextTokens ??
+      stats?.context_tokens ??
+      stats?.context_occupancy_tokens ??
+      stats?.contextOccupancyTokens ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.context_occupancy_tokens ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.contextOccupancyTokens ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.contextTokens ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.context_tokens
+  );
+  if (contextTokens === null || contextTokens <= 0) return;
+  const contextTotalTokens = normalizeContextTotalTokens(
+    stats?.contextTotalTokens ??
+      stats?.context_total_tokens ??
+      stats?.context_max_tokens ??
+      stats?.max_context ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.max_context ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.maxContext ??
+      (stats?.context_usage as Record<string, unknown> | undefined)?.context_max_tokens
+  );
+  syncSessionContextTokens(store, key, contextTokens, contextTotalTokens);
+};
+
+const COMMAND_SESSION_STREAM_EVENTS = new Set([
+  'command_session_delta',
+  'command_session_start',
+  'command_session_status',
+  'command_session_exit',
+  'command_session_summary'
+]);
+
+const extractCanonicalStreamData = (payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const data = payload.data;
+  return data && typeof data === 'object' && !Array.isArray(data)
+    ? data
+    : payload;
+};
+
+const normalizeCommandSessionRef = (payload, data) => {
+  for (const source of [data, payload]) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    const ref = String(source.command_session_id ?? source.commandSessionId ?? '').trim();
+    if (ref) return ref;
+  }
+  return '';
+};
+
+const COMMAND_SESSION_TOOL_OUTPUT_EVENTS = new Set([
+  'tool_output',
+  'tool_output_delta'
+]);
+
+const TEAM_AGENT_REFRESH_EVENTS = new Set([
+  'team_task_result',
+  'team_finish',
+  'team_error'
+]);
+
+const DESKTOP_OVERLAY_STREAM_EVENTS = new Set([
+  'desktop_controller_hint',
+  'desktop_controller_hint_done',
+  'desktop_monitor_countdown',
+  'desktop_monitor_countdown_done'
+]);
+
+const applyCommandSessionCanonicalSideEffect = (sessionId, eventType, payload, data) => {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  if (
+    !COMMAND_SESSION_STREAM_EVENTS.has(normalizedEventType) &&
+    !COMMAND_SESSION_TOOL_OUTPUT_EVENTS.has(normalizedEventType)
+  ) {
+    return false;
+  }
+  const commandSessionId = normalizeCommandSessionRef(payload, data);
+  if (!commandSessionId) return false;
+  const source = data && typeof data === 'object' && !Array.isArray(data)
+    ? data
+    : payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? payload
+      : {};
+  const store = useCommandSessionStore();
+  if (
+    normalizedEventType === 'command_session_delta' ||
+    normalizedEventType === 'tool_output' ||
+    normalizedEventType === 'tool_output_delta'
+  ) {
+    store.appendDelta(
+      resolveSessionKey(sessionId),
+      commandSessionId,
+      source.stream,
+      source.delta ?? source.output ?? source.content ?? source.text ?? '',
+      source
+    );
+    return true;
+  }
+  store.upsertSnapshot(
+    resolveSessionKey(sessionId) || String(source.session_id ?? source.sessionId ?? ''),
+    source
+  );
+  return true;
+};
+
+const isSubagentCanonicalEvent = (eventType: string): boolean =>
+  eventType.startsWith('subagent_');
+
+const isTeamCanonicalEvent = (eventType: string): boolean =>
+  eventType.startsWith('team_');
+
+const isSubagentControlToolResultEvent = (
+  eventType: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): boolean => {
+  if (eventType !== 'tool_result') return false;
+  const normalized = String(
+    data.tool ??
+      data.name ??
+      payload.tool ??
+      payload.name ??
+      ''
+  ).trim().toLowerCase();
+  return normalized.includes('subagent') ||
+    normalized.includes('child_agent') ||
+    normalized.includes('子智能体');
+};
+
+const applyCollaborationCanonicalSideEffect = (
+  sessionId,
+  eventType: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+) => {
+  if (isSubagentCanonicalEvent(eventType) || isSubagentControlToolResultEvent(eventType, payload, data)) {
+    const key = resolveSessionKey(sessionId);
+    if (key) {
+      sessionSubagentsCache.delete(key);
+    }
+  }
+  if (TEAM_AGENT_REFRESH_EVENTS.has(eventType)) {
+    const workerAgentId = String(data.agent_id ?? data.agentId ?? payload.agent_id ?? payload.agentId ?? '').trim();
+    emitAgentRuntimeRefresh({
+      agentIds: workerAgentId ? [workerAgentId] : undefined
+    });
+  }
+};
+
+const collectCanonicalWorkspacePathHints = (
+  data: Record<string, unknown>,
+  payload: Record<string, unknown>
+): string[] => {
+  const values = [
+    data.path,
+    data.file_path,
+    data.filePath,
+    data.workspace_path,
+    data.workspacePath,
+    payload.path,
+    payload.file_path,
+    payload.filePath,
+    payload.workspace_path,
+    payload.workspacePath
+  ];
+  for (const source of [data.paths, data.changed_paths, data.changedPaths, payload.paths, payload.changed_paths, payload.changedPaths]) {
+    if (Array.isArray(source)) {
+      source.forEach((value) => values.push(value));
+    }
+  }
+  return Array.from(new Set(
+    values
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean)
+  ));
+};
+
+const applyWorkspaceUpdateCanonicalSideEffect = (
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+) => {
+  const changedPaths = collectCanonicalWorkspacePathHints(data, payload);
+  emitWorkspaceRefresh({
+    sessionId: payload.session_id ?? payload.sessionId ?? data.session_id ?? data.sessionId ?? null,
+    workspaceId: data.workspace_id ?? data.workspaceId ?? payload.workspace_id ?? payload.workspaceId ?? null,
+    agentId: data.agent_id ?? data.agentId ?? payload.agent_id ?? payload.agentId ?? '',
+    containerId: data.container_id ?? data.containerId ?? payload.container_id ?? payload.containerId ?? null,
+    treeVersion: data.tree_version ?? data.treeVersion ?? payload.tree_version ?? payload.treeVersion ?? null,
+    reason: data.reason || payload.reason || 'workspace_update',
+    ...(changedPaths.length ? { path: changedPaths[0], paths: changedPaths } : {})
+  });
+};
+
+const applyCanonicalStreamSideEffects = (store, sessionId, eventType, payload) => {
+  const normalizedEventType = String(eventType || '').trim().toLowerCase();
+  const data = extractCanonicalStreamData(payload);
+  if (normalizedEventType === 'thread_control') {
+    void handleThreadControlWorkflowEvent(store, data);
+    return;
+  }
+  if (normalizedEventType === 'workspace_update') {
+    applyWorkspaceUpdateCanonicalSideEffect(payload, data);
+    return;
+  }
+  if (DESKTOP_OVERLAY_STREAM_EVENTS.has(normalizedEventType)) {
+    applyDesktopOverlayEvent(normalizedEventType, data);
+    return;
+  }
+  applyCommandSessionCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
+  if (isSubagentCanonicalEvent(normalizedEventType) || isTeamCanonicalEvent(normalizedEventType) || normalizedEventType === 'tool_result') {
+    applyCollaborationCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
+  }
+};
 
 export const syncChatRuntimeProjectionStatus = (
   store,
@@ -2023,7 +2044,7 @@ export const applyCanonicalStreamRuntimeEvent = (
   eventType,
   payload,
   eventId,
-  options: { requestId?: string; phase?: string; onSyncRequired?: (reason: string) => void } = {}
+  options: { requestId?: string; phase?: string; onSyncRequired?: (reason: string) => void; sideEffects?: boolean } = {}
 ) => {
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
@@ -2044,16 +2065,32 @@ export const applyCanonicalStreamRuntimeEvent = (
     immediate: options.phase === 'snapshot',
     reason: `stream:${options.phase || 'ws'}`
   });
+  if (isUsageContextStreamEvent(eventType) && results.some((result) => result.applied)) {
+    syncSessionContextTokensFromRuntimeProjection(store, key);
+  }
+  if (
+    options.sideEffects === true ||
+    (
+      (options.phase === 'watch' || options.phase === 'snapshot') &&
+      results.some((result) => result.applied)
+    )
+  ) {
+    applyCanonicalStreamSideEffects(store, key, eventType, payload);
+  }
   const session = projection.sessions[key];
   if (
     typeof options.onSyncRequired === 'function' &&
     session?.syncRequired &&
     results.some((result) =>
       result.reason === 'event_seq_gap' ||
+      result.reason === 'event_seq_gap_timeout' ||
       result.reason === 'pending_event_seq_gap'
     )
   ) {
-    const reason = results.some((result) => result.reason === 'event_seq_gap')
+    const reason = results.some((result) =>
+      result.reason === 'event_seq_gap' ||
+      result.reason === 'event_seq_gap_timeout'
+    )
       ? 'event_seq_gap'
       : 'pending_event_seq_gap';
     options.onSyncRequired(reason);
@@ -2072,6 +2109,7 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
     userTurnId?: string;
     modelTurnId?: string;
     assistantMessageId?: string;
+    attachments?: unknown[];
   }
 ) => {
   const key = resolveSessionKey(payload?.sessionId);
@@ -2085,7 +2123,8 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
     content: payload.content,
     clientMessageId: payload.clientMessageId,
     createdAt: payload.createdAt,
-    userTurnId: payload.userTurnId
+    userTurnId: payload.userTurnId,
+    attachments: payload.attachments
   });
   const result = applyChatRuntimeEvent(projection, event);
   const assistantMessageId = String(payload.assistantMessageId || '').trim();
@@ -2112,6 +2151,70 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
     markRuntimeProjectionChanged(store, {
       immediate: true,
       reason: 'client-submitted'
+    });
+  }
+  pruneDesktopChatMemoryForStore(store);
+  return event;
+};
+
+export const applyLocalAssistantTurnTerminalRuntimeEvent = (
+  store,
+  payload: {
+    sessionId: string;
+    terminal: 'failed' | 'cancelled';
+    content?: unknown;
+    reason?: unknown;
+    requestId?: string | null;
+    userTurnId?: string | null;
+    modelTurnId?: string | null;
+    assistantMessageId?: string | null;
+  }
+) => {
+  const key = resolveSessionKey(payload?.sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return null;
+  touchDesktopChatSession(key);
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const session = projection.sessions[key];
+  const requestedAssistantMessageId = String(payload.assistantMessageId || '').trim();
+  const projectedAssistant = requestedAssistantMessageId
+    ? session?.messageById?.[requestedAssistantMessageId] || null
+    : null;
+  const activeProjectedAssistant = projectedAssistant || Object.values(session?.messageById || {})
+    .filter((message) =>
+      message?.role === 'assistant' &&
+      (
+        message.status === 'placeholder' ||
+        message.status === 'waiting_first_output' ||
+        message.status === 'streaming' ||
+        message.status === 'tooling'
+      )
+    )
+    .sort((left, right) => Number(right.updatedSeq || 0) - Number(left.updatedSeq || 0))[0] || null;
+  const modelTurnId = String(payload.modelTurnId || activeProjectedAssistant?.modelTurnId || '').trim();
+  const userTurnId = String(payload.userTurnId || activeProjectedAssistant?.userTurnId || '').trim();
+  const assistantMessageId = String(requestedAssistantMessageId || activeProjectedAssistant?.id || '').trim();
+  const event = {
+    event_type: payload.terminal === 'cancelled' ? 'turn_cancelled' : 'turn_failed',
+    source: 'local',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    event_id: `local:${key}:${modelTurnId || payload.requestId || Date.now()}:${payload.terminal}`,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    content: String(payload.content || ''),
+    payload: {
+      reason: String(payload.reason || payload.terminal || ''),
+      source_event_type: payload.terminal === 'cancelled' ? 'local_cancelled' : 'local_failed'
+    }
+  };
+  const result = applyChatRuntimeEvent(projection, event);
+  if (result.applied) {
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      reason: `local-turn-${payload.terminal}`
     });
   }
   pruneDesktopChatMemoryForStore(store);
@@ -2462,9 +2565,6 @@ export const shouldPreserveUnmatchedLiveAssistant = (message) => {
   if (!message || message.role !== 'assistant' || message.isGreeting) {
     return false;
   }
-  if (message.realtime_protected === true) {
-    return true;
-  }
   if (isPendingAssistantMessage(message)) {
     return true;
   }
@@ -2490,9 +2590,10 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
       }
     };
   }
+  const mergedMessages = hydratedMessages.slice();
   if (!Array.isArray(liveMessages) || liveMessages.length === 0) {
     return {
-      messages: hydratedMessages,
+      messages: mergedMessages,
       debug: {
         matchedLiveAssistantCount: 0,
         appendedLivePending: false,
@@ -2500,10 +2601,12 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
       }
     };
   }
-  const liveAssistants = buildAssistantMatchEntries(liveMessages);
+  const liveAssistants = liveMessages.filter(
+    (message) => message?.role === 'assistant' && !message?.isGreeting
+  );
   if (liveAssistants.length === 0) {
     return {
-      messages: hydratedMessages,
+      messages: mergedMessages,
       debug: {
         matchedLiveAssistantCount: 0,
         appendedLivePending: false,
@@ -2511,44 +2614,10 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
       }
     };
   }
-  const matchedLiveAssistants = new Set();
-  const hydratedAssistantEntryMap = buildAssistantMatchEntryMap(hydratedMessages);
-  const mergedMessages = hydratedMessages.map((message) => {
-    if (!message || message.role !== 'assistant' || message.isGreeting) {
-      return message;
-    }
-    const matchIndex = findSnapshotAssistantIndexExcluding(
-      message,
-      hydratedAssistantEntryMap.get(message),
-      liveAssistants,
-      matchedLiveAssistants
-    );
-    if (matchIndex < 0) {
-      return message;
-    }
-    const liveTarget = liveAssistants[matchIndex].message;
-    matchedLiveAssistants.add(matchIndex);
-    mergeSnapshotAssistant(liveTarget, message);
-    return liveTarget;
-  });
-  // Preserve only live assistants that are still semantically authoritative:
-  // pending live output, explicitly realtime-protected items, or terminal
-  // compaction markers. Older completed assistants should defer to hydrated
-  // history; otherwise stale image/text replies can be reinserted forever.
-  for (let i = 0; i < liveAssistants.length; i += 1) {
-    if (!matchedLiveAssistants.has(i)) {
-      const liveTarget = liveAssistants[i].message;
-      if (!shouldPreserveUnmatchedLiveAssistant(liveTarget)) {
-        continue;
-      }
-      const insertAfterIndex = findLiveAssistantInsertionIndex(liveTarget, mergedMessages);
-      if (insertAfterIndex >= 0) {
-        mergedMessages.splice(insertAfterIndex + 1, 0, liveTarget);
-      } else {
-        mergedMessages.push(liveTarget);
-      }
-      matchedLiveAssistants.add(i);
-    }
+  for (const liveTarget of liveAssistants) {
+    if (!shouldPreserveUnmatchedLiveAssistant(liveTarget)) continue;
+    if (mergedMessages.includes(liveTarget)) continue;
+    mergedMessages.push(liveTarget);
   }
   const livePendingAssistant = findPendingAssistantMessage(liveMessages);
   let appendedLivePending = false;
@@ -2556,10 +2625,7 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
     isCompactionMarkerAssistantMessage(livePendingAssistant) &&
     isSupersededRunningManualCompactionMarker(livePendingAssistant, mergedMessages);
   // Check if livePendingAssistant was already matched by checking its index in liveAssistants
-  const livePendingAssistantIndex = liveAssistants.findIndex(
-    (entry) => entry.message === livePendingAssistant
-  );
-  const livePendingAlreadyMatched = livePendingAssistantIndex >= 0 && matchedLiveAssistants.has(livePendingAssistantIndex);
+  const livePendingAlreadyMatched = Boolean(livePendingAssistant && mergedMessages.includes(livePendingAssistant));
   if (
     isForegroundRealtimeAssistant(livePendingAssistant) &&
     !livePendingAlreadyMatched &&
@@ -2571,7 +2637,7 @@ export const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMe
   return {
     messages: mergedMessages,
     debug: {
-      matchedLiveAssistantCount: matchedLiveAssistants.size,
+      matchedLiveAssistantCount: 0,
       liveAssistantCount: liveAssistants.length,
       appendedLivePending,
       suppressedLivePendingCompaction,

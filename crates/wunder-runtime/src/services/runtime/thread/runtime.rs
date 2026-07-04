@@ -154,6 +154,8 @@ impl ThreadRuntime {
         if user_id.is_empty() {
             return Err(anyhow!(i18n::t("error.user_id_required")));
         }
+        request.client_message_id =
+            normalize_client_message_id(request.client_message_id.as_deref());
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
         let explicit_session = request
             .session_id
@@ -656,7 +658,9 @@ impl ThreadRuntime {
         }
 
         if agent_id.is_empty() {
-            if let Ok(Some(session)) = self.user_store.get_chat_session(cleaned_user, cleaned_session)
+            if let Ok(Some(session)) = self
+                .user_store
+                .get_chat_session(cleaned_user, cleaned_session)
             {
                 agent_id = session.agent_id.unwrap_or_default();
             }
@@ -664,7 +668,12 @@ impl ThreadRuntime {
 
         let mut thread_status_reset = false;
         if !agent_id.trim().is_empty() {
-            self.update_thread_status(cleaned_user, &agent_id, cleaned_session, THREAD_STATUS_IDLE)?;
+            self.update_thread_status(
+                cleaned_user,
+                &agent_id,
+                cleaned_session,
+                THREAD_STATUS_IDLE,
+            )?;
             thread_status_reset = true;
         }
         let settlement_event_id = self
@@ -886,11 +895,8 @@ impl ThreadRuntime {
             .await
             .unwrap_or(0);
         let queue_event_id = self
-            .emit_queue_event(
-                &record.session_id,
-                &record.user_id,
-                "queue_enter",
-                json!({
+            .emit_queue_event(&record.session_id, &record.user_id, "queue_enter", {
+                let mut payload = json!({
                     "queue_id": record.task_id,
                     "thread_id": record.thread_id,
                     "session_id": record.session_id,
@@ -898,8 +904,14 @@ impl ThreadRuntime {
                     "user_id": record.user_id,
                     "queue_ahead": queue_stats.queue_ahead,
                     "queue_total": queue_stats.queue_total,
-                }),
-            )
+                });
+                if let (Some(client_message_id), Value::Object(ref mut map)) =
+                    (request.client_message_id.as_deref(), &mut payload)
+                {
+                    map.insert("client_message_id".to_string(), json!(client_message_id));
+                }
+                payload
+            })
             .await;
         Ok(QueueInfo {
             task_id: record.task_id,
@@ -1109,7 +1121,10 @@ impl ThreadRuntime {
 
         let mut data = Map::new();
         data.insert("session_id".to_string(), json!(cleaned_session));
-        data.insert("thread_id".to_string(), json!(format!("thread_{cleaned_session}")));
+        data.insert(
+            "thread_id".to_string(),
+            json!(format!("thread_{cleaned_session}")),
+        );
         data.insert("status".to_string(), json!(cleaned_status));
         data.insert("thread_status".to_string(), json!(cleaned_status));
         data.insert("loaded".to_string(), json!(true));
@@ -1458,8 +1473,13 @@ impl ThreadRuntime {
         self.user_store
             .get_agent_task(cleaned)
             .map(|task| {
-                task.map(|record| record.status.trim().eq_ignore_ascii_case(TASK_STATUS_CANCELLED))
-                    .unwrap_or(false)
+                task.map(|record| {
+                    record
+                        .status
+                        .trim()
+                        .eq_ignore_ascii_case(TASK_STATUS_CANCELLED)
+                })
+                .unwrap_or(false)
             })
             .unwrap_or(false)
     }
@@ -1472,6 +1492,13 @@ impl ThreadRuntime {
 
 fn normalize_agent_id(value: Option<&str>) -> String {
     value.unwrap_or("").trim().to_string()
+}
+
+fn normalize_client_message_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(128).collect::<String>())
 }
 
 fn now_ts() -> f64 {

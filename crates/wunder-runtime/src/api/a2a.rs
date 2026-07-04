@@ -741,6 +741,7 @@ impl A2aService {
         let request = WunderRequest {
             user_id: user_id.clone(),
             question,
+            client_message_id: None,
             tool_names,
             skip_tool_calls: false,
             stream: false,
@@ -833,6 +834,7 @@ impl A2aService {
         let request = WunderRequest {
             user_id: user_id.clone(),
             question,
+            client_message_id: None,
             tool_names,
             skip_tool_calls: false,
             stream: true,

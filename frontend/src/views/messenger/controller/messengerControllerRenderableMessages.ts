@@ -186,17 +186,9 @@ import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
 import {
   buildChatRuntimeRenderableMessages,
-  hasChatRuntimeRenderSession,
-  isChatRuntimeProjectionRenderEnabled,
   isChatRuntimeProjectionRenderShadowEnabled,
-  resolveChatRuntimeRenderableSourceDecision,
-  resolveChatRuntimeProjectionRenderMode,
   summarizeChatRuntimeRenderableMessages
 } from '@/realtime/chat/chatRuntimeRenderAdapter';
-import {
-  compareChatRuntimeRenderShadow,
-  summarizeChatRuntimeRenderShadowReport
-} from '@/realtime/chat/chatRuntimeRenderShadow';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -638,38 +630,26 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return ctx.hasMessageContent(message?.content) || ctx.hasWorkflowOrThinking(message);
   };
 
-  const buildLegacyAgentRenderableMessages = (): AgentRenderableMessage[] => {
-      const renderable = ctx.chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
+  const resolveSyntheticGreetingRenderable = (): AgentRenderableMessage | null => {
+      for (let sourceIndex = 0; sourceIndex < ctx.chatStore.messages.length; sourceIndex += 1) {
+          const rawMessage = ctx.chatStore.messages[sourceIndex];
       const message = (rawMessage || {}) as Record<string, unknown>;
-      if (!ctx.shouldRenderAgentMessage(message)) {
-          return acc;
+          if (!ctx.isGreetingMessage(message) || !ctx.shouldRenderAgentMessage(message)) {
+              continue;
       }
-      if (ctx.isGreetingMessage(message) &&
-          acc.some((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>))) {
-          return acc;
-      }
-      acc.push({
+          return {
           key: ctx.resolveAgentMessageKey(message, sourceIndex),
           sourceIndex,
           message
-      });
-      return acc;
-      }, []);
-      const firstGreeting = renderable.find((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
-      if (!firstGreeting) {
-          return renderable;
+          };
       }
-      return [
-          firstGreeting,
-          ...renderable.filter((item) => item !== firstGreeting && !ctx.isGreetingMessage(item.message as Record<string, unknown>))
-      ];
+      return null;
   };
 
   const mergeProjectionRenderableWithSyntheticUiMessages = (
-      legacyRenderable: AgentRenderableMessage[],
+      syntheticGreeting: AgentRenderableMessage | null,
       projectionRenderable: AgentRenderableMessage[]
   ): AgentRenderableMessage[] => {
-      const syntheticGreeting = legacyRenderable.find((item) => ctx.isGreetingMessage(item.message as Record<string, unknown>));
       const projectedWithoutGreeting = projectionRenderable.filter((item) => !ctx.isGreetingMessage(item.message as Record<string, unknown>));
       return syntheticGreeting ? [syntheticGreeting, ...projectedWithoutGreeting] : projectedWithoutGreeting;
   };
@@ -697,91 +677,26 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       });
   };
 
-  let lastAgentRenderShadowSignature = '';
-  const inspectAgentRuntimeRenderShadow = (legacyRenderable: AgentRenderableMessage[], projectionRenderable: AgentRenderableMessage[]) => {
-      if (!isChatDebugEnabled() && !isChatRuntimeProjectionRenderShadowEnabled())
-          return;
-      if (!projectionRenderable.length && !legacyRenderable.length)
-          return;
-      const report = compareChatRuntimeRenderShadow({
-          sessionId: ctx.chatStore.activeSessionId,
-          legacy: legacyRenderable,
-          projection: projectionRenderable
-      });
-      if (report.ok)
-          return;
-      if (report.fingerprint === lastAgentRenderShadowSignature)
-          return;
-      lastAgentRenderShadowSignature = report.fingerprint;
-      const summary = summarizeChatRuntimeRenderShadowReport(report);
-      if (isChatDebugEnabled()) {
-          chatDebugLog('chat.runtime.render', 'render-source-drift', {
-              ...summary,
-              legacyMessages: buildMessageIdentityDebugList(
-                  legacyRenderable.map((item) => item.message as Record<string, unknown>)
-              ),
-              projectionMessages: buildMessageIdentityDebugList(
-                  projectionRenderable.map((item) => item.message as Record<string, unknown>)
-              )
-          });
-      } else if (typeof console !== 'undefined') {
-          console.info('[wunder-chat-runtime-render] render-source-drift', summary);
-      }
-  };
-
   ctx.agentRenderableMessages = computed<AgentRenderableMessage[]>(() => {
-      const _renderVersion = ctx.chatStore.messageMutationVersion;
-      const renderMode = resolveChatRuntimeProjectionRenderMode();
       const shadowEnabled = isChatRuntimeProjectionRenderShadowEnabled();
-      const legacyRenderable = buildLegacyAgentRenderableMessages();
-      const shouldUseProjectionRender =
-        ctx.sessionHub.activeSection === 'messages' &&
-        (renderMode !== 'legacy' || shadowEnabled);
-      if (shouldUseProjectionRender) {
-          const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
-          const projection = toRaw(ctx.chatStore.runtimeProjection);
-          const projectionRenderable = buildChatRuntimeRenderableMessages({
-            projection,
-            sessionId: ctx.chatStore.activeSessionId,
-            shouldRenderMessage: ctx.shouldRenderAgentMessage
-          }) as AgentRenderableMessage[];
-          const displayProjectionRenderable = mergeProjectionRenderableWithSyntheticUiMessages(
-              legacyRenderable,
-              projectionRenderable
-          );
-          const hasProjectionSession = hasChatRuntimeRenderSession(projection, ctx.chatStore.activeSessionId);
-          const decision = resolveChatRuntimeRenderableSourceDecision({
-              renderMode,
-              projectionCount: displayProjectionRenderable.length,
-              projectionSessionKnown: hasProjectionSession,
-              shadowEnabled
-          });
-          if (decision.inspectShadow) {
-              inspectAgentRuntimeRenderShadow(legacyRenderable, displayProjectionRenderable);
-          }
-          if (decision.event === 'projection-source') {
-              logAgentRenderSource('projection-source', {
-                  activeSessionId: ctx.chatStore.activeSessionId,
-                  projectionSessionKnown: hasProjectionSession,
-                  renderMode,
-                  ...summarizeChatRuntimeRenderableMessages(displayProjectionRenderable)
-              }, displayProjectionRenderable);
-              return displayProjectionRenderable;
-          }
-          if (decision.event === 'projection-empty-fallback') {
-              logAgentRenderSource('projection-empty-fallback', {
-                  activeSessionId: ctx.chatStore.activeSessionId,
-                  legacyCount: legacyRenderable.length
-              }, legacyRenderable);
-          } else if (decision.event === 'projection-shadow') {
-              logAgentRenderSource('projection-shadow', {
-                  activeSessionId: ctx.chatStore.activeSessionId,
-                  renderMode,
-                  ...summarizeChatRuntimeRenderableMessages(displayProjectionRenderable)
-              }, displayProjectionRenderable);
-          }
-      }
-      return legacyRenderable;
+      const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
+      const syntheticGreeting = resolveSyntheticGreetingRenderable();
+      const projection = toRaw(ctx.chatStore.runtimeProjection);
+      const projectionRenderable = buildChatRuntimeRenderableMessages({
+        projection,
+        sessionId: ctx.chatStore.activeSessionId,
+        shouldRenderMessage: ctx.shouldRenderAgentMessage
+      }) as AgentRenderableMessage[];
+      const displayProjectionRenderable = mergeProjectionRenderableWithSyntheticUiMessages(
+          syntheticGreeting,
+          projectionRenderable
+      );
+      logAgentRenderSource('projection-source', {
+          activeSessionId: ctx.chatStore.activeSessionId,
+          shadowEnabled,
+          ...summarizeChatRuntimeRenderableMessages(displayProjectionRenderable)
+      }, displayProjectionRenderable);
+      return displayProjectionRenderable;
   });
 
   ctx.resolveActiveAgentRenderableMessageRecords = (): Record<string, unknown>[] => {
@@ -791,9 +706,7 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
               .map((item) => (item?.message || {}) as Record<string, unknown>)
               .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
       }
-      return (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])
-          .map((item) => (item || {}) as Record<string, unknown>)
-          .filter((item) => item && typeof item === 'object' && !Array.isArray(item));
+      return [];
   };
 
   ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => {
@@ -883,7 +796,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const workflowItems = Array.isArray(message.workflowItems)
           ? (message.workflowItems as unknown[])
           : [];
-      const renderVersion = ctx.chatStore.messageMutationVersion;
       const projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
       const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
       const workflowSignature = lastWorkflowItem
@@ -907,7 +819,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           : '';
       return [
           ctx.latestAgentRenderableMessageKey.value,
-          renderVersion,
           projectionRenderVersion,
           String(message.id || message.localId || '').trim(),
           String(message.content || '').length,
@@ -1217,7 +1128,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const subagents = Array.isArray(message.subagents) ? (message.subagents as unknown[]) : [];
       const signature = [
           ctx.chatStore.activeSessionId,
-          ctx.chatStore.messageMutationVersion,
           ctx.chatStore.runtimeProjectionVersion,
           nowTick,
           String(messageKey || '').trim(),

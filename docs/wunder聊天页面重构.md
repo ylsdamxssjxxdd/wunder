@@ -1,12 +1,12 @@
 # wunder 聊天页面重构设计
 
-## 上线收口状态（2026-05-23）
+## 上线收口状态（2026-07-03）
 
-- 当前结论：聊天页主链路已切到 canonical runtime projection，刷新后历史顺序、停止后取消标记、同轮 assistant 合并和长输出节流已经形成一条可上线验证的闭环。
-- 默认行为：Messenger 气泡渲染优先读取 `chatRuntimeReducer` 的可见消息投影；旧 `messages` 数组仅作为未知空投影会话的兜底和显式回退路径。
-- 最近收口：失败事件与随后 `turn_terminal` 会合并到同一条 assistant 失败消息；错误正文保留但不会重复生成错误气泡。运行时工具名送入模型前统一清洗为 API 安全函数名，并保留映射回原始运行时名，避免外部渠道触发非法 function name 后重复渲染错误。
+- 当前结论：聊天页主渲染链路已切到 canonical runtime projection 单一真相源；刷新后历史顺序、停止后取消标记、同轮 assistant 合并、长输出节流、`client_message_id` 乐观合并和 `event_seq` gap replay 已形成闭环。
+- 默认行为：Messenger 气泡渲染只读取 `chatRuntimeReducer` 的可见消息投影；旧 `messages` 数组保留为历史 hydration、兼容缓存和 UI-only greeting 输入，不再作为气泡列表回退源或渲染时钟。
+- 最近收口：后端在本轮对象型流事件中统一回带 `client_message_id`；前端删除 legacy render fallback、raw 回借和 `messageMutationVersion` 渲染驱动；watch 在 send/resume controller 存在时仍以 projection-only 模式消费事件，避免发送流挂死后 watch 永久静默。
 - 外部渠道实时性：当前打开的聊天 session 即使处于空闲态，也保持轻量 `watch` 订阅；微信/渠道/后台入站写入同一会话的 `channel_message` 后应即时进入气泡列表，不再依赖刷新或下一次 hydrate 才出现。
-- 回退方式：线上如遇不可接受回归，可设置 URL 参数 `chat_runtime_render=legacy` / `chatRuntimeRender=off`，或 localStorage `wunder:chat-runtime-render=legacy/off/0/false`，快速退回旧渲染源；`shadow` 模式仍可用于只比较不切换。
+- 诊断方式：`shadow` 模式仍可用于记录 projection 与旧缓存的差异；`legacy/off/false` 等历史开关不再切回旧渲染源，避免线上状态源再次分裂。
 - 本次验证：已通过 `npm run test:chat-runtime-reducer --workspace wunder-frontend`；Rust 侧已通过 `cargo test --release -j 8 prompt::tests::model_function_name_uses_readable_runtime_name_for_mcp_tools --lib -- --nocapture`。全量 `cargo test --release -j 8 model_function_name` 当前被无关测试中的 `UserAgentRecord.visible_unit_ids` 初始化缺字段阻断。
 - 仍需上线观察：真实长输出、工具调用、审批、子智能体、多会话快速切换、微信/外部渠道错误回传和桌面弱机器场景需要灰度观察；一旦出现 projection/legacy drift，优先打开 shadow/debug 定位，再决定是否临时切 `legacy`。
 
@@ -356,11 +356,11 @@ terminal event 必须携带 `model_turn_id` 和最终 runtime status。前端只
 
 ### 当前实施进度（2026-05-21）
 
-- 已完成 canonical runtime projection 侧车：本地提交、send/watch/resume WS 事件、HTTP events snapshot 已统一投递到 `chatRuntimeReducer`，旧 `messages` 仍是当前 UI 渲染源。
+- 已完成 canonical runtime projection 主链路：本地提交、send/watch/resume WS 事件、HTTP events snapshot 已统一投递到 `chatRuntimeReducer`，Messenger 气泡列表只从 projection selector 物化。
 - 已完成 request-scoped queued 保护：`queued` ack 只解析请求，不再立即丢弃后续同 request 事件。
 - 已完成 events-first snapshot 基础：`GET /wunder/chat/sessions/{session_id}/events` 已返回原始 `events`，并为存储与 WS 事件补齐 `event_seq`。
 - 已完成 shadow comparison 基础：新增 `frontend/src/realtime/chat/chatRuntimeShadow.ts`，在 chat debug 开启时对 canonical projection 与 legacy `messages` 做影子一致性检查，覆盖缺失、重复、顺序漂移、内容/reasoning/status 漂移和 busy 漂移。
-- 已完成受控 selector render adapter：新增 `frontend/src/realtime/chat/chatRuntimeRenderAdapter.ts`，可通过 `wunder:chat-runtime-render` / `wunder_chat_runtime_render` 或 URL 参数 `chat_runtime_render` / `chatRuntimeRender` 显式把 Messenger 气泡渲染源切到 canonical projection；默认仍使用 legacy `messages`，projection 为空时自动回退。
+- 已完成 projection-only render adapter：`frontend/src/realtime/chat/chatRuntimeRenderAdapter.ts` 只输出 projection 渲染源；`shadow` 仅做诊断，projection 为空或未知时不再回退 legacy `messages`。
 - 已接入 Messenger 渲染侧车：`agentRenderableMessages` 可读取 projection 物化结果，稳定 key 来自 runtime message id；最新助手消息、实时 stats 也改为读取 renderable 列表，避免 projection 渲染开关开启后头像状态和 footer 继续读旧数组。
 - 已新增 render-source shadow：`frontend/src/realtime/chat/chatRuntimeRenderShadow.ts` 比较 legacy renderable 与 projection renderable 的 key、缺失、顺序、内容、reasoning、streaming flag、workflow timeline 和 subagent 摘要；`wunder:chat-runtime-render=shadow` 或 `wunder:chat-runtime-render-shadow=1` 可在不切换真实 UI 的情况下输出差异。
 - 已继续收敛 Messenger 直接读旧数组的渲染辅助：附件预加载、计划面板、询问面板、最新助手布局刷新、虚拟列表刷新触发、stats 上下文等开始跟随 `agentRenderableMessages`。
@@ -371,12 +371,12 @@ terminal event 必须携带 `model_turn_id` 和最终 runtime status。前端只
 - 已修正投影终态和 legacy 活动判断：terminal/idle 会同时收敛 workflowItems 与 subagents；旧快照即使只有 active subagents、没有 `workflowItems/workflowStreaming`，也会被视为 tooling/running，不再把仍在运行的子智能体误判成 idle。
 - 已新增投影渲染刷新时钟：`runtimeProjectionVersion` 独立于旧 `messageMutationVersion`，所有 canonical/legacy projection 写入会按应用结果触发版本推进；流式 delta 默认用 `requestAnimationFrame` 或 16ms fallback 合并，提交、终态、snapshot、runtime status 等边界事件立即刷新。Messenger 在 projection/shadow 模式下读取 `toRaw(runtimeProjection)`，只依赖显式版本号重算，避免深层响应式追踪把 token 级事件扩散成整页重排。
 - 已继续收敛显示态读取源：发送控制器的发送起点日志、待助手居中计数、停止确认快照改为读取 `resolveActiveAgentRenderableMessageRecords()`；`ChatComposer` 增加 `contextMessages` 输入，由 `MessengerView` 传入 `agentRenderableContextMessages`，输入区上下文占用和发送日志计数不再直接订阅旧消息数组。`test:messenger-renderable-source` 已锁定 message commands、composer、MessengerView 的读取来源。
-- 已收紧 projection 渲染空列表语义：`chatRuntimeRenderAdapter` 暴露 `hasChatRuntimeRenderSession()`，Messenger 在 projection 模式下如果投影已知道当前 session，即使 renderable 列表为空也直接渲染空列表，不再自动回退 legacy `messages`；只有投影尚未见过该 session 时才允许 legacy fallback，避免空会话、清空面板或空快照被旧数组残留气泡污染。
+- 已收紧 projection 渲染空列表语义：Messenger 如果投影已知道当前 session，即使 renderable 列表为空也直接渲染空列表；投影未知时显示加载/空态，不再自动回退 legacy `messages`，避免空会话、清空面板或空快照被旧数组残留气泡污染。
 - 已落地严格事件顺序缓冲：`chatRuntimeReducer` 为每个 session 增加 `pendingSequentialEvents` 有界缓冲，小范围 `event_seq` 乱序先等待缺失事件，不再让后续 delta/final 抢跑污染 projection；缺口补齐后按序排空并保持稳定 assistant message。超过缓冲能力的大 gap 会返回 `event_seq_gap` 并保留 `syncRequired`，当前兼容应用该事件，等后端连续 canonical seq 稳定后再升级为硬阻塞。
-- 已接入 gap 主动恢复：`applyCanonicalStreamRuntimeEvent` 会把 `pending_event_seq_gap/event_seq_gap` 暴露给 watch/send/resume 入口；watch 小 gap 延迟一个 reconcile 窗口再拉取，硬 gap 立即 reconcile，send/resume 小 gap 延迟恢复、硬 gap 立即调用 `ensureActiveSessionRealtime`，避免只等 watchdog 才修复真实丢包。
+- 已接入 gap 主动恢复：`applyCanonicalStreamRuntimeEvent` 会把 `pending_event_seq_gap/event_seq_gap/event_seq_gap_timeout` 暴露给 watch/send/resume 入口；watch 小 gap 延迟一个 reconcile 窗口再拉取，硬 gap 或 timeout 立即 replay/reconcile，send/resume 小 gap 延迟恢复、硬 gap 立即调用 `ensureActiveSessionRealtime`，避免只等 watchdog 才修复真实丢包。
 - 已完成 legacy 流式输出可见刷新节流：`chatWorkflowProcessor` 不再在每个 `llm_output_delta` 上直接改气泡正文或 reasoning，而是按 40ms 基准窗口和下一帧合并刷新，最长等待受 `STREAM_FLUSH_MAX_MS` 约束；终态事件仍强制 flush。`notifySessionSnapshot` 同步增加可见签名闸门，无可见变化的流式 bookkeeping 不再推动 `messageMutationVersion`、legacy reconcile、窗口重算和快照落盘。新增 `test:chat-workflow-stream-flush` 并接入 `test:chat-realtime`。
-- 当前剩余允许直接碰旧 `chatStore.messages` 的位置主要是会话删除/清空等写路径、legacy renderable builder、helper 内部 fallback；projection 渲染仍保持 feature flag，不直接默认切换。
-- 下一步继续做 projection 默认切换前的场景压测：长流式乱序、真实工具调用、审批等待、子智能体运行、切会话与刷新恢复的 shadow/e2e 验证；当 render shadow 和 reducer shadow 在这些场景下稳定无 drift 后，再把 projection 模式从人工开关推进到小流量灰度默认，并继续削减旧 `messages` 数组直接写入路径。
+- 当前剩余允许直接碰旧 `chatStore.messages` 的位置主要是会话删除/清空、历史 hydration、兼容缓存和部分 workflow 旧组件输入；这些路径不再决定 Messenger 气泡列表。
+- 下一步继续削减旧 `messages` 数组直接写入路径，把 workflow 旧组件输入继续收编到 reducer 事件归约，并用 e2e 覆盖断网重连、send 中断由 watch 接管、快照与 live 交叠三类场景。
 
 ### 阶段 0：冻结问题与观测
 

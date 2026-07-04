@@ -947,6 +947,7 @@ fn build_parent_auto_wake_request(
     Ok(WunderRequest {
         user_id: user_id.to_string(),
         question: format!("{OBSERVATION_PREFIX}{}", serde_json::to_string(&payload)?),
+        client_message_id: None,
         tool_names: session.tool_overrides.clone(),
         skip_tool_calls: false,
         stream: true,

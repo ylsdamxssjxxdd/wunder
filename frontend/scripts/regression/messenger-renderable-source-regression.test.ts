@@ -85,7 +85,7 @@ test('messenger display-derived agent state reads the renderable source instead 
   });
 });
 
-test('messenger exposes a single active agent renderable record helper with legacy fallback only inside the helper', () => {
+test('messenger exposes a single active agent renderable record helper without legacy fallback', () => {
   const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
   const helperStart = renderableMessages.indexOf('ctx.resolveActiveAgentRenderableMessageRecords = ()');
   assert.ok(helperStart >= 0);
@@ -94,10 +94,12 @@ test('messenger exposes a single active agent renderable record helper with lega
   const helperSource = renderableMessages.slice(helperStart, helperEnd);
 
   assert.ok(helperSource.includes('const renderable = ctx.agentRenderableMessages?.value;'));
-  assert.ok(helperSource.includes('return (Array.isArray(ctx.chatStore.messages) ? ctx.chatStore.messages : [])'));
+  assert.ok(helperSource.includes('return [];'));
+  assert.ok(!helperSource.includes('ctx.chatStore.messages'));
   assert.ok(renderableMessages.includes('ctx.agentRenderableContextMessages = computed<Record<string, unknown>[]>(() => {'));
   assert.ok(renderableMessages.includes('const records = ctx.resolveActiveAgentRenderableMessageRecords();'));
-  assert.ok(renderableMessages.includes('const buildLegacyAgentRenderableMessages = ()'));
+  assert.ok(renderableMessages.includes('const resolveSyntheticGreetingRenderable = ()'));
+  assert.ok(!renderableMessages.includes('const buildLegacyAgentRenderableMessages = ()'));
 });
 
 test('projection render source has an explicit batched invalidation clock', () => {
@@ -115,11 +117,32 @@ test('projection render source has an explicit batched invalidation clock', () =
   assert.ok(invalidation.includes('requestAnimationFrame'));
   assert.ok(invalidation.includes('globalThis.setTimeout(() => bump(), 16)'));
   assert.ok(runtimeState.includes('markRuntimeProjectionChanged(store, {'));
-  assert.ok(renderableMessages.includes('hasChatRuntimeRenderSession'));
-  assert.ok(renderableMessages.includes('resolveChatRuntimeRenderableSourceDecision'));
-  assert.ok(renderableMessages.includes('projectionSessionKnown: hasProjectionSession'));
   assert.ok(renderableMessages.includes('const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;'));
   assert.ok(renderableMessages.includes('const projection = toRaw(ctx.chatStore.runtimeProjection);'));
   assert.ok(renderableMessages.includes('projection,'));
+  assert.ok(renderableMessages.includes("logAgentRenderSource('projection-source'"));
+  assert.ok(!renderableMessages.includes('projection-empty-fallback'));
+  assert.ok(!renderableMessages.includes('return legacyRenderable;'));
   assert.ok(lifecycleReactive.includes('ctx.chatStore.runtimeProjectionVersion'));
+  assert.ok(!lifecycleReactive.includes('ctx.chatStore.messageMutationVersion'));
+});
+
+test('store visibleMessages getter materializes projection without legacy raw fallback', () => {
+  const chatStore = readSource('src/stores/chat.ts');
+  const watcher = readSource('src/stores/chatWatcher.ts');
+  const renderAdapter = readSource('src/realtime/chat/chatRuntimeRenderAdapter.ts');
+
+  assert.ok(chatStore.includes('return materializeChatRuntimeMessages(state.runtimeProjection, sessionId || state.activeSessionId);'));
+  assert.ok(!chatStore.includes('resolveProjectedVisibleMessagesFromStore'));
+  assert.ok(!chatStore.includes('messageRuntimeStatus:'));
+  assert.ok(!chatStore.includes('resolveLegacyMessageRuntimeStatusFromStore'));
+  assert.ok(!watcher.includes('export const resolveProjectedVisibleMessagesFromStore'));
+  assert.ok(!watcher.includes('export const resolveLegacyMessageRuntimeStatusFromStore'));
+  assert.ok(!watcher.includes('const byRaw = new Map();'));
+  assert.ok(!watcher.includes('return sourceMessages;'));
+  assert.ok(renderAdapter.includes('const base: ChatMessageLike = cloneDisplayProjection(message.display);'));
+  assert.ok(renderAdapter.includes('isSyntheticGreetingDisplay(message.display)'));
+  assert.ok(!renderAdapter.includes('message.raw'));
+  assert.ok(!renderAdapter.includes('raw ? { ...raw } : {}'));
+  assert.ok(!renderAdapter.includes('__runtime_raw_message'));
 });

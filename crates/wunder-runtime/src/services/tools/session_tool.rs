@@ -169,6 +169,7 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: message,
+        client_message_id: None,
         tool_names,
         skip_tool_calls: false,
         stream: true,

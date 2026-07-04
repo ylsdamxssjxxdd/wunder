@@ -31,6 +31,7 @@ pub async fn grade_with_judge(
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: prompt,
+        client_message_id: None,
         tool_names: Vec::new(),
         skip_tool_calls: true,
         stream: true,

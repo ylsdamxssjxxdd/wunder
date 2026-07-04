@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -78,15 +78,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +90,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -122,17 +112,13 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { safeJsonParse, stringifyPayload } from './chatDemoPanels';
 import { syncSessionPendingApprovalRuntime } from './chatRuntimeState';
 import { buildMessage, resolveTimestampIso, resolveTimestampMs } from './chatStats';
-import { SessionWorkflowStateOptions, WorkflowEventRawPayload } from './chatTypes';
+import { SessionWorkflowStateOptions } from './chatTypes';
 
 export const sessionWorkflowState = new Map();
 
@@ -176,7 +162,7 @@ export const updateWorkflowItem = (items, id, patch) => {
 };
 
 export const resolveEventType = (eventName, payload) => {
-  // SSE 事件名优先，但遇到默认的 message 时允许使用 payload 内部字段
+  // SSE 浜嬩欢鍚嶄紭鍏堬紝浣嗛亣鍒伴粯璁ょ殑 message 鏃跺厑璁镐娇鐢?payload 鍐呴儴瀛楁
   const normalized = (eventName || '').trim();
   if (normalized && normalized !== 'message') return normalized;
   if (payload?.event) return payload.event;
@@ -264,7 +250,7 @@ export const pickText = (value, fallback = '') => {
   return stringifyPayload(value);
 };
 
-// 保留完整详情，供弹窗查看完整内容
+// 淇濈暀瀹屾暣璇︽儏锛屼緵寮圭獥鏌ョ湅瀹屾暣鍐呭
 export const pickString = (...values) => {
   for (const value of values) {
     if (typeof value === 'string') {
@@ -298,7 +284,7 @@ export const toOptionalInt = (...values) => {
 
 export const buildDetail = (payload) => stringifyPayload(payload);
 
-export const defaultSessionTitles = new Set(['新会话', '未命名会话']);
+export const defaultSessionTitles = new Set(['\u65b0\u4f1a\u8bdd', '\u672a\u547d\u540d\u4f1a\u8bdd']);
 
 export const buildSessionTitle = (content, maxLength = 20) => {
   const cleaned = String(content || '').trim().replace(/\s+/g, ' ');
@@ -486,14 +472,14 @@ export const createThinkTagStreamParser = () => {
 export const normalizeToolNameForFinal = (name) => {
   const raw = String(name || '').trim();
   if (!raw) return '';
-  if (raw === '最终回复') return raw;
+  if (raw === '\u6700\u7ec8\u56de\u590d') return raw;
   return raw.toLowerCase().replace(/[\s-]+/g, '_');
 };
 
 export const isFinalToolName = (name) => {
   const normalized = normalizeToolNameForFinal(name);
   return (
-    normalized === '最终回复' ||
+    normalized === '\u6700\u7ec8\u56de\u590d' ||
     normalized === 'final_response' ||
     normalized === 'final' ||
     normalized === 'final_answer'
@@ -559,52 +545,6 @@ export const extractFinalAnswerFromToolCalls = (toolCalls) => {
     }
   }
   return '';
-};
-
-export const buildWorkflowEventRaw = (data, timestamp = undefined) => {
-  const payload: WorkflowEventRawPayload = { data: data ?? null };
-  if (timestamp) {
-    payload.timestamp = timestamp;
-  }
-  return JSON.stringify(payload);
-};
-
-export const normalizeWorkflowEvents = (events, message) => {
-  if (!Array.isArray(events) || events.length === 0) {
-    return [];
-  }
-  const normalizedOutput = normalizeAssistantOutput(
-    message?.content || '',
-    resolveAssistantReasoning(message)
-  );
-  const content = normalizedOutput.content;
-  const reasoning = normalizedOutput.reasoning;
-  const normalized = [];
-  events.forEach((event) => {
-    const eventName = String(event?.event || '').trim();
-    if (!eventName || eventName === 'final') {
-      return;
-    }
-    let data = event?.data ?? null;
-    if (eventName === 'llm_output' && (content || reasoning)) {
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        data = { ...data, content, reasoning };
-      } else {
-        data = { content, reasoning };
-      }
-    }
-    normalized.push({
-      event: eventName,
-      raw: buildWorkflowEventRaw(data, event?.timestamp)
-    });
-  });
-  if (content || reasoning) {
-    normalized.push({
-      event: 'final',
-      raw: buildWorkflowEventRaw({ answer: content, content, reasoning })
-    });
-  }
-  return normalized;
 };
 
 export const resolveWorkflowRoundTimestamp = (events) => {
@@ -886,15 +826,13 @@ export const attachWorkflowEvents = (messages, rounds) => {
       }
       return;
     }
-    const target = hydratedMessages[lastAssistantIndex];
-    target.workflow_events = normalizeWorkflowEvents(events, target);
     assignedRounds.add(roundNumber);
     const compactionSummary = summarizeCompactionRoundEvents(events);
     if (compactionSummary) {
       chatDebugLog('chat.compaction.hydrate', 'assign-round', {
         round: roundNumber,
         targetIndex: lastAssistantIndex,
-        createdAt: target?.created_at ?? null,
+        createdAt: hydratedMessages[lastAssistantIndex]?.created_at ?? null,
         summary: compactionSummary
       });
     }
@@ -933,7 +871,6 @@ export const attachWorkflowEvents = (messages, rounds) => {
           stream_incomplete: false,
           stream_round: roundNumber
         };
-    syntheticMessage.workflow_events = normalizeWorkflowEvents(events, syntheticMessage);
     const insertedIndex = manualCompactionRound
       ? insertMessageByTimestamp(hydratedMessages, syntheticMessage)
       : pushMessage(syntheticMessage);
@@ -1011,7 +948,7 @@ export const normalizeToolCategory = (value) => {
   return '';
 };
 
-// 根据工具名称与事件字段推断分类，用于工作流高亮
+// 鏍规嵁宸ュ叿鍚嶇О涓庝簨浠跺瓧娈垫帹鏂垎绫伙紝鐢ㄤ簬宸ヤ綔娴侀珮浜?
 export const resolveToolCategory = (toolName, payload) => {
   const explicit = normalizeToolCategory(
     payload?.category ??
@@ -1026,10 +963,10 @@ export const resolveToolCategory = (toolName, payload) => {
   if (name.includes('@')) return 'mcp';
   const lowerName = name.toLowerCase();
   if (lowerName.includes('mcp')) return 'mcp';
-  if (lowerName.includes('knowledge') || lowerName.startsWith('kb_') || name.includes('知识')) {
+  if (lowerName.includes('knowledge') || lowerName.startsWith('kb_') || name.includes('鐭ヨ瘑')) {
     return 'knowledge';
   }
-  if (lowerName.includes('skill') || name.includes('技能')) return 'skill';
+  if (lowerName.includes('skill') || name.includes('\u6280\u80fd')) return 'skill';
   if (lowerName.includes('builtin') || lowerName.includes('built-in') || lowerName.includes('system')) {
     return 'builtin';
   }

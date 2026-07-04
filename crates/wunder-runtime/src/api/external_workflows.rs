@@ -659,6 +659,7 @@ async fn build_wunder_request(
     Ok(WunderRequest {
         user_id: prepared.user.user_id.clone(),
         question: message,
+        client_message_id: None,
         tool_names,
         skip_tool_calls: false,
         stream: true,

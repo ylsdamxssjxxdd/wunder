@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -77,17 +77,10 @@ import {
   selectVisibleMessageProjections,
   selectSessionBusy,
   selectSessionBusyReason,
+  selectRuntimeLastAppliedEventId,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -99,8 +92,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -123,27 +114,36 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoChatCache } from './chatDemoPanels';
 import { applyGoalStreamEvent, applyMainSession, persistAgentSession } from './chatPersist';
-import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, refreshRuntimeStreamLifecycle, resolveSessionContextTokens, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, setSessionLoading } from './chatRuntimeControls';
+import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, notifySessionSnapshot, refreshRuntimeStreamLifecycle, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, resolveTimestampMs } from './chatStats';
-import { assignStreamEventId, getRuntimeLastEventId, normalizeApprovalMode, normalizeStreamEventId, updateRuntimeLastEventId } from './chatStreamIds';
+import { getRuntimeLastEventId, normalizeApprovalMode, normalizeStreamEventId, updateRuntimeLastEventId } from './chatStreamIds';
 import { SendMessageOptions } from './chatTypes';
 import { abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
-import { buildDetail, buildSessionTitle, getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldAutoTitle, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
-import { createWorkflowProcessor } from './chatWorkflowProcessor';
+import { buildDetail, buildSessionTitle, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldAutoTitle, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
+import { shouldUseProjectionOnlyInteractiveStreamEvent } from './chatProjectionOnlyEvents';
 
 const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
+
+const resolveMaxProjectionUserRound = (projection: ChatRuntimeProjection | null | undefined, sessionId: unknown): number => {
+  const key = String(sessionId ?? '').trim();
+  if (!key || !projection?.sessions?.[key]) return 0;
+  const session = projection.sessions[key];
+  const maxExplicitRound = session.userTurns.reduce((maxRound, turnId) => {
+    const match = /^user-turn:[^:]+:round:(\d+)$/.exec(String(turnId || '').trim());
+    if (!match) return maxRound;
+    const round = Number.parseInt(match[1], 10);
+    return Number.isFinite(round) && round > maxRound ? round : maxRound;
+  }, 0);
+  return Math.max(maxExplicitRound, session.userTurns.length);
+};
 
 export const chatSendActions = {
     async sendMessage(content: string, options: SendMessageOptions = {}) {
@@ -206,8 +206,11 @@ export const chatSendActions = {
         }));
       }
       const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
-      const suppressQueuedNotice = options.suppressQueuedNotice === true;
-      const nextLocalStreamRound = (resolveMaxStreamRound(this.messages) || 0) + 1;
+      const maxKnownStreamRound = Math.max(
+        resolveMaxStreamRound(this.messages) || 0,
+        resolveMaxProjectionUserRound(this.runtimeProjection, this.activeSessionId)
+      );
+      const nextLocalStreamRound = maxKnownStreamRound + 1;
       const assistantMessageRaw = {
         ...buildMessage('assistant', ''),
         ...(bootstrappingDraftSession ? { draft_session_bootstrap: true } : {}),
@@ -256,7 +259,6 @@ export const chatSendActions = {
       }
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
-      const previousSessionContextTokens = resolveSessionContextTokens(this, sessionId);
       const clientMessageId = String(
         (userMessage as Record<string, unknown>).message_id ??
           (userMessage as Record<string, unknown>).messageId ??
@@ -283,13 +285,7 @@ export const chatSendActions = {
         message_id: `local-assistant:${localModelTurnId}`,
         client_message_id: `local-assistant:${localModelTurnId}`
       });
-      if (!bootstrappingDraftSession) {
-        this.messages.push(userMessage);
-      }
       const sessionMessagesRef = this.messages;
-      if (!bootstrappingDraftSession) {
-        sessionMessagesRef.push(assistantMessageRaw);
-      }
       const assistantMessage = assistantMessageRaw;
       applyCanonicalClientMessageSubmittedRuntimeEvent(this, {
         sessionId,
@@ -298,7 +294,8 @@ export const chatSendActions = {
         createdAt: userMessage.created_at,
         userTurnId: localUserTurnId,
         modelTurnId: localModelTurnId,
-        assistantMessageId: `local-assistant:${localModelTurnId}`
+        assistantMessageId: `local-assistant:${localModelTurnId}`,
+        attachments: userMessage.attachments
       });
       chatDebugLog('messenger.send', 'store-placeholder-appended', {
         sessionId,
@@ -315,7 +312,9 @@ export const chatSendActions = {
         },
         messages: buildMessageIdentityDebugList(sessionMessagesRef)
       });
-      clearDraftSessionBootstrapMarkers(sessionMessagesRef);
+      if (bootstrappingDraftSession) {
+        clearDraftSessionBootstrapMarkers(sessionMessagesRef);
+      }
       cacheSessionMessages(sessionId, sessionMessagesRef);
       touchSessionUpdatedAt(this, sessionId, userMessage.created_at);
 
@@ -323,10 +322,13 @@ export const chatSendActions = {
       if (activeSession) {
         this.sessions = applyMainSession(this.sessions, activeSession.agent_id, sessionId);
         persistAgentSession(activeSession.agent_id, sessionId);
-        const hasExistingUserMessage = sessionMessagesRef.some(
+        const hasExistingLegacyUserMessage = sessionMessagesRef.some(
           (message) => message !== userMessage && String(message?.role || '').trim() === 'user'
         );
-        if (!hasExistingUserMessage && shouldAutoTitle(activeSession.title)) {
+        const hasExistingProjectedUserMessage = selectVisibleMessageProjections(this.runtimeProjection, sessionId).some(
+          (message) => message.id !== clientMessageId && message.role === 'user'
+        );
+        if (!hasExistingLegacyUserMessage && !hasExistingProjectedUserMessage && shouldAutoTitle(activeSession.title)) {
           const autoTitle = buildSessionTitle(content);
           if (autoTitle) {
             activeSession.title = autoTitle;
@@ -334,24 +336,12 @@ export const chatSendActions = {
         }
       }
 
-      notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+      if (bootstrappingDraftSession) {
+        notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+      }
 
       setSessionLoading(this, sessionId, true);
 
-      const workflowState = getSessionWorkflowState(sessionId);
-      const processor = createWorkflowProcessor(
-        assistantMessage,
-        workflowState,
-        (immediate = false) => notifySessionSnapshot(this, sessionId, sessionMessagesRef, immediate),
-        {
-          streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
-          sessionId,
-          initialContextTokens: previousSessionContextTokens,
-          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
-          onContextUsage: (contextTokens, contextTotalTokens) =>
-            syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)
-        }
-      );
       let queued = false;
       let interruptedByStop = false;
       let recoveredByRealtime = false;
@@ -359,6 +349,15 @@ export const chatSendActions = {
       let errorSeen = false;
       let slowClientResumeAfterEventId = 0;
       let sendRequestId = '';
+      const hasProjectionSession = Boolean(this.runtimeProjection?.sessions?.[sessionId]);
+      const syncRuntimeLastAppliedEventId = () => {
+        const appliedEventId = selectRuntimeLastAppliedEventId(this.runtimeProjection, sessionId);
+        updateRuntimeLastEventId(
+          runtime,
+          appliedEventId || (hasProjectionSession ? 0 : getRuntimeLastEventId(runtime))
+        );
+        return appliedEventId;
+      };
 
       try {
         if (runtime) {
@@ -375,6 +374,7 @@ export const chatSendActions = {
         const payload = {
           content,
           stream: true,
+          client_message_id: clientMessageId,
           ...(debugPayloadEnabled ? { debug_payload: true } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
@@ -392,6 +392,13 @@ export const chatSendActions = {
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+          const terminalLlmOutput =
+            normalizedEventType === 'llm_output' &&
+            isTerminalLlmOutputPayload(payload, approvalPayload);
+          const projectionOnlyInteractiveEvent = shouldUseProjectionOnlyInteractiveStreamEvent(
+            normalizedEventType,
+            { terminalLlmOutput }
+          );
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
@@ -404,6 +411,7 @@ export const chatSendActions = {
             {
               requestId: runtime?.sendRequestId || sendRequestId || requestId,
               phase: 'send',
+              sideEffects: projectionOnlyInteractiveEvent,
               onSyncRequired: (reason) => {
                 const run = () => {
                   void this.ensureActiveSessionRealtime({
@@ -460,7 +468,7 @@ export const chatSendActions = {
                 errorSeen = true;
               }
             }
-            updateRuntimeLastEventId(runtime, eventId);
+            syncRuntimeLastAppliedEventId();
             applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
             return;
           }
@@ -479,17 +487,8 @@ export const chatSendActions = {
           if (queuedFlag) {
             if (!queued) {
               queued = true;
-              if (!suppressQueuedNotice) {
-                assistantMessage.workflowItems.push(
-                  buildWorkflowItem(t('chat.workflow.queued'), buildDetail(payload?.data ?? payload), 'pending', {
-                    eventType: normalizedEventType || 'queued'
-                  })
-                );
-                notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
-              }
             }
-            assistantMessage.stream_incomplete = true;
-            assistantMessage.workflowStreaming = true;
+            syncRuntimeLastAppliedEventId();
             return;
           }
           if (isTerminalStreamEventType(normalizedEventType)) {
@@ -498,58 +497,22 @@ export const chatSendActions = {
             } else {
               finalSeen = true;
             }
-          } else if (
-            normalizedEventType === 'llm_output' &&
-            isTerminalLlmOutputPayload(payload, approvalPayload)
-          ) {
+          } else if (terminalLlmOutput) {
             finalSeen = true;
           } else if (
             normalizedEventType === 'slow_client' &&
             String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
           ) {
+            const appliedEventId = selectRuntimeLastAppliedEventId(this.runtimeProjection, sessionId);
             slowClientResumeAfterEventId = Math.max(
               slowClientResumeAfterEventId,
-              getRuntimeLastEventId(runtime),
+              appliedEventId,
+              hasProjectionSession ? 0 : getRuntimeLastEventId(runtime),
               normalizeStreamEventId(assistantMessage.stream_event_id) || 0
             );
           }
-          const normalizedEventId = normalizeStreamEventId(eventId);
-          if (normalizedEventId !== null) {
-            const currentEventId = Math.max(
-              normalizeStreamEventId(assistantMessage.stream_event_id) || 0,
-              getRuntimeLastEventId(runtime)
-            );
-            if (normalizedEventId <= currentEventId) {
-              return;
-            }
-          }
-          assignStreamEventId(assistantMessage, eventId);
-          updateRuntimeLastEventId(runtime, eventId);
-          const mutationBaseline = captureRealtimeWorkflowMutationBaseline(
-            assistantMessage,
-            sessionMessagesRef
-          );
-          if (perfEnabled) {
-            const start = performance.now();
-            processor.handleEvent(normalizedEventType || eventType, dataText);
-            chatPerf.recordDuration('chat_stream_event_handle', performance.now() - start, {
-              eventType: normalizedEventType || eventType,
-              sessionId
-            });
-          } else {
-            processor.handleEvent(normalizedEventType || eventType, dataText);
-          }
-          logRealtimeWorkflowMutation({
-            phase: 'send',
-            sessionId,
-            eventType: normalizedEventType || eventType,
-            eventId,
-            roundNumber: assistantMessage.stream_round,
-            userRoundNumber: payload?.user_round ?? approvalPayload?.user_round,
-            message: assistantMessage,
-            messages: sessionMessagesRef,
-            before: mutationBaseline
-          });
+          syncRuntimeLastAppliedEventId();
+          return;
         };
         const requestId = sendRequestId || buildWsRequestId();
         sendRequestId = requestId;
@@ -578,17 +541,31 @@ export const chatSendActions = {
           recoveredByRealtime = true;
         } else if (error?.name === 'AbortError' || runtime?.stopRequested || chatPageLifecycle.pageUnloading) {
           interruptedByStop = true;
-          assistantMessage.reasoningStreaming = false;
+          if (bootstrappingDraftSession) {
+            assistantMessage.reasoningStreaming = false;
+          }
           if (!chatPageLifecycle.pageUnloading) {
-            assistantMessage.workflowItems.push(
-              buildWorkflowItem(
-                t('chat.workflow.aborted'),
-                t('chat.workflow.abortedDetail'),
-                'failed'
-              )
-            );
-            if (!assistantMessage.content) {
-              assistantMessage.content = t('chat.workflow.aborted');
+            applyLocalAssistantTurnTerminalRuntimeEvent(this, {
+              sessionId,
+              terminal: 'cancelled',
+              content: t('chat.workflow.aborted'),
+              reason: 'user_stop',
+              requestId: sendRequestId,
+              userTurnId: localUserTurnId,
+              modelTurnId: localModelTurnId,
+              assistantMessageId: `local-assistant:${localModelTurnId}`
+            });
+            if (bootstrappingDraftSession) {
+              assistantMessage.workflowItems.push(
+                buildWorkflowItem(
+                  t('chat.workflow.aborted'),
+                  t('chat.workflow.abortedDetail'),
+                  'failed'
+                )
+              );
+              if (!assistantMessage.content) {
+                assistantMessage.content = t('chat.workflow.aborted');
+              }
             }
           }
         } else {
@@ -602,6 +579,16 @@ export const chatSendActions = {
           if (!transient) {
             const detail = error?.message || t('chat.workflow.requestFailedDetail');
             errorSeen = true;
+            applyLocalAssistantTurnTerminalRuntimeEvent(this, {
+              sessionId,
+              terminal: 'failed',
+              content: detail,
+              reason: 'request_failed',
+              requestId: sendRequestId,
+              userTurnId: localUserTurnId,
+              modelTurnId: localModelTurnId,
+              assistantMessageId: `local-assistant:${localModelTurnId}`
+            });
             const normalizedDetail = String(detail || '').trim().toLowerCase();
             const looksLikeOverflow = [
               'context_window_exceeded',
@@ -610,37 +597,41 @@ export const chatSendActions = {
               'input exceeds the context window',
               'exceeds the model',
               'prompt is too long',
-              '上下文',
-              '超限',
-              '过长'
+              'context',
+              '瓒呴檺',
+              '杩囬暱'
             ].some((token) => normalizedDetail.includes(token));
             if (looksLikeOverflow) {
-              for (let cursor = assistantMessage.workflowItems.length - 1; cursor >= 0; cursor -= 1) {
-                const item = assistantMessage.workflowItems[cursor];
-                if (item?.eventType !== 'compaction_progress') continue;
-                if (item?.status !== 'loading' && item?.status !== 'pending') continue;
-                const existingDetail = safeJsonParse(item.detail);
-                item.status = 'failed';
-                item.detail = buildDetail({
-                  ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
-                  status: 'failed',
-                  stage: 'context_overflow_recovery',
-                  error_code: 'CONTEXT_WINDOW_EXCEEDED',
-                  error_message: String(detail || '')
-                });
-                break;
+              if (bootstrappingDraftSession) {
+                for (let cursor = assistantMessage.workflowItems.length - 1; cursor >= 0; cursor -= 1) {
+                  const item = assistantMessage.workflowItems[cursor];
+                  if (item?.eventType !== 'compaction_progress') continue;
+                  if (item?.status !== 'loading' && item?.status !== 'pending') continue;
+                  const existingDetail = safeJsonParse(item.detail);
+                  item.status = 'failed';
+                  item.detail = buildDetail({
+                    ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
+                    status: 'failed',
+                    stage: 'context_overflow_recovery',
+                    error_code: 'CONTEXT_WINDOW_EXCEEDED',
+                    error_message: String(detail || '')
+                  });
+                  break;
+                }
               }
             }
-            assistantMessage.workflowItems.push(
-              buildWorkflowItem(
-                t('chat.workflow.requestFailed'),
-                detail,
-                'failed',
-                { eventType: 'request_failed' }
-              )
-            );
-            if (!assistantMessage.content) {
-              assistantMessage.content = detail;
+            if (bootstrappingDraftSession) {
+              assistantMessage.workflowItems.push(
+                buildWorkflowItem(
+                  t('chat.workflow.requestFailed'),
+                  detail,
+                  'failed',
+                  { eventType: 'request_failed' }
+                )
+              );
+              if (!assistantMessage.content) {
+                assistantMessage.content = detail;
+              }
             }
           } else if (perfEnabled) {
             chatPerf.count('chat_stream_interrupted', 1, { sessionId });
@@ -661,9 +652,11 @@ export const chatSendActions = {
         const terminalSeen = finalSeen || errorSeen;
         let keepStreaming = recoveredByRealtime || (!stopped && !terminalSeen);
         const finishedRequestId = ownsCurrentSendState ? currentSendRequestId : sendRequestId;
-        assistantMessage.workflowStreaming = keepStreaming;
-        assistantMessage.reasoningStreaming = false;
-        assistantMessage.stream_incomplete = keepStreaming;
+        if (bootstrappingDraftSession) {
+          assistantMessage.workflowStreaming = keepStreaming;
+          assistantMessage.reasoningStreaming = false;
+          assistantMessage.stream_incomplete = keepStreaming;
+        }
         if (runtime) {
           const clearedOwnSendState = clearRuntimeSendStreamState(runtime, {
             requestId: sendRequestId
@@ -679,7 +672,7 @@ export const chatSendActions = {
           }
         }
         const canApplyGlobalSendSettlement = ownsCurrentSendState || sendStateAlreadySettledForThisRequest;
-        if (canApplyGlobalSendSettlement && !keepStreaming) {
+        if (bootstrappingDraftSession && canApplyGlobalSendSettlement && !keepStreaming) {
           settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
             failed: errorSeen || stopped
           });
@@ -687,7 +680,6 @@ export const chatSendActions = {
         if (canApplyGlobalSendSettlement) {
           setSessionLoading(this, sessionId, keepStreaming);
         }
-        processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
         if (canApplyGlobalSendSettlement) {
           this.clearPendingApprovals({ requestId: finishedRequestId || sendRequestId, sessionId });
@@ -697,7 +689,9 @@ export const chatSendActions = {
           sessionId,
           messages: sessionMessagesRef
         });
-        notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+        if (bootstrappingDraftSession) {
+          notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+        }
         chatDebugLog('messenger.send', 'stream-finish', {
           sessionId,
           requestId: finishedRequestId || null,
@@ -725,7 +719,7 @@ export const chatSendActions = {
           })
         ) {
           if (keepStreaming && slowClientResumeAfterEventId > 0) {
-            scheduleSlowClientResume(this, sessionId, assistantMessage, slowClientResumeAfterEventId);
+            scheduleSlowClientResume(this, sessionId, null, slowClientResumeAfterEventId);
           }
           startSessionWatcher(this, sessionId);
         }

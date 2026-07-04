@@ -76,16 +76,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import { mergeFinalTranscriptAssistantDuplicates } from './chatFinalTranscriptMerge';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -104,8 +95,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -128,10 +117,6 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
@@ -139,8 +124,8 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, mergeSessionProtectedRealtimeMessages, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, syncChatRuntimeProjectionFromLegacy, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
-import { mergeSnapshotIntoMessages, normalizeSnapshotMessage } from './chatSnapshot';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
 import {
@@ -600,7 +585,7 @@ export const chatSessionOpenLoadActions = {
           targetSessionId,
           previousSessionKey === targetSessionId ? previousForegroundMessages : null
         );
-        const cachedSessionMessages = dedupeAssistantMessagesInPlace(liveSessionMessages);
+        const cachedSessionMessages = liveSessionMessages;
         const snapshot = previousSessionKey && previousSessionKey !== targetSessionId
           ? null
           : this.getSnapshotForSession(targetSessionId);
@@ -609,11 +594,9 @@ export const chatSessionOpenLoadActions = {
             greeting: this.greetingOverride
           });
         } else if (snapshot?.messages?.length) {
-          const cachedMessages = dedupeAssistantMessages(
-            snapshot.messages
+          const cachedMessages = snapshot.messages
             .map((item) => normalizeSnapshotMessage(item))
-            .filter(Boolean)
-          );
+            .filter(Boolean);
           this.messages = ensureGreetingMessage(cachedMessages, {
             greeting: this.greetingOverride
           });
@@ -640,15 +623,13 @@ export const chatSessionOpenLoadActions = {
             prefetchedSessionDetail = null;
           }
         }
-        const latestCachedSessionMessages = dedupeAssistantMessagesInPlace(
-          resolveSessionMessageArray(
+        const latestCachedSessionMessages = resolveSessionMessageArray(
             {
               activeSessionId: previousSessionKey,
               messages: previousForegroundMessages
             },
             targetSessionId,
             previousSessionKey === targetSessionId ? previousForegroundMessages : null
-          )
         );
         let sessionRes = null;
         let eventsPayload = null;
@@ -794,12 +775,10 @@ export const chatSessionOpenLoadActions = {
               })
               .filter(Boolean)
           : [];
-        const finalCachedMessages = dedupeAssistantMessages(
-          resolveSessionMessageArray(
+        const finalCachedMessages = resolveSessionMessageArray(
             this,
             targetSessionId,
             resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null
-          )
         );
         const previousHydratedVersion = readSessionHydratedMessageVersion(targetSessionId);
         const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
@@ -814,9 +793,7 @@ export const chatSessionOpenLoadActions = {
         perfHydrateStart = perfEnabled ? performance.now() : 0;
         if (canReuseHydratedMessages) {
           getSessionWorkflowState(targetSessionId, { reset: true });
-          messages = mergeFinalTranscriptAssistantDuplicates(
-            dedupeAssistantMessages(mergeSnapshotIntoMessages(finalCachedMessages, snapshot))
-          );
+          messages = finalCachedMessages;
         } else {
           const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
           const rawMessages = attachWorkflowEvents(
@@ -827,11 +804,8 @@ export const chatSessionOpenLoadActions = {
             hydrateMessage(message, workflowState)
           );
           if (!hasCanonicalTranscript) {
-            messages = mergeSnapshotIntoMessages(messages, snapshot);
             messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
-            messages = dedupeAssistantMessages(messages);
           }
-          messages = mergeFinalTranscriptAssistantDuplicates(messages);
         }
         if (perfEnabled) {
           perfHydrateMs = performance.now() - perfHydrateStart;
@@ -851,12 +825,7 @@ export const chatSessionOpenLoadActions = {
           clearCompletedAssistantStreamingState(messages);
         }
         if (!hasCanonicalTranscript && remoteRunning && shouldPreferCachedMessages(finalCachedMessages, messages)) {
-          messages = dedupeAssistantMessages(
-            mergeSnapshotIntoMessages(finalCachedMessages, { messages })
-          );
-        }
-        if (remoteRunning) {
-          mergeSessionProtectedRealtimeMessages(targetSessionId, messages);
+          messages = finalCachedMessages;
         }
         dismissStaleInquiryPanels(messages);
         let nextMessages = ensureGreetingMessage(messages, {
@@ -973,7 +942,7 @@ export const chatSessionOpenLoadActions = {
             nextMessages
           );
           const mergedWithCompactionMarkers = mergeCompactionMarkersIntoMessages(
-            mergeFinalTranscriptAssistantDuplicates(foregroundMerge.messages),
+            foregroundMerge.messages,
             watchedMessages
           );
           chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
@@ -999,7 +968,7 @@ export const chatSessionOpenLoadActions = {
           });
           nextMessages = replaceMessageArrayKeepingReference(
             watchedMessages,
-            mergeFinalTranscriptAssistantDuplicates(mergedWithCompactionMarkers)
+            mergedWithCompactionMarkers
           );
         }
         if (!remoteRunning) {
@@ -1046,7 +1015,7 @@ export const chatSessionOpenLoadActions = {
         if (this.messages !== nextMessages) {
           this.messages = nextMessages;
         }
-        syncChatRuntimeProjectionFromLegacy(this, targetSessionId, this.messages, {
+        syncChatRuntimeProjectionFromSnapshot(this, targetSessionId, this.messages, {
           immediate: true,
           loading: remoteRunning,
           running: remoteRunning,

@@ -157,6 +157,12 @@ impl Orchestrator {
                     map.insert("user_message".to_string(), json!(question.clone()));
                     map.insert("hidden_internal_user".to_string(), Value::Bool(true));
                 }
+                if let Some(client_message_id) = prepared.client_message_id.as_deref() {
+                    map.insert(
+                        "client_message_id".to_string(),
+                        json!(client_message_id),
+                    );
+                }
                 request_round.insert_into(map);
             }
             emitter.emit("progress", start_payload).await;

@@ -29,8 +29,8 @@ const installBrowserStorageStub = () => {
 test('merged busy state keeps running when projection is stale idle but runtime is running', () => {
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_running',
     messages: [
@@ -85,8 +85,8 @@ test('merged busy state suppresses stale assistant streaming after confirmed idl
     }
   ];
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_idle',
     messages,
@@ -127,8 +127,8 @@ test('merged busy state suppresses stale busy projection after confirmed idle ru
     { role: 'assistant', content: 'done' }
   ];
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_stale_projection',
     messages,
@@ -206,8 +206,8 @@ test('merged busy state suppresses stale assistant streaming after completed run
     }
   ];
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_completed_terminal',
     messages,
@@ -253,8 +253,8 @@ test('merged busy state stays cleared across idle to not_loaded terminal chain',
     }
   ];
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_terminal_chain',
     messages,
@@ -263,20 +263,20 @@ test('merged busy state stays cleared across idle to not_loaded terminal chain',
   });
   applyChatRuntimeEvent(projection, {
     event_type: 'session_runtime',
-    source: 'legacy',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_terminal_chain',
     runtime_status: 'idle'
   });
   applyChatRuntimeEvent(projection, {
     event_type: 'session_idle',
-    source: 'legacy',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_terminal_chain'
   });
   applyChatRuntimeEvent(projection, {
     event_type: 'session_runtime',
-    source: 'legacy',
+    source: 'snapshot',
     strict: false,
     session_id: 'sess_terminal_chain',
     runtime_status: 'not_loaded'

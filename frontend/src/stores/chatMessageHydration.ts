@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -78,15 +78,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +90,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -122,30 +112,26 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { normalizeInquiryPanelState, normalizePlanPayload, shouldAutoShowPlan } from './chatDemoPanels';
-import { STREAM_FLUSH_BASE_MS } from './chatRuntimeControls';
 import { buildMessageStats, normalizeHiddenInternalMessage, normalizeInteractionTimestamp, normalizeMessageStats, normalizeMessageSubagents, parseOptionalCount } from './chatStats';
 import { normalizeFlag } from './chatStreamIds';
 import { normalizeAssistantOutput, resolveAssistantReasoning } from './chatWorkflowHydration';
-import { createWorkflowProcessor } from './chatWorkflowProcessor';
 
 export const hydrateMessage = (message, workflowState) => {
+  void workflowState;
   if (!message || message.role !== 'assistant') {
     return message;
   }
+  const { workflow_events: _workflowEvents, workflowEvents: _workflowEventsAlias, ...messageWithoutWorkflowEvents } = message;
   const normalizedOutput = normalizeAssistantOutput(
     message.content,
     resolveAssistantReasoning(message)
   );
   const hydrated = {
-    ...message,
+    ...messageWithoutWorkflowEvents,
     content: normalizedOutput.content,
     workflowItems: [],
     workflowStreaming: normalizeFlag(message?.workflowStreaming),
@@ -192,21 +178,5 @@ export const hydrateMessage = (message, workflowState) => {
   hydrated.plan = plan;
   hydrated.planVisible = shouldAutoShowPlan(plan, message);
   hydrated.questionPanel = normalizeInquiryPanelState(message.questionPanel);
-  if (Array.isArray(message.workflow_events) && message.workflow_events.length > 0) {
-    const processor = createWorkflowProcessor(
-      hydrated,
-      workflowState,
-      null,
-      {
-        finalizeWithNow: false,
-        streamFlushMs: STREAM_FLUSH_BASE_MS,
-        sessionId: message?.session_id ?? message?.sessionId ?? null
-      }
-    );
-    message.workflow_events.forEach((event) => {
-      processor.handleEvent(event?.event || '', event?.raw || '');
-    });
-    processor.finalize();
-  }
   return hydrated;
 };

@@ -24,11 +24,11 @@ export type BuildChatRuntimeRenderableMessagesOptions = {
   shouldRenderMessage?: (message: ChatMessageLike) => boolean;
 };
 
-export type ChatRuntimeProjectionRenderMode = 'legacy' | 'shadow' | 'projection';
+export type ChatRuntimeProjectionRenderMode = 'shadow' | 'projection';
 
 export type ChatRuntimeRenderableSourceDecision = {
-  source: 'legacy' | 'projection';
-  event: 'legacy-source' | 'projection-source' | 'projection-empty-fallback' | 'projection-shadow';
+  source: 'projection';
+  event: 'projection-source';
   inspectShadow: boolean;
 };
 
@@ -41,11 +41,32 @@ const RENDER_SHADOW_STORAGE_KEYS = [
   'wunder_chat_runtime_render_shadow'
 ];
 const RENDER_TRUE_VALUES = new Set(['1', 'true', 'on', 'yes', 'debug']);
-const RENDER_LEGACY_VALUES = new Set(['0', 'false', 'off', 'no', 'legacy']);
 const RENDER_SHADOW_VALUES = new Set(['shadow', 'compare', 'dry-run', 'dryrun']);
 const RENDER_PROJECTION_VALUES = new Set(['projection-debug', 'force-projection', 'projected-debug']);
 const RENDER_SEARCH_KEYS = ['chat_runtime_render', 'chatRuntimeRender'];
 const RENDER_SHADOW_SEARCH_KEYS = ['chat_runtime_render_shadow', 'chatRuntimeRenderShadow'];
+const MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT = 64;
+const MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT = 5000;
+
+type MaterializedMessageCacheEntry = {
+  sourceRevision: string;
+  materializedMutableRevision: string;
+  message: ChatMessageLike;
+  lastUsed: number;
+};
+
+type MaterializedSessionMessageCache = {
+  byMessageId: Map<string, MaterializedMessageCacheEntry>;
+  lastUsed: number;
+};
+
+const materializedMessageCache = new WeakMap<
+  ChatRuntimeProjection,
+  Map<string, MaterializedSessionMessageCache>
+>();
+const projectionObjectIdentity = new WeakMap<object, number>();
+let materializedMessageCacheClock = 0;
+let projectionObjectIdentityClock = 0;
 
 export const isChatRuntimeProjectionRenderEnabled = (): boolean =>
   resolveChatRuntimeProjectionRenderMode() === 'projection';
@@ -57,7 +78,6 @@ export const isChatRuntimeProjectionRenderShadowEnabled = (): boolean =>
 
 export const resolveChatRuntimeProjectionRenderMode = (): ChatRuntimeProjectionRenderMode => {
   const raw = readRuntimeRenderRawFlag();
-  if (RENDER_LEGACY_VALUES.has(raw)) return 'legacy';
   if (RENDER_PROJECTION_VALUES.has(raw)) return 'projection';
   if (RENDER_SHADOW_VALUES.has(raw)) return 'shadow';
   if (RENDER_TRUE_VALUES.has(raw) || raw === 'projection' || raw === 'projected') {
@@ -68,22 +88,27 @@ export const resolveChatRuntimeProjectionRenderMode = (): ChatRuntimeProjectionR
   }
   // Default to projection rendering: the runtime projection carries strict
   // event_id / event_seq dedup, client_message_id optimistic-merge, snapshot
-  // full-replace and turn-ordered message selection — none of which the legacy
-  // array path enforces. materializeChatRuntimeMessage reuses the underlying
-  // legacy message object whenever it is still in sync with the projection
-  // (canReuseLegacyMessage), so no render fields are lost. When the projection
-  // has no data yet it transparently falls back to the legacy array
-  // (projection-empty-fallback), so empty/loading states render correctly.
+  // full-replace and turn-ordered message selection. The legacy array is kept
+  // only as an input/debug surface, never as the rendered source of truth.
   return 'projection';
 };
 
 export const materializeChatRuntimeMessages = (
   projection: ChatRuntimeProjection | null | undefined,
   sessionId: unknown
-): ChatMessageLike[] =>
-  selectVisibleMessageProjections(projection, sessionId)
-    .map(materializeChatRuntimeMessage)
+): ChatMessageLike[] => {
+  const projectedMessages = selectVisibleMessageProjections(projection, sessionId);
+  const sessionCache = resolveMaterializedSessionMessageCache(projection, sessionId);
+  const activeMessageIds = new Set<string>();
+  const materialized = projectedMessages
+    .map((message) => {
+      activeMessageIds.add(message.id);
+      return materializeChatRuntimeMessageWithCache(sessionCache, message);
+    })
     .filter((message): message is ChatMessageLike => Boolean(message));
+  pruneMaterializedSessionMessageCache(sessionCache, activeMessageIds);
+  return materialized;
+};
 
 export const buildChatRuntimeRenderableMessages = (
   options: BuildChatRuntimeRenderableMessagesOptions
@@ -116,33 +141,10 @@ export const resolveChatRuntimeRenderableSourceDecision = (input: {
   projectionSessionKnown: boolean;
   shadowEnabled?: boolean;
 }): ChatRuntimeRenderableSourceDecision => {
-  const projectionCount = Math.max(0, Number(input.projectionCount) || 0);
-  const inspectShadow = input.renderMode !== 'legacy' || input.shadowEnabled === true;
-  if (input.renderMode === 'projection') {
-    if (projectionCount > 0 || input.projectionSessionKnown) {
-      return {
-        source: 'projection',
-        event: 'projection-source',
-        inspectShadow
-      };
-    }
-    return {
-      source: 'legacy',
-      event: 'projection-empty-fallback',
-      inspectShadow
-    };
-  }
-  if (input.renderMode === 'shadow' && projectionCount > 0) {
-    return {
-      source: 'legacy',
-      event: 'projection-shadow',
-      inspectShadow
-    };
-  }
   return {
-    source: 'legacy',
-    event: 'legacy-source',
-    inspectShadow
+    source: 'projection',
+    event: 'projection-source',
+    inspectShadow: input.renderMode === 'shadow' || input.shadowEnabled === true
   };
 };
 
@@ -164,30 +166,23 @@ export const materializeChatRuntimeMessage = (
   if (!message || (message.role !== 'user' && message.role !== 'assistant')) {
     return null;
   }
-  const raw = isPlainRecord(message.raw) ? message.raw : null;
-  if (raw && isSyntheticGreetingRaw(raw)) {
+  if (isSyntheticGreetingDisplay(message.display)) {
     return null;
-  }
-  if (raw && canReuseLegacyMessage(raw, message)) {
-    return raw;
   }
 
   const active = isRuntimeMessageActive(message.status);
-  const base: ChatMessageLike = raw ? { ...raw } : {};
+  const base: ChatMessageLike = cloneDisplayProjection(message.display);
   base.role = message.role;
   base.content = message.content;
   base.reasoning = message.reasoning;
-  base.created_at = firstText(base.created_at, base.createdAt, message.createdAt);
-  base.message_id = firstText(base.message_id, base.messageId, message.id);
+  base.created_at = firstText(message.createdAt, base.created_at, base.createdAt);
+  base.message_id = firstText(message.id, base.message_id, base.messageId);
   base.runtime_status = message.status;
   base.__runtime_projected = true;
   base.__runtime_message_id = message.id;
   base.__runtime_user_turn_id = message.userTurnId;
   base.__runtime_model_turn_id = message.modelTurnId;
   base.__runtime_render_key = resolveChatRuntimeProjectionKey(message);
-  if (raw) {
-    base.__runtime_raw_message = raw;
-  }
 
   if (message.role === 'assistant') {
     base.state = resolveAssistantLegacyState(message.status);
@@ -203,8 +198,185 @@ export const materializeChatRuntimeMessage = (
   return base;
 };
 
-const isSyntheticGreetingRaw = (message: ChatMessageLike): boolean =>
-  message.isGreeting === true || message.is_greeting === true;
+const materializeChatRuntimeMessageWithCache = (
+  sessionCache: MaterializedSessionMessageCache | null,
+  message: ChatRuntimeMessageProjection | null | undefined
+): ChatMessageLike | null => {
+  if (!sessionCache || !message?.id) {
+    return materializeChatRuntimeMessage(message);
+  }
+  const sourceRevision = buildProjectionMessageMaterializationRevision(message);
+  const cached = sessionCache.byMessageId.get(message.id);
+  if (cached?.sourceRevision === sourceRevision) {
+    cached.lastUsed = ++materializedMessageCacheClock;
+    sessionCache.lastUsed = cached.lastUsed;
+    if (
+      isMaterializedMessageAligned(cached.message, message) &&
+      cached.materializedMutableRevision === buildMaterializedMutableFieldsRevision(cached.message)
+    ) {
+      return cached.message;
+    }
+  }
+
+  const materialized = materializeChatRuntimeMessage(message);
+  if (!materialized) {
+    sessionCache.byMessageId.delete(message.id);
+    return null;
+  }
+  const lastUsed = ++materializedMessageCacheClock;
+  sessionCache.byMessageId.set(message.id, {
+    sourceRevision,
+    materializedMutableRevision: buildMaterializedMutableFieldsRevision(materialized),
+    message: materialized,
+    lastUsed
+  });
+  sessionCache.lastUsed = lastUsed;
+  return materialized;
+};
+
+const resolveMaterializedSessionMessageCache = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: unknown
+): MaterializedSessionMessageCache | null => {
+  if (!projection || typeof projection !== 'object') return null;
+  const key = firstText(sessionId) || '__unknown__';
+  let projectionCache = materializedMessageCache.get(projection);
+  if (!projectionCache) {
+    projectionCache = new Map();
+    materializedMessageCache.set(projection, projectionCache);
+  }
+  let sessionCache = projectionCache.get(key);
+  if (!sessionCache) {
+    sessionCache = {
+      byMessageId: new Map(),
+      lastUsed: ++materializedMessageCacheClock
+    };
+    projectionCache.set(key, sessionCache);
+    pruneProjectionMaterializedSessionCaches(projectionCache);
+  } else {
+    sessionCache.lastUsed = ++materializedMessageCacheClock;
+  }
+  return sessionCache;
+};
+
+const pruneProjectionMaterializedSessionCaches = (
+  projectionCache: Map<string, MaterializedSessionMessageCache>
+): void => {
+  if (projectionCache.size <= MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT) return;
+  [...projectionCache.entries()]
+    .sort((left, right) => left[1].lastUsed - right[1].lastUsed)
+    .slice(0, projectionCache.size - MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT)
+    .forEach(([sessionId]) => projectionCache.delete(sessionId));
+};
+
+const pruneMaterializedSessionMessageCache = (
+  sessionCache: MaterializedSessionMessageCache | null,
+  activeMessageIds: Set<string>
+): void => {
+  if (!sessionCache) return;
+  for (const messageId of sessionCache.byMessageId.keys()) {
+    if (!activeMessageIds.has(messageId)) {
+      sessionCache.byMessageId.delete(messageId);
+    }
+  }
+  if (sessionCache.byMessageId.size <= MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT) return;
+  [...sessionCache.byMessageId.entries()]
+    .sort((left, right) => left[1].lastUsed - right[1].lastUsed)
+    .slice(0, sessionCache.byMessageId.size - MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT)
+    .forEach(([messageId]) => sessionCache.byMessageId.delete(messageId));
+};
+
+const buildProjectionMessageMaterializationRevision = (
+  message: ChatRuntimeMessageProjection
+): string => [
+    message.id,
+    message.role,
+    message.content,
+    message.reasoning,
+    message.status,
+    message.createdAt,
+    message.createdSeq,
+    message.updatedSeq,
+    message.userTurnId,
+    message.modelTurnId,
+    message.final,
+    message.failed,
+    message.cancelled,
+    resolveProjectionObjectIdentity(message.display),
+    resolveProjectionObjectIdentity(message.workflowItems),
+    resolveProjectionObjectIdentity(message.subagents)
+  ].join('\u0001');
+
+const resolveProjectionObjectIdentity = (value: unknown): number => {
+  if (!value || typeof value !== 'object') return 0;
+  const objectValue = value as object;
+  const existing = projectionObjectIdentity.get(objectValue);
+  if (existing) return existing;
+  const next = ++projectionObjectIdentityClock;
+  projectionObjectIdentity.set(objectValue, next);
+  return next;
+};
+
+const isMaterializedMessageAligned = (
+  materialized: ChatMessageLike,
+  source: ChatRuntimeMessageProjection
+): boolean =>
+  materialized.__runtime_projected === true &&
+  materialized.__runtime_message_id === source.id &&
+  materialized.__runtime_user_turn_id === source.userTurnId &&
+  materialized.__runtime_model_turn_id === source.modelTurnId &&
+  materialized.__runtime_render_key === resolveChatRuntimeProjectionKey(source) &&
+  materialized.role === source.role &&
+  materialized.content === source.content &&
+  materialized.reasoning === source.reasoning &&
+  materialized.runtime_status === source.status &&
+  materialized.message_id === source.id;
+
+const MATERIALIZED_MUTABLE_FIELDS = [
+  'attachments',
+  'feedback',
+  'plan',
+  'questionPanel',
+  'stats',
+  'subagents',
+  'workflowItems'
+];
+
+const buildMaterializedMutableFieldsRevision = (message: ChatMessageLike): string => {
+  const values = MATERIALIZED_MUTABLE_FIELDS
+    .map((field) => [field, message[field]])
+    .filter(([, value]) => value !== undefined);
+  if (values.length === 0) return '';
+  try {
+    return JSON.stringify(values) || '';
+  } catch {
+    return values
+      .map(([field, value]) => `${field}:${Array.isArray(value) ? value.length : typeof value}`)
+      .join('|');
+  }
+};
+
+const cloneDisplayProjection = (display: unknown): ChatMessageLike => {
+  if (!isPlainRecord(display)) return {};
+  return Object.fromEntries(
+    Object.entries(display).map(([key, value]) => [key, cloneDisplayValue(value)])
+  );
+};
+
+const cloneDisplayValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(cloneDisplayValue);
+  }
+  if (isPlainRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, inner]) => [key, cloneDisplayValue(inner)])
+    );
+  }
+  return value;
+};
+
+const isSyntheticGreetingDisplay = (display: unknown): boolean =>
+  isPlainRecord(display) && (display.isGreeting === true || display.is_greeting === true);
 
 export const resolveChatRuntimeMessageRenderKey = (
   message: ChatMessageLike | null | undefined
@@ -214,60 +386,25 @@ const resolveChatRuntimeProjectionKey = (
   message: ChatRuntimeMessageProjection
 ): string => `runtime:${message.role}:${message.id}`;
 
-const canReuseLegacyMessage = (
-  raw: ChatMessageLike,
-  projected: ChatRuntimeMessageProjection
-): boolean => {
-  if (!hasStableLegacyIdentity(raw)) return false;
-  if (normalizeRole(raw.role) !== projected.role) return false;
-  if (String(raw.content ?? '') !== projected.content) return false;
-  if (String(raw.reasoning ?? '') !== projected.reasoning) return false;
-  if (projected.role !== 'assistant') return true;
-
-  const active = isRuntimeMessageActive(projected.status);
-  if (normalizeFlag(raw.stream_incomplete) !== active) return false;
-  if (normalizeFlag(raw.workflowStreaming) !== resolveProjectedWorkflowStreaming(projected)) {
-    return false;
-  }
-  if (normalizeFlag(raw.reasoningStreaming) !== (active && Boolean(projected.reasoning))) {
-    return false;
-  }
-  if (hasProjectionRecords(projected.workflowItems) || hasProjectionRecords(projected.subagents)) {
-    return false;
-  }
-  if (projected.status === 'failed' && !normalizeFlag(raw.failed) && normalizeStatus(raw.status) !== 'failed') {
-    return false;
-  }
-  if (
-    projected.status === 'cancelled' &&
-    !normalizeFlag(raw.cancelled) &&
-    normalizeStatus(raw.status) !== 'cancelled' &&
-    normalizeStatus(raw.status) !== 'canceled'
-  ) {
-    return false;
-  }
-  return true;
-};
-
-const hasStableLegacyIdentity = (message: ChatMessageLike): boolean =>
-  Boolean(firstText(
-    message.message_id,
-    message.messageId,
-    message.id,
-    message.request_id,
-    message.requestId
-  ));
-
-const hasProjectionRecords = (value: unknown): boolean =>
-  Array.isArray(value) && value.some(isPlainRecord);
-
 const resolveProjectedWorkflowStreaming = (
   message: ChatRuntimeMessageProjection
-): boolean =>
-  message.status === 'tooling' ||
-  hasActiveProjectedWorkflowItems(message.workflowItems) ||
-  hasActiveProjectedSubagents(message.subagents) ||
-  (isRuntimeMessageActive(message.status) && !message.content && !message.reasoning);
+): boolean => {
+  if (isProjectedResumablePause(message)) return false;
+  return (
+    message.status === 'tooling' ||
+    hasActiveProjectedWorkflowItems(message.workflowItems) ||
+    hasActiveProjectedSubagents(message.subagents) ||
+    (isRuntimeMessageActive(message.status) && !message.content && !message.reasoning)
+  );
+};
+
+const isProjectedResumablePause = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const display = isPlainRecord(message.display) ? message.display : {};
+  return normalizeFlag(display.resume_available ?? display.resumeAvailable) ||
+    normalizeFlag(display.slow_client ?? display.slowClient);
+};
 
 const hasActiveProjectedWorkflowItems = (items: unknown): boolean => {
   if (!Array.isArray(items)) return false;
@@ -410,11 +547,6 @@ const firstText = (...values: unknown[]): string => {
     if (text) return text;
   }
   return '';
-};
-
-const normalizeRole = (value: unknown): string => {
-  const role = String(value || '').trim().toLowerCase();
-  return role === 'user' || role === 'assistant' ? role : 'message';
 };
 
 const normalizeStatus = (value: unknown): string =>

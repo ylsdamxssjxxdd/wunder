@@ -550,6 +550,7 @@ async fn run_attempt(
     let request = WunderRequest {
         user_id: ctx.user_id.clone(),
         question,
+        client_message_id: None,
         tool_names: ctx.requested_tool_names.clone(),
         skip_tool_calls: false,
         stream: true,

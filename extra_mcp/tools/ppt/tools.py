@@ -271,7 +271,9 @@ def register_tools(mcp: FastMCP) -> None:
             "使用方式对齐豆包 lark-ppt：content 优先传 XML，根节点为 <slides>，每个 <slide> 至少包含 <prompt>，"
             "也可包含 <type>/<title>/<subtitle>/<body>/<bullet>/<item>/<metric>/<template_id>/<template_slide_id>。"
             "可用 template_id 选择内置模板：amber_clear、executive_green、research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar。"
-            "也可选择 config/ppt_templates/<template_id>/template.json 定义的真实 PPTX 母版模板包，例如 black_times_default。"
+            "也可选择 config/ppt_templates/<template_id>/template.json 定义的真实 PPTX 母版模板包，"
+            "例如 black_times_default；需要封面页 + 顶部全宽大标题 + 顶部左侧一级标题结构时用 top_title_section。"
+            "top_title_section 会把第一页作为封面版式；第二页开始使用自定义内容版式，title 是顶部大标题，subtitle 是左上一级标题，body/bullet/item 是下方正文。"
             "页面可通过 <image src=\"/workspaces/.../image.png\"/> 或 JSON images 数组插入本地/工作区图片。"
             "请在 prompt 中详细写明主题、版式、文案、图表、配色、字体和素材使用要求。"
             "返回 presentation_id、pptx 路径与 slide_id，后续用 ppt_refine 精修。"
@@ -325,7 +327,9 @@ def register_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "内置模板 ID。可选：amber_clear、executive_green、research_blue、"
-                    "finance_ink、creative_coral、minimal_gray、doubao_radar；也可传 config/ppt_templates 下的母版模板包 ID。"
+                    "finance_ink、creative_coral、minimal_gray、doubao_radar；也可传 config/ppt_templates 下的母版模板包 ID，"
+                    "例如 black_times_default、top_title_section。top_title_section 适合第一页封面、第二页开始顶部大标题加左上一级标题的版式。"
+                    "使用 top_title_section 时，第一页写 cover 类型，后续页用 title/subtitle/body 表达顶部大标题、一级标题和正文。"
                     "为空时使用 amber_clear。"
                 ),
                 title="模板 ID",
@@ -367,7 +371,7 @@ def register_tools(mcp: FastMCP) -> None:
         description=(
             "修改已有 PPT 的指定页面。content 必须包含 <slide_id> 和 <prompt>，"
             "可同时传 <title>/<body>/<bullet>/<item>/<metric> 等结构化字段。"
-            "也可传 template_id 重渲染整份 PPT 的内置模板风格。"
+            "也可传 template_id 重渲染整份 PPT 的内置模板风格或真实 PPTX 母版模板包。"
             "当前实现对本工具生成的 PPT 使用 manifest 重渲染，能保持整份文稿风格一致。"
         ),
         annotations={
@@ -398,7 +402,8 @@ def register_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "可选内置模板 ID，用于重渲染整份 PPT 风格。可选：amber_clear、executive_green、"
-                    "research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar；也可传母版模板包 ID。"
+                    "research_blue、finance_ink、creative_coral、minimal_gray、doubao_radar；"
+                    "也可传母版模板包 ID，例如 black_times_default、top_title_section。"
                 ),
                 title="模板 ID",
             ),
@@ -474,7 +479,8 @@ def register_tools(mcp: FastMCP) -> None:
         title="读取 PPT 模板",
         description=(
             "读取 PPT 模板或已有 PPTX 的页面摘要、尺寸和每页文字，供模型选择 template_slide_id 或分析模板风格。"
-            "template_id 和 path 都为空时返回内置模板列表；内置模板可直接传给 ppt_write/ppt_refine 的 template_id。"
+            "template_id 和 path 都为空时返回内置模板列表，以及 config/ppt_templates 下的真实 PPTX 母版模板包列表；"
+            "内置模板或母版模板包 ID 都可直接传给 ppt_write/ppt_refine 的 template_id。"
             "第一版返回结构摘要；后续可扩展为截图和版式元素识别。"
         ),
         annotations={
@@ -487,7 +493,7 @@ def register_tools(mcp: FastMCP) -> None:
     async def ppt_template_read(
         template_id: Annotated[
             str,
-            Field(description="模板 ID 或模板文件路径。为空时返回内置模板列表。", title="模板 ID"),
+            Field(description="模板 ID 或模板文件路径。为空时返回内置模板和真实 PPTX 母版模板包列表。", title="模板 ID"),
         ] = "",
         path: Annotated[
             str,

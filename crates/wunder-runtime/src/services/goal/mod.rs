@@ -530,6 +530,7 @@ pub async fn build_continuation_request_from_session(
     let request = WunderRequest {
         user_id: user_id.trim().to_string(),
         question,
+        client_message_id: None,
         tool_names,
         skip_tool_calls: false,
         stream: true,

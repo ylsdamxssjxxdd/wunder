@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -78,15 +78,7 @@ import {
   selectSessionBusyReason,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -98,8 +90,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -123,14 +113,9 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
-import { findAssistantMessageByRound, findAssistantMessageByUserRound } from './chatMessageLookup';
 import { normalizeStreamRound } from './chatStreamIds';
 import { MessageSubagentItem, NormalizedUsagePayload } from './chatTypes';
 
@@ -810,7 +795,7 @@ export const normalizeMessageSubagent = (payload): MessageSubagentItem | null =>
   const label = String(
     source.label ?? source.spawn_label ?? source.spawnLabel ?? source.title ?? ''
   ).trim();
-  const title = label || sessionId || runId || '子智能体';
+  const title = label || sessionId || runId || '瀛愭櫤鑳戒綋';
   const status = normalizeSubagentEventStatus(source.status);
   const active = isSubagentItemActive(source);
   const assistantMessage = pickSubagentTextValue(
@@ -942,6 +927,38 @@ export const collectSubagentPayloads = (source: unknown): Record<string, unknown
   return output;
 };
 
+const findSubagentOwnerAssistantByUserRound = (messages, userRound) => {
+  const normalizedRound = normalizeStreamRound(userRound);
+  if (!Array.isArray(messages) || normalizedRound === null || normalizedRound <= 0) return null;
+  let userCount = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    userCount += 1;
+    if (userCount !== normalizedRound) continue;
+    for (let cursor = index + 1; cursor < messages.length; cursor += 1) {
+      const candidate = messages[cursor];
+      if (candidate?.role === 'assistant') return candidate;
+      if (candidate?.role === 'user') return null;
+    }
+    return null;
+  }
+  return null;
+};
+
+const findSubagentOwnerAssistantByModelRound = (messages, modelRound) => {
+  const normalizedRound = normalizeStreamRound(modelRound);
+  if (!Array.isArray(messages) || normalizedRound === null || normalizedRound <= 0) return null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    if (normalizeStreamRound(message.stream_round) === normalizedRound) {
+      return message;
+    }
+  }
+  return null;
+};
+
 export const attachSubagentsToMessages = (messages, subagents) => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return messages;
@@ -976,10 +993,10 @@ export const attachSubagentsToMessages = (messages, subagents) => {
   normalized.forEach((item) => {
     const target =
       (item.parent_user_round
-        ? findAssistantMessageByUserRound(messages, item.parent_user_round)
+        ? findSubagentOwnerAssistantByUserRound(messages, item.parent_user_round)
         : null) ||
       (item.parent_model_round
-        ? findAssistantMessageByRound(messages, item.parent_model_round)
+        ? findSubagentOwnerAssistantByModelRound(messages, item.parent_model_round)
         : null) ||
       previousOwnerByKey.get(item.key) ||
       fallbackTarget;

@@ -6,6 +6,7 @@ pub(super) struct PreparedRequest {
     pub(super) user_id: String,
     pub(super) workspace_id: String,
     pub(super) question: String,
+    pub(super) client_message_id: Option<String>,
     pub(super) session_id: String,
     pub(super) tool_names: Option<Vec<String>>,
     pub(super) skip_tool_calls: bool,

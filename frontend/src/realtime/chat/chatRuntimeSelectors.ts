@@ -40,6 +40,27 @@ export const selectSessionRuntimeStatus = (
   return normalizeChatRuntimeStatus(session?.runtimeStatus);
 };
 
+export const selectRuntimeLastAppliedEventId = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: unknown
+): number => {
+  const session = selectChatRuntimeSession(projection, sessionId);
+  if (!session) return 0;
+  const direct = normalizePositiveEventId(session.lastAppliedEventId);
+  if (direct > 0) return direct;
+  return Object.keys(session.eventIdIndex || {}).reduce((maxEventId, eventId) => {
+    const normalized = normalizePositiveEventId(eventId);
+    return normalized > maxEventId ? normalized : maxEventId;
+  }, 0);
+};
+
+const normalizePositiveEventId = (value: unknown): number => {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return 0;
+  const parsed = Number.parseInt(text, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
 export const selectCanSend = (
   projection: ChatRuntimeProjection | null | undefined,
   sessionId: unknown
@@ -73,24 +94,61 @@ export const selectVisibleMessageProjections = (
   session.messages.forEach(pushMessage);
   const turnOrder = buildMessageTurnOrder(session);
   return ordered.sort((left, right) => {
-    const leftTurnIndex = resolveMessageTurnIndex(turnOrder, left);
-    const rightTurnIndex = resolveMessageTurnIndex(turnOrder, right);
-    if (leftTurnIndex !== rightTurnIndex) return leftTurnIndex - rightTurnIndex;
+    const leftTurnOrder = resolveMessageTurnOrder(turnOrder, left);
+    const rightTurnOrder = resolveMessageTurnOrder(turnOrder, right);
+    if (leftTurnOrder !== rightTurnOrder) {
+      return leftTurnOrder - rightTurnOrder;
+    }
     if (left.role !== right.role) {
       return left.role === 'user' ? -1 : 1;
     }
-    const leftTime = resolveMessageCreatedAtMs(left);
-    const rightTime = resolveMessageCreatedAtMs(right);
-    if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
-      return leftTime - rightTime;
-    }
-    return left.createdSeq - right.createdSeq;
+    if (left.createdSeq !== right.createdSeq) return left.createdSeq - right.createdSeq;
+    return left.id.localeCompare(right.id);
   });
 };
 
 const isSyntheticGreetingProjection = (
   message: ChatRuntimeMessageProjection | null | undefined
-): boolean => Boolean(message?.raw?.isGreeting === true || message?.raw?.is_greeting === true);
+): boolean => Boolean(message?.display?.isGreeting === true || message?.display?.is_greeting === true);
+
+const buildMessageTurnOrder = (
+  session: ChatRuntimeSessionProjection
+): Map<string, number> => {
+  const orderedTurns = session.userTurns
+    .map((turnId, index) => ({
+      turnId,
+      index,
+      createdSeq: resolveTurnCreatedSeq(session, turnId)
+    }))
+    .sort((left, right) => left.createdSeq - right.createdSeq || left.index - right.index);
+  return new Map(orderedTurns.map((item, index) => [item.turnId, index]));
+};
+
+const resolveMessageTurnOrder = (
+  turnOrder: Map<string, number>,
+  message: ChatRuntimeMessageProjection
+): number =>
+  turnOrder.get(message.userTurnId) ?? Number.MAX_SAFE_INTEGER;
+
+const resolveTurnCreatedSeq = (
+  session: ChatRuntimeSessionProjection,
+  turnId: string
+): number => {
+  const turn = session.userTurnById[turnId];
+  if (!turn) return Number.MAX_SAFE_INTEGER;
+  const seqs = [
+    turn.createdSeq,
+    ...turn.messageIds.map((messageId) => session.messageById[messageId]?.createdSeq),
+    ...turn.modelTurnIds.flatMap((modelTurnId) => {
+      const modelTurn = session.modelTurnById[modelTurnId];
+      return [
+        modelTurn?.createdSeq,
+        ...(modelTurn?.messageIds || []).map((messageId) => session.messageById[messageId]?.createdSeq)
+      ];
+    })
+  ].filter((value): value is number => Number.isFinite(value));
+  return seqs.length > 0 ? Math.min(...seqs) : Number.MAX_SAFE_INTEGER;
+};
 
 export const selectLatestAssistantForTurn = (
   projection: ChatRuntimeProjection | null | undefined,
@@ -156,57 +214,3 @@ export const isRuntimeMessageActive = (status: ChatRuntimeMessageStatus | null |
   status === 'waiting_first_output' ||
   status === 'streaming' ||
   status === 'tooling';
-
-const resolveMessageTurnIndex = (
-  turnOrder: Map<string, number>,
-  message: ChatRuntimeMessageProjection
-): number => {
-  return turnOrder.get(message.userTurnId) ?? Number.MAX_SAFE_INTEGER;
-};
-
-const buildMessageTurnOrder = (
-  session: ChatRuntimeSessionProjection
-): Map<string, number> => {
-  const orderedTurns = session.userTurns
-    .map((turnId, index) => ({
-      turnId,
-      index,
-      createdAtMs: resolveTurnCreatedAtMs(session, turnId),
-      createdSeq: session.userTurnById[turnId]?.createdSeq ?? Number.MAX_SAFE_INTEGER
-    }))
-    .sort((left, right) =>
-      compareNullableTime(left.createdAtMs, right.createdAtMs) ||
-      left.createdSeq - right.createdSeq || left.index - right.index
-    );
-  return new Map(orderedTurns.map((item, index) => [item.turnId, index]));
-};
-
-const resolveTurnCreatedAtMs = (
-  session: ChatRuntimeSessionProjection,
-  turnId: string
-): number | null => {
-  const turn = session.userTurnById[turnId];
-  const directMessage = turn?.messageIds
-    ?.map((messageId) => session.messageById[messageId])
-    .find(Boolean);
-  if (directMessage) return resolveMessageCreatedAtMs(directMessage);
-  const modelMessage = turn?.modelTurnIds
-    ?.flatMap((modelTurnId) => session.modelTurnById[modelTurnId]?.messageIds || [])
-    .map((messageId) => session.messageById[messageId])
-    .find(Boolean);
-  return modelMessage ? resolveMessageCreatedAtMs(modelMessage) : null;
-};
-
-const compareNullableTime = (left: number | null, right: number | null): number => {
-  if (left !== null && right !== null && left !== right) return left - right;
-  if (left !== null && right === null) return -1;
-  if (left === null && right !== null) return 1;
-  return 0;
-};
-
-const resolveMessageCreatedAtMs = (
-  message: ChatRuntimeMessageProjection
-): number | null => {
-  const value = Date.parse(message.createdAt || '');
-  return Number.isFinite(value) ? value : null;
-};

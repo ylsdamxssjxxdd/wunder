@@ -212,6 +212,7 @@ impl ServerHandler for WunderMcpServer {
             .run(WunderRequest {
                 user_id: MCP_USER_ID.to_string(),
                 question: task,
+                client_message_id: None,
                 tool_names,
                 skip_tool_calls: false,
                 stream: false,

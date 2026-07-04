@@ -367,9 +367,9 @@ async fn fetch_access_token(http: &Client, config: &WechatMpConfig) -> Result<St
         .get(build_api_url(
             &token_url,
             &[
-            ("grant_type", "client_credential"),
-            ("appid", app_id),
-            ("secret", app_secret),
+                ("grant_type", "client_credential"),
+                ("appid", app_id),
+                ("secret", app_secret),
             ],
         )?)
         .send()

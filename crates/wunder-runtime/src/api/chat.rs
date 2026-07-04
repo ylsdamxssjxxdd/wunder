@@ -78,6 +78,8 @@ pub fn router() -> Router<Arc<AppState>> {
 #[derive(Debug, Deserialize)]
 struct SendMessageRequest {
     content: String,
+    #[serde(default, alias = "clientMessageId")]
+    client_message_id: Option<String>,
     #[serde(default)]
     stream: Option<bool>,
     #[serde(default, alias = "debugPayload", alias = "debug_payload")]
@@ -289,6 +291,7 @@ async fn send_message(
         &resolved.user,
         &session_id,
         payload.content,
+        payload.client_message_id,
         payload.stream.unwrap_or(true),
         payload.attachments,
         ChatRequestOverrides {
@@ -384,6 +387,7 @@ pub(crate) async fn build_chat_request(
     user: &crate::storage::UserAccountRecord,
     session_id: &str,
     content: String,
+    client_message_id: Option<String>,
     stream: bool,
     attachments: Option<Vec<ChatAttachment>>,
     request_overrides: ChatRequestOverrides,
@@ -553,6 +557,7 @@ pub(crate) async fn build_chat_request(
     Ok(WunderRequest {
         user_id: user.user_id.clone(),
         question: content,
+        client_message_id: normalize_optional_client_message_id(client_message_id.as_deref()),
         tool_names,
         skip_tool_calls: false,
         stream,
@@ -641,19 +646,23 @@ async fn cancel_session(
     )
     .await
     .unwrap_or(false);
-    Ok(Json(
-        json!({
-            "data": {
-                "cancelled": cancel_settlement.monitor_cancelled,
-                "goal_cleared": goal_cleared,
-                "marker_persisted": marker_persisted,
-                "queued_tasks_cancelled": cancel_settlement.queued_tasks_cancelled,
-                "running_tasks_marked_cancelled": cancel_settlement.running_tasks_marked_cancelled,
-                "thread_status_reset": cancel_settlement.thread_status_reset,
-                "settlement_event_id": cancel_settlement.settlement_event_id,
-            }
-        }),
-    ))
+    Ok(Json(json!({
+        "data": {
+            "cancelled": cancel_settlement.monitor_cancelled,
+            "goal_cleared": goal_cleared,
+            "marker_persisted": marker_persisted,
+            "queued_tasks_cancelled": cancel_settlement.queued_tasks_cancelled,
+            "running_tasks_marked_cancelled": cancel_settlement.running_tasks_marked_cancelled,
+            "thread_status_reset": cancel_settlement.thread_status_reset,
+            "settlement_event_id": cancel_settlement.settlement_event_id,
+        }
+    })))
+}
+
+fn normalize_optional_client_message_id(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(128).collect::<String>())
 }
 
 async fn compact_session(

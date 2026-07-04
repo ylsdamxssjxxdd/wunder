@@ -1738,6 +1738,7 @@ impl CronRuntime {
         Ok(WunderRequest {
             user_id: user.user_id.clone(),
             question: message.to_string(),
+            client_message_id: None,
             tool_names,
             skip_tool_calls: false,
             stream: true,

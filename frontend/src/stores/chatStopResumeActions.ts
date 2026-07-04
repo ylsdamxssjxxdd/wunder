@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   archiveSession as archiveSessionApi,
@@ -77,17 +77,10 @@ import {
   selectVisibleMessageProjections,
   selectSessionBusy,
   selectSessionBusyReason,
+  selectRuntimeLastAppliedEventId,
   selectSessionRuntimeStatus
 } from '@/realtime/chat/chatRuntimeSelectors';
-import { buildLegacyMessagesReconciledEvent } from '@/realtime/chat/chatRuntimeReplay';
 import type { ChatRuntimeProjection } from '@/realtime/chat/chatRuntimeTypes';
-import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
-import {
-  assistantEntriesShareTurnAnchor,
-  buildAssistantMatchEntries,
-  buildAssistantMatchEntryMap,
-  findAnchoredAssistantContentMatchIndex
-} from './chatAssistantMatch';
 import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
@@ -99,8 +92,6 @@ import {
   captureChatSnapshotScheduleContext,
   resolveChatSnapshotScheduleSource
 } from './chatSnapshotScheduler';
-import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
-import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
@@ -123,25 +114,21 @@ import {
   replaceMessageArrayKeepingReference,
   resolveRealtimeMessageArrayReference
 } from './chatMessageArraySync';
-import {
-  mergeProtectedRealtimeMessages,
-  upsertProtectedRealtimeMessage
-} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
-import { buildWorkflowItem, dismissStaleInquiryPanels, normalizeInquiryPanelState, safeJsonParse } from './chatDemoPanels';
+import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse } from './chatDemoPanels';
 import { applyGoalStreamEvent, writeSessionGoalState } from './chatPersist';
-import { WATCH_USER_MESSAGE_DEDUP_MS, abortWatchStream, clearRuntimeResumeStreamState, clearSlowClientResume, insertWatchUserMessage, markRuntimeResumeStreamActivity, markRuntimeResumeStreamStarted, resolveHiddenInternalUserEvent, resolveMaterializedMessageEventId, resolveStreamFlushMsForMessages, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalStreamRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, captureRealtimeWorkflowMutationBaseline, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, handleThreadControlWorkflowEvent, logRealtimeWorkflowMutation, notifySessionSnapshot, protectRealtimeChannelMessage, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, syncSessionContextTokens, touchSessionUpdatedAt } from './chatRuntimeState';
+import { abortWatchStream, clearRuntimeResumeStreamState, clearSlowClientResume, markRuntimeResumeStreamActivity, markRuntimeResumeStreamStarted, resolveMaterializedMessageEventId, setSessionLoading } from './chatRuntimeControls';
+import { applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, getSessionMessages, notifySessionSnapshot, refreshRuntimeStreamLifecycle, resolveSessionKey, resolveSessionMessageArray, settleUserStoppedSessionRuntime, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
-import { buildMessage, clearAssistantRetryState, resetAssistantWaitingOutputPhase, resolveTimestampMs } from './chatStats';
-import { assignStreamEventId, getRuntimeLastEventId, normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
+import { clearAssistantRetryState, resetAssistantWaitingOutputPhase } from './chatStats';
+import { getRuntimeLastEventId, normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
 import { ResumeStreamOptions } from './chatTypes';
 import { abortCompactRequest, abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, finalizeManualCompactionAsCancelled, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
-import { getSessionWorkflowState, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
-import { createWorkflowProcessor } from './chatWorkflowProcessor';
+import { handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
+import { shouldUseProjectionOnlyInteractiveStreamEvent } from './chatProjectionOnlyEvents';
 
 const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
 
@@ -298,34 +285,26 @@ export const chatStopResumeActions = {
     },
     async resumeStream(sessionId, message, options: ResumeStreamOptions = {}) {
       const force = options.force === true;
-      if (!message || (!message.stream_incomplete && !force)) return;
+      if (!message && !force) return;
+      if (message && !message.stream_incomplete && !force) return;
       abortWatchStream(sessionId);
       clearSessionEventsSnapshot(sessionId);
       setSessionLoading(this, sessionId, true);
       const perfEnabled = chatPerf.enabled();
       const perfStreamStart = perfEnabled ? performance.now() : 0;
-      message.resume_available = false;
-      message.slow_client = false;
-      clearAssistantRetryState(message);
-      message.workflowStreaming = true;
-      message.stream_incomplete = true;
-      resetAssistantWaitingOutputPhase(message);
       const sessionMessagesRef = resolveSessionMessageArray(this, sessionId, this.messages);
       cacheSessionMessages(sessionId, sessionMessagesRef);
-      notifySessionSnapshot(this, sessionId, sessionMessagesRef);
-      const workflowState = getSessionWorkflowState(sessionId);
-      const processor = createWorkflowProcessor(
-        message,
-        workflowState,
-        (immediate = false) => notifySessionSnapshot(this, sessionId, sessionMessagesRef, immediate),
-        {
-          streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
-          sessionId,
-          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
-          onContextUsage: (contextTokens, contextTotalTokens) =>
-            syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)
-        }
-      );
+      const projectionOnlyResume = !message;
+      const shouldMutateLegacyResumeMessage = Boolean(message) && message.__runtime_projected !== true;
+      if (shouldMutateLegacyResumeMessage) {
+        message.resume_available = false;
+        message.slow_client = false;
+        clearAssistantRetryState(message);
+        message.workflowStreaming = true;
+        message.stream_incomplete = true;
+        resetAssistantWaitingOutputPhase(message);
+        notifySessionSnapshot(this, sessionId, sessionMessagesRef);
+      }
       abortResumeStream(sessionId);
       const runtime = ensureRuntime(sessionId);
       if (runtime) {
@@ -342,23 +321,51 @@ export const chatStopResumeActions = {
       let errorSeen = false;
       let slowClientResumeAfterEventId = 0;
       let resumeRequestId = runtime?.resumeRequestId || '';
+      const resumeUserTurnId = String(message?.user_turn_id ?? message?.userTurnId ?? '').trim();
+      const resumeModelTurnId = String(message?.model_turn_id ?? message?.modelTurnId ?? '').trim();
+      const resumeAssistantMessageId = String(message?.message_id ?? message?.messageId ?? message?.id ?? '').trim();
       const forcedEventId = options.afterEventId;
-      const normalizedMessageEventId = normalizeStreamEventId(message.stream_event_id);
+      const normalizedMessageEventId = normalizeStreamEventId(message?.stream_event_id);
+      const hasProjectionSession = Boolean(this.runtimeProjection?.sessions?.[sessionId]);
+      const projectionLastEventId = selectRuntimeLastAppliedEventId(this.runtimeProjection, sessionId);
       const afterEventId = Number.isFinite(Number(forcedEventId))
         ? Number.parseInt(String(forcedEventId), 10)
         : normalizedMessageEventId;
-      const resumeAfterEventId = Number.isFinite(afterEventId) ? Math.max(afterEventId, 0) : 0;
+      const resumeAfterEventId = hasProjectionSession
+        ? projectionLastEventId
+        : Number.isFinite(afterEventId)
+          ? Math.max(afterEventId, 0)
+          : 0;
       let resumeLastEventId = Math.max(
         resolveMaterializedMessageEventId(sessionMessagesRef),
-        getRuntimeLastEventId(runtime),
+        projectionLastEventId,
+        hasProjectionSession ? 0 : getRuntimeLastEventId(runtime),
         resumeAfterEventId
       );
+      const syncRuntimeLastAppliedEventId = () => {
+        const appliedEventId = selectRuntimeLastAppliedEventId(this.runtimeProjection, sessionId);
+        updateRuntimeLastEventId(
+          runtime,
+          appliedEventId || (hasProjectionSession ? 0 : getRuntimeLastEventId(runtime))
+        );
+        if (appliedEventId > resumeLastEventId) {
+          resumeLastEventId = appliedEventId;
+        }
+        return appliedEventId;
+      };
       try {
         const onEvent = (eventType, dataText, eventId) => {
           markRuntimeResumeStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+          const terminalLlmOutput =
+            normalizedEventType === 'llm_output' &&
+            isTerminalLlmOutputPayload(payload, approvalPayload);
+          const projectionOnlyInteractiveEvent = shouldUseProjectionOnlyInteractiveStreamEvent(
+            normalizedEventType,
+            { terminalLlmOutput }
+          );
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
@@ -371,6 +378,7 @@ export const chatStopResumeActions = {
             {
               requestId: runtime?.resumeRequestId || resumeRequestId,
               phase: 'resume',
+              sideEffects: projectionOnlyInteractiveEvent,
               onSyncRequired: (reason) => {
                 const run = () => {
                   void this.ensureActiveSessionRealtime({
@@ -412,124 +420,33 @@ export const chatStopResumeActions = {
               }
             }
             updateRuntimeRemoteLastEventId(runtime, eventId);
+            syncRuntimeLastAppliedEventId();
             applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
             return;
           }
-          if (normalizedEventType === 'channel_message') {
-            const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? approvalPayload?.timestamp);
-            const channelRole = String(
-              approvalPayload?.role ?? payload?.role ?? ''
-            ).trim().toLowerCase();
-            const channelContent = String(
-              approvalPayload?.content ?? payload?.content ?? ''
-            ).trim();
-            const result = consumeChatWatchChannelMessage({
-              messages: sessionMessagesRef,
-              lastEventId: resumeLastEventId,
-              eventId,
-              eventTimestampMs,
-              payload,
-              data: approvalPayload,
-              normalizeEventId: normalizeStreamEventId,
-              buildMessage,
-              assignStreamEventId,
-              insertWatchUserMessage: (content, timestampMs, anchor, insertOptions) =>
-                insertWatchUserMessage(
-                  this,
-                  sessionId,
-                  sessionMessagesRef,
-                  content,
-                  timestampMs,
-                  anchor,
-                  insertOptions
-                ),
-              clearSupersededPendingAssistantMessages,
-              dismissStaleInquiryPanels,
-              touchUpdatedAt: (timestamp) => touchSessionUpdatedAt(this, sessionId, timestamp),
-              notifySnapshot: (immediate = true) =>
-                notifySessionSnapshot(this, sessionId, sessionMessagesRef, immediate),
-              hiddenInternalUser: resolveHiddenInternalUserEvent(payload, approvalPayload),
-              dedupeAssistantWindowMs: WATCH_USER_MESSAGE_DEDUP_MS
-            });
-            if (result.handled) {
-              if (result.lastEventId > resumeLastEventId) {
-                resumeLastEventId = result.lastEventId;
-                updateRuntimeLastEventId(runtime, result.lastEventId);
-                updateRuntimeRemoteLastEventId(runtime, result.lastEventId);
-              }
-              const normalizedEventId = normalizeStreamEventId(eventId);
-              if (
-                result.mutated &&
-                normalizedEventId !== null &&
-                (channelRole === 'user' || channelRole === 'assistant') &&
-                channelContent
-              ) {
-                protectRealtimeChannelMessage(
-                  sessionId,
-                  sessionMessagesRef,
-                  normalizedEventId,
-                  channelRole,
-                  channelContent,
-                  eventTimestampMs,
-                  resolveHiddenInternalUserEvent(payload, approvalPayload)
-                );
-              }
-              return;
-            }
-          }
-          assignStreamEventId(message, eventId);
-          updateRuntimeLastEventId(runtime, eventId);
-          updateRuntimeRemoteLastEventId(runtime, eventId);
-          resumeLastEventId = Math.max(
-            resumeLastEventId,
-            normalizeStreamEventId(eventId) || 0
-          );
           if (isTerminalStreamEventType(normalizedEventType)) {
             if (normalizedEventType === 'error' || normalizedEventType === 'queue_fail') {
               errorSeen = true;
             } else {
               finalSeen = true;
             }
-          } else if (
-            normalizedEventType === 'llm_output' &&
-            isTerminalLlmOutputPayload(payload, approvalPayload)
-          ) {
+          } else if (terminalLlmOutput) {
             finalSeen = true;
           } else if (
             normalizedEventType === 'slow_client' &&
             String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
           ) {
+            const appliedEventId = selectRuntimeLastAppliedEventId(this.runtimeProjection, sessionId);
             slowClientResumeAfterEventId = Math.max(
               slowClientResumeAfterEventId,
-              getRuntimeLastEventId(runtime),
-              normalizeStreamEventId(message.stream_event_id) || 0
+              appliedEventId,
+              hasProjectionSession ? 0 : getRuntimeLastEventId(runtime),
+              normalizeStreamEventId(message?.stream_event_id) || 0
             );
           }
-          const mutationBaseline = captureRealtimeWorkflowMutationBaseline(
-            message,
-            sessionMessagesRef
-          );
-          if (perfEnabled) {
-            const start = performance.now();
-            processor.handleEvent(normalizedEventType || eventType, dataText);
-            chatPerf.recordDuration('chat_resume_event_handle', performance.now() - start, {
-              eventType: normalizedEventType || eventType,
-              sessionId
-            });
-          } else {
-            processor.handleEvent(normalizedEventType || eventType, dataText);
-          }
-          logRealtimeWorkflowMutation({
-            phase: 'resume',
-            sessionId,
-            eventType: normalizedEventType || eventType,
-            eventId,
-            roundNumber: message.stream_round,
-            userRoundNumber: payload?.user_round ?? approvalPayload?.user_round,
-            message,
-            messages: sessionMessagesRef,
-            before: mutationBaseline
-          });
+          updateRuntimeRemoteLastEventId(runtime, eventId);
+          syncRuntimeLastAppliedEventId();
+          return;
         };
         const requestId = resumeRequestId || buildWsRequestId();
         resumeRequestId = requestId;
@@ -558,6 +475,16 @@ export const chatStopResumeActions = {
           recoveredByRealtime = true;
         } else if (error?.name === 'AbortError') {
           aborted = true;
+          applyLocalAssistantTurnTerminalRuntimeEvent(this, {
+            sessionId,
+            terminal: 'cancelled',
+            content: t('chat.workflow.aborted'),
+            reason: 'resume_aborted',
+            requestId: resumeRequestId,
+            userTurnId: resumeUserTurnId,
+            modelTurnId: resumeModelTurnId,
+            assistantMessageId: resumeAssistantMessageId
+          });
         } else {
           const transient =
             !finalSeen &&
@@ -569,15 +496,27 @@ export const chatStopResumeActions = {
           if (!transient) {
             const detail = error?.message || t('chat.workflow.resumeFailedDetail');
             errorSeen = true;
-            message.workflowItems.push(
-              buildWorkflowItem(
-                t('chat.workflow.resumeFailed'),
-                detail,
-                'failed'
-              )
-            );
-            if (!message.content) {
-              message.content = detail;
+            applyLocalAssistantTurnTerminalRuntimeEvent(this, {
+              sessionId,
+              terminal: 'failed',
+              content: detail,
+              reason: 'resume_failed',
+              requestId: resumeRequestId,
+              userTurnId: resumeUserTurnId,
+              modelTurnId: resumeModelTurnId,
+              assistantMessageId: resumeAssistantMessageId
+            });
+            if (shouldMutateLegacyResumeMessage) {
+              message.workflowItems.push(
+                buildWorkflowItem(
+                  t('chat.workflow.resumeFailed'),
+                  detail,
+                  'failed'
+                )
+              );
+              if (!message.content) {
+                message.content = detail;
+              }
             }
           } else if (perfEnabled) {
             chatPerf.count('chat_resume_interrupted', 1, { sessionId });
@@ -587,9 +526,11 @@ export const chatStopResumeActions = {
         const finishedRequestId = runtime?.resumeRequestId || '';
         const terminalSeen = finalSeen || errorSeen;
         let keepStreaming = recoveredByRealtime || (!aborted && !terminalSeen);
-        message.workflowStreaming = keepStreaming;
-        if (!aborted || recoveredByRealtime) {
-          message.stream_incomplete = keepStreaming;
+        if (shouldMutateLegacyResumeMessage) {
+          message.workflowStreaming = keepStreaming;
+          if (!aborted || recoveredByRealtime) {
+            message.stream_incomplete = keepStreaming;
+          }
         }
         if (runtime) {
           clearRuntimeResumeStreamState(runtime);
@@ -599,16 +540,17 @@ export const chatStopResumeActions = {
             clearSlowClientResume(runtime);
           }
         }
-        if (!keepStreaming) {
+        if (shouldMutateLegacyResumeMessage && !keepStreaming) {
           settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
             failed: errorSeen || aborted
           });
         }
         setSessionLoading(this, sessionId, keepStreaming);
-        processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
         this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
-        notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+        if (shouldMutateLegacyResumeMessage) {
+          notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+        }
         if (perfEnabled) {
           chatPerf.recordDuration('chat_resume_total', performance.now() - perfStreamStart, {
             sessionId,

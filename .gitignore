@@ -81,3 +81,4 @@ config/mcp_config.json
 config/org_units.json
 exports/
 形象/
+config/ppt_templates

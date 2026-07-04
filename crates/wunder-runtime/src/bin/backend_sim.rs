@@ -172,6 +172,7 @@ async fn run_one_request(
     let request = WunderRequest {
         user_id: user_id.clone(),
         question: args.question.clone(),
+        client_message_id: None,
         tool_names: Vec::new(),
         skip_tool_calls: args.skip_tool_calls,
         stream: args.stream,

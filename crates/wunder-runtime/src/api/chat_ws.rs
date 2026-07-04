@@ -50,6 +50,8 @@ pub fn router() -> Router<Arc<AppState>> {
 #[derive(Debug, Deserialize)]
 struct WsStartPayload {
     content: String,
+    #[serde(default, alias = "clientMessageId")]
+    client_message_id: Option<String>,
     #[serde(default)]
     stream: Option<bool>,
     #[serde(default, alias = "debugPayload", alias = "debug_payload")]
@@ -428,6 +430,7 @@ async fn handle_ws(
                             &user,
                             &session_id,
                             payload.content,
+                            payload.client_message_id,
                             stream,
                             payload.attachments,
                             ChatRequestOverrides {

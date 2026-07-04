@@ -11,6 +11,8 @@ import {
   resolveChatRuntimeRenderableSourceDecision,
   resolveChatRuntimeMessageRenderKey
 } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
+import { resolveComposerContextUsageSource } from '../../src/components/chat/composerContextUsage';
+import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
 import type { ChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeTypes';
 
 const apply = (events: ChatRuntimeEvent[]) => {
@@ -41,6 +43,21 @@ const withWindowFlags = (
       (globalThis as Record<string, unknown>).window = previousWindow;
     }
   }
+};
+
+const t = (key: string, params?: Record<string, unknown>): string => {
+  const table: Record<string, string> = {
+    'chat.stats.duration': 'Duration',
+    'chat.stats.speed': 'Speed',
+    'chat.stats.contextTokens': 'Context',
+    'chat.stats.quota': 'Quota',
+    'chat.stats.toolCalls': 'Tools',
+    'chat.stats.userRoundStatus': `Round ${String(params?.round ?? '')}`,
+    'messenger.messageStatus.done': 'Done',
+    'messenger.messageStatus.requesting': 'Requesting',
+    'messenger.messageStatus.modelOutputting': 'Outputting'
+  };
+  return table[key] || key;
 };
 
 test('chat runtime render adapter keeps stable keys across streaming updates', () => {
@@ -85,6 +102,49 @@ test('chat runtime render adapter keeps stable keys across streaming updates', (
   assert.equal(second[0].key, first[0].key);
   assert.equal(second[0].message.content, 'hello world');
   assert.equal(second[0].sourceIndex, 0);
+});
+
+test('chat runtime render adapter reuses materialized objects until projection content changes', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_delta',
+    source: 'test',
+    strict: true,
+    session_id: 'session-1',
+    event_id: 'event-cache-1',
+    event_seq: 1,
+    user_turn_id: 'turn-cache-1',
+    model_turn_id: 'model-turn-cache-1',
+    message_id: 'message-cache-1',
+    delta: 'stable'
+  });
+
+  const first = materializeChatRuntimeMessages(projection, 'session-1');
+  const second = materializeChatRuntimeMessages(projection, 'session-1');
+
+  assert.equal(first[0], second[0]);
+  second[0].content = 'external mutation';
+
+  const recovered = materializeChatRuntimeMessages(projection, 'session-1');
+  assert.notEqual(recovered[0], second[0]);
+  assert.equal(recovered[0].content, 'stable');
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_delta',
+    source: 'test',
+    strict: true,
+    session_id: 'session-1',
+    event_id: 'event-cache-2',
+    event_seq: 2,
+    user_turn_id: 'turn-cache-1',
+    model_turn_id: 'model-turn-cache-1',
+    message_id: 'message-cache-1',
+    delta: ' update'
+  });
+  const updated = materializeChatRuntimeMessages(projection, 'session-1');
+
+  assert.notEqual(updated[0], recovered[0]);
+  assert.equal(updated[0].content, 'stable update');
 });
 
 test('chat runtime render adapter orders user messages before assistant turns', () => {
@@ -136,7 +196,7 @@ test('chat runtime render adapter orders user messages before assistant turns', 
   );
 });
 
-test('chat runtime render adapter preserves compatible legacy raw message references', () => {
+test('chat runtime render adapter materializes projection-owned messages with legacy fields', () => {
   const user = {
     message_id: 'message-user-1',
     role: 'user',
@@ -157,8 +217,8 @@ test('chat runtime render adapter preserves compatible legacy raw message refere
   };
   const projection = apply([
     {
-      event_type: 'legacy_messages_reconciled',
-      source: 'legacy',
+      event_type: 'session_snapshot',
+      source: 'snapshot',
       strict: false,
       session_id: 'session-1',
       messages: [user, assistant],
@@ -169,10 +229,16 @@ test('chat runtime render adapter preserves compatible legacy raw message refere
 
   const materialized = materializeChatRuntimeMessages(projection, 'session-1');
 
-  assert.equal(materialized[0], user);
-  assert.equal(materialized[1], assistant);
+  assert.notEqual(materialized[0], user);
+  assert.notEqual(materialized[1], assistant);
+  assert.equal(materialized[0].__runtime_projected, true);
+  assert.equal(materialized[1].__runtime_projected, true);
+  assert.equal('__runtime_raw_message' in materialized[0], false);
+  assert.equal('__runtime_raw_message' in materialized[1], false);
   assert.deepEqual(materialized[0].attachments, [{ name: 'file' }]);
   assert.deepEqual(materialized[1].feedback, { vote: 'up' });
+  (materialized[0].attachments as Array<Record<string, unknown>>)[0].name = 'changed';
+  assert.deepEqual(user.attachments, [{ name: 'file' }]);
 });
 
 test('chat runtime render adapter never materializes synthetic greeting from projection', () => {
@@ -190,8 +256,8 @@ test('chat runtime render adapter never materializes synthetic greeting from pro
   };
   const projection = apply([
     {
-      event_type: 'legacy_messages_reconciled',
-      source: 'legacy',
+      event_type: 'session_snapshot',
+      source: 'snapshot',
       strict: false,
       session_id: 'session-1',
       messages: [greeting, user],
@@ -229,8 +295,8 @@ test('chat runtime render adapter patches stale raw streaming flags without muta
   };
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [assistant],
@@ -271,8 +337,8 @@ test('chat runtime render adapter does not reuse raw messages after projected wo
   };
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
-    event_type: 'legacy_messages_reconciled',
-    source: 'legacy',
+    event_type: 'session_snapshot',
+    source: 'snapshot',
     strict: false,
     session_id: 'session-1',
     messages: [assistant],
@@ -400,6 +466,196 @@ test('chat runtime render adapter preserves projected workflow items', () => {
   assert.equal(workflowItems[0].toolName, 'lookup');
 });
 
+test('chat runtime render adapter materializes projected retry and resumable fields', () => {
+  const projection = apply([
+    {
+      event_type: 'workflow_event',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-1',
+      event_seq: 1,
+      user_turn_id: 'turn-1',
+      model_turn_id: 'model-turn-1',
+      message_id: 'message-assistant-1',
+      payload: {
+        source_event_type: 'llm_stream_retry',
+        data: {
+          attempt: 1,
+          max_attempts: 3,
+          delay_s: 2,
+          retry_reason: 'rate_limit',
+          timestamp: '2026-04-30T02:14:07.000Z'
+        }
+      }
+    },
+    {
+      event_type: 'workflow_event',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-2',
+      event_seq: 2,
+      user_turn_id: 'turn-1',
+      model_turn_id: 'model-turn-1',
+      message_id: 'message-assistant-1',
+      payload: {
+        source_event_type: 'slow_client',
+        data: {
+          reason: 'queue_full_resume_required'
+        }
+      }
+    }
+  ]);
+
+  const materialized = materializeChatRuntimeMessages(projection, 'session-1');
+  const workflowItems = materialized[0].workflowItems as Array<Record<string, unknown>>;
+
+  assert.equal(materialized.length, 1);
+  assert.equal(materialized[0].slow_client, true);
+  assert.equal(materialized[0].resume_available, true);
+  assert.equal(materialized[0].workflowStreaming, false);
+  assert.equal(materialized[0].stream_incomplete, false);
+  assert.equal(materialized[0].retry_attempt, 1);
+  assert.equal(materialized[0].retry_max_attempts, 3);
+  assert.equal(materialized[0].retry_delay_s, 2);
+  assert.equal(workflowItems.some((item) => item.eventType === 'llm_stream_retry'), true);
+  assert.equal(workflowItems.some((item) => item.eventType === 'slow_client'), true);
+});
+
+test('chat runtime render adapter materializes projected plan and question panel fields', () => {
+  const projection = apply([
+    {
+      event_type: 'workflow_event',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-1',
+      event_seq: 1,
+      user_turn_id: 'turn-1',
+      model_turn_id: 'model-turn-1',
+      message_id: 'message-assistant-1',
+      payload: {
+        source_event_type: 'plan_update',
+        data: {
+          explanation: 'planned route',
+          steps: [{ step: 'collect input', status: 'in_progress' }]
+        }
+      }
+    },
+    {
+      event_type: 'workflow_event',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-2',
+      event_seq: 2,
+      user_turn_id: 'turn-1',
+      model_turn_id: 'model-turn-1',
+      message_id: 'message-assistant-1',
+      payload: {
+        source_event_type: 'question_panel',
+        data: {
+          question: 'Pick a route',
+          routes: [{ label: 'Fast', recommended: true }]
+        }
+      }
+    }
+  ]);
+
+  const materialized = materializeChatRuntimeMessages(projection, 'session-1');
+  const message = materialized[0] as {
+    plan?: { explanation?: string; steps?: Array<{ step?: string; status?: string }> };
+    questionPanel?: { question?: string; routes?: Array<{ label?: string; recommended?: boolean }> };
+    workflowItems?: Array<Record<string, unknown>>;
+  };
+
+  assert.equal(materialized.length, 1);
+  assert.equal(message.plan?.explanation, 'planned route');
+  assert.equal(message.plan?.steps?.[0]?.step, 'collect input');
+  assert.equal(message.questionPanel?.question, 'Pick a route');
+  assert.equal(message.questionPanel?.routes?.[0]?.recommended, true);
+  assert.equal(message.workflowItems?.some((item) => item.eventType === 'plan_update'), true);
+  assert.equal(message.workflowItems?.some((item) => item.eventType === 'question_panel'), true);
+});
+
+test('chat runtime render adapter materializes projected usage stats for message utilities', () => {
+  const projection = apply([
+    {
+      event_type: 'assistant_message_created',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-stats-1',
+      event_seq: 1,
+      user_turn_id: 'turn-stats-1',
+      model_turn_id: 'model-turn-stats-1',
+      message_id: 'message-assistant-stats-1'
+    },
+    {
+      event_type: 'usage_stats',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-stats-2',
+      event_seq: 2,
+      user_turn_id: 'turn-stats-1',
+      model_turn_id: 'model-turn-stats-1',
+      message_id: 'message-assistant-stats-1',
+      payload: {
+        source_event_type: 'round_usage',
+        data: {
+          input_tokens: 120,
+          output_tokens: 30,
+          total_tokens: 150,
+          request_consumed_tokens: 150,
+          context_occupancy_tokens: 180,
+          max_context: 1000,
+          decode_duration_s: 3,
+          avg_model_round_speed_tps: 10,
+          avg_model_round_speed_rounds: 1
+        }
+      }
+    },
+    {
+      event_type: 'assistant_final',
+      source: 'test',
+      strict: true,
+      session_id: 'session-1',
+      event_id: 'event-stats-3',
+      event_seq: 3,
+      user_turn_id: 'turn-stats-1',
+      model_turn_id: 'model-turn-stats-1',
+      message_id: 'message-assistant-stats-1',
+      content: 'done'
+    }
+  ]);
+
+  const materialized = materializeChatRuntimeMessages(projection, 'session-1');
+  const message = materialized[0] as Record<string, any>;
+  const entries = buildAssistantMessageStatsEntries(message, t, materialized);
+  const contextSource = resolveComposerContextUsageSource(materialized, {
+    id: 'session-1',
+    context_occupancy_tokens: 180,
+    context_max_tokens: 1000
+  }, false);
+
+  assert.equal(materialized.length, 1);
+  assert.equal(message.__runtime_projected, true);
+  assert.deepEqual(message.stats.roundUsage, { input: 120, output: 30, total: 150 });
+  assert.equal(message.stats.context_occupancy_tokens, 180);
+  assert.equal(message.stats.contextTotalTokens, 1000);
+  assert.equal(message.stats.quotaConsumed, 150);
+  assert.equal(entries.find((item) => item.key === 'contextTokens')?.value, '180');
+  assert.equal(entries.find((item) => item.key === 'quota')?.value, '150');
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '10.00 token/s');
+  assert.equal(contextSource.contextTokens, 180);
+  assert.equal(contextSource.contextTotalTokens, 1000);
+  (message.stats.roundUsage as Record<string, unknown>).total = 1;
+  const second = materializeChatRuntimeMessages(projection, 'session-1')[0] as Record<string, any>;
+  assert.equal(second.stats.roundUsage.total, 150);
+});
+
 test('chat runtime render adapter preserves projected subagent cards', () => {
   const projection = apply([
     {
@@ -486,8 +742,8 @@ test('chat runtime render adapter marks completed subagents as non-streaming aft
 test('chat runtime render adapter keeps workflow streaming for active subagent-only legacy snapshots', () => {
   const projection = apply([
     {
-      event_type: 'legacy_messages_reconciled',
-      source: 'legacy',
+      event_type: 'session_snapshot',
+      source: 'snapshot',
       strict: false,
       session_id: 'session-1',
       messages: [
@@ -553,14 +809,14 @@ test('chat runtime render adapter reports known empty projection sessions', () =
   assert.equal(hasChatRuntimeRenderSession(projection, 'session-empty'), true);
 });
 
-test('chat runtime render mode defaults to projection and supports explicit legacy rollback', () => {
+test('chat runtime render mode always keeps projection as the rendered source', () => {
   withWindowFlags({}, () => {
     assert.equal(resolveChatRuntimeProjectionRenderMode(), 'projection');
     assert.equal(isChatRuntimeProjectionRenderEnabled(), true);
   });
   withWindowFlags({ 'wunder:chat-runtime-render': 'legacy' }, () => {
-    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'legacy');
-    assert.equal(isChatRuntimeProjectionRenderEnabled(), false);
+    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'projection');
+    assert.equal(isChatRuntimeProjectionRenderEnabled(), true);
   });
   withWindowFlags({ 'wunder:chat-runtime-render': 'projection' }, () => {
     assert.equal(resolveChatRuntimeProjectionRenderMode(), 'shadow');
@@ -571,21 +827,21 @@ test('chat runtime render mode defaults to projection and supports explicit lega
     assert.equal(isChatRuntimeProjectionRenderEnabled(), true);
   });
   withWindowFlags({}, () => {
-    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'legacy');
+    assert.equal(resolveChatRuntimeProjectionRenderMode(), 'projection');
   }, '?chat_runtime_render=off');
 });
 
-test('chat runtime render source decision keeps legacy only when rollback mode is explicit', () => {
+test('chat runtime render source decision ignores legacy rollback requests', () => {
   assert.deepEqual(
     resolveChatRuntimeRenderableSourceDecision({
-      renderMode: 'legacy',
+      renderMode: 'projection',
       projectionCount: 3,
       projectionSessionKnown: true,
       shadowEnabled: false
     }),
     {
-      source: 'legacy',
-      event: 'legacy-source',
+      source: 'projection',
+      event: 'projection-source',
       inspectShadow: false
     }
   );
@@ -600,8 +856,8 @@ test('chat runtime render source decision observes projection in shadow mode wit
       shadowEnabled: true
     }),
     {
-      source: 'legacy',
-      event: 'projection-shadow',
+      source: 'projection',
+      event: 'projection-source',
       inspectShadow: true
     }
   );
@@ -618,12 +874,12 @@ test('chat runtime render source decision renders known empty projection session
     {
       source: 'projection',
       event: 'projection-source',
-      inspectShadow: true
+      inspectShadow: false
     }
   );
 });
 
-test('chat runtime render source decision falls back only for unknown empty projection sessions', () => {
+test('chat runtime render source decision keeps projection for unknown empty sessions', () => {
   assert.deepEqual(
     resolveChatRuntimeRenderableSourceDecision({
       renderMode: 'projection',
@@ -632,9 +888,9 @@ test('chat runtime render source decision falls back only for unknown empty proj
       shadowEnabled: false
     }),
     {
-      source: 'legacy',
-      event: 'projection-empty-fallback',
-      inspectShadow: true
+      source: 'projection',
+      event: 'projection-source',
+      inspectShadow: false
     }
   );
 });

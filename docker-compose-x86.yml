@@ -256,7 +256,7 @@ services:
       - seccomp:unconfined
     container_name: wunder-frontend
     working_dir: /workspace
-    restart: always
+    restart: "no"
     volumes:
       - ./:/workspace
       - ./node_modules-linux-x86:/workspace/node_modules
@@ -275,6 +275,7 @@ services:
       - FRONTEND_STRICT_PORT=${FRONTEND_STRICT_PORT:-1}
       - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
       - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
+      - FRONTEND_RUN_DEV_SERVER=${FRONTEND_RUN_DEV_SERVER:-0}
       - FRONTEND_SKIP_DIST_BUILD=${FRONTEND_SKIP_DIST_BUILD:-0}
       - NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
       - NPM_CONFIG_PREFER_OFFLINE=${NPM_CONFIG_PREFER_OFFLINE:-true}
@@ -304,7 +305,7 @@ services:
       wunder-server:
         condition: service_started
       wunder-frontend:
-        condition: service_started
+        condition: service_completed_successfully
     command: ["/bin/sh", "-lc", "until [ -f /usr/share/nginx/html/index.html ]; do echo '[wunder-nginx] waiting for frontend dist/index.html'; sleep 1; done; exec nginx -g 'daemon off;'"]
     restart: always
     volumes:

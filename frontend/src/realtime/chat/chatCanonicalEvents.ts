@@ -24,6 +24,30 @@ const TERMINAL_FAILED_STATUSES = new Set([
 const TERMINAL_CANCELLED_STATUSES = new Set(['cancelled', 'canceled', 'aborted']);
 
 const WORKFLOW_EVENT_PREFIXES = ['subagent_', 'team_'];
+const GENERIC_WORKFLOW_EVENT_TYPES = new Set([
+  'progress',
+  'llm_request',
+  'llm_stream_retry',
+  'knowledge_request',
+  'thread_control',
+  'plan_update',
+  'question_panel',
+  'command_session_delta',
+  'command_session_start',
+  'command_session_status',
+  'command_session_exit',
+  'command_session_summary',
+  'slow_client',
+  'compaction',
+  'compaction_progress',
+  'compaction_notice'
+]);
+const USAGE_EVENT_TYPES = new Set([
+  'token_usage',
+  'round_usage',
+  'context_usage',
+  'quota_usage'
+]);
 
 const normalizeId = (value: unknown): string => String(value ?? '').trim();
 
@@ -258,16 +282,28 @@ const buildBaseEvent = (
   const needsAssistantMessage =
     runtimeType.startsWith('assistant_') ||
     runtimeType.startsWith('tool_call_') ||
-    runtimeType === 'workflow_event';
+    runtimeType === 'workflow_event' ||
+    runtimeType === 'usage_stats';
   return {
     event_type: runtimeType,
     source: options.source || 'ws',
-    strict: eventSeq !== null,
+    strict: extra.strict ?? eventSeq !== null,
     session_id: sessionId,
     event_id: eventId,
     event_seq: eventSeq,
     user_turn_id: userTurnId,
     model_turn_id: modelTurnId,
+    ...(runtimeType === 'user_message_created' ? {
+      message_id: resolveMessageId(
+        sessionId,
+        'user',
+        payload,
+        data,
+        modelTurnId,
+        userTurnId,
+        clientMessageId
+      )
+    } : {}),
     ...(needsAssistantMessage ? { message_id: assistantMessageId } : {}),
     payload: {
       ...payload,
@@ -333,6 +369,29 @@ const extractFinalContent = (
   )
 });
 
+const isTerminalLlmOutput = (
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): boolean => {
+  const stopReason = firstText(
+    data.stop_reason,
+    data.stopReason,
+    data.finish_reason,
+    data.finishReason,
+    payload.stop_reason,
+    payload.stopReason,
+    payload.finish_reason,
+    payload.finishReason
+  );
+  return Boolean(
+    stopReason ||
+      data.done === true ||
+      data.final === true ||
+      data.is_final === true ||
+      payload.done === true
+  );
+};
+
 export const buildCanonicalChatRuntimeEvents = (
   options: CanonicalBuildOptions
 ): ChatRuntimeEvent[] => {
@@ -343,7 +402,13 @@ export const buildCanonicalChatRuntimeEvents = (
   const payload = asRecord(options.payload);
   const data = readData(payload);
 
-  if (eventType === 'llm_output_delta' || eventType === 'delta' || eventType === 'message') {
+  if (
+    eventType === 'llm_output_delta' ||
+    eventType === 'delta' ||
+    eventType === 'message' ||
+    eventType === 'think_delta' ||
+    eventType === 'reasoning_delta'
+  ) {
     const { delta, reasoningDelta } = extractDelta(payload, data);
     if (!delta && !reasoningDelta) return [];
     return [
@@ -351,6 +416,51 @@ export const buildCanonicalChatRuntimeEvents = (
         delta,
         reasoning_delta: reasoningDelta
       })
+    ];
+  }
+
+  if (eventType === 'round_start' || eventType === 'received') {
+    const content = firstText(
+      data.question,
+      payload.question,
+      data.user_message,
+      payload.user_message,
+      data.user_content,
+      payload.user_content,
+      data.input,
+      payload.input,
+      data.prompt,
+      payload.prompt,
+      data.message,
+      payload.message
+    );
+    if (!content) return [];
+    return [
+      buildBaseEvent(options, 'user_message_created', {
+        role: 'user',
+        content
+      })
+    ];
+  }
+
+  if (eventType === 'channel_message') {
+    const role = normalizeEventType(data.role ?? payload.role);
+    const content = firstText(data.content, payload.content, data.message, payload.message);
+    if (!content || (role !== 'user' && role !== 'assistant')) return [];
+    if (role === 'user') {
+      return [
+        buildBaseEvent(options, 'user_message_created', {
+          role: 'user',
+          content
+        })
+      ];
+    }
+    return [
+      buildBaseEvent(options, 'assistant_final', {
+        role: 'assistant',
+        content
+      }),
+      buildBaseEvent(options, 'turn_completed', {}, 'terminal')
     ];
   }
 
@@ -375,6 +485,10 @@ export const buildCanonicalChatRuntimeEvents = (
           ? 'turn_failed'
           : 'turn_completed';
     return [buildBaseEvent(options, terminalType)];
+  }
+
+  if (eventType === 'queue_finish') {
+    return [buildBaseEvent(options, 'turn_completed')];
   }
 
   if (eventType === 'error' || eventType === 'queue_fail') {
@@ -409,16 +523,24 @@ export const buildCanonicalChatRuntimeEvents = (
     return [
       buildBaseEvent(options, 'session_runtime', {
         runtime_status: 'queued'
-      })
+      }),
+      buildBaseEvent(options, 'queue_status', {
+        strict: false,
+        event_seq: null
+      }, 'queue')
     ];
   }
 
-  if (eventType === 'queue_start' || eventType === 'progress') {
+  if (eventType === 'queue_start') {
     return [
       buildBaseEvent(options, 'session_runtime', {
         runtime_status: 'running'
       })
     ];
+  }
+
+  if (eventType === 'tool_call_delta' || eventType === 'tool_output' || eventType === 'tool_output_delta') {
+    return [buildBaseEvent(options, 'tool_call_delta')];
   }
 
   if (eventType === 'tool_call' || eventType === 'approval_request') {
@@ -433,26 +555,25 @@ export const buildCanonicalChatRuntimeEvents = (
     return [buildBaseEvent(options, failed ? 'tool_call_failed' : 'tool_call_completed')];
   }
 
-  if (WORKFLOW_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))) {
+  if (GENERIC_WORKFLOW_EVENT_TYPES.has(eventType) || WORKFLOW_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))) {
     return [buildBaseEvent(options, 'workflow_event')];
   }
 
+  if (USAGE_EVENT_TYPES.has(eventType)) {
+    return [buildBaseEvent(options, 'usage_stats')];
+  }
+
   if (eventType === 'llm_output') {
-    const stopReason = firstText(
-      data.stop_reason,
-      data.stopReason,
-      data.finish_reason,
-      data.finishReason,
-      payload.stop_reason,
-      payload.stopReason,
-      payload.finish_reason,
-      payload.finishReason
-    );
-    const done = data.done === true || data.final === true || data.is_final === true || payload.done === true;
-    if (!stopReason && !done) {
-      return [];
-    }
     const finalContent = extractFinalContent(payload, data);
+    if (!isTerminalLlmOutput(payload, data)) {
+      if (!finalContent.content && !finalContent.reasoning) return [];
+      return [
+        buildBaseEvent(options, 'assistant_output_snapshot', {
+          content: finalContent.content,
+          reasoning: finalContent.reasoning
+        })
+      ];
+    }
     return [
       buildBaseEvent(options, 'assistant_final', {
         content: finalContent.content,
@@ -461,7 +582,7 @@ export const buildCanonicalChatRuntimeEvents = (
     ];
   }
 
-  return [];
+  return [buildBaseEvent(options, 'workflow_event')];
 };
 
 export const buildCanonicalClientMessageSubmittedEvent = (payload: {
@@ -471,6 +592,7 @@ export const buildCanonicalClientMessageSubmittedEvent = (payload: {
   clientMessageId: string;
   createdAt?: unknown;
   userTurnId?: string;
+  attachments?: unknown[];
 }): ChatRuntimeEvent => ({
   event_type: 'client_message_submitted',
   source: 'local',
@@ -484,6 +606,9 @@ export const buildCanonicalClientMessageSubmittedEvent = (payload: {
   content: payload.content,
   created_at: payload.createdAt,
   payload: {
-    client_message_id: payload.clientMessageId
+    client_message_id: payload.clientMessageId,
+    ...(Array.isArray(payload.attachments) && payload.attachments.length > 0
+      ? { attachments: payload.attachments }
+      : {})
   }
 });

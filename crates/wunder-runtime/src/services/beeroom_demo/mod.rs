@@ -726,6 +726,7 @@ fn build_mother_request(
     WunderRequest {
         user_id: plan.user_id.clone(),
         question,
+        client_message_id: None,
         tool_names: vec!["agent_swarm".to_string()],
         skip_tool_calls: false,
         stream: false,

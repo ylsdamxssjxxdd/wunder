@@ -1112,6 +1112,7 @@ async fn run_request(
     let request = WunderRequest {
         user_id: user_id.clone(),
         question,
+        client_message_id: None,
         tool_names: Vec::new(),
         skip_tool_calls: true,
         stream: true,
