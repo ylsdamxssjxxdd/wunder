@@ -5,7 +5,28 @@ mode="${1:-}"
 binary="${CARGO_TARGET_DIR:-/tmp/cargo-target}/release/wunder-server"
 prefer_prebuilt="${WUNDER_PREFER_PREBUILT_BIN:-0}"
 feature_stamp="${binary}.features"
-server_features="${WUNDER_SERVER_FEATURES:-mcp}"
+
+normalize_server_features() {
+  local raw="${1:-}"
+  local normalized=""
+  local part
+
+  raw="${raw//,/ }"
+  for part in ${raw}; do
+    if [ -z "${part}" ]; then
+      continue
+    fi
+    if [ -n "${normalized}" ]; then
+      normalized="${normalized} ${part}"
+    else
+      normalized="${part}"
+    fi
+  done
+
+  printf '%s' "${normalized}"
+}
+
+server_features="$(normalize_server_features "${WUNDER_SERVER_FEATURES:-mcp,host-metrics}")"
 
 ensure_playwright_browsers() {
   local target="${PLAYWRIGHT_BROWSERS_PATH:-}"

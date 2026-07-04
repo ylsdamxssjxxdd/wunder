@@ -97,9 +97,14 @@ These endpoints can all be mounted under the same service domain—don't wait un
 - `WUNDER_POSTGRES_DSN`
 - `WUNDER_SANDBOX_ENDPOINT`
 - `WUNDER_SANDBOX_DOCKER_READ_ONLY`
+- `WUNDER_SERVER_FEATURES`
 - `WUNDER_MCP_HOST`
 - `WUNDER_CONFIG_PATH`
 - `WUNDER_USER_TOOLS_ROOT`
+
+## System Status Under Docker
+
+The admin-side system status CPU, memory, process, load, and disk metrics depend on the `host-metrics` Rust feature. Compose now defaults to `WUNDER_SERVER_FEATURES=mcp,host-metrics`; if you override this variable in `.env`, keep `host-metrics` or those host resource metrics will degrade to zero values.
 
 ## Browser Runtime Under Docker
 
@@ -117,6 +122,7 @@ Current Compose keeps the `wunder-sandbox` container root filesystem writable by
 - Enabled MCP configuration, but the target service isn't connected
 - Workspaces not persisted, causing outputs to be lost
 - Put long-term business data into the `config/data/` runtime directory
+- Admin system status resource metrics show zero because `WUNDER_SERVER_FEATURES` was overridden without `host-metrics`
 - Sandbox file tools still fail with `Read-only file system` because an old `wunder-sandbox` container was created with Docker `read_only: true`
 - Mistakenly treated desktop local mode as a server deployment method
 

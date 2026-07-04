@@ -60,48 +60,68 @@
           <AgentPresetQuestionsField v-model="form.preset_questions" />
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.tools')">
-          <div class="messenger-tool-picker">
+          <div class="messenger-tool-picker-list">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
             <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
-            <el-checkbox-group v-else v-model="form.tool_names" class="messenger-tool-groups">
-              <div v-for="section in toolSections" :key="section.key" class="messenger-tool-section">
-                <div class="messenger-tool-section-title">{{ section.label }}</div>
-                <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
-                  <div class="messenger-tool-group-head">
-                    <div class="messenger-tool-group-head-left">
-                      <div class="messenger-tool-group-title">{{ group.label }}</div>
-                    </div>
-                    <button class="messenger-tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
-                      {{
-                        isGroupFullSelected(group)
-                          ? t('messenger.agentCreate.unselectAll')
-                          : t('messenger.agentCreate.selectAll')
-                      }}
-                    </button>
-                  </div>
-                  <div
-                    class="messenger-tool-options"
-                    :class="{ 'messenger-tool-options--scrollable': group.options.length > 3 }"
-                  >
-                    <div
-                      v-for="tool in group.options"
-                      :key="tool.value"
-                      class="messenger-tool-option-item"
-                      @contextmenu.prevent="showToolDetail($event, group, tool)"
-                    >
-                      <el-checkbox :value="tool.value">
-                        <AgentToolOptionLabel
-                          :label="tool.label"
-                          :description="tool.description"
-                          :hint="tool.hint"
-                          :group-key="group.key"
-                        />
-                      </el-checkbox>
-                    </div>
-                  </div>
+            <div v-else-if="!toolSections.length" class="messenger-list-empty">
+              {{ t('portal.agent.tools.loadFailed') }}
+            </div>
+            <template v-else>
+              <div v-for="section in visibleToolSections" :key="section.key" class="messenger-tool-picker">
+                <div class="messenger-tool-picker-head">
+                  <span class="messenger-tool-picker-title">{{ section.label }}</span>
+                  <el-input
+                    v-model="toolSearchKeywords[section.key]"
+                    class="messenger-tool-picker-search"
+                    size="small"
+                    clearable
+                    :placeholder="t('portal.agent.tools.searchPlaceholder')"
+                    @click.stop
+                  />
                 </div>
+                <div v-if="isToolSectionSearchEmpty(section)" class="messenger-list-empty">
+                  {{ t('portal.agent.tools.searchEmpty') }}
+                </div>
+                <el-checkbox-group v-else v-model="form.tool_names" class="messenger-tool-groups">
+                  <div class="messenger-tool-section">
+                    <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
+                      <div class="messenger-tool-group-head">
+                        <div class="messenger-tool-group-head-left">
+                          <div class="messenger-tool-group-title">{{ group.label }}</div>
+                        </div>
+                        <button class="messenger-tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
+                          {{
+                            isGroupFullSelected(group)
+                              ? t('messenger.agentCreate.unselectAll')
+                              : t('messenger.agentCreate.selectAll')
+                          }}
+                        </button>
+                      </div>
+                      <div
+                        class="messenger-tool-options"
+                        :class="{ 'messenger-tool-options--scrollable': group.options.length > 3 }"
+                      >
+                        <div
+                          v-for="tool in group.options"
+                          :key="tool.value"
+                          class="messenger-tool-option-item"
+                          @contextmenu.prevent="showToolDetail($event, group, tool)"
+                        >
+                          <el-checkbox :value="tool.value">
+                            <AgentToolOptionLabel
+                              :label="tool.label"
+                              :description="tool.description"
+                              :hint="tool.hint"
+                              :group-key="group.key"
+                            />
+                          </el-checkbox>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </el-checkbox-group>
               </div>
-            </el-checkbox-group>
+            </template>
           </div>
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.base')">
@@ -263,6 +283,10 @@ const resolveGroupAbilityKind = (groupKey: string): 'tool' | 'skill' =>
 const toolLoading = ref(false);
 const toolError = ref('');
 const toolSummary = ref<Record<string, unknown> | null>(null);
+const toolSearchKeywords = reactive<Record<string, string>>({
+  admin: '',
+  user: ''
+});
 const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
@@ -348,6 +372,36 @@ const normalizeOption = (item: unknown): ToolOption | null => {
 const toolSections = computed<ToolSection[]>(() =>
   buildAgentToolSections(toolSummary.value, t, normalizeOption, USER_AGENT_TOOL_CATALOG_OPTIONS)
 );
+
+const normalizeToolSearchKeyword = (sectionKey: string): string =>
+  String(toolSearchKeywords[sectionKey] || '').trim().toLowerCase();
+
+const isToolOptionMatched = (option: ToolOption, keyword: string): boolean => {
+  if (!keyword) return true;
+  return [option.label, option.value, option.description]
+    .some((field) => String(field || '').toLowerCase().includes(keyword));
+};
+
+const filterToolSectionBySearch = (section: ToolSection): ToolSection => {
+  const keyword = normalizeToolSearchKeyword(section.key);
+  if (!keyword) return section;
+  return {
+    ...section,
+    groups: section.groups
+      .map((group) => ({
+        ...group,
+        options: group.options.filter((option) => isToolOptionMatched(option, keyword))
+      }))
+      .filter((group) => group.options.length > 0)
+  };
+};
+
+const visibleToolSections = computed<ToolSection[]>(() =>
+  toolSections.value.map((section) => filterToolSectionBySearch(section))
+);
+
+const isToolSectionSearchEmpty = (section: ToolSection): boolean =>
+  Boolean(normalizeToolSearchKeyword(section.key)) && section.groups.length === 0;
 
 const defaultModelDisplayName = computed(() => {
   const fallback = t('portal.agent.model.defaultName');

@@ -70,76 +70,78 @@
           />
         </el-form-item>
         <el-form-item class="messenger-agent-form-item messenger-agent-form-item--tools">
-          <div class="messenger-tool-picker">
-            <div class="messenger-agent-tools-head">
-              <span class="messenger-agent-tools-caption">{{ t('portal.agent.form.tools') }}</span>
-              <el-input
-                v-model="toolSearchKeyword"
-                class="messenger-agent-tools-search"
-                size="small"
-                clearable
-                :placeholder="t('portal.agent.tools.searchPlaceholder')"
-                :disabled="toolLoading || Boolean(toolError)"
-                @click.stop
-              />
-            </div>
+          <div class="messenger-tool-picker-list">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('portal.agent.tools.loading') }}</div>
             <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
             <div v-else-if="!toolSections.length" class="messenger-list-empty">
               {{ t('portal.agent.tools.loadFailed') }}
             </div>
-            <div v-else-if="toolSearchNormalized && !visibleToolSections.length" class="messenger-list-empty">
-              {{ t('portal.agent.tools.searchEmpty') }}
-            </div>
-            <el-checkbox-group
-              v-else
-              v-model="form.tool_names"
-              class="messenger-tool-groups"
-              :disabled="isInteractionDisabled"
-            >
-              <div v-for="section in visibleToolSections" :key="section.key" class="messenger-tool-section">
-                <div class="messenger-tool-section-title">{{ section.label }}</div>
-                <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
-                  <div class="messenger-tool-group-head">
-                    <div class="messenger-tool-group-head-left">
-                      <span class="messenger-tool-group-title">{{ t('chat.approval.kind') }}：{{ group.label }}</span>
-                    </div>
-                    <button
-                      class="messenger-tool-group-toggle"
-                      type="button"
-                      :disabled="isInteractionDisabled"
-                      @click.prevent="toggleGroup(group)"
-                    >
-                      {{
-                        isGroupFullSelected(group)
-                          ? t('portal.agent.tools.unselectAll')
-                          : t('portal.agent.tools.selectAll')
-                      }}
-                    </button>
-                  </div>
-                  <div
-                    class="messenger-tool-options"
-                    :class="{ 'messenger-tool-options--scrollable': group.options.length > 3 }"
-                  >
-                    <div
-                      v-for="option in group.options"
-                      :key="option.value"
-                      class="messenger-tool-option-item"
-                      @contextmenu.prevent="showToolDetail($event, group, option)"
-                    >
-                      <el-checkbox :value="option.value">
-                        <AgentToolOptionLabel
-                          :label="option.label"
-                          :description="option.description"
-                          :hint="option.hint"
-                          :group-key="group.key"
-                        />
-                      </el-checkbox>
-                    </div>
-                  </div>
+            <template v-else>
+              <div v-for="section in visibleToolSections" :key="section.key" class="messenger-tool-picker">
+                <div class="messenger-tool-picker-head">
+                  <span class="messenger-tool-picker-title">{{ section.label }}</span>
+                  <el-input
+                    v-model="toolSearchKeywords[section.key]"
+                    class="messenger-tool-picker-search"
+                    size="small"
+                    clearable
+                    :placeholder="t('portal.agent.tools.searchPlaceholder')"
+                    @click.stop
+                  />
                 </div>
+                <div v-if="isToolSectionSearchEmpty(section)" class="messenger-list-empty">
+                  {{ t('portal.agent.tools.searchEmpty') }}
+                </div>
+                <el-checkbox-group
+                  v-else
+                  v-model="form.tool_names"
+                  class="messenger-tool-groups"
+                  :disabled="isInteractionDisabled"
+                >
+                  <div class="messenger-tool-section">
+                    <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
+                      <div class="messenger-tool-group-head">
+                        <div class="messenger-tool-group-head-left">
+                          <span class="messenger-tool-group-title">{{ t('chat.approval.kind') }}：{{ group.label }}</span>
+                        </div>
+                        <button
+                          class="messenger-tool-group-toggle"
+                          type="button"
+                          :disabled="isInteractionDisabled"
+                          @click.prevent="toggleGroup(group)"
+                        >
+                          {{
+                            isGroupFullSelected(group)
+                              ? t('portal.agent.tools.unselectAll')
+                              : t('portal.agent.tools.selectAll')
+                          }}
+                        </button>
+                      </div>
+                      <div
+                        class="messenger-tool-options"
+                        :class="{ 'messenger-tool-options--scrollable': group.options.length > 3 }"
+                      >
+                        <div
+                          v-for="option in group.options"
+                          :key="option.value"
+                          class="messenger-tool-option-item"
+                          @contextmenu.prevent="showToolDetail($event, group, option)"
+                        >
+                          <el-checkbox :value="option.value">
+                            <AgentToolOptionLabel
+                              :label="option.label"
+                              :description="option.description"
+                              :hint="option.hint"
+                              :group-key="group.key"
+                            />
+                          </el-checkbox>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </el-checkbox-group>
               </div>
-            </el-checkbox-group>
+            </template>
           </div>
         </el-form-item>
         <AgentDependencyNotice
@@ -731,7 +733,10 @@ const beeroomGroupOptions = computed(() =>
 const toolSummary = ref<Record<string, unknown> | null>(null);
 const toolLoading = ref(false);
 const toolError = ref('');
-const toolSearchKeyword = ref('');
+const toolSearchKeywords = reactive<Record<string, string>>({
+  admin: '',
+  user: ''
+});
 const currentAgent = ref<Record<string, unknown> | null>(null);
 const agentLoading = ref(true);
 const modelLoading = ref(false);
@@ -1467,7 +1472,8 @@ const normalizeAgentToolNamesForCatalog = (toolNames: unknown): string[] => {
   return output;
 };
 
-const toolSearchNormalized = computed(() => String(toolSearchKeyword.value || '').trim().toLowerCase());
+const normalizeToolSearchKeyword = (sectionKey: string): string =>
+  String(toolSearchKeywords[sectionKey] || '').trim().toLowerCase();
 
 const isToolOptionMatched = (option: ToolOption, keyword: string): boolean => {
   if (!keyword) return true;
@@ -1475,21 +1481,26 @@ const isToolOptionMatched = (option: ToolOption, keyword: string): boolean => {
     .some((field) => String(field || '').toLowerCase().includes(keyword));
 };
 
-const visibleToolSections = computed<ToolSection[]>(() => {
-  const keyword = toolSearchNormalized.value;
-  if (!keyword) return toolSections.value;
-  return toolSections.value
-    .map((section) => ({
-      ...section,
-      groups: section.groups
-        .map((group) => ({
-          ...group,
-          options: group.options.filter((option) => isToolOptionMatched(option, keyword))
-        }))
-        .filter((group) => group.options.length > 0)
-    }))
-    .filter((section) => section.groups.length > 0);
-});
+const filterToolSectionBySearch = (section: ToolSection): ToolSection => {
+  const keyword = normalizeToolSearchKeyword(section.key);
+  if (!keyword) return section;
+  return {
+    ...section,
+    groups: section.groups
+      .map((group) => ({
+        ...group,
+        options: group.options.filter((option) => isToolOptionMatched(option, keyword))
+      }))
+      .filter((group) => group.options.length > 0)
+  };
+};
+
+const visibleToolSections = computed<ToolSection[]>(() =>
+  toolSections.value.map((section) => filterToolSectionBySearch(section))
+);
+
+const isToolSectionSearchEmpty = (section: ToolSection): boolean =>
+  Boolean(normalizeToolSearchKeyword(section.key)) && section.groups.length === 0;
 
 const defaultModelDisplayName = computed(() => {
   const fallback = t('portal.agent.model.defaultName');
@@ -2067,35 +2078,6 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.messenger-agent-tools-head {
-  width: 100%;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.messenger-agent-tools-caption {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--el-text-color-regular, #111827);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.5;
-}
-
-.messenger-agent-tools-search {
-  width: min(240px, 42vw);
-  flex: 0 1 240px;
-}
-
-.messenger-agent-tools-search :deep(.el-input__wrapper) {
-  min-height: 28px;
-  border-radius: 999px;
-}
-
 .messenger-agent-icon-btn {
   width: 26px;
   height: 26px;
@@ -2357,16 +2339,6 @@ onBeforeUnmount(() => {
 @media (max-width: 720px) {
   .messenger-agent-name-row {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .messenger-agent-tools-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .messenger-agent-tools-search {
-    width: 100%;
-    flex-basis: auto;
   }
 
   .messenger-agent-avatar-trigger {

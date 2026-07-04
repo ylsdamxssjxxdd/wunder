@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-02T10:55:07.731100+00:00",
+  "generated_at": "2026-07-04T02:23:55.070036+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -6664,7 +6664,7 @@
       "language": "zh-CN",
       "title": "部署与运行",
       "summary": "部署前先想清楚用哪种形态、准备什么环境。Server 部署至少需要数据库、工作区和后端服务。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-07-04",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -6722,25 +6722,30 @@
         {
           "id": "section-10",
           "level": 3,
-          "text": "Docker 下的浏览器"
+          "text": "Docker 下的系统状态"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "Docker 下的沙盒写权限"
+          "text": "Docker 下的浏览器"
         },
         {
           "id": "section-12",
-          "level": 2,
-          "text": "升级策略"
+          "level": 3,
+          "text": "Docker 下的沙盒写权限"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "常见部署问题"
+          "text": "升级策略"
         },
         {
           "id": "section-14",
+          "level": 2,
+          "text": "常见部署问题"
+        },
+        {
+          "id": "section-15",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -14832,7 +14837,7 @@
       "language": "en",
       "title": "Deployment and Running",
       "summary": "Before deploying Wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
-      "updated_at": "2026-05-13",
+      "updated_at": "2026-07-04",
       "read_when": [
         "You need to deploy Wunder",
         "You need to confirm where to place databases, MCP, sandbox, and workspaces"
@@ -14913,20 +14918,25 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "Browser Runtime Under Docker"
+          "text": "System Status Under Docker"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "Sandbox Write Permissions Under Docker"
+          "text": "Browser Runtime Under Docker"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "Most Overlooked Deployment Issues"
+          "text": "Sandbox Write Permissions Under Docker"
         },
         {
           "id": "section-16",
+          "level": 2,
+          "text": "Most Overlooked Deployment Issues"
+        },
+        {
+          "id": "section-17",
           "level": 2,
           "text": "Further Reading"
         }

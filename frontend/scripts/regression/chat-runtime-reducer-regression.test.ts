@@ -3203,6 +3203,132 @@ test('runtime selector orders turns by event sequence instead of wall clock', ()
   );
 });
 
+test('runtime reducer folds stop artifacts before the next optimistic turn', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'first request',
+      clientMessageId: 'local-user-1',
+      createdAt: '2026-04-30T02:14:06.000Z',
+      userTurnId: 'user-turn:session-1:round:1'
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-assistant-1',
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: 'model-turn:session-1:user:1:model:1',
+    message_id: 'local-assistant:model-turn:session-1:user:1:model:1'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_cancelled',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-cancelled-1',
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: 'model-turn:session-1:user:1:model:1',
+    message_id: 'local-assistant:model-turn:session-1:user:1:model:1',
+    content: 'request aborted'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_failed',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-error-1',
+    user_turn_id: 'local-user-1',
+    model_turn_id: 'model-turn:session-1:request:req-1',
+    content: 'server cancelled',
+    payload: {
+      client_message_id: 'local-user-1'
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_cancelled',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-terminal-1',
+    user_turn_id: 'user-turn:session-1:round:1',
+    model_turn_id: 'model-turn:session-1:user:1',
+    payload: {
+      client_message_id: 'local-user-1'
+    }
+  });
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'continue',
+      clientMessageId: 'local-user-2',
+      createdAt: '2026-04-30T02:14:10.000Z',
+      userTurnId: 'user-turn:session-1:round:2'
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-assistant-2',
+    user_turn_id: 'user-turn:session-1:round:2',
+    model_turn_id: 'model-turn:session-1:user:2:model:1',
+    message_id: 'local-assistant:model-turn:session-1:user:2:model:1'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_output_snapshot',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-output-2-a',
+    user_turn_id: 'user-turn:session-1:round:2',
+    model_turn_id: 'model-turn:session-1:user:2:model:1',
+    message_id: 'assistant-message:model-turn:session-1:user:2:model:1',
+    content: 'draft',
+    payload: {
+      client_message_id: 'local-user-2'
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_final',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-output-2-b',
+    user_turn_id: 'user-turn:session-1:round:2',
+    model_turn_id: 'model-turn:session-1:user:2:model:3',
+    message_id: 'assistant-message:model-turn:session-1:user:2:model:3',
+    content: 'done',
+    payload: {
+      client_message_id: 'local-user-2'
+    }
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}:${message.status}`),
+    [
+      'user:first request:final',
+      'assistant:request aborted:cancelled',
+      'user:continue:final',
+      'assistant:done:final'
+    ]
+  );
+  assert.equal(
+    visible.filter((message) => message.role === 'assistant').length,
+    2
+  );
+  assert.equal(projection.sessions['session-1'].userTurns.length, 2);
+});
+
 test('strict runtime reducer expires small event_seq gaps and asks for replay', () => {
   const projection = createChatRuntimeProjection();
   const originalNow = Date.now;

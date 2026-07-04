@@ -287,6 +287,7 @@ const applyNormalizedRuntimeEvent = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent
 ): void => {
+  bindEventToOptimisticUserTurn(session, event);
   if (shouldIgnoreEventForCancelledTurn(session, event)) {
     if (event.eventId) {
       session.eventIdIndex[event.eventId] = true;
@@ -377,6 +378,9 @@ const applyNormalizedRuntimeEvent = (
         applySessionIdle(session, event);
       }
       break;
+  }
+  if (isServerAuthoritativeRuntimeEvent(event)) {
+    pruneLocalTerminalArtifactsForAuthoritativeEvent(session, event);
   }
 
   if (event.eventSeq !== null && event.eventSeq > session.appliedSeq) {
@@ -599,6 +603,137 @@ const normalizeRuntimeEvent = (event: ChatRuntimeEvent): NormalizedRuntimeEvent 
     createdAt: normalizeCreatedAt(event.created_at ?? payload.created_at ?? payload.createdAt),
     payload
   };
+};
+
+const bindEventToOptimisticUserTurn = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): void => {
+  if (!event.userTurnId) return;
+  const clientMessageId = resolveEventClientMessageId(event);
+  if (!clientMessageId) return;
+  const clientMessage = session.messageById[clientMessageId];
+  if (!clientMessage || clientMessage.role !== 'user') return;
+  const localUserTurn = session.userTurnById[clientMessage.userTurnId];
+  if (!localUserTurn) return;
+  const incomingUserTurn = session.userTurnById[event.userTurnId];
+  if (incomingUserTurn && incomingUserTurn.id !== localUserTurn.id) {
+    mergeUserTurnInto(session, incomingUserTurn.id, localUserTurn.id);
+  }
+  event.userTurnId = localUserTurn.id;
+};
+
+const resolveEventClientMessageId = (event: NormalizedRuntimeEvent): string =>
+  firstText(
+    event.payload.client_message_id,
+    event.payload.clientMessageId,
+    asRecord(event.payload.data).client_message_id,
+    asRecord(event.payload.data).clientMessageId
+  );
+
+const mergeUserTurnInto = (
+  session: ChatRuntimeSessionProjection,
+  sourceTurnId: string,
+  targetTurnId: string
+): void => {
+  if (!sourceTurnId || !targetTurnId || sourceTurnId === targetTurnId) return;
+  const sourceTurn = session.userTurnById[sourceTurnId];
+  const targetTurn = session.userTurnById[targetTurnId] || ensureUserTurn(session, targetTurnId, sourceTurn?.createdSeq ?? null);
+  if (!sourceTurn) return;
+  sourceTurn.messageIds.forEach((messageId) => {
+    const message = session.messageById[messageId];
+    if (!message) return;
+    message.userTurnId = targetTurn.id;
+    addUnique(targetTurn.messageIds, messageId);
+  });
+  sourceTurn.modelTurnIds.forEach((modelTurnId) => {
+    const modelTurn = session.modelTurnById[modelTurnId];
+    if (!modelTurn) return;
+    modelTurn.userTurnId = targetTurn.id;
+    modelTurn.messageIds.forEach((messageId) => {
+      const message = session.messageById[messageId];
+      if (message) {
+        message.userTurnId = targetTurn.id;
+      }
+    });
+    addUnique(targetTurn.modelTurnIds, modelTurnId);
+  });
+  targetTurn.createdSeq = Math.min(targetTurn.createdSeq, sourceTurn.createdSeq);
+  targetTurn.status = mergeUserTurnStatus(targetTurn.status, sourceTurn.status);
+  delete session.userTurnById[sourceTurnId];
+  session.userTurns = session.userTurns.filter((turnId) => turnId !== sourceTurnId);
+};
+
+const mergeUserTurnStatus = (
+  current: ChatRuntimeUserTurnProjection['status'],
+  incoming: ChatRuntimeUserTurnProjection['status']
+): ChatRuntimeUserTurnProjection['status'] => {
+  if (current === incoming) return current;
+  if (current === 'completed' || incoming === 'completed') return 'completed';
+  if (current === 'failed' || incoming === 'failed') return 'failed';
+  if (current === 'cancelled' || incoming === 'cancelled') return 'cancelled';
+  if (current === 'waiting_user_input' || incoming === 'waiting_user_input') return 'waiting_user_input';
+  if (current === 'model_running' || incoming === 'model_running') return 'model_running';
+  if (current === 'dispatched' || incoming === 'dispatched') return 'dispatched';
+  if (current === 'accepted' || incoming === 'accepted') return 'accepted';
+  return 'created';
+};
+
+const isServerAuthoritativeRuntimeEvent = (event: NormalizedRuntimeEvent): boolean =>
+  event.source !== 'local' &&
+  event.source !== 'legacy' &&
+  event.source !== 'snapshot';
+
+const pruneLocalTerminalArtifactsForAuthoritativeEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): void => {
+  if (!event.userTurnId || !isAssistantRuntimeEventType(event.type) && !isTerminalSafeEventType(event.type)) {
+    return;
+  }
+  const canonicalTurn = session.modelTurnById[event.modelTurnId];
+  if (!canonicalTurn) return;
+  if (!canonicalTurn.messageIds.some((messageId) => session.messageById[messageId]?.role === 'assistant')) {
+    return;
+  }
+  const staleTurnIds = session.userTurnById[event.userTurnId]?.modelTurnIds.filter((modelTurnId) => {
+    if (modelTurnId === canonicalTurn.id) return false;
+    const modelTurn = session.modelTurnById[modelTurnId];
+    if (!modelTurn) return false;
+    if (modelTurn.userTurnId !== event.userTurnId) return false;
+    if (modelTurn.status !== 'failed' && modelTurn.status !== 'cancelled') return false;
+    return modelTurn.messageIds.some((messageId) => isLocalTerminalArtifactMessage(session.messageById[messageId]));
+  }) || [];
+  staleTurnIds.forEach((modelTurnId) => removeModelTurnProjection(session, modelTurnId));
+};
+
+const isLocalTerminalArtifactMessage = (
+  message: ChatRuntimeMessageProjection | null | undefined
+): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (message.status !== 'failed' && message.status !== 'cancelled') return false;
+  if (!message.id.startsWith('local-assistant:')) return false;
+  return message.updatedSeq === message.createdSeq || message.updatedSeq <= 0;
+};
+
+const removeModelTurnProjection = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string
+): void => {
+  const modelTurn = session.modelTurnById[modelTurnId];
+  if (!modelTurn) return;
+  const staleMessageIds = new Set(modelTurn.messageIds);
+  staleMessageIds.forEach((messageId) => {
+    delete session.messageById[messageId];
+  });
+  session.messages = session.messages.filter((messageId) => !staleMessageIds.has(messageId));
+  const userTurn = session.userTurnById[modelTurn.userTurnId];
+  if (userTurn) {
+    userTurn.modelTurnIds = userTurn.modelTurnIds.filter((id) => id !== modelTurnId);
+    userTurn.messageIds = userTurn.messageIds.filter((messageId) => !staleMessageIds.has(messageId));
+  }
+  delete session.modelTurnById[modelTurnId];
+  session.modelTurns = session.modelTurns.filter((id) => id !== modelTurnId);
 };
 
 const resolveStrictEventQuarantineReason = (event: NormalizedRuntimeEvent): string => {
@@ -2216,6 +2351,16 @@ const resolveModelTurnIdentity = (
     shouldFoldModelTurnIntoExisting(modelTurnId, existingForUserTurn, userTurnId)
   ) {
     return existingForUserTurn.id;
+  }
+  const terminalForUserTurn = resolveReusableModelTurnForUserTurn(session, userTurnId, true, [
+    'failed',
+    'cancelled'
+  ]);
+  if (
+    terminalForUserTurn &&
+    shouldFoldModelTurnIntoExisting(modelTurnId, terminalForUserTurn, userTurnId)
+  ) {
+    return terminalForUserTurn.id;
   }
   return modelTurnId;
 };
