@@ -656,6 +656,84 @@ test('chat runtime render adapter materializes projected usage stats for message
   assert.equal(second.stats.roundUsage.total, 150);
 });
 
+test('chat runtime render adapter invalidates cached materialization when projected stats mutate in place', () => {
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'test',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'event-cache-stats-1',
+    user_turn_id: 'turn-stats-cache-1',
+    model_turn_id: 'model-turn-stats-cache-1',
+    message_id: 'message-assistant-stats-cache-1'
+  });
+
+  const first = materializeChatRuntimeMessages(projection, 'session-1')[0] as Record<string, any>;
+  assert.equal(first.stats?.avg_model_round_speed_tps ?? null, null);
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'tool_call_completed',
+    source: 'test',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'event-cache-stats-tool',
+    user_turn_id: 'turn-stats-cache-1',
+    model_turn_id: 'model-turn-stats-cache-1',
+    message_id: 'message-assistant-stats-cache-1',
+    payload: {
+      source_event_type: 'tool_result',
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'lookup'
+      }
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'usage_stats',
+    source: 'test',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'event-cache-stats-2',
+    user_turn_id: 'turn-stats-cache-1',
+    model_turn_id: 'model-turn-stats-cache-1',
+    message_id: 'message-assistant-stats-cache-1',
+    payload: {
+      source_event_type: 'round_usage',
+      data: {
+        input_tokens: 10,
+        output_tokens: 5,
+        total_tokens: 15,
+        request_consumed_tokens: 15,
+        context_occupancy_tokens: 20,
+        decode_duration_s: 1,
+        avg_model_round_speed_tps: 5,
+        avg_model_round_speed_rounds: 1
+      }
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_final',
+    source: 'test',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'event-cache-stats-3',
+    user_turn_id: 'turn-stats-cache-1',
+    model_turn_id: 'model-turn-stats-cache-1',
+    message_id: 'message-assistant-stats-cache-1',
+    content: 'done'
+  });
+
+  const second = materializeChatRuntimeMessages(projection, 'session-1')[0] as Record<string, any>;
+  const entries = buildAssistantMessageStatsEntries(second, t, [second]);
+
+  assert.notEqual(second, first);
+  assert.equal(second.stats.avg_model_round_speed_tps, 5);
+  assert.equal(second.stats.toolCalls, 1);
+  assert.equal(entries.find((item) => item.key === 'speed')?.value, '5.00 token/s');
+  assert.equal(entries.find((item) => item.key === 'toolCalls')?.value, '1');
+});
+
 test('chat runtime render adapter preserves projected subagent cards', () => {
   const projection = apply([
     {

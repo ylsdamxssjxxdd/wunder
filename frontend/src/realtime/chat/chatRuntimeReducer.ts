@@ -916,6 +916,7 @@ const applyToolActivity = (
     completed ? 'streaming' : 'tooling'
   );
   upsertToolWorkflowItem(message, event, completed ? 'completed' : 'loading');
+  syncProjectedToolCallStats(message);
   message.status = completed ? 'streaming' : 'tooling';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   modelTurn.status = completed ? 'streaming' : 'tool_running';
@@ -938,6 +939,7 @@ const applyToolFailed = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(session, event, 'failed');
   upsertToolWorkflowItem(message, event, 'failed');
+  syncProjectedToolCallStats(message);
   message.status = 'failed';
   message.failed = true;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -959,6 +961,7 @@ const applyWorkflowEvent = (
   if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
     upsertProjectedSubagents(message, event, sourceType, status);
   }
+  syncProjectedToolCallStats(message);
   if (sourceType === 'slow_client') {
     settleProjectedRetryWorkflowItems(message);
   }
@@ -1301,6 +1304,21 @@ const mergeLegacyMessages = (
     addUnique(modelTurn.messageIds, message.id);
     if (status === 'final') {
       modelTurn.finalMessageId = modelTurn.finalMessageId || message.id;
+      modelTurn.status = 'completed';
+    } else if (status === 'failed') {
+      modelTurn.status = 'failed';
+    } else if (status === 'cancelled') {
+      modelTurn.status = 'cancelled';
+    } else if (status === 'tooling') {
+      modelTurn.status = 'tool_running';
+    } else if (status === 'streaming') {
+      modelTurn.status = 'streaming';
+    } else if (status === 'waiting_first_output' || status === 'placeholder') {
+      modelTurn.status = 'waiting_first_output';
+    }
+    const userTurn = session.userTurnById[modelTurn.userTurnId];
+    if (userTurn && (status === 'final' || status === 'failed' || status === 'cancelled')) {
+      userTurn.status = status === 'final' ? 'completed' : status;
     }
     addUnique(session.messages, message.id);
     pruneModelTurnAssistantMessages(session, modelTurn, message.id);
@@ -2307,7 +2325,7 @@ const ensureModelTurn = (
   userTurnId: string,
   seq: number | null
 ): ChatRuntimeModelTurnProjection => {
-  const id = resolveModelTurnIdentity(session, modelTurnId, userTurnId) ||
+  const id = resolveModelTurnIdentity(session, modelTurnId, userTurnId, seq) ||
     `local-model-turn:${session.sessionId}:${session.modelTurns.length + 1}`;
   if (!session.modelTurnById[id]) {
     const resolvedUserTurnId = userTurnId || `orphan-user-turn:${id}`;
@@ -2336,11 +2354,29 @@ const ensureModelTurn = (
 const resolveModelTurnIdentity = (
   session: ChatRuntimeSessionProjection,
   modelTurnId: string,
-  userTurnId: string
+  userTurnId: string,
+  seq: number | null = null
 ): string => {
   if (!modelTurnId) return '';
   const existing = session.modelTurnById[modelTurnId];
-  if (existing) return modelTurnId;
+  if (existing) {
+    if (
+      existing.id.startsWith('legacy-model-turn:') ||
+      isWeakGeneratedModelTurnId(session, existing.id, existing.userTurnId)
+    ) {
+      const reusableForExisting = resolveReusableModelTurnForUserTurn(session, existing.userTurnId);
+      if (
+        reusableForExisting &&
+        reusableForExisting.id !== existing.id &&
+        shouldFoldModelTurnIntoExisting(existing.id, reusableForExisting, existing.userTurnId)
+      ) {
+        mergeModelTurnInto(session, existing.id, reusableForExisting.id, seq);
+        return reusableForExisting.id;
+      }
+    }
+    mergeWeakSiblingModelTurnsInto(session, existing, seq);
+    return modelTurnId;
+  }
   if (shouldUseActiveModelTurnForWeakRuntimeTurn(session, modelTurnId, userTurnId)) {
     const activeTurn = resolveLatestActiveAssistantModelTurn(session);
     if (activeTurn) return activeTurn.id;
@@ -2392,8 +2428,13 @@ const isWeakGeneratedModelTurnId = (
   userTurnId: string
 ): boolean => {
   if (!modelTurnId) return true;
+  const round = resolveRoundFromUserTurnId(session, userTurnId);
   return (
     modelTurnId === `model-turn:${userTurnId}` ||
+    (
+      round !== null &&
+      modelTurnId === `model-turn:${session.sessionId}:user:${round}`
+    ) ||
     modelTurnId === `model-turn:user-turn:${session.sessionId}:unknown` ||
     modelTurnId.startsWith(`model-turn:${session.sessionId}:request:`) ||
     modelTurnId.startsWith(`model-turn:${session.sessionId}:model:`) ||
@@ -2403,6 +2444,187 @@ const isWeakGeneratedModelTurnId = (
       modelTurnId.startsWith('model-turn:')
     )
   );
+};
+
+const resolveRoundFromUserTurnId = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string
+): number | null => {
+  const prefix = `user-turn:${session.sessionId}:round:`;
+  if (!userTurnId.startsWith(prefix)) return null;
+  const round = Number.parseInt(userTurnId.slice(prefix.length), 10);
+  return Number.isFinite(round) && round > 0 ? round : null;
+};
+
+const mergeModelTurnInto = (
+  session: ChatRuntimeSessionProjection,
+  sourceTurnId: string,
+  targetTurnId: string,
+  seq: number | null = null
+): void => {
+  if (!sourceTurnId || !targetTurnId || sourceTurnId === targetTurnId) return;
+  const sourceTurn = session.modelTurnById[sourceTurnId];
+  const targetTurn = session.modelTurnById[targetTurnId];
+  if (!sourceTurn || !targetTurn) return;
+  sourceTurn.messageIds.forEach((messageId) => {
+    const message = session.messageById[messageId];
+    if (!message || message.role !== 'assistant') return;
+    message.modelTurnId = targetTurn.id;
+    message.userTurnId = targetTurn.userTurnId;
+    addUnique(targetTurn.messageIds, messageId);
+  });
+  if (!targetTurn.finalMessageId && sourceTurn.finalMessageId) {
+    targetTurn.finalMessageId = sourceTurn.finalMessageId;
+  }
+  targetTurn.createdSeq = Math.min(targetTurn.createdSeq, sourceTurn.createdSeq);
+  targetTurn.status = mergeModelTurnStatus(targetTurn.status, sourceTurn.status);
+  const sourceUserTurn = session.userTurnById[sourceTurn.userTurnId];
+  if (sourceUserTurn) {
+    sourceUserTurn.modelTurnIds = sourceUserTurn.modelTurnIds.filter((id) => id !== sourceTurn.id);
+  }
+  const targetUserTurn = ensureUserTurn(session, targetTurn.userTurnId, seq);
+  addUnique(targetUserTurn.modelTurnIds, targetTurn.id);
+  delete session.modelTurnById[sourceTurn.id];
+  session.modelTurns = session.modelTurns.filter((id) => id !== sourceTurn.id);
+  const preferredMessageId = targetTurn.finalMessageId ||
+    targetTurn.messageIds.find((messageId) => session.messageById[messageId]?.role === 'assistant') ||
+    '';
+  if (preferredMessageId) {
+    targetTurn.messageIds.forEach((messageId) => {
+      if (messageId === preferredMessageId) return;
+      mergeAssistantMessageProjectionMetadata(session, messageId, preferredMessageId);
+    });
+    pruneModelTurnAssistantMessages(session, targetTurn, preferredMessageId);
+  }
+};
+
+const mergeWeakSiblingModelTurnsInto = (
+  session: ChatRuntimeSessionProjection,
+  targetTurn: ChatRuntimeModelTurnProjection,
+  seq: number | null = null
+): void => {
+  const userTurn = session.userTurnById[targetTurn.userTurnId];
+  const turnIds = userTurn?.modelTurnIds?.length
+    ? [...userTurn.modelTurnIds]
+    : session.modelTurns.filter((turnId) => session.modelTurnById[turnId]?.userTurnId === targetTurn.userTurnId);
+  turnIds.forEach((turnId) => {
+    if (turnId === targetTurn.id) return;
+    const sibling = session.modelTurnById[turnId];
+    if (!sibling) return;
+    const weakSibling =
+      sibling.id.startsWith('legacy-model-turn:') ||
+      isWeakGeneratedModelTurnId(session, sibling.id, sibling.userTurnId);
+    if (!weakSibling) return;
+    if (!shouldFoldModelTurnIntoExisting(sibling.id, targetTurn, targetTurn.userTurnId)) return;
+    mergeModelTurnInto(session, sibling.id, targetTurn.id, seq);
+  });
+};
+
+const mergeAssistantMessageProjectionMetadata = (
+  session: ChatRuntimeSessionProjection,
+  sourceMessageId: string,
+  targetMessageId: string
+): void => {
+  if (!sourceMessageId || !targetMessageId || sourceMessageId === targetMessageId) return;
+  const source = session.messageById[sourceMessageId];
+  const target = session.messageById[targetMessageId];
+  if (!source || !target || source.role !== 'assistant' || target.role !== 'assistant') return;
+  if (source.content && !target.content) {
+    target.content = source.content;
+  }
+  if (source.reasoning && !target.reasoning) {
+    target.reasoning = source.reasoning;
+  }
+  target.display = mergeProjectedDisplayMetadata(target.display, source.display);
+  mergeAssistantProjectionRecords(target, 'workflowItems', source.workflowItems);
+  mergeAssistantProjectionRecords(target, 'subagents', source.subagents);
+  target.failed = target.failed || source.failed;
+  target.cancelled = target.cancelled || source.cancelled;
+  if (!target.final && source.final) {
+    target.final = true;
+  }
+  if (isActiveMessageStatus(target.status)) {
+    target.status = pickMergedMessageStatus(target.status, source.status);
+  }
+  target.updatedSeq = Math.max(target.updatedSeq, source.updatedSeq);
+};
+
+const mergeProjectedDisplayMetadata = (
+  target: unknown,
+  source: unknown
+): Record<string, unknown> | undefined => {
+  if (!isPlainRecord(source)) {
+    return isPlainRecord(target) ? target : undefined;
+  }
+  const base = isPlainRecord(target) ? target : {};
+  const merged: Record<string, unknown> = { ...base };
+  Object.entries(source).forEach(([key, value]) => {
+    if (value === undefined) return;
+    const current = merged[key];
+    if (isPlainRecord(current) && isPlainRecord(value)) {
+      merged[key] = mergeProjectedDisplayMetadata(current, value);
+      return;
+    }
+    if (Array.isArray(current) && Array.isArray(value)) {
+      merged[key] = value.length > current.length
+        ? cloneProjectionDisplayValue(value)
+        : cloneProjectionDisplayValue(current);
+      return;
+    }
+    if (typeof current === 'number' && typeof value === 'number') {
+      merged[key] = Math.max(current, value);
+      return;
+    }
+    if (typeof current === 'boolean' && typeof value === 'boolean') {
+      merged[key] = current || value;
+      return;
+    }
+    if (current === undefined || current === null || current === '') {
+      merged[key] = cloneProjectionDisplayValue(value);
+    }
+  });
+  return merged;
+};
+
+const mergeAssistantProjectionRecords = (
+  message: ChatRuntimeMessageProjection,
+  field: 'workflowItems' | 'subagents',
+  value: unknown
+): void => {
+  if (!Array.isArray(value) || value.length === 0) return;
+  const existing = Array.isArray(message[field]) ? message[field] || [] : [];
+  const incoming = value.filter(isPlainRecord).map((item) => ({ ...item }));
+  if (incoming.length === 0) return;
+  const merged = new Map<string, ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection>();
+  [...existing, ...incoming].forEach((item, index) => {
+    const key = resolveProjectionRecordIdentity(item, index);
+    const previous = merged.get(key);
+    if (!previous || normalizeProjectedCount(item.updatedSeq) >= normalizeProjectedCount(previous.updatedSeq)) {
+      merged.set(key, { ...item });
+    }
+  });
+  if (field === 'workflowItems') {
+    message.workflowItems = Array.from(merged.values()) as ChatRuntimeWorkflowItemProjection[];
+  } else {
+    message.subagents = Array.from(merged.values()) as ChatRuntimeSubagentProjection[];
+  }
+};
+
+const mergeModelTurnStatus = (
+  current: ChatRuntimeModelTurnProjection['status'],
+  incoming: ChatRuntimeModelTurnProjection['status']
+): ChatRuntimeModelTurnProjection['status'] => {
+  if (current === incoming) return current;
+  if (current === 'failed' || incoming === 'failed') return 'failed';
+  if (current === 'cancelled' || incoming === 'cancelled') return 'cancelled';
+  if (current === 'completed' || incoming === 'completed') return 'completed';
+  if (current === 'tool_running' || incoming === 'tool_running') return 'tool_running';
+  if (current === 'streaming' || incoming === 'streaming') return 'streaming';
+  if (current === 'waiting_first_output' || incoming === 'waiting_first_output') {
+    return 'waiting_first_output';
+  }
+  if (current === 'finalizing' || incoming === 'finalizing') return 'finalizing';
+  return 'created';
 };
 
 const resolveLatestActiveAssistantModelTurn = (
@@ -2793,6 +3015,51 @@ const ensureProjectedStatsDisplay = (
   return display.stats as Record<string, unknown>;
 };
 
+const syncProjectedToolCallStats = (
+  message: ChatRuntimeMessageProjection
+): void => {
+  if (message.role !== 'assistant') return;
+  const count = countProjectedToolCalls(message.workflowItems);
+  if (count <= 0) return;
+  const display = ensureMessageDisplayProjection(message);
+  const stats = ensureProjectedStatsDisplay(display);
+  stats.toolCalls = Math.max(normalizeProjectedCount(stats.toolCalls), count);
+  stats.tool_calls = stats.toolCalls;
+  mirrorProjectedStatsDisplay(display, stats);
+};
+
+const countProjectedToolCalls = (items: unknown): number => {
+  if (!Array.isArray(items)) return 0;
+  const keys = new Set<string>();
+  items.forEach((item, index) => {
+    if (!isPlainRecord(item)) return;
+    if (!isProjectedToolWorkflowItem(item)) return;
+    const key = firstText(
+      item.toolCallId,
+      item.tool_call_id,
+      item.callId,
+      item.call_id,
+      item.id
+    ) || `tool:${index}`;
+    keys.add(key);
+  });
+  return keys.size;
+};
+
+const isProjectedToolWorkflowItem = (
+  item: Record<string, unknown>
+): boolean => {
+  if (item.isTool === true || item.is_tool === true) return true;
+  const eventType = normalizeText(item.eventType ?? item.event ?? item.event_type);
+  return eventType === 'tool_call' ||
+    eventType === 'tool_result' ||
+    eventType === 'tool_output' ||
+    eventType === 'tool_output_delta' ||
+    eventType === 'tool_call_started' ||
+    eventType === 'tool_call_completed' ||
+    eventType === 'tool_call_failed';
+};
+
 const mirrorProjectedStatsDisplay = (
   display: Record<string, unknown>,
   stats: Record<string, unknown>
@@ -2809,6 +3076,8 @@ const mirrorProjectedStatsDisplay = (
     'quota_consumed',
     'partialQuotaConsumed',
     'partial_quota_consumed',
+    'toolCalls',
+    'tool_calls',
     'quotaSnapshot',
     'quota',
     'quota_usage',

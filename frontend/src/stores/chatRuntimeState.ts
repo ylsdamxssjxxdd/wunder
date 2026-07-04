@@ -2161,7 +2161,7 @@ export const applyLocalAssistantTurnTerminalRuntimeEvent = (
   store,
   payload: {
     sessionId: string;
-    terminal: 'failed' | 'cancelled';
+    terminal: 'completed' | 'failed' | 'cancelled';
     content?: unknown;
     reason?: unknown;
     requestId?: string | null;
@@ -2195,7 +2195,12 @@ export const applyLocalAssistantTurnTerminalRuntimeEvent = (
   const userTurnId = String(payload.userTurnId || activeProjectedAssistant?.userTurnId || '').trim();
   const assistantMessageId = String(requestedAssistantMessageId || activeProjectedAssistant?.id || '').trim();
   const event = {
-    event_type: payload.terminal === 'cancelled' ? 'turn_cancelled' : 'turn_failed',
+    event_type:
+      payload.terminal === 'completed'
+        ? 'turn_completed'
+        : payload.terminal === 'cancelled'
+          ? 'turn_cancelled'
+          : 'turn_failed',
     source: 'local',
     strict: false,
     session_id: key,
@@ -2207,7 +2212,12 @@ export const applyLocalAssistantTurnTerminalRuntimeEvent = (
     content: String(payload.content || ''),
     payload: {
       reason: String(payload.reason || payload.terminal || ''),
-      source_event_type: payload.terminal === 'cancelled' ? 'local_cancelled' : 'local_failed'
+      source_event_type:
+        payload.terminal === 'completed'
+          ? 'local_completed'
+          : payload.terminal === 'cancelled'
+            ? 'local_cancelled'
+            : 'local_failed'
     }
   };
   const result = applyChatRuntimeEvent(projection, event);

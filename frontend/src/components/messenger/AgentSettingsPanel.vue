@@ -759,8 +759,10 @@ const avatarPage = ref(1);
 const privateCompanionInputRef = ref<HTMLInputElement | null>(null);
 let panelDisposed = false;
 let latestAgentLoadRequestId = 0;
+let latestToolSummaryLoadId = 0;
 let lastHandledFocusToken = 0;
 let focusAnimationFrame = 0;
+let toolSummaryLoadPromise: Promise<void> | null = null;
 let stopUserToolsUpdatedListener: (() => void) | null = null;
 let stopUnsavedGuard: (() => void) | null = null;
 let deleteLoading: ReturnType<typeof ElLoading.service> | null = null;
@@ -1584,15 +1586,6 @@ const agentSettingsWaitingState = computed<AgentSettingsWaitingState | null>(() 
       progress: 28
     };
   }
-  if (toolLoading.value || modelLoading.value) {
-    return {
-      title: t('messenger.waiting.title'),
-      targetName,
-      phaseLabel: t('messenger.waiting.phase.loading'),
-      summaryLabel: t('messenger.waiting.summary.agentSettings'),
-      progress: 54
-    };
-  }
   return null;
 });
 
@@ -1613,19 +1606,46 @@ const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
   form.tool_names = filterUserAgentToolNames(Array.from(selected), USER_AGENT_TOOL_CATALOG_OPTIONS);
 };
 
-const loadToolSummary = async (options: { force?: boolean } = {}) => {
-  if (toolLoading.value) return;
-  toolLoading.value = true;
-  toolError.value = '';
-  try {
-    toolSummary.value = ((await loadUserToolsCatalogCache(options)) as Record<string, unknown> | null) || {};
-  } catch (error) {
-    toolError.value =
-      (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-      t('portal.agent.tools.loadFailed');
-  } finally {
-    toolLoading.value = false;
+const reconcileToolNamesAfterCatalogLoad = (wasCleanBeforeLoad: boolean): void => {
+  if (!wasCleanBeforeLoad || panelDisposed || !loadedSnapshot.value || hasUnsavedChanges.value) {
+    return;
   }
+  const nextToolNames = normalizeAgentToolNamesForCatalog(form.tool_names);
+  const currentToolNames = filterUserAgentToolNames(form.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
+  if (JSON.stringify(nextToolNames) !== JSON.stringify(currentToolNames)) {
+    form.tool_names = nextToolNames;
+  }
+  markFormClean();
+};
+
+const loadToolSummary = (options: { force?: boolean } = {}): Promise<void> => {
+  if (toolSummaryLoadPromise && options.force !== true) {
+    return toolSummaryLoadPromise;
+  }
+  const requestId = ++latestToolSummaryLoadId;
+  const request = (async () => {
+    toolLoading.value = true;
+    toolError.value = '';
+    try {
+      const payload = ((await loadUserToolsCatalogCache(options)) as Record<string, unknown> | null) || {};
+      if (requestId === latestToolSummaryLoadId && !panelDisposed) {
+        toolSummary.value = payload;
+      }
+    } catch (error) {
+      if (requestId === latestToolSummaryLoadId && !panelDisposed) {
+        toolError.value =
+          (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
+          t('portal.agent.tools.loadFailed');
+      }
+    } finally {
+      if (requestId === latestToolSummaryLoadId) {
+        toolLoading.value = false;
+        toolSummaryLoadPromise = null;
+      }
+    }
+  })();
+  toolSummaryLoadPromise = request;
+  return request;
 };
 
 const loadModelOptions = async () => {
@@ -1707,10 +1727,16 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
 
 const reloadAgent = async () => {
   const requestId = nextAgentLoadRequestId();
-  await loadToolSummary({ force: true });
+  const wasCleanBeforeToolLoad = !hasUnsavedChanges.value;
+  const toolSummaryPromise = loadToolSummary().then(() => {
+    if (isAgentLoadRequestActive(requestId)) {
+      reconcileToolNamesAfterCatalogLoad(wasCleanBeforeToolLoad);
+    }
+  });
   await Promise.all([
     loadModelOptions(),
-    loadAgent(requestId)
+    loadAgent(requestId),
+    toolSummaryPromise
   ]);
 };
 
@@ -1882,10 +1908,7 @@ onMounted(() => {
     invalidateUserToolsCatalogCache();
     const wasClean = !hasUnsavedChanges.value;
     void loadToolSummary({ force: true }).then(() => {
-      if (wasClean) {
-        form.tool_names = normalizeAgentToolNamesForCatalog(form.tool_names);
-        markFormClean();
-      }
+      reconcileToolNamesAfterCatalogLoad(wasClean);
     });
   });
   window.addEventListener('beforeunload', handleBeforeUnload);

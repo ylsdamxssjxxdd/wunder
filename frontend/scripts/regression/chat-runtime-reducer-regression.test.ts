@@ -3329,6 +3329,207 @@ test('runtime reducer folds stop artifacts before the next optimistic turn', () 
   assert.equal(projection.sessions['session-1'].userTurns.length, 2);
 });
 
+test('runtime reducer folds weak model turn into the local optimistic assistant turn', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const strongModelTurnId = 'model-turn:session-1:user:1:model:1';
+  const weakModelTurnId = 'model-turn:session-1:user:1';
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'question',
+      clientMessageId: 'local-user-1',
+      createdAt: '2026-04-30T02:14:06.000Z',
+      userTurnId
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'workflow_event',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-weak-workflow',
+    user_turn_id: userTurnId,
+    model_turn_id: weakModelTurnId,
+    message_id: `assistant-message:${weakModelTurnId}`,
+    payload: {
+      source_event_type: 'llm_request',
+      client_message_id: 'local-user-1'
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_delta',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-strong-delta',
+    user_turn_id: userTurnId,
+    model_turn_id: strongModelTurnId,
+    message_id: `local-assistant:${strongModelTurnId}`,
+    delta: 'answer',
+    payload: {
+      client_message_id: 'local-user-1'
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_final',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-strong-final',
+    user_turn_id: userTurnId,
+    model_turn_id: strongModelTurnId,
+    message_id: `local-assistant:${strongModelTurnId}`,
+    content: 'answer',
+    payload: {
+      client_message_id: 'local-user-1'
+    }
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}:${message.status}`),
+    ['user:question:final', 'assistant:answer:final']
+  );
+  assert.equal(
+    visible.filter((message) => message.role === 'assistant').length,
+    1
+  );
+  assert.equal(projection.sessions['session-1'].userTurnById[userTurnId].modelTurnIds.length, 1);
+});
+
+test('runtime reducer preserves weak-turn stats and workflow when strong final arrives', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const weakModelTurnId = 'model-turn:session-1:user:1';
+  const strongModelTurnId = 'model-turn:session-1:user:1:model:1';
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'question',
+      clientMessageId: 'local-user-1',
+      createdAt: '2026-04-30T02:14:06.000Z',
+      userTurnId
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'tool_call_completed',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-weak-tool',
+    user_turn_id: userTurnId,
+    model_turn_id: weakModelTurnId,
+    message_id: `assistant-message:${weakModelTurnId}`,
+    payload: {
+      source_event_type: 'tool_result',
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'lookup'
+      },
+      client_message_id: 'local-user-1'
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'usage_stats',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-weak-usage',
+    user_turn_id: userTurnId,
+    model_turn_id: weakModelTurnId,
+    message_id: `assistant-message:${weakModelTurnId}`,
+    payload: {
+      source_event_type: 'round_usage',
+      data: {
+        input_tokens: 10,
+        output_tokens: 20,
+        request_consumed_tokens: 30,
+        context_occupancy_tokens: 40,
+        decode_duration_s: 2,
+        avg_model_round_speed_tps: 10,
+        avg_model_round_speed_rounds: 1
+      },
+      client_message_id: 'local-user-1'
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_final',
+    source: 'ws',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'server-strong-final',
+    user_turn_id: userTurnId,
+    model_turn_id: strongModelTurnId,
+    message_id: `local-assistant:${strongModelTurnId}`,
+    content: 'answer',
+    payload: {
+      client_message_id: 'local-user-1'
+    }
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(
+    visible.filter((message) => message.role === 'assistant').length,
+    1
+  );
+  assert.equal(assistant?.content, 'answer');
+  assert.equal(assistant?.workflowItems?.[0]?.toolCallId, 'call-1');
+  assert.equal(assistant?.display?.stats?.avg_model_round_speed_tps, 10);
+  assert.equal(assistant?.display?.stats?.contextTokens, 40);
+});
+
+test('local terminal event settles an optimistic assistant placeholder', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const modelTurnId = 'model-turn:session-1:user:1:model:1';
+  const assistantMessageId = `local-assistant:${modelTurnId}`;
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId: 'session-1',
+      content: 'question',
+      clientMessageId: 'local-user-1',
+      createdAt: '2026-04-30T02:14:06.000Z',
+      userTurnId
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-assistant-placeholder',
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId
+  });
+
+  assert.equal(selectSessionBusy(projection, 'session-1'), true);
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_completed',
+    source: 'local',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'local-completed',
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(visible[1].status, 'final');
+  assert.equal(visible[1].final, true);
+  assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
 test('strict runtime reducer expires small event_seq gaps and asks for replay', () => {
   const projection = createChatRuntimeProjection();
   const originalNow = Date.now;

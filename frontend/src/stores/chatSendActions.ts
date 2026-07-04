@@ -677,6 +677,33 @@ export const chatSendActions = {
             failed: errorSeen || stopped
           });
         }
+        if (canApplyGlobalSendSettlement && !keepStreaming) {
+          applyLocalAssistantTurnTerminalRuntimeEvent(this, {
+            sessionId,
+            terminal: errorSeen
+              ? 'failed'
+              : stopped && !finalSeen
+                ? 'cancelled'
+                : 'completed',
+            content: errorSeen
+              ? t('chat.workflow.requestFailedDetail')
+              : stopped && !finalSeen
+                ? t('chat.workflow.aborted')
+                : '',
+            reason: errorSeen
+              ? 'request_failed'
+              : stopped && !finalSeen
+                ? 'user_stop'
+                : 'stream_finished',
+            requestId: sendRequestId,
+            userTurnId: localUserTurnId,
+            modelTurnId: localModelTurnId,
+            assistantMessageId: `local-assistant:${localModelTurnId}`
+          });
+          settleTerminalAssistantArtifactsBase(sessionMessagesRef, {
+            failed: errorSeen || (stopped && !finalSeen)
+          });
+        }
         if (canApplyGlobalSendSettlement) {
           setSessionLoading(this, sessionId, keepStreaming);
         }

@@ -302,10 +302,19 @@ const buildProjectionMessageMaterializationRevision = (
     message.final,
     message.failed,
     message.cancelled,
-    resolveProjectionObjectIdentity(message.display),
-    resolveProjectionObjectIdentity(message.workflowItems),
-    resolveProjectionObjectIdentity(message.subagents)
+    buildProjectionMetadataRevision(message.display),
+    buildProjectionMetadataRevision(message.workflowItems),
+    buildProjectionMetadataRevision(message.subagents)
   ].join('\u0001');
+
+const buildProjectionMetadataRevision = (value: unknown): string => {
+  if (!value || typeof value !== 'object') return '';
+  try {
+    return JSON.stringify(value) || '';
+  } catch {
+    return String(resolveProjectionObjectIdentity(value));
+  }
+};
 
 const resolveProjectionObjectIdentity = (value: unknown): number => {
   if (!value || typeof value !== 'object') return 0;
