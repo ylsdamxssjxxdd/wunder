@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-04T02:23:55.070036+00:00",
+  "generated_at": "2026-07-04T08:17:40.936911+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -7663,7 +7663,7 @@
       "language": "zh-CN",
       "title": "系统设置参考",
       "summary": "常用设置项的含义与推荐值，帮助理解各项配置的作用。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-07-04",
       "read_when": [],
       "source_docs": [],
       "tab": "参考",
@@ -14750,7 +14750,7 @@
       "language": "en",
       "title": "Operations Overview",
       "summary": "Wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just \"it started successfully.\"",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-07-04",
       "read_when": [
         "You are deploying or taking over a Wunder runtime environment",
         "You need to quickly locate operations and governance entry points"
@@ -14951,10 +14951,10 @@
       "language": "en",
       "title": "Data and Storage",
       "summary": "Wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-07-04",
       "read_when": [
         "You need to deploy or migrate data",
-        "You want to understand what PostgreSQL, SQLite, Weaviate, workspaces, and temp_dir each store"
+        "You want to understand what PostgreSQL, SQLite, workspaces, and temp_dir each store"
       ],
       "source_docs": [
         "config/wunder-example.yaml",
@@ -15011,7 +15011,7 @@
         {
           "id": "section-9",
           "level": 2,
-          "text": "What Goes in Weaviate"
+          "text": "What Goes in Vector Storage"
         },
         {
           "id": "section-10",
@@ -15669,7 +15669,7 @@
       "language": "en",
       "title": "Configuration",
       "summary": "When configuration doesn't take effect, first confirm which layer you're modifying, rather than suspecting the program isn't reading it.",
-      "updated_at": "2026-04-30",
+      "updated_at": "2026-07-04",
       "read_when": [
         "You are checking where a specific configuration should be written",
         "You need to distinguish between base configuration, runtime overrides, and external MCP configuration"

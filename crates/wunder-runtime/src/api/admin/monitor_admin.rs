@@ -36,6 +36,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             get(admin_monitor_tool_usage),
         )
         .route(
+            "/wunder/admin/monitor/logs/cleanup",
+            post(admin_monitor_logs_cleanup),
+        )
+        .route(
             "/wunder/admin/monitor/{session_id}",
             get(admin_monitor_detail).delete(admin_monitor_delete),
         )
@@ -630,6 +634,48 @@ async fn admin_monitor_delete(
     ))
 }
 
+async fn admin_monitor_logs_cleanup(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<MonitorLogsCleanupRequest>,
+) -> Result<Json<Value>, Response> {
+    let Some(mut start_time) = normalize_ts(payload.start_time) else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    };
+    let Some(mut end_time) = normalize_ts(payload.end_time) else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    };
+    if end_time < start_time {
+        std::mem::swap(&mut start_time, &mut end_time);
+    }
+    if end_time <= start_time {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.invalid_time_range"),
+        ));
+    }
+    let deleted = state
+        .monitor
+        .delete_logs_by_time_range(start_time, end_time)
+        .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
+    let deleted_total: i64 = deleted.values().copied().sum();
+    let system = state.monitor.get_system_metrics();
+    Ok(Json(json!({
+        "ok": true,
+        "start_time": start_time,
+        "end_time": end_time,
+        "deleted": deleted,
+        "deleted_total": deleted_total,
+        "system": system,
+        "message": i18n::t("message.deleted"),
+    })))
+}
+
 async fn admin_throughput_start(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ThroughputStartRequest>,
@@ -869,4 +915,10 @@ struct MonitorToolUsageQuery {
 struct MonitorCompactionRequest {
     #[serde(default)]
     model_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MonitorLogsCleanupRequest {
+    start_time: Option<f64>,
+    end_time: Option<f64>,
 }

@@ -58,7 +58,7 @@ Key takeaway: When troubleshooting configuration issues, first distinguish betwe
 - For authentication, commands, and path control, see `security.*`
 - For external MCP service integration, see `mcp.*`
 - For A2A service integration, see `a2a.*`
-- For storage and vector capabilities, see `storage.*` and `vector_store.*`
+- For storage and vector capabilities, see `storage.*`
 - For browser, only need to check `tools.browser.enabled`, `browser.enabled`, and `browser.docker.enabled`; other parameters use system defaults
 
 ## Items You're Most Likely to Modify First

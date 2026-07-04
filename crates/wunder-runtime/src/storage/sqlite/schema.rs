@@ -1373,6 +1373,25 @@ impl SqliteSchemaStorage for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_vector_documents_owner_base
               ON vector_documents (owner_id, base_name, updated_at);
+            CREATE TABLE IF NOT EXISTS vector_chunks (
+              chunk_id TEXT PRIMARY KEY,
+              owner_id TEXT NOT NULL,
+              base_name TEXT NOT NULL,
+              doc_id TEXT NOT NULL,
+              doc_name TEXT NOT NULL,
+              chunk_index INTEGER NOT NULL,
+              start_pos INTEGER NOT NULL,
+              end_pos INTEGER NOT NULL,
+              content TEXT NOT NULL,
+              embedding_model TEXT NOT NULL,
+              vector_json TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_vector_chunks_lookup
+              ON vector_chunks (owner_id, base_name, embedding_model, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_vector_chunks_doc
+              ON vector_chunks (owner_id, base_name, doc_id);
             "#,
         )?;
         self.ensure_user_account_quota_columns(&conn)?;

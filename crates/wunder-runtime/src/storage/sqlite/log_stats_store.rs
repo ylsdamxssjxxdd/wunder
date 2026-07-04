@@ -21,6 +21,11 @@ pub(super) trait SqliteLogStatsStorage {
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
     fn get_log_usage_impl(&self) -> Result<u64>;
+    fn delete_logs_by_time_range_impl(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>>;
     fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_chat_history_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64>;
@@ -242,6 +247,54 @@ impl SqliteLogStatsStorage for SqliteStorage {
             |row| row.get(0),
         )?;
         Ok(total.max(0) as u64)
+    }
+
+    fn delete_logs_by_time_range_impl(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let start = start_time.min(end_time);
+        let end = start_time.max(end_time);
+        if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
+            return Ok(HashMap::new());
+        }
+        let conn = self.open()?;
+        let delete_range = |table: &str, time_field: &str| -> Result<i64> {
+            let sql = format!("DELETE FROM {table} WHERE {time_field} >= ? AND {time_field} <= ?");
+            Ok(conn.execute(&sql, params![start, end])? as i64)
+        };
+        let mut results = HashMap::new();
+        results.insert(
+            "chat_history".to_string(),
+            delete_range("chat_history", "created_time")?,
+        );
+        results.insert(
+            "model_context_entries".to_string(),
+            delete_range("model_context_entries", "created_time")?,
+        );
+        results.insert(
+            "tool_logs".to_string(),
+            delete_range("tool_logs", "created_time")?,
+        );
+        results.insert(
+            "artifact_logs".to_string(),
+            delete_range("artifact_logs", "created_time")?,
+        );
+        results.insert(
+            "monitor_sessions".to_string(),
+            delete_range("monitor_sessions", "COALESCE(updated_time, 0)")?,
+        );
+        results.insert(
+            "stream_events".to_string(),
+            delete_range("stream_events", "created_time")?,
+        );
+        results.insert(
+            "memory_task_logs".to_string(),
+            delete_range("memory_task_logs", "updated_time")?,
+        );
+        Ok(results)
     }
 
     fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64> {
@@ -505,5 +558,72 @@ mod tests {
                 .expect("delete remaining artifacts"),
             1
         );
+    }
+
+    #[test]
+    fn log_stats_store_deletes_logs_by_time_range() {
+        let (storage, _dir) = build_storage();
+        let conn = storage.open().expect("open sqlite");
+        conn.execute(
+            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time)
+             VALUES (?, ?, ?, ?, ?)",
+            ("user-a", "session-old", "user", "{}", 10.0),
+        )
+        .expect("insert old chat");
+        conn.execute(
+            "INSERT INTO chat_history (user_id, session_id, role, payload, created_time)
+             VALUES (?, ?, ?, ?, ?)",
+            ("user-a", "session-new", "user", "{}", 90.0),
+        )
+        .expect("insert new chat");
+        conn.execute(
+            "INSERT INTO tool_logs (user_id, session_id, tool, payload, created_time)
+             VALUES (?, ?, ?, ?, ?)",
+            ("user-a", "session-tool", "tool-a", "{}", 50.0),
+        )
+        .expect("insert tool");
+        conn.execute(
+            "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload)
+             VALUES (?, ?, ?, ?, ?)",
+            ("session-monitor", "user-a", "finished", 55.0, "{}"),
+        )
+        .expect("insert monitor");
+        conn.execute(
+            "INSERT INTO stream_events (session_id, event_id, user_id, payload, created_time)
+             VALUES (?, ?, ?, ?, ?)",
+            ("session-stream", 1_i64, "user-a", "{}", 60.0),
+        )
+        .expect("insert stream");
+        conn.execute(
+            "INSERT INTO memory_task_logs (task_id, user_id, session_id, status, updated_time)
+             VALUES (?, ?, ?, ?, ?)",
+            ("task-a", "user-a", "session-memory", "finished", 70.0),
+        )
+        .expect("insert memory task");
+        drop(conn);
+
+        let deleted = storage
+            .delete_logs_by_time_range(40.0, 80.0)
+            .expect("delete range");
+        assert_eq!(deleted.get("tool_logs").copied(), Some(1));
+        assert_eq!(deleted.get("monitor_sessions").copied(), Some(1));
+        assert_eq!(deleted.get("stream_events").copied(), Some(1));
+        assert_eq!(deleted.get("memory_task_logs").copied(), Some(1));
+
+        let conn = storage.open().expect("reopen sqlite");
+        let chat_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chat_history", [], |row| row.get(0))
+            .expect("count chat");
+        assert_eq!(chat_count, 2);
+        let tool_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tool_logs", [], |row| row.get(0))
+            .expect("count tool");
+        assert_eq!(tool_count, 0);
+        let monitor_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM monitor_sessions", [], |row| {
+                row.get(0)
+            })
+            .expect("count monitor");
+        assert_eq!(monitor_count, 0);
     }
 }

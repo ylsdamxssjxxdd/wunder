@@ -5514,6 +5514,18 @@
   gap: 10px;
 }
 
+.monitor-log-cleanup-status {
+  min-height: 18px;
+}
+
+.monitor-log-cleanup-status[data-kind="success"] {
+  color: #15803d;
+}
+
+.monitor-log-cleanup-status[data-kind="error"] {
+  color: #b91c1c;
+}
+
 .a2a-connection-actions {
   justify-content: flex-end;
 }

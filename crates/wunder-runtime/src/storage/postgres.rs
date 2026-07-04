@@ -17,7 +17,8 @@ use crate::storage::{
     UserSessionScopeRecord, UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord,
     UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
     UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
-    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    UserWorldSendMessageResult, VectorChunkEmbeddingRecord, VectorDocumentRecord,
+    VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;

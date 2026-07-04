@@ -662,6 +662,10 @@ async fn cleanup_perf_vector_dir(context: &PerformanceContext) {
     let _ = context
         .state
         .storage
+        .delete_vector_chunk_embeddings_by_base(&owner_key, &base_name);
+    let _ = context
+        .state
+        .storage
         .delete_vector_documents_by_base(&owner_key, &base_name);
     let root = vector_knowledge::resolve_vector_root(None, &base_name, false);
     let Ok(root) = root else {

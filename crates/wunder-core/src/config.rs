@@ -1556,22 +1556,7 @@ fn default_server_log_retention_days() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct VectorStoreConfig {
-    #[serde(default)]
-    pub weaviate: WeaviateConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WeaviateConfig {
-    #[serde(default)]
-    pub url: String,
-    #[serde(default)]
-    pub api_key: Option<String>,
-    #[serde(default)]
-    pub timeout_s: u64,
-    #[serde(default, deserialize_with = "deserialize_usize_from_any")]
-    pub batch_size: usize,
-}
+pub struct VectorStoreConfig {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageConfig {
@@ -2179,15 +2164,9 @@ fn apply_workspace_env_overrides(
 }
 
 fn apply_vector_store_env_overrides(
-    vector_store: &mut VectorStoreConfig,
-    env_lookup: &dyn Fn(&str) -> Option<String>,
+    _vector_store: &mut VectorStoreConfig,
+    _env_lookup: &dyn Fn(&str) -> Option<String>,
 ) {
-    if let Some(value) = non_empty_env(env_lookup, "WUNDER_WEAVIATE_URL") {
-        vector_store.weaviate.url = value;
-    }
-    if let Some(value) = env_optional_string(env_lookup, "WUNDER_WEAVIATE_API_KEY") {
-        vector_store.weaviate.api_key = value;
-    }
 }
 
 fn apply_browser_env_overrides(
@@ -2210,15 +2189,6 @@ fn non_empty_env(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Opt
     env_lookup(name)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn env_optional_string(
-    env_lookup: &dyn Fn(&str) -> Option<String>,
-    name: &str,
-) -> Option<Option<String>> {
-    env_lookup(name)
-        .map(|value| value.trim().to_string())
-        .map(|value| if value.is_empty() { None } else { Some(value) })
 }
 
 fn env_u16(env_lookup: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<u16> {
@@ -2640,8 +2610,6 @@ storage:
         config.storage.postgres.connect_timeout_s = 5;
         config.storage.postgres.pool_size = 8;
         config.workspace.root = "C:/local/workspaces".to_string();
-        config.vector_store.weaviate.url = "http://old-weaviate:8080".to_string();
-        config.vector_store.weaviate.api_key = Some("old-key".to_string());
         config.browser.enabled = false;
         config.tools.browser.enabled = false;
         config.browser.docker.enabled = false;
@@ -2658,8 +2626,6 @@ storage:
             ("WUNDER_POSTGRES_CONNECT_TIMEOUT_S", "9"),
             ("WUNDER_POSTGRES_POOL_SIZE", "64"),
             ("WUNDER_WORKSPACE_ROOT", "/workspaces"),
-            ("WUNDER_WEAVIATE_URL", "http://wunder-weaviate:8080"),
-            ("WUNDER_WEAVIATE_API_KEY", ""),
             ("WUNDER_BROWSER_ENABLED", "true"),
             ("WUNDER_BROWSER_TOOL_ENABLED", "true"),
             ("WUNDER_BROWSER_DOCKER_ENABLED", "true"),
@@ -2680,11 +2646,6 @@ storage:
         assert_eq!(config.storage.postgres.connect_timeout_s, 9);
         assert_eq!(config.storage.postgres.pool_size, 64);
         assert_eq!(config.workspace.root, "/workspaces");
-        assert_eq!(
-            config.vector_store.weaviate.url,
-            "http://wunder-weaviate:8080"
-        );
-        assert_eq!(config.vector_store.weaviate.api_key, None);
         assert!(config.browser.enabled);
         assert!(config.tools.browser.enabled);
         assert!(config.browser.docker.enabled);
@@ -2751,11 +2712,7 @@ knowledge:
     - name: 公司制度知识库
       root: ./config/knowledge/plan
       enabled: false
-vector_store:
-  weaviate:
-    url: http://wunder-weaviate:8080
-    timeout_s: 30
-    batch_size: 64
+vector_store: {}
 storage:
   backend: auto
   db_path: ./config/data/wunder.db
@@ -2797,11 +2754,7 @@ skills:
   enabled: []
 knowledge:
   bases: []
-vector_store:
-  weaviate:
-    url: ''
-    timeout_s: 0
-    batch_size: 0
+vector_store: {}
 storage:
   backend: ''
   db_path: ''
@@ -2823,10 +2776,6 @@ storage:
         assert_eq!(config.skills.paths, vec!["./config/skills".to_string()]);
         assert_eq!(config.skills.enabled, vec!["技能创建器".to_string()]);
         assert_eq!(config.knowledge.bases.len(), 1);
-        assert_eq!(
-            config.vector_store.weaviate.url,
-            "http://wunder-weaviate:8080"
-        );
         assert_eq!(config.storage.backend, "auto");
         assert_eq!(config.storage.db_path, "./config/data/wunder.db");
         assert_eq!(

@@ -245,6 +245,23 @@ pub struct VectorDocumentSummaryRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct VectorChunkEmbeddingRecord {
+    pub chunk_id: String,
+    pub owner_id: String,
+    pub base_name: String,
+    pub doc_id: String,
+    pub doc_name: String,
+    pub chunk_index: i64,
+    pub start: i64,
+    pub end: i64,
+    pub content: String,
+    pub embedding_model: String,
+    pub vector_json: String,
+    pub dimensions: i64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct ChatSessionRecord {
     pub session_id: String,
     pub user_id: String,

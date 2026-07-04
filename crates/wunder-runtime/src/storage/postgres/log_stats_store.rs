@@ -20,6 +20,11 @@ pub(super) trait PostgresLogStatsStorage {
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
     fn get_log_usage_impl(&self) -> Result<u64>;
+    fn delete_logs_by_time_range_impl(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>>;
     fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_chat_history_by_session_impl(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_tool_logs_impl(&self, user_id: &str) -> Result<i64>;
@@ -219,6 +224,55 @@ impl PostgresLogStatsStorage for PostgresStorage {
         )?;
         let total: i64 = row.get(0);
         Ok(total.max(0) as u64)
+    }
+
+    fn delete_logs_by_time_range_impl(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let start = start_time.min(end_time);
+        let end = start_time.max(end_time);
+        if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
+            return Ok(HashMap::new());
+        }
+        let mut conn = self.conn()?;
+        let mut results = HashMap::new();
+        let mut delete_range = |table: &str, time_field: &str| -> Result<i64> {
+            let sql =
+                format!("DELETE FROM {table} WHERE {time_field} >= $1 AND {time_field} <= $2");
+            Ok(conn.execute(&sql, &[&start, &end])? as i64)
+        };
+        results.insert(
+            "chat_history".to_string(),
+            delete_range("chat_history", "created_time")?,
+        );
+        results.insert(
+            "model_context_entries".to_string(),
+            delete_range("model_context_entries", "created_time")?,
+        );
+        results.insert(
+            "tool_logs".to_string(),
+            delete_range("tool_logs", "created_time")?,
+        );
+        results.insert(
+            "artifact_logs".to_string(),
+            delete_range("artifact_logs", "created_time")?,
+        );
+        results.insert(
+            "monitor_sessions".to_string(),
+            delete_range("monitor_sessions", "updated_time")?,
+        );
+        results.insert(
+            "stream_events".to_string(),
+            delete_range("stream_events", "created_time")?,
+        );
+        results.insert(
+            "memory_task_logs".to_string(),
+            delete_range("memory_task_logs", "updated_time")?,
+        );
+        Ok(results)
     }
 
     fn delete_chat_history_impl(&self, user_id: &str) -> Result<i64> {

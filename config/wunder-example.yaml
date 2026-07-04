@@ -254,12 +254,7 @@ knowledge: # 字面知识库配置
       enabled: false # 默认不启用，管理员可在前端按需开放
 
 
-vector_store: # 向量数据库配置
-  weaviate:
-    url: ${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
-    api_key: ${WUNDER_WEAVIATE_API_KEY:-}
-    timeout_s: 30
-    batch_size: 64
+vector_store: {} # 向量知识库随 storage backend 存储，保留该段用于兼容旧配置
 
 workspace: # 工作区配置
   root: "${WUNDER_WORKSPACE_ROOT:-./config/data/workspaces}" # 工作区根目录（按 user_id 划分子目录）

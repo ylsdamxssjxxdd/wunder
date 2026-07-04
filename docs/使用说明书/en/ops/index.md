@@ -26,7 +26,7 @@ The goal: keep the system **running stably for 10+ years**, not just "it started
   </a>
   <a class="docs-card" href="/docs/en/ops/data-and-storage/">
     <strong>Data and Storage</strong>
-    <span>Postgres/SQLite/Weaviate/workspaces/temp_dir.</span>
+    <span>Postgres/SQLite/workspaces/temp_dir.</span>
   </a>
   <a class="docs-card" href="/docs/en/ops/auth-and-security/">
     <strong>Authentication and Security</strong>
@@ -81,7 +81,7 @@ The goal: keep the system **running stably for 10+ years**, not just "it started
 | Tier | Technology | Purpose | Backup Strategy |
 |------|-----------|---------|-----------------|
 | **Relational data** | PostgreSQL | Users, sessions, configuration | Periodic full backup + binlog |
-| **Vector data** | Weaviate | Knowledge base retrieval | Backup alongside PostgreSQL |
+| **Vector data** | PostgreSQL / SQLite | Knowledge base retrieval | Backup with the primary database |
 | **File storage** | Local disk/NAS | User workspaces | Filesystem backup |
 | **Temporary data** | Local disk | Uploads, downloads, conversions | Periodic cleanup |
 
@@ -207,7 +207,6 @@ When something goes wrong, investigate in this order:
 
 3. **Are dependencies ready?**
    - PostgreSQL healthy?
-   - Weaviate healthy?
    - Sandbox healthy?
    - MCP services healthy?
 

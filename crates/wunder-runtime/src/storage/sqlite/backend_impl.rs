@@ -122,6 +122,13 @@ impl LogStatsStore for SqliteStorage {
     fn get_log_usage(&self) -> Result<u64> {
         self.get_log_usage_impl()
     }
+    fn delete_logs_by_time_range(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>> {
+        self.delete_logs_by_time_range_impl(start_time, end_time)
+    }
     fn delete_chat_history(&self, user_id: &str) -> Result<i64> {
         self.delete_chat_history_impl(user_id)
     }
@@ -304,6 +311,36 @@ impl VectorDocumentStore for SqliteStorage {
     }
     fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64> {
         self.delete_vector_documents_by_base_impl(owner_id, base_name)
+    }
+    fn upsert_vector_chunk_embeddings(&self, records: &[VectorChunkEmbeddingRecord]) -> Result<()> {
+        self.upsert_vector_chunk_embeddings_impl(records)
+    }
+    fn list_vector_chunk_embeddings(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        embedding_model: &str,
+        limit: i64,
+    ) -> Result<Vec<VectorChunkEmbeddingRecord>> {
+        self.list_vector_chunk_embeddings_impl(owner_id, base_name, embedding_model, limit)
+    }
+    fn delete_vector_chunk_embedding(&self, chunk_id: &str) -> Result<bool> {
+        self.delete_vector_chunk_embedding_impl(chunk_id)
+    }
+    fn delete_vector_chunk_embeddings_by_doc(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        doc_id: &str,
+    ) -> Result<i64> {
+        self.delete_vector_chunk_embeddings_by_doc_impl(owner_id, base_name, doc_id)
+    }
+    fn delete_vector_chunk_embeddings_by_base(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+    ) -> Result<i64> {
+        self.delete_vector_chunk_embeddings_by_base_impl(owner_id, base_name)
     }
 }
 

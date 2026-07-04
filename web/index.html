@@ -226,7 +226,19 @@
                             </td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.logUsage">日志占用</th>
+                            <th>
+                              <div class="monitor-metric-title-stack">
+                                <span data-i18n="monitor.metric.logUsage">日志占用</span>
+                                <button
+                                  id="monitorLogManageBtn"
+                                  class="secondary btn-with-icon monitor-inline-action"
+                                  type="button"
+                                >
+                                  <i class="fa-solid fa-trash-can"></i>
+                                  <span data-i18n="monitor.logs.manage">管理日志</span>
+                                </button>
+                              </div>
+                            </th>
                             <td><strong id="metricLogUsage">-</strong></td>
                           </tr>
                           <tr>
@@ -6151,6 +6163,40 @@
         <div class="modal-actions">
           <button id="monitorToolCloseBtn" class="secondary btn-with-icon">
             <i class="fa-solid fa-xmark"></i><span data-i18n="common.close">关闭</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="monitorLogCleanupModal" class="modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div class="detail-title" data-i18n="monitor.logs.modal.title">日志管理</div>
+            <div class="muted" data-i18n="monitor.logs.modal.desc">
+              按时间范围删除系统热日志记录，包含监控、工具调用、聊天历史上下文与流事件，删除后不可恢复。
+            </div>
+          </div>
+          <button id="monitorLogCleanupClose" class="icon-btn" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <label>
+              <span data-i18n="monitor.logs.start">开始时间</span>
+              <input id="monitorLogCleanupStart" type="datetime-local" />
+            </label>
+            <label>
+              <span data-i18n="monitor.logs.end">结束时间</span>
+              <input id="monitorLogCleanupEnd" type="datetime-local" />
+            </label>
+          </div>
+          <div id="monitorLogCleanupStatus" class="muted monitor-log-cleanup-status"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="monitorLogCleanupCancel" class="secondary btn-with-icon" type="button">
+            <i class="fa-solid fa-xmark"></i><span data-i18n="common.cancel">取消</span>
+          </button>
+          <button id="monitorLogCleanupSubmit" class="danger btn-with-icon" type="button">
+            <i class="fa-solid fa-trash-can"></i><span data-i18n="monitor.logs.delete">删除日志</span>
           </button>
         </div>
       </div>

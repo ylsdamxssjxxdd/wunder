@@ -1,23 +1,19 @@
-use crate::config::{
-    Config, KnowledgeBaseConfig, KnowledgeBaseType, LlmModelConfig, WeaviateConfig,
-};
+use crate::config::{Config, KnowledgeBaseConfig, KnowledgeBaseType, LlmModelConfig};
 use crate::i18n;
 use crate::llm::{embed_texts, is_embedding_model};
 use crate::path_utils::normalize_existing_path;
-use crate::storage::{StorageBackend, VectorDocumentRecord, VectorDocumentSummaryRecord};
+use crate::storage::{
+    StorageBackend, VectorChunkEmbeddingRecord, VectorDocumentRecord, VectorDocumentSummaryRecord,
+};
 use anyhow::{anyhow, Result};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use url::Url;
 use uuid::Uuid;
 
 const VECTOR_ROOT_DIR: &str = "config/data/vector_knowledge";
@@ -32,22 +28,7 @@ const VECTOR_META_EXT: &str = ".json";
 const DEFAULT_CHUNK_SIZE: usize = 800;
 const DEFAULT_CHUNK_OVERLAP: usize = 100;
 const DEFAULT_TOP_K: usize = 5;
-
-const WEAVIATE_CLASS: &str = "KnowledgeChunk";
-const WEAVIATE_TEXT_GET_SCALAR: &str = "TextGetObjectsKnowledgeChunk";
-const WEAVIATE_TEXT_DELETE_SCALAR: &str = "TextDeleteObjectsKnowledgeChunk";
-const WEAVIATE_PROPERTIES: [(&str, &str); 10] = [
-    ("owner_id", "text"),
-    ("base_name", "text"),
-    ("doc_id", "text"),
-    ("doc_name", "text"),
-    ("chunk_index", "int"),
-    ("start", "int"),
-    ("end", "int"),
-    ("content", "text"),
-    ("embedding_model", "text"),
-    ("created_at", "date"),
-];
+const VECTOR_SEARCH_CANDIDATE_LIMIT: i64 = 2048;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorDocumentMeta {
@@ -399,6 +380,126 @@ fn build_summary_from_record(record: &VectorDocumentSummaryRecord) -> VectorDocu
     }
 }
 
+fn vector_to_json(vector: &[f32]) -> Result<String> {
+    Ok(serde_json::to_string(vector)?)
+}
+
+fn parse_vector_json(raw: &str) -> Option<Vec<f32>> {
+    let vector = serde_json::from_str::<Vec<f32>>(raw).ok()?;
+    if vector.is_empty() || vector.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    Some(vector)
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> Option<f64> {
+    if left.is_empty() || left.len() != right.len() {
+        return None;
+    }
+    let mut dot = 0.0f64;
+    let mut left_norm = 0.0f64;
+    let mut right_norm = 0.0f64;
+    for (a, b) in left.iter().zip(right.iter()) {
+        let a = f64::from(*a);
+        let b = f64::from(*b);
+        if !a.is_finite() || !b.is_finite() {
+            return None;
+        }
+        dot += a * b;
+        left_norm += a * a;
+        right_norm += b * b;
+    }
+    if left_norm <= f64::EPSILON || right_norm <= f64::EPSILON {
+        return None;
+    }
+    Some(dot / (left_norm.sqrt() * right_norm.sqrt()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_vector_chunk_embedding_records(
+    owner_id: &str,
+    base_name: &str,
+    doc_id: &str,
+    doc_name: &str,
+    embedding_model: &str,
+    chunks: &[VectorChunk],
+    vectors: &[Vec<f32>],
+    updated_at: f64,
+) -> Result<Vec<VectorChunkEmbeddingRecord>> {
+    if chunks.len() != vectors.len() {
+        return Err(anyhow!("embedding count mismatch"));
+    }
+    let mut records = Vec::with_capacity(chunks.len());
+    for (chunk, vector) in chunks.iter().zip(vectors.iter()) {
+        records.push(VectorChunkEmbeddingRecord {
+            chunk_id: chunk.chunk_id.clone(),
+            owner_id: owner_id.to_string(),
+            base_name: base_name.to_string(),
+            doc_id: doc_id.to_string(),
+            doc_name: doc_name.to_string(),
+            chunk_index: chunk.index as i64,
+            start: chunk.start as i64,
+            end: chunk.end as i64,
+            content: chunk.content.clone(),
+            embedding_model: embedding_model.to_string(),
+            vector_json: vector_to_json(vector)?,
+            dimensions: vector.len() as i64,
+            updated_at,
+        });
+    }
+    Ok(records)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_vector_chunk_embeddings(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    doc_id: &str,
+    doc_name: &str,
+    embedding_model: &str,
+    chunks: &[VectorChunk],
+    vectors: &[Vec<f32>],
+) -> Result<usize> {
+    let owner_key = resolve_owner_key(owner_id);
+    let records = build_vector_chunk_embedding_records(
+        &owner_key,
+        base_name,
+        doc_id,
+        doc_name,
+        embedding_model,
+        chunks,
+        vectors,
+        now_ts(),
+    )?;
+    let count = records.len();
+    storage.upsert_vector_chunk_embeddings(&records)?;
+    Ok(count)
+}
+
+pub fn delete_vector_chunk_embedding(storage: &dyn StorageBackend, chunk_id: &str) -> Result<bool> {
+    storage.delete_vector_chunk_embedding(chunk_id)
+}
+
+pub fn delete_vector_document_embeddings(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+    doc_id: &str,
+) -> Result<i64> {
+    let owner_key = resolve_owner_key(owner_id);
+    storage.delete_vector_chunk_embeddings_by_doc(&owner_key, base_name, doc_id)
+}
+
+pub fn delete_vector_base_embeddings(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base_name: &str,
+) -> Result<i64> {
+    let owner_key = resolve_owner_key(owner_id);
+    storage.delete_vector_chunk_embeddings_by_base(&owner_key, base_name)
+}
+
 static MIGRATED_BASES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 async fn ensure_vector_documents_migrated(
@@ -604,6 +705,7 @@ pub async fn delete_vector_document_files(
 ) -> Result<()> {
     ensure_vector_documents_migrated(storage, owner_id, base_name, root).await?;
     let owner_key = resolve_owner_key(owner_id);
+    let _ = storage.delete_vector_chunk_embeddings_by_doc(&owner_key, base_name, doc_id)?;
     let _ = storage.delete_vector_document(&owner_key, base_name, doc_id)?;
     let _ = delete_vector_document_files_from_fs(root, doc_id).await;
     Ok(())
@@ -719,6 +821,61 @@ pub async fn query_chunks_by_text(
             .then_with(|| left.1.chunk_index.cmp(&right.1.chunk_index))
     });
     scored.truncate(limit);
+    Ok(scored.into_iter().map(|(_, hit)| hit).collect())
+}
+
+pub async fn query_chunks_by_vector(
+    storage: &dyn StorageBackend,
+    owner_id: Option<&str>,
+    base: &KnowledgeBaseConfig,
+    root: &Path,
+    embedding_model: &str,
+    vector: &[f32],
+    top_k: usize,
+) -> Result<Vec<VectorSearchHit>> {
+    ensure_vector_base_type(base)?;
+    ensure_vector_documents_migrated(storage, owner_id, &base.name, root).await?;
+    if vector.is_empty() {
+        return Ok(Vec::new());
+    }
+    let owner_key = resolve_owner_key(owner_id);
+    let candidate_limit = VECTOR_SEARCH_CANDIDATE_LIMIT.max(top_k.max(1) as i64);
+    let records = storage.list_vector_chunk_embeddings(
+        &owner_key,
+        &base.name,
+        embedding_model,
+        candidate_limit,
+    )?;
+    let mut scored = Vec::new();
+    for record in records {
+        let Some(candidate) = parse_vector_json(&record.vector_json) else {
+            continue;
+        };
+        let Some(score) = cosine_similarity(vector, &candidate) else {
+            continue;
+        };
+        scored.push((
+            score,
+            VectorSearchHit {
+                doc_id: record.doc_id,
+                doc_name: record.doc_name,
+                chunk_index: usize::try_from(record.chunk_index).unwrap_or_default(),
+                start: usize::try_from(record.start).unwrap_or_default(),
+                end: usize::try_from(record.end).unwrap_or_default(),
+                content: record.content,
+                embedding_model: record.embedding_model,
+                score: Some(score),
+            },
+        ));
+    }
+    scored.sort_by(|left, right| {
+        right
+            .0
+            .total_cmp(&left.0)
+            .then_with(|| left.1.doc_name.cmp(&right.1.doc_name))
+            .then_with(|| left.1.chunk_index.cmp(&right.1.chunk_index))
+    });
+    scored.truncate(top_k.max(1));
     Ok(scored.into_iter().map(|(_, hit)| hit).collect())
 }
 
@@ -859,746 +1016,6 @@ where
     op().await
 }
 
-#[derive(Clone)]
-pub struct WeaviateClient {
-    http: reqwest::Client,
-    base_url: String,
-    api_key: Option<String>,
-    batch_size: usize,
-}
-
-struct WeaviateClientCache {
-    key: String,
-    client: WeaviateClient,
-}
-
-static WEAVIATE_CLIENT_CACHE: OnceLock<StdMutex<Option<WeaviateClientCache>>> = OnceLock::new();
-
-const LOCAL_WEAVIATE_FALLBACK_URL: &str = "http://127.0.0.1:18003";
-
-fn extract_host_and_port(base_url: &str) -> Option<(String, u16)> {
-    let parsed = Url::parse(base_url).ok()?;
-    let host = parsed.host_str()?.to_ascii_lowercase();
-    let port = parsed.port_or_known_default()?;
-    Some((host, port))
-}
-
-fn is_hostname_resolvable(host: &str, port: u16) -> bool {
-    (host, port)
-        .to_socket_addrs()
-        .map(|mut addresses| addresses.next().is_some())
-        .unwrap_or(false)
-}
-
-fn is_probably_container_runtime() -> bool {
-    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
-        return true;
-    }
-    if cfg!(target_family = "unix") {
-        if Path::new("/.dockerenv").exists() {
-            return true;
-        }
-        if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-            let lowered = cgroup.to_ascii_lowercase();
-            if lowered.contains("docker")
-                || lowered.contains("containerd")
-                || lowered.contains("kubepods")
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn should_use_local_weaviate_fallback(
-    base_url: &str,
-    runtime_in_container: bool,
-    host_resolvable: bool,
-) -> bool {
-    if runtime_in_container || host_resolvable {
-        return false;
-    }
-    let Some((host, port)) = extract_host_and_port(base_url) else {
-        return false;
-    };
-    if port != 8080 {
-        return false;
-    }
-    matches!(host.as_str(), "weaviate" | "wunder-weaviate")
-}
-
-fn resolve_runtime_weaviate_url(raw_url: &str) -> String {
-    let normalized = raw_url.trim().trim_end_matches('/').to_string();
-    if normalized.is_empty() {
-        return normalized;
-    }
-    let (host, port) = match extract_host_and_port(&normalized) {
-        Some(value) => value,
-        None => return normalized,
-    };
-    let runtime_in_container = is_probably_container_runtime();
-    let host_resolvable = is_hostname_resolvable(&host, port);
-    if should_use_local_weaviate_fallback(&normalized, runtime_in_container, host_resolvable) {
-        warn!(
-            "Weaviate url {normalized} is not resolvable outside container runtime; fallback to {LOCAL_WEAVIATE_FALLBACK_URL}. Set WUNDER_WEAVIATE_URL to override."
-        );
-        return LOCAL_WEAVIATE_FALLBACK_URL.to_string();
-    }
-    normalized
-}
-
-impl WeaviateClient {
-    pub fn from_config(config: &WeaviateConfig) -> Option<Self> {
-        let url = resolve_runtime_weaviate_url(&config.url);
-        if url.is_empty() {
-            return None;
-        }
-        let timeout = std::time::Duration::from_secs(config.timeout_s.max(10));
-        let http = reqwest::Client::builder().timeout(timeout).build().ok()?;
-        let batch_size = if config.batch_size == 0 {
-            64
-        } else {
-            config.batch_size
-        };
-        Some(Self {
-            http,
-            base_url: url,
-            api_key: config.api_key.clone(),
-            batch_size,
-        })
-    }
-
-    async fn graphql_request(&self, query: &str, variables: Value) -> Result<Value> {
-        let payload = json!({ "query": query, "variables": variables });
-        let response = self
-            .http
-            .post(format!("{}/v1/graphql", self.base_url))
-            .headers(self.build_headers())
-            .json(&payload)
-            .send()
-            .await?;
-        let status = response.status();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
-        if let Some(detail) = extract_weaviate_graphql_errors(&body) {
-            return Err(anyhow!("weaviate graphql failed: {detail}"));
-        }
-        if !status.is_success() {
-            return Err(anyhow!("weaviate graphql failed: {status} {body}"));
-        }
-        Ok(body)
-    }
-
-    pub async fn ensure_schema(&self) -> Result<()> {
-        static READY: OnceLock<Mutex<bool>> = OnceLock::new();
-        let lock = READY.get_or_init(|| Mutex::new(false));
-        let mut guard = lock.lock().await;
-        if *guard {
-            return Ok(());
-        }
-        let schema_url = format!("{}/v1/schema/{}", self.base_url, WEAVIATE_CLASS);
-        let response = self
-            .http
-            .get(&schema_url)
-            .headers(self.build_headers())
-            .send()
-            .await?;
-        let status = response.status();
-        if status.is_success() {
-            let body: Value = response.json().await.unwrap_or(Value::Null);
-            let existing = body
-                .get("properties")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| {
-                            item.get("name")
-                                .and_then(Value::as_str)
-                                .map(|name| name.to_string())
-                        })
-                        .collect::<HashSet<_>>()
-                })
-                .unwrap_or_default();
-            let mut missing = Vec::new();
-            for (name, data_type) in WEAVIATE_PROPERTIES {
-                if !existing.contains(name) {
-                    missing.push(build_weaviate_property(name, data_type));
-                }
-            }
-            for payload in missing {
-                let response = self
-                    .http
-                    .post(format!(
-                        "{}/v1/schema/{}/properties",
-                        self.base_url, WEAVIATE_CLASS
-                    ))
-                    .headers(self.build_headers())
-                    .json(&payload)
-                    .send()
-                    .await?;
-                let status = response.status();
-                if status.is_success() || status.as_u16() == 422 || status.as_u16() == 409 {
-                    continue;
-                }
-                let body = response.text().await.unwrap_or_default();
-                return Err(anyhow!("weaviate schema update failed: {status} {body}"));
-            }
-            *guard = true;
-            return Ok(());
-        }
-        if status.as_u16() != 404 {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("weaviate schema read failed: {status} {body}"));
-        }
-        let properties = WEAVIATE_PROPERTIES
-            .iter()
-            .map(|(name, data_type)| build_weaviate_property(name, data_type))
-            .collect::<Vec<_>>();
-        let payload = json!({
-            "class": WEAVIATE_CLASS,
-            "description": "Vector knowledge chunks",
-            "vectorizer": "none",
-            "vectorIndexConfig": {
-                "distance": "cosine"
-            },
-            "properties": properties,
-        });
-        let response = self
-            .http
-            .post(format!("{}/v1/schema", self.base_url))
-            .headers(self.build_headers())
-            .json(&payload)
-            .send()
-            .await?;
-        if response.status().is_success() {
-            *guard = true;
-            return Ok(());
-        }
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if status.as_u16() == 422 || status.as_u16() == 409 {
-            *guard = true;
-            return Ok(());
-        }
-        Err(anyhow!("weaviate schema create failed: {status} {body}"))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_chunks(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        doc_id: &str,
-        doc_name: &str,
-        embedding_model: &str,
-        chunks: &[VectorChunk],
-        vectors: &[Vec<f32>],
-    ) -> Result<String> {
-        if chunks.len() != vectors.len() {
-            return Err(anyhow!("embedding count mismatch"));
-        }
-        self.ensure_schema().await?;
-        let created_at = Utc::now().to_rfc3339();
-        let mut start = 0;
-        while start < chunks.len() {
-            let end = (start + self.batch_size).min(chunks.len());
-            let mut objects = Vec::new();
-            for (chunk, vector) in chunks[start..end].iter().zip(&vectors[start..end]) {
-                let properties = json!({
-                    "owner_id": owner_id,
-                    "base_name": base_name,
-                    "doc_id": doc_id,
-                    "doc_name": doc_name,
-                    "chunk_index": chunk.index as i64,
-                    "start": chunk.start as i64,
-                    "end": chunk.end as i64,
-                    "content": chunk.content,
-                    "embedding_model": embedding_model,
-                    "created_at": created_at,
-                });
-                objects.push(json!({
-                    "class": WEAVIATE_CLASS,
-                    "id": chunk.chunk_id,
-                    "properties": properties,
-                    "vector": vector,
-                }));
-            }
-            let payload = json!({ "objects": objects });
-            let response = self
-                .http
-                .post(format!("{}/v1/batch/objects", self.base_url))
-                .headers(self.build_headers())
-                .json(&payload)
-                .send()
-                .await?;
-            let status = response.status();
-            let body: Value = response.json().await.unwrap_or(Value::Null);
-            if !status.is_success() {
-                return Err(anyhow!("weaviate batch insert failed: {status} {body}"));
-            }
-            if let Some(detail) = extract_weaviate_batch_errors(&body) {
-                return Err(anyhow!("weaviate batch insert failed: {detail}"));
-            }
-            start = end;
-        }
-        Ok(created_at)
-    }
-
-    pub async fn delete_chunk(&self, chunk_id: &str) -> Result<bool> {
-        let response = self
-            .http
-            .delete(format!("{}/v1/objects/{}", self.base_url, chunk_id))
-            .headers(self.build_headers())
-            .send()
-            .await?;
-        if response.status().is_success() {
-            return Ok(true);
-        }
-        if response.status().as_u16() == 404 {
-            return Ok(false);
-        }
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        Err(anyhow!("weaviate delete failed: {status} {body}"))
-    }
-
-    pub async fn query_chunks(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        vector: &[f32],
-        top_k: usize,
-    ) -> Result<Vec<VectorSearchHit>> {
-        self.ensure_schema().await?;
-        let limit_value = top_k as i64;
-        let query = format!(
-            r#"
-            query SearchChunks($vector: [Float!]!, $owner: {text_scalar}!, $base: {text_scalar}!, $model: {text_scalar}!) {{
-                Get {{
-                    KnowledgeChunk(
-                        nearVector: {{vector: $vector}},
-                        limit: {limit_value},
-                        where: {{
-                            operator: And,
-                            operands: [
-                                {{path: ["owner_id"], operator: Equal, valueText: $owner}},
-                                {{path: ["base_name"], operator: Equal, valueText: $base}},
-                                {{path: ["embedding_model"], operator: Equal, valueText: $model}}
-                            ]
-                        }}
-                    ) {{
-                        doc_id
-                        doc_name
-                        chunk_index
-                        start
-                        end
-                        content
-                        embedding_model
-                        _additional {{ distance }}
-                    }}
-                }}
-            }}
-        "#,
-            text_scalar = WEAVIATE_TEXT_GET_SCALAR,
-            limit_value = limit_value
-        );
-        let body = self
-            .graphql_request(
-                &query,
-                json!({
-                    "vector": vector,
-                    "owner": owner_id,
-                    "base": base_name,
-                    "model": embedding_model
-                }),
-            )
-            .await?;
-        let items = body
-            .get("data")
-            .and_then(|value| value.get("Get"))
-            .and_then(|value| value.get(WEAVIATE_CLASS))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut hits = Vec::new();
-        for item in items {
-            let doc_id = item
-                .get("doc_id")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let doc_name = item
-                .get("doc_name")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let chunk_index = item.get("chunk_index").and_then(Value::as_i64).unwrap_or(0) as usize;
-            let start = item.get("start").and_then(Value::as_i64).unwrap_or(0) as usize;
-            let end = item.get("end").and_then(Value::as_i64).unwrap_or(0) as usize;
-            let content = item
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let embedding_model = item
-                .get("embedding_model")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let distance = item
-                .get("_additional")
-                .and_then(|value| value.get("distance"))
-                .and_then(Value::as_f64);
-            let score = distance.map(|value| (1.0 - value).max(0.0));
-            hits.push(VectorSearchHit {
-                doc_id,
-                doc_name,
-                chunk_index,
-                start,
-                end,
-                content,
-                embedding_model,
-                score,
-            });
-        }
-        Ok(hits)
-    }
-
-    pub async fn delete_chunks_by_ids(&self, ids: &[String]) -> Result<usize> {
-        let mut deleted = 0;
-        for id in ids {
-            let response = self
-                .http
-                .delete(format!("{}/v1/objects/{}", self.base_url, id))
-                .headers(self.build_headers())
-                .send()
-                .await?;
-            if response.status().is_success() {
-                deleted += 1;
-            }
-        }
-        Ok(deleted)
-    }
-
-    pub async fn delete_doc_chunks(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        doc_id: &str,
-        limit: usize,
-    ) -> Result<usize> {
-        let ids = self
-            .list_chunk_ids(owner_id, base_name, embedding_model, doc_id, limit)
-            .await?;
-        self.delete_chunks_by_ids(&ids).await
-    }
-
-    pub async fn delete_doc_chunks_all(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        doc_id: &str,
-    ) -> Result<usize> {
-        if let Ok(deleted) = self
-            .delete_doc_chunks_by_filter(owner_id, base_name, embedding_model, doc_id, None)
-            .await
-        {
-            return Ok(deleted);
-        }
-        let mut total = 0;
-        let limit = self.batch_size.clamp(64, 2048);
-        loop {
-            let ids = self
-                .list_chunk_ids(owner_id, base_name, embedding_model, doc_id, limit)
-                .await?;
-            if ids.is_empty() {
-                break;
-            }
-            total += self.delete_chunks_by_ids(&ids).await?;
-        }
-        Ok(total)
-    }
-
-    pub async fn delete_doc_chunks_except_created_at(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        doc_id: &str,
-        created_at: &str,
-    ) -> Result<usize> {
-        self.delete_doc_chunks_by_filter(
-            owner_id,
-            base_name,
-            embedding_model,
-            doc_id,
-            Some(created_at),
-        )
-        .await
-    }
-
-    async fn delete_doc_chunks_by_filter(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        doc_id: &str,
-        exclude_created_at: Option<&str>,
-    ) -> Result<usize> {
-        self.ensure_schema().await?;
-        let (query, variables) = if let Some(created_at) = exclude_created_at {
-            (
-                format!(
-                    r#"
-                mutation DeleteChunks($owner: {text_scalar}!, $base: {text_scalar}!, $doc: {text_scalar}!, $model: {text_scalar}!, $created: String!) {{
-                    Delete {{
-                        KnowledgeChunk(
-                            where: {{
-                                operator: And,
-                                operands: [
-                                    {{path: ["owner_id"], operator: Equal, valueText: $owner}},
-                                    {{path: ["base_name"], operator: Equal, valueText: $base}},
-                                    {{path: ["doc_id"], operator: Equal, valueText: $doc}},
-                                    {{path: ["embedding_model"], operator: Equal, valueText: $model}},
-                                    {{path: ["created_at"], operator: NotEqual, valueDate: $created}}
-                                ]
-                            }}
-                        ) {{
-                            matches
-                        }}
-                    }}
-                }}
-                "#,
-                    text_scalar = WEAVIATE_TEXT_DELETE_SCALAR
-                ),
-                json!({
-                    "owner": owner_id,
-                    "base": base_name,
-                    "doc": doc_id,
-                    "model": embedding_model,
-                    "created": created_at
-                }),
-            )
-        } else {
-            (
-                format!(
-                    r#"
-                mutation DeleteChunks($owner: {text_scalar}!, $base: {text_scalar}!, $doc: {text_scalar}!, $model: {text_scalar}!) {{
-                    Delete {{
-                        KnowledgeChunk(
-                            where: {{
-                                operator: And,
-                                operands: [
-                                    {{path: ["owner_id"], operator: Equal, valueText: $owner}},
-                                    {{path: ["base_name"], operator: Equal, valueText: $base}},
-                                    {{path: ["doc_id"], operator: Equal, valueText: $doc}},
-                                    {{path: ["embedding_model"], operator: Equal, valueText: $model}}
-                                ]
-                            }}
-                        ) {{
-                            matches
-                        }}
-                    }}
-                }}
-                "#,
-                    text_scalar = WEAVIATE_TEXT_DELETE_SCALAR
-                ),
-                json!({
-                    "owner": owner_id,
-                    "base": base_name,
-                    "doc": doc_id,
-                    "model": embedding_model
-                }),
-            )
-        };
-        let body = self.graphql_request(&query, variables).await?;
-        let matches = body
-            .get("data")
-            .and_then(|value| value.get("Delete"))
-            .and_then(|value| value.get(WEAVIATE_CLASS))
-            .and_then(|value| value.get("matches"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        Ok(matches as usize)
-    }
-
-    async fn list_chunk_ids(
-        &self,
-        owner_id: &str,
-        base_name: &str,
-        embedding_model: &str,
-        doc_id: &str,
-        limit: usize,
-    ) -> Result<Vec<String>> {
-        self.ensure_schema().await?;
-        let limit_value = limit as i64;
-        let query = format!(
-            r#"
-            query ListChunkIds($owner: {text_scalar}!, $base: {text_scalar}!, $doc: {text_scalar}!, $model: {text_scalar}!) {{
-                Get {{
-                    KnowledgeChunk(
-                        limit: {limit_value},
-                        where: {{
-                            operator: And,
-                            operands: [
-                                {{path: ["owner_id"], operator: Equal, valueText: $owner}},
-                                {{path: ["base_name"], operator: Equal, valueText: $base}},
-                                {{path: ["doc_id"], operator: Equal, valueText: $doc}},
-                                {{path: ["embedding_model"], operator: Equal, valueText: $model}}
-                            ]
-                        }}
-                    ) {{
-                        _additional {{ id }}
-                    }}
-                }}
-            }}
-        "#,
-            text_scalar = WEAVIATE_TEXT_GET_SCALAR,
-            limit_value = limit_value
-        );
-        let body = self
-            .graphql_request(
-                &query,
-                json!({
-                    "owner": owner_id,
-                    "base": base_name,
-                    "doc": doc_id,
-                    "model": embedding_model
-                }),
-            )
-            .await?;
-        let items = body
-            .get("data")
-            .and_then(|value| value.get("Get"))
-            .and_then(|value| value.get(WEAVIATE_CLASS))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut ids = Vec::new();
-        for item in items {
-            if let Some(id) = item
-                .get("_additional")
-                .and_then(|value| value.get("id"))
-                .and_then(Value::as_str)
-            {
-                ids.push(id.to_string());
-            }
-        }
-        Ok(ids)
-    }
-
-    fn build_headers(&self) -> reqwest::header::HeaderMap {
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(api_key) = &self.api_key {
-            if !api_key.trim().is_empty() {
-                if let Ok(value) = format!("Bearer {api_key}").parse() {
-                    headers.insert(reqwest::header::AUTHORIZATION, value);
-                }
-            }
-        }
-        headers
-    }
-}
-
-fn build_weaviate_property(name: &str, data_type: &str) -> Value {
-    json!({
-        "name": name,
-        "dataType": [data_type],
-    })
-}
-
-fn collect_weaviate_error_messages(value: &Value, output: &mut Vec<String>) {
-    match value {
-        Value::String(text) => {
-            let trimmed = text.trim();
-            if !trimmed.is_empty() {
-                output.push(trimmed.to_string());
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_weaviate_error_messages(item, output);
-            }
-        }
-        Value::Object(map) => {
-            if let Some(Value::String(message)) = map.get("message") {
-                let trimmed = message.trim();
-                if !trimmed.is_empty() {
-                    output.push(trimmed.to_string());
-                }
-            } else if let Some(Value::String(message)) = map.get("error") {
-                let trimmed = message.trim();
-                if !trimmed.is_empty() {
-                    output.push(trimmed.to_string());
-                }
-            } else {
-                for item in map.values() {
-                    collect_weaviate_error_messages(item, output);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn format_weaviate_errors(value: &Value) -> Option<String> {
-    let mut messages = Vec::new();
-    collect_weaviate_error_messages(value, &mut messages);
-    if messages.is_empty() {
-        return None;
-    }
-    let mut deduped = Vec::new();
-    let mut seen = HashSet::new();
-    for message in messages {
-        if seen.insert(message.clone()) {
-            deduped.push(message);
-        }
-    }
-    Some(deduped.join(" | "))
-}
-
-fn extract_weaviate_graphql_errors(body: &Value) -> Option<String> {
-    let errors = body.get("errors")?;
-    format_weaviate_errors(errors)
-}
-
-fn extract_weaviate_batch_errors(body: &Value) -> Option<String> {
-    if let Some(detail) = body.get("errors").and_then(format_weaviate_errors) {
-        return Some(detail);
-    }
-    let objects = body.get("objects").and_then(Value::as_array)?;
-    let mut messages = Vec::new();
-    for item in objects {
-        let status = item
-            .get("result")
-            .and_then(|value| value.get("status"))
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if status.eq_ignore_ascii_case("FAILED") {
-            if let Some(errors) = item.get("result").and_then(|value| value.get("errors")) {
-                collect_weaviate_error_messages(errors, &mut messages);
-            } else if let Some(errors) = item.get("errors") {
-                collect_weaviate_error_messages(errors, &mut messages);
-            }
-        }
-    }
-    if messages.is_empty() {
-        return None;
-    }
-    let mut deduped = Vec::new();
-    let mut seen = HashSet::new();
-    for message in messages {
-        if seen.insert(message.clone()) {
-            deduped.push(message);
-        }
-    }
-    Some(deduped.join(" | "))
-}
-
 pub async fn embed_chunks(
     config: &LlmModelConfig,
     chunks: &[VectorChunk],
@@ -1609,36 +1026,6 @@ pub async fn embed_chunks(
         .map(|chunk| chunk.content.clone())
         .collect::<Vec<_>>();
     embed_texts(config, &inputs, timeout_s).await
-}
-
-fn build_weaviate_cache_key(config: &WeaviateConfig) -> String {
-    let url = config.url.trim().trim_end_matches('/');
-    let api_key = config.api_key.as_deref().unwrap_or("").trim();
-    format!("{url}|{api_key}|{}|{}", config.timeout_s, config.batch_size)
-}
-
-pub fn resolve_weaviate_client(config: &Config) -> Result<WeaviateClient> {
-    let weaviate = &config.vector_store.weaviate;
-    let key = build_weaviate_cache_key(weaviate);
-    if let Ok(mut guard) = WEAVIATE_CLIENT_CACHE
-        .get_or_init(|| StdMutex::new(None))
-        .lock()
-    {
-        if let Some(entry) = guard.as_ref() {
-            if entry.key == key {
-                return Ok(entry.client.clone());
-            }
-        }
-        let client = WeaviateClient::from_config(weaviate)
-            .ok_or_else(|| anyhow!(i18n::t("error.vector_store_not_configured")))?;
-        *guard = Some(WeaviateClientCache {
-            key,
-            client: client.clone(),
-        });
-        return Ok(client);
-    }
-    WeaviateClient::from_config(weaviate)
-        .ok_or_else(|| anyhow!(i18n::t("error.vector_store_not_configured")))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1747,24 +1134,6 @@ pub async fn index_document(
     if chunks.is_empty() {
         return Err(anyhow!(i18n::t("error.empty_parse_result")));
     }
-    let previous_embedding = previous_meta
-        .map(|meta| meta.embedding_model.clone())
-        .filter(|value| !value.trim().is_empty());
-    let previous_chunk_ids = previous_meta
-        .map(|meta| {
-            meta.chunks
-                .iter()
-                .filter(|chunk| !is_chunk_deleted(chunk))
-                .map(|chunk| build_chunk_id(&doc_id, chunk.index))
-                .collect::<HashSet<_>>()
-        })
-        .unwrap_or_default();
-    let new_chunk_ids: HashSet<String> =
-        chunks.iter().map(|chunk| chunk.chunk_id.clone()).collect();
-    let delete_ids: Vec<String> = previous_chunk_ids
-        .difference(&new_chunk_ids)
-        .cloned()
-        .collect();
     let created_at = previous_meta
         .map(|meta| meta.created_at)
         .unwrap_or_else(now_ts);
@@ -1776,43 +1145,18 @@ pub async fn index_document(
     let result = with_document_lock(root, &lock_doc_id, move || async move {
         let timeout_s = embed_config.timeout_s.unwrap_or(120);
         let vectors = embed_chunks(&embed_config, &chunks, timeout_s).await?;
-        let client = resolve_weaviate_client(config)?;
-        let upserted_at = client
-            .upsert_chunks(
-                &owner_key,
-                &base_name,
-                &doc_id,
-                &doc_name,
-                &embedding_name,
-                &chunks,
-                &vectors,
-            )
-            .await?;
-        if !previous_chunk_ids.is_empty() {
-            if let Err(err) = client
-                .delete_doc_chunks_except_created_at(
-                    &owner_key,
-                    &base_name,
-                    &embedding_name,
-                    &doc_id,
-                    &upserted_at,
-                )
-                .await
-            {
-                if !delete_ids.is_empty() {
-                    let _ = client.delete_chunks_by_ids(&delete_ids).await;
-                } else {
-                    let _ = err;
-                }
-            }
-        }
-        if let Some(previous_embedding) = previous_embedding.as_ref() {
-            if previous_embedding != &embedding_name {
-                let _ = client
-                    .delete_doc_chunks_all(&owner_key, &base_name, previous_embedding, &doc_id)
-                    .await;
-            }
-        }
+        storage.delete_vector_chunk_embeddings_by_doc(&owner_key, &base_name, &doc_id)?;
+        let records = build_vector_chunk_embedding_records(
+            &owner_key,
+            &base_name,
+            &doc_id,
+            &doc_name,
+            &embedding_name,
+            &chunks,
+            &vectors,
+            now_ts(),
+        )?;
+        storage.upsert_vector_chunk_embeddings(&records)?;
         for chunk in &mut chunk_meta {
             if is_chunk_deleted(chunk) {
                 continue;
@@ -1867,56 +1211,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn weaviate_fallback_enabled_for_unresolvable_docker_alias_on_host() {
-        assert!(should_use_local_weaviate_fallback(
-            "http://weaviate:8080",
-            false,
-            false
-        ));
-        assert!(should_use_local_weaviate_fallback(
-            "http://wunder-weaviate:8080",
-            false,
-            false
-        ));
+    fn cosine_similarity_ranks_matching_vectors() {
+        let same = cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]).expect("same dimensions");
+        let orthogonal = cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]).expect("same dimensions");
+
+        assert!(same > orthogonal);
+        assert_eq!(cosine_similarity(&[1.0], &[1.0, 0.0]), None);
     }
 
     #[test]
-    fn weaviate_fallback_disabled_inside_container() {
-        assert!(!should_use_local_weaviate_fallback(
-            "http://weaviate:8080",
-            true,
-            false
-        ));
-    }
+    fn vector_chunk_embedding_records_preserve_chunk_identity() {
+        let chunks = vec![VectorChunk {
+            index: 2,
+            start: 10,
+            end: 20,
+            content: "content".to_string(),
+            chunk_id: "chunk-a".to_string(),
+        }];
+        let records = build_vector_chunk_embedding_records(
+            "owner-a",
+            "base-a",
+            "doc-a",
+            "Doc A",
+            "model-a",
+            &chunks,
+            &[vec![0.5, 0.25]],
+            1.0,
+        )
+        .expect("build records");
 
-    #[test]
-    fn weaviate_fallback_disabled_when_hostname_resolves() {
-        assert!(!should_use_local_weaviate_fallback(
-            "http://weaviate:8080",
-            false,
-            true
-        ));
-    }
-
-    #[test]
-    fn weaviate_fallback_disabled_for_non_docker_alias_or_port() {
-        assert!(!should_use_local_weaviate_fallback(
-            "http://127.0.0.1:18003",
-            false,
-            false
-        ));
-        assert!(!should_use_local_weaviate_fallback(
-            "http://weaviate:18003",
-            false,
-            false
-        ));
-    }
-
-    #[test]
-    fn resolve_runtime_weaviate_url_uses_local_fallback() {
-        let resolved = resolve_runtime_weaviate_url("http://weaviate:8080");
-        if !is_probably_container_runtime() && !is_hostname_resolvable("weaviate", 8080) {
-            assert_eq!(resolved, LOCAL_WEAVIATE_FALLBACK_URL);
-        }
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].chunk_id, "chunk-a");
+        assert_eq!(records[0].doc_id, "doc-a");
+        assert_eq!(records[0].chunk_index, 2);
+        assert_eq!(
+            parse_vector_json(&records[0].vector_json),
+            Some(vec![0.5, 0.25])
+        );
     }
 }

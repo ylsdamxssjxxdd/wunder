@@ -252,6 +252,7 @@ async fn cleanup_removed_ragflow_datasets(config: &Config, dataset_ids: Vec<Stri
 async fn cleanup_removed_vector_roots(storage: Arc<dyn StorageBackend>, bases: Vec<String>) {
     for name in bases {
         let owner_key = vector_knowledge::resolve_owner_key(None);
+        let _ = storage.delete_vector_chunk_embeddings_by_base(&owner_key, &name);
         let _ = storage.delete_vector_documents_by_base(&owner_key, &name);
         let root = match vector_knowledge::resolve_vector_root(None, &name, false) {
             Ok(path) => path,
@@ -457,13 +458,13 @@ async fn admin_knowledge_doc_delete(
             )
             .await
             .map_err(vector_error_response)?;
-            let client = vector_knowledge::resolve_weaviate_client(&config)
-                .map_err(vector_error_response)?;
-            let owner_key = vector_knowledge::resolve_owner_key(None);
-            let deleted = client
-                .delete_doc_chunks_all(&owner_key, &base_name, &meta.embedding_model, &meta.doc_id)
-                .await
-                .map_err(vector_error_response)?;
+            let deleted = vector_knowledge::delete_vector_document_embeddings(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &meta.doc_id,
+            )
+            .map_err(vector_error_response)?;
             vector_knowledge::delete_vector_document_files(
                 storage.as_ref(),
                 None,
@@ -645,6 +646,7 @@ async fn admin_knowledge_test_stream(
     let config = state.config_store.get().await;
     let base = resolve_knowledge_base(&config, base_name)?;
     let query = query.to_string();
+    let storage = state.storage.clone();
 
     let (event_tx, event_rx) =
         mpsc::channel::<AdminKnowledgeTestEvent>(ADMIN_KNOWLEDGE_TEST_EVENT_QUEUE_CAPACITY);
@@ -674,17 +676,17 @@ async fn admin_knowledge_test_stream(
                 let vector = vectors
                     .first()
                     .ok_or_else(|| anyhow!(i18n::t("error.llm_request_failed")))?;
-                let client = vector_knowledge::resolve_weaviate_client(&config)?;
-                let owner_key = vector_knowledge::resolve_owner_key(None);
-                let mut hits = client
-                    .query_chunks(
-                        &owner_key,
-                        &base.name,
-                        embedding_name,
-                        vector,
-                        effective_top_k,
-                    )
-                    .await?;
+                let root = vector_knowledge::resolve_vector_root(None, &base.name, false)?;
+                let mut hits = vector_knowledge::query_chunks_by_vector(
+                    storage.as_ref(),
+                    None,
+                    &base,
+                    &root,
+                    embedding_name,
+                    vector,
+                    effective_top_k,
+                )
+                .await?;
                 if let Some(threshold) = base.score_threshold {
                     hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
                 }
@@ -843,13 +845,18 @@ async fn admin_knowledge_test(
             .top_k
             .filter(|value| *value > 0)
             .unwrap_or_else(|| vector_knowledge::resolve_top_k(&base));
-        let client =
-            vector_knowledge::resolve_weaviate_client(&config).map_err(vector_error_response)?;
-        let owner_key = vector_knowledge::resolve_owner_key(None);
-        let mut hits = client
-            .query_chunks(&owner_key, &base.name, embedding_name, vector, top_k)
-            .await
-            .map_err(vector_error_response)?;
+        let root = resolve_vector_root_for_admin(&base, false)?;
+        let mut hits = vector_knowledge::query_chunks_by_vector(
+            state.storage.as_ref(),
+            None,
+            &base,
+            &root,
+            embedding_name,
+            vector,
+            top_k,
+        )
+        .await
+        .map_err(vector_error_response)?;
         if let Some(threshold) = base.score_threshold {
             hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
         }
@@ -1140,21 +1147,17 @@ async fn admin_knowledge_chunk_embed(
             )
             .await
             .map_err(vector_error_response)?;
-            let client = vector_knowledge::resolve_weaviate_client(&config)
-                .map_err(vector_error_response)?;
-            let owner_key = vector_knowledge::resolve_owner_key(None);
-            let _ = client
-                .upsert_chunks(
-                    &owner_key,
-                    &base_name,
-                    &meta.doc_id,
-                    &meta.name,
-                    &embedding_name,
-                    &[vector_chunk],
-                    &vectors,
-                )
-                .await
-                .map_err(vector_error_response)?;
+            vector_knowledge::upsert_vector_chunk_embeddings(
+                storage.as_ref(),
+                None,
+                &base_name,
+                &meta.doc_id,
+                &meta.name,
+                &embedding_name,
+                &[vector_chunk],
+                &vectors,
+            )
+            .map_err(vector_error_response)?;
             chunk.status = Some("embedded".to_string());
             vector_knowledge::refresh_document_meta(&mut meta);
             vector_knowledge::write_vector_document(
@@ -1245,11 +1248,10 @@ async fn admin_knowledge_chunk_delete(
             if chunk.status.as_deref() == Some("deleted") {
                 return Ok(meta);
             }
-            let client = vector_knowledge::resolve_weaviate_client(&config)
-                .map_err(vector_error_response)?;
-            let _ = client
-                .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
-                .await;
+            let _ = vector_knowledge::delete_vector_chunk_embedding(
+                storage.as_ref(),
+                &vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
+            );
             chunk.status = Some("deleted".to_string());
             vector_knowledge::refresh_document_meta(&mut meta);
             vector_knowledge::write_vector_document(

@@ -319,6 +319,10 @@
     "en-US": "Parameters are required",
     "zh-CN": "参数不能为空"
   },
+  "error.invalid_time_range": {
+    "en-US": "Invalid time range",
+    "zh-CN": "时间范围不合法"
+  },
   "error.user_seed_count_invalid": {
     "en-US": "Invalid test user count",
     "zh-CN": "测试用户数量不合法"

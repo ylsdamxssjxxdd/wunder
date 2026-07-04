@@ -1598,6 +1598,47 @@ impl MonitorState {
         })
     }
 
+    pub fn delete_logs_by_time_range(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>, String> {
+        self.run_guarded(
+            "monitor.delete_logs_by_time_range",
+            || Err("monitor log cleanup failed".to_string()),
+            || {
+                let start = start_time.min(end_time);
+                let end = start_time.max(end_time);
+                if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start {
+                    return Err("invalid log cleanup time range".to_string());
+                }
+                let deleted = self
+                    .storage
+                    .delete_logs_by_time_range(start, end)
+                    .map_err(|err| err.to_string())?;
+                {
+                    let mut log_cache = self.log_usage_cache.lock();
+                    *log_cache = UsageCache::default();
+                }
+                {
+                    let mut snapshot_cache = self.system_snapshot_cache.lock();
+                    *snapshot_cache = None;
+                }
+                {
+                    let mut sessions = self.sessions.lock();
+                    sessions.retain(|_, record| {
+                        let in_range = record.updated_time >= start && record.updated_time <= end;
+                        let active = record.status == Self::STATUS_RUNNING
+                            || record.status == Self::STATUS_CANCELLING
+                            || record.status == Self::STATUS_WAITING;
+                        !in_range || active
+                    });
+                }
+                Ok(deleted)
+            },
+        )
+    }
+
     pub fn get_system_metrics(&self) -> SystemSnapshot {
         self.run_guarded(
             "monitor.get_system_metrics",

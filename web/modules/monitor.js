@@ -49,6 +49,7 @@ const TOOL_HEATMAP_TILE_SIZE = 68;
 const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 const USER_DASHBOARD_TTL_MS = 60 * 1000;
+const DEFAULT_LOG_CLEANUP_HOURS = 24;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 // 线程状态环图配色与图例配置
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
@@ -1194,6 +1195,118 @@ const renderMonitorMetrics = (system) => {
     : "";
   elements.metricLogUsage.textContent = formatBytes(system.log_used);
   elements.metricWorkspaceUsage.textContent = formatBytes(system.workspace_used);
+};
+
+const toDatetimeLocalValue = (date) => {
+  const pad = (value) => String(value).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hour = pad(date.getHours());
+  const minute = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+};
+
+const parseDatetimeLocalSeconds = (value) => {
+  const date = new Date(value || "");
+  const timestamp = date.getTime();
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp / 1000;
+};
+
+const setMonitorLogCleanupStatus = (message = "", kind = "") => {
+  if (!elements.monitorLogCleanupStatus) {
+    return;
+  }
+  elements.monitorLogCleanupStatus.textContent = message;
+  elements.monitorLogCleanupStatus.dataset.kind = kind;
+};
+
+const openMonitorLogCleanupModal = () => {
+  if (!elements.monitorLogCleanupModal) {
+    return;
+  }
+  const now = new Date();
+  const start = new Date(now.getTime() - DEFAULT_LOG_CLEANUP_HOURS * ONE_HOUR_MS);
+  if (elements.monitorLogCleanupStart && !elements.monitorLogCleanupStart.value) {
+    elements.monitorLogCleanupStart.value = toDatetimeLocalValue(start);
+  }
+  if (elements.monitorLogCleanupEnd) {
+    elements.monitorLogCleanupEnd.value = toDatetimeLocalValue(now);
+  }
+  setMonitorLogCleanupStatus(t("monitor.logs.modal.hint"), "");
+  elements.monitorLogCleanupModal.classList.add("active");
+};
+
+const closeMonitorLogCleanupModal = () => {
+  elements.monitorLogCleanupModal?.classList.remove("active");
+};
+
+const summarizeDeletedLogs = (deleted) => {
+  if (!deleted || typeof deleted !== "object") {
+    return "";
+  }
+  return Object.entries(deleted)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([table, count]) => `${table}: ${count}`)
+    .join(" · ");
+};
+
+const submitMonitorLogCleanup = async () => {
+  const startSeconds = parseDatetimeLocalSeconds(elements.monitorLogCleanupStart?.value);
+  const endSeconds = parseDatetimeLocalSeconds(elements.monitorLogCleanupEnd?.value);
+  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) {
+    setMonitorLogCleanupStatus(t("monitor.logs.invalidRange"), "error");
+    return;
+  }
+  const confirmed = window.confirm(t("monitor.logs.confirm"));
+  if (!confirmed) {
+    return;
+  }
+  const submitBtn = elements.monitorLogCleanupSubmit;
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.setAttribute("aria-busy", "true");
+  }
+  setMonitorLogCleanupStatus(t("monitor.logs.deleting"), "");
+  try {
+    const wunderBase = getWunderBase();
+    const response = await fetch(`${wunderBase}/admin/monitor/logs/cleanup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start_time: startSeconds,
+        end_time: endSeconds,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    if (result.system) {
+      renderMonitorMetrics(result.system);
+    }
+    const summary = summarizeDeletedLogs(result.deleted);
+    const message = t("monitor.logs.deleted", {
+      count: result.deleted_total ?? 0,
+      detail: summary || "-",
+    });
+    setMonitorLogCleanupStatus(message, "success");
+    notify(message, "success");
+    await loadMonitorData();
+  } catch (error) {
+    const message = t("monitor.logs.deleteFailed", { message: error.message });
+    setMonitorLogCleanupStatus(message, "error");
+    notify(message, "error");
+    appendLog(message);
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.removeAttribute("aria-busy");
+    }
+  }
 };
 
 const renderServiceMetrics = (service) => {
@@ -4119,6 +4232,10 @@ export const initMonitorPanel = () => {
     elements.monitorTimeStart.addEventListener("change", applyFilter);
     elements.monitorTimeEnd.addEventListener("change", applyFilter);
   }
+  elements.monitorLogManageBtn?.addEventListener("click", openMonitorLogCleanupModal);
+  elements.monitorLogCleanupClose?.addEventListener("click", closeMonitorLogCleanupModal);
+  elements.monitorLogCleanupCancel?.addEventListener("click", closeMonitorLogCleanupModal);
+  elements.monitorLogCleanupSubmit?.addEventListener("click", submitMonitorLogCleanup);
   elements.monitorRefreshBtn.addEventListener("click", async () => {
     try {
       await loadMonitorData();

@@ -270,7 +270,6 @@ async fn execute_vector_knowledge(
         .to_string();
     let owner_key = vector_knowledge::resolve_owner_key(owner_id);
     let top_k = extract_limit(args).unwrap_or_else(|| vector_knowledge::resolve_top_k(base));
-    let base_name = base.name.clone();
     let root = std::path::PathBuf::from(&base.root);
     let aggregated = if let Ok(embed_config) =
         vector_knowledge::resolve_embedding_model(context.config, &embedding_name)
@@ -278,59 +277,51 @@ async fn execute_vector_knowledge(
         let timeout_s = embed_config.timeout_s.unwrap_or(120);
         match embed_texts(&embed_config, &queries, timeout_s).await {
             Ok(vectors) if vectors.len() == queries.len() => {
-                if let Ok(client) = vector_knowledge::resolve_weaviate_client(context.config) {
-                    let query_results = futures::future::join_all(
-                        vectors.into_iter().enumerate().map(|(index, vector)| {
-                            let client = client.clone();
-                            let owner_key = owner_key.clone();
-                            let base_name = base_name.clone();
-                            let embedding_name = embedding_name.clone();
-                            let keyword = queries.get(index).cloned().unwrap_or_default();
-                            let score_threshold = base.score_threshold;
-                            async move {
-                                let mut hits = client
-                                    .query_chunks(
-                                        &owner_key,
-                                        &base_name,
-                                        &embedding_name,
-                                        &vector,
-                                        top_k,
-                                    )
-                                    .await?;
-                                if let Some(threshold) = score_threshold {
-                                    hits.retain(|hit| {
-                                        hit.score.unwrap_or(0.0) >= f64::from(threshold)
-                                    });
-                                }
-                                if hits.len() > top_k {
-                                    hits.truncate(top_k);
-                                }
-                                Ok::<_, anyhow::Error>((index, keyword, hits))
+                let query_results = futures::future::join_all(vectors.into_iter().enumerate().map(
+                    |(index, vector)| {
+                        let storage = context.storage.clone();
+                        let base = base.clone();
+                        let root = root.clone();
+                        let embedding_name = embedding_name.clone();
+                        let owner_id = owner_id.map(str::to_string);
+                        let keyword = queries.get(index).cloned().unwrap_or_default();
+                        let score_threshold = base.score_threshold;
+                        async move {
+                            let mut hits = vector_knowledge::query_chunks_by_vector(
+                                storage.as_ref(),
+                                owner_id.as_deref(),
+                                &base,
+                                &root,
+                                &embedding_name,
+                                &vector,
+                                top_k,
+                            )
+                            .await?;
+                            if let Some(threshold) = score_threshold {
+                                hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
                             }
-                        }),
-                    )
-                    .await;
-                    let mut aggregated = Vec::new();
-                    let mut failed = false;
-                    for result in query_results {
-                        match result {
-                            Ok(item) => aggregated.push(item),
-                            Err(_) => {
-                                failed = true;
-                                break;
+                            if hits.len() > top_k {
+                                hits.truncate(top_k);
                             }
+                            Ok::<_, anyhow::Error>((index, keyword, hits))
+                        }
+                    },
+                ))
+                .await;
+                let mut aggregated = Vec::new();
+                let mut failed = false;
+                for result in query_results {
+                    match result {
+                        Ok(item) => aggregated.push(item),
+                        Err(_) => {
+                            failed = true;
+                            break;
                         }
                     }
-                    if !failed {
-                        aggregated.sort_by_key(|(index, _, _)| *index);
-                        (aggregated, false)
-                    } else {
-                        let fallback = build_vector_literal_fallback_results(
-                            context, base, owner_id, &queries, top_k, &root,
-                        )
-                        .await?;
-                        (fallback, true)
-                    }
+                }
+                if !failed {
+                    aggregated.sort_by_key(|(index, _, _)| *index);
+                    (aggregated, false)
                 } else {
                     let fallback = build_vector_literal_fallback_results(
                         context, base, owner_id, &queries, top_k, &root,

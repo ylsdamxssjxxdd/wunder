@@ -584,7 +584,6 @@ pub(super) async fn user_knowledge_doc_delete(
         .user_tool_store
         .resolve_knowledge_base_root_with_type(&user_id, &base.name, base_type, false)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let config = state.config_store.get().await;
     let base_name = base.name.clone();
     let storage = state.storage.clone();
     let root_for_lock = root.clone();
@@ -604,24 +603,13 @@ pub(super) async fn user_knowledge_doc_delete(
             )
             .await
             .map_err(vector_error_response)?;
-            let deleted = if !meta.embedding_model.trim().is_empty() {
-                if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
-                    let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
-                    client
-                        .delete_doc_chunks_all(
-                            &owner_key,
-                            &base_name,
-                            &meta.embedding_model,
-                            &meta.doc_id,
-                        )
-                        .await
-                        .unwrap_or(0)
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
+            let deleted = vector_knowledge::delete_vector_document_embeddings(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &meta.doc_id,
+            )
+            .unwrap_or(0);
             vector_knowledge::delete_vector_document_files(
                 storage.as_ref(),
                 Some(&user_id),
@@ -834,21 +822,17 @@ pub(super) async fn user_knowledge_chunk_embed(
             )
             .await
             .map_err(vector_error_response)?;
-            let client = vector_knowledge::resolve_weaviate_client(&config)
-                .map_err(vector_error_response)?;
-            let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
-            let _ = client
-                .upsert_chunks(
-                    &owner_key,
-                    &base_name,
-                    &meta.doc_id,
-                    &meta.name,
-                    &embedding_name,
-                    &[vector_chunk],
-                    &vectors,
-                )
-                .await
-                .map_err(vector_error_response)?;
+            vector_knowledge::upsert_vector_chunk_embeddings(
+                storage.as_ref(),
+                Some(&user_id),
+                &base_name,
+                &meta.doc_id,
+                &meta.name,
+                &embedding_name,
+                &[vector_chunk],
+                &vectors,
+            )
+            .map_err(vector_error_response)?;
             chunk.status = Some("embedded".to_string());
             vector_knowledge::refresh_document_meta(&mut meta);
             vector_knowledge::write_vector_document(
@@ -952,13 +936,10 @@ pub(super) async fn user_knowledge_chunk_delete(
             if chunk.status.as_deref() == Some("deleted") {
                 return Ok(meta);
             }
-            if !meta.embedding_model.trim().is_empty() {
-                if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
-                    let _ = client
-                        .delete_chunk(&vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index))
-                        .await;
-                }
-            }
+            let _ = vector_knowledge::delete_vector_chunk_embedding(
+                storage.as_ref(),
+                &vector_knowledge::build_chunk_id(&meta.doc_id, chunk.index),
+            );
             chunk.status = Some("deleted".to_string());
             vector_knowledge::refresh_document_meta(&mut meta);
             vector_knowledge::write_vector_document(
@@ -1167,22 +1148,24 @@ pub(super) async fn user_knowledge_test(
                 llm::embed_texts(&embed_config, &[query.to_string()], timeout_s).await
             {
                 if let Some(vector) = vectors.first() {
-                    if let Ok(client) = vector_knowledge::resolve_weaviate_client(&config) {
-                        let owner_key = vector_knowledge::resolve_owner_key(Some(&user_id));
-                        if let Ok(mut hits) = client
-                            .query_chunks(&owner_key, &base.name, &embedding_name, vector, top_k)
-                            .await
-                        {
-                            if let Some(threshold) = base.score_threshold {
-                                hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
-                            }
-                            if hits.len() > top_k {
-                                hits.truncate(top_k);
-                            }
-                            Some(hits)
-                        } else {
-                            None
+                    if let Ok(mut hits) = vector_knowledge::query_chunks_by_vector(
+                        state.storage.as_ref(),
+                        Some(&user_id),
+                        &knowledge_config,
+                        &root,
+                        &embedding_name,
+                        vector,
+                        top_k,
+                    )
+                    .await
+                    {
+                        if let Some(threshold) = base.score_threshold {
+                            hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
                         }
+                        if hits.len() > top_k {
+                            hits.truncate(top_k);
+                        }
+                        Some(hits)
                     } else {
                         None
                     }
@@ -1544,6 +1527,7 @@ async fn cleanup_removed_user_vector_docs(
 ) {
     let owner_key = vector_knowledge::resolve_owner_key(Some(user_id));
     for name in bases {
+        let _ = storage.delete_vector_chunk_embeddings_by_base(&owner_key, &name);
         let _ = storage.delete_vector_documents_by_base(&owner_key, &name);
         if let Ok(root) = vector_knowledge::resolve_vector_root(Some(user_id), &name, false) {
             let _ = tokio::fs::remove_dir_all(&root).await;

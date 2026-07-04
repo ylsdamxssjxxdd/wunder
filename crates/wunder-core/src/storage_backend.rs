@@ -81,6 +81,11 @@ pub trait LogStatsStore {
         until_time: Option<f64>,
     ) -> Result<Vec<HashMap<String, Value>>>;
     fn get_log_usage(&self) -> Result<u64>;
+    fn delete_logs_by_time_range(
+        &self,
+        start_time: f64,
+        end_time: f64,
+    ) -> Result<HashMap<String, i64>>;
     fn delete_chat_history(&self, user_id: &str) -> Result<i64>;
     fn delete_chat_history_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_tool_logs(&self, user_id: &str) -> Result<i64>;
@@ -237,6 +242,26 @@ pub trait VectorDocumentStore {
     fn delete_vector_document(&self, owner_id: &str, base_name: &str, doc_id: &str)
         -> Result<bool>;
     fn delete_vector_documents_by_base(&self, owner_id: &str, base_name: &str) -> Result<i64>;
+    fn upsert_vector_chunk_embeddings(&self, records: &[VectorChunkEmbeddingRecord]) -> Result<()>;
+    fn list_vector_chunk_embeddings(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        embedding_model: &str,
+        limit: i64,
+    ) -> Result<Vec<VectorChunkEmbeddingRecord>>;
+    fn delete_vector_chunk_embedding(&self, chunk_id: &str) -> Result<bool>;
+    fn delete_vector_chunk_embeddings_by_doc(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+        doc_id: &str,
+    ) -> Result<i64>;
+    fn delete_vector_chunk_embeddings_by_base(
+        &self,
+        owner_id: &str,
+        base_name: &str,
+    ) -> Result<i64>;
 }
 
 /// Long-term memory settings, records, fragments, hits, and jobs storage.

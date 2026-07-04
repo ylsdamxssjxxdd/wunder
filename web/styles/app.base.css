@@ -2209,6 +2209,19 @@ button.btn-with-icon[aria-busy="true"] i {
   white-space: nowrap;
 }
 
+.monitor-metric-title-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.monitor-inline-action {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .throughput-model-select {
   width: 100%;
   text-align: left;

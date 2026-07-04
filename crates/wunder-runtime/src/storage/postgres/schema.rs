@@ -1793,6 +1793,25 @@ impl PostgresSchemaStorage for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_vector_documents_owner_base
                   ON vector_documents (owner_id, base_name, updated_at);
+                CREATE TABLE IF NOT EXISTS vector_chunks (
+                  chunk_id TEXT PRIMARY KEY,
+                  owner_id TEXT NOT NULL,
+                  base_name TEXT NOT NULL,
+                  doc_id TEXT NOT NULL,
+                  doc_name TEXT NOT NULL,
+                  chunk_index BIGINT NOT NULL,
+                  start_pos BIGINT NOT NULL,
+                  end_pos BIGINT NOT NULL,
+                  content TEXT NOT NULL,
+                  embedding_model TEXT NOT NULL,
+                  vector_json TEXT NOT NULL,
+                  dimensions BIGINT NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_vector_chunks_lookup
+                  ON vector_chunks (owner_id, base_name, embedding_model, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_vector_chunks_doc
+                  ON vector_chunks (owner_id, base_name, doc_id);
                 "#,
             );
             match result {

@@ -3,7 +3,7 @@ title: Data and Storage
 summary: Wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.
 read_when:
   - You need to deploy or migrate data
-  - You want to understand what PostgreSQL, SQLite, Weaviate, workspaces, and temp_dir each store
+  - You want to understand what PostgreSQL, SQLite, workspaces, and temp_dir each store
 source_docs:
   - config/wunder-example.yaml
   - docs/API文档.md
@@ -67,13 +67,14 @@ This is not a matter of style, but determined by the runtime form:
 - Server is oriented toward multi-user, multi-tenant, and sustained concurrency
 - Desktop is more single-machine, local, and lightweight persistence
 
-## What Goes in Weaviate
+## What Goes in Vector Storage
 
-Vector knowledge base related capabilities currently use:
+Vector knowledge base related capabilities use the configured primary storage backend:
 
-- `vector_store.weaviate`
+- PostgreSQL in server deployments
+- SQLite in desktop/local deployments
 
-It primarily handles vector retrieval-side data.
+They primarily handle vector retrieval-side data such as document chunks and embedding vectors.
 
 So don't think of it as "a replacement for the primary business database."
 
@@ -122,7 +123,7 @@ After deployment, at minimum confirm:
 
 1. The primary database is your expected backend
 2. The workspace directory has persistent volumes
-3. The vector store has persistent volumes
+3. The primary database is persisted because vector data is stored there
 4. `temp_dir` is not being used as long-term storage
 
 ## Common Misconceptions
@@ -130,7 +131,7 @@ After deployment, at minimum confirm:
 - Thinking SQLite and PostgreSQL are just "performance differences"
 - Writing workspace outputs only to temp_dir
 - Forgetting to persist `/workspaces`
-- Thinking Weaviate will automatically save all business data
+- Thinking vector storage will automatically save all business data
 
 ## Further Reading
 
