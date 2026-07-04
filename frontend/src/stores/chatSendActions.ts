@@ -142,7 +142,7 @@ const resolveMaxProjectionUserRound = (projection: ChatRuntimeProjection | null 
     const round = Number.parseInt(match[1], 10);
     return Number.isFinite(round) && round > maxRound ? round : maxRound;
   }, 0);
-  return Math.max(maxExplicitRound, session.userTurns.length);
+  return maxExplicitRound;
 };
 
 export const chatSendActions = {

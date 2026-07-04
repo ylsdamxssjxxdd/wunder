@@ -828,11 +828,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       }
       if (command === 'new') {
           try {
-              const outcome = await ctx.runStartNewSession({ notify: true });
-              if (outcome !== 'noop') {
-                  const replyText = outcome === 'already_current' ? ctx.t('chat.newSessionAlreadyCurrent') : ctx.t('chat.command.newSuccess');
-                  await ctx.appendAgentLocalCommandMessages(rawText, replyText);
-              }
+              await ctx.runStartNewSession({ notify: true });
           }
           catch (error) {
               await ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.newFailed', { message: ctx.resolveCommandErrorMessage(error) }));
