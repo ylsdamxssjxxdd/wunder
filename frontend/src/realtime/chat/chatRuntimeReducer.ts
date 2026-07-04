@@ -890,6 +890,7 @@ const applyAssistantFinal = (
   if (isPlainRecord(message.display)) {
     clearProjectedRetryDisplay(message.display);
   }
+  applyProjectedUsageStatsDisplay(message, event, 'round_usage');
   message.status = 'final';
   message.final = true;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -1527,7 +1528,20 @@ const applyCanonicalTranscriptSnapshot = (
       userTurnId: userTurn.id,
       modelTurnId: modelTurn.id
     });
+    const metadataSourceIds = collectCanonicalAssistantMetadataSourceIds(
+      session,
+      userTurn.id,
+      modelTurn.id,
+      message.id
+    );
     patchMessageFromRaw(message, plan.raw, plan.status, plan.createdSeq);
+    metadataSourceIds.forEach((sourceMessageId) => {
+      mergeAssistantMessageProjectionMetadata(session, sourceMessageId, message.id);
+    });
+    syncProjectedToolCallStats(message);
+    if (plan.status === 'final') {
+      settleProjectedWorkflowItems(message, 'completed');
+    }
     message.userTurnId = userTurn.id;
     message.modelTurnId = modelTurn.id;
     addUnique(modelTurn.messageIds, message.id);
@@ -1574,6 +1588,68 @@ const applyCanonicalTranscriptSnapshot = (
   session.snapshotSeq = Math.max(session.snapshotSeq, snapshotSeq);
   session.syncRequired = false;
 };
+
+const collectCanonicalAssistantMetadataSourceIds = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string,
+  modelTurnId: string,
+  targetMessageId: string
+): string[] => {
+  const sourceIds: string[] = [];
+  const push = (messageId: string): void => {
+    if (!messageId || messageId === targetMessageId || sourceIds.includes(messageId)) return;
+    const message = session.messageById[messageId];
+    if (!message || message.role !== 'assistant') return;
+    if (!isCanonicalAssistantMetadataSource(session, message, userTurnId, modelTurnId)) return;
+    if (!hasAssistantProjectionMetadata(message)) return;
+    sourceIds.push(messageId);
+  };
+  const turnIds = new Set<string>();
+  if (modelTurnId) {
+    turnIds.add(modelTurnId);
+  }
+  const userTurn = session.userTurnById[userTurnId];
+  (userTurn?.modelTurnIds || []).forEach((turnId) => turnIds.add(turnId));
+  session.modelTurns.forEach((turnId) => {
+    const turn = session.modelTurnById[turnId];
+    if (turn?.userTurnId === userTurnId) {
+      turnIds.add(turnId);
+    }
+  });
+  turnIds.forEach((turnId) => {
+    const turn = session.modelTurnById[turnId];
+    (turn?.messageIds || []).forEach(push);
+  });
+  Object.values(session.messageById).forEach((message) => {
+    if (message.userTurnId === userTurnId || message.modelTurnId === modelTurnId) {
+      push(message.id);
+    }
+  });
+  return sourceIds;
+};
+
+const isCanonicalAssistantMetadataSource = (
+  session: ChatRuntimeSessionProjection,
+  message: ChatRuntimeMessageProjection,
+  userTurnId: string,
+  modelTurnId: string
+): boolean => {
+  if (message.modelTurnId === modelTurnId) return true;
+  if (message.userTurnId !== userTurnId) return false;
+  const turn = session.modelTurnById[message.modelTurnId];
+  if (!turn) return !message.modelTurnId;
+  return turn.id.startsWith('legacy-model-turn:') ||
+    isWeakGeneratedModelTurnId(session, turn.id, turn.userTurnId);
+};
+
+const hasAssistantProjectionMetadata = (
+  message: ChatRuntimeMessageProjection
+): boolean =>
+  Boolean(
+    (isPlainRecord(message.display) && Object.keys(message.display).length > 0) ||
+      (Array.isArray(message.workflowItems) && message.workflowItems.length > 0) ||
+      (Array.isArray(message.subagents) && message.subagents.length > 0)
+  );
 
 const buildCanonicalTranscriptPlan = (
   raw: ChatRuntimeRawMessage,

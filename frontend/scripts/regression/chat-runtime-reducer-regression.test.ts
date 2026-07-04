@@ -3484,6 +3484,122 @@ test('runtime reducer preserves weak-turn stats and workflow when strong final a
   assert.equal(assistant?.display?.stats?.contextTokens, 40);
 });
 
+test('canonical transcript snapshot keeps prior weak-turn tool and speed metadata', () => {
+  const projection = createChatRuntimeProjection();
+  const userTurnId = 'user-turn:session-1:round:1';
+  const weakModelTurnId = 'model-turn:session-1:user:1';
+  const canonicalModelTurnId = 'model-turn:session-1:user:1:model:2';
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'tool_call_started',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'snapshot-tool-start',
+    event_seq: 10,
+    user_turn_id: userTurnId,
+    model_turn_id: weakModelTurnId,
+    message_id: `assistant-message:${weakModelTurnId}`,
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'programmatic_tool_call'
+      }
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'tool_call_completed',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'snapshot-tool-result',
+    event_seq: 11,
+    user_turn_id: userTurnId,
+    model_turn_id: weakModelTurnId,
+    message_id: `assistant-message:${weakModelTurnId}`,
+    payload: {
+      source_event_type: 'tool_result',
+      data: {
+        tool_call_id: 'call-1',
+        tool: 'programmatic_tool_call'
+      }
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_final',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'snapshot-final',
+    event_seq: 12,
+    user_turn_id: userTurnId,
+    model_turn_id: weakModelTurnId,
+    message_id: `assistant-message:${weakModelTurnId}`,
+    content: 'answer',
+    reasoning: 'reasoning',
+    payload: {
+      data: {
+        round_usage: {
+          input_tokens: 30,
+          output_tokens: 12,
+          total_tokens: 42
+        },
+        context_occupancy_tokens: 42,
+        avg_model_round_speed_tps: 44.5,
+        avg_model_round_speed_rounds: 2
+      }
+    }
+  });
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-1',
+    event_id: 'canonical-transcript',
+    snapshot_seq: 20,
+    running: false,
+    messages: [
+      {
+        role: 'user',
+        id: 'history:1',
+        message_id: 'history:1',
+        user_turn_id: userTurnId,
+        turn_index: 1,
+        content: 'question',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        role: 'assistant',
+        id: 'history:2',
+        message_id: 'history:2',
+        user_turn_id: userTurnId,
+        model_turn_id: canonicalModelTurnId,
+        turn_index: 2,
+        content: 'answer',
+        reasoning: 'reasoning',
+        state: 'final',
+        created_at: '2026-04-30T02:14:07.000Z'
+      }
+    ]
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.deepEqual(
+    visible.map((message) => message.id),
+    ['history:1', 'history:2']
+  );
+  assert.equal(assistant?.modelTurnId, canonicalModelTurnId);
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.workflowItems?.[0]?.toolCallId, 'call-1');
+  assert.equal(assistant?.workflowItems?.[0]?.status, 'completed');
+  assert.equal(assistant?.display?.stats?.toolCalls, 1);
+  assert.equal(assistant?.display?.stats?.avg_model_round_speed_tps, 44.5);
+  assert.equal(assistant?.display?.stats?.contextTokens, 42);
+});
+
 test('local terminal event settles an optimistic assistant placeholder', () => {
   const projection = createChatRuntimeProjection();
   const userTurnId = 'user-turn:session-1:round:1';
