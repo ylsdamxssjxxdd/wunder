@@ -124,7 +124,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -255,12 +255,37 @@ export const chatSessionOpenLoadActions = {
       const text = String(content || '').trim();
       if (!text) return null;
       const message = buildMessage(normalizedRole, text, options.createdAt);
+      const createdAt = String(message.created_at || new Date().toISOString());
+      const localId = `local-ui:${Date.parse(createdAt) || Date.now()}:${Math.random().toString(16).slice(2)}`;
+      const localTurnId = String(options.localTurnId || '').trim() || `local-ui-turn:${localId}`;
+      const localModelTurnId = normalizedRole === 'assistant'
+        ? String(options.localModelTurnId || '').trim() || `local-ui-model:${localId}`
+        : '';
+      Object.assign(message, {
+        message_id: localId,
+        client_message_id: localId,
+        user_turn_id: localTurnId,
+        ...(localModelTurnId ? { model_turn_id: localModelTurnId } : {})
+      });
       if (options.manualGoalMarker === true && normalizedRole === 'assistant') {
         message.manual_goal_marker = true;
       }
       this.messages.push(message);
       const targetSessionId = String(options.sessionId ?? this.activeSessionId ?? '').trim();
       if (targetSessionId) {
+        applyLocalChatMessageRuntimeEvent(this, {
+          sessionId: targetSessionId,
+          role: normalizedRole,
+          content: text,
+          messageId: localId,
+          createdAt,
+          userTurnId: localTurnId,
+          modelTurnId: localModelTurnId,
+          display: {
+            client_message_id: localId,
+            ...(options.manualGoalMarker === true ? { manual_goal_marker: true, manualGoalMarker: true } : {})
+          }
+        });
         cacheSessionMessages(targetSessionId, this.messages);
         touchSessionUpdatedAt(this, targetSessionId, message.created_at || Date.now());
         notifySessionSnapshot(this, targetSessionId, this.messages, options.immediate !== false);

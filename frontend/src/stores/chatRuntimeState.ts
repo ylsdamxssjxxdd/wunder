@@ -2157,6 +2157,60 @@ export const applyCanonicalClientMessageSubmittedRuntimeEvent = (
   return event;
 };
 
+export const applyLocalChatMessageRuntimeEvent = (
+  store,
+  payload: {
+    sessionId: string;
+    role: 'user' | 'assistant';
+    content: string;
+    messageId: string;
+    createdAt?: unknown;
+    userTurnId?: string;
+    modelTurnId?: string;
+    display?: Record<string, unknown>;
+  }
+) => {
+  const key = resolveSessionKey(payload?.sessionId);
+  const projection = ensureChatRuntimeProjectionForStore(store);
+  if (!key || !projection) return null;
+  const role = payload.role === 'assistant' ? 'assistant' : 'user';
+  const messageId = String(payload.messageId || '').trim();
+  if (!messageId) return null;
+  touchDesktopChatSession(key);
+  projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const userTurnId = String(payload.userTurnId || `local-command-turn:${messageId}`).trim();
+  const modelTurnId = role === 'assistant'
+    ? String(payload.modelTurnId || `local-command-model:${messageId}`).trim()
+    : '';
+  const event = {
+    event_type: role === 'assistant' ? 'assistant_final' : 'user_message_created',
+    source: 'local',
+    strict: false,
+    session_id: key,
+    agent_id: resolveProjectionAgentId(store, key),
+    event_id: `local:${key}:${messageId}:message`,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: messageId,
+    role,
+    content: String(payload.content || ''),
+    created_at: payload.createdAt,
+    payload: {
+      ...(payload.display && typeof payload.display === 'object' ? payload.display : {}),
+      local_ui_message: true
+    }
+  };
+  const result = applyChatRuntimeEvent(projection, event);
+  if (result.applied) {
+    markRuntimeProjectionChanged(store, {
+      immediate: true,
+      reason: 'local-message'
+    });
+  }
+  pruneDesktopChatMemoryForStore(store);
+  return event;
+};
+
 export const applyLocalAssistantTurnTerminalRuntimeEvent = (
   store,
   payload: {

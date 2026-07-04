@@ -280,6 +280,8 @@ export type AppendLocalMessageOptions = {
   sessionId?: unknown;
   immediate?: boolean;
   manualGoalMarker?: boolean;
+  localTurnId?: string;
+  localModelTurnId?: string;
 };
 
 export type ResumeStreamOptions = {

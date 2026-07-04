@@ -692,10 +692,25 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       message?: string;
   })?.message || ctx.t('common.requestFailed')).trim();
 
-  ctx.appendAgentLocalCommandMessages = (commandText: string, replyText: string) => {
-      const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
-      ctx.chatStore.appendLocalMessage('user', commandText, { sessionId });
-      ctx.chatStore.appendLocalMessage('assistant', replyText, { sessionId });
+  ctx.appendAgentLocalCommandMessages = async (commandText: string, replyText: string) => {
+      let sessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (!sessionId) {
+          const targetAgent = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
+          sessionId = await ctx.openOrReuseFreshAgentSession(targetAgent, {
+              reuseScope: 'active_only'
+          });
+          if (sessionId) {
+              void ctx.openAgentSession(sessionId, targetAgent);
+          }
+      }
+      if (!sessionId) {
+          ElMessage.info(replyText);
+          return;
+      }
+      const localTurnId = `local-command-turn:${sessionId || 'draft'}:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+      const localModelTurnId = `${localTurnId}:model`;
+      ctx.chatStore.appendLocalMessage('user', commandText, { sessionId, localTurnId });
+      ctx.chatStore.appendLocalMessage('assistant', replyText, { sessionId, localTurnId, localModelTurnId });
   };
 
   ctx.openGoalDialog = async (initialObjective = '') => {
@@ -807,21 +822,20 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
 
   ctx.handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: string) => {
       if (command === 'help') {
-          ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.help'));
+          await ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.help'));
           await ctx.scrollMessagesToBottom();
           return;
       }
       if (command === 'new') {
           try {
-              const outcome = await ctx.runStartNewSession();
+              const outcome = await ctx.runStartNewSession({ notify: true });
               if (outcome !== 'noop') {
-                  const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
                   const replyText = outcome === 'already_current' ? ctx.t('chat.newSessionAlreadyCurrent') : ctx.t('chat.command.newSuccess');
-                  ctx.chatStore.appendLocalMessage('assistant', replyText, { sessionId });
+                  await ctx.appendAgentLocalCommandMessages(rawText, replyText);
               }
           }
           catch (error) {
-              ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.newFailed', { message: ctx.resolveCommandErrorMessage(error) }));
+              await ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.newFailed', { message: ctx.resolveCommandErrorMessage(error) }));
           }
           await ctx.scrollMessagesToBottom();
           return;
@@ -829,7 +843,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       if (command === 'stop') {
           const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
           if (!sessionId) {
-              ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.stopNoSession'));
+              await ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.stopNoSession'));
               await ctx.scrollMessagesToBottom();
               return;
           }
@@ -838,7 +852,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               ctx.agentGoalComposerRequested.value = false;
               ctx.agentGoalComposerVisible.value = false;
           }
-          ctx.appendAgentLocalCommandMessages(rawText, cancelled ? ctx.t('chat.command.stopRequested') : ctx.t('chat.command.stopNoRunning'));
+          await ctx.appendAgentLocalCommandMessages(rawText, cancelled ? ctx.t('chat.command.stopRequested') : ctx.t('chat.command.stopNoRunning'));
           await ctx.scrollMessagesToBottom();
           return;
       }
@@ -859,7 +873,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       }
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (!sessionId) {
-          ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.compactMissingSession'));
+          await ctx.appendAgentLocalCommandMessages(rawText, ctx.t('chat.command.compactMissingSession'));
           await ctx.scrollMessagesToBottom();
           return;
       }
@@ -896,7 +910,7 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               ctx.chatStore.resolveInquiryPanel(activeInquiry.message, { status: 'dismissed' });
           }
           if (attachments.length > 0) {
-              ctx.appendAgentLocalCommandMessages(content, ctx.t('chat.command.attachmentsUnsupported'));
+              await ctx.appendAgentLocalCommandMessages(content, ctx.t('chat.command.attachmentsUnsupported'));
               ctx.agentInquirySelection.value = [];
               await ctx.scrollMessagesToBottom();
               return;

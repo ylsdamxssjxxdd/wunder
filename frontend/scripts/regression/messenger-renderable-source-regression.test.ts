@@ -131,8 +131,10 @@ test('store visibleMessages getter materializes projection without legacy raw fa
   const chatStore = readSource('src/stores/chat.ts');
   const watcher = readSource('src/stores/chatWatcher.ts');
   const renderAdapter = readSource('src/realtime/chat/chatRuntimeRenderAdapter.ts');
+  const sessionOpenLoadActions = readSource('src/stores/chatSessionOpenLoadActions.ts');
 
   assert.ok(chatStore.includes('return materializeChatRuntimeMessages(state.runtimeProjection, sessionId || state.activeSessionId);'));
+  assert.ok(sessionOpenLoadActions.includes('applyLocalChatMessageRuntimeEvent(this, {'));
   assert.ok(!chatStore.includes('resolveProjectedVisibleMessagesFromStore'));
   assert.ok(!chatStore.includes('messageRuntimeStatus:'));
   assert.ok(!chatStore.includes('resolveLegacyMessageRuntimeStatusFromStore'));
