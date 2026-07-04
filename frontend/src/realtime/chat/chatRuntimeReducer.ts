@@ -1497,6 +1497,11 @@ const applyCanonicalTranscriptSnapshot = (
   const keepMessageIds = new Set<string>();
   const keepUserTurnIds = new Set<string>();
   const keepModelTurnIds = new Set<string>();
+  const canonicalAssistantCountsByUserTurn = plans.reduce<Map<string, number>>((acc, plan) => {
+    if (plan.role !== 'assistant') return acc;
+    acc.set(plan.userTurnId, (acc.get(plan.userTurnId) || 0) + 1);
+    return acc;
+  }, new Map());
 
   plans.forEach((plan) => {
     const userTurn = ensureUserTurn(session, plan.userTurnId, plan.createdSeq);
@@ -1532,7 +1537,8 @@ const applyCanonicalTranscriptSnapshot = (
       session,
       userTurn.id,
       modelTurn.id,
-      message.id
+      message.id,
+      (canonicalAssistantCountsByUserTurn.get(userTurn.id) || 0) <= 1
     );
     patchMessageFromRaw(message, plan.raw, plan.status, plan.createdSeq);
     metadataSourceIds.forEach((sourceMessageId) => {
@@ -1593,14 +1599,21 @@ const collectCanonicalAssistantMetadataSourceIds = (
   session: ChatRuntimeSessionProjection,
   userTurnId: string,
   modelTurnId: string,
-  targetMessageId: string
+  targetMessageId: string,
+  includeSameUserTurnStrongSources = false
 ): string[] => {
   const sourceIds: string[] = [];
   const push = (messageId: string): void => {
     if (!messageId || messageId === targetMessageId || sourceIds.includes(messageId)) return;
     const message = session.messageById[messageId];
     if (!message || message.role !== 'assistant') return;
-    if (!isCanonicalAssistantMetadataSource(session, message, userTurnId, modelTurnId)) return;
+    if (!isCanonicalAssistantMetadataSource(
+      session,
+      message,
+      userTurnId,
+      modelTurnId,
+      includeSameUserTurnStrongSources
+    )) return;
     if (!hasAssistantProjectionMetadata(message)) return;
     sourceIds.push(messageId);
   };
@@ -1632,10 +1645,12 @@ const isCanonicalAssistantMetadataSource = (
   session: ChatRuntimeSessionProjection,
   message: ChatRuntimeMessageProjection,
   userTurnId: string,
-  modelTurnId: string
+  modelTurnId: string,
+  includeSameUserTurnStrongSources = false
 ): boolean => {
   if (message.modelTurnId === modelTurnId) return true;
   if (message.userTurnId !== userTurnId) return false;
+  if (includeSameUserTurnStrongSources) return true;
   const turn = session.modelTurnById[message.modelTurnId];
   if (!turn) return !message.modelTurnId;
   return turn.id.startsWith('legacy-model-turn:') ||
