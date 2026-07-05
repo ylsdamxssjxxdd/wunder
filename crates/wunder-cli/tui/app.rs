@@ -22,6 +22,9 @@ use wunder_server::schemas::StreamEvent;
 use wunder_server::user_tools::UserMcpServer;
 
 use crate::args::GlobalArgs;
+use crate::command_session_display::{
+    CommandSessionDisplayState, CommandSessionUpdate, CommandSessionView,
+};
 use crate::render::FinalEvent;
 use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
@@ -284,6 +287,8 @@ pub struct TuiApp {
     last_turn_tool_calls: u64,
     assistant_markdown_stream: Option<StreamedMarkdownState>,
     reasoning_markdown_stream: Option<StreamedMarkdownState>,
+    command_sessions: CommandSessionDisplayState,
+    command_log_indices: HashMap<String, usize>,
 }
 
 impl TuiApp {
@@ -396,6 +401,8 @@ impl TuiApp {
             last_turn_tool_calls: 0,
             assistant_markdown_stream: None,
             reasoning_markdown_stream: None,
+            command_sessions: CommandSessionDisplayState::default(),
+            command_log_indices: HashMap::new(),
         };
         app.load_persisted_history();
         app.load_popup_recents();
@@ -3250,6 +3257,7 @@ impl TuiApp {
                 }
                 KeyCode::Char('l') => {
                     self.logs.clear();
+                    self.command_log_indices.clear();
                     self.reset_scrollback_archive();
                     self.invalidate_transcript_metrics();
                     self.active_assistant = None;
@@ -3945,6 +3953,8 @@ impl TuiApp {
         self.active_inquiry_panel = None;
         self.inquiry_selected_index = 0;
         self.logs.clear();
+        self.command_sessions = CommandSessionDisplayState::default();
+        self.command_log_indices.clear();
         self.reset_scrollback_archive();
         self.invalidate_transcript_metrics();
 
@@ -4175,6 +4185,8 @@ impl TuiApp {
         self.busy = true;
         self.active_assistant = None;
         self.active_reasoning = None;
+        self.command_sessions = CommandSessionDisplayState::default();
+        self.command_log_indices.clear();
         self.turn_final_answer.clear();
         self.turn_final_stop_reason = None;
         self.begin_turn_metrics();
@@ -5022,11 +5034,39 @@ impl TuiApp {
                         self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
                     }
                 } else if is_execute_command_tool_name(tool) {
-                    if !self.push_command_call_log(args) {
+                    let update = self.command_sessions.register_tool_call(payload);
+                    if let Some(update) = update {
+                        self.upsert_command_session_log(&update);
+                    } else if !self.push_command_call_log(args) {
                         self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
                     }
                 } else {
                     self.push_generic_tool_call_log(tool, args);
+                }
+            }
+            "command_session_start" => {
+                self.stop_llm_active_window();
+                self.stream_saw_output = true;
+                if !self.tool_phase_notice_emitted {
+                    self.emit_tool_phase_notice();
+                }
+                self.active_assistant = None;
+                self.active_reasoning = None;
+                self.stream_tool_markup_open = false;
+                if let Some(update) = self.command_sessions.register_start(payload) {
+                    self.upsert_command_session_log(&update);
+                }
+            }
+            "command_session_delta" => {
+                self.stream_saw_output = true;
+                if let Some(update) = self.command_sessions.register_delta(payload) {
+                    self.upsert_command_session_log(&update);
+                }
+            }
+            "command_session_status" | "command_session_exit" | "command_session_summary" => {
+                self.stream_saw_output = true;
+                if let Some(update) = self.command_sessions.register_status(payload) {
+                    self.upsert_command_session_log(&update);
                 }
             }
             "tool_result" => {
@@ -5038,7 +5078,12 @@ impl TuiApp {
                 if is_apply_patch_tool_name(tool) {
                     self.complete_patch_log(payload);
                 } else if is_execute_command_tool_name(tool) {
-                    if !self.complete_command_log(payload) {
+                    let updates = self.command_sessions.register_tool_result_all(payload);
+                    if !updates.is_empty() {
+                        for update in updates {
+                            self.upsert_command_session_log(&update);
+                        }
+                    } else if !self.complete_command_log(payload) {
                         for line in format_tool_result_lines(tool, payload) {
                             self.push_log(LogKind::Tool, line);
                         }
@@ -5141,6 +5186,7 @@ impl TuiApp {
             };
         }
         self.adjust_markdown_stream_indices_after_remove(index);
+        self.adjust_command_log_indices_after_remove(index);
         if self.logs.is_empty() {
             self.reset_scrollback_archive();
         }
@@ -5165,10 +5211,24 @@ impl TuiApp {
             *index = index.saturating_sub(1);
         }
         self.adjust_markdown_stream_indices_after_remove(0);
+        self.adjust_command_log_indices_after_remove(0);
         if self.logs.is_empty() {
             self.reset_scrollback_archive();
         }
         self.invalidate_transcript_metrics();
+    }
+
+    fn adjust_command_log_indices_after_remove(&mut self, removed_index: usize) {
+        self.command_log_indices.retain(|_, index| {
+            if *index == removed_index {
+                false
+            } else {
+                if *index > removed_index {
+                    *index = index.saturating_sub(1);
+                }
+                true
+            }
+        });
     }
 
     fn total_log_chars(&self) -> usize {
@@ -5511,6 +5571,60 @@ impl TuiApp {
         let text = special.summary_text();
         self.push_special_log(LogKind::Tool, text, special);
         true
+    }
+
+    fn upsert_command_session_log(&mut self, update: &CommandSessionUpdate) {
+        let primary = self.command_sessions.primary_for_view(&update.view);
+        let special = build_command_session_log(&update.view, self.is_zh_language());
+        let text = special.summary_text();
+
+        if let Some(index) = self
+            .command_log_indices
+            .get(primary.as_str())
+            .copied()
+            .filter(|index| *index < self.logs.len())
+        {
+            if let Some(entry) = self.logs.get_mut(index) {
+                entry.text = text;
+                entry.special = Some(special);
+                entry.markdown_cache = None;
+            }
+            self.register_command_log_refs(&update.view, index);
+            self.invalidate_transcript_metrics();
+            return;
+        }
+
+        if let Some(index) = update
+            .view
+            .tool_call_id
+            .as_deref()
+            .and_then(|tool_call_id| self.command_log_indices.get(tool_call_id).copied())
+            .filter(|index| *index < self.logs.len())
+        {
+            if let Some(entry) = self.logs.get_mut(index) {
+                entry.text = text;
+                entry.special = Some(special);
+                entry.markdown_cache = None;
+            }
+            self.register_command_log_refs(&update.view, index);
+            self.invalidate_transcript_metrics();
+            return;
+        }
+
+        let index = self.push_special_log(LogKind::Tool, text, special);
+        self.register_command_log_refs(&update.view, index);
+    }
+
+    fn register_command_log_refs(&mut self, view: &CommandSessionView, index: usize) {
+        if view.command_session_id.is_some() {
+            if let Some(tool_call_id) = view.tool_call_id.as_deref() {
+                self.command_log_indices.remove(tool_call_id);
+            }
+        }
+        for reference in view.ref_ids() {
+            self.command_log_indices
+                .insert(reference.to_string(), index);
+        }
     }
 
     fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value) {

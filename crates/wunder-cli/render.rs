@@ -1,13 +1,20 @@
 use anyhow::Result;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use wunder_server::schemas::StreamEvent;
 
+use crate::command_session_display::{
+    compact_text_preview, CommandSessionDisplayState, CommandSessionDisplayStatus,
+    CommandSessionUpdate, CommandSessionView,
+};
 use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
 use crate::tool_display::summarize_tool_result;
 
 const MAX_INLINE_JSON_CHARS: usize = 180;
 const MAX_PATCH_RESULT_FILES: usize = 24;
+const COMMAND_LIVE_PRINT_HEAD_CHARS: usize = 2_000;
+const COMMAND_LIVE_PRINT_TAIL_CHARS: usize = 1_500;
 
 #[derive(Debug, Clone, Default)]
 pub struct FinalEvent {
@@ -23,6 +30,19 @@ pub struct StreamRenderer {
     saw_tool_activity: bool,
     last_visible_was_tool: bool,
     is_zh: bool,
+    command_sessions: CommandSessionDisplayState,
+    command_live: HashMap<String, CommandLivePrintState>,
+    command_start_printed: HashSet<String>,
+    command_terminal_status_printed: HashSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct CommandLivePrintState {
+    printed_chars: usize,
+    suppressed_chars: usize,
+    tail: String,
+    output_header_printed: bool,
+    at_line_start: bool,
 }
 
 fn event_payload(data: &Value) -> &Value {
@@ -38,6 +58,10 @@ impl StreamRenderer {
             saw_tool_activity: false,
             last_visible_was_tool: false,
             is_zh: crate::locale::is_zh_language(language),
+            command_sessions: CommandSessionDisplayState::default(),
+            command_live: HashMap::new(),
+            command_start_printed: HashSet::new(),
+            command_terminal_status_printed: HashSet::new(),
         }
     }
 
@@ -85,7 +109,36 @@ impl StreamRenderer {
                     .unwrap_or("unknown");
                 let args = payload.get("args").unwrap_or(&Value::Null);
                 let repair = payload.get("repair");
-                println!("{}", format_tool_call_line(tool, args, repair));
+                if is_execute_command_tool_name(tool) {
+                    if self.command_sessions.register_tool_call(payload).is_none() {
+                        println!("{}", format_tool_call_line(tool, args, repair));
+                    }
+                } else {
+                    println!("{}", format_tool_call_line(tool, args, repair));
+                }
+            }
+            "command_session_start" => {
+                self.ensure_newline();
+                self.saw_tool_activity = true;
+                self.last_visible_was_tool = true;
+                if let Some(update) = self.command_sessions.register_start(payload) {
+                    self.render_command_session_start(&update);
+                }
+            }
+            "command_session_delta" => {
+                self.saw_tool_activity = true;
+                self.last_visible_was_tool = true;
+                if let Some(update) = self.command_sessions.register_delta(payload) {
+                    self.render_command_session_delta(&update, payload);
+                }
+            }
+            "command_session_status" | "command_session_exit" | "command_session_summary" => {
+                self.ensure_newline();
+                self.saw_tool_activity = true;
+                self.last_visible_was_tool = true;
+                if let Some(update) = self.command_sessions.register_status(payload) {
+                    self.render_command_session_terminal(&update, false);
+                }
             }
             "tool_result" => {
                 self.ensure_newline();
@@ -98,6 +151,17 @@ impl StreamRenderer {
                 if is_apply_patch_tool_name(tool) {
                     for line in format_apply_patch_result_lines(tool, payload) {
                         println!("{line}");
+                    }
+                } else if is_execute_command_tool_name(tool) {
+                    let updates = self.command_sessions.register_tool_result_all(payload);
+                    if !updates.is_empty() {
+                        for update in updates {
+                            self.render_command_session_terminal(&update, true);
+                        }
+                    } else {
+                        for line in format_generic_tool_result_lines(tool, payload) {
+                            println!("{line}");
+                        }
                     }
                 } else {
                     for line in format_generic_tool_result_lines(tool, payload) {
@@ -165,6 +229,159 @@ impl StreamRenderer {
             self.line_open = false;
         }
     }
+
+    fn render_command_session_start(&mut self, update: &CommandSessionUpdate) {
+        let primary = self.command_sessions.primary_for_view(&update.view);
+        if !self.command_start_printed.insert(primary) {
+            return;
+        }
+        let command = update.view.command.trim();
+        if command.is_empty() {
+            println!("- Running command");
+        } else {
+            println!("- Running command");
+            println!("  command: `{command}`");
+        }
+    }
+
+    fn render_command_session_delta(&mut self, update: &CommandSessionUpdate, payload: &Value) {
+        let primary = self.command_sessions.primary_for_view(&update.view);
+        let delta = payload
+            .get("delta")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if delta.is_empty() {
+            return;
+        }
+
+        if !self
+            .command_live
+            .get(primary.as_str())
+            .is_some_and(|state| state.output_header_printed)
+        {
+            self.ensure_newline();
+        }
+
+        let mut marker = None;
+        {
+            let state = self.command_live.entry(primary).or_default();
+            let remaining = COMMAND_LIVE_PRINT_HEAD_CHARS.saturating_sub(state.printed_chars);
+            if remaining > 0 {
+                let (prefix, truncated) = take_chars(delta, remaining);
+                if !prefix.is_empty() {
+                    let formatted = format_command_live_chunk(state, prefix.as_str());
+                    print!("{formatted}");
+                    io::stdout().flush().ok();
+                    state.printed_chars =
+                        state.printed_chars.saturating_add(prefix.chars().count());
+                    self.line_open = command_live_line_open(state);
+                }
+                if truncated {
+                    let rest = delta
+                        .chars()
+                        .skip(prefix.chars().count())
+                        .collect::<String>();
+                    append_tail(
+                        &mut state.tail,
+                        rest.as_str(),
+                        COMMAND_LIVE_PRINT_TAIL_CHARS,
+                    );
+                    state.suppressed_chars =
+                        state.suppressed_chars.saturating_add(rest.chars().count());
+                    marker = Some(state.suppressed_chars);
+                }
+            } else {
+                append_tail(&mut state.tail, delta, COMMAND_LIVE_PRINT_TAIL_CHARS);
+                let was_zero = state.suppressed_chars == 0;
+                state.suppressed_chars =
+                    state.suppressed_chars.saturating_add(delta.chars().count());
+                if was_zero {
+                    marker = Some(state.suppressed_chars);
+                }
+            }
+        }
+        if let Some(suppressed_chars) = marker {
+            self.print_command_suppression_marker(suppressed_chars);
+        }
+    }
+
+    fn print_command_suppression_marker(&mut self, suppressed_chars: usize) {
+        self.ensure_newline();
+        println!(
+            "  ... live output truncated, keeping tail ({suppressed_chars} chars omitted so far)"
+        );
+    }
+
+    fn render_command_session_terminal(
+        &mut self,
+        update: &CommandSessionUpdate,
+        from_tool_result: bool,
+    ) {
+        if !update.view.is_terminal() {
+            return;
+        }
+        let primary = self.command_sessions.primary_for_view(&update.view);
+        let status_already_printed = self
+            .command_terminal_status_printed
+            .contains(primary.as_str());
+        let live = self
+            .command_live
+            .remove(primary.as_str())
+            .unwrap_or_default();
+        if live.suppressed_chars > 0 && !live.tail.trim().is_empty() {
+            self.ensure_newline();
+            println!("  tail:");
+            for line in compact_output_lines(live.tail.as_str(), 8, 1_500) {
+                println!("    {line}");
+            }
+        }
+
+        if from_tool_result && !update.had_output_before && live.printed_chars == 0 {
+            let lines = if status_already_printed {
+                command_session_output_lines(&update.view)
+            } else {
+                self.command_terminal_status_printed.insert(primary);
+                command_session_result_lines(&update.view)
+            };
+            for line in lines {
+                println!("{line}");
+            }
+            return;
+        }
+
+        if status_already_printed {
+            return;
+        }
+        self.command_terminal_status_printed.insert(primary);
+        let line = command_session_status_line(&update.view);
+        if !line.is_empty() {
+            println!("{line}");
+        }
+    }
+}
+
+fn format_command_live_chunk(state: &mut CommandLivePrintState, chunk: &str) -> String {
+    let mut output = String::new();
+    if !state.output_header_printed {
+        output.push_str("  output:\n");
+        state.output_header_printed = true;
+        state.at_line_start = true;
+    }
+    for ch in chunk.chars() {
+        if state.at_line_start {
+            output.push_str("    ");
+            state.at_line_start = false;
+        }
+        output.push(ch);
+        if ch == '\n' {
+            state.at_line_start = true;
+        }
+    }
+    output
+}
+
+fn command_live_line_open(state: &CommandLivePrintState) -> bool {
+    state.output_header_printed && !state.at_line_start
 }
 
 fn format_tool_call_line(tool: &str, args: &Value, repair: Option<&Value>) -> String {
@@ -814,6 +1031,184 @@ fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String
     lines
 }
 
+fn command_session_status_line(view: &CommandSessionView) -> String {
+    let mut metrics = Vec::new();
+    if let Some(exit_code) = view.exit_code {
+        metrics.push(format!("exit={exit_code}"));
+    }
+    if let Some(duration_ms) = view.duration_ms.filter(|value| *value > 0) {
+        metrics.push(format!("{duration_ms}ms"));
+    }
+    if view.timed_out {
+        metrics.push("timeout".to_string());
+    }
+    let suffix = if metrics.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", metrics.join(", "))
+    };
+    let command = view.command.trim();
+    let command_suffix = if command.is_empty() {
+        String::new()
+    } else {
+        format!(" `{command}`")
+    };
+    match view.status {
+        CommandSessionDisplayStatus::FailedToStart => {
+            format!("- Command failed to start{command_suffix}{suffix}")
+        }
+        CommandSessionDisplayStatus::Exited if view.success() => {
+            format!("- Command finished{command_suffix}{suffix}")
+        }
+        CommandSessionDisplayStatus::Exited => {
+            format!("- Command failed{command_suffix}{suffix}")
+        }
+        CommandSessionDisplayStatus::Running | CommandSessionDisplayStatus::Pending => {
+            String::new()
+        }
+    }
+}
+
+fn command_session_result_lines(view: &CommandSessionView) -> Vec<String> {
+    let mut lines = Vec::new();
+    let status = command_session_status_line(view);
+    if !status.is_empty() {
+        lines.push(status);
+    }
+    if let Some(cwd) = view
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  cwd: {cwd}"));
+    }
+    if let Some(error) = view
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  error: {error}"));
+    }
+    lines.extend(command_session_output_lines(view));
+    if lines.len() == 1 && !view.has_output() {
+        lines.push("  output: <empty>".to_string());
+    }
+    lines
+}
+
+fn command_session_output_lines(view: &CommandSessionView) -> Vec<String> {
+    let mut lines = Vec::new();
+    let first_stream = if !view.pty.trim().is_empty() {
+        Some(("pty", view.pty.as_str(), 10, 1_500))
+    } else if !view.success() && !view.stderr.trim().is_empty() {
+        Some(("stderr", view.stderr.as_str(), 8, 1_200))
+    } else if !view.stdout.trim().is_empty() {
+        Some(("stdout", view.stdout.as_str(), 8, 1_200))
+    } else {
+        None
+    };
+    if let Some((label, text, max_lines, max_chars)) = first_stream {
+        lines.push(format!("  {label}:"));
+        for line in compact_output_lines(text, max_lines, max_chars) {
+            lines.push(format!("    {line}"));
+        }
+    }
+
+    let secondary = if first_stream.is_some_and(|(label, _, _, _)| label == "stderr") {
+        (!view.stdout.trim().is_empty()).then_some(("stdout", view.stdout.as_str(), 4, 500))
+    } else {
+        (!view.stderr.trim().is_empty()).then_some(("stderr", view.stderr.as_str(), 4, 500))
+    };
+    if let Some((label, text, max_lines, max_chars)) = secondary {
+        lines.push(format!("  {label}:"));
+        for line in compact_output_lines(text, max_lines, max_chars) {
+            lines.push(format!("    {line}"));
+        }
+    }
+    lines
+}
+
+fn compact_output_lines(text: &str, max_lines: usize, max_chars: usize) -> Vec<String> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = normalized.trim_end_matches('\n');
+    if trimmed.trim().is_empty() {
+        return Vec::new();
+    }
+    let (preview, chars_truncated) = compact_text_preview(trimmed, max_chars);
+    let lines = preview.lines().map(ToString::to_string).collect::<Vec<_>>();
+    collapse_middle_lines(lines, max_lines, chars_truncated)
+}
+
+fn collapse_middle_lines(
+    lines: Vec<String>,
+    max_lines: usize,
+    chars_truncated: bool,
+) -> Vec<String> {
+    if max_lines == 0 {
+        return vec![ellipsis_line(lines.len(), chars_truncated)];
+    }
+    if lines.len() <= max_lines && !chars_truncated {
+        return lines;
+    }
+    if max_lines == 1 {
+        return vec![ellipsis_line(lines.len(), chars_truncated)];
+    }
+    let keep_head = max_lines / 2;
+    let keep_tail = max_lines.saturating_sub(keep_head + 1);
+    let omitted = lines.len().saturating_sub(keep_head + keep_tail);
+    let mut collapsed = Vec::new();
+    collapsed.extend(lines.iter().take(keep_head).cloned());
+    collapsed.push(ellipsis_line(omitted, chars_truncated));
+    if keep_tail > 0 {
+        let start = lines.len().saturating_sub(keep_tail);
+        collapsed.extend(lines.into_iter().skip(start));
+    }
+    collapsed
+}
+
+fn ellipsis_line(omitted_lines: usize, chars_truncated: bool) -> String {
+    let mut parts = Vec::new();
+    if omitted_lines > 0 {
+        parts.push(format!("{omitted_lines} lines"));
+    }
+    if chars_truncated {
+        parts.push("truncated".to_string());
+    }
+    if parts.is_empty() {
+        "...".to_string()
+    } else {
+        format!("... omitted {} ...", parts.join(", "))
+    }
+}
+
+fn take_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !text.is_empty());
+    }
+    let mut output = String::new();
+    let mut count = 0usize;
+    for ch in text.chars() {
+        if count >= max_chars {
+            return (output, true);
+        }
+        output.push(ch);
+        count = count.saturating_add(1);
+    }
+    (output, false)
+}
+
+fn append_tail(target: &mut String, text: &str, max_chars: usize) {
+    target.push_str(text);
+    let count = target.chars().count();
+    if count <= max_chars {
+        return;
+    }
+    let start = count.saturating_sub(max_chars);
+    *target = target.chars().skip(start).collect();
+}
+
 fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     let result = extract_tool_result_object(payload);
     let ok = result.get("ok").and_then(Value::as_bool);
@@ -1044,6 +1439,18 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("3 items")));
         assert!(lines.iter().any(|line| line.contains("src/main.rs")));
         assert!(!lines.iter().any(|line| line.contains("\"items\"")));
+    }
+
+    #[test]
+    fn command_live_chunk_uses_indented_terminal_block() {
+        let mut state = CommandLivePrintState::default();
+        let first = format_command_live_chunk(&mut state, "one\ntwo");
+        assert_eq!(first, "  output:\n    one\n    two");
+        assert!(command_live_line_open(&state));
+
+        let second = format_command_live_chunk(&mut state, "\nthree\n");
+        assert_eq!(second, "\n    three\n");
+        assert!(!command_live_line_open(&state));
     }
 
     #[test]

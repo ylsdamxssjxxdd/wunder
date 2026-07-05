@@ -1,5 +1,6 @@
 mod args;
 mod attachments;
+mod command_session_display;
 mod error_display;
 mod input_guard;
 mod locale;
@@ -6611,6 +6612,7 @@ pub(crate) async fn build_wunder_request(
     Ok(WunderRequest {
         user_id: runtime.user_id.clone(),
         question: prompt.trim().to_string(),
+        client_message_id: None,
         tool_names: Vec::new(),
         skip_tool_calls: false,
         stream: !global.no_stream,

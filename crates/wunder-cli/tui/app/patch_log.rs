@@ -5,6 +5,9 @@ use serde_json::Value;
 use textwrap::Options;
 use unicode_width::UnicodeWidthStr;
 
+use crate::command_session_display::{
+    compact_text_preview, CommandSessionDisplayStatus, CommandSessionView,
+};
 use crate::patch_diff::{
     build_patch_diff_preview, PatchDiffBlock, PatchDiffBlockKind, PatchDiffLine, PatchDiffLineKind,
     PatchDiffPreview,
@@ -949,6 +952,155 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
     }))
 }
 
+pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) -> SpecialLogEntry {
+    let command = if view.command.trim().is_empty() {
+        if is_zh {
+            "\u{547d}\u{4ee4}".to_string()
+        } else {
+            "command".to_string()
+        }
+    } else {
+        view.command.trim().to_string()
+    };
+    let terminal = matches!(
+        view.status,
+        CommandSessionDisplayStatus::Exited | CommandSessionDisplayStatus::FailedToStart
+    );
+    let success = view.success();
+    let title = match view.status {
+        CommandSessionDisplayStatus::FailedToStart => {
+            if is_zh {
+                "\u{542f}\u{52a8}\u{5931}\u{8d25}".to_string()
+            } else {
+                "Failed to start".to_string()
+            }
+        }
+        CommandSessionDisplayStatus::Exited => {
+            if success {
+                if is_zh {
+                    "\u{5df2}\u{8fd0}\u{884c}".to_string()
+                } else {
+                    "Ran".to_string()
+                }
+            } else if is_zh {
+                "\u{8fd0}\u{884c}\u{5931}\u{8d25}".to_string()
+            } else {
+                "Failed".to_string()
+            }
+        }
+        CommandSessionDisplayStatus::Pending | CommandSessionDisplayStatus::Running => {
+            if is_zh {
+                "\u{6b63}\u{5728}\u{8fd0}\u{884c}".to_string()
+            } else {
+                "Running".to_string()
+            }
+        }
+    };
+
+    let mut metrics = Vec::new();
+    if let Some(exit_code) = view.exit_code {
+        metrics.push(format!("exit={exit_code}"));
+    }
+    if let Some(duration_ms) = view.duration_ms.filter(|value| *value > 0) {
+        metrics.push(format!("{duration_ms}ms"));
+    }
+    if view.timed_out {
+        metrics.push("timeout".to_string());
+    }
+    if !terminal && !view.has_output() {
+        metrics.push(if is_zh {
+            "\u{7b49}\u{5f85}\u{8f93}\u{51fa}".to_string()
+        } else {
+            "waiting for output".to_string()
+        });
+    }
+
+    let mut sections = Vec::new();
+    if let Some(error) = view
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sections.push(CommandSection {
+            label: if is_zh {
+                "\u{9519}\u{8bef}".to_string()
+            } else {
+                "error".to_string()
+            },
+            lines: compact_command_output_lines(error, 4, 600),
+            style: Style::default().fg(Color::Red),
+        });
+    }
+
+    if !view.pty.trim().is_empty() {
+        sections.push(CommandSection {
+            label: "output".to_string(),
+            lines: compact_command_output_lines(view.pty.as_str(), 12, 1_800),
+            style: summary_style(),
+        });
+    } else if !terminal || success {
+        if !view.stdout.trim().is_empty() {
+            sections.push(CommandSection {
+                label: "stdout".to_string(),
+                lines: compact_command_output_lines(view.stdout.as_str(), 10, 1_500),
+                style: summary_style(),
+            });
+        }
+        if !view.stderr.trim().is_empty() {
+            sections.push(CommandSection {
+                label: "stderr".to_string(),
+                lines: compact_command_output_lines(view.stderr.as_str(), 5, 700),
+                style: Style::default().fg(Color::Yellow),
+            });
+        }
+    } else {
+        if !view.stderr.trim().is_empty() {
+            sections.push(CommandSection {
+                label: "stderr".to_string(),
+                lines: compact_command_output_lines(view.stderr.as_str(), 10, 1_500),
+                style: Style::default().fg(Color::Red),
+            });
+        }
+        if !view.stdout.trim().is_empty() {
+            sections.push(CommandSection {
+                label: "stdout".to_string(),
+                lines: compact_command_output_lines(view.stdout.as_str(), 6, 800),
+                style: summary_style(),
+            });
+        }
+    }
+
+    if terminal && sections.is_empty() {
+        sections.push(CommandSection {
+            label: if is_zh {
+                "\u{8f93}\u{51fa}".to_string()
+            } else {
+                "output".to_string()
+            },
+            lines: vec![if is_zh {
+                "<\u{7a7a}>".to_string()
+            } else {
+                "<empty>".to_string()
+            }],
+            style: theme::secondary_text(),
+        });
+    }
+
+    SpecialLogEntry::Command(CommandLogEntry {
+        status: if terminal {
+            CommandLogStatus::Completed
+        } else {
+            CommandLogStatus::Pending
+        },
+        success: !terminal || success,
+        title,
+        command,
+        metrics: (!metrics.is_empty()).then(|| metrics.join(", ")),
+        sections,
+    })
+}
+
 pub(super) fn build_static_art_log(summary: String, lines: Vec<Line<'static>>) -> SpecialLogEntry {
     SpecialLogEntry::Art(ArtLogEntry { summary, lines })
 }
@@ -1436,6 +1588,21 @@ fn build_output_section(
         lines,
         style,
     })
+}
+
+fn compact_command_output_lines(text: &str, max_lines: usize, max_chars: usize) -> Vec<String> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = normalized.trim_end_matches('\n').trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let (preview, chars_truncated) = compact_text_preview(trimmed, max_chars);
+    let all_lines = preview.lines().map(ToString::to_string).collect::<Vec<_>>();
+    if all_lines.is_empty() {
+        Vec::new()
+    } else {
+        collapse_middle_lines(all_lines, max_lines, chars_truncated)
+    }
 }
 
 fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
@@ -2027,6 +2194,36 @@ mod tests {
             .lines
             .iter()
             .any(|line| line.contains("line 8")));
+    }
+
+    #[test]
+    fn running_command_session_log_streams_stdout_before_failure_ordering() {
+        let view = CommandSessionView {
+            primary_id: "cmd_1".to_string(),
+            command_session_id: Some("cmd_1".to_string()),
+            tool_call_id: Some("call_1".to_string()),
+            command: "demo".to_string(),
+            cwd: None,
+            status: CommandSessionDisplayStatus::Running,
+            exit_code: None,
+            timed_out: false,
+            error: None,
+            duration_ms: None,
+            stdout: "line 1\nline 2".to_string(),
+            stderr: "warning".to_string(),
+            pty: String::new(),
+        };
+        let SpecialLogEntry::Command(entry) = build_command_session_log(&view, false) else {
+            panic!("expected command log");
+        };
+        assert_eq!(entry.status, CommandLogStatus::Pending);
+        assert_eq!(entry.sections[0].label, "stdout");
+        assert_eq!(entry.sections[1].label, "stderr");
+        assert!(entry
+            .sections
+            .iter()
+            .flat_map(|section| section.lines.iter())
+            .any(|line| line.contains("line 1")));
     }
 
     #[test]
