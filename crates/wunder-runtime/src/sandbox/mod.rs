@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::i18n;
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
+use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::env;
@@ -455,12 +456,217 @@ pub async fn execute_tool(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_command_streaming<F>(
+    config: &Config,
+    workspace: &WorkspaceManager,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    args: &Value,
+    user_tool_bindings: Option<&UserToolBindings>,
+    mut on_event: F,
+) -> Option<Value>
+where
+    F: FnMut(Value) + Send,
+{
+    if !sandbox_enabled(config) {
+        return None;
+    }
+    let endpoints = sandbox_endpoint_candidates(config);
+    if endpoints.is_empty() {
+        return Some(json!({
+            "ok": false,
+            "data": {},
+            "error": "sandbox endpoint is empty",
+            "sandbox": true,
+        }));
+    }
+    if let Err(err) = workspace.ensure_user_root(workspace_id) {
+        return Some(json!({
+            "ok": false,
+            "data": { "detail": err.to_string() },
+            "error": "failed to prepare workspace",
+            "sandbox": true,
+        }));
+    }
+
+    let public_root = workspace
+        .public_root(workspace_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let container_workspace_root =
+        resolve_container_workspace_root(config, workspace, workspace_id);
+    let allow_paths = collect_allow_paths(config, user_tool_bindings);
+    let deny_globs = config.security.deny_globs.clone();
+    let allow_commands = config.security.allow_commands.clone();
+    let mut mapped_args = if args.is_object() {
+        args.clone()
+    } else {
+        json!({ "raw": args })
+    };
+    if let Value::Object(ref mut map) = mapped_args {
+        if let Some(Value::String(workdir)) = map.get("workdir").cloned() {
+            let trimmed = workdir.trim();
+            let path = Path::new(trimmed);
+            if path.is_absolute() {
+                if let Some(rest) = strip_root_prefix(trimmed, &public_root) {
+                    let mapped = format!("{container_workspace_root}{rest}");
+                    map.insert("workdir".to_string(), Value::String(mapped));
+                }
+            }
+        }
+        if let Some(Value::String(content)) = map.get("content").cloned() {
+            let rewritten = replace_root_in_text(&content, &public_root, &container_workspace_root);
+            if rewritten != content {
+                map.insert("content".to_string(), Value::String(rewritten));
+            }
+        }
+    }
+
+    let payload = json!({
+        "user_id": user_id,
+        "session_id": session_id,
+        "language": i18n::get_language(),
+        "tool": "执行命令",
+        "args": mapped_args,
+        "workspace_root": container_workspace_root,
+        "allow_paths": allow_paths,
+        "deny_globs": deny_globs,
+        "allow_commands": allow_commands,
+        "container_root": sandbox_container_root(),
+        "network": "bridge",
+        "readonly_rootfs": sandbox_readonly_rootfs(),
+        "idle_ttl_s": sandbox_idle_ttl_seconds(),
+        "resources": {
+            "cpu": sandbox_cpu_limit(),
+            "memory_mb": sandbox_memory_mb(),
+            "pids": sandbox_pids_limit(),
+        }
+    });
+
+    let timeout_s = sandbox_timeout_seconds().max(1);
+    let mut last_error = json!({});
+
+    for endpoint in &endpoints {
+        let url = format!("{endpoint}/sandboxes/execute_command_stream");
+        let response = tokio::time::timeout(
+            Duration::from_secs(timeout_s),
+            http_client().post(&url).json(&payload).send(),
+        )
+        .await;
+        let response = match response {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
+                warn!("sandbox stream request failed for {endpoint}: {err}");
+                last_error = json!({ "endpoint": endpoint, "detail": err.to_string() });
+                continue;
+            }
+            Err(_) => {
+                warn!("sandbox stream request timed out before response headers for {endpoint}");
+                last_error =
+                    json!({ "endpoint": endpoint, "detail": "stream response header timeout" });
+                continue;
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            last_error = json!({
+                "endpoint": endpoint,
+                "status": status.as_u16(),
+                "raw": truncate_text(&body, 2048),
+            });
+            continue;
+        }
+
+        let mut final_payload: Option<Value> = None;
+        let mut pending = Vec::<u8>::new();
+        let mut stream = response.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let chunk = match item {
+                Ok(chunk) => chunk,
+                Err(err) => {
+                    warn!("sandbox stream chunk read failed for {endpoint}: {err}");
+                    last_error = json!({
+                        "endpoint": endpoint,
+                        "error": err.to_string(),
+                    });
+                    final_payload = None;
+                    break;
+                }
+            };
+            pending.extend_from_slice(&chunk);
+            while let Some(index) = pending.iter().position(|byte| *byte == b'\n') {
+                let line = pending.drain(..=index).collect::<Vec<_>>();
+                let text = String::from_utf8_lossy(&line).trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                let parsed = match serde_json::from_str::<Value>(&text) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        warn!("sandbox stream json parse failed for {endpoint}: {err}");
+                        continue;
+                    }
+                };
+                if parsed.get("type").and_then(Value::as_str) == Some("final") {
+                    final_payload = parsed.get("payload").cloned();
+                } else {
+                    on_event(parsed);
+                }
+            }
+        }
+        if !pending.is_empty() {
+            let text = String::from_utf8_lossy(&pending).trim().to_string();
+            if !text.is_empty() {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
+                    if parsed.get("type").and_then(Value::as_str) == Some("final") {
+                        final_payload = parsed.get("payload").cloned();
+                    } else {
+                        on_event(parsed);
+                    }
+                }
+            }
+        }
+
+        if let Some(parsed) = final_payload {
+            let ok = parsed.get("ok").and_then(Value::as_bool).unwrap_or(false);
+            let error = parsed
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let data = parsed.get("data").cloned().unwrap_or_else(|| json!({}));
+            let data =
+                rewrite_sandbox_paths(&public_root, &container_workspace_root, "执行命令", data);
+            return Some(json!({
+                "ok": ok,
+                "data": data,
+                "error": error,
+                "sandbox": true,
+            }));
+        }
+    }
+
+    Some(json!({
+        "ok": false,
+        "data": { "tried_endpoints": endpoints, "last_error": last_error },
+        "error": "sandbox stream request failed",
+        "sandbox": true,
+    }))
+}
+
 fn rewrite_sandbox_paths(
     public_root: &str,
     container_root: &str,
     tool: &str,
     mut data: Value,
 ) -> Value {
+    if tool == "执行命令" {
+        replace_paths_in_value(&mut data, container_root, public_root);
+        return data;
+    }
     if !matches!(
         tool,
         "ptc"

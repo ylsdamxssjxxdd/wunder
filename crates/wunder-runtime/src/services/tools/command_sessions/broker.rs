@@ -10,12 +10,17 @@ use uuid::Uuid;
 
 const DEFAULT_SESSION_RING_BUFFER_BYTES: usize = 256 * 1024;
 const FINISHED_SESSION_RETENTION_MINUTES: i64 = 5;
+const SESSION_RING_HEAD_RATIO_NUMERATOR: usize = 3;
+const SESSION_RING_HEAD_RATIO_DENOMINATOR: usize = 8;
 
 #[derive(Default)]
 struct OutputTailState {
     total_bytes: usize,
     dropped_bytes: usize,
-    recent_bytes: VecDeque<u8>,
+    truncated: bool,
+    full_bytes: Vec<u8>,
+    head_bytes: Vec<u8>,
+    tail_bytes: VecDeque<u8>,
 }
 
 impl OutputTailState {
@@ -25,24 +30,93 @@ impl OutputTailState {
         }
         self.total_bytes = self.total_bytes.saturating_add(chunk.len());
         if limit == 0 {
-            self.dropped_bytes = self.dropped_bytes.saturating_add(chunk.len());
+            self.dropped_bytes = self.total_bytes;
             return;
         }
-        self.recent_bytes.extend(chunk.iter().copied());
-        if self.recent_bytes.len() > limit {
-            let overflow = self.recent_bytes.len().saturating_sub(limit);
-            self.recent_bytes.drain(..overflow);
-            self.dropped_bytes = self.dropped_bytes.saturating_add(overflow);
+
+        let (head_limit, tail_limit) = preview_budgets(limit);
+        if !self.truncated {
+            if self.full_bytes.len().saturating_add(chunk.len()) <= limit {
+                self.full_bytes.extend_from_slice(chunk);
+                return;
+            }
+            self.truncated = true;
+            let keep_head = head_limit.min(self.full_bytes.len());
+            self.head_bytes
+                .extend_from_slice(&self.full_bytes[..keep_head]);
+            let carry_tail = self.full_bytes[keep_head..].to_vec();
+            self.full_bytes.clear();
+            self.push_tail_bytes(&carry_tail, tail_limit);
         }
+
+        let mut remaining = chunk;
+        if self.head_bytes.len() < head_limit {
+            let missing = head_limit - self.head_bytes.len();
+            let take = missing.min(remaining.len());
+            self.head_bytes.extend_from_slice(&remaining[..take]);
+            remaining = &remaining[take..];
+        }
+        self.push_tail_bytes(remaining, tail_limit);
+        self.dropped_bytes = self.total_bytes.saturating_sub(self.kept_bytes());
     }
 
     fn text(&self) -> String {
-        if self.recent_bytes.is_empty() {
-            return String::new();
+        if !self.truncated {
+            if self.full_bytes.is_empty() {
+                return String::new();
+            }
+            return String::from_utf8_lossy(&self.full_bytes).into_owned();
         }
-        let bytes = self.recent_bytes.iter().copied().collect::<Vec<_>>();
-        String::from_utf8_lossy(&bytes).into_owned()
+
+        let head = String::from_utf8_lossy(&self.head_bytes).into_owned();
+        let tail_bytes = self.tail_bytes.iter().copied().collect::<Vec<_>>();
+        let tail = String::from_utf8_lossy(&tail_bytes).into_owned();
+        let marker = format!(
+            "...(truncated command output, omitted {} bytes)...",
+            self.dropped_bytes
+        );
+        match (head.is_empty(), tail.is_empty()) {
+            (true, true) => marker,
+            (true, false) => format!("{marker}\n{tail}"),
+            (false, true) => format!("{head}\n{marker}"),
+            (false, false) => format!("{head}\n{marker}\n{tail}"),
+        }
     }
+
+    fn kept_bytes(&self) -> usize {
+        if self.truncated {
+            self.head_bytes.len().saturating_add(self.tail_bytes.len())
+        } else {
+            self.full_bytes.len()
+        }
+    }
+
+    fn push_tail_bytes(&mut self, bytes: &[u8], limit: usize) {
+        if bytes.is_empty() || limit == 0 {
+            return;
+        }
+        if bytes.len() >= limit {
+            self.tail_bytes.clear();
+            self.tail_bytes
+                .extend(bytes[bytes.len().saturating_sub(limit)..].iter().copied());
+            return;
+        }
+        let overflow = self.tail_bytes.len().saturating_add(bytes.len());
+        if overflow > limit {
+            self.tail_bytes.drain(..overflow - limit);
+        }
+        self.tail_bytes.extend(bytes.iter().copied());
+    }
+}
+
+fn preview_budgets(limit: usize) -> (usize, usize) {
+    if limit <= 1 {
+        return (limit, 0);
+    }
+    let head = ((limit as u128 * SESSION_RING_HEAD_RATIO_NUMERATOR as u128)
+        / SESSION_RING_HEAD_RATIO_DENOMINATOR as u128) as usize;
+    let head = head.clamp(1, limit - 1);
+    (head, limit - head)
 }
 
 struct CommandSessionRecord {
@@ -326,12 +400,18 @@ mod tests {
     }
 
     #[test]
-    fn broker_keeps_recent_tail_per_stream() {
+    fn broker_keeps_head_and_tail_preview_per_stream() {
         let broker = CommandSessionBroker::new();
         let snapshot = broker.start_session(build_start_spec());
         assert_eq!(snapshot.command_session_id, "cmd_test");
 
-        let chunk = vec![b'a'; DEFAULT_SESSION_RING_BUFFER_BYTES + 32];
+        let chunk = format!(
+            "{}{}{}",
+            "a".repeat(DEFAULT_SESSION_RING_BUFFER_BYTES / 2),
+            "b".repeat(32),
+            "z".repeat(DEFAULT_SESSION_RING_BUFFER_BYTES / 2)
+        )
+        .into_bytes();
         let seq = broker
             .append_delta("cmd_test", CommandSessionStream::Stdout, &chunk)
             .expect("seq");
@@ -340,10 +420,9 @@ mod tests {
         let snapshot = broker.snapshot("cmd_test").expect("snapshot");
         assert_eq!(snapshot.stdout_bytes, chunk.len());
         assert_eq!(snapshot.stdout_dropped_bytes, 32);
-        assert_eq!(
-            snapshot.stdout_tail.len(),
-            DEFAULT_SESSION_RING_BUFFER_BYTES
-        );
+        assert!(snapshot.stdout_tail.starts_with('a'));
+        assert!(snapshot.stdout_tail.contains("omitted 32 bytes"));
+        assert!(snapshot.stdout_tail.ends_with('z'));
     }
 
     #[test]

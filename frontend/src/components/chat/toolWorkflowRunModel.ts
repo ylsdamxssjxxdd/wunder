@@ -66,6 +66,10 @@ const COMMAND_SESSION_EVENT_TYPES = new Set([
   'command_session_summary',
   'command_session_delta'
 ]);
+const COMMAND_SESSION_RESULT_EVENT_TYPES = new Set([
+  'command_session_exit',
+  'command_session_summary'
+]);
 
 const normalizeWorkflowRef = (value: unknown): string => String(value || '').trim();
 const normalizeWorkflowText = (value: unknown): string => String(value || '').trim();
@@ -79,8 +83,23 @@ const resolveWorkflowToolCallRef = (item: WorkflowItem): string =>
 const resolveWorkflowCommandSessionRef = (item: WorkflowItem): string =>
   normalizeWorkflowRef(item.commandSessionId ?? item.command_session_id);
 
-const resolveWorkflowLinkRef = (item: WorkflowItem): string =>
-  resolveWorkflowToolCallRef(item) || resolveWorkflowCommandSessionRef(item);
+const isCommandSessionWorkflowItem = (item: WorkflowItem): boolean =>
+  COMMAND_SESSION_EVENT_TYPES.has(resolveWorkflowEventType(item));
+
+const resolveWorkflowPrimaryRef = (item: WorkflowItem): string => {
+  const toolCallRef = resolveWorkflowToolCallRef(item);
+  const commandSessionRef = resolveWorkflowCommandSessionRef(item);
+  return toolCallRef || commandSessionRef;
+};
+
+const resolveWorkflowAliasRefs = (item: WorkflowItem): string[] => {
+  const refs = [
+    resolveWorkflowToolCallRef(item),
+    resolveWorkflowCommandSessionRef(item),
+    resolveWorkflowItemId(item)
+  ].filter(Boolean);
+  return Array.from(new Set(refs));
+};
 
 const resolveWorkflowEventType = (item: WorkflowItem): string =>
   normalizeWorkflowText(item.eventType ?? item.event ?? item.event_type).toLowerCase();
@@ -132,6 +151,9 @@ export const resolveWorkflowToolEventKind = (item: WorkflowItem): ToolEventKind 
   if (eventType === 'tool_call') return 'call';
   if (eventType === 'tool_output_delta' || eventType === 'compaction_progress') return 'output';
   if (eventType === 'tool_result' || eventType === 'compaction') return 'result';
+  if (COMMAND_SESSION_EVENT_TYPES.has(eventType)) {
+    return COMMAND_SESSION_RESULT_EVENT_TYPES.has(eventType) ? 'result' : 'output';
+  }
 
   const title = normalizeWorkflowText(item.title);
   if (/^调用工具[:：]/i.test(title) || /^Tool\s+call:/i.test(title)) return 'call';
@@ -219,7 +241,7 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
     const key = [
       kind,
       resolveWorkflowToolName(item).trim().toLowerCase(),
-      resolveWorkflowLinkRef(item),
+      resolveWorkflowPrimaryRef(item),
       normalizeWorkflowText(item.status).toLowerCase(),
       normalizeWorkflowText(item.title),
       normalizeWorkflowText(item.detail)
@@ -313,7 +335,8 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
     const toolRuntimeName = resolveWorkflowToolRuntimeName(item) || toolName;
     const toolFunctionName = resolveWorkflowToolFunctionName(item);
     const itemId = resolveWorkflowItemId(item) || `tool-entry-${index}`;
-    const toolCallId = resolveWorkflowLinkRef(item);
+    const toolCallId = resolveWorkflowPrimaryRef(item);
+    const aliasRefs = resolveWorkflowAliasRefs(item);
     const toolRefKey = toolCallId || itemId;
     const toolKey = [
       toolName.trim().toLowerCase() || '__unknown__',
@@ -329,10 +352,7 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
         if (!rows[existingIndex].toolDisplayName && toolDisplayName) rows[existingIndex].toolDisplayName = toolDisplayName;
         if (!rows[existingIndex].toolRuntimeName && toolRuntimeName) rows[existingIndex].toolRuntimeName = toolRuntimeName;
         if (!rows[existingIndex].toolFunctionName && toolFunctionName) rows[existingIndex].toolFunctionName = toolFunctionName;
-        rowIndexByCallId.set(itemId, existingIndex);
-        if (toolCallId) {
-          rowIndexByCallId.set(toolCallId, existingIndex);
-        }
+        aliasRefs.forEach((ref) => rowIndexByCallId.set(ref, existingIndex));
         if (!rows[existingIndex].resultItem) {
           enqueuePending(toolKey, existingIndex);
         }
@@ -348,10 +368,7 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
           resultItem: null
         });
         const rowIndex = rows.length - 1;
-        rowIndexByCallId.set(itemId, rowIndex);
-        if (toolCallId) {
-          rowIndexByCallId.set(toolCallId, rowIndex);
-        }
+        aliasRefs.forEach((ref) => rowIndexByCallId.set(ref, rowIndex));
         enqueuePending(toolKey, rowIndex);
       }
       return;
@@ -369,6 +386,7 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
         if (!rows[targetIndex].toolDisplayName && toolDisplayName) rows[targetIndex].toolDisplayName = toolDisplayName;
         if (!rows[targetIndex].toolRuntimeName && toolRuntimeName) rows[targetIndex].toolRuntimeName = toolRuntimeName;
         if (!rows[targetIndex].toolFunctionName && toolFunctionName) rows[targetIndex].toolFunctionName = toolFunctionName;
+        aliasRefs.forEach((ref) => rowIndexByCallId.set(ref, targetIndex));
       } else {
         rows.push({
           key: itemId,
@@ -398,9 +416,7 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
       if (!rows[targetIndex].toolDisplayName && toolDisplayName) rows[targetIndex].toolDisplayName = toolDisplayName;
       if (!rows[targetIndex].toolRuntimeName && toolRuntimeName) rows[targetIndex].toolRuntimeName = toolRuntimeName;
       if (!rows[targetIndex].toolFunctionName && toolFunctionName) rows[targetIndex].toolFunctionName = toolFunctionName;
-      if (toolCallId) {
-        rowIndexByCallId.set(toolCallId, targetIndex);
-      }
+      aliasRefs.forEach((ref) => rowIndexByCallId.set(ref, targetIndex));
     } else {
       rows.push({
         key: itemId,

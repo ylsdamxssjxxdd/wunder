@@ -1793,7 +1793,7 @@ const DESKTOP_OVERLAY_STREAM_EVENTS = new Set([
   'desktop_monitor_countdown_done'
 ]);
 
-const applyCommandSessionCanonicalSideEffect = (sessionId, eventType, payload, data) => {
+const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventType, payload, data) => {
   const normalizedEventType = String(eventType || '').trim().toLowerCase();
   if (
     !COMMAND_SESSION_STREAM_EVENTS.has(normalizedEventType) &&
@@ -1808,25 +1808,41 @@ const applyCommandSessionCanonicalSideEffect = (sessionId, eventType, payload, d
     : payload && typeof payload === 'object' && !Array.isArray(payload)
       ? payload
       : {};
-  const store = useCommandSessionStore();
+  if (normalizedEventType === 'tool_output_delta') {
+    // command_session_delta is the authoritative live stream for command sessions.
+    // Legacy tool_output_delta still drives workflow projection, but appending it here
+    // would duplicate the same command output in the terminal tail.
+    return true;
+  }
+  const commandStore = useCommandSessionStore();
   if (
     normalizedEventType === 'command_session_delta' ||
     normalizedEventType === 'tool_output' ||
     normalizedEventType === 'tool_output_delta'
   ) {
-    store.appendDelta(
+    const entry = commandStore.appendDelta(
       resolveSessionKey(sessionId),
       commandSessionId,
       source.stream,
       source.delta ?? source.output ?? source.content ?? source.text ?? '',
       source
     );
+    if (entry) {
+      markRuntimeProjectionChanged(runtimeStore, {
+        reason: 'command-session-delta'
+      });
+    }
     return true;
   }
-  store.upsertSnapshot(
+  const entry = commandStore.upsertSnapshot(
     resolveSessionKey(sessionId) || String(source.session_id ?? source.sessionId ?? ''),
     source
   );
+  if (entry) {
+    markRuntimeProjectionChanged(runtimeStore, {
+      reason: 'command-session-snapshot'
+    });
+  }
   return true;
 };
 
@@ -1933,7 +1949,7 @@ const applyCanonicalStreamSideEffects = (store, sessionId, eventType, payload) =
     applyDesktopOverlayEvent(normalizedEventType, data);
     return;
   }
-  applyCommandSessionCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
+  applyCommandSessionCanonicalSideEffect(store, sessionId, normalizedEventType, payload, data);
   if (isSubagentCanonicalEvent(normalizedEventType) || isTeamCanonicalEvent(normalizedEventType) || normalizedEventType === 'tool_result') {
     applyCollaborationCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
   }
@@ -2044,7 +2060,16 @@ export const applyCanonicalStreamRuntimeEvent = (
   eventType,
   payload,
   eventId,
-  options: { requestId?: string; phase?: string; onSyncRequired?: (reason: string) => void; sideEffects?: boolean } = {}
+  options: {
+    requestId?: string;
+    phase?: string;
+    clientMessageId?: string | null;
+    userTurnId?: string | null;
+    modelTurnId?: string | null;
+    assistantMessageId?: string | null;
+    onSyncRequired?: (reason: string) => void;
+    sideEffects?: boolean;
+  } = {}
 ) => {
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
@@ -2059,6 +2084,10 @@ export const applyCanonicalStreamRuntimeEvent = (
       : { value: payload },
     eventId,
     requestId: options.requestId,
+    clientMessageId: options.clientMessageId,
+    userTurnId: options.userTurnId,
+    modelTurnId: options.modelTurnId,
+    assistantMessageId: options.assistantMessageId,
     phase: options.phase
   });
   const results = applyChatRuntimeEventsWithInvalidation(store, projection, events, {

@@ -12,6 +12,72 @@ use crate::services::tools::sessions_yield_tool;
 
 use super::execute_support::*;
 
+enum ToolEventForward {
+    Event { event_type: String, data: Value },
+    Flush(tokio::sync::oneshot::Sender<()>),
+}
+
+struct ToolEventForwarder {
+    tx: mpsc::Sender<ToolEventForward>,
+}
+
+impl ToolEventForwarder {
+    fn new(emitter: EventEmitter, round_info: RoundInfo) -> Self {
+        let (tx, mut rx) = mpsc::channel::<ToolEventForward>(STREAM_EVENT_QUEUE_SIZE);
+        long_task::spawn("orchestrator.execute.tool_event_forwarder", async move {
+            while let Some(message) = rx.recv().await {
+                match message {
+                    ToolEventForward::Event {
+                        event_type,
+                        mut data,
+                    } => {
+                        if let Value::Object(ref mut map) = data {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit(&event_type, data).await;
+                    }
+                    ToolEventForward::Flush(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        });
+        Self { tx }
+    }
+
+    fn emitter(&self, stream: bool) -> ToolEventEmitter {
+        let tx = self.tx.clone();
+        ToolEventEmitter::new(
+            move |event_type, data| {
+                let message = ToolEventForward::Event {
+                    event_type: event_type.to_string(),
+                    data,
+                };
+                if let Err(err) = tx.try_send(message) {
+                    match err {
+                        mpsc::error::TrySendError::Full(message) => {
+                            let tx = tx.clone();
+                            let _ = tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current()
+                                    .block_on(async move { tx.send(message).await })
+                            });
+                        }
+                        mpsc::error::TrySendError::Closed(_) => {}
+                    }
+                }
+            },
+            stream,
+        )
+    }
+
+    async fn flush(&self) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self.tx.send(ToolEventForward::Flush(tx)).await.is_ok() {
+            let _ = rx.await;
+        }
+    }
+}
+
 impl Orchestrator {
     pub(super) async fn execute_request(
         &self,
@@ -923,25 +989,9 @@ impl Orchestrator {
                     );
                 }
 
-                let tool_event_emitter = ToolEventEmitter::new(
-                    {
-                        let emitter = emitter.clone();
-                        move |event_type, mut data| {
-                            let emitter = emitter.clone();
-                            let event_name = event_type.to_string();
-                            if let Value::Object(ref mut map) = data {
-                                round_info.insert_into(map);
-                            }
-                            long_task::spawn(
-                                "orchestrator.execute.tool_event_emit",
-                                async move {
-                                emitter.emit(&event_name, data).await;
-                                },
-                            );
-                        }
-                    },
-                    prepared.stream,
-                );
+                let tool_event_forwarder =
+                    ToolEventForwarder::new(emitter.clone(), round_info);
+                let tool_event_emitter = tool_event_forwarder.emitter(prepared.stream);
 
                 let tool_context = ToolContext {
                     user_id: &user_id,
@@ -1142,7 +1192,8 @@ impl Orchestrator {
                     let mut outcomes = if executable_calls.is_empty() {
                         Vec::new()
                     } else {
-                        self.execute_tool_calls_parallel(
+                        let outcomes = self
+                            .execute_tool_calls_parallel(
                             executable_calls,
                             &tool_context,
                             &allowed_tool_names,
@@ -1152,7 +1203,9 @@ impl Orchestrator {
                             prepared.approval_tx.clone(),
                             round_info,
                         )
-                        .await?
+                            .await;
+                        tool_event_forwarder.flush().await;
+                        outcomes?
                     };
                     outcomes.extend(cached_recall_outcomes);
                     for (index, outcome) in outcomes.into_iter().enumerate() {

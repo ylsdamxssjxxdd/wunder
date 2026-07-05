@@ -349,6 +349,43 @@ test('terminal settle clears stale assistant waiting artifacts, workflow items, 
   assert.equal(hasAssistantWaitingForCurrentOutput(messages[1]), false);
 });
 
+test('terminal settle clears status-only streaming placeholders after recovery', () => {
+  const messages: Record<string, any>[] = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      workflowStreaming: false,
+      stream_incomplete: false,
+      reasoningStreaming: false,
+      slow_client: false,
+      resume_available: false
+    }
+  ];
+
+  assert.equal(settleTerminalAssistantArtifacts(messages, { failed: false }), true);
+  assert.equal(messages[1].status, 'final');
+  assert.equal(messages[1].final, true);
+  assert.equal(messages[1].failed, false);
+  assert.equal(messages[1].workflowStreaming, false);
+  assert.equal(messages[1].stream_incomplete, false);
+  assert.equal(messages[1].reasoningStreaming, false);
+  assert.equal(hasAssistantWaitingForCurrentOutput(messages[1]), false);
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection: null,
+      sessionId: 'sess_terminal_status_only',
+      loading: false,
+      messages,
+      runtimeStatus: 'idle',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    false
+  );
+});
+
 test('user stop settlement clears local runtime locks that would keep composer busy', () => {
   const sessionId = 'sess_user_stop_local_settle';
   const waitingUpdatedAtMs = Date.now() - 1000;

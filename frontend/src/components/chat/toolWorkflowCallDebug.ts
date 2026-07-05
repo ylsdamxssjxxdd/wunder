@@ -59,7 +59,8 @@ const parseArgumentObject = (candidate: unknown): UnknownObject | null => {
 
 const extractExplicitCallArgs = (item: WorkflowItem | null): UnknownObject | null => {
   if (!item) return null;
-  const detailObject = parseDetailObject(item.detail);
+  const rawDetail = parseDetailObject(item.toolCallRawDetail ?? item.tool_call_raw_detail);
+  const detailObject = rawDetail || parseDetailObject(item.detail);
   if (!detailObject) return null;
   const nestedFunction = asObject(detailObject.function);
   const candidates: unknown[] = [

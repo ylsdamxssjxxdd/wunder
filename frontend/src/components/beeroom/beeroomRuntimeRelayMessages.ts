@@ -10,6 +10,7 @@ export const buildBeeroomRuntimeRelayMessageSignature = (
     .map((message) =>
       [
         String(message?.key || '').trim(),
+        String(message?.remoteKey || '').trim(),
         String(message?.tone || '').trim(),
         String(message?.senderName || '').trim(),
         String(message?.senderAgentId || '').trim(),

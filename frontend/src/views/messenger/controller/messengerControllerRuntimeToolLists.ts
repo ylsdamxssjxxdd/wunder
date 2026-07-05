@@ -500,7 +500,7 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       }
       const result = new Set<string>();
       sessionIds.forEach((sessionId) => {
-          if (!sessionId || !ctx.isSessionBusy(sessionId))
+          if (!sessionId || !ctx.resolveEffectiveSessionBusy(sessionId))
               return;
           const mappedAgentId = sessionAgentMap.get(sessionId);
           if (mappedAgentId) {

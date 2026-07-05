@@ -94,6 +94,7 @@ const cloneManualMessages = (messages: MissionChatMessage[]): MissionChatMessage
       if (!key || !body || time <= 0) return null;
       return {
         key,
+        remoteKey: String(message?.remoteKey || '').trim(),
         senderName: String(message?.senderName || '').trim() || 'Wunder',
         senderAgentId: String(message?.senderAgentId || '').trim(),
         avatarImageUrl: String(message?.avatarImageUrl || '').trim(),

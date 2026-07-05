@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use axum::body::{Body, Bytes};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -8,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::Infallible;
 use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
@@ -16,7 +19,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::a2a_store::A2aStore;
 use crate::command_utils;
@@ -228,6 +233,10 @@ pub fn build_router() -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/sandboxes/execute_tool", post(execute_tool))
+        .route(
+            "/sandboxes/execute_command_stream",
+            post(execute_command_stream),
+        )
         .route("/sandboxes/release", post(release_sandbox))
 }
 
@@ -308,6 +317,38 @@ async fn execute_tool(Json(request): Json<SandboxToolRequest>) -> impl IntoRespo
     .await
 }
 
+async fn execute_command_stream(Json(request): Json<SandboxToolRequest>) -> impl IntoResponse {
+    let language = i18n::resolve_language([request.language.as_str()]);
+    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(64);
+    tokio::spawn(async move {
+        i18n::with_language(language, async move {
+            let response = handle_execute_command_stream(request, tx.clone()).await;
+            let _ = send_stream_json(
+                &tx,
+                json!({
+                    "type": "final",
+                    "payload": response,
+                }),
+            )
+            .await;
+        })
+        .await;
+    });
+
+    (
+        StatusCode::OK,
+        [
+            (CONTENT_TYPE, "application/x-ndjson"),
+            (CACHE_CONTROL, "no-cache"),
+            (
+                axum::http::header::HeaderName::from_static("x-accel-buffering"),
+                "no",
+            ),
+        ],
+        Body::from_stream(ReceiverStream::new(rx)),
+    )
+}
+
 async fn release_sandbox(Json(request): Json<SandboxReleaseRequest>) -> impl IntoResponse {
     let language = i18n::resolve_language([request.language.as_str()]);
     i18n::with_language(language, async move {
@@ -319,6 +360,10 @@ async fn release_sandbox(Json(request): Json<SandboxReleaseRequest>) -> impl Int
         (StatusCode::OK, Json(response))
     })
     .await
+}
+
+async fn send_stream_json(tx: &mpsc::Sender<Result<Bytes, Infallible>>, value: Value) -> bool {
+    tx.send(Ok(Bytes::from(format!("{value}\n")))).await.is_ok()
 }
 
 async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse {
@@ -376,6 +421,61 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
             error: i18n::t("sandbox.error.unsupported_tool"),
         },
     };
+
+    SandboxToolResponse {
+        ok: result.ok,
+        data: if result.data.is_object() {
+            result.data
+        } else {
+            json!({ "result": result.data })
+        },
+        error: result.error,
+        debug_events: Vec::new(),
+    }
+}
+
+async fn handle_execute_command_stream(
+    request: SandboxToolRequest,
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+) -> SandboxToolResponse {
+    let _ = (
+        &request.user_id,
+        &request.session_id,
+        &request.network,
+        request.readonly_rootfs,
+        request.idle_ttl_s,
+        request.resources.cpu,
+        request.resources.memory_mb,
+        request.resources.pids,
+    );
+    let container_root = if request.container_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.container_root.trim())
+    };
+    let workspace_root = if request.workspace_root.trim().is_empty() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(request.workspace_root.trim())
+    };
+    let rules = resolve_cached_rules(
+        &workspace_root,
+        &container_root,
+        &["*".to_string()],
+        &[],
+        &request.allow_commands,
+    );
+    let context = SandboxContext {
+        workspace_root,
+        container_root,
+        allow_commands: rules.allow_commands,
+    };
+    let args = if request.args.is_null() {
+        json!({})
+    } else {
+        request.args.clone()
+    };
+    let result = execute_command_streaming(&context, &args, tx).await;
 
     SandboxToolResponse {
         ok: result.ok,
@@ -615,6 +715,355 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
 
         results.push(json!({
             "command": command,
+            "returncode": output.returncode,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+            "output_meta": {
+                "truncated": command_truncated,
+                "total_bytes": command_total_bytes,
+                "omitted_bytes": command_omitted_bytes,
+                "stdout": output.stdout_capture.to_json(),
+                "stderr": output.stderr_capture.to_json(),
+            },
+        }));
+
+        if output.timed_out {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        true,
+                    ),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_TIMEOUT",
+                        Some(
+                            "命令执行超时，可拆分脚本或提高 timeout/budget.time_budget_ms 后重试。"
+                                .to_string(),
+                        ),
+                        true,
+                        Some(500),
+                    ),
+                ),
+                error: build_execute_command_failure_message(&results, true),
+            };
+        }
+
+        if output.returncode != 0 {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        false,
+                    ),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_NON_ZERO_EXIT",
+                        Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
+                error: build_execute_command_failure_message(&results, false),
+            };
+        }
+    }
+
+    ToolResult {
+        ok: true,
+        data: json!({
+            "results": results,
+            "meta": {
+                "output_guard": {
+                    "truncated": guarded_truncated_commands > 0,
+                    "commands": guarded_total_commands,
+                    "truncated_commands": guarded_truncated_commands,
+                    "total_bytes": guarded_total_bytes,
+                    "omitted_bytes": guarded_omitted_bytes,
+                    "effective_total_bytes": effective_output_budget_bytes,
+                }
+            },
+            "budget": command_budget.to_json()
+        }),
+        error: String::new(),
+    }
+}
+
+async fn execute_command_streaming(
+    context: &SandboxContext,
+    args: &Value,
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+) -> ToolResult {
+    let args = recover_tool_args_value(args);
+    let dry_run = parse_dry_run(&args);
+    let command_budget = parse_command_budget(&args);
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if content.is_empty() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_COMMAND_REQUIRED",
+                    Some("请在 content 中提供要执行的命令或脚本文本。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.command_required"),
+        };
+    }
+
+    let timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
+    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
+    let workdir = args
+        .get("workdir")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let workdir = if workdir.is_empty() { "." } else { &workdir };
+    let cwd = match resolve_path(context, workdir) {
+        Ok(path) => path,
+        Err(error) => {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({ "workdir": workdir }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_WORKDIR_INVALID",
+                        Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
+                error,
+            };
+        }
+    };
+    if !cwd.exists() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_FOUND",
+                    Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.workdir_not_found"),
+        };
+    }
+    if !cwd.is_dir() {
+        return ToolResult {
+            ok: false,
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_DIR",
+                    Some("请将 workdir 指向目录而非文件。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
+            error: i18n::t("tool.exec.workdir_not_dir"),
+        };
+    }
+
+    let allow_all = context.allow_commands.contains("*");
+    let (stdout_policy, stderr_policy) =
+        derive_capture_policies(command_budget.output_budget_bytes);
+    let effective_output_budget_bytes = stdout_policy
+        .max_bytes()
+        .saturating_add(stderr_policy.max_bytes());
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({
+                        "command_count": commands.len(),
+                        "max_commands": max_commands,
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_BUDGET_COMMAND_LIMIT",
+                        Some("请减少单次执行命令数量，或提高 max_commands 预算。".to_string()),
+                        true,
+                        Some(200),
+                    ),
+                ),
+                error: format!(
+                    "command count {} exceeds budget limit {}",
+                    commands.len(),
+                    max_commands
+                ),
+            };
+        }
+    }
+    if dry_run {
+        return ToolResult {
+            ok: true,
+            data: json!({
+                "dry_run": true,
+                "workdir": cwd.to_string_lossy().to_string(),
+                "command_count": commands.len(),
+                "commands": commands,
+                "timeout_s": timeout_s,
+                "budget": command_budget.to_json(),
+                "meta": {
+                    "output_guard": {
+                        "effective_total_bytes": effective_output_budget_bytes,
+                    }
+                }
+            }),
+            error: String::new(),
+        };
+    }
+
+    let mut results = Vec::new();
+    let mut guarded_total_bytes: usize = 0;
+    let mut guarded_omitted_bytes: usize = 0;
+    let mut guarded_total_commands: usize = 0;
+    let mut guarded_truncated_commands: usize = 0;
+
+    for (command_index, command) in commands.into_iter().enumerate() {
+        if command.trim().is_empty() {
+            continue;
+        }
+        if !allow_all {
+            let lower = command.to_lowercase();
+            if !context
+                .allow_commands
+                .iter()
+                .any(|item| lower.starts_with(item))
+            {
+                return ToolResult {
+                    ok: false,
+                    data: with_error_meta(
+                        json!({ "command": command }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_NOT_ALLOWED",
+                            Some("命令不在 allow_commands 白名单内。".to_string()),
+                            false,
+                            None,
+                        ),
+                    ),
+                    error: i18n::t("tool.exec.not_allowed"),
+                };
+            }
+        }
+
+        let _ = send_stream_json(
+            &tx,
+            json!({
+                "type": "command_start",
+                "command_index": command_index,
+                "command": command,
+                "cwd": cwd.to_string_lossy().to_string(),
+            }),
+        )
+        .await;
+        let output = run_shell_command_streaming(
+            &command,
+            &cwd,
+            timeout_s,
+            stdout_policy,
+            stderr_policy,
+            CommandStreamSink {
+                tx: tx.clone(),
+                command_index,
+            },
+        )
+        .await;
+
+        let output = match output {
+            Ok(output) => output,
+            Err(detail) => {
+                let _ = send_stream_json(
+                    &tx,
+                    json!({
+                        "type": "command_exit",
+                        "command_index": command_index,
+                        "exit_code": null,
+                        "timed_out": false,
+                        "error": detail,
+                    }),
+                )
+                .await;
+                return ToolResult {
+                    ok: false,
+                    data: with_error_meta(
+                        json!({
+                            "command": command,
+                        }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_COMMAND_FAILED",
+                            Some("请检查命令内容、运行环境或可执行文件是否存在。".to_string()),
+                            true,
+                            Some(200),
+                        ),
+                    ),
+                    error: i18n::t_with_params(
+                        "tool.exec.command_failed",
+                        &std::collections::HashMap::from([("detail".to_string(), detail)]),
+                    ),
+                };
+            }
+        };
+
+        let command_total_bytes = output
+            .stdout_capture
+            .total_bytes
+            .saturating_add(output.stderr_capture.total_bytes);
+        let command_omitted_bytes = output
+            .stdout_capture
+            .omitted_bytes
+            .saturating_add(output.stderr_capture.omitted_bytes);
+        let command_truncated = output.stdout_capture.truncated || output.stderr_capture.truncated;
+        guarded_total_bytes = guarded_total_bytes.saturating_add(command_total_bytes);
+        guarded_omitted_bytes = guarded_omitted_bytes.saturating_add(command_omitted_bytes);
+        guarded_total_commands = guarded_total_commands.saturating_add(1);
+        if command_truncated {
+            guarded_truncated_commands = guarded_truncated_commands.saturating_add(1);
+        }
+
+        let _ = send_stream_json(
+            &tx,
+            json!({
+                "type": "command_exit",
+                "command_index": command_index,
+                "exit_code": output.returncode,
+                "timed_out": output.timed_out,
+            }),
+        )
+        .await;
+
+        results.push(json!({
+            "command": command,
+            "command_index": command_index,
             "returncode": output.returncode,
             "stdout": output.stdout,
             "stderr": output.stderr,
@@ -1049,6 +1498,34 @@ struct CommandOutput {
     stderr_capture: CommandOutputCaptureMeta,
 }
 
+#[derive(Clone)]
+struct CommandStreamSink {
+    tx: mpsc::Sender<Result<Bytes, Infallible>>,
+    command_index: usize,
+}
+
+impl CommandStreamSink {
+    async fn emit_delta(&self, stream: &'static str, chunk: &[u8]) {
+        if chunk.is_empty() {
+            return;
+        }
+        let delta = String::from_utf8_lossy(chunk).into_owned();
+        if delta.is_empty() {
+            return;
+        }
+        let _ = send_stream_json(
+            &self.tx,
+            json!({
+                "type": "delta",
+                "command_index": self.command_index,
+                "stream": stream,
+                "delta": delta,
+            }),
+        )
+        .await;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandErrorKind {
     SpawnNotFound,
@@ -1090,6 +1567,36 @@ async fn run_shell_command(
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
 ) -> Result<CommandOutput, String> {
+    run_shell_command_inner(command, cwd, timeout_s, stdout_policy, stderr_policy, None).await
+}
+
+async fn run_shell_command_streaming(
+    command: &str,
+    cwd: &Path,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+    stream_sink: CommandStreamSink,
+) -> Result<CommandOutput, String> {
+    run_shell_command_inner(
+        command,
+        cwd,
+        timeout_s,
+        stdout_policy,
+        stderr_policy,
+        Some(stream_sink),
+    )
+    .await
+}
+
+async fn run_shell_command_inner(
+    command: &str,
+    cwd: &Path,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
+    stream_sink: Option<CommandStreamSink>,
+) -> Result<CommandOutput, String> {
     let command_env = python_runtime::resolve_desktop_command_env();
     let command_overrides = command_utils::CommandProgramOverrides {
         pip_bin: command_env.command_overrides.pip_bin.clone(),
@@ -1109,7 +1616,16 @@ async fn run_shell_command(
     .or_else(|| command_utils::build_direct_command(command, cwd))
     {
         python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
-        match run_command_output(cmd, timeout_s, stdout_policy, stderr_policy).await {
+        apply_streaming_command_env(&mut cmd);
+        match run_command_output(
+            cmd,
+            timeout_s,
+            stdout_policy,
+            stderr_policy,
+            stream_sink.clone(),
+        )
+        .await
+        {
             Ok(output) => return Ok(output),
             Err(err) if err.kind == CommandErrorKind::SpawnNotFound => {}
             Err(err) => return Err(err.detail),
@@ -1118,9 +1634,16 @@ async fn run_shell_command(
 
     let mut cmd = command_utils::build_shell_command(command, cwd);
     python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
-    run_command_output(cmd, timeout_s, stdout_policy, stderr_policy)
+    apply_streaming_command_env(&mut cmd);
+    run_command_output(cmd, timeout_s, stdout_policy, stderr_policy, stream_sink)
         .await
         .map_err(|err| err.detail)
+}
+
+fn apply_streaming_command_env(cmd: &mut Command) {
+    cmd.env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONLEGACYWINDOWSSTDIO", "utf-8");
 }
 
 async fn run_python_script(
@@ -1148,6 +1671,7 @@ async fn run_python_script(
         timeout_s as f64,
         STDOUT_CAPTURE_POLICY,
         STDERR_CAPTURE_POLICY,
+        None,
     )
     .await
     .map_err(|err| err.detail)
@@ -1158,14 +1682,29 @@ async fn run_command_output(
     timeout_s: f64,
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
+    stream_sink: Option<CommandStreamSink>,
 ) -> Result<CommandOutput, CommandError> {
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(CommandError::from_spawn)?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let stdout_task = stdout.map(|stream| tokio::spawn(read_stream_capture(stream, stdout_policy)));
-    let stderr_task = stderr.map(|stream| tokio::spawn(read_stream_capture(stream, stderr_policy)));
+    let stdout_task = stdout.map(|stream| {
+        tokio::spawn(read_stream_capture(
+            stream,
+            stdout_policy,
+            stream_sink.clone(),
+            "stdout",
+        ))
+    });
+    let stderr_task = stderr.map(|stream| {
+        tokio::spawn(read_stream_capture(
+            stream,
+            stderr_policy,
+            stream_sink.clone(),
+            "stderr",
+        ))
+    });
 
     let mut timed_out = false;
     let status = if timeout_s > 0.0 {
@@ -1222,6 +1761,8 @@ async fn join_capture_task(
 async fn read_stream_capture<R>(
     mut reader: R,
     policy: CommandOutputPolicy,
+    stream_sink: Option<CommandStreamSink>,
+    stream_name: &'static str,
 ) -> Result<CommandOutputCapture, CommandError>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -1237,6 +1778,9 @@ where
             break;
         }
         collector.push_chunk(&chunk[..read]);
+        if let Some(stream_sink) = stream_sink.as_ref() {
+            stream_sink.emit_delta(stream_name, &chunk[..read]).await;
+        }
     }
     Ok(collector.finish())
 }

@@ -128,6 +128,7 @@ export const buildCommandCardView = (input: CommandCardInput, t: Translate): Too
   return {
     command: input.command || '',
     shell: input.shell || 'bash',
+    status: '',
     terminalText: [input.stdout, input.stderr, input.preview, input.errorText].filter(Boolean).join('\n\n'),
     exitCode: input.exitCode,
     showExitCode: input.showExitCode,

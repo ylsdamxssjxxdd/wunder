@@ -117,20 +117,19 @@ impl CommandSessionSnapshot {
         map.insert("status".to_string(), json!(self.status));
         map.insert("exit_code".to_string(), json!(self.exit_code));
         map.insert("timed_out".to_string(), json!(self.timed_out));
-        if !self.pty_tail.is_empty() {
-            map.insert("pty_tail".to_string(), Value::String(self.pty_tail.clone()));
+        map.insert("stdout_bytes".to_string(), json!(self.stdout_bytes));
+        map.insert("stderr_bytes".to_string(), json!(self.stderr_bytes));
+        map.insert("pty_bytes".to_string(), json!(self.pty_bytes));
+        map.insert("ended_at".to_string(), json!(self.ended_at));
+        if let Some(error) = self.error.as_ref() {
+            map.insert("error".to_string(), Value::String(error.clone()));
         }
-        if !self.stdout_tail.is_empty() {
-            map.insert(
-                "stdout_tail".to_string(),
-                Value::String(self.stdout_tail.clone()),
-            );
-        }
-        if !self.stderr_tail.is_empty() {
-            map.insert(
-                "stderr_tail".to_string(),
-                Value::String(self.stderr_tail.clone()),
-            );
+        if let Some(ended_at) = self.ended_at {
+            let duration_ms = ended_at
+                .signed_duration_since(self.started_at)
+                .num_milliseconds()
+                .max(0);
+            map.insert("duration_ms".to_string(), json!(duration_ms));
         }
         if self.stdout_dropped_bytes > 0 {
             map.insert(
@@ -194,4 +193,57 @@ fn base_event_map(snapshot: &CommandSessionSnapshot) -> Map<String, Value> {
     map.insert("started_at".to_string(), json!(snapshot.started_at));
     map.insert("updated_at".to_string(), json!(snapshot.updated_at));
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot_with_output() -> CommandSessionSnapshot {
+        let now = Utc::now();
+        CommandSessionSnapshot {
+            command_session_id: "cmd_test".to_string(),
+            tool_call_id: Some("tool_1".to_string()),
+            user_id: "user_1".to_string(),
+            session_id: "session_1".to_string(),
+            workspace_id: "workspace_1".to_string(),
+            command_index: 0,
+            command: "run".to_string(),
+            cwd: "/workspace".to_string(),
+            shell: Some("shell".to_string()),
+            launch_mode: CommandSessionLaunchMode::Shell,
+            tty: false,
+            interactive: false,
+            status: CommandSessionStatus::Exited,
+            seq: 3,
+            started_at: now,
+            updated_at: now,
+            ended_at: Some(now),
+            exit_code: Some(0),
+            timed_out: false,
+            error: None,
+            stdout_bytes: 32,
+            stderr_bytes: 16,
+            pty_bytes: 0,
+            stdout_dropped_bytes: 8,
+            stderr_dropped_bytes: 0,
+            pty_dropped_bytes: 0,
+            stdout_tail: "stdout preview".to_string(),
+            stderr_tail: "stderr preview".to_string(),
+            pty_tail: "pty preview".to_string(),
+        }
+    }
+
+    #[test]
+    fn summary_event_payload_omits_terminal_text() {
+        let payload = snapshot_with_output().summary_event_payload();
+        let map = payload.as_object().expect("object payload");
+
+        assert!(!map.contains_key("stdout_tail"));
+        assert!(!map.contains_key("stderr_tail"));
+        assert!(!map.contains_key("pty_tail"));
+        assert_eq!(map.get("stdout_bytes"), Some(&json!(32)));
+        assert_eq!(map.get("stderr_bytes"), Some(&json!(16)));
+        assert_eq!(map.get("stdout_dropped_bytes"), Some(&json!(8)));
+    }
 }

@@ -58,6 +58,32 @@ test('subagent request stays before child reply and final assistant even when ti
   );
 });
 
+test('dispatch chat keeps user message before assistant when initial snapshot timestamps match', () => {
+  const messages = [
+    buildMessage({
+      key: 'session:sess_main:message:assistant:100:2',
+      senderName: '默认智能体',
+      mention: '用户',
+      body: '回复',
+      time: 100,
+      tone: 'mother'
+    }),
+    buildMessage({
+      key: 'session:sess_main:message:user:100:1',
+      senderName: '用户',
+      mention: '默认智能体',
+      body: '提问',
+      time: 100,
+      tone: 'user'
+    })
+  ].sort(compareMissionChatMessages);
+
+  assert.deepEqual(
+    messages.map((message) => message.key),
+    ['session:sess_main:message:user:100:1', 'session:sess_main:message:assistant:100:2']
+  );
+});
+
 test('dispatch chat keeps only the final assistant reply for each user turn', () => {
   const messages = collapseMissionChatAssistantTurns([
     buildMessage({
@@ -209,7 +235,39 @@ test('session hydration drops optimistic user message after matching remote mess
     reconciled.map((message) => message.key),
     [
       'session:sess_main:message:user:100:1',
-      'session:sess_main:message:user:102:3'
+      'user:102:1'
     ]
   );
+  assert.equal(reconciled[1]?.remoteKey, 'session:sess_main:message:user:102:3');
+});
+
+test('session hydration preserves optimistic render key when matching remote message arrives', () => {
+  const reconciled = reconcileBeeroomSessionBackedManualMessages({
+    sessionId: 'sess_main',
+    limit: 120,
+    current: [
+      buildMessage({
+        key: 'user:102:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第二问',
+        time: 102,
+        tone: 'user'
+      })
+    ],
+    incoming: [
+      buildMessage({
+        key: 'session:sess_main:message:user:102:3',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第二问',
+        time: 102,
+        tone: 'user'
+      })
+    ]
+  });
+
+  assert.equal(reconciled.length, 1);
+  assert.equal(reconciled[0]?.key, 'user:102:1');
+  assert.equal(reconciled[0]?.remoteKey, 'session:sess_main:message:user:102:3');
 });

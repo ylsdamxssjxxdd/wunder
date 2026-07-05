@@ -61,6 +61,76 @@ test('chat runtime projection renders late user sideband before its assistant tu
   );
 });
 
+test('beeroom dispatch stream events stay bound to the local optimistic turn', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const seed = 'beeroom-seed-1';
+  const clientMessageId = `local-user:${sessionId}:beeroom:${seed}`;
+  const userTurnId = `user-turn:${sessionId}:beeroom:${seed}`;
+  const modelTurnId = `model-turn:${sessionId}:beeroom:${seed}:model:1`;
+  const assistantMessageId = `local-assistant:${modelTurnId}`;
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'client_message_submitted',
+    source: 'local',
+    strict: false,
+    session_id: sessionId,
+    event_id: 'local-submit-1',
+    user_turn_id: userTurnId,
+    message_id: clientMessageId,
+    content: 'request',
+    payload: {
+      client_message_id: clientMessageId
+    }
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: sessionId,
+    event_id: 'local-assistant-1',
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId
+  });
+
+  const streamEvents = buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'tool_call',
+    eventId: 2,
+    requestId: 'dispatch-request-1',
+    phase: 'beeroom-dispatch',
+    source: 'ws',
+    clientMessageId,
+    userTurnId,
+    modelTurnId,
+    assistantMessageId,
+    payload: {
+      event_id: 2,
+      event_seq: 2,
+      user_round: 2,
+      model_round: 1,
+      tool_call_id: 'tool-call-1',
+      name: 'sample_tool'
+    }
+  });
+  streamEvents.forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const session = projection.sessions[sessionId];
+  const assistantMessages = visible.filter((message) => message.role === 'assistant');
+  assert.deepEqual(
+    visible.map((message) => message.role),
+    ['user', 'assistant']
+  );
+  assert.equal(assistantMessages.length, 1);
+  assert.equal(assistantMessages[0]?.id, assistantMessageId);
+  assert.equal(assistantMessages[0]?.userTurnId, userTurnId);
+  assert.equal(assistantMessages[0]?.modelTurnId, modelTurnId);
+  assert.equal(session.userTurnById[`user-turn:${sessionId}:round:2`], undefined);
+  assert.equal(session.messageById[`assistant-message:model-turn:${sessionId}:user:2:model:1`], undefined);
+});
+
 test('chat runtime reducer ignores duplicate final events by event id', () => {
   const projection = createChatRuntimeProjection();
 
@@ -858,6 +928,59 @@ test('tool result and final events with weak turn ids fold into the active tool 
     projection.sessions['session-1'].messages.length,
     2
   );
+});
+
+test('command session stream events bypass sequential gap buffering', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-1',
+    event_seq: 1,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1'
+  }));
+  const result = applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'workflow_event',
+    event_id: 'evt-6',
+    event_seq: 6,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    payload: {
+      source_event_type: 'command_session_delta',
+      data: {
+        command_session_id: 'cmd-1',
+        tool_call_id: 'tool-1',
+        command: 'sample',
+        stream: 'stdout',
+        delta: 'line\n',
+        seq: 1
+      }
+    }
+  }));
+
+  const session = projection.sessions['session-1'];
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(result.applied, true);
+  assert.equal(session.pendingSequentialEvents.length, 0);
+  assert.equal(session.appliedSeq, 1);
+  assert.equal(visible[0]?.workflowItems?.[0]?.commandSessionId, 'cmd-1');
+  assert.equal(visible[0]?.workflowItems?.[0]?.toolCallId, 'tool-1');
+
+  const laterNormalEvent = applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-2',
+    event_seq: 2,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1',
+    delta: 'answer'
+  }));
+  const updatedVisible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(laterNormalEvent.applied, true);
+  assert.equal(updatedVisible[0]?.content, 'answer');
 });
 
 test('chat runtime projection order follows event sequence instead of wall clock timestamps', () => {
@@ -2156,7 +2279,7 @@ test('canonical visible workflow events project retry slow-client and compaction
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
 });
 
-test('canonical command session events project without replacing command store side effects', () => {
+test('canonical command session events project into execute command workflow item', () => {
   const projection = createChatRuntimeProjection();
   const events = buildCanonicalChatRuntimeEvents({
     sessionId: 'session-1',
@@ -2176,17 +2299,117 @@ test('canonical command session events project without replacing command store s
   });
 
   assert.equal(events.length, 1);
-  assert.equal(events[0].event_type, 'workflow_event');
+  assert.equal(events[0].event_type, 'tool_call_completed');
   events.forEach((event) => applyChatRuntimeEvent(projection, event));
 
   const visible = selectVisibleMessageProjections(projection, 'session-1');
   const assistant = visible.find((message) => message.role === 'assistant');
   assert.ok(assistant);
   assert.equal(assistant.workflowItems?.length, 1);
-  assert.equal(assistant.workflowItems?.[0]?.eventType, 'command_session_summary');
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'tool_result');
   assert.equal(assistant.workflowItems?.[0]?.status, 'completed');
   assert.equal(assistant.workflowItems?.[0]?.commandSessionId, 'cmd-1');
   assert.equal(assistant.workflowItems?.[0]?.isTool, true);
+  assert.equal(assistant.workflowItems?.[0]?.toolName, 'execute_command');
+});
+
+test('canonical command session events merge with prior execute command tool call by tool call id', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'tool_call',
+    eventId: 401,
+    requestId: 'req-command-refresh',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        tool_call_id: 'tool-1',
+        tool: 'execute_command',
+        arguments: {
+          content: 'sample command',
+          timeout_s: 35
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'command_session_summary',
+    eventId: 402,
+    requestId: 'req-command-refresh',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        command_session_id: 'cmd-1',
+        tool_call_id: 'tool-1',
+        command: 'sample command',
+        status: 'completed',
+        exit_code: 0
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.toolCallId, 'tool-1');
+  assert.equal(assistant.workflowItems?.[0]?.commandSessionId, 'cmd-1');
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'tool_result');
+  assert.ok(String(assistant.workflowItems?.[0]?.toolCallRawDetail || '').includes('timeout_s'));
+});
+
+test('canonical command session summary before execute command tool call still folds by tool call id', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'command_session_summary',
+    eventId: 501,
+    requestId: 'req-command-refresh-reversed',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        command_session_id: 'cmd-1',
+        tool_call_id: 'tool-1',
+        command: 'sample command',
+        status: 'completed',
+        exit_code: 0
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'tool_call',
+    eventId: 502,
+    requestId: 'req-command-refresh-reversed',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        tool_call_id: 'tool-1',
+        tool: 'execute_command',
+        arguments: {
+          content: 'sample command',
+          timeout_s: 35
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.toolCallId, 'tool-1');
+  assert.equal(assistant.workflowItems?.[0]?.commandSessionId, 'cmd-1');
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'tool_result');
+  assert.equal(assistant.workflowItems?.[0]?.status, 'completed');
+  assert.ok(String(assistant.workflowItems?.[0]?.toolCallRawDetail || '').includes('timeout_s'));
 });
 
 test('canonical thread control event projects a workflow item', () => {

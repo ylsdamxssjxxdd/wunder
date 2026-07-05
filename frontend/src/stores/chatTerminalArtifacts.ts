@@ -5,8 +5,27 @@ import {
 } from '@/utils/subagentRuntime';
 
 const ACTIVE_WORKFLOW_ITEM_STATUS_SET = new Set(['loading', 'pending', 'running', 'streaming']);
+const TERMINAL_SETTLED_ASSISTANT_STATUS_SET = new Set([
+  'placeholder',
+  'waiting_first_output',
+  'streaming',
+  'tooling'
+]);
 
 const resolveTimestampIso = (value: number): string => new Date(value).toISOString();
+
+const settleTerminalAssistantStatus = (
+  message,
+  terminalStatus: 'final' | 'failed'
+): boolean => {
+  const status = String(message?.status || '').trim().toLowerCase();
+  if (!TERMINAL_SETTLED_ASSISTANT_STATUS_SET.has(status)) return false;
+  message.status = terminalStatus;
+  message.final = terminalStatus === 'final';
+  message.failed = terminalStatus === 'failed' ? true : Boolean(message.failed);
+  message.cancelled = false;
+  return true;
+};
 
 export const settleTerminalAssistantArtifacts = (
   messages,
@@ -21,6 +40,9 @@ export const settleTerminalAssistantArtifacts = (
 
   messages.forEach((message) => {
     if (!message || message.role !== 'assistant') return;
+    if (settleTerminalAssistantStatus(message, options.failed === true ? 'failed' : 'final')) {
+      changed = true;
+    }
     if (stopPendingAssistantMessage(message)) {
       changed = true;
     }

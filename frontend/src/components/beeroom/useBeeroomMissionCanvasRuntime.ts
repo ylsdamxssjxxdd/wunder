@@ -108,6 +108,13 @@ type DispatchSessionAssistantIdentity = {
   tone: MissionChatMessage['tone'];
 };
 
+type DispatchStreamTurnBinding = {
+  clientMessageId?: string | null;
+  userTurnId?: string | null;
+  modelTurnId?: string | null;
+  assistantMessageId?: string | null;
+};
+
 type DispatchMessageRefreshRequest = {
   reason: string;
   sessionId: string;
@@ -1122,6 +1129,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         !leftItem ||
         !rightItem ||
         leftItem.key !== rightItem.key ||
+        String(leftItem.remoteKey || '').trim() !== String(rightItem.remoteKey || '').trim() ||
         leftItem.time !== rightItem.time ||
         leftItem.tone !== rightItem.tone ||
         leftItem.senderName !== rightItem.senderName ||
@@ -1140,11 +1148,17 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
   const hasSessionScopedMessageFor = (messages: MissionChatMessage[], sessionId: string) => {
     const prefix = `session:${String(sessionId || '').trim()}:`;
-    return messages.some((message) => String(message?.key || '').startsWith(prefix));
+    return messages.some((message) =>
+      String(message?.key || '').startsWith(prefix) ||
+      String(message?.remoteKey || '').startsWith(prefix)
+    );
   };
 
   const hasAnySessionScopedMessage = (messages: MissionChatMessage[]) =>
-    messages.some((message) => String(message?.key || '').startsWith('session:'));
+    messages.some((message) =>
+      String(message?.key || '').startsWith('session:') ||
+      String(message?.remoteKey || '').startsWith('session:')
+    );
 
   const resolveVisibleChatFreshness = (messages: MissionChatMessage[]) => {
     let lastTime = 0;
@@ -1158,7 +1172,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       if (message?.tone !== 'user' && Number.isFinite(time) && time > lastAssistantTime) {
         lastAssistantTime = time;
       }
-      if (String(message?.key || '').startsWith('session:')) {
+      if (
+        String(message?.key || '').startsWith('session:') ||
+        String(message?.remoteKey || '').startsWith('session:')
+      ) {
         sessionScopedCount += 1;
       }
     });
@@ -1212,7 +1229,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const resolveSessionScopedAssistantMessages = (messages: MissionChatMessage[], sessionId: string) => {
     const prefix = `session:${String(sessionId || '').trim()}:`;
     return messages.filter(
-      (message) => message?.tone !== 'user' && String(message?.key || '').startsWith(prefix)
+      (message) =>
+        message?.tone !== 'user' &&
+        (
+          String(message?.key || '').startsWith(prefix) ||
+          String(message?.remoteKey || '').startsWith(prefix)
+        )
     );
   };
 
@@ -2376,7 +2398,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     mode: 'send' | 'resume',
     sessionId: string,
     payload: { content?: string; afterEventId?: number } = {},
-    streamOptions: { onAccepted?: () => void } = {}
+    streamOptions: { onAccepted?: () => void; turnBinding?: DispatchStreamTurnBinding } = {}
   ) => {
     let finalPayload: Record<string, any> | null = null;
     let streamError = '';
@@ -2397,7 +2419,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       sessionId,
       requestId,
       afterEventId: Number(payload.afterEventId || 0),
-      contentPreview: clipDebugText(payload.content)
+      contentPreview: clipDebugText(payload.content),
+      boundClientMessageId: String(streamOptions.turnBinding?.clientMessageId || '').trim(),
+      boundUserTurnId: String(streamOptions.turnBinding?.userTurnId || '').trim(),
+      boundModelTurnId: String(streamOptions.turnBinding?.modelTurnId || '').trim()
     });
     const onEvent = (eventType: string, dataText: string, eventId: string) => {
       updateDispatchLastEventId(eventId);
@@ -2424,6 +2449,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         {
           requestId: dispatchRequestId.value || requestId,
           phase: 'beeroom-dispatch',
+          clientMessageId: streamOptions.turnBinding?.clientMessageId,
+          userTurnId: streamOptions.turnBinding?.userTurnId,
+          modelTurnId: streamOptions.turnBinding?.modelTurnId,
+          assistantMessageId: streamOptions.turnBinding?.assistantMessageId,
           sideEffects: true
         }
       );
@@ -2514,6 +2543,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
             : {
                 content: String(payload.content || ''),
                 stream: true,
+                ...(streamOptions.turnBinding?.clientMessageId
+                  ? { client_message_id: streamOptions.turnBinding.clientMessageId }
+                  : {}),
                 orchestration_source: 'beeroom_orchestration'
               }
       },
@@ -2649,6 +2681,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       const localUserTurnId = `user-turn:${sessionId}:beeroom:${localTurnSeed}`;
       const localModelTurnId = `model-turn:${sessionId}:beeroom:${localTurnSeed}:model:1`;
       const clientMessageId = `local-user:${sessionId}:beeroom:${localTurnSeed}`;
+      const assistantMessageId = `local-assistant:${localModelTurnId}`;
       applyCanonicalClientMessageSubmittedRuntimeEvent(chatStore, {
         sessionId,
         content: visibleBody,
@@ -2656,7 +2689,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         createdAt: new Date((localUserMessage?.time || now) * 1000).toISOString(),
         userTurnId: localUserTurnId,
         modelTurnId: localModelTurnId,
-        assistantMessageId: `local-assistant:${localModelTurnId}`
+        assistantMessageId
       });
       syncDispatchSessionToChatStore(
         {
@@ -2684,6 +2717,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         sessionId,
         { content: dispatchBody },
         {
+          turnBinding: {
+            clientMessageId,
+            userTurnId: localUserTurnId,
+            modelTurnId: localModelTurnId,
+            assistantMessageId
+          },
           onAccepted: () => {
             if (!localUserAccepted && localUserMessage) {
               appendManualChatMessage(localUserMessage);
@@ -2714,6 +2753,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         sessionId,
         targetAgentId: target.agentId,
         replyPreview: clipDebugText(replyText)
+      });
+      emitAgentRuntimeRefresh({
+        agentIds: [target.agentId]
       });
       result = {
         status: 'completed'
@@ -2839,6 +2881,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         sessionId,
         replyPreview: clipDebugText(replyText)
       });
+      if (dispatchTargetAgentId.value) {
+        emitAgentRuntimeRefresh({
+          agentIds: [dispatchTargetAgentId.value]
+        });
+      }
     } catch (error: any) {
       if (error?.name === 'AbortError' || dispatchStopRequested) {
         dispatchRuntimeStatus.value = 'stopped';
@@ -2922,7 +2969,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   );
   const sessionOnlyChatMessages = computed(() =>
     allRenderableChatMessages.value.filter((message) =>
-      String(message?.key || '').startsWith('session:')
+      String(message?.key || '').startsWith('session:') ||
+      String(message?.remoteKey || '').startsWith('session:')
     )
   );
 

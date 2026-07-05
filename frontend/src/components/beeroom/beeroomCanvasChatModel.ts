@@ -1,5 +1,6 @@
 export type MissionChatMessage = {
   key: string;
+  remoteKey?: string;
   senderName: string;
   senderAgentId: string;
   avatarImageUrl?: string;
@@ -20,8 +21,15 @@ const normalizeSortOrder = (value: unknown): number => {
   return Number.isFinite(normalized) ? normalized : 0;
 };
 
+const resolveToneSortOrder = (message: MissionChatMessage): number => {
+  if (message.tone === 'user') return -1;
+  if (message.tone === 'system') return 2;
+  return 0;
+};
+
 export const compareMissionChatMessages = (left: MissionChatMessage, right: MissionChatMessage) =>
   left.time - right.time ||
+  resolveToneSortOrder(left) - resolveToneSortOrder(right) ||
   normalizeSortOrder(left.sortOrder) - normalizeSortOrder(right.sortOrder) ||
   left.key.localeCompare(right.key);
 

@@ -1,51 +1,40 @@
 <template>
   <div class="tool-workflow-command-card">
     <div
-      v-if="view.exitCode !== null && view.showExitCode !== false"
+      v-if="(view.exitCode !== null && view.showExitCode !== false) || view.metrics?.length"
       class="tool-workflow-command-head"
     >
-      <span class="tool-workflow-command-exit">
+      <span v-if="view.exitCode !== null && view.showExitCode !== false" class="tool-workflow-command-exit">
         exit {{ view.exitCode }}
+      </span>
+      <span v-else class="tool-workflow-command-exit">{{ statusLabel }}</span>
+      <span v-if="view.metrics?.length" class="tool-workflow-command-meta">
+        {{ formatMetrics(view.metrics) }}
       </span>
     </div>
 
-    <div v-if="view.metrics?.length" class="tool-workflow-command-metrics">
-      <div
-        v-for="metric in view.metrics"
-        :key="metric.key"
-        :class="['tool-workflow-command-metric', metric.tone ? `is-${metric.tone}` : '']"
-      >
-        <span class="tool-workflow-command-metric-label">{{ metric.label }}</span>
-        <span class="tool-workflow-command-metric-value">{{ metric.value }}</span>
+    <div v-if="view.terminalText || view.streams?.length" class="tool-workflow-command-terminal">
+      <div class="tool-workflow-command-terminal-head">
+        <span class="tool-workflow-command-dot"></span>
+        <span class="tool-workflow-command-dot"></span>
+        <span class="tool-workflow-command-dot"></span>
       </div>
-    </div>
-
-    <pre v-if="view.command" class="tool-workflow-command-line">{{ view.command }}</pre>
-
-    <div v-if="view.streams?.length" class="tool-workflow-command-streams">
-      <section
-        v-for="stream in view.streams"
-        :key="stream.key"
-        :class="['tool-workflow-command-stream', stream.tone ? `is-${stream.tone}` : '']"
-      >
-        <header class="tool-workflow-command-stream-head">
-          <span class="tool-workflow-command-stream-label">{{ stream.label }}</span>
-        </header>
-        <pre
-          class="tool-workflow-command-stream-body"
-          :ref="(el) => bindStreamRef(stream.key, el)"
-          @scroll="(event) => onStreamBodyScroll?.(resolveStreamName(stream.key), event)"
-        >{{ stream.body }}</pre>
-      </section>
-    </div>
-
-    <section v-else-if="view.terminalText" class="tool-workflow-command-stream">
       <pre
+        v-if="view.terminalText"
         class="tool-workflow-command-stream-body"
         :ref="(el) => bindStreamRef('stdout', el)"
         @scroll="(event) => onStreamBodyScroll?.('stdout', event)"
       >{{ view.terminalText }}</pre>
-    </section>
+      <template v-else>
+        <pre
+          v-for="stream in terminalFallbackStreams"
+          :key="stream.key"
+          :class="['tool-workflow-command-stream-body', stream.tone ? `is-${stream.tone}` : '']"
+          :ref="(el) => bindStreamRef(stream.key, el)"
+          @scroll="(event) => onStreamBodyScroll?.(resolveStreamName(stream.key), event)"
+        ><span v-if="terminalFallbackStreams.length > 1" class="tool-workflow-command-stream-prefix">[{{ stream.label }}]</span>{{ stream.body }}</pre>
+      </template>
+    </div>
 
     <section v-if="view.previewBody" class="tool-workflow-command-preview">
       <header class="tool-workflow-command-stream-head">
@@ -57,6 +46,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
 
 import type { ToolWorkflowCommandView } from './toolWorkflowTypes';
@@ -69,8 +59,24 @@ const props = defineProps<{
   onStreamBodyScroll?: (stream: CommandStreamName, event: Event) => void;
 }>();
 
+const statusLabel = computed(() => {
+  const status = String(props.view.status || '').trim().toLowerCase();
+  if (status === 'failed') return 'failed';
+  if (status === 'completed') return 'done';
+  return 'running';
+});
+
+const terminalFallbackStreams = computed(() => props.view.streams || []);
+
 function resolveStreamName(key: string): CommandStreamName {
   return key.includes('stderr') ? 'stderr' : 'stdout';
+}
+
+function formatMetrics(metrics: ToolWorkflowCommandView['metrics']): string {
+  return (metrics || [])
+    .map((metric) => `${metric.label} ${metric.value}`.trim())
+    .filter(Boolean)
+    .join(' | ');
 }
 
 function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null): void {
@@ -82,53 +88,7 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
 .tool-workflow-command-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.tool-workflow-command-metrics {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
-}
-
-.tool-workflow-command-metric {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(15, 23, 42, 0.16);
-}
-
-.tool-workflow-command-metric.is-success {
-  border-color: rgba(74, 222, 128, 0.24);
-  background: rgba(22, 163, 74, 0.1);
-}
-
-.tool-workflow-command-metric.is-warning {
-  border-color: rgba(251, 191, 36, 0.24);
-  background: rgba(217, 119, 6, 0.1);
-}
-
-.tool-workflow-command-metric.is-danger {
-  border-color: rgba(248, 113, 113, 0.24);
-  background: rgba(127, 29, 29, 0.18);
-}
-
-.tool-workflow-command-metric-label,
-.tool-workflow-command-metric-value {
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.tool-workflow-command-metric-label {
-  color: var(--workflow-term-muted);
-  font-weight: 600;
-}
-
-.tool-workflow-command-metric-value {
-  color: var(--workflow-term-text);
 }
 
 .tool-workflow-command-head {
@@ -136,49 +96,67 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
-.tool-workflow-command-exit {
+.tool-workflow-command-exit,
+.tool-workflow-command-meta {
   color: var(--workflow-term-muted);
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
 }
 
-.tool-workflow-command-line {
-  margin: 0;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--workflow-term-text);
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
+.tool-workflow-command-exit {
+  flex: 0 0 auto;
 }
 
-.tool-workflow-command-streams,
+.tool-workflow-command-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tool-workflow-command-preview {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.tool-workflow-command-stream {
+.tool-workflow-command-terminal {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  min-height: 96px;
+  max-height: 220px;
   border: 1px solid var(--workflow-term-border);
-  border-radius: 10px;
-  background: var(--workflow-term-bg-soft);
-  padding: 10px;
+  border-radius: 8px;
+  background: rgba(3, 7, 18, 0.72);
+  overflow: hidden;
 }
 
-.tool-workflow-command-stream.is-danger {
-  border-color: rgba(248, 113, 113, 0.24);
+.tool-workflow-command-terminal-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.tool-workflow-command-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.58);
+}
+
+.tool-workflow-command-stream-prefix {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--workflow-term-muted);
 }
 
 .tool-workflow-command-stream-head {
@@ -197,8 +175,10 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
 
 .tool-workflow-command-stream-body {
   margin: 0;
-  max-height: 260px;
-  overflow: auto;
+  max-height: 196px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
   color: var(--workflow-term-code);
   font-size: 12px;
   line-height: 1.5;
@@ -207,6 +187,14 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
   scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
+}
+
+.tool-workflow-command-stream-body + .tool-workflow-command-stream-body {
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.tool-workflow-command-stream-body.is-danger {
+  color: #fecaca;
 }
 
 .tool-workflow-command-stream-body::-webkit-scrollbar {
@@ -223,3 +211,4 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
   border-radius: 999px;
 }
 </style>
+

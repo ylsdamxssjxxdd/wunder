@@ -162,6 +162,7 @@ test('cached session message readers use projection materialization for secondar
   const beeroomCanvas = readSource('src/components/beeroom/BeeroomMissionCanvas.vue');
   const swarmCanvasModel = readSource('src/components/beeroom/canvas/swarmCanvasModel.ts');
   const sharedHelpers = readSource('src/views/messenger/controller/messengerControllerSharedHelpers.ts');
+  const runtimeToolLists = readSource('src/views/messenger/controller/messengerControllerRuntimeToolLists.ts');
 
   const cacheHelperStart = cacheActions.indexOf('getCachedSessionMessages(sessionId)');
   assert.ok(cacheHelperStart >= 0);
@@ -246,6 +247,9 @@ test('cached session message readers use projection materialization for secondar
   assert.ok(beeroomRuntime.includes('Number(chatStore.runtimeProjectionVersion || 0)'));
   assert.ok(beeroomRuntime.includes("scheduleDispatchMessageRefresh('runtime-projection', {"));
   assert.ok(beeroomRuntime.includes('hydrate: false,'));
+  assert.ok(runtimeToolLists.includes('ctx.resolveEffectiveSessionBusy(sessionId)'));
+  assert.ok(!runtimeToolLists.includes('!sessionId || !ctx.isSessionBusy(sessionId)'));
+  assert.ok(beeroomRuntime.includes('emitAgentRuntimeRefresh({'));
 
   const activityStart = sharedHelpers.indexOf('ctx.resolveSessionActivityTimestamp = function resolveSessionActivityTimestamp');
   assert.ok(activityStart >= 0);

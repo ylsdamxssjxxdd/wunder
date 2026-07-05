@@ -295,6 +295,58 @@ test('tool workflow run model accepts mixed legacy workflow field names during l
   assert.equal(rows[0]?.resultItem?.event, 'tool_result');
 });
 
+test('tool workflow run model merges refreshed command session events with the original tool call', () => {
+  const commandArgs = {
+    tool: 'execute_command',
+    arguments: {
+      content: 'sample command',
+      timeout_s: 35
+    }
+  };
+  const rows = buildWorkflowToolRuns([
+    {
+      id: 'tool-call-1',
+      eventType: 'tool_call',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      status: 'loading',
+      detail: JSON.stringify(commandArgs)
+    },
+    {
+      id: 'cmd-start-1',
+      eventType: 'command_session_start',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      commandSessionId: 'cmd-1',
+      status: 'loading',
+      detail: JSON.stringify({
+        command_session_id: 'cmd-1',
+        tool_call_id: 'tool-1',
+        command: 'sample command'
+      })
+    },
+    {
+      id: 'cmd-summary-1',
+      eventType: 'command_session_summary',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      commandSessionId: 'cmd-1',
+      status: 'completed',
+      detail: JSON.stringify({
+        command_session_id: 'cmd-1',
+        tool_call_id: 'tool-1',
+        command: 'sample command',
+        exit_code: 0
+      })
+    }
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.callItem?.eventType, 'tool_call');
+  assert.equal(rows[0]?.resultItem?.eventType, 'command_session_summary');
+  assert.equal(rows[0]?.callItem?.detail, JSON.stringify(commandArgs));
+});
+
 test('workflow pending placeholder detects command session activity before tool rows are formed', () => {
   const items = [
     {
@@ -304,7 +356,7 @@ test('workflow pending placeholder detects command session activity before tool 
       status: 'loading'
     }
   ];
-  assert.equal(buildWorkflowToolRuns(items).length, 0);
+  assert.equal(buildWorkflowToolRuns(items).length, 1);
   assert.deepEqual(resolveWorkflowPendingPlaceholder(items), {
     kind: 'tool',
     toolName: 'execute_command',

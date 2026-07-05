@@ -343,6 +343,28 @@ test('interactive projection-only stream keeps side-effect-heavy events on canon
   assert.equal('shouldUseLegacyWatchStreamFallback' in projectionOnlyModule, false);
 });
 
+test('command session store resolves live sessions by tool call id', () => {
+  ensureBrowserStorageMocks();
+  setActivePinia(createPinia());
+  const store = useCommandSessionStore();
+
+  store.upsertSnapshot('session-1', {
+    command_session_id: 'cmd-1',
+    tool_call_id: 'tool-1',
+    session_id: 'session-1',
+    command: 'sample',
+    status: 'running'
+  });
+  store.appendDelta('session-1', 'cmd-1', 'stdout', 'line\n', {
+    tool_call_id: 'tool-1',
+    seq: 1
+  });
+
+  const entry = store.getByToolCallId('tool-1');
+  assert.equal(entry?.commandSessionId, 'cmd-1');
+  assert.equal(entry?.stdoutTail, 'line\n');
+});
+
 test('channel messages no longer enter realtime legacy sideband writers', () => {
   const watchSource = readFileSync(resolve(process.cwd(), 'src/stores/chatWatcher.ts'), 'utf8');
   const resumeSource = readFileSync(resolve(process.cwd(), 'src/stores/chatStopResumeActions.ts'), 'utf8');
@@ -402,7 +424,7 @@ test('canonical projection-only side effects preserve command session output sto
   applyCanonicalStreamRuntimeEvent(
     store,
     'session-1',
-    'tool_output_delta',
+    'command_session_delta',
     {
       data: {
         command_session_id: 'cmd-1',
@@ -420,6 +442,35 @@ test('canonical projection-only side effects preserve command session output sto
   assert.equal(entry.command, 'run');
   assert.equal(entry.stdoutTail, 'chunk');
   assert.equal(entry.stdoutBytes, 5);
+});
+
+test('command session store keeps bounded head and tail output preview', () => {
+  setActivePinia(createPinia());
+  const commandSessions = useCommandSessionStore();
+
+  commandSessions.appendDelta('session-1', 'cmd-long', 'stdout', 'a'.repeat(10000));
+  commandSessions.appendDelta('session-1', 'cmd-long', 'stdout', 'b'.repeat(10000));
+  commandSessions.appendDelta('session-1', 'cmd-long', 'stdout', 'z'.repeat(10000));
+
+  const entry = commandSessions.entries['cmd-long'];
+  assert.ok(entry);
+  assert.equal(entry.stdoutBytes, 30000);
+  assert.ok(entry.stdoutTail.startsWith('a'.repeat(100)));
+  assert.ok(entry.stdoutTail.includes('truncated command output'));
+  assert.ok(entry.stdoutTail.includes('omitted 6000 chars'));
+  assert.ok(entry.stdoutTail.endsWith('z'.repeat(100)));
+
+  commandSessions.upsertSnapshot('session-1', {
+    command_session_id: 'cmd-long',
+    session_id: 'session-1',
+    status: 'exited',
+    seq: 99,
+    stdout_bytes: 30000
+  });
+
+  const completed = commandSessions.entries['cmd-long'];
+  assert.equal(completed.status, 'exited');
+  assert.equal(completed.stdoutTail, entry.stdoutTail);
 });
 
 test('canonical projection-only side effects preserve collaboration refresh semantics', async () => {

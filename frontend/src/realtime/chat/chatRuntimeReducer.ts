@@ -94,6 +94,10 @@ const COMMAND_SESSION_WORKFLOW_EVENT_TYPES = new Set([
   'command_session_summary',
   'command_session_delta'
 ]);
+const COMMAND_SESSION_TERMINAL_EVENT_TYPES = new Set([
+  'command_session_exit',
+  'command_session_summary'
+]);
 const QUESTION_PANEL_WORKFLOW_EVENT_TYPES = new Set(['question_panel']);
 const PLAN_WORKFLOW_EVENT_TYPES = new Set(['plan_update']);
 const COMPACTION_PROGRESS_STAGES = new Set([
@@ -110,6 +114,21 @@ const SUCCESS_WORKFLOW_STATUSES = new Set([
   'success',
   'succeeded'
 ]);
+
+const isCommandSessionRuntimeEvent = (event: { payload?: Record<string, unknown> | null }): boolean => {
+  const payload = asRecord(event.payload);
+  const sourceType = normalizeText(payload.source_event_type);
+  if (COMMAND_SESSION_WORKFLOW_EVENT_TYPES.has(sourceType)) return true;
+  const data = asRecord(payload.data);
+  return Boolean(
+    firstText(
+      data.command_session_id,
+      data.commandSessionId,
+      payload.command_session_id,
+      payload.commandSessionId
+    )
+  );
+};
 
 export const createChatRuntimeProjection = (): ChatRuntimeProjection => ({
   activeSessionId: null,
@@ -189,6 +208,7 @@ export const applyChatRuntimeEvent = (
   ensureRuntimeSessionCollections(session);
   const beforeSummary = summarizeSession(session);
   const duplicateEventId = event.eventId && session.eventIdIndex[event.eventId];
+  const commandSessionRuntimeEvent = isCommandSessionRuntimeEvent(event);
 
   if (duplicateEventId) {
     appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
@@ -202,7 +222,11 @@ export const applyChatRuntimeEvent = (
     };
   }
 
-  if (event.eventSeq !== null && event.eventSeq <= session.appliedSeq) {
+  if (
+    !commandSessionRuntimeEvent &&
+    event.eventSeq !== null &&
+    event.eventSeq <= session.appliedSeq
+  ) {
     removePendingSequentialEvent(session, event);
     appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
     return {
@@ -293,7 +317,11 @@ const applyNormalizedRuntimeEvent = (
       session.eventIdIndex[event.eventId] = true;
     }
     markAppliedStreamEventId(session, event.eventId);
-    if (event.eventSeq !== null && event.eventSeq > session.appliedSeq) {
+    if (
+      !isCommandSessionRuntimeEvent(event) &&
+      event.eventSeq !== null &&
+      event.eventSeq > session.appliedSeq
+    ) {
       session.appliedSeq = event.eventSeq;
     }
     return;
@@ -383,7 +411,11 @@ const applyNormalizedRuntimeEvent = (
     pruneLocalTerminalArtifactsForAuthoritativeEvent(session, event);
   }
 
-  if (event.eventSeq !== null && event.eventSeq > session.appliedSeq) {
+  if (
+    !isCommandSessionRuntimeEvent(event) &&
+    event.eventSeq !== null &&
+    event.eventSeq > session.appliedSeq
+  ) {
     session.appliedSeq = event.eventSeq;
   }
   deriveSessionRuntime(session);
@@ -420,6 +452,7 @@ const shouldBufferSequentialEvent = (
   event: NormalizedRuntimeEvent
 ): boolean => {
   if (!event.strict || event.eventSeq === null) return false;
+  if (isCommandSessionRuntimeEvent(event)) return false;
   if (event.source === 'legacy' || event.source === 'snapshot') return false;
   if (session.appliedSeq <= 0) return false;
   return event.eventSeq > session.appliedSeq + 1;
@@ -2948,6 +2981,7 @@ const upsertToolWorkflowItem = (
   const payload = event.payload;
   const data = asRecord(payload.data);
   const eventType = resolveProjectedWorkflowEventType(event, status);
+  const sourceType = normalizeText(event.payload.source_event_type);
   const toolName = firstText(
     data.tool,
     data.name,
@@ -2956,7 +2990,8 @@ const upsertToolWorkflowItem = (
     payload.tool,
     payload.name,
     payload.tool_name,
-    payload.toolName
+    payload.toolName,
+    COMMAND_SESSION_WORKFLOW_EVENT_TYPES.has(sourceType) ? 'execute_command' : ''
   );
   const toolDisplayName = firstText(
     data.tool_display_name,
@@ -2988,7 +3023,10 @@ const upsertToolWorkflowItem = (
     payload.function_name,
     payload.functionName
   );
-  const toolCallId = resolveToolWorkflowRef(event, payload, data);
+  const isCommandSessionEvent = COMMAND_SESSION_WORKFLOW_EVENT_TYPES.has(sourceType);
+  const toolCallId = isCommandSessionEvent
+    ? resolveExplicitToolWorkflowRef(payload, data)
+    : resolveToolWorkflowRef(event, payload, data);
   const commandSessionId = firstText(
     data.command_session_id,
     data.commandSessionId,
@@ -3001,21 +3039,44 @@ const upsertToolWorkflowItem = (
     payload.approval_id,
     payload.approvalId
   );
-  const itemId = resolveProjectedWorkflowItemId(event, eventType, toolCallId, commandSessionId, approvalId);
+  const itemId = resolveProjectedWorkflowItemId(
+    event,
+    eventType,
+    toolCallId,
+    commandSessionId,
+    approvalId,
+    isCommandSessionEvent
+  );
   const workflowRef = eventType === 'approval_request' || eventType === 'approval_result'
     ? approvalId || toolCallId
-    : toolCallId;
-  const existing = findProjectedWorkflowItem(items, itemId, workflowRef, commandSessionId, approvalId);
+    : isCommandSessionEvent
+      ? toolCallId || commandSessionId
+      : commandSessionId || toolCallId;
+  const existing = findProjectedWorkflowItem(
+    items,
+    itemId,
+    workflowRef,
+    isCommandSessionEvent && toolCallId ? '' : commandSessionId,
+    approvalId
+  );
   const detailSource = Object.keys(data).length > 0 ? data : payload;
   const title = resolveProjectedWorkflowTitle(eventType, toolName);
+  const existingEventType = normalizeText(existing?.eventType ?? existing?.event ?? existing?.event_type);
+  const keepExistingTerminalResult =
+    Boolean(existing) &&
+    eventType === 'tool_call' &&
+    existingEventType === 'tool_result' &&
+    SUCCESS_WORKFLOW_STATUSES.has(normalizeText(existing?.status));
   const next: ChatRuntimeWorkflowItemProjection = {
     ...(existing || {}),
     id: itemId,
-    title,
-    detail: stringifyWorkflowDetail(detailSource),
-    status,
+    title: keepExistingTerminalResult ? firstText(existing?.title, title) : title,
+    detail: keepExistingTerminalResult
+      ? firstText(existing?.detail, stringifyWorkflowDetail(detailSource))
+      : stringifyWorkflowDetail(detailSource),
+    status: keepExistingTerminalResult ? firstText(existing?.status, status) : status,
     isTool: true,
-    eventType,
+    eventType: keepExistingTerminalResult ? existingEventType : eventType,
     sourceEventType: event.type,
     updatedSeq: event.eventSeq ?? message.updatedSeq
   };
@@ -4445,11 +4506,14 @@ const resolveProjectedWorkflowItemId = (
   eventType: string,
   toolCallId: string,
   commandSessionId: string,
-  approvalId: string
+  approvalId: string,
+  isCommandSessionEvent = false
 ): string => {
   const ref = eventType === 'approval_request' || eventType === 'approval_result'
     ? approvalId || toolCallId || commandSessionId
-    : toolCallId || commandSessionId || approvalId;
+    : isCommandSessionEvent
+      ? toolCallId || commandSessionId || approvalId
+      : commandSessionId || toolCallId || approvalId;
   if (ref) return `runtime-workflow:${event.modelTurnId || event.messageId}:${ref}`;
   if (event.eventId) return `runtime-workflow:${event.modelTurnId || event.messageId}:event:${event.eventId}`;
   return `runtime-workflow:${event.modelTurnId || event.messageId}:${eventType}:${event.eventSeq ?? 'local'}`;
@@ -4460,6 +4524,11 @@ const resolveProjectedWorkflowEventType = (
   status: 'loading' | 'completed' | 'failed'
 ): string => {
   const sourceType = normalizeText(event.payload.source_event_type);
+  if (COMMAND_SESSION_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    return COMMAND_SESSION_TERMINAL_EVENT_TYPES.has(sourceType) || status !== 'loading'
+      ? 'tool_result'
+      : 'tool_output_delta';
+  }
   if (
     status === 'loading' &&
     (

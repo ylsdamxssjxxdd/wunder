@@ -7,6 +7,9 @@ type CanonicalBuildOptions = {
   eventId?: string | number | null;
   requestId?: string | null;
   clientMessageId?: string | null;
+  userTurnId?: string | null;
+  modelTurnId?: string | null;
+  assistantMessageId?: string | null;
   phase?: string | null;
   source?: string | null;
 };
@@ -24,6 +27,13 @@ const TERMINAL_FAILED_STATUSES = new Set([
 const TERMINAL_CANCELLED_STATUSES = new Set(['cancelled', 'canceled', 'aborted']);
 
 const WORKFLOW_EVENT_PREFIXES = ['subagent_', 'team_'];
+const COMMAND_SESSION_EVENT_TYPES = new Set([
+  'command_session_delta',
+  'command_session_start',
+  'command_session_status',
+  'command_session_exit',
+  'command_session_summary'
+]);
 const GENERIC_WORKFLOW_EVENT_TYPES = new Set([
   'progress',
   'llm_request',
@@ -32,11 +42,6 @@ const GENERIC_WORKFLOW_EVENT_TYPES = new Set([
   'thread_control',
   'plan_update',
   'question_panel',
-  'command_session_delta',
-  'command_session_start',
-  'command_session_status',
-  'command_session_exit',
-  'command_session_summary',
   'slow_client',
   'compaction',
   'compaction_progress',
@@ -189,7 +194,8 @@ const resolveMessageId = (
   data: Record<string, unknown>,
   modelTurnId: string,
   userTurnId: string,
-  clientMessageId: string
+  clientMessageId: string,
+  assistantMessageId = ''
 ): string => {
   if (role === 'user') {
     return firstId(
@@ -206,6 +212,7 @@ const resolveMessageId = (
     data.messageId,
     payload.message_id,
     payload.messageId,
+    assistantMessageId,
     data.assistant_message_id,
     data.assistantMessageId,
     payload.assistant_message_id,
@@ -268,8 +275,15 @@ const buildBaseEvent = (
     payload.client_message_id,
     payload.clientMessageId
   );
-  const userTurnId = resolveUserTurnId(sessionId, payload, data, requestId, userRound, clientMessageId);
-  const modelTurnId = resolveModelTurnId(sessionId, payload, data, requestId, userRound, modelRound, userTurnId);
+  const userTurnId = firstId(
+    options.userTurnId,
+    resolveUserTurnId(sessionId, payload, data, requestId, userRound, clientMessageId)
+  );
+  const modelTurnId = firstId(
+    options.modelTurnId,
+    resolveModelTurnId(sessionId, payload, data, requestId, userRound, modelRound, userTurnId)
+  );
+  const assistantMessageIdHint = firstId(options.assistantMessageId);
   const assistantMessageId = resolveMessageId(
     sessionId,
     'assistant',
@@ -277,7 +291,8 @@ const buildBaseEvent = (
     data,
     modelTurnId,
     userTurnId,
-    clientMessageId
+    clientMessageId,
+    assistantMessageIdHint
   );
   const needsAssistantMessage =
     runtimeType.startsWith('assistant_') ||
@@ -309,6 +324,10 @@ const buildBaseEvent = (
       ...payload,
       data,
       request_id: requestId,
+      client_message_id: clientMessageId || undefined,
+      user_turn_id: userTurnId || undefined,
+      model_turn_id: modelTurnId || undefined,
+      assistant_message_id: assistantMessageId || undefined,
       source_event_type: options.eventType,
       source_phase: options.phase || undefined
     },
@@ -540,6 +559,19 @@ export const buildCanonicalChatRuntimeEvents = (
   }
 
   if (eventType === 'tool_call_delta' || eventType === 'tool_output' || eventType === 'tool_output_delta') {
+    return [buildBaseEvent(options, 'tool_call_delta')];
+  }
+
+  if (COMMAND_SESSION_EVENT_TYPES.has(eventType)) {
+    const exitCode = Number(data.exit_code ?? data.exitCode ?? payload.exit_code ?? payload.exitCode);
+    const failed =
+      data.success === false ||
+      payload.success === false ||
+      (Number.isFinite(exitCode) && exitCode !== 0) ||
+      TERMINAL_FAILED_STATUSES.has(normalizeEventType(data.status ?? payload.status));
+    if (eventType === 'command_session_exit' || eventType === 'command_session_summary') {
+      return [buildBaseEvent(options, failed ? 'tool_call_failed' : 'tool_call_completed')];
+    }
     return [buildBaseEvent(options, 'tool_call_delta')];
   }
 

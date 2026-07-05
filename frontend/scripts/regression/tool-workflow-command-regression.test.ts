@@ -167,3 +167,45 @@ test('command tool call debug text reads saved model call from result-only row',
   assert.ok(debugText.includes('rm'));
   assert.ok(!debugText.includes('model_observation'));
 });
+
+test('command tool call debug text preserves timeout from raw call detail on merged runtime item', () => {
+  const original = JSON.stringify(
+    {
+      tool: 'execute_command',
+      arguments: {
+        content: 'sample command',
+        timeout_s: 35
+      }
+    },
+    null,
+    2
+  );
+  const debugText = buildWorkflowToolCallDebugText({
+    key: 'tool-4',
+    toolName: 'execute_command',
+    toolDisplayName: 'execute_command',
+    toolRuntimeName: 'execute_command',
+    toolFunctionName: 'execute_command',
+    callItem: {
+      id: 'tool-4',
+      eventType: 'tool_call',
+      toolName: 'execute_command',
+      toolCallId: 'tool-4',
+      commandSessionId: 'cmd-4',
+      toolCallRawDetail: original,
+      detail: JSON.stringify({
+        command_session_id: 'cmd-4',
+        tool_call_id: 'tool-4',
+        command: 'sample command',
+        status: 'completed',
+        exit_code: 0
+      })
+    },
+    outputItem: null,
+    resultItem: null
+  });
+
+  assert.equal(debugText, original);
+  assert.ok(debugText.includes('"timeout_s": 35'));
+  assert.ok(!debugText.includes('command_session_id'));
+});

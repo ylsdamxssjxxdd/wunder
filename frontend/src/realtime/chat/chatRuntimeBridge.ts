@@ -10,6 +10,10 @@ type BuildStreamRuntimeEventsOptions = {
   payload?: Record<string, unknown> | null;
   eventId?: string | number | null;
   requestId?: string | null;
+  clientMessageId?: string | null;
+  userTurnId?: string | null;
+  modelTurnId?: string | null;
+  assistantMessageId?: string | null;
   phase?: string | null;
   source?: string | null;
 };

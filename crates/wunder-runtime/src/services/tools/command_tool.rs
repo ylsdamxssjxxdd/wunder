@@ -23,7 +23,7 @@ use anyhow::{anyhow, Result};
 #[cfg(windows)]
 use encoding_rs::GBK;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -131,6 +131,240 @@ fn command_session_stream_from_name(stream_name: &str) -> CommandSessionStream {
     }
 }
 
+fn command_session_stream_from_value(value: &Value) -> CommandSessionStream {
+    value
+        .as_str()
+        .map(command_session_stream_from_name)
+        .unwrap_or(CommandSessionStream::Stdout)
+}
+
+fn resolve_command_session_for_index(
+    sessions: &mut HashMap<usize, CommandSessionTracker>,
+    context: &ToolContext<'_>,
+    command: &str,
+    cwd: &str,
+    command_index: usize,
+) -> Option<CommandSessionTracker> {
+    if let Some(existing) = sessions.get(&command_index) {
+        return Some(existing.clone());
+    }
+    let tracker = CommandSessionTracker::start(
+        context,
+        command,
+        cwd,
+        command_index,
+        Some("sandbox".to_string()),
+        CommandSessionLaunchMode::Shell,
+        false,
+        false,
+    )?;
+    sessions.insert(command_index, tracker.clone());
+    Some(tracker)
+}
+
+async fn execute_command_in_sandbox_streaming(
+    context: &ToolContext<'_>,
+    args: &Value,
+    commands: &[String],
+    cwd: &Path,
+) -> Option<Value> {
+    if !crate::sandbox::sandbox_enabled(context.config) {
+        return None;
+    }
+    let cwd_text = cwd.to_string_lossy().to_string();
+    let command_lookup = commands
+        .iter()
+        .enumerate()
+        .map(|(index, command)| (index, command.clone()))
+        .collect::<HashMap<usize, String>>();
+    let mut sessions = HashMap::<usize, CommandSessionTracker>::new();
+    let mut exited_sessions = HashSet::<usize>::new();
+    let result = crate::sandbox::execute_command_streaming(
+        context.config,
+        context.workspace.as_ref(),
+        context.user_id,
+        context.workspace_id,
+        context.session_id,
+        args,
+        context.user_tool_bindings,
+        |event| {
+            let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+            let command_index = event
+                .get("command_index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(0);
+            let command = event
+                .get("command")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+                .or_else(|| command_lookup.get(&command_index).cloned())
+                .unwrap_or_default();
+            match event_type {
+                "command_start" => {
+                    let _ = resolve_command_session_for_index(
+                        &mut sessions,
+                        context,
+                        &command,
+                        cwd_text.as_str(),
+                        command_index,
+                    );
+                }
+                "delta" => {
+                    let Some(tracker) = resolve_command_session_for_index(
+                        &mut sessions,
+                        context,
+                        &command,
+                        cwd_text.as_str(),
+                        command_index,
+                    ) else {
+                        return;
+                    };
+                    let delta = event
+                        .get("delta")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .as_bytes()
+                        .to_vec();
+                    tracker.emit_delta(
+                        command_session_stream_from_value(
+                            event.get("stream").unwrap_or(&Value::Null),
+                        ),
+                        &delta,
+                    );
+                }
+                "command_exit" => {
+                    if exited_sessions.insert(command_index) {
+                        if let Some(tracker) = resolve_command_session_for_index(
+                            &mut sessions,
+                            context,
+                            &command,
+                            cwd_text.as_str(),
+                            command_index,
+                        ) {
+                            let exit_code = event
+                                .get("exit_code")
+                                .and_then(Value::as_i64)
+                                .and_then(|value| i32::try_from(value).ok());
+                            let timed_out = event
+                                .get("timed_out")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false);
+                            let error = event
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                                .filter(|value| !value.trim().is_empty());
+                            tracker.emit_exit(exit_code, timed_out, error);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        },
+    )
+    .await;
+
+    for (command_index, tracker) in sessions.iter() {
+        if !exited_sessions.contains(command_index) {
+            tracker.emit_exit(
+                None,
+                false,
+                Some("sandbox stream ended without exit".to_string()),
+            );
+        }
+    }
+
+    let mut result = result?;
+    let session_ids = sessions
+        .iter()
+        .map(|(index, tracker)| (*index, tracker.command_session_id().to_string()))
+        .collect::<HashMap<usize, String>>();
+    if let Some(results) = result
+        .get_mut("data")
+        .and_then(|data| data.get_mut("results"))
+        .and_then(Value::as_array_mut)
+    {
+        for item in results {
+            let Some(obj) = item.as_object_mut() else {
+                continue;
+            };
+            let command_index = obj
+                .get("command_index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(0);
+            if let Some(command_session_id) = session_ids.get(&command_index) {
+                obj.insert(
+                    "command_session_id".to_string(),
+                    Value::String(command_session_id.clone()),
+                );
+            }
+        }
+    }
+    Some(result)
+}
+
+async fn execute_command_in_sandbox_streaming_auto(
+    context: &ToolContext<'_>,
+    args: &Value,
+    content: &str,
+) -> Option<Value> {
+    if content.trim().is_empty() {
+        return None;
+    }
+    if !crate::sandbox::sandbox_enabled(context.config) {
+        return None;
+    }
+    let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
+    let cwd = if workdir.is_empty() {
+        match context.workspace.ensure_user_root(context.workspace_id) {
+            Ok(path) => path,
+            Err(_) => return None,
+        }
+    } else {
+        match context
+            .workspace
+            .resolve_path(context.workspace_id, workdir)
+        {
+            Ok(path) => path,
+            Err(_) => return None,
+        }
+    };
+    let allow_all = context
+        .config
+        .security
+        .allow_commands
+        .iter()
+        .any(|item| item == "*");
+    let commands = if allow_all {
+        vec![content.to_string()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    let result = execute_command_in_sandbox_streaming(context, args, &commands, &cwd).await?;
+    let transport_failed = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(|value| value == "sandbox stream request failed")
+        .unwrap_or(false);
+    if transport_failed {
+        return None;
+    }
+    Some(result)
+}
+
+fn apply_streaming_command_env(cmd: &mut tokio::process::Command) {
+    cmd.env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONLEGACYWINDOWSSTDIO", "utf-8");
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn read_stream_output<R>(
     mut reader: R,
@@ -148,7 +382,11 @@ where
     let read_size = chunk_size.max(256);
     let mut buffer = vec![0u8; read_size];
     let mut collector = CommandOutputCollector::new(capture_policy);
-    let stream_emitter = emitter.as_ref().filter(|item| item.stream_enabled());
+    let stream_emitter = if command_session.is_some() {
+        None
+    } else {
+        emitter.as_ref().filter(|item| item.stream_enabled())
+    };
     let command_stream = command_session_stream_from_name(stream_name);
 
     let mut pending_bytes = Vec::new();
@@ -546,6 +784,7 @@ async fn run_command_streaming(
         (command_utils::build_shell_command(command, cwd), false)
     };
     python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
+    apply_streaming_command_env(&mut cmd);
     let initial_launch_mode = if used_direct {
         CommandSessionLaunchMode::Direct
     } else {
@@ -568,6 +807,7 @@ async fn run_command_streaming(
         Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
             let mut cmd = command_utils::build_shell_command(command, cwd);
             python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
+            apply_streaming_command_env(&mut cmd);
             cmd.kill_on_drop(true);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             let fallback_shell_name = command_utils::resolve_shell_name(command).to_string();
@@ -655,7 +895,7 @@ async fn run_ptc_python_script_streaming(
         let mut cmd = tokio::process::Command::new(&program);
         cmd.arg(script_path);
         cmd.current_dir(workdir);
-        cmd.env("PYTHONIOENCODING", "utf-8");
+        apply_streaming_command_env(&mut cmd);
         python_runtime::apply_python_env(&mut cmd, &runtime);
         command_utils::apply_platform_spawn_options(&mut cmd);
         cmd.kill_on_drop(true);
@@ -688,7 +928,7 @@ async fn run_ptc_python_script_streaming(
         cmd.args(*prefix_args);
         cmd.arg(script_path);
         cmd.current_dir(workdir);
-        cmd.env("PYTHONIOENCODING", "utf-8");
+        apply_streaming_command_env(&mut cmd);
         if system_python_runtime {
             python_runtime::apply_system_python_env_if_configured(&mut cmd);
         }
@@ -753,6 +993,13 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 Value::String("execute_command".to_string()),
             );
         }
+        if !dry_run {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+        }
+        return Ok(result);
+    }
+    if let Some(result) = execute_command_in_sandbox_streaming_auto(context, &args, &content).await
+    {
         if !dry_run {
             context.workspace.mark_tree_dirty(context.workspace_id);
         }

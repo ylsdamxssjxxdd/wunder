@@ -110,6 +110,7 @@ import {
 } from '@/stores/commandSessions';
 import {
   buildCommandCardView,
+  buildCommandResultNote,
   buildPatchResultNote,
   buildPatchResultView
 } from './toolWorkflowActionViews';
@@ -302,6 +303,21 @@ const terminalAutoStickMode = computed<TerminalAutoStickMode>(() =>
   normalizeTerminalAutoStickMode(props.terminalAutoStick)
 );
 const workflowOpen = computed(() => !workflowUserCollapsed.value);
+const commandSessionRenderToken = computed(() =>
+  Object.values(commandSessionStore.entries)
+    .map((entry) => [
+      entry.commandSessionId,
+      entry.seq,
+      entry.status,
+      entry.stdoutBytes,
+      entry.stderrBytes,
+      entry.ptyBytes,
+      entry.stdoutDroppedBytes,
+      entry.stderrDroppedBytes,
+      entry.ptyDroppedBytes
+    ].join(':'))
+    .join('|')
+);
 
 const shouldAutoStickStream = (key: string): boolean => {
   const mode = terminalAutoStickMode.value;
@@ -552,7 +568,10 @@ const normalizeStatus = (status: unknown): string => {
 };
 
 const resolveCommandSessionRefFromItem = (item: WorkflowItem | null): string =>
-  String(item?.commandSessionId || item?.toolCallId || '').trim();
+  String(item?.commandSessionId || item?.command_session_id || item?.toolCallId || item?.tool_call_id || '').trim();
+
+const resolveToolCallRefFromItem = (item: WorkflowItem | null): string =>
+  String(item?.toolCallId || item?.tool_call_id || item?.callId || item?.call_id || '').trim();
 
 const resolveCommandSessionStatus = (snapshot: CommandSessionRuntimeEntry | null): string => {
   if (!snapshot) return '';
@@ -597,6 +616,15 @@ const resolveCommandSessionSnapshot = (entry: RawEntry): CommandSessionRuntimeEn
   ].filter(Boolean);
   for (const ref of refs) {
     const snapshot = commandSessionStore.getById(ref);
+    if (snapshot) return snapshot;
+  }
+  const toolCallRefs = [
+    resolveToolCallRefFromItem(entry.resultItem),
+    resolveToolCallRefFromItem(entry.outputItem),
+    resolveToolCallRefFromItem(entry.callItem)
+  ].filter(Boolean);
+  for (const ref of toolCallRefs) {
+    const snapshot = commandSessionStore.getByToolCallId(ref);
     if (snapshot) return snapshot;
   }
   return null;
@@ -2794,6 +2822,7 @@ const buildExecuteCommandView = (
 
   return {
     ...commandView,
+    status,
     terminalText: buildExecuteCommandTerminalText(
       commandText,
       displayStdout,
@@ -2801,7 +2830,7 @@ const buildExecuteCommandView = (
       previewRaw,
       errorText,
       status,
-      includeCommandLine
+      false
     )
   };
 };
@@ -2872,13 +2901,32 @@ const resolveRawWorkflowDetail = (item: WorkflowItem | null): string =>
 const buildToolResultSection = (
   entry: RawEntry,
   status: string,
-  compactionDisplay: CompactionDisplay | null
+  compactionDisplay: CompactionDisplay | null,
+  commandSession: CommandSessionRuntimeEntry | null,
+  command: string,
+  errorText: string
 ): ToolWorkflowDetailSection | null => {
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
 
   const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
   const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
+  if (isExecuteCommandTool(entry.toolName)) {
+    const commandView = buildExecuteCommandView(entry, command, status, errorText, commandSession, true);
+    if (hasVisibleCommandViewContent(commandView)) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'command',
+        summary: buildCommandResultNote(commandView, t),
+        body: commandView.terminalText,
+        copyText: commandView.terminalText || rawResultDetail || rawOutputDetail || undefined,
+        commandView,
+        patchLines: []
+      };
+    }
+  }
+
   if (compactionDisplay) {
     const detailBody = compactionDisplay.copyBody || compactionDisplay.resultBody;
     return {
@@ -2997,8 +3045,11 @@ const buildErrorText = (
 const resolveEntryWorkflowRef = (entry: RawEntry): string => {
   const candidates = [
     entry.resultItem?.toolCallId,
+    entry.resultItem?.tool_call_id,
     entry.outputItem?.toolCallId,
+    entry.outputItem?.tool_call_id,
     entry.callItem?.toolCallId,
+    entry.callItem?.tool_call_id,
     entry.key
   ];
   for (const candidate of candidates) {
@@ -3062,7 +3113,14 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const durationLabel = formatWorkflowDurationLabel(
     resolveWorkflowEntryDurationMs(entry, resolveCommandSessionDurationMs(commandSession))
   );
-  const toolResultSection = buildToolResultSection(entry, status, compactionDisplay);
+  const toolResultSection = buildToolResultSection(
+    entry,
+    status,
+    compactionDisplay,
+    commandSession,
+    command,
+    errorText
+  );
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
@@ -3131,6 +3189,7 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 
 const buildEntries = (): ToolEntryView[] => {
   void props.renderVersion;
+  void commandSessionRenderToken.value;
   return buildWorkflowToolRuns(props.items)
     .map(buildEntryView);
 };
@@ -3165,16 +3224,22 @@ watch(
   entries,
   (nextEntries) => {
     const validKeys = new Set(nextEntries.map((entry) => entry.key));
+    const liveEntry = findLatestLiveEntry(nextEntries);
+    const liveKey = liveEntry?.key || '';
     pruneStreamTracking(validKeys);
     const nextUserCollapsed = new Set<string>();
     userCollapsedEntryKeys.value.forEach((key) => {
-      if (validKeys.has(key)) nextUserCollapsed.add(key);
+      if (validKeys.has(key) && key !== liveKey) nextUserCollapsed.add(key);
     });
     userCollapsedEntryKeys.value = nextUserCollapsed;
     const nextExpanded = new Set<string>();
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
+    if (liveKey) {
+      nextExpanded.add(liveKey);
+      workflowFollow.value = true;
+    }
     expandedKeys.value = nextExpanded;
     void nextTick(() => {
       syncWorkflowOpenState();

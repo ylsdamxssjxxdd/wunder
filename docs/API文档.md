@@ -226,15 +226,15 @@
 - 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
-- `execute_command` 第一阶段实时协议已落地：`tool_output_delta` 与每条命令结果会补充 `command_session_id/command_index`，用于把一次工具调用内的多条子命令拆成独立工作流条目。
+- `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。
 - `execute_command` 在 Windows 本地/桌面运行时优先使用 `powershell.exe` 执行 shell 命令；仅当 PowerShell 不可用时回退 `cmd.exe`，命令会话事件中的 `shell` 字段会记录实际使用的 shell。
-- 新增命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary`。当前阶段只持久化生命周期与摘要事件，不向客户端额外广播高频 `command_session_delta`，避免在旧前端仍消费 `tool_output_delta` 时造成双倍热路径流量。
+- 命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary` 继续作为可持久化状态事件，其中 `command_session_summary` 只保留状态、退出码、耗时、输出字节数与 dropped 计数，不持久化 stdout/stderr/pty 正文；`command_session_delta` 只承载当前在线流的一次性增量文本，不写入会话事件库，普通会话刷新恢复仅依赖 Broker 短期快照中的有界预览，避免长命令输出进入热路径列表查询。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
 - 会话事件摘要接口现在同时返回 `data.events[]` 原始持久化事件流，保留既有 `data.rounds[]` 工作流摘要；新前端状态投影应优先消费 `data.events[]`，缺失时再回退到 `data.rounds[]`。
 - `data.events[]` 与聊天 WS 事件 payload 会补充 `event_seq`；当前 `event_seq` 与会话内递增的 `event_id` 对齐，用于前端 reducer 去重、乱序检测和 HTTP snapshot 回放。
 - 会话级实时订阅支持 `cancel`、连接关闭和任务自然结束后的幂等清理，避免断连后残留状态。
-- 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段，用于前端刷新后直接恢复工作流里的终端预览。
+- 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的短期命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段；tail 为有界 head+tail 预览，中间输出可能以省略标记折叠，用于前端刷新后恢复工作流里的近期终端预览。
 - 新增命令会话回放接口：
   - `GET /wunder/chat/sessions/{session_id}/command-sessions`：返回当前会话可见的命令会话快照列表。
   - `GET /wunder/chat/sessions/{session_id}/command-sessions/{command_session_id}`：返回单个命令会话快照，按 `user_id + session_id + command_session_id` 做作用域校验。

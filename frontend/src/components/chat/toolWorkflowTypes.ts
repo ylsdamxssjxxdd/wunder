@@ -3,6 +3,7 @@ import type { CompactionView } from '@/utils/chatCompactionUi';
 export type ToolWorkflowCommandView = {
   command: string;
   shell: string;
+  status?: string;
   terminalText: string;
   exitCode: number | null;
   showExitCode?: boolean;

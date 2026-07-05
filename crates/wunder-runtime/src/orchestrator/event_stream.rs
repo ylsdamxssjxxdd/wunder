@@ -193,6 +193,17 @@ fn should_persist_stream_event(event_type: &str) -> bool {
     )
 }
 
+fn should_backpressure_online_stream_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "command_session_delta"
+            | "command_session_start"
+            | "command_session_status"
+            | "command_session_exit"
+            | "command_session_summary"
+    )
+}
+
 #[derive(Clone)]
 pub(super) struct EventEmitter {
     session_id: String,
@@ -394,6 +405,18 @@ impl EventEmitter {
                     }
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
+                    if should_backpressure_online_stream_event(&event.event) {
+                        if queue
+                            .send(StreamSignal::Event(event.clone()))
+                            .await
+                            .is_err()
+                        {
+                            if !persisted {
+                                self.record_overflow(event).await;
+                            }
+                        }
+                        return;
+                    }
                     if !persisted {
                         self.record_overflow(event).await;
                     }
@@ -942,6 +965,7 @@ mod tests {
         assert!(should_persist_stream_event("approval_resolved"));
         assert!(should_persist_stream_event("thread_status"));
         assert!(should_persist_stream_event("thread_closed"));
+        assert!(!should_persist_stream_event("command_session_delta"));
     }
 
     #[test]

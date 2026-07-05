@@ -14,6 +14,8 @@ pub(crate) struct CommandSessionTracker {
     command_session_id: String,
     command_index: usize,
     fallback_seq: Arc<AtomicU64>,
+    command: String,
+    cwd: String,
 }
 
 impl CommandSessionTracker {
@@ -98,6 +100,8 @@ impl CommandSessionTracker {
             command_session_id: snapshot.command_session_id,
             command_index,
             fallback_seq: Arc::new(AtomicU64::new(snapshot.seq)),
+            command: snapshot.command,
+            cwd: snapshot.cwd,
         })
     }
 
@@ -117,13 +121,32 @@ impl CommandSessionTracker {
         if chunk.is_empty() {
             return;
         }
-        let _seq = if let Some(broker) = self.broker.as_ref() {
+        let seq = if let Some(broker) = self.broker.as_ref() {
             broker
                 .append_delta(&self.command_session_id, stream, chunk)
                 .unwrap_or_else(|| self.fallback_seq.fetch_add(1, Ordering::Relaxed) + 1)
         } else {
             self.fallback_seq.fetch_add(1, Ordering::Relaxed) + 1
         };
+        let Some(emitter) = self.emitter.as_ref().filter(|item| item.stream_enabled()) else {
+            return;
+        };
+        let delta = String::from_utf8_lossy(chunk).into_owned();
+        if delta.is_empty() {
+            return;
+        }
+        emitter.emit(
+            "command_session_delta",
+            json!({
+                "command_session_id": self.command_session_id,
+                "command_index": self.command_index,
+                "command": self.command,
+                "cwd": self.cwd,
+                "stream": stream_name(stream),
+                "delta": delta,
+                "seq": seq,
+            }),
+        );
     }
 
     pub(crate) fn emit_failed_to_start(&self, error: impl Into<String>) {
@@ -178,5 +201,13 @@ impl CommandSessionTracker {
                 }),
             );
         }
+    }
+}
+
+fn stream_name(stream: CommandSessionStream) -> &'static str {
+    match stream {
+        CommandSessionStream::Pty => "pty",
+        CommandSessionStream::Stdout => "stdout",
+        CommandSessionStream::Stderr => "stderr",
     }
 }

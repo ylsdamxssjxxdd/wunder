@@ -36,6 +36,12 @@ export type CommandSessionRuntimeEntry = {
 };
 
 const OUTPUT_TAIL_MAX_CHARS = 24000;
+const OUTPUT_HEAD_MAX_CHARS = 9000;
+const OUTPUT_TAIL_RECENT_MAX_CHARS = OUTPUT_TAIL_MAX_CHARS - OUTPUT_HEAD_MAX_CHARS;
+const COMMAND_OUTPUT_OMISSION_PREFIX = '...(truncated command output, omitted ';
+const COMMAND_OUTPUT_OMISSION_SUFFIX = ' chars)...';
+const COMMAND_OUTPUT_OMISSION_PATTERN =
+  /\n?\.\.\.\(truncated command output, omitted (\d+) chars\)\.\.\.\n?/;
 
 const normalizeText = (value: unknown): string => String(value || '').trim();
 
@@ -84,20 +90,71 @@ const normalizeStream = (value: unknown): CommandSessionRuntimeStream => {
   return 'stdout';
 };
 
-const clampTailText = (
+const splitCompactText = (
+  value: string
+): { head: string; tail: string; omittedChars: number } | null => {
+  const match = COMMAND_OUTPUT_OMISSION_PATTERN.exec(value);
+  if (!match) return null;
+  const omittedChars = Number.parseInt(match[1] || '0', 10);
+  return {
+    head: value.slice(0, match.index).replace(/\n$/, ''),
+    tail: value.slice(match.index + match[0].length).replace(/^\n/, ''),
+    omittedChars: Number.isFinite(omittedChars) && omittedChars > 0 ? omittedChars : 0
+  };
+};
+
+const joinCompactText = (head: string, tail: string, omittedChars: number): string => {
+  const marker = `${COMMAND_OUTPUT_OMISSION_PREFIX}${omittedChars}${COMMAND_OUTPUT_OMISSION_SUFFIX}`;
+  if (!head && !tail) return marker;
+  if (!head) return `${marker}\n${tail}`;
+  if (!tail) return `${head}\n${marker}`;
+  return `${head}\n${marker}\n${tail}`;
+};
+
+const compactTerminalText = (
   current: string,
   delta: string
 ): { value: string; droppedChars: number } => {
-  const next = `${current || ''}${delta || ''}`;
+  const normalizedCurrent = String(current || '');
+  const normalizedDelta = String(delta || '');
+  const compact = splitCompactText(normalizedCurrent);
+  if (compact) {
+    const nextTail = `${compact.tail}${normalizedDelta}`;
+    if (nextTail.length <= OUTPUT_TAIL_RECENT_MAX_CHARS) {
+      return {
+        value: joinCompactText(compact.head, nextTail, compact.omittedChars),
+        droppedChars: 0
+      };
+    }
+    const droppedChars = nextTail.length - OUTPUT_TAIL_RECENT_MAX_CHARS;
+    return {
+      value: joinCompactText(
+        compact.head,
+        nextTail.slice(droppedChars),
+        compact.omittedChars + droppedChars
+      ),
+      droppedChars
+    };
+  }
+
+  const next = `${normalizedCurrent}${normalizedDelta}`;
   if (next.length <= OUTPUT_TAIL_MAX_CHARS) {
     return { value: next, droppedChars: 0 };
   }
-  const droppedChars = next.length - OUTPUT_TAIL_MAX_CHARS;
+  const tailStart = Math.max(OUTPUT_HEAD_MAX_CHARS, next.length - OUTPUT_TAIL_RECENT_MAX_CHARS);
+  const droppedChars = tailStart - OUTPUT_HEAD_MAX_CHARS;
   return {
-    value: next.slice(droppedChars),
+    value: joinCompactText(
+      next.slice(0, OUTPUT_HEAD_MAX_CHARS),
+      next.slice(tailStart),
+      droppedChars
+    ),
     droppedChars
   };
 };
+
+const mergeTerminalText = (incoming: string, existing: string): string =>
+  incoming || existing || '';
 
 const ensureSessionIndex = (state: CommandSessionsState, sessionId: string): string[] => {
   if (!state.sessionIndex[sessionId]) {
@@ -201,6 +258,7 @@ const normalizeEntryPayload = (
 type CommandSessionsState = {
   entries: Record<string, CommandSessionRuntimeEntry>;
   sessionIndex: Record<string, string[]>;
+  toolCallIndex: Record<string, string[]>;
   hydratedSessions: Record<string, boolean>;
 };
 
@@ -209,12 +267,26 @@ export const useCommandSessionStore = defineStore('commandSessions', {
   state: (): CommandSessionsState => ({
     entries: {},
     sessionIndex: {},
+    toolCallIndex: {},
     hydratedSessions: {}
   }),
   getters: {
     getById: (state) => (commandSessionId: string): CommandSessionRuntimeEntry | null => {
       const normalizedId = normalizeText(commandSessionId);
       return normalizedId ? state.entries[normalizedId] || null : null;
+    },
+    getByToolCallId: (state) => (toolCallId: string): CommandSessionRuntimeEntry | null => {
+      const normalizedToolCallId = normalizeText(toolCallId);
+      if (!normalizedToolCallId) return null;
+      const ids = state.toolCallIndex[normalizedToolCallId] || [];
+      return ids
+        .map((id) => state.entries[id])
+        .filter(Boolean)
+        .sort((left, right) => {
+          const leftIndex = left.commandIndex ?? Number.MAX_SAFE_INTEGER;
+          const rightIndex = right.commandIndex ?? Number.MAX_SAFE_INTEGER;
+          return leftIndex - rightIndex || right.seq - left.seq;
+        })[0] || null;
     },
     listBySession: (state) => (sessionId: string): CommandSessionRuntimeEntry[] => {
       const normalizedSessionId = normalizeText(sessionId);
@@ -234,6 +306,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
     reset(): void {
       this.entries = {};
       this.sessionIndex = {};
+      this.toolCallIndex = {};
       this.hydratedSessions = {};
     },
     clearSession(sessionId: string): void {
@@ -241,6 +314,7 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       if (!normalizedSessionId) return;
       const ids = this.sessionIndex[normalizedSessionId] || [];
       ids.forEach((id) => {
+        this.removeEntryIndexes(this.entries[id]);
         delete this.entries[id];
       });
       delete this.sessionIndex[normalizedSessionId];
@@ -261,11 +335,34 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       const previousIds = this.sessionIndex[normalizedSessionId] || [];
       previousIds.forEach((id) => {
         if (!nextIds.has(id)) {
+          this.removeEntryIndexes(this.entries[id]);
           delete this.entries[id];
         }
       });
       this.sessionIndex[normalizedSessionId] = Array.from(nextIds);
       this.hydratedSessions[normalizedSessionId] = true;
+    },
+    removeEntryIndexes(entry: CommandSessionRuntimeEntry | null | undefined): void {
+      if (!entry) return;
+      const toolCallId = normalizeText(entry.toolCallId);
+      if (toolCallId && this.toolCallIndex[toolCallId]) {
+        const nextIds = this.toolCallIndex[toolCallId].filter(
+          (id) => id !== entry.commandSessionId
+        );
+        if (nextIds.length > 0) {
+          this.toolCallIndex[toolCallId] = nextIds;
+        } else {
+          delete this.toolCallIndex[toolCallId];
+        }
+      }
+    },
+    indexEntry(entry: CommandSessionRuntimeEntry): void {
+      const toolCallId = normalizeText(entry.toolCallId);
+      if (!toolCallId) return;
+      const ids = this.toolCallIndex[toolCallId] || [];
+      if (!ids.includes(entry.commandSessionId)) {
+        this.toolCallIndex[toolCallId] = [...ids, entry.commandSessionId];
+      }
     },
     upsertSnapshot(sessionId: string, payload: unknown): CommandSessionRuntimeEntry | null {
       const normalized = normalizeEntryPayload(sessionId, payload);
@@ -309,7 +406,26 @@ export const useCommandSessionStore = defineStore('commandSessions', {
             }
           : normalized)
       };
+      if (existing && !preserveTerminalState) {
+        next.stdoutTail = mergeTerminalText(normalized.stdoutTail, existing.stdoutTail);
+        next.stderrTail = mergeTerminalText(normalized.stderrTail, existing.stderrTail);
+        next.ptyTail = mergeTerminalText(normalized.ptyTail, existing.ptyTail);
+        next.stdoutBytes = Math.max(existing.stdoutBytes, normalized.stdoutBytes);
+        next.stderrBytes = Math.max(existing.stderrBytes, normalized.stderrBytes);
+        next.ptyBytes = Math.max(existing.ptyBytes, normalized.ptyBytes);
+        next.stdoutDroppedBytes = Math.max(
+          existing.stdoutDroppedBytes,
+          normalized.stdoutDroppedBytes
+        );
+        next.stderrDroppedBytes = Math.max(
+          existing.stderrDroppedBytes,
+          normalized.stderrDroppedBytes
+        );
+        next.ptyDroppedBytes = Math.max(existing.ptyDroppedBytes, normalized.ptyDroppedBytes);
+      }
+      this.removeEntryIndexes(existing);
       this.entries[normalized.commandSessionId] = next;
+      this.indexEntry(next);
       const sessionIds = ensureSessionIndex(this.$state, next.sessionId);
       if (!sessionIds.includes(next.commandSessionId)) {
         sessionIds.push(next.commandSessionId);
@@ -340,6 +456,10 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       if (!next.sessionId) {
         next.sessionId = normalizedSessionId;
       }
+      const toolCallId = normalizeText(meta.tool_call_id ?? meta.toolCallId);
+      if (toolCallId && !next.toolCallId) {
+        next.toolCallId = toolCallId;
+      }
       const command = normalizeText(meta.command);
       if (command && !next.command) {
         next.command = command;
@@ -352,23 +472,25 @@ export const useCommandSessionStore = defineStore('commandSessions', {
       next.seq = Math.max(next.seq + 1, normalizeCount(meta.seq));
 
       if (streamName === 'stderr') {
-        const tail = clampTailText(next.stderrTail, textDelta);
+        const tail = compactTerminalText(next.stderrTail, textDelta);
         next.stderrTail = tail.value;
         next.stderrBytes = next.stderrBytes + textDelta.length;
         next.stderrDroppedBytes = next.stderrDroppedBytes + tail.droppedChars;
       } else if (streamName === 'pty') {
-        const tail = clampTailText(next.ptyTail, textDelta);
+        const tail = compactTerminalText(next.ptyTail, textDelta);
         next.ptyTail = tail.value;
         next.ptyBytes = next.ptyBytes + textDelta.length;
         next.ptyDroppedBytes = next.ptyDroppedBytes + tail.droppedChars;
       } else {
-        const tail = clampTailText(next.stdoutTail, textDelta);
+        const tail = compactTerminalText(next.stdoutTail, textDelta);
         next.stdoutTail = tail.value;
         next.stdoutBytes = next.stdoutBytes + textDelta.length;
         next.stdoutDroppedBytes = next.stdoutDroppedBytes + tail.droppedChars;
       }
 
+      this.removeEntryIndexes(existing);
       this.entries[normalizedCommandSessionId] = next;
+      this.indexEntry(next);
       const sessionIds = ensureSessionIndex(this.$state, next.sessionId);
       if (!sessionIds.includes(normalizedCommandSessionId)) {
         sessionIds.push(normalizedCommandSessionId);

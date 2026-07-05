@@ -8,6 +8,9 @@ const normalizeText = (value: unknown) => String(value || '').trim();
 const isSessionScopedMessageKey = (key: unknown, sessionId: string) =>
   normalizeText(key).startsWith(`session:${normalizeText(sessionId)}:`);
 
+const isAnySessionScopedMessageKey = (key: unknown) =>
+  normalizeText(key).startsWith('session:');
+
 const areEquivalentMissionChatMessages = (
   localMessage: MissionChatMessage,
   remoteMessage: MissionChatMessage
@@ -18,6 +21,24 @@ const areEquivalentMissionChatMessages = (
   if (normalizeText(localMessage.senderName) !== normalizeText(remoteMessage.senderName)) return false;
   if (normalizeText(localMessage.senderAgentId) !== normalizeText(remoteMessage.senderAgentId)) return false;
   return Math.abs(Number(localMessage.time || 0) - Number(remoteMessage.time || 0)) <= 8;
+};
+
+const buildStableRemoteMessage = (
+  current: MissionChatMessage[],
+  remoteMessage: MissionChatMessage,
+  sessionId: string
+): MissionChatMessage => {
+  if (!isSessionScopedMessageKey(remoteMessage.key, sessionId)) return remoteMessage;
+  const equivalentLocalMessage = current.find((localMessage) => {
+    if (isAnySessionScopedMessageKey(localMessage.key)) return false;
+    return areEquivalentMissionChatMessages(localMessage, remoteMessage);
+  });
+  if (!equivalentLocalMessage) return remoteMessage;
+  return {
+    ...remoteMessage,
+    key: equivalentLocalMessage.key,
+    remoteKey: remoteMessage.key
+  };
 };
 
 export const reconcileBeeroomSessionBackedManualMessages = (options: {
@@ -33,14 +54,18 @@ export const reconcileBeeroomSessionBackedManualMessages = (options: {
     return [...incoming].sort(compareMissionChatMessages).slice(-Math.max(1, Math.floor(options.limit)));
   }
 
+  const stableIncoming = incoming.map((remoteMessage) =>
+    buildStableRemoteMessage(current, remoteMessage, sessionId)
+  );
+
   const preservedLocalMessages = current.filter((message) => {
     if (isSessionScopedMessageKey(message.key, sessionId)) {
       return false;
     }
-    return !incoming.some((remoteMessage) => areEquivalentMissionChatMessages(message, remoteMessage));
+    return !stableIncoming.some((remoteMessage) => areEquivalentMissionChatMessages(message, remoteMessage));
   });
 
-  return [...incoming, ...preservedLocalMessages]
+  return [...stableIncoming, ...preservedLocalMessages]
     .sort(compareMissionChatMessages)
     .slice(-Math.max(1, Math.floor(options.limit)));
 };
