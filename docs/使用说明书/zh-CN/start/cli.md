@@ -63,6 +63,16 @@ CLI 内置 TUI（终端用户界面），类似 Codex 的交互体验：
 - 下方：输入区
 - 侧边：线程列表
 
+## 运行时文件
+
+CLI 默认把运行时文件放在用户目录的 `.wunder` 下：
+
+- 运行时配置和 SQLite 状态：`~/.wunder/cli/WUNDER_TEMP/`
+- 用户工具和技能：`~/.wunder/user_tools/` 与 `~/.wunder/skills/`
+- 临时文件 API：通过 `WUNDER_TEMP_DIR_ROOT` 指向同一个 `~/.wunder/cli/WUNDER_TEMP/`
+
+只有脚本需要隔离运行目录时，才使用 `--temp-root <path>` 覆盖默认位置。
+
 ## JSONL 输出
 
 CLI 支持 JSONL 格式输出，便于管道和自动化集成：

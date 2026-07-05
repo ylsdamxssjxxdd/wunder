@@ -74,11 +74,13 @@ async fn run_loop(
     loop {
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 
+        let mut should_draw = false;
         tokio::select! {
             maybe_draw = frame_notifications.recv() => {
                 if maybe_draw.is_none() {
                     break;
                 }
+                should_draw = true;
             }
             maybe_event = events.next() => {
                 let Some(event) = maybe_event else {
@@ -105,6 +107,14 @@ async fn run_loop(
                 }
                 app.request_redraw();
             }
+        }
+
+        if app.should_quit() {
+            break;
+        }
+
+        if !should_draw {
+            continue;
         }
 
         app.drain_stream_events().await;

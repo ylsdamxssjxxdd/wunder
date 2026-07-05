@@ -62,6 +62,16 @@ CLI includes a built-in TUI (Terminal User Interface), similar to Codex:
 - Bottom: Input area
 - Side: Thread list
 
+## Runtime Files
+
+By default, CLI stores runtime files under the user's `.wunder` directory:
+
+- Runtime config and SQLite state: `~/.wunder/cli/WUNDER_TEMP/`
+- User tools and skills: `~/.wunder/user_tools/` and `~/.wunder/skills/`
+- Temporary file APIs: the same `~/.wunder/cli/WUNDER_TEMP/` root through `WUNDER_TEMP_DIR_ROOT`
+
+Use `--temp-root <path>` only when a script needs an isolated runtime directory.
+
 ## JSONL Output
 
 CLI supports JSONL format output for piping and automation:

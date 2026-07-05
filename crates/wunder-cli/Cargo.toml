@@ -30,12 +30,10 @@ futures.workspace = true
 image.workspace = true
 pulldown-cmark.workspace = true
 ratatui.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 shell-words.workspace = true
-syntect.workspace = true
 textwrap.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -46,3 +44,10 @@ uuid.workspace = true
 walkdir.workspace = true
 zip.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
+
+[target.'cfg(not(target_vendor = "win7"))'.dependencies]
+reqwest.workspace = true
+syntect.workspace = true
+
+[target.'cfg(target_vendor = "win7")'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "multipart", "rustls-no-provider"] }

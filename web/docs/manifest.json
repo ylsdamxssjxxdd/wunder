@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-04T08:17:40.936911+00:00",
+  "generated_at": "2026-07-05T06:15:05.895796+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -2053,15 +2053,20 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "JSONL 输出"
+          "text": "运行时文件"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "自动化场景"
+          "text": "JSONL 输出"
         },
         {
           "id": "section-9",
+          "level": 2,
+          "text": "自动化场景"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -10444,15 +10449,20 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "JSONL Output"
+          "text": "Runtime Files"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Automation Scenarios"
+          "text": "JSONL Output"
         },
         {
           "id": "section-9",
+          "level": 2,
+          "text": "Automation Scenarios"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "Next Steps"
         }
@@ -14837,7 +14847,7 @@
       "language": "en",
       "title": "Deployment and Running",
       "summary": "Before deploying Wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
-      "updated_at": "2026-07-04",
+      "updated_at": "2026-07-05",
       "read_when": [
         "You need to deploy Wunder",
         "You need to confirm where to place databases, MCP, sandbox, and workspaces"
@@ -15669,7 +15679,7 @@
       "language": "en",
       "title": "Configuration",
       "summary": "When configuration doesn't take effect, first confirm which layer you're modifying, rather than suspecting the program isn't reading it.",
-      "updated_at": "2026-07-04",
+      "updated_at": "2026-07-05",
       "read_when": [
         "You are checking where a specific configuration should be written",
         "You need to distinguish between base configuration, runtime overrides, and external MCP configuration"
@@ -15719,7 +15729,7 @@
         {
           "id": "section-7",
           "level": 3,
-          "text": "WUNDERTEMP/config/wunder.yaml"
+          "text": "/.wunder/cli/WUNDERTEMP/config/wunder.yaml"
         },
         {
           "id": "section-8",

@@ -7,12 +7,12 @@ const MIN_FRAME_INTERVAL: Duration = Duration::from_nanos(8_333_334);
 
 #[derive(Clone, Debug)]
 pub(crate) struct FrameRequester {
-    request_tx: mpsc::UnboundedSender<Instant>,
+    request_tx: mpsc::Sender<Instant>,
 }
 
 #[derive(Debug)]
 pub(crate) struct FrameNotifications {
-    draw_rx: mpsc::UnboundedReceiver<()>,
+    draw_rx: mpsc::Receiver<()>,
 }
 
 #[derive(Debug, Default)]
@@ -38,16 +38,13 @@ impl FrameRateLimiter {
 
 #[derive(Debug)]
 struct FrameScheduler {
-    request_rx: mpsc::UnboundedReceiver<Instant>,
-    draw_tx: mpsc::UnboundedSender<()>,
+    request_rx: mpsc::Receiver<Instant>,
+    draw_tx: mpsc::Sender<()>,
     limiter: FrameRateLimiter,
 }
 
 impl FrameScheduler {
-    fn new(
-        request_rx: mpsc::UnboundedReceiver<Instant>,
-        draw_tx: mpsc::UnboundedSender<()>,
-    ) -> Self {
+    fn new(request_rx: mpsc::Receiver<Instant>, draw_tx: mpsc::Sender<()>) -> Self {
         Self {
             request_rx,
             draw_tx,
@@ -63,6 +60,12 @@ impl FrameScheduler {
                 Some(deadline) => {
                     let sleep_until = tokio::time::Instant::from_std(deadline);
                     tokio::select! {
+                        biased;
+                        _ = tokio::time::sleep_until(sleep_until) => {
+                            self.limiter.mark_emitted(Instant::now());
+                            let _ = self.draw_tx.try_send(());
+                            pending_deadline = None;
+                        }
                         maybe_requested = self.request_rx.recv() => {
                             let Some(requested) = maybe_requested else {
                                 break;
@@ -70,18 +73,17 @@ impl FrameScheduler {
                             let clamped = self.limiter.clamp_deadline(requested);
                             pending_deadline = Some(deadline.min(clamped));
                         }
-                        _ = tokio::time::sleep_until(sleep_until) => {
-                            self.limiter.mark_emitted(Instant::now());
-                            let _ = self.draw_tx.send(());
-                            pending_deadline = None;
-                        }
                     }
                 }
                 None => {
                     let Some(requested) = self.request_rx.recv().await else {
                         break;
                     };
-                    pending_deadline = Some(self.limiter.clamp_deadline(requested));
+                    let mut next_deadline = self.limiter.clamp_deadline(requested);
+                    while let Ok(requested) = self.request_rx.try_recv() {
+                        next_deadline = next_deadline.min(self.limiter.clamp_deadline(requested));
+                    }
+                    pending_deadline = Some(next_deadline);
                 }
             }
         }
@@ -89,8 +91,8 @@ impl FrameScheduler {
 }
 
 pub(crate) fn spawn_frame_scheduler() -> (FrameRequester, FrameNotifications) {
-    let (request_tx, request_rx) = mpsc::unbounded_channel();
-    let (draw_tx, draw_rx) = mpsc::unbounded_channel();
+    let (request_tx, request_rx) = mpsc::channel(64);
+    let (draw_tx, draw_rx) = mpsc::channel(1);
     let scheduler = FrameScheduler::new(request_rx, draw_tx);
     tokio::spawn(scheduler.run());
     (
@@ -101,11 +103,11 @@ pub(crate) fn spawn_frame_scheduler() -> (FrameRequester, FrameNotifications) {
 
 impl FrameRequester {
     pub(crate) fn schedule_frame(&self) {
-        let _ = self.request_tx.send(Instant::now());
+        let _ = self.request_tx.try_send(Instant::now());
     }
 
     pub(crate) fn schedule_frame_in(&self, delay: Duration) {
-        let _ = self.request_tx.send(Instant::now() + delay);
+        let _ = self.request_tx.try_send(Instant::now() + delay);
     }
 }
 

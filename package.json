@@ -53,6 +53,13 @@
     "build:desktop:win7:gnu:x64:installer-only": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64",
     "build:desktop:win7:gnu:x64:installer-only:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -SkipBootstrap",
     "build:desktop:win7:gnu:x64:static": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime",
-    "build:desktop:win7:gnu:x64:static:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime -SkipBootstrap"
+    "build:desktop:win7:gnu:x64:static:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime -SkipBootstrap",
+    "doctor:cli:win7:gnu": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -Doctor",
+    "build:cli:win7:gnu": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32",
+    "build:cli:win7:gnu:fast": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -SkipBootstrap",
+    "build:cli:win7:gnu:ia32": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32",
+    "build:cli:win7:gnu:ia32:fast": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch ia32 -SkipBootstrap",
+    "build:cli:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch x64",
+    "build:cli:win7:gnu:x64:fast": "powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gnu.ps1 -Arch x64 -SkipBootstrap"
   }
 }

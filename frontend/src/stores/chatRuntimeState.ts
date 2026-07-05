@@ -67,6 +67,10 @@ import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspace
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import {
+  isCommandStreamRuntimeEvent,
+  isCommandStreamVisualizationEnabled
+} from '@/utils/commandStreamVisualization';
+import {
   summarizeChatMessageDebugList,
   summarizeChatMessageDebugSnapshot
 } from '@/utils/chatMessageDebug';
@@ -1803,6 +1807,9 @@ const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventTy
   }
   const commandSessionId = normalizeCommandSessionRef(payload, data);
   if (!commandSessionId) return false;
+  if (!isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(normalizedEventType)) {
+    return true;
+  }
   const source = data && typeof data === 'object' && !Array.isArray(data)
     ? data
     : payload && typeof payload === 'object' && !Array.isArray(payload)
@@ -2090,7 +2097,11 @@ export const applyCanonicalStreamRuntimeEvent = (
     assistantMessageId: options.assistantMessageId,
     phase: options.phase
   });
-  const results = applyChatRuntimeEventsWithInvalidation(store, projection, events, {
+  const projectionEvents =
+    !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType)
+      ? []
+      : events;
+  const results = applyChatRuntimeEventsWithInvalidation(store, projection, projectionEvents, {
     immediate: options.phase === 'snapshot',
     reason: `stream:${options.phase || 'ws'}`
   });

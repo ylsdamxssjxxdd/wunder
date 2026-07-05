@@ -26,7 +26,7 @@ Key takeaway: When troubleshooting configuration issues, first distinguish betwe
 
 - `config/wunder.yaml`
 - `config/wunder-example.yaml`
-- `WUNDER_TEMP/config/wunder.yaml` (CLI/Desktop runtime copy)
+- `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml` (CLI runtime copy)
 - `config/mcp_config.json`
 
 ## What Each File Is Responsible For
@@ -41,7 +41,7 @@ Key takeaway: When troubleshooting configuration issues, first distinguish betwe
 - Example configuration and fallback template
 - When the official configuration is missing, the system falls back to this file according to current logic
 
-### `WUNDER_TEMP/config/wunder.yaml`
+### `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml`
 
 - The configuration file actually used by CLI/Desktop at runtime
 - Usually corresponds to the content saved from the admin panel
@@ -78,7 +78,7 @@ Key takeaway: When troubleshooting configuration issues, first distinguish betwe
 ## Common Misconceptions
 
 - Treating `wunder-example.yaml` as the official configuration for long-term modifications.
-- Modifying both repository `config/wunder.yaml` and runtime copy `WUNDER_TEMP/config/wunder.yaml` simultaneously; first confirm which file the current instance actually uses.
+- Modifying both repository `config/wunder.yaml` and runtime copy `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml` simultaneously; first confirm which file the current instance actually uses.
 - Assuming all configurations are read by the server process; in reality, `extra_mcp` has its own configuration file.
 
 ## Further Reading

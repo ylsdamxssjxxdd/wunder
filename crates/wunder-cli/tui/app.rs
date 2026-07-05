@@ -52,10 +52,6 @@ const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(30);
 const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(8);
 #[cfg(windows)]
 const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
-const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(120);
-const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 3;
-const PASTE_BURST_CAPTURE_CHAR_THRESHOLD: usize = 3;
-const CLIPBOARD_PASTE_PROBE_CACHE_TTL: Duration = Duration::from_millis(400);
 const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200);
 mod commands;
 mod input_placeholders;
@@ -113,6 +109,25 @@ pub struct TranscriptRenderWindow {
     pub entries: Vec<TranscriptRenderEntry>,
     pub local_scroll: u16,
     pub total_lines: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptRenderedView {
+    pub lines: Vec<Line<'static>>,
+    pub local_scroll: u16,
+}
+
+#[derive(Debug, Clone)]
+struct TranscriptRenderCache {
+    width: u16,
+    height: u16,
+    revision: u64,
+    selected: Option<usize>,
+    offset_from_bottom: usize,
+    archived_entries: usize,
+    log_entries: usize,
+    lines: Vec<Line<'static>>,
+    local_scroll: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +222,8 @@ pub struct TuiApp {
     transcript_viewport_width: u16,
     transcript_viewport_height: u16,
     transcript_rendered_lines: usize,
+    transcript_render_revision: u64,
+    transcript_render_cache: Option<TranscriptRenderCache>,
     history_archived_entries: usize,
     pending_scrollback_lines: Vec<Line<'static>>,
     logs: Vec<LogEntry>,
@@ -259,11 +276,8 @@ pub struct TuiApp {
     stream_catchup_enter_since: Option<Instant>,
     stream_catchup_exit_since: Option<Instant>,
     terminal_focused: bool,
-    key_char_burst_len: usize,
-    key_char_burst_last_at: Option<Instant>,
     key_paste_burst_buffer: String,
     key_paste_burst_last_at: Option<Instant>,
-    clipboard_probe_cache: Option<(Instant, Option<String>)>,
     suppressed_clipboard_paste: String,
     suppressed_clipboard_paste_last_at: Option<Instant>,
     statusline_items: Vec<String>,
@@ -321,6 +335,8 @@ impl TuiApp {
             transcript_viewport_width: 1,
             transcript_viewport_height: 1,
             transcript_rendered_lines: 0,
+            transcript_render_revision: 0,
+            transcript_render_cache: None,
             history_archived_entries: 0,
             pending_scrollback_lines: Vec::new(),
             logs: Vec::new(),
@@ -373,11 +389,8 @@ impl TuiApp {
             stream_catchup_enter_since: None,
             stream_catchup_exit_since: None,
             terminal_focused: true,
-            key_char_burst_len: 0,
-            key_char_burst_last_at: None,
             key_paste_burst_buffer: String::new(),
             key_paste_burst_last_at: None,
-            clipboard_probe_cache: None,
             suppressed_clipboard_paste: String::new(),
             suppressed_clipboard_paste_last_at: None,
             statusline_items: Vec::new(),
@@ -1577,6 +1590,8 @@ impl TuiApp {
 
     fn invalidate_transcript_metrics(&mut self) {
         self.transcript_rendered_lines = 0;
+        self.transcript_render_revision = self.transcript_render_revision.wrapping_add(1);
+        self.transcript_render_cache = None;
     }
 
     fn reset_scrollback_archive(&mut self) {
@@ -1957,6 +1972,78 @@ impl TuiApp {
             entries,
             local_scroll: window.local_scroll,
             total_lines: window.total_lines,
+        }
+    }
+
+    pub fn transcript_rendered_view(
+        &mut self,
+        viewport_width: u16,
+        viewport_height: u16,
+        is_zh: bool,
+    ) -> TranscriptRenderedView {
+        let width = viewport_width.max(1);
+        let height = viewport_height.max(1);
+        self.set_transcript_viewport(width, height);
+
+        let selected_transcript = self.selected_transcript_index();
+        if let Some(cache) = self.transcript_render_cache.as_ref().filter(|cache| {
+            cache.width == width
+                && cache.height == height
+                && cache.revision == self.transcript_render_revision
+                && cache.selected == selected_transcript
+                && cache.offset_from_bottom == self.transcript_offset_from_bottom
+                && cache.archived_entries == self.history_archived_entries
+                && cache.log_entries == self.logs.len()
+        }) {
+            return TranscriptRenderedView {
+                lines: cache.lines.clone(),
+                local_scroll: cache.local_scroll,
+            };
+        }
+
+        let render_window = self.transcript_render_window(height);
+        let transcript_total_lines = render_window.total_lines;
+        let transcript_scroll = render_window.local_scroll;
+        let mut transcript_lines: Vec<Line<'static>> = render_window
+            .entries
+            .into_iter()
+            .flat_map(|entry| {
+                self.render_entry_lines(
+                    entry.global_index,
+                    selected_transcript.is_some_and(|selected| selected == entry.global_index),
+                    width,
+                )
+            })
+            .collect();
+
+        if transcript_lines.is_empty() {
+            let placeholder = if is_zh {
+                "还没有对话内容，输入提示词开始。"
+            } else {
+                "No conversation yet. Start by typing a prompt."
+            };
+            transcript_lines.push(Line::from(Span::styled(
+                placeholder,
+                super::theme::secondary_text(),
+            )));
+        }
+
+        self.set_transcript_rendered_lines(transcript_total_lines);
+        self.transcript_render_cache = Some(TranscriptRenderCache {
+            width,
+            height,
+            revision: self.transcript_render_revision,
+            selected: selected_transcript,
+            offset_from_bottom: self.transcript_offset_from_bottom,
+            archived_entries: self.history_archived_entries,
+            log_entries: self.logs.len(),
+            lines: transcript_lines.clone(),
+            local_scroll: transcript_scroll,
+        });
+
+        TranscriptRenderedView {
+            lines: transcript_lines,
+            local_scroll: transcript_scroll,
         }
     }
 
@@ -2652,32 +2739,9 @@ impl TuiApp {
         self.key_paste_burst_buffer.clear();
         self.key_paste_burst_last_at = None;
         self.clear_suppressed_clipboard_paste();
-        self.clear_clipboard_probe_cache();
         self.history_cursor = None;
         self.reset_plain_char_burst();
         true
-    }
-
-    fn take_recent_input_chars(&mut self, char_count: usize) -> String {
-        if char_count == 0 || self.input_cursor == 0 {
-            return String::new();
-        }
-        let mut start = self.input_cursor.min(self.input.len());
-        for _ in 0..char_count {
-            if start == 0 {
-                break;
-            }
-            start = prev_char_boundary(&self.input, start);
-        }
-        if start >= self.input_cursor {
-            return String::new();
-        }
-        let grabbed = self.input[start..self.input_cursor].to_string();
-        self.input.replace_range(start..self.input_cursor, "");
-        self.input_cursor = start;
-        self.sync_large_paste_placeholders();
-        self.sync_attachment_placeholders();
-        grabbed
     }
 
     fn flush_key_paste_burst(&mut self) -> bool {
@@ -2706,30 +2770,6 @@ impl TuiApp {
             return false;
         }
         self.flush_key_paste_burst()
-    }
-
-    fn handle_plain_char_paste_burst(&mut self, ch: char) -> bool {
-        let now = Instant::now();
-        if self.key_paste_burst_active() {
-            if self
-                .key_paste_burst_last_at
-                .is_some_and(|last| now.saturating_duration_since(last) <= PASTE_BURST_CHAR_GAP)
-            {
-                self.key_paste_burst_buffer.push(ch);
-                self.key_paste_burst_last_at = Some(now);
-                return true;
-            }
-            self.flush_key_paste_burst();
-        }
-        if self.key_char_burst_len < PASTE_BURST_CAPTURE_CHAR_THRESHOLD {
-            return false;
-        }
-        let retro_text =
-            self.take_recent_input_chars(PASTE_BURST_CAPTURE_CHAR_THRESHOLD.saturating_sub(1));
-        self.key_paste_burst_buffer.push_str(retro_text.as_str());
-        self.key_paste_burst_buffer.push(ch);
-        self.key_paste_burst_last_at = Some(now);
-        true
     }
 
     fn sync_large_paste_placeholders(&mut self) {
@@ -2876,48 +2916,9 @@ impl TuiApp {
         self.input_cursor = self.input_cursor.min(self.input.len());
     }
 
-    fn recent_input_chars(&self, char_count: usize) -> String {
-        if char_count == 0 || self.input_cursor == 0 {
-            return String::new();
-        }
-        let mut start = self.input_cursor.min(self.input.len());
-        for _ in 0..char_count {
-            if start == 0 {
-                break;
-            }
-            start = prev_char_boundary(&self.input, start);
-        }
-        if start >= self.input_cursor {
-            return String::new();
-        }
-        self.input[start..self.input_cursor].to_string()
-    }
-
-    fn cached_clipboard_text_for_promotion(&mut self) -> Option<String> {
-        let now = Instant::now();
-        if let Some((cached_at, cached_text)) = &self.clipboard_probe_cache {
-            if now.saturating_duration_since(*cached_at) <= CLIPBOARD_PASTE_PROBE_CACHE_TTL {
-                return cached_text.clone();
-            }
-        }
-        let detected = read_system_clipboard_text().ok().flatten();
-        self.clipboard_probe_cache = Some((now, detected.clone()));
-        detected
-    }
-
-    fn clear_clipboard_probe_cache(&mut self) {
-        self.clipboard_probe_cache = None;
-    }
-
     fn clear_suppressed_clipboard_paste(&mut self) {
         self.suppressed_clipboard_paste.clear();
         self.suppressed_clipboard_paste_last_at = None;
-    }
-
-    fn should_promote_clipboard_text(&self, text: &str) -> bool {
-        text.chars().count() > LARGE_PASTE_CHAR_THRESHOLD
-            || text.contains('\n')
-            || detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), text).is_some()
     }
 
     fn try_consume_suppressed_clipboard_key(&mut self, key: KeyEvent) -> bool {
@@ -2951,60 +2952,6 @@ impl TuiApp {
             self.clear_suppressed_clipboard_paste();
         }
         true
-    }
-
-    fn try_promote_clipboard_paste(&mut self, ch: char) -> bool {
-        let max_prior_chars = self
-            .input
-            .get(..self.input_cursor.min(self.input.len()))
-            .map(|value| value.chars().count().min(8))
-            .unwrap_or(0);
-        let Some(clipboard_text) = self.cached_clipboard_text_for_promotion() else {
-            return false;
-        };
-        if !self.should_promote_clipboard_text(clipboard_text.as_str()) {
-            return false;
-        }
-        if max_prior_chars == 0 {
-            if !clipboard_text.starts_with(ch) {
-                return false;
-            }
-            let remaining = clipboard_text.chars().skip(1).collect::<String>();
-            if !remaining.is_empty() {
-                self.suppressed_clipboard_paste = remaining;
-                self.suppressed_clipboard_paste_last_at = Some(Instant::now());
-            } else {
-                self.clear_suppressed_clipboard_paste();
-            }
-            self.on_paste(clipboard_text);
-            self.flush_pending_paste();
-            self.reset_plain_char_burst();
-            return true;
-        }
-        for prior_chars in (1..=max_prior_chars).rev() {
-            let mut candidate = self.recent_input_chars(prior_chars);
-            candidate.push(ch);
-            if !clipboard_text.starts_with(candidate.as_str()) {
-                continue;
-            }
-            let _ = self.take_recent_input_chars(prior_chars);
-            let consumed_prefix_chars = candidate.chars().count();
-            let remaining = clipboard_text
-                .chars()
-                .skip(consumed_prefix_chars)
-                .collect::<String>();
-            if !remaining.is_empty() {
-                self.suppressed_clipboard_paste = remaining;
-                self.suppressed_clipboard_paste_last_at = Some(Instant::now());
-            } else {
-                self.clear_suppressed_clipboard_paste();
-            }
-            self.on_paste(clipboard_text);
-            self.flush_pending_paste();
-            self.reset_plain_char_burst();
-            return true;
-        }
-        false
     }
 
     async fn drain_pending_attachment_paths(&mut self) {
@@ -3086,11 +3033,9 @@ impl TuiApp {
         let Some(normalized) = normalize_clipboard_text(text) else {
             return;
         };
-        self.reset_plain_char_burst();
         self.key_paste_burst_buffer.clear();
         self.key_paste_burst_last_at = None;
         self.clear_suppressed_clipboard_paste();
-        self.clear_clipboard_probe_cache();
         if let Some(paths) =
             detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), normalized.as_str())
         {
@@ -3143,33 +3088,10 @@ impl TuiApp {
         }
     }
 
-    fn observe_plain_char_event(&mut self) {
-        let now = Instant::now();
-        if let Some(last) = self.key_char_burst_last_at {
-            if now.saturating_duration_since(last) <= PASTE_BURST_CHAR_GAP {
-                self.key_char_burst_len = self.key_char_burst_len.saturating_add(1);
-            } else {
-                self.key_char_burst_len = 1;
-            }
-        } else {
-            self.key_char_burst_len = 1;
-        }
-        self.key_char_burst_last_at = Some(now);
-    }
-
-    fn reset_plain_char_burst(&mut self) {
-        self.key_char_burst_len = 0;
-        self.key_char_burst_last_at = None;
-    }
+    fn reset_plain_char_burst(&mut self) {}
 
     fn should_treat_enter_as_paste_newline(&self) -> bool {
-        let Some(last) = self.key_char_burst_last_at else {
-            return false;
-        };
-        if Instant::now().saturating_duration_since(last) > PASTE_BURST_ENTER_GAP {
-            return false;
-        }
-        self.key_char_burst_len >= PASTE_BURST_ENTER_CHAR_THRESHOLD
+        false
     }
 
     pub async fn on_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -3397,7 +3319,6 @@ impl TuiApp {
                 if self.key_paste_burst_active() {
                     self.key_paste_burst_buffer.push('\n');
                     self.key_paste_burst_last_at = Some(Instant::now());
-                    self.observe_plain_char_event();
                     return Ok(());
                 }
                 if self.config_wizard.is_none()
@@ -3405,7 +3326,6 @@ impl TuiApp {
                         .modifiers
                         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
                 {
-                    self.observe_plain_char_event();
                     self.insert_char_at_cursor('\n');
                     return Ok(());
                 }
@@ -3414,7 +3334,6 @@ impl TuiApp {
                     && self.should_treat_enter_as_paste_newline()
                 {
                     self.insert_char_at_cursor('\n');
-                    self.observe_plain_char_event();
                     return Ok(());
                 }
                 self.reset_plain_char_burst();
@@ -3511,26 +3430,12 @@ impl TuiApp {
                 }
             }
             KeyCode::Char('?') => {
-                self.observe_plain_char_event();
-                if self.try_promote_clipboard_paste('?') {
-                    return Ok(());
-                }
-                if self.handle_plain_char_paste_burst('?') {
-                    return Ok(());
-                }
                 self.insert_char_at_cursor('?');
             }
             KeyCode::Char(ch) => {
                 if matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
                     || is_altgr(key.modifiers)
                 {
-                    self.observe_plain_char_event();
-                    if self.try_promote_clipboard_paste(ch) {
-                        return Ok(());
-                    }
-                    if self.handle_plain_char_paste_burst(ch) {
-                        return Ok(());
-                    }
                     self.insert_char_at_cursor(ch);
                 }
             }

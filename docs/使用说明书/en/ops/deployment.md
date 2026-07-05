@@ -86,7 +86,7 @@ These endpoints can all be mounted under the same service domain—don't wait un
 
 - `config/wunder.yaml`
 - `config/wunder-example.yaml`
-- `WUNDER_TEMP/config/wunder.yaml` (CLI/Desktop runtime)
+- `~/.wunder/cli/WUNDER_TEMP/config/wunder.yaml` (CLI runtime)
 - `config/mcp_config.json`
 
 ## Common Environment Variables

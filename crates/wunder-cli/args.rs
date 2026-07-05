@@ -64,7 +64,7 @@ pub struct GlobalArgs {
     #[arg(long = "config", global = true)]
     pub config_path: Option<PathBuf>,
 
-    /// Runtime temp root / 运行时临时目录（默认 ./WUNDER_TEMP）。
+    /// Runtime temp root / 运行时临时目录（默认用户目录 .wunder/cli/WUNDER_TEMP）。
     #[arg(long = "temp-root", global = true)]
     pub temp_root: Option<PathBuf>,
 

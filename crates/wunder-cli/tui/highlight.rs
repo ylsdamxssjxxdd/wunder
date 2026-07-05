@@ -1,20 +1,39 @@
+#[cfg(not(target_vendor = "win7"))]
 use std::sync::OnceLock;
 
+#[cfg(not(target_vendor = "win7"))]
 use ratatui::style::Color;
+#[cfg(not(target_vendor = "win7"))]
 use ratatui::style::Modifier;
+#[cfg(not(target_vendor = "win7"))]
 use ratatui::style::Style;
 use ratatui::text::Line;
+#[cfg(not(target_vendor = "win7"))]
 use ratatui::text::Span;
+#[cfg(not(target_vendor = "win7"))]
 use syntect::easy::HighlightLines;
+#[cfg(not(target_vendor = "win7"))]
 use syntect::highlighting::FontStyle;
+#[cfg(not(target_vendor = "win7"))]
 use syntect::highlighting::Style as SyntectStyle;
+#[cfg(not(target_vendor = "win7"))]
 use syntect::highlighting::Theme;
+#[cfg(not(target_vendor = "win7"))]
 use syntect::highlighting::ThemeSet;
+#[cfg(not(target_vendor = "win7"))]
 use syntect::parsing::SyntaxSet;
 
+#[cfg(not(target_vendor = "win7"))]
 const MAX_HIGHLIGHT_CHARS: usize = 40_000;
+#[cfg(not(target_vendor = "win7"))]
 const MAX_HIGHLIGHT_LINES: usize = 600;
 
+#[cfg(target_vendor = "win7")]
+pub(crate) fn highlight_code_to_lines(_code: &str, _lang: &str) -> Option<Vec<Line<'static>>> {
+    None
+}
+
+#[cfg(not(target_vendor = "win7"))]
 pub(crate) fn highlight_code_to_lines(code: &str, lang: &str) -> Option<Vec<Line<'static>>> {
     if code.is_empty()
         || code.len() > MAX_HIGHLIGHT_CHARS
@@ -65,6 +84,7 @@ pub(crate) fn highlight_code_to_lines(code: &str, lang: &str) -> Option<Vec<Line
     Some(lines)
 }
 
+#[cfg(not(target_vendor = "win7"))]
 fn normalize_language_token(lang: &str) -> Option<&str> {
     let token = lang
         .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';')
@@ -72,11 +92,13 @@ fn normalize_language_token(lang: &str) -> Option<&str> {
     Some(token.trim())
 }
 
+#[cfg(not(target_vendor = "win7"))]
 fn syntax_set() -> &'static SyntaxSet {
     static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
     SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
+#[cfg(not(target_vendor = "win7"))]
 fn theme() -> &'static Theme {
     static THEMES: OnceLock<ThemeSet> = OnceLock::new();
     let theme_set = THEMES.get_or_init(ThemeSet::load_defaults);
@@ -87,6 +109,7 @@ fn theme() -> &'static Theme {
         .expect("syntect default themes should provide at least one theme")
 }
 
+#[cfg(not(target_vendor = "win7"))]
 fn syntect_to_ratatui(style: SyntectStyle) -> Style {
     let mut output = Style::default().fg(Color::Rgb(
         style.foreground.r,

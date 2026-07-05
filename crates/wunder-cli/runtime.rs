@@ -65,7 +65,7 @@ impl CliRuntime {
         let temp_root = global
             .temp_root
             .clone()
-            .unwrap_or_else(|| launch_dir.join("WUNDER_TEMP"));
+            .unwrap_or_else(|| default_cli_temp_root(&wunder_home));
         let user_tools_root = wunder_home.join("user_tools");
         let vector_root = wunder_home.join("vector_knowledge");
         ensure_runtime_dirs(&temp_root, &wunder_home, &user_tools_root, &vector_root)?;
@@ -85,6 +85,7 @@ impl CliRuntime {
         set_env_path("WUNDER_HOME", &wunder_home);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
+        set_env_path("WUNDER_TEMP_DIR_ROOT", &temp_root);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
         let config_store = ConfigStore::new(config_path.clone());
@@ -353,6 +354,10 @@ fn ensure_runtime_dirs(
         fs::create_dir_all(dir)?;
     }
     Ok(())
+}
+
+fn default_cli_temp_root(wunder_home: &Path) -> PathBuf {
+    wunder_home.join("cli").join("WUNDER_TEMP")
 }
 
 fn set_env_path(key: &str, value: &Path) {

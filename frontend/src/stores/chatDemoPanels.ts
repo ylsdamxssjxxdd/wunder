@@ -65,6 +65,7 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { isCommandStreamVisualizationEnabled } from '@/utils/commandStreamVisualization';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
@@ -506,12 +507,14 @@ export const buildToolIdentityMeta = (...sources) => {
 };
 
 export const hydrateSessionCommandSessions = (sessionId, snapshots) => {
+  if (!isCommandStreamVisualizationEnabled()) return;
   const targetId = resolveSessionKey(sessionId);
   if (!targetId || !Array.isArray(snapshots)) return;
   useCommandSessionStore().hydrateSession(targetId, snapshots);
 };
 
 export const upsertCommandSessionRuntime = (sessionId, payload) => {
+  if (!isCommandStreamVisualizationEnabled()) return null;
   const targetId = resolveSessionKey(sessionId);
   if (!targetId || !payload) return null;
   return useCommandSessionStore().upsertSnapshot(targetId, payload);
@@ -524,6 +527,7 @@ export const appendCommandSessionRuntimeDelta = (
   delta,
   meta = {}
 ) => {
+  if (!isCommandStreamVisualizationEnabled()) return null;
   const targetId = resolveSessionKey(sessionId);
   if (!targetId || !commandSessionId || !delta) return null;
   return useCommandSessionStore().appendDelta(targetId, commandSessionId, stream, delta, meta);

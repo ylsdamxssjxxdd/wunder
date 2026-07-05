@@ -134,6 +134,7 @@ import {
 import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { isCommandStreamVisualizationEnabled } from '@/utils/commandStreamVisualization';
 import {
   buildCompactionDisplay,
   resolveCompactionInstanceLabel,
@@ -608,6 +609,7 @@ const resolveCommandSessionDurationMs = (
 };
 
 const resolveCommandSessionSnapshot = (entry: RawEntry): CommandSessionRuntimeEntry | null => {
+  if (!isCommandStreamVisualizationEnabled()) return null;
   if (!isExecuteCommandTool(entry.toolName)) return null;
   const refs = [
     resolveCommandSessionRefFromItem(entry.resultItem),
@@ -2835,6 +2837,97 @@ const buildExecuteCommandView = (
   };
 };
 
+const buildExecuteCommandCompactResultText = (
+  entry: RawEntry,
+  command: string,
+  status: string,
+  errorText: string
+): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const firstResult = Array.isArray(dataObject?.results)
+    ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
+    : undefined;
+  const outputStreams = extractToolOutputStreams(entry.outputItem);
+  const compacted = extractCompactedCommandPayload(resultObject, dataObject);
+  const structuredCandidates = [
+    extractCommandRecordFromUnknown(firstResult),
+    extractCommandRecordFromUnknown(firstResult?.result),
+    extractCommandRecordFromUnknown(firstResult?.output),
+    extractCommandRecordFromUnknown(dataObject),
+    extractCommandRecordFromUnknown(dataObject?.result),
+    extractCommandRecordFromUnknown(dataObject?.output),
+    extractCommandRecordFromUnknown(resultObject),
+    extractCommandRecordFromUnknown(resultObject?.result),
+    extractCommandRecordFromUnknown(resultObject?.output)
+  ];
+  const stdoutRaw = pickString(
+    outputStreams.stdout,
+    firstResult?.stdout,
+    ...structuredCandidates.map((item) => item.stdout),
+    compacted.stdout,
+    dataObject?.stdout,
+    resultObject?.stdout,
+    firstResult?.output,
+    firstResult?.result,
+    dataObject?.output,
+    dataObject?.result,
+    resultObject?.output,
+    resultObject?.result
+  );
+  const stderrRaw = pickString(
+    outputStreams.stderr,
+    firstResult?.stderr,
+    ...structuredCandidates.map((item) => item.stderr),
+    compacted.stderr,
+    firstResult?.error,
+    dataObject?.stderr,
+    dataObject?.error,
+    resultObject?.stderr,
+    resultObject?.error,
+    errorText
+  );
+  const displayStdout = stripBackendTruncationMarkers(normalizeCommandStreamText(stdoutRaw, 'stdout'));
+  const displayStderr = stripBackendTruncationMarkers(normalizeCommandStreamText(stderrRaw, 'stderr'));
+  const terminalText = buildExecuteCommandTerminalText(
+    command,
+    displayStdout,
+    displayStderr,
+    compacted.preview,
+    errorText,
+    status,
+    false
+  );
+  if (terminalText) return terminalText;
+
+  const exitCode = toOptionalInt(
+    resolveExecuteCommandExitCode(resultObject, dataObject),
+    ...structuredCandidates.map((item) => item.returncode),
+    compacted.returncode,
+    dataObject?.exit_code,
+    dataObject?.exitCode,
+    resultObject?.exit_code,
+    resultObject?.exitCode
+  );
+  const stdoutBytes = toOptionalInt(dataObject?.stdout_bytes, dataObject?.stdoutBytes, resultObject?.stdout_bytes, resultObject?.stdoutBytes);
+  const stderrBytes = toOptionalInt(dataObject?.stderr_bytes, dataObject?.stderrBytes, resultObject?.stderr_bytes, resultObject?.stderrBytes);
+  const ptyBytes = toOptionalInt(dataObject?.pty_bytes, dataObject?.ptyBytes, resultObject?.pty_bytes, resultObject?.ptyBytes);
+  const durationMs = toOptionalInt(dataObject?.duration_ms, dataObject?.durationMs, resultObject?.duration_ms, resultObject?.durationMs);
+  const parts = [
+    exitCode === null ? '' : `exit ${exitCode}`,
+    formatByteCountLabel(
+      [stdoutBytes, stderrBytes, ptyBytes]
+        .filter((value): value is number => value !== null)
+        .reduce((sum, value) => sum + value, 0) || null
+    ),
+    durationMs === null ? '' : `${durationMs}ms`
+  ].filter(Boolean);
+  if (parts.length > 0) return parts.join(' | ');
+
+  const commandText = pickString(command, args?.command, args?.cmd, compacted.command);
+  return commandText ? truncateSingleLine(commandText, 180) : '';
+};
+
 const buildGenericResultBlock = (
   resultObject: UnknownObject | null,
   dataObject: UnknownObject | null,
@@ -2911,7 +3004,7 @@ const buildToolResultSection = (
 
   const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
   const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
-  if (isExecuteCommandTool(entry.toolName)) {
+  if (isCommandStreamVisualizationEnabled() && isExecuteCommandTool(entry.toolName)) {
     const commandView = buildExecuteCommandView(entry, command, status, errorText, commandSession, true);
     if (hasVisibleCommandViewContent(commandView)) {
       return {
@@ -2922,6 +3015,21 @@ const buildToolResultSection = (
         body: commandView.terminalText,
         copyText: commandView.terminalText || rawResultDetail || rawOutputDetail || undefined,
         commandView,
+        patchLines: []
+      };
+    }
+  }
+  if (isExecuteCommandTool(entry.toolName)) {
+    const compactBody = buildExecuteCommandCompactResultText(entry, command, status, errorText);
+    if (compactBody) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'text',
+        summary: truncateSingleLine(compactBody, 80),
+        body: compactBody,
+        copyText: compactBody,
+        commandView: null,
         patchLines: []
       };
     }
