@@ -5,9 +5,13 @@ import {
   canonicalizeAgentToolName,
   normalizeAgentToolNamesForSettings,
   normalizeAgentToolNamesForSettingsSnapshot,
-  resolveDesktopToolKind
+  resolveDesktopToolKind,
+  resolveWebToolKind
 } from '../../src/utils/agentSettingsSnapshot';
 import { buildDeclaredDependencyPayload } from '../../src/utils/agentDependencyStatus';
+
+const WEB_FETCH_TOOL_NAME = '\u7f51\u9875\u6293\u53d6';
+const WEB_SEARCH_TOOL_NAME = '\u7f51\u9875\u641c\u7d22';
 
 test('agent settings normalize desktop tool aliases to persisted runtime names', () => {
   assert.equal(resolveDesktopToolKind('desktop_controller'), 'controller');
@@ -22,6 +26,27 @@ test('agent settings normalize desktop tool aliases to persisted runtime names',
       '桌面监视器'
     ]),
     ['桌面控制器', '桌面监视器']
+  );
+});
+
+test('agent settings normalize web tool aliases to persisted runtime names', () => {
+  assert.equal(resolveWebToolKind('web_fetch'), 'fetch');
+  assert.equal(resolveWebToolKind('web fetch'), 'fetch');
+  assert.equal(resolveWebToolKind('web-fetch'), 'fetch');
+  assert.equal(resolveWebToolKind(WEB_FETCH_TOOL_NAME), 'fetch');
+  assert.equal(resolveWebToolKind('web_search'), 'search');
+  assert.equal(resolveWebToolKind('web search'), 'search');
+  assert.equal(resolveWebToolKind(WEB_SEARCH_TOOL_NAME), 'search');
+  assert.equal(canonicalizeAgentToolName('web_fetch'), WEB_FETCH_TOOL_NAME);
+  assert.equal(canonicalizeAgentToolName('web_search'), WEB_SEARCH_TOOL_NAME);
+  assert.deepEqual(
+    normalizeAgentToolNamesForSettings([
+      'web_fetch',
+      WEB_FETCH_TOOL_NAME,
+      'web-search',
+      WEB_SEARCH_TOOL_NAME
+    ]),
+    [WEB_FETCH_TOOL_NAME, WEB_SEARCH_TOOL_NAME]
   );
 });
 

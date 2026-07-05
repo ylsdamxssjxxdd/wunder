@@ -1709,13 +1709,16 @@ pub fn collect_enabled_tool_names_for_catalog(
     let mut enabled_builtin = HashSet::new();
     if is_desktop_mode(config) {
         for canonical in desktop_builtin_tool_names() {
+            if !runtime_builtin_tool_allowed(config, canonical) {
+                continue;
+            }
             enabled_builtin.insert(canonical.clone());
             names.insert(canonical.clone());
         }
     } else {
         for name in &config.tools.builtin.enabled {
             let canonical = resolve_tool_name(name);
-            if canonical.is_empty() {
+            if canonical.is_empty() || !runtime_builtin_tool_allowed(config, &canonical) {
                 continue;
             }
             enabled_builtin.insert(canonical.clone());
@@ -1992,7 +1995,8 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
 mod tests {
     use super::{
         build_mcp_tool_alias_entries, builtin_tool_specs_with_language,
-        collect_available_tool_names, collect_prompt_tool_specs_with_language, resolve_tool_name,
+        collect_available_tool_names, collect_enabled_tool_names_for_catalog,
+        collect_prompt_tool_specs_with_language, resolve_tool_name,
     };
     use crate::config::Config;
     use crate::i18n;
@@ -2647,6 +2651,25 @@ mod tests {
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
         assert!(!available.contains("web_search"));
         assert!(!available.contains("网页搜索"));
+    }
+
+    #[test]
+    fn catalog_available_tools_hide_runtime_disabled_web_search_by_default() {
+        let config = Config::default();
+        let available =
+            collect_enabled_tool_names_for_catalog(&config, &SkillRegistry::default(), None);
+        assert!(!available.contains("web_search"));
+        assert!(!available.contains("网页搜索"));
+    }
+
+    #[cfg(not(feature = "web-fetch"))]
+    #[test]
+    fn catalog_available_tools_hide_web_fetch_when_feature_is_disabled() {
+        let config = Config::default();
+        let available =
+            collect_enabled_tool_names_for_catalog(&config, &SkillRegistry::default(), None);
+        assert!(!available.contains("web_fetch"));
+        assert!(!available.contains(super::web_fetch_tool::TOOL_WEB_FETCH));
     }
 
     #[test]

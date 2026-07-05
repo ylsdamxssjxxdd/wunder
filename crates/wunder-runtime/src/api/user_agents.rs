@@ -2667,6 +2667,30 @@ mod tests {
     }
 
     #[test]
+    fn filter_allowed_tools_keeps_web_fetch_alias_when_allowed_by_canonical_name() {
+        let requested = vec!["web_fetch".to_string()];
+        let canonical = crate::tools::resolve_tool_name("web_fetch");
+        let allowed = HashSet::from([canonical.clone()]);
+
+        assert_eq!(
+            filter_allowed_tools(&requested, &allowed, false),
+            vec![canonical]
+        );
+    }
+
+    #[test]
+    fn filter_allowed_tools_keeps_web_fetch_canonical_when_allowed_by_alias() {
+        let canonical = crate::tools::resolve_tool_name("web_fetch");
+        let requested = vec![canonical.clone()];
+        let allowed = HashSet::from(["web_fetch".to_string()]);
+
+        assert_eq!(
+            filter_allowed_tools(&requested, &allowed, false),
+            vec![canonical]
+        );
+    }
+
+    #[test]
     fn filter_allowed_tools_still_rejects_desktop_tools_outside_desktop_mode() {
         let requested = vec![
             "desktop_controller".to_string(),

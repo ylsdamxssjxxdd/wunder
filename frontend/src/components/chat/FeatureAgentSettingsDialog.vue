@@ -188,6 +188,10 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import {
+  canonicalizeAgentToolName,
+  normalizeAgentToolNamesForSettings
+} from '@/utils/agentSettingsSnapshot';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { downloadWorkerCard } from '@/utils/workerCard';
 import {
@@ -302,12 +306,12 @@ const defaultModelName = ref('');
 const normalizeToolOption = (item) => {
   if (!item) return null;
   if (typeof item === 'string') {
-    const name = item.trim();
+    const name = canonicalizeAgentToolName(item);
     return name ? { label: name, value: name, description: '', hint: name } : null;
   }
-  const value = String(
+  const value = canonicalizeAgentToolName(String(
     item.runtime_name || item.runtimeName || item.name || item.tool_name || item.toolName || item.id || ''
-  ).trim();
+  ).trim());
   if (!value) return null;
   const label = String(item.display_name || item.displayName || item.title || item.label || value).trim() || value;
   const option = {
@@ -360,7 +364,9 @@ const dependencyStatus = computed(() =>
 
 const ignoreMissingDependencies = () => {
   const payload = buildIgnoredMissingDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
-  form.tool_names = filterUserAgentToolNames(payload.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
+  form.tool_names = normalizeAgentToolNamesForSettings(
+    filterUserAgentToolNames(payload.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS)
+  );
   currentAgent.value = currentAgent.value
     ? {
         ...currentAgent.value,
@@ -386,7 +392,9 @@ const selectToolGroup = (group: AgentToolGroup<any>) => {
   } else {
     group.options.forEach((option) => next.add(option.value));
   }
-  form.tool_names = filterUserAgentToolNames(Array.from(next), USER_AGENT_TOOL_CATALOG_OPTIONS);
+  form.tool_names = normalizeAgentToolNamesForSettings(
+    filterUserAgentToolNames(Array.from(next), USER_AGENT_TOOL_CATALOG_OPTIONS)
+  );
 };
 
 const loadToolSummary = async () => {
@@ -441,7 +449,9 @@ const loadAgent = async () => {
     form.is_shared = false;
     form.system_prompt = agent.system_prompt || '';
     form.model_name = resolveConfiguredModelName(currentAgent.value);
-    form.tool_names = filterUserAgentToolNames(agent.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS);
+    form.tool_names = normalizeAgentToolNamesForSettings(
+      filterUserAgentToolNames(agent.tool_names, USER_AGENT_TOOL_CATALOG_OPTIONS)
+    );
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(
       agent.hive_id,
@@ -471,9 +481,11 @@ const saveAgent = async () => {
       name,
       description: form.description || '',
       is_shared: false,
-      tool_names: filterUserAgentToolNames(
-        dependencyPayload.tool_names,
-        USER_AGENT_TOOL_CATALOG_OPTIONS
+      tool_names: normalizeAgentToolNamesForSettings(
+        filterUserAgentToolNames(
+          dependencyPayload.tool_names,
+          USER_AGENT_TOOL_CATALOG_OPTIONS
+        )
       ),
       declared_tool_names: dependencyPayload.declared_tool_names,
       declared_skill_names: dependencyPayload.declared_skill_names,
@@ -510,9 +522,11 @@ const exportWorkerCard = () => {
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
     model_name: String(form.model_name || '').trim(),
-    tool_names: filterUserAgentToolNames(
-      dependencyPayload.tool_names,
-      USER_AGENT_TOOL_CATALOG_OPTIONS
+    tool_names: normalizeAgentToolNamesForSettings(
+      filterUserAgentToolNames(
+        dependencyPayload.tool_names,
+        USER_AGENT_TOOL_CATALOG_OPTIONS
+      )
     ),
     declared_tool_names: dependencyPayload.declared_tool_names,
     declared_skill_names: dependencyPayload.declared_skill_names,

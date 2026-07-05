@@ -152,7 +152,7 @@ export CARGO_TARGET_DIR=/app/target/arm64-20
 if [ "${WUNDER_BUILD_OFFLINE:-0}" = "1" ]; then
   export CARGO_NET_OFFLINE=true
 fi
-cargo build --release --locked -p wunder-desktop --bin wunder-desktop-bridge --features desktop-control
+cargo build --release --locked -p wunder-desktop --bin wunder-desktop-bridge --features desktop-control,web-fetch
 EOF
 }
 

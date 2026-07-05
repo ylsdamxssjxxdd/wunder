@@ -7,7 +7,7 @@ build = "build.rs"
 default-run = "wunder-desktop"
 
 [features]
-default = ["sqlite-storage"]
+default = ["sqlite-storage", "web-fetch"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
 desktop-control = ["wunder-runtime/desktop-control"]
 doc2md = ["wunder-runtime/doc2md"]
