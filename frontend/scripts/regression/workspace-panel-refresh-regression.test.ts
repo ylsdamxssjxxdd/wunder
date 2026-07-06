@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   collectWorkspaceRefreshTargets,
@@ -9,6 +11,11 @@ import {
   shouldWorkspacePreviewReload,
   type WorkspaceRefreshEntryLike
 } from '../../src/components/chat/workspacePanelRefreshPlanner';
+
+const frontendRoot = resolve(process.cwd());
+
+const readSource = (relativePath: string): string =>
+  readFileSync(resolve(frontendRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 
 const ensureBrowserRuntimeStub = (): void => {
   const root = globalThis as typeof globalThis & {
@@ -152,6 +159,28 @@ test('workspace background refresh preserves stale children for expanded directo
   });
   assert.equal(emptyMerged[0].childrenLoaded, false);
   assert.deepEqual(emptyMerged[0].children, []);
+});
+
+test('workspace background refresh stays interaction-preserving while directories expand', () => {
+  const source = readSource('src/components/chat/WorkspacePanel.vue');
+  const loadStart = source.indexOf('const loadWorkspace = async');
+  assert.ok(loadStart >= 0);
+  const loadSearchStart = source.indexOf('const loadWorkspaceSearch = async', loadStart);
+  assert.ok(loadSearchStart > loadStart);
+  const loadSource = source.slice(loadStart, loadSearchStart);
+
+  assert.ok(loadSource.includes('if (!preserveInteraction) {\n    state.loading = true;'));
+  assert.ok(loadSource.includes('if (!preserveInteraction) {\n      state.loading = false;'));
+  assert.ok(source.includes('const workspaceDirectoryLoadingPaths = new Set<string>();'));
+  const toggleStart = source.indexOf('const toggleWorkspaceDirectory = async');
+  assert.ok(toggleStart >= 0);
+  const toggleEnd = source.indexOf('const refreshWorkspace = async', toggleStart);
+  assert.ok(toggleEnd > toggleStart);
+  const toggleSource = source.slice(toggleStart, toggleEnd);
+  assert.ok(toggleSource.indexOf('if (state.expanded.has(entryPath))') < toggleSource.indexOf('if (workspaceDirectoryLoadingPaths.has(entryPath)) return;'));
+  assert.ok(source.includes('workspaceDirectoryLoadingPaths.add(entryPath);'));
+  assert.ok(source.includes('workspaceDirectoryLoadingPaths.delete(entryPath);'));
+  assert.ok(source.includes('if (state.loading || workspaceDirectoryLoadingPaths.size > 0)'));
 });
 
 test('workspace loaded directory check requires a real children array', () => {

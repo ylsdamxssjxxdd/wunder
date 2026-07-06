@@ -1576,6 +1576,7 @@ let autoRefreshTimer = null;
 let autoRefreshPending = false;
 let autoRefreshForceFullReload = false;
 let autoRefreshTargetPaths = new Set<string>();
+const workspaceDirectoryLoadingPaths = new Set<string>();
 let latestWorkspaceTreeVersion = 0;
 let pendingWorkspaceTreeVersion: number | null = null;
 let settleRefreshTimer = null;
@@ -2351,7 +2352,9 @@ const loadWorkspace = async ({
     state.entries = cloneWorkspaceEntries(cachedTree.entries);
     emitWorkspaceStats(state.entries);
   }
-  state.loading = true;
+  if (!preserveInteraction) {
+    state.loading = true;
+  }
   // Keep background sync fully silent to avoid empty-state skeleton flicker.
   state.visualLoading = !background;
   if (resetSearch) {
@@ -2421,7 +2424,9 @@ const loadWorkspace = async ({
     await syncWorkspaceListViewport({ reset: !preserveInteraction });
     return false;
   } finally {
-    state.loading = false;
+    if (!preserveInteraction) {
+      state.loading = false;
+    }
     state.visualLoading = false;
     if (autoRefreshPending) {
       scheduleWorkspaceAutoRefresh();
@@ -2436,7 +2441,9 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
     state.searchMode = false;
     return loadWorkspace({ resetSearch: true, background });
   }
-  state.loading = true;
+  if (!preserveInteraction) {
+    state.loading = true;
+  }
   state.visualLoading = !background;
   if (!preserveInteraction) {
     state.renamingPath = '';
@@ -2465,7 +2472,9 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
     await syncWorkspaceListViewport({ reset: !preserveInteraction });
     return false;
   } finally {
-    state.loading = false;
+    if (!preserveInteraction) {
+      state.loading = false;
+    }
     state.visualLoading = false;
     if (autoRefreshPending) {
       scheduleWorkspaceAutoRefresh();
@@ -2633,7 +2642,7 @@ const scheduleWorkspaceAutoRefresh = () => {
     const refreshStartAt = nowPerf();
     autoRefreshTimer = null;
     if (!autoRefreshPending) return;
-    if (state.loading) {
+    if (state.loading || workspaceDirectoryLoadingPaths.size > 0) {
       scheduleWorkspaceAutoRefresh();
       return;
     }
@@ -2767,10 +2776,12 @@ const toggleWorkspaceDirectory = async (entry) => {
     state.expanded = new Set(state.expanded);
     return;
   }
+  if (workspaceDirectoryLoadingPaths.has(entryPath)) return;
   state.expanded.add(entryPath);
   state.expanded = new Set(state.expanded);
   const currentEntry = findWorkspaceEntryByPath(state.entries, entryPath) || entry;
   if (hasLoadedWorkspaceDirectoryChildren(currentEntry)) return;
+  workspaceDirectoryLoadingPaths.add(entryPath);
   try {
     const { data } = await activeFileSystem.value.listContent(withFsParams({
       path: entryPath,
@@ -2785,6 +2796,11 @@ const toggleWorkspaceDirectory = async (entry) => {
     state.expanded.delete(entryPath);
     state.expanded = new Set(state.expanded);
     showApiError(error, t('workspace.expandFailed'));
+  } finally {
+    workspaceDirectoryLoadingPaths.delete(entryPath);
+    if (autoRefreshPending) {
+      scheduleWorkspaceAutoRefresh();
+    }
   }
 };
 

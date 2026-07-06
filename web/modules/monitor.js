@@ -1313,9 +1313,6 @@ const renderServiceMetrics = (service) => {
   if (!service) {
     elements.metricServiceActive.textContent = "-";
     elements.metricServiceHistory.textContent = "-";
-    elements.metricServiceFinished.textContent = "-";
-    elements.metricServiceError.textContent = "-";
-    elements.metricServiceCancelled.textContent = "-";
     elements.metricServiceTotal.textContent = "-";
     if (elements.metricServiceTokenAvg) {
       elements.metricServiceTokenAvg.textContent = "-";
@@ -1331,9 +1328,6 @@ const renderServiceMetrics = (service) => {
   }
   elements.metricServiceActive.textContent = `${service.active_sessions ?? 0}`;
   elements.metricServiceHistory.textContent = `${service.history_sessions ?? 0}`;
-  elements.metricServiceFinished.textContent = `${service.finished_sessions ?? 0}`;
-  elements.metricServiceError.textContent = `${service.error_sessions ?? 0}`;
-  elements.metricServiceCancelled.textContent = `${service.cancelled_sessions ?? 0}`;
   elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   if (elements.metricServiceTokenAvg) {
     const avgTokens = parseMetricNumber(service.avg_context_tokens);

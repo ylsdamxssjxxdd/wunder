@@ -888,6 +888,8 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.agentPlanExpanded = ref(false);
 
+  ctx.agentPlanExpandedByKey = new Map<string, boolean>();
+
   ctx.beeroomFirstEntryAutoSelectionPending = ref(true);
 
   ctx.dismissedPlanMessages = ref<WeakSet<Record<string, unknown>>>(new WeakSet());

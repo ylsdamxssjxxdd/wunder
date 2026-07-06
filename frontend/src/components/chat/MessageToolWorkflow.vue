@@ -100,6 +100,16 @@
   </div>
 </template>
 
+<script lang="ts">
+type WorkflowPanelState = {
+  collapsed: boolean;
+  expandedKeys: string[];
+  userCollapsedEntryKeys: string[];
+};
+
+const workflowStateCache = new Map<string, WorkflowPanelState>();
+</script>
+
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 
@@ -211,6 +221,7 @@ type Props = {
   visible?: boolean;
   terminalAutoStick?: TerminalAutoStickMode;
   renderVersion?: number | string;
+  stateKey?: string;
 };
 
 type UnknownObject = Record<string, unknown>;
@@ -228,6 +239,7 @@ const FILE_HINT_SUMMARY_LIMIT = 2;
 const PATCH_RESULT_FILE_LIMIT = 10;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
+const WORKFLOW_STATE_CACHE_LIMIT = 120;
 const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
 const TOOL_CALL_DEBUG_HINT_MARGIN = 12;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH = 360;
@@ -264,7 +276,8 @@ const props = withDefaults(defineProps<Props>(), {
   loading: false,
   visible: false,
   terminalAutoStick: 'smart',
-  renderVersion: 0
+  renderVersion: 0,
+  stateKey: ''
 });
 const emit = defineEmits<{
   (event: 'layout-change'): void;
@@ -296,6 +309,43 @@ let toolCallDebugHintHideTimer: ReturnType<typeof setTimeout> | null = null;
 const programmaticEntryToggleKeys = new Set<string>();
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
+
+const normalizeWorkflowStateKey = (value: unknown): string => String(value || '').trim();
+
+const rememberWorkflowStateCacheOrder = (key: string): void => {
+  if (!workflowStateCache.has(key)) return;
+  const value = workflowStateCache.get(key);
+  if (!value) return;
+  workflowStateCache.delete(key);
+  workflowStateCache.set(key, value);
+  while (workflowStateCache.size > WORKFLOW_STATE_CACHE_LIMIT) {
+    const firstKey = workflowStateCache.keys().next().value;
+    if (!firstKey) break;
+    workflowStateCache.delete(firstKey);
+  }
+};
+
+const saveWorkflowPanelState = (): void => {
+  const key = normalizeWorkflowStateKey(props.stateKey);
+  if (!key) return;
+  workflowStateCache.set(key, {
+    collapsed: Boolean(workflowUserCollapsed.value),
+    expandedKeys: Array.from(expandedKeys.value),
+    userCollapsedEntryKeys: Array.from(userCollapsedEntryKeys.value)
+  });
+  rememberWorkflowStateCacheOrder(key);
+};
+
+const restoreWorkflowPanelState = (keyValue: unknown): void => {
+  const key = normalizeWorkflowStateKey(keyValue);
+  if (!key) return;
+  const cached = workflowStateCache.get(key);
+  if (!cached) return;
+  workflowUserCollapsed.value = Boolean(cached.collapsed);
+  expandedKeys.value = new Set(cached.expandedKeys);
+  userCollapsedEntryKeys.value = new Set(cached.userCollapsedEntryKeys);
+  rememberWorkflowStateCacheOrder(key);
+};
 
 const isNearBottom = (element: HTMLElement, threshold = 20): boolean =>
   element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
@@ -534,10 +584,12 @@ const handleWorkflowToggle = (event: Event) => {
       }
     });
   }
+  saveWorkflowPanelState();
   scheduleWorkflowLayoutChange();
 };
 
 const syncStreamAutoStick = () => {
+  if (!workflowOpen.value) return;
   streamBodyRefMap.forEach((_element, key) => {
     if (shouldAutoStickStream(key)) {
       scrollStreamToBottom(key);
@@ -3329,6 +3381,30 @@ const entries = computed<ToolEntryView[]>(() => {
 });
 
 watch(
+  () => props.stateKey,
+  (value, oldValue) => {
+    const oldKey = normalizeWorkflowStateKey(oldValue);
+    if (oldKey) {
+      workflowStateCache.set(oldKey, {
+        collapsed: Boolean(workflowUserCollapsed.value),
+        expandedKeys: Array.from(expandedKeys.value),
+        userCollapsedEntryKeys: Array.from(userCollapsedEntryKeys.value)
+      });
+      rememberWorkflowStateCacheOrder(oldKey);
+    }
+    restoreWorkflowPanelState(value);
+    void nextTick(() => {
+      syncWorkflowOpenState();
+      if (workflowOpen.value) {
+        syncEntryOpenStates();
+      }
+      scheduleWorkflowLayoutChange();
+    });
+  },
+  { immediate: true }
+);
+
+watch(
   entries,
   (nextEntries) => {
     const validKeys = new Set(nextEntries.map((entry) => entry.key));
@@ -3337,26 +3413,29 @@ watch(
     pruneStreamTracking(validKeys);
     const nextUserCollapsed = new Set<string>();
     userCollapsedEntryKeys.value.forEach((key) => {
-      if (validKeys.has(key) && key !== liveKey) nextUserCollapsed.add(key);
+      if (validKeys.has(key)) nextUserCollapsed.add(key);
     });
     userCollapsedEntryKeys.value = nextUserCollapsed;
     const nextExpanded = new Set<string>();
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
-    if (liveKey) {
+    if (liveKey && !nextUserCollapsed.has(liveKey)) {
       nextExpanded.add(liveKey);
       workflowFollow.value = true;
     }
     expandedKeys.value = nextExpanded;
+    saveWorkflowPanelState();
     void nextTick(() => {
       syncWorkflowOpenState();
-      syncEntryOpenStates(validKeys);
-      syncStreamAutoStick();
-      if (shouldAutoScrollWorkflow()) {
-        scrollWorkflowToBottom();
+      if (workflowOpen.value) {
+        syncEntryOpenStates(validKeys);
+        syncStreamAutoStick();
+        if (shouldAutoScrollWorkflow()) {
+          scrollWorkflowToBottom();
+        }
+        scheduleWorkflowLayoutChange();
       }
-      scheduleWorkflowLayoutChange();
     });
   },
   { immediate: true }
@@ -3400,6 +3479,7 @@ const handleEntryToggle = (key: string, event: Event) => {
   if (target.open) next.add(key);
   else next.delete(key);
   expandedKeys.value = next;
+  saveWorkflowPanelState();
   if (isChatDebugEnabled()) {
     chatDebugLog('messenger.workflow-shell', 'entry-toggle', {
       key,

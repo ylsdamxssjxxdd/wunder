@@ -92,13 +92,33 @@
 
 .messenger-action-blocker {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--messenger-left-rail-width) + var(--messenger-middle-pane-width));
+  right: var(--messenger-right-dock-width);
   z-index: 1200;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(247, 249, 252, 0.62);
   pointer-events: auto;
+}
+
+.messenger-view.messenger-view--without-middle .messenger-action-blocker {
+  left: var(--messenger-left-rail-width);
+}
+
+.messenger-view.messenger-view--without-right .messenger-action-blocker,
+.messenger-view.messenger-view--right-collapsed .messenger-action-blocker {
+  right: 0;
+}
+
+.messenger-view.messenger-view--nav-collapsed .messenger-action-blocker {
+  left: var(--messenger-middle-pane-width);
+}
+
+.messenger-view.messenger-view--nav-collapsed.messenger-view--without-middle .messenger-action-blocker {
+  left: 0;
 }
 
 .messenger-action-blocker-card {

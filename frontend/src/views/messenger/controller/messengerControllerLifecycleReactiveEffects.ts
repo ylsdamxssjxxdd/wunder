@@ -415,6 +415,19 @@ type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerControllerContext): void {
   installActiveChatRealtimeRecovery(ctx);
+  const rememberAgentPlanExpandedState = (key: unknown, value: unknown) => {
+      const normalizedKey = String(key || '').trim();
+      if (!normalizedKey)
+          return;
+      ctx.agentPlanExpandedByKey.delete(normalizedKey);
+      ctx.agentPlanExpandedByKey.set(normalizedKey, Boolean(value));
+      while (ctx.agentPlanExpandedByKey.size > 120) {
+          const firstKey = ctx.agentPlanExpandedByKey.keys().next().value;
+          if (!firstKey)
+              break;
+          ctx.agentPlanExpandedByKey.delete(firstKey);
+      }
+  };
   let desktopRealtimePulseStartTimer: number | null = null;
   const clearDesktopRealtimePulseStartTimer = () => {
       if (typeof window === 'undefined' || desktopRealtimePulseStartTimer === null) {
@@ -855,9 +868,22 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
   });
 
-  watch(() => ctx.activeAgentPlan.value, (value) => {
-      if (!value) {
-          ctx.agentPlanExpanded.value = false;
+  watch(() => ctx.activeAgentPlanKey.value, (value, oldValue) => {
+      const oldKey = String(oldValue || '').trim();
+      const activeConversationPrefix = `${String(ctx.sessionHub.activeConversationKey || '')}:`;
+      if (oldKey && oldKey.startsWith(activeConversationPrefix)) {
+          rememberAgentPlanExpandedState(oldKey, ctx.agentPlanExpanded.value);
+      }
+      const key = String(value || '').trim();
+      if (!key)
+          return;
+      ctx.agentPlanExpanded.value = Boolean(ctx.agentPlanExpandedByKey.get(key));
+  }, { immediate: true });
+
+  watch(() => ctx.agentPlanExpanded.value, (value) => {
+      const key = String(ctx.activeAgentPlanKey.value || '').trim();
+      if (key) {
+          rememberAgentPlanExpandedState(key, value);
       }
   });
 
@@ -969,7 +995,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
 
   watch(() => [
       ctx.agentRenderableMessages.value.length,
-      ctx.chatStore.runtimeProjectionVersion,
       ctx.userWorldStore.activeMessages.length,
       ctx.sessionHub.activeConversationKey
   ], () => {
@@ -977,12 +1002,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       void nextTick(() => {
           ctx.scheduleMessageViewportRefresh({
               measure: true,
-              reason: 'message-list-change'
+              reason: 'message-structure-change'
           });
       });
-      ctx.scheduleWorkspaceResourceHydration('message-list-change');
+      ctx.scheduleWorkspaceResourceHydration('message-structure-change');
       if (isChatDebugVerboseEnabled()) {
-          chatDebugLog('messenger.virtual', 'message-list-change', ctx.buildMessageVirtualDebugSnapshot?.());
+          chatDebugLog('messenger.virtual', 'message-structure-change', ctx.buildMessageVirtualDebugSnapshot?.());
       }
       if (ctx.pendingAssistantCenter &&
           ctx.isAgentConversationActive.value &&
@@ -1020,12 +1045,12 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       const latestMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
       return [
           ctx.chatStore.activeSessionId,
-          ctx.chatStore.runtimeProjectionVersion,
           ctx.latestAgentRenderableMessageKey.value,
           ctx.buildLatestAssistantLayoutSignature(latestMessage)
       ].join('::');
   }, () => {
-      ctx.scheduleWorkspaceResourceHydration('latest-assistant-signature');
+      const latestKey = ctx.latestAgentRenderableMessageKey.value;
+      ctx.scheduleWorkspaceResourceHydration('latest-assistant-signature', latestKey ? { messageKeys: [latestKey] } : {});
       ctx.refreshLatestAssistantMessageLayout('latest-assistant-signature');
   }, { flush: 'post' });
 

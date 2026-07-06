@@ -886,7 +886,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
   };
 
-  ctx.hydrateWorkspaceResources = () => {
+  ctx.hydrateWorkspaceResources = (options: {
+      messageKeys?: string[];
+  } = {}) => {
       if (isDesktopSafeModeEnabled()) {
           return;
       }
@@ -894,7 +896,14 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (!container)
           return;
       const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      const messageNodes = container.querySelectorAll('.messenger-message[data-virtual-key]');
+      const targetKeys = Array.isArray(options.messageKeys)
+          ? options.messageKeys.map((key) => String(key || '').trim()).filter(Boolean)
+          : [];
+      const targetKeySet = targetKeys.length ? new Set(targetKeys) : null;
+      const messageNodes = targetKeys.length
+          ? Array.from(container.querySelectorAll('.messenger-message[data-virtual-key]'))
+              .filter((node) => targetKeySet?.has(String((node as HTMLElement).dataset?.virtualKey || '').trim()))
+          : Array.from(container.querySelectorAll('.messenger-message[data-virtual-key]'));
       const cards = messageNodes.length
           ? Array.from(messageNodes).flatMap((node) => Array.from(node.querySelectorAll('.ai-resource-card[data-workspace-path]')))
           : Array.from(container.querySelectorAll('.ai-resource-card[data-workspace-path]'));
@@ -913,6 +922,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               activeSection: ctx.sessionHub.activeSection,
               activeConversationKey: ctx.sessionHub.activeConversationKey,
               virtualized: Boolean(ctx.shouldVirtualizeMessages?.value),
+              targetKeyCount: targetKeys.length,
               messageNodeCount: messageNodes.length,
               resourceCardCount: cards.length,
               durationMs
@@ -920,7 +930,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
   };
 
-  ctx.scheduleWorkspaceResourceHydration = (reason = '') => {
+  ctx.scheduleWorkspaceResourceHydration = (reason = '', options: {
+      messageKeys?: string[];
+  } = {}) => {
       if (isDesktopSafeModeEnabled()) {
           return;
       }
@@ -952,7 +964,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
                           activeConversationKey: ctx.sessionHub.activeConversationKey
                       });
                   }
-                  ctx.hydrateWorkspaceResources();
+                  ctx.hydrateWorkspaceResources(options);
               });
           }, ctx.desktopMode?.value ? 180 : 90);
       });

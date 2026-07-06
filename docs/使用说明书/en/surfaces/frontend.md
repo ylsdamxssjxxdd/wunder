@@ -17,16 +17,16 @@ Hive is your workbench. Conversations, file management, agent configuration, too
 
 ### Input area
 
-More than just a text box:
+Use the input area to start tasks, add context, and control the current thread. Common controls include:
 
-| Capability | Description |
-|------------|-------------|
-| **Text input** | Regular questions or slash commands |
-| **File upload** | Click upload or drag and drop |
-| **Image upload** | Directly as multimodal input |
-| **Document upload** | Automatically converted to Markdown |
-| **Audio upload** | Automatically transcribed to text |
-| **Video upload** | Frames extracted for analysis |
+| Area | Purpose |
+|------|---------|
+| **Message input** | Enter natural-language tasks, questions, or slash commands |
+| **Attachment entry** | Select or drag local files; after processing, they are sent with the message |
+| **Send / stop** | Send when idle, or stop the current execution while running |
+| **Current thread** | While a thread is running, high-risk actions such as creating a new thread are protected to avoid interrupting state writes |
+
+For tasks that need existing files, put the files in the current agent's working directory first, then mention the path or file name in your message.
 
 ### Slash commands
 
@@ -57,9 +57,12 @@ See [Orchestration](/docs/en/surfaces/orchestration/) for details.
 
 ## Files
 
-- Browse directory structure
-- Upload, download, delete files
+The Files page shows the working directory available to the current agent. You can:
+
+- Browse the working directory structure
+- Upload, download, delete, and rename files
 - Preview text, images, PDF, and other formats
+- Put materials for the agent into the working directory, then reference file names or paths in chat
 
 ## Agents
 

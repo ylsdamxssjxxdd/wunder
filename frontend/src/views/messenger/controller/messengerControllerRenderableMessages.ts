@@ -796,7 +796,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       const workflowItems = Array.isArray(message.workflowItems)
           ? (message.workflowItems as unknown[])
           : [];
-      const projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;
       const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
       const workflowSignature = lastWorkflowItem
           ? [
@@ -819,7 +818,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           : '';
       return [
           ctx.latestAgentRenderableMessageKey.value,
-          projectionRenderVersion,
           String(message.id || message.localId || '').trim(),
           String(message.content || '').length,
           String(message.reasoning || '').length,
@@ -1126,9 +1124,27 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       );
       const workflowItems = Array.isArray(message.workflowItems) ? (message.workflowItems as unknown[]) : [];
       const subagents = Array.isArray(message.subagents) ? (message.subagents as unknown[]) : [];
+      const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
+      const workflowSignature = lastWorkflowItem
+          ? [
+              workflowItems.length,
+              String(lastWorkflowItem.eventType || lastWorkflowItem.event || lastWorkflowItem.event_type || '').trim(),
+              String(lastWorkflowItem.status || '').trim(),
+              String(lastWorkflowItem.title || lastWorkflowItem.toolName || '').length,
+              String(lastWorkflowItem.detail || '').length
+          ].join(':')
+          : String(workflowItems.length);
+      const lastSubagent = subagents[subagents.length - 1] as Record<string, unknown> | undefined;
+      const subagentSignature = lastSubagent
+          ? [
+              subagents.length,
+              String(lastSubagent.key || lastSubagent.run_id || lastSubagent.session_id || '').trim(),
+              String(lastSubagent.status || '').trim(),
+              String(lastSubagent.summary || '').length
+          ].join(':')
+          : String(subagents.length);
       const signature = [
           ctx.chatStore.activeSessionId,
-          ctx.chatStore.runtimeProjectionVersion,
           nowTick,
           String(messageKey || '').trim(),
           latestActiveAssistantBusy,
@@ -1140,8 +1156,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           Boolean(message.stream_incomplete),
           Boolean(message.resume_available),
           Boolean(message.slow_client),
-          workflowItems.length,
-          subagents.length,
+          workflowSignature,
+          subagentSignature,
           String(message.retry_started_at_ms ?? message.retryStartedAtMs ?? ''),
           String(message.retry_next_attempt_at_ms ?? message.retryNextAttemptAtMs ?? ''),
           String(message.retry_attempt ?? message.retryAttempt ?? ''),
@@ -1231,6 +1247,24 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       ctx.dismissedPlanVersion.value += 1;
   };
 
+  ctx.resolveAgentPlanPanelKey = (message: Record<string, unknown> | null | undefined): string => {
+      if (!message)
+          return '';
+      const renderable = ctx.agentRenderableMessages.value.find((item) => item.message === message);
+      const messageKey = String(
+          renderable?.key ||
+          message.id ||
+          message.localId ||
+          message.local_id ||
+          message.clientId ||
+          message.client_id ||
+          ''
+      ).trim();
+      if (!messageKey)
+          return '';
+      return `${String(ctx.sessionHub.activeConversationKey || '')}:${messageKey}`;
+  };
+
   ctx.activeAgentPlanMessage = computed<Record<string, unknown> | null>(() => {
       // Trigger recompute when manual dismiss state changes.
       void ctx.dismissedPlanVersion.value;
@@ -1249,6 +1283,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       }
       return null;
   });
+
+  ctx.activeAgentPlanKey = computed(() => ctx.resolveAgentPlanPanelKey(ctx.activeAgentPlanMessage.value));
 
   ctx.activeAgentPlan = computed(() => {
       const message = ctx.activeAgentPlanMessage.value as {

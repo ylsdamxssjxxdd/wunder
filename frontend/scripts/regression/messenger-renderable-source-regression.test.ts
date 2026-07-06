@@ -38,6 +38,7 @@ test('messenger installs renderable messages before identity and navigation deri
 
 test('message workflow component keeps a stable key across live tool updates', () => {
   const messengerView = readSource('src/views/MessengerView.vue');
+  const workflowComponent = readSource('src/components/chat/MessageToolWorkflow.vue');
   const workflowStart = messengerView.indexOf('<MessageToolWorkflow');
   assert.ok(workflowStart >= 0);
   const workflowEnd = messengerView.indexOf('@layout-change', workflowStart);
@@ -47,6 +48,84 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(workflowSource.includes(':key="`workflow:${item.key}`"'));
   assert.ok(!workflowSource.includes(':key="`workflow:${item.key}:${buildMessageWorkflowRenderVersion'));
   assert.ok(workflowSource.includes(':render-version="buildMessageWorkflowRenderVersion(item.message)"'));
+  assert.ok(workflowSource.includes(':state-key="`${sessionHub.activeConversationKey}:workflow:${item.key}`"'));
+  assert.ok(workflowComponent.includes('<script lang="ts">'));
+  assert.ok(workflowComponent.includes('const workflowStateCache = new Map<string, WorkflowPanelState>();'));
+  assert.ok(workflowComponent.includes('restoreWorkflowPanelState(value);'));
+  assert.ok(workflowComponent.includes('if (liveKey && !nextUserCollapsed.has(liveKey))'));
+  assert.ok(!workflowComponent.includes('validKeys.has(key) && key !== liveKey'));
+  assert.ok(workflowComponent.includes('if (!workflowOpen.value) return;'));
+});
+
+test('active agent plan panel preserves user expansion across streaming projection churn', () => {
+  const messengerView = readSource('src/views/MessengerView.vue');
+  const stateRefs = readSource('src/views/messenger/controller/messengerControllerStateRefs.ts');
+  const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
+  const reactiveEffects = readSource('src/views/messenger/controller/messengerControllerLifecycleReactiveEffects.ts');
+
+  assert.ok(messengerView.includes(':key="activeAgentPlanKey || \'active-agent-plan\'"'));
+  assert.ok(messengerView.includes('const activeAgentPlanKey = controller.activeAgentPlanKey;'));
+  assert.ok(stateRefs.includes('ctx.agentPlanExpandedByKey = new Map<string, boolean>();'));
+  assert.ok(renderableMessages.includes('ctx.resolveAgentPlanPanelKey ='));
+  assert.ok(renderableMessages.includes('ctx.activeAgentPlanKey = computed(() => ctx.resolveAgentPlanPanelKey(ctx.activeAgentPlanMessage.value));'));
+  assert.ok(reactiveEffects.includes('const rememberAgentPlanExpandedState ='));
+  assert.ok(reactiveEffects.includes('while (ctx.agentPlanExpandedByKey.size > 120)'));
+  assert.ok(reactiveEffects.includes('watch(() => ctx.activeAgentPlanKey.value'));
+  assert.ok(reactiveEffects.includes("const activeConversationPrefix = `${String(ctx.sessionHub.activeConversationKey || '')}:`;"));
+  assert.ok(reactiveEffects.includes('if (oldKey && oldKey.startsWith(activeConversationPrefix))'));
+  assert.ok(reactiveEffects.includes('rememberAgentPlanExpandedState(oldKey, ctx.agentPlanExpanded.value);'));
+  assert.ok(!reactiveEffects.includes('watch(() => ctx.activeAgentPlan.value, (value) => {\n      if (!value) {\n          ctx.agentPlanExpanded.value = false;'));
+});
+
+test('messenger interaction blocker leaves the right workspace dock interactive', () => {
+  const styles = readSource('src/styles/messenger.css');
+  const blockerStart = styles.indexOf('.messenger-action-blocker {');
+  assert.ok(blockerStart >= 0);
+  const blockerEnd = styles.indexOf('.messenger-action-blocker-card', blockerStart);
+  assert.ok(blockerEnd > blockerStart);
+  const blockerSource = styles.slice(blockerStart, blockerEnd);
+
+  assert.ok(!blockerSource.includes('inset: 0;'));
+  assert.ok(blockerSource.includes('left: calc(var(--messenger-left-rail-width) + var(--messenger-middle-pane-width));'));
+  assert.ok(blockerSource.includes('right: var(--messenger-right-dock-width);'));
+  assert.ok(blockerSource.includes('.messenger-view.messenger-view--without-right .messenger-action-blocker'));
+  assert.ok(blockerSource.includes('.messenger-view.messenger-view--right-collapsed .messenger-action-blocker'));
+});
+
+test('streaming projection changes only refresh the latest message layout', () => {
+  const reactiveEffects = readSource('src/views/messenger/controller/messengerControllerLifecycleReactiveEffects.ts');
+  const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
+
+  const structureWatchStart = reactiveEffects.indexOf("reason: 'message-structure-change'");
+  assert.ok(structureWatchStart >= 0);
+  const structureWatchSource = reactiveEffects.slice(
+    Math.max(0, structureWatchStart - 700),
+    structureWatchStart + 260
+  );
+  assert.ok(!structureWatchSource.includes('ctx.chatStore.runtimeProjectionVersion'));
+
+  const latestWatchStart = reactiveEffects.indexOf("ctx.refreshLatestAssistantMessageLayout('latest-assistant-signature')");
+  assert.ok(latestWatchStart >= 0);
+  const latestWatchSource = reactiveEffects.slice(
+    Math.max(0, latestWatchStart - 520),
+    latestWatchStart + 160
+  );
+  assert.ok(!latestWatchSource.includes('ctx.chatStore.runtimeProjectionVersion'));
+  assert.ok(latestWatchSource.includes("messageKeys: [latestKey]"));
+
+  const layoutSignatureStart = renderableMessages.indexOf('ctx.buildLatestAssistantLayoutSignature =');
+  assert.ok(layoutSignatureStart >= 0);
+  const layoutSignatureEnd = renderableMessages.indexOf('ctx.latestWorldRenderableMessageKey =', layoutSignatureStart);
+  assert.ok(layoutSignatureEnd > layoutSignatureStart);
+  const layoutSignatureSource = renderableMessages.slice(layoutSignatureStart, layoutSignatureEnd);
+  assert.ok(!layoutSignatureSource.includes('runtimeProjectionVersion'));
+
+  const statsStart = renderableMessages.indexOf('ctx.buildMessageStatsEntries =');
+  assert.ok(statsStart >= 0);
+  const statsEnd = renderableMessages.indexOf('ctx.shouldShowMessageStats =', statsStart);
+  assert.ok(statsEnd > statsStart);
+  const statsSource = renderableMessages.slice(statsStart, statsEnd);
+  assert.ok(!statsSource.includes('ctx.chatStore.runtimeProjectionVersion'));
 });
 
 test('messenger display-derived agent state reads the renderable source instead of the legacy message array', () => {
@@ -136,7 +215,6 @@ test('projection render source has an explicit batched invalidation clock', () =
   assert.ok(renderableMessages.includes("logAgentRenderSource('projection-source'"));
   assert.ok(!renderableMessages.includes('projection-empty-fallback'));
   assert.ok(!renderableMessages.includes('return legacyRenderable;'));
-  assert.ok(lifecycleReactive.includes('ctx.chatStore.runtimeProjectionVersion'));
   assert.ok(!lifecycleReactive.includes('ctx.chatStore.messageMutationVersion'));
 });
 

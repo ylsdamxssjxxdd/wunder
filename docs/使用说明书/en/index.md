@@ -40,13 +40,7 @@ Hive uses a three-column layout: left navigation, middle list, right workspace. 
 
 The system is organized top-down:
 
-```
-wunder
-  └─ User (your space)
-      └─ Swarm (collaboration group)
-          └─ Agent (the role that works)
-              └─ Thread (a continuous conversation)
-```
+![Top-down structure from wunder to thread: wunder, user, swarm, agent, and thread progressively land in a concrete conversation.](/docs/assets/manual/08-hierarchy-structure.svg)
 
 You send a message → the swarm assigns it to the right agent → the agent keeps working in its thread.
 

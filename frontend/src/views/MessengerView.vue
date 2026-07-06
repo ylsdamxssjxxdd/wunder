@@ -1110,6 +1110,7 @@
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
                     :render-version="buildMessageWorkflowRenderVersion(item.message)"
+                    :state-key="`${sessionHub.activeConversationKey}:workflow:${item.key}`"
                     :visible="
                       Boolean(
                         item.message.workflowStreaming ||
@@ -1520,6 +1521,7 @@
           />
           <PlanPanel
             v-if="activeAgentPlan"
+            :key="activeAgentPlanKey || 'active-agent-plan'"
             v-model:expanded="agentPlanExpanded"
             :plan="activeAgentPlan"
             @remove="dismissActiveAgentPlan"
@@ -1889,6 +1891,7 @@ const activeAgentIdForApi = controller.activeAgentIdForApi;
 const activeAgentInquiryPanel = controller.activeAgentInquiryPanel;
 const activeAgentName = controller.activeAgentName;
 const activeAgentPlan = controller.activeAgentPlan;
+const activeAgentPlanKey = controller.activeAgentPlanKey;
 const activeAgentPlanMessage = controller.activeAgentPlanMessage;
 const activeAgentPresetQuestions = controller.activeAgentPresetQuestions;
 const activeAgentProfileForModelResolution = controller.activeAgentProfileForModelResolution;
