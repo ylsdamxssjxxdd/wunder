@@ -49,7 +49,8 @@ impl PostgresMonitorStorage for PostgresStorage {
         conn.execute(
             "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload) \
              VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT(session_id) DO UPDATE SET user_id = EXCLUDED.user_id, status = EXCLUDED.status, updated_time = EXCLUDED.updated_time, payload = EXCLUDED.payload",
+             ON CONFLICT(session_id) DO UPDATE SET user_id = EXCLUDED.user_id, status = EXCLUDED.status, updated_time = EXCLUDED.updated_time, payload = EXCLUDED.payload \
+             WHERE EXCLUDED.updated_time >= monitor_sessions.updated_time",
             &[&session_id, &user_id, &status, &updated_time, &payload_text],
         )?;
         Ok(())

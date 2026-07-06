@@ -39,6 +39,7 @@ const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 2;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
 const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
+const MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT: i64 = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MonitorLogProfile {
@@ -304,6 +305,7 @@ struct SessionRecord {
     events: VecDeque<MonitorEvent>,
     dirty: bool,
     last_persisted: f64,
+    round_floor_verified: bool,
 }
 
 struct SessionRecordInit {
@@ -354,6 +356,7 @@ impl SessionRecord {
             events: VecDeque::new(),
             dirty: true,
             last_persisted: 0.0,
+            round_floor_verified: true,
         }
     }
 
@@ -643,6 +646,7 @@ impl SessionRecord {
             events,
             dirty: false,
             last_persisted: updated_time,
+            round_floor_verified: false,
         })
     }
 }
@@ -886,10 +890,47 @@ impl MonitorState {
             || 1,
             || {
                 let now = now_ts();
+                let cleaned_session_id = session_id.trim().to_string();
+                if cleaned_session_id.is_empty() {
+                    return 1;
+                }
+                let needs_hydration = {
+                    let sessions = self.sessions.lock();
+                    !sessions.contains_key(cleaned_session_id.as_str())
+                };
+                let needs_round_floor_verification = if needs_hydration {
+                    false
+                } else {
+                    let sessions = self.sessions.lock();
+                    sessions
+                        .get(cleaned_session_id.as_str())
+                        .map(|record| !record.round_floor_verified)
+                        .unwrap_or(false)
+                };
+                let hydrated_record = if needs_hydration {
+                    self.hydrate_session_record_for_register(cleaned_session_id.as_str())
+                } else {
+                    None
+                };
+                let persisted_round_floor = if needs_hydration {
+                    hydrated_record
+                        .as_ref()
+                        .map(|record| record.user_rounds)
+                        .unwrap_or_else(|| {
+                            self.persisted_user_round_floor(cleaned_session_id.as_str())
+                        })
+                } else if needs_round_floor_verification {
+                    self.persisted_user_round_floor(cleaned_session_id.as_str())
+                } else {
+                    0
+                };
                 let mut sessions = self.sessions.lock();
+                if let Some(hydrated) = hydrated_record {
+                    sessions.entry(cleaned_session_id.clone()).or_insert(hydrated);
+                }
                 let (to_persist, user_round) = self.register_locked(
                     &mut sessions,
-                    session_id,
+                    cleaned_session_id.as_str(),
                     user_id,
                     agent_id,
                     question,
@@ -897,6 +938,7 @@ impl MonitorState {
                     debug_payload,
                     now,
                     false,
+                    persisted_round_floor,
                 );
                 drop(sessions);
                 if let Some(record) = to_persist {
@@ -2118,6 +2160,7 @@ impl MonitorState {
         debug_payload: bool,
         now: f64,
         append_received: bool,
+        persisted_round_floor: i64,
     ) -> (Option<SessionRecord>, i64) {
         if session_id.trim().is_empty() {
             return (None, 1);
@@ -2129,6 +2172,10 @@ impl MonitorState {
             forced.remove(session_id);
         }
         if let Some(record) = sessions.get_mut(session_id) {
+            if !record.round_floor_verified {
+                record.user_rounds = record.user_rounds.max(persisted_round_floor);
+                record.round_floor_verified = true;
+            }
             record.user_rounds += 1;
             record.question = question.to_string();
             record.is_admin = is_admin;
@@ -2197,6 +2244,10 @@ impl MonitorState {
             },
             now,
         );
+        if persisted_round_floor > 0 {
+            record.user_rounds = record.user_rounds.max(persisted_round_floor.saturating_add(1));
+        }
+        record.round_floor_verified = true;
         let event_type = if append_received {
             "received"
         } else {
@@ -2235,6 +2286,41 @@ impl MonitorState {
         let to_persist = self.maybe_persist_record(&mut record, now, false);
         sessions.insert(session_id.to_string(), record);
         (to_persist, user_round)
+    }
+
+    fn hydrate_session_record_for_register(&self, session_id: &str) -> Option<SessionRecord> {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+        let payload = match self.storage.get_monitor_record(cleaned) {
+            Ok(Some(payload)) => payload,
+            Ok(None) => return None,
+            Err(err) => {
+                warn!("monitor register failed to hydrate session {cleaned}: {err}");
+                return None;
+            }
+        };
+        let mut record = SessionRecord::from_storage(&payload)?;
+        let stream_round_floor = self.persisted_user_round_floor(cleaned);
+        record.user_rounds = max_known_user_round_for_monitor_payload(&payload)
+            .max(stream_round_floor)
+            .max(record.user_rounds)
+            .max(1);
+        record.dirty = false;
+        record.last_persisted = 0.0;
+        record.round_floor_verified = true;
+        Some(record)
+    }
+
+    fn persisted_user_round_floor(&self, session_id: &str) -> i64 {
+        max_known_user_round_for_stream_events(
+            self.storage
+                .load_recent_stream_events(session_id, MONITOR_ROUND_HYDRATE_STREAM_EVENT_LIMIT)
+                .unwrap_or_default()
+                .iter(),
+        )
+        .unwrap_or(0)
     }
 
     fn mark_status(&self, session_id: &str, status: &str, summary: Option<&str>) {
@@ -2470,6 +2556,23 @@ fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
     value
         .and_then(Value::as_i64)
         .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
+}
+
+fn parse_positive_i64_value(value: Option<&Value>) -> Option<i64> {
+    let parsed = parse_i64_value(value).or_else(|| {
+        value
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value.trunc() as i64)
+    })
+    .or_else(|| {
+        value
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|value| value.parse::<i64>().ok())
+    })?;
+    (parsed > 0).then_some(parsed)
 }
 
 fn parse_context_occupancy_tokens(data: &Value) -> i64 {
@@ -2905,6 +3008,54 @@ fn calc_dir_size(path: &Path, extensions: Option<&[&str]>) -> u64 {
     total
 }
 
+fn max_known_user_round_for_monitor_payload(payload: &Value) -> i64 {
+    let mut max_round = parse_positive_i64_value(payload.get("user_rounds"))
+        .or_else(|| parse_positive_i64_value(payload.get("rounds")))
+        .unwrap_or(0);
+    max_round = max_round.max(max_known_user_round_in_value(payload));
+    if let Some(events) = payload.get("events").and_then(Value::as_array) {
+        for event in events {
+            max_round = max_round.max(max_known_user_round_in_value(event));
+        }
+    }
+    max_round
+}
+
+fn max_known_user_round_for_stream_events<'a>(
+    events: impl IntoIterator<Item = &'a Value>,
+) -> Option<i64> {
+    let mut max_round = 0_i64;
+    for event in events {
+        max_round = max_round.max(max_known_user_round_in_value(event));
+    }
+    (max_round > 0).then_some(max_round)
+}
+
+fn max_known_user_round_in_value(value: &Value) -> i64 {
+    let mut max_round = parse_positive_i64_value(value.get("user_round"))
+        .or_else(|| parse_positive_i64_value(value.get("userRound")))
+        .or_else(|| parse_positive_i64_value(value.get("user_turn_index")))
+        .or_else(|| parse_positive_i64_value(value.get("userTurnIndex")))
+        .unwrap_or(0);
+    if let Some(data) = value.get("data") {
+        max_round = max_round.max(max_known_user_round_in_value(data));
+    }
+    if let Some(payload) = value.get("payload") {
+        max_round = max_round.max(max_known_user_round_in_value(payload));
+    }
+    if let Some(events) = value.get("events").and_then(Value::as_array) {
+        for event in events {
+            max_round = max_round.max(max_known_user_round_in_value(event));
+        }
+    }
+    if let Some(segments) = value.get("segments").and_then(Value::as_array) {
+        for segment in segments {
+            max_round = max_round.max(max_known_user_round_in_value(segment));
+        }
+    }
+    max_round
+}
+
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
@@ -3161,6 +3312,93 @@ mod tests {
         assert_eq!(detail["session"]["context_tokens"], json!(4321));
         assert_eq!(detail["session"]["context_occupancy_tokens"], json!(4321));
         assert_eq!(detail["session"]["context_tokens_peak"], json!(4321));
+    }
+
+    #[test]
+    fn monitor_register_hydrates_cold_session_round_from_storage() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-round-hydrate.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id": "sess-round-hydrate",
+                "user_id": "user",
+                "agent_id": "agent",
+                "status": "finished",
+                "updated_time": 10.0,
+                "user_rounds": 3,
+                "rounds": 3,
+                "last_awarded_user_round": 2,
+                "events": [
+                    { "event_id": 1, "timestamp": 8.0, "type": "round_start", "data": { "user_round": 3 } },
+                    { "event_id": 2, "timestamp": 9.0, "type": "final", "data": { "user_round": 3 } }
+                ]
+            }))
+            .expect("seed monitor record");
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        let round = monitor.register(
+            " sess-round-hydrate ",
+            "user",
+            "agent",
+            "next",
+            true,
+            false,
+        );
+
+        assert_eq!(round, 4);
+        let record = monitor.get_record("sess-round-hydrate").expect("record");
+        assert_eq!(record["user_rounds"], json!(4));
+        assert!(record["events"].as_array().is_some_and(|events| events
+            .iter()
+            .any(|event| event["type"] == "round_start"
+                && event["data"]["user_round"] == json!(4))));
+    }
+
+    #[test]
+    fn monitor_register_hydrates_round_floor_from_stream_events_without_monitor_record() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-stream-round-hydrate.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .append_stream_event(
+                "sess-stream-round-hydrate",
+                "user",
+                1,
+                &json!({
+                    "event": "progress",
+                    "data": { "stage": "start", "user_round": 5 }
+                }),
+            )
+            .expect("seed stream event");
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        let round = monitor.register(
+            "sess-stream-round-hydrate",
+            "user",
+            "agent",
+            "next",
+            true,
+            false,
+        );
+
+        assert_eq!(round, 6);
+        let record = monitor
+            .get_record("sess-stream-round-hydrate")
+            .expect("record");
+        assert_eq!(record["user_rounds"], json!(6));
     }
 
     #[test]

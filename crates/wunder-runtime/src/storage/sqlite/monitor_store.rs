@@ -50,7 +50,8 @@ impl SqliteMonitorStorage for SqliteStorage {
         let conn = self.open()?;
         conn.execute(
             "INSERT INTO monitor_sessions (session_id, user_id, status, updated_time, payload) VALUES (?, ?, ?, ?, ?) \
-             ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, status = excluded.status, updated_time = excluded.updated_time, payload = excluded.payload",
+             ON CONFLICT(session_id) DO UPDATE SET user_id = excluded.user_id, status = excluded.status, updated_time = excluded.updated_time, payload = excluded.payload \
+             WHERE excluded.updated_time >= COALESCE(monitor_sessions.updated_time, 0)",
             params![session_id, user_id, status, updated_time, payload_text],
         )?;
         Ok(())
@@ -284,5 +285,35 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn monitor_store_ignores_stale_upsert_payloads() {
+        let (storage, _dir) = build_storage();
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id": "session-a",
+                "user_id": "user-a",
+                "status": "running",
+                "updated_time": 20.0,
+                "user_rounds": 4
+            }))
+            .expect("upsert latest monitor record");
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id": "session-a",
+                "user_id": "user-a",
+                "status": "running",
+                "updated_time": 10.0,
+                "user_rounds": 1
+            }))
+            .expect("upsert stale monitor record");
+
+        let record = storage
+            .get_monitor_record("session-a")
+            .expect("get monitor")
+            .expect("record");
+        assert_eq!(record["updated_time"], json!(20.0));
+        assert_eq!(record["user_rounds"], json!(4));
     }
 }

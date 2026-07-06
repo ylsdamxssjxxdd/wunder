@@ -1807,9 +1807,6 @@ const applyCommandSessionCanonicalSideEffect = (runtimeStore, sessionId, eventTy
   }
   const commandSessionId = normalizeCommandSessionRef(payload, data);
   if (!commandSessionId) return false;
-  if (!isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(normalizedEventType)) {
-    return true;
-  }
   const source = data && typeof data === 'object' && !Array.isArray(data)
     ? data
     : payload && typeof payload === 'object' && !Array.isArray(payload)
@@ -2108,8 +2105,11 @@ export const applyCanonicalStreamRuntimeEvent = (
   if (isUsageContextStreamEvent(eventType) && results.some((result) => result.applied)) {
     syncSessionContextTokensFromRuntimeProjection(store, key);
   }
+  const isCommandProjectionOnlyEvent =
+    !isCommandStreamVisualizationEnabled() && isCommandStreamRuntimeEvent(eventType);
   if (
     options.sideEffects === true ||
+    isCommandProjectionOnlyEvent ||
     (
       (options.phase === 'watch' || options.phase === 'snapshot') &&
       results.some((result) => result.applied)
