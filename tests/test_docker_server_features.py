@@ -15,12 +15,12 @@ def docker_feature_defaults(text: str) -> list[str]:
 
 
 class DockerServerFeatureTests(unittest.TestCase):
-    def test_docker_entry_defaults_enable_host_metrics(self) -> None:
+    def test_docker_entry_defaults_enable_runtime_tools(self) -> None:
         entry = read_repo_file("scripts/docker-rust-entry.sh")
-        self.assertIn("WUNDER_SERVER_FEATURES:-mcp,host-metrics", entry)
+        self.assertIn("WUNDER_SERVER_FEATURES:-mcp,host-metrics,web-fetch", entry)
         self.assertIn("normalize_server_features", entry)
 
-    def test_compose_defaults_enable_host_metrics_for_server_and_sandbox(self) -> None:
+    def test_compose_defaults_enable_runtime_tools_for_server_and_sandbox(self) -> None:
         for compose_file in ("docker-compose-x86.yml", "docker-compose-arm.yml"):
             defaults = docker_feature_defaults(read_repo_file(compose_file))
             self.assertGreaterEqual(len(defaults), 2, compose_file)
@@ -28,6 +28,7 @@ class DockerServerFeatureTests(unittest.TestCase):
                 features = {part.strip() for part in default.replace(",", " ").split()}
                 self.assertIn("mcp", features, compose_file)
                 self.assertIn("host-metrics", features, compose_file)
+                self.assertIn("web-fetch", features, compose_file)
 
 
 if __name__ == "__main__":

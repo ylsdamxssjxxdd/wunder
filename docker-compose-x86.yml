@@ -59,7 +59,7 @@ services:
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
-      - WUNDER_SERVER_FEATURES=${WUNDER_SERVER_FEATURES:-mcp,host-metrics}
+      - WUNDER_SERVER_FEATURES=${WUNDER_SERVER_FEATURES:-mcp,host-metrics,web-fetch}
       - CARGO_HOME=/app/.cargo/x86
       - CARGO_TARGET_DIR=/app/target/x86
     command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
@@ -151,7 +151,7 @@ services:
       - WUNDER_CONFIG_PATH=/run/wunder-sandbox-runtime.yaml
       - WUNDER_HOST=0.0.0.0
       - WUNDER_PORT=9001
-      - WUNDER_SERVER_FEATURES=${WUNDER_SERVER_FEATURES:-mcp,host-metrics}
+      - WUNDER_SERVER_FEATURES=${WUNDER_SERVER_FEATURES:-mcp,host-metrics,web-fetch}
       - CARGO_TARGET_DIR=/cargo-target
     volumes:
       - ./target/x86:/cargo-target

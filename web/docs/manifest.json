@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-05T06:15:05.895796+00:00",
+  "generated_at": "2026-07-06T00:34:33.075800+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -6669,7 +6669,7 @@
       "language": "zh-CN",
       "title": "部署与运行",
       "summary": "部署前先想清楚用哪种形态、准备什么环境。Server 部署至少需要数据库、工作区和后端服务。",
-      "updated_at": "2026-07-04",
+      "updated_at": "2026-07-06",
       "read_when": [],
       "source_docs": [],
       "tab": "运维",
@@ -14847,7 +14847,7 @@
       "language": "en",
       "title": "Deployment and Running",
       "summary": "Before deploying Wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
-      "updated_at": "2026-07-05",
+      "updated_at": "2026-07-06",
       "read_when": [
         "You need to deploy Wunder",
         "You need to confirm where to place databases, MCP, sandbox, and workspaces"

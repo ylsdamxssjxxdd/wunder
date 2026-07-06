@@ -1106,7 +1106,7 @@
                 </div>
                 <div v-if="item.message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
                   <MessageToolWorkflow
-                    :key="`workflow:${item.key}:${buildMessageWorkflowRenderVersion(item.message)}`"
+                    :key="`workflow:${item.key}`"
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
                     :render-version="buildMessageWorkflowRenderVersion(item.message)"

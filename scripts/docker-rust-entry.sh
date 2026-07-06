@@ -26,7 +26,7 @@ normalize_server_features() {
   printf '%s' "${normalized}"
 }
 
-server_features="$(normalize_server_features "${WUNDER_SERVER_FEATURES:-mcp,host-metrics}")"
+server_features="$(normalize_server_features "${WUNDER_SERVER_FEATURES:-mcp,host-metrics,web-fetch}")"
 
 ensure_playwright_browsers() {
   local target="${PLAYWRIGHT_BROWSERS_PATH:-}"

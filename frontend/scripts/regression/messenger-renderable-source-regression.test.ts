@@ -36,6 +36,19 @@ test('messenger installs renderable messages before identity and navigation deri
   assert.ok(!conversationRuntime.includes('installMessengerControllerRenderableMessages'));
 });
 
+test('message workflow component keeps a stable key across live tool updates', () => {
+  const messengerView = readSource('src/views/MessengerView.vue');
+  const workflowStart = messengerView.indexOf('<MessageToolWorkflow');
+  assert.ok(workflowStart >= 0);
+  const workflowEnd = messengerView.indexOf('@layout-change', workflowStart);
+  assert.ok(workflowEnd > workflowStart);
+  const workflowSource = messengerView.slice(workflowStart, workflowEnd);
+
+  assert.ok(workflowSource.includes(':key="`workflow:${item.key}`"'));
+  assert.ok(!workflowSource.includes(':key="`workflow:${item.key}:${buildMessageWorkflowRenderVersion'));
+  assert.ok(workflowSource.includes(':render-version="buildMessageWorkflowRenderVersion(item.message)"'));
+});
+
 test('messenger display-derived agent state reads the renderable source instead of the legacy message array', () => {
   const identityState = readSource('src/views/messenger/controller/messengerControllerAgentIdentityState.ts');
   const runtimeToolLists = readSource('src/views/messenger/controller/messengerControllerRuntimeToolLists.ts');

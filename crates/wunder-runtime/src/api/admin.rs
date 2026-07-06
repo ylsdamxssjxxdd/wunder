@@ -287,6 +287,76 @@ fn normalize_optional_config_string(value: String) -> Option<String> {
     }
 }
 
+fn firecrawl_base_url_is_custom(base_url: &str) -> bool {
+    let cleaned = base_url.trim().trim_end_matches('/');
+    !cleaned.is_empty() && cleaned != "https://api.firecrawl.dev"
+}
+
+fn firecrawl_search_should_be_enabled(config: &Config) -> bool {
+    match config.tools.web.fetch.provider().as_str() {
+        "firecrawl" => true,
+        "auto" => {
+            config.tools.web.fetch.firecrawl.api_key().is_some()
+                || firecrawl_base_url_is_custom(&config.tools.web.fetch.firecrawl.base_url())
+        }
+        _ => false,
+    }
+}
+
+fn sync_web_search_from_firecrawl_fetch(config: &mut Config) {
+    let enabled = firecrawl_search_should_be_enabled(config);
+    config.tools.web.search.enabled = enabled;
+    config.tools.web.search.provider = if enabled {
+        "firecrawl".to_string()
+    } else {
+        String::new()
+    };
+    config.tools.web.search.firecrawl.api_key = config.tools.web.fetch.firecrawl.api_key.clone();
+    config.tools.web.search.firecrawl.base_url = config.tools.web.fetch.firecrawl.base_url.clone();
+    config.tools.web.search.firecrawl.timeout_secs = config.tools.web.fetch.firecrawl.timeout_secs;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_web_search_from_firecrawl_fetch;
+    use crate::config::Config;
+
+    #[test]
+    fn firecrawl_fetch_provider_enables_web_search_with_same_connection() {
+        let mut config = Config::default();
+        config.tools.web.fetch.provider = "firecrawl".to_string();
+        config.tools.web.fetch.firecrawl.api_key = Some("test-key".to_string());
+        config.tools.web.fetch.firecrawl.base_url = "http://firecrawl.local".to_string();
+        config.tools.web.fetch.firecrawl.timeout_secs = 42;
+
+        sync_web_search_from_firecrawl_fetch(&mut config);
+
+        assert!(config.tools.web.search.enabled);
+        assert_eq!(config.tools.web.search.provider, "firecrawl");
+        assert_eq!(
+            config.tools.web.search.firecrawl.api_key.as_deref(),
+            Some("test-key")
+        );
+        assert_eq!(
+            config.tools.web.search.firecrawl.base_url,
+            "http://firecrawl.local"
+        );
+        assert_eq!(config.tools.web.search.firecrawl.timeout_secs, 42);
+    }
+
+    #[test]
+    fn direct_fetch_provider_disables_web_search_runtime_visibility() {
+        let mut config = Config::default();
+        config.tools.web.fetch.provider = "direct".to_string();
+        config.tools.web.fetch.firecrawl.api_key = Some("test-key".to_string());
+
+        sync_web_search_from_firecrawl_fetch(&mut config);
+
+        assert!(!config.tools.web.search.enabled);
+        assert_eq!(config.tools.web.search.provider, "");
+    }
+}
+
 fn build_system_settings_payload(config: &Config) -> Value {
     let exec_policy_mode = config
         .security
@@ -609,6 +679,7 @@ async fn admin_system_update(
                 if let Some(store_in_cache) = firecrawl.store_in_cache {
                     config.tools.web.fetch.firecrawl.store_in_cache = store_in_cache;
                 }
+                sync_web_search_from_firecrawl_fetch(config);
             }
         })
         .await

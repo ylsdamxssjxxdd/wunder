@@ -140,7 +140,7 @@ async fn run_loop(
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnableBracketedPaste)?;
+    enable_bracketed_paste_if_supported(&mut stdout)?;
 
     // Use an inline viewport so the transcript stays in normal scrollback,
     // matching Codex-style wheel scrolling and native text selection.
@@ -154,7 +154,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), DisableBracketedPaste)?;
+    disable_bracketed_paste_if_supported(terminal.backend_mut())?;
     if let Err(error) = execute!(terminal.backend_mut(), DisableMouseCapture) {
         if !cfg!(windows) || !error.to_string().contains("Initial console modes not set") {
             return Err(error.into());
@@ -162,6 +162,32 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     }
     terminal.show_cursor()?;
     Ok(())
+}
+
+fn enable_bracketed_paste_if_supported<W: io::Write>(writer: &mut W) -> Result<()> {
+    match execute!(writer, EnableBracketedPaste) {
+        Ok(()) => Ok(()),
+        Err(error) if should_ignore_bracketed_paste_error(&error) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn disable_bracketed_paste_if_supported<W: io::Write>(writer: &mut W) -> Result<()> {
+    match execute!(writer, DisableBracketedPaste) {
+        Ok(()) => Ok(()),
+        Err(error) if should_ignore_bracketed_paste_error(&error) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn should_ignore_bracketed_paste_error(error: &io::Error) -> bool {
+    cfg!(windows) && looks_like_legacy_windows_bracketed_paste_error(&error.to_string())
+}
+
+fn looks_like_legacy_windows_bracketed_paste_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    (message.contains("bracketed paste") || message.contains("bracked paste"))
+        && message.contains("legacy windows api")
 }
 
 fn sync_mouse_mode(
@@ -184,4 +210,25 @@ fn sync_mouse_mode(
     }
     *mouse_capture_enabled = Some(desired_mouse_capture);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_legacy_windows_bracketed_paste_error;
+
+    #[test]
+    fn detects_legacy_windows_bracketed_paste_errors() {
+        assert!(looks_like_legacy_windows_bracketed_paste_error(
+            "bracketed paste not implemented in the legacy windows api"
+        ));
+        assert!(looks_like_legacy_windows_bracketed_paste_error(
+            "Bracketed Paste not implemented in the Legacy Windows API"
+        ));
+        assert!(looks_like_legacy_windows_bracketed_paste_error(
+            "bracked paste not implemented in the legacy windows api"
+        ));
+        assert!(!looks_like_legacy_windows_bracketed_paste_error(
+            "initial console modes not set"
+        ));
+    }
 }

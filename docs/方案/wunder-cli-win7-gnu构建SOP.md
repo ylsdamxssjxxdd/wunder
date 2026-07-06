@@ -76,6 +76,8 @@ powershell -ExecutionPolicy Bypass -File crates/wunder-cli/scripts/build-win7-gn
 - `wunder-cli` 不应依赖 `wunder-desktop`、`tauri`、`wry`、Electron 或 webview。
 - Win7 target 下 `reqwest` 必须关闭默认特性并使用 `rustls-no-provider`；workspace 的 `tokio-rustls` 必须显式使用 `ring` provider，避免默认 aws-lc provider 增大体积或引入不必要链路。
 - Win7 CLI 不链接 `syntect` 默认语法库，TUI 代码块在 Win7 产物中回退为普通 Markdown 代码块渲染；普通 Windows/Linux/macOS CLI 仍保留高亮。
+- Win7 legacy console 不支持 bracketed paste；TUI 必须把 `EnableBracketedPaste` / `DisableBracketedPaste` 作为 best-effort 能力探测，失败时回退到 Ctrl+V/Shift+Insert 显式粘贴路径，不能阻塞启动或退出。
+- Win7 legacy console 使用 crossterm WinAPI backend 时不支持 `SetUnderlineColor`；workspace `ratatui` 必须显式关闭 default features，只开启 `crossterm` 和 `unstable-rendered-line-info`，避免每帧 reset underline color 时退出。
 - 产物检查必须确认没有 `api-ms-*` 与 `winrt` 导入。
 - GNU release 未 strip 时可能保留 `HAS_SYMS/HAS_LOCALS`，体积会明显偏大；正式分发默认 strip。
 - 当前 32 位 Win7 CLI 仍静态链接完整 runtime，strip 后约 80 MiB。要进入 30 MiB 内，需要另拆 `cli-lite`/runtime feature，不能只靠 strip、TLS provider 或 UI 依赖裁剪达成。
