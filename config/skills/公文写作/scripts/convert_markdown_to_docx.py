@@ -46,6 +46,7 @@ DOCX_FENCE_RE = re.compile(r"^\s*```")
 HEADER_KEYS = ("份号", "密级", "紧急程度", "发文机关标志", "发文字号", "签发人")
 HEADER_LINE_RE = re.compile(rf"^({'|'.join(map(re.escape, HEADER_KEYS))})[:：]\s*(.*)$")
 ORDERED_LIST_LINE_RE = re.compile(r"^\d+[.)、]\s*")
+PANDOC_ORDERED_LIST_MARKER_RE = re.compile(r"^(\s*\d{1,3})([.)])(\s*)")
 FIELD_LINE_RE = re.compile(
     r"^(?P<label>(?:\*\*)?(?:\[[^\]]{1,40}\]|【[^】]{1,40}】|[A-Za-z0-9\u4e00-\u9fff（）()《》“”‘’、/\-]{1,40})(?:\*\*)?)[:：]\s*(?P<value>.*)$"
 )
@@ -835,6 +836,36 @@ def normalize_reference_entries(md_text: str) -> str:
             next_line = lines[idx + 1].strip() if idx + 1 < len(lines) else ""
             if next_line and not HEADING_RE.match(next_line):
                 output.append("")
+            continue
+
+        output.append(line)
+
+    return "\n".join(output)
+
+
+def escape_ordered_list_markers_for_pandoc(md_text: str) -> str:
+    lines = md_text.splitlines()
+    output: List[str] = []
+    in_code_block = False
+
+    for raw in lines:
+        line = raw.rstrip("\n")
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            output.append(line)
+            continue
+        if in_code_block:
+            output.append(line)
+            continue
+
+        # Official documents often use explicit "1." paragraphs as lower-level
+        # headings. Keep the typed numbers literal instead of letting Pandoc/Word
+        # merge separate sections into one auto-numbered list.
+        match = PANDOC_ORDERED_LIST_MARKER_RE.match(line)
+        if match:
+            start, marker, rest = match.groups()
+            output.append(f"{start}\\{marker}{rest}{line[match.end():]}")
             continue
 
         output.append(line)
@@ -2154,9 +2185,8 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
 
         if ordered_re.match(stripped):
             flush_paragraph()
-            text = ordered_re.sub("", stripped, count=1)
-            paragraph = doc.add_paragraph(style="List Number")
-            add_text_with_breaks(paragraph, text.strip(), args, bold=None)
+            paragraph = doc.add_paragraph()
+            add_text_with_breaks(paragraph, stripped, args, bold=None)
             i += 1
             continue
 
@@ -2699,7 +2729,10 @@ def main() -> int:
                     allow_missing_images=args.allow_missing_images,
                 )
                 normalized_md = temp_dir_path / "normalized.md"
-                normalized_md.write_text(temp_text, encoding="utf-8")
+                normalized_md.write_text(
+                    escape_ordered_list_markers_for_pandoc(temp_text),
+                    encoding="utf-8",
+                )
 
                 if args.reference_doc:
                     reference_doc = Path(args.reference_doc).resolve()

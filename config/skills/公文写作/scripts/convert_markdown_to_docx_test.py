@@ -123,6 +123,13 @@ class ConvertMarkdownToDocxTests(unittest.TestCase):
         self.assertIn("| 字段名 | 类型 | 说明 |\n| --- | --- | --- |\n| a | b | c |", normalized)
         self.assertIn("| a | b | c |\n\n下一段", normalized)
 
+    def test_escape_ordered_list_markers_for_pandoc_keeps_explicit_numbers(self):
+        source = "1. 第一项\n2) 第二项\n3、第三项\n"
+        escaped = MODULE.escape_ordered_list_markers_for_pandoc(source)
+        self.assertIn("1\\. 第一项", escaped)
+        self.assertIn("2\\) 第二项", escaped)
+        self.assertIn("3、第三项", escaped)
+
 
 if __name__ == "__main__":
     unittest.main()

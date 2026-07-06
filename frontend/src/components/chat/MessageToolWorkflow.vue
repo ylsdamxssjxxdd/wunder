@@ -52,9 +52,18 @@
               </span>
             </span>
             <span
-              v-if="entry.consumedTokensLabel || entry.durationLabel"
+              v-if="entry.contextTokensLabel || entry.consumedTokensLabel || entry.durationLabel"
               class="tool-workflow-entry-meta"
             >
+              <span
+                :class="[
+                  'tool-workflow-entry-context',
+                  { 'is-empty': !entry.contextTokensLabel }
+                ]"
+                :title="entry.contextTokensTitle"
+              >
+                {{ entry.contextTokensLabel }}
+              </span>
               <span
                 :class="[
                   'tool-workflow-entry-consumed',
@@ -138,7 +147,10 @@ import {
 } from './toolWorkflowRunModel';
 import { shouldRenderWorkflowShell } from './toolWorkflowVisibility';
 import {
+  formatWorkflowContextTokensLabel,
+  formatWorkflowContextTokensTitle,
   formatWorkflowConsumedTokensLabel,
+  resolveWorkflowEntryContextTokenResolution,
   resolveWorkflowEntryConsumedTokenResolution
 } from './toolWorkflowUsage';
 import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
@@ -192,6 +204,9 @@ type ToolEntryView = {
   toolIconClass: string;
   isCompaction: boolean;
   status: string;
+  contextTokensLabel: string;
+  contextTokensTitle: string;
+  contextTokensSource: string;
   consumedTokensLabel: string;
   consumedTokensSource: string;
   durationLabel: string;
@@ -3270,6 +3285,18 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     : splitEntrySummary(summaryTitle, toolDisplay);
   const consumedTokenResolution = resolveWorkflowEntryConsumedTokenResolution(entry);
   const consumedTokensLabel = formatWorkflowConsumedTokensLabel(consumedTokenResolution.tokens);
+  const contextTokenResolution = resolveWorkflowEntryContextTokenResolution(entry);
+  const contextTokenLabel = t('chat.toolWorkflow.detail.context');
+  const contextTokensLabel = formatWorkflowContextTokensLabel(
+    contextTokenResolution.tokens,
+    contextTokenResolution.totalTokens,
+    contextTokenLabel
+  );
+  const contextTokensTitle = formatWorkflowContextTokensTitle(
+    contextTokenResolution.tokens,
+    contextTokenResolution.totalTokens,
+    contextTokenLabel
+  );
   const durationLabel = formatWorkflowDurationLabel(
     resolveWorkflowEntryDurationMs(entry, resolveCommandSessionDurationMs(commandSession))
   );
@@ -3292,6 +3319,9 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     toolIconClass: resolveWorkflowToolIconClass(entry.toolName),
     isCompaction: Boolean(compactionDisplay),
     status,
+    contextTokensLabel,
+    contextTokensTitle,
+    contextTokensSource: contextTokenResolution.source,
     consumedTokensLabel,
     consumedTokensSource: consumedTokenResolution.source,
     durationLabel,
@@ -3578,15 +3608,21 @@ const buildWorkflowDebugSnapshot = () => {
     workflowUserCollapsed: workflowUserCollapsed.value,
     latestEntryKey: latestEntry.value?.key || '',
     latestEntryStatus: latestEntry.value?.status || '',
+    latestEntryContextTokensLabel: latestEntry.value?.contextTokensLabel || '',
+    latestEntryContextTokensSource: latestEntry.value?.contextTokensSource || '',
     latestEntryConsumedTokensLabel: latestEntry.value?.consumedTokensLabel || '',
     latestEntryConsumedTokensSource: latestEntry.value?.consumedTokensSource || '',
     latestLiveEntryKey: liveEntry?.key || '',
     latestLiveEntryStatus: liveEntry?.status || '',
+    latestLiveEntryContextTokensLabel: liveEntry?.contextTokensLabel || '',
+    latestLiveEntryContextTokensSource: liveEntry?.contextTokensSource || '',
     latestLiveEntryConsumedTokensLabel: liveEntry?.consumedTokensLabel || '',
     latestLiveEntryConsumedTokensSource: liveEntry?.consumedTokensSource || '',
     entryTokenSamples: displayEntries.value.slice(-3).map((entry) => ({
       key: entry.key,
       status: entry.status,
+      contextTokensLabel: entry.contextTokensLabel,
+      contextTokensSource: entry.contextTokensSource,
       consumedTokensLabel: entry.consumedTokensLabel,
       consumedTokensSource: entry.consumedTokensSource
     })),
@@ -3623,6 +3659,9 @@ const buildPendingEntryView = (
     toolIconClass: resolveWorkflowToolIconClass(toolName),
     isCompaction,
     status: 'loading',
+    contextTokensLabel: '',
+    contextTokensTitle: '',
+    contextTokensSource: '',
     consumedTokensLabel: '',
     consumedTokensSource: '',
     durationLabel: '',
@@ -4335,9 +4374,9 @@ onBeforeUnmount(() => {
 
 .tool-workflow-entry-meta {
   margin-left: auto;
-  flex: 0 1 18ch;
+  flex: 0 1 28ch;
   display: grid;
-  grid-template-columns: minmax(8ch, 11ch) minmax(4ch, 5ch);
+  grid-template-columns: minmax(9ch, 12ch) minmax(8ch, 10ch) minmax(4ch, 5ch);
   align-items: center;
   justify-content: end;
   justify-items: end;
@@ -4346,6 +4385,7 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.tool-workflow-entry-context,
 .tool-workflow-entry-consumed,
 .tool-workflow-entry-duration {
   display: block;
@@ -4357,6 +4397,11 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
+.tool-workflow-entry-context {
+  color: var(--workflow-term-text);
+}
+
+.tool-workflow-entry-context.is-empty,
 .tool-workflow-entry-consumed.is-empty,
 .tool-workflow-entry-duration.is-empty {
   visibility: hidden;
@@ -4364,9 +4409,13 @@ onBeforeUnmount(() => {
 
 @media (max-width: 760px) {
   .tool-workflow-entry-meta {
-    flex-basis: 14ch;
-    grid-template-columns: minmax(7ch, 10ch) minmax(4ch, 5ch);
+    flex-basis: 18ch;
+    grid-template-columns: minmax(9ch, 12ch) minmax(4ch, 5ch);
     column-gap: 6px;
+  }
+
+  .tool-workflow-entry-consumed {
+    display: none;
   }
 }
 

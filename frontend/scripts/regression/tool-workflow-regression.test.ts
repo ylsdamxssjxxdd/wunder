@@ -11,7 +11,11 @@ import {
   resolveWorkflowPendingPlaceholder
 } from '../../src/components/chat/toolWorkflowRunModel';
 import {
+  formatWorkflowContextTokensLabel,
+  formatWorkflowContextTokensTitle,
   formatWorkflowConsumedTokensLabel,
+  resolveWorkflowContextTokens,
+  resolveWorkflowEntryContextTokenResolution,
   resolveWorkflowEntryConsumedTokenResolution,
   resolveWorkflowEntryConsumedTokens,
   resolveWorkflowConsumedTokens
@@ -449,6 +453,29 @@ test('workflow consumed tokens ignore context-only payloads', () => {
   assert.equal(formatWorkflowConsumedTokensLabel(tokens), '');
 });
 
+test('workflow context tokens read context-only payloads for row occupancy', () => {
+  const resolved = resolveWorkflowContextTokens(
+    JSON.stringify({
+      data: {
+        context_occupancy_tokens: 12064,
+        context_usage: {
+          context_tokens: 12064,
+          context_max_tokens: 32768
+        }
+      }
+    })
+  );
+  assert.deepEqual(resolved, {
+    tokens: 12064,
+    totalTokens: 32768
+  });
+  assert.equal(formatWorkflowContextTokensLabel(resolved.tokens, resolved.totalTokens, 'Context'), 'Context 12.1k/32.8k');
+  assert.equal(
+    formatWorkflowContextTokensTitle(resolved.tokens, resolved.totalTokens, 'Context'),
+    'Context 12,064 / 32,768 token'
+  );
+});
+
 test('workflow consumed tokens can still read request usage from item payload when detail is observation-only', () => {
   const tokens = resolveWorkflowConsumedTokens(
     '{"summary":"tool finished"}',
@@ -609,6 +636,42 @@ test('workflow entry consumed token resolution records none when no usage is ava
   assert.deepEqual(resolution, {
     tokens: null,
     source: 'none'
+  });
+});
+
+test('workflow entry context token resolution prefers final result occupancy', () => {
+  const resolution = resolveWorkflowEntryContextTokenResolution({
+    callItem: {
+      eventType: 'tool_call',
+      payload: {
+        context_occupancy_tokens: 4096,
+        context_total_tokens: 32768
+      }
+    },
+    outputItem: {
+      eventType: 'tool_output_delta',
+      payload: {
+        context_usage: {
+          context_tokens: 6144,
+          context_max_tokens: 32768
+        }
+      }
+    },
+    resultItem: {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          meta: {
+            context_occupancy_tokens: 8192
+          }
+        }
+      }
+    }
+  });
+  assert.deepEqual(resolution, {
+    tokens: 8192,
+    totalTokens: 32768,
+    source: 'result'
   });
 });
 
