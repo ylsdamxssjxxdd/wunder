@@ -441,6 +441,34 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       }
   };
 
+  ctx.handleMessageMarkdownRendered = (messageKey?: string, payload: {
+      streaming?: boolean;
+      contentLength?: number;
+      needsHydration?: boolean;
+      lightweight?: boolean;
+      } = {}) => {
+      const normalizedKey = String(messageKey || '').trim();
+      const lightweightStreaming = payload.streaming === true && payload.lightweight === true;
+      if (!lightweightStreaming) {
+          ctx.scheduleMessageViewportRefresh({
+              updateScrollState: true,
+              measure: true,
+              measureKeys: normalizedKey ? [normalizedKey] : undefined,
+              reason: payload.streaming ? 'streaming-markdown-rendered' : 'markdown-rendered'
+          });
+      }
+      if (
+          ctx.autoStickToBottom.value &&
+          normalizedKey &&
+          normalizedKey === ctx.latestAgentRenderableMessageKey.value
+      ) {
+          void ctx.scrollMessagesToBottom();
+      }
+      if (payload.needsHydration === true) {
+          ctx.scheduleWorkspaceResourceHydration('markdown-rendered-resources', normalizedKey ? { messageKeys: [normalizedKey] } : {});
+      }
+  };
+
   ctx.updateMessageScrollState = () => {
       ctx.messageViewportRuntime?.updateMessageScrollState();
   };

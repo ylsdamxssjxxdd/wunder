@@ -257,6 +257,9 @@ export const resolveToolIconClass = (input: AbilityVisualInput | string): string
 export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMeta => {
   const kind = resolveAbilityKind(input.kind, input.group || input.source);
   const preferredTone = resolvePreferredTone(kind, input.group, input.source);
+  if (preferredTone === 'mcp') {
+    return { icon: 'fa-plug', tone: 'mcp' };
+  }
   const resolvedName = cleanText(input.name).toLowerCase();
   const resolvedHint = cleanText(input.hint).toLowerCase();
   const resolvedDescription = cleanText(input.description).toLowerCase();

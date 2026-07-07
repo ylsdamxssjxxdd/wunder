@@ -314,6 +314,13 @@ export const chatSessionOpenLoadActions = {
       const now = Date.now();
       const activeSessionKey = resolveSessionKey(this.activeSessionId);
       const activeRuntime = ensureRuntime(activeSessionKey);
+      const activeRuntimeInteractive = Boolean(
+        activeSessionKey &&
+          (
+            activeRuntime?.sendController ||
+            activeRuntime?.resumeController
+          )
+      );
       const activeRuntimeHot = Boolean(
         activeSessionKey &&
           (
@@ -323,6 +330,22 @@ export const chatSessionOpenLoadActions = {
           )
       );
       const recentListRefreshAgeMs = now - Number(this.sessionsLoadedAt || 0);
+      if (
+        !force &&
+        traceSource === 'realtime-pulse' &&
+        requestedAgentId === null &&
+        activeRuntimeInteractive
+      ) {
+        chatDebugLog('messenger.conversation', 'load-sessions-skip-interactive-stream', {
+          traceId,
+          traceSource,
+          requestedAgentId,
+          activeSessionId: activeSessionKey,
+          previousSessionCount: Array.isArray(this.sessions) ? this.sessions.length : 0,
+          ageMs: recentListRefreshAgeMs
+        });
+        return this.sessions;
+      }
       if (
         !force &&
         traceSource === 'realtime-pulse' &&

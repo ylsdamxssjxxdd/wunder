@@ -16,6 +16,22 @@ const normalizeAbilityNameList = (values: unknown): string[] => {
   return output;
 };
 
+const normalizeAbilityKey = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+const isMcpRuntimeName = (value: unknown): boolean => {
+  const name = normalizeAbilityKey(value);
+  if (!name) return false;
+  return name.includes('@') || name.startsWith('mcp_') || name.startsWith('mcp:');
+};
+
+const collectConfiguredToolNames = (agent: Record<string, unknown> | null): string[] =>
+  normalizeAbilityNameList([
+    ...normalizeAbilityNameList(agent?.declared_tool_names),
+    ...normalizeAbilityNameList(agent?.declaredToolNames),
+    ...normalizeAbilityNameList(agent?.tool_names),
+    ...normalizeAbilityNameList(agent?.toolNames)
+  ]);
+
 const normalizeAbilityDescriptors = (agent: Record<string, unknown> | null): Array<Record<string, unknown>> => {
   const source = agent || {};
   const abilities = source.abilities as Record<string, unknown> | null | undefined;
@@ -88,8 +104,9 @@ export const resolveAgentOverviewAbilityCounts = (agent: Record<string, unknown>
     ? collectStructuredAbilityGroups(agent)
     : collectAbilityGroupDetails((agent || {}) as Record<string, unknown>);
   const declaredSkillNames = normalizeAbilityNameList(agent?.declared_skill_names);
+  const configuredMcpToolCount = collectConfiguredToolNames(agent).filter(isMcpRuntimeName).length;
   return {
     skillCount: hasStructuredDescriptors || grouped.skills.length > 0 ? grouped.skills.length : declaredSkillNames.length,
-    mcpCount: grouped.mcp.length
+    mcpCount: grouped.mcp.length > 0 ? grouped.mcp.length : configuredMcpToolCount
   };
 };

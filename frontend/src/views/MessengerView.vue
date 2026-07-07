@@ -1202,11 +1202,25 @@
                       </el-tooltip>
                     </div>
                   </template>
-                  <div
+                  <MessageMarkdownBody
                     v-else
-                    class="markdown-body"
-                    v-html="renderAgentMarkdown(item.message, item.sourceIndex)"
-                  ></div>
+                    :cache-key="`agent:${String(sessionHub.activeConversationKey || '')}:${resolveAgentMessageKey(item.message, item.sourceIndex)}:c${currentContainerId}`"
+                    :content="String(item.message.content || '')"
+                    :message="item.message"
+                    :runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || '')"
+                    :session-id="String(chatStore.activeSessionId || '')"
+                    :assistant-display="true"
+                    :streaming="
+                      Boolean(
+                        item.message.stream_incomplete ||
+                          item.message.workflowStreaming ||
+                          item.message.reasoningStreaming
+                      )
+                    "
+                    :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
+                    :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
+                    @rendered="handleMessageMarkdownRendered(item.key, $event)"
+                  />
                   <div
                     v-if="item.message.role === 'user' && hasUserImageAttachments(item.message)"
                     class="message-user-image-grid"
@@ -1443,7 +1457,17 @@
                       </div>
                     </div>
                   </template>
-                  <div v-else class="markdown-body" v-html="renderWorldMarkdown(item.message)"></div>
+                  <MessageMarkdownBody
+                    v-else
+                    :cache-key="`world:${String(sessionHub.activeConversationKey || '')}:${resolveWorldMessageKey(item.message)}`"
+                    :content="replaceWorldAtPathTokens(String(item.message.content || ''), String(item.message.sender_user_id || '').trim())"
+                    :message="item.message"
+                    :streaming="false"
+                    :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
+                    :resolve-workspace-path="resolveWorldMarkdownWorkspacePath"
+                    :workspace-path-context="String(item.message.sender_user_id || '').trim()"
+                    @rendered="handleMessageMarkdownRendered(item.key, $event)"
+                  />
                 </div>
                 <div
                   v-if="!isWorldVoiceMessage(item.message) && hasMessageContent(item.message.content)"
@@ -1841,6 +1865,7 @@ defineOptions({
 });
 
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
+import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
 import SkillMarkdownPreview from '@/components/messenger/SkillMarkdownPreview.vue';
 import { computed as vueComputed, ref as vueRef, watch as vueWatch } from 'vue';
@@ -2305,6 +2330,7 @@ const handleHivePackImportedFromMiddlePane = controller.handleHivePackImportedFr
 const handleResourcePreviewDownload = controller.handleResourcePreviewDownload;
 const handleMessageContentClick = controller.handleMessageContentClick;
 const handleMessageListScroll = controller.handleMessageListScroll;
+const handleMessageMarkdownRendered = controller.handleMessageMarkdownRendered;
 const handleMessageWorkflowLayoutChange = controller.handleMessageWorkflowLayoutChange;
 const handleMessengerRootPointerLeave = controller.handleMessengerRootPointerLeave;
 const handleMessengerRootPointerMove = controller.handleMessengerRootPointerMove;
@@ -2710,11 +2736,7 @@ const handleWorkspaceEditorSaved = controller.handleWorkspaceEditorSaved;
 const handleWorkspaceEditorFallback = controller.handleWorkspaceEditorFallback;
 const rememberWorldEmoji = controller.rememberWorldEmoji;
 const renameTimelineSession = controller.renameTimelineSession;
-const renderAgentMarkdown = controller.renderAgentMarkdown;
-const renderMarkdown = controller.renderMarkdown;
-const renderMessageMarkdown = controller.renderMessageMarkdown;
 const renderSystemPromptHighlight = controller.renderSystemPromptHighlight;
-const renderWorldMarkdown = controller.renderWorldMarkdown;
 const replaceWorldAtPathTokens = controller.replaceWorldAtPathTokens;
 const reportMessengerLayoutAnomaly = controller.reportMessengerLayoutAnomaly;
 const requestAgentSettingsFocus = controller.requestAgentSettingsFocus;

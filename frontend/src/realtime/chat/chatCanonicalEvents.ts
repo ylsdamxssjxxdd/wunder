@@ -233,6 +233,18 @@ const buildEventId = (
   return `synthetic:${sessionId}:${requestPart}:${eventType}${suffix ? `:${suffix}` : ''}`;
 };
 
+const shouldUseStrictEventSequence = (
+  _runtimeType: string,
+  _sourceEventType: string,
+  phase?: string | null
+): boolean => {
+  const normalizedPhase = normalizeEventType(phase);
+  if (normalizedPhase === 'send') {
+    return false;
+  }
+  return true;
+};
+
 const buildBaseEvent = (
   options: CanonicalBuildOptions,
   runtimeType: string,
@@ -302,7 +314,10 @@ const buildBaseEvent = (
   return {
     event_type: runtimeType,
     source: options.source || 'ws',
-    strict: extra.strict ?? eventSeq !== null,
+    strict: extra.strict ?? (
+      eventSeq !== null &&
+      shouldUseStrictEventSequence(runtimeType, options.eventType, options.phase)
+    ),
     session_id: sessionId,
     event_id: eventId,
     event_seq: eventSeq,

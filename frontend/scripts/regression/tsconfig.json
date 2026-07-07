@@ -40,6 +40,7 @@
     "../../src/views/messenger/chatRefreshRecovery.ts",
     "../../src/views/messenger/messageConversationRetention.ts",
     "../../src/views/messenger/agentOpenState.ts",
+    "../../src/views/messenger/agentOverviewCards.ts",
     "../../src/views/messenger/interactionBlocker.ts",
     "../../src/views/messenger/realtimePulse.ts",
     "../../src/views/messenger/agentOverviewAbilities.ts",

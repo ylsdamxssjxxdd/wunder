@@ -210,6 +210,7 @@ const materializeChatRuntimeMessageWithCache = (
   if (cached?.sourceRevision === sourceRevision) {
     cached.lastUsed = ++materializedMessageCacheClock;
     sessionCache.lastUsed = cached.lastUsed;
+    syncMaterializedStreamingFields(cached.message, message);
     if (
       isMaterializedMessageAligned(cached.message, message) &&
       cached.materializedMutableRevision === buildMaterializedMutableFieldsRevision(cached.message)
@@ -291,12 +292,9 @@ const buildProjectionMessageMaterializationRevision = (
 ): string => [
     message.id,
     message.role,
-    message.content,
-    message.reasoning,
     message.status,
     message.createdAt,
     message.createdSeq,
-    message.updatedSeq,
     message.userTurnId,
     message.modelTurnId,
     message.final,
@@ -340,6 +338,20 @@ const isMaterializedMessageAligned = (
   materialized.reasoning === source.reasoning &&
   materialized.runtime_status === source.status &&
   materialized.message_id === source.id;
+
+const syncMaterializedStreamingFields = (
+  materialized: ChatMessageLike,
+  source: ChatRuntimeMessageProjection
+): void => {
+  materialized.content = source.content;
+  materialized.reasoning = source.reasoning;
+  materialized.runtime_status = source.status;
+  if (source.role !== 'assistant') return;
+  const active = isRuntimeMessageActive(source.status);
+  materialized.state = resolveAssistantLegacyState(source.status);
+  materialized.stream_incomplete = active;
+  materialized.reasoningStreaming = active && Boolean(source.reasoning);
+};
 
 const MATERIALIZED_MUTABLE_FIELDS = [
   'attachments',
@@ -475,7 +487,11 @@ const cloneProjectionRecords = (
   fallback: unknown
 ): Record<string, unknown>[] => {
   const source = Array.isArray(projected) ? projected : Array.isArray(fallback) ? fallback : [];
-  return source.filter(isPlainRecord).map((item) => ({ ...item }));
+  return source.filter(isPlainRecord).map((item) =>
+    Object.fromEntries(
+      Object.entries(item).filter(([key]) => !key.startsWith('__'))
+    )
+  );
 };
 
 const resolveAssistantLegacyState = (

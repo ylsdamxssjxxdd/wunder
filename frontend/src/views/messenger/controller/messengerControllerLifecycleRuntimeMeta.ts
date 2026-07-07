@@ -38,6 +38,7 @@ import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversa
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { chatDebugLog } from '@/utils/chatDebug';
+import { buildRuntimeDebugSnapshot, getRuntime } from '@/stores/chatRuntimeState';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
@@ -693,6 +694,18 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
       const traceId = `sess-refresh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       ctx.messengerSessionRefreshTraceId.value = traceId;
       ctx.messengerSessionRefreshTraceSource.value = 'realtime-pulse';
+      if (ctx.isActiveChatInteractiveStream?.()) {
+          chatDebugLog('messenger.conversation', 'session-refresh-skip-interactive-stream', {
+              traceId,
+              source: ctx.messengerSessionRefreshTraceSource.value,
+              activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
+              sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0,
+              runtime: buildRuntimeDebugSnapshot(getRuntime(ctx.chatStore.activeSessionId))
+          });
+          ctx.messengerSessionRefreshTraceId.value = '';
+          ctx.messengerSessionRefreshTraceSource.value = '';
+          return;
+      }
       chatDebugLog('messenger.conversation', 'session-refresh-start', {
           traceId,
           source: ctx.messengerSessionRefreshTraceSource.value,
@@ -735,7 +748,30 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
       });
   };
 
-  ctx.shouldRefreshRealtimeChatSessions = () => ctx.sessionHub.activeSection === 'messages';
+  ctx.isActiveChatInteractiveStream = () => {
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (!activeSessionId) {
+          return false;
+      }
+      const runtime = getRuntime(activeSessionId);
+      return Boolean(runtime?.sendController || runtime?.resumeController);
+  };
+
+  ctx.shouldRefreshRealtimeChatSessions = () => {
+      if (ctx.sessionHub.activeSection !== 'messages') {
+          return false;
+      }
+      if (!ctx.isActiveChatInteractiveStream?.()) {
+          return true;
+      }
+      chatDebugLog('messenger.conversation', 'session-refresh-skip-interactive-stream', {
+          source: 'realtime-pulse',
+          activeSessionId: String(ctx.chatStore.activeSessionId || '').trim(),
+          sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0,
+          runtime: buildRuntimeDebugSnapshot(getRuntime(ctx.chatStore.activeSessionId))
+      });
+      return false;
+  };
 
   ctx.shouldRefreshAgentMeta = () => ctx.sessionHub.activeSection === 'agents' || ctx.sessionHub.activeSection === 'tools';
 

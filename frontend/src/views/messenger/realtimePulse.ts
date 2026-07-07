@@ -13,6 +13,7 @@ type MessengerRealtimePulseOptions = {
   shouldRefreshChannelBoundAgentIds?: () => boolean;
   shouldRefreshChatSessions?: () => boolean;
   shouldRefreshContacts?: () => boolean;
+  shouldDefer?: () => boolean;
   isHotState?: () => boolean;
   onError?: (error: unknown) => void;
 };
@@ -131,6 +132,12 @@ export const createMessengerRealtimePulse = (
     }
     // Keep one in-flight tick at a time to avoid overlapping requests and stale writes.
     running = true;
+    if (options.shouldDefer?.() === true) {
+      running = false;
+      pendingTrigger = false;
+      scheduleNext(resolveDelay());
+      return;
+    }
     const desktopMode = isDesktopModeEnabled();
     const shouldRefreshMeta = shouldRefreshDesktopMeta();
     const tasks: Array<() => Promise<unknown>> = [

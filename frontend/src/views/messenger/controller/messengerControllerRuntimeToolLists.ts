@@ -44,6 +44,7 @@ import {
   settleAgentSessionBusyAfterRefresh,
   type SessionBusyRecoveryStatus
 } from '@/views/messenger/chatRefreshRecovery';
+import { buildDefaultAgentOverviewSource } from '@/views/messenger/agentOverviewCards';
 import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
 import {
@@ -1056,14 +1057,12 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
   ctx.fullPrimaryAgentList = computed(() => {
       const items: Array<Record<string, unknown>> = [];
       if (ctx.showDefaultAgentEntry.value) {
-          const defaultProfile = ctx.defaultAgentProfile.value as Record<string, unknown> | null;
-          items.push({
-              id: DEFAULT_AGENT_KEY,
-              name: String(defaultProfile?.name || ctx.t('messenger.defaultAgent')),
-              description: String(defaultProfile?.description || ctx.t('messenger.defaultAgentDesc')),
-              icon: defaultProfile?.icon,
-              sandbox_container_id: defaultProfile?.sandbox_container_id ?? 1
-          });
+          items.push(buildDefaultAgentOverviewSource({
+              profile: ctx.defaultAgentProfile.value as Record<string, unknown> | null,
+              defaultAgentKey: DEFAULT_AGENT_KEY,
+              defaultName: ctx.t('messenger.defaultAgent'),
+              defaultDescription: ctx.t('messenger.defaultAgentDesc')
+          }));
       }
       return [...items, ...ctx.ownedAgents.value];
   });

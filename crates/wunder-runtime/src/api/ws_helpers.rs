@@ -376,28 +376,6 @@ fn send_slow_client_warning(
     }
 }
 
-async fn send_slow_client_warning_backpressured(
-    sender: &WsSender,
-    request_id: Option<&str>,
-    reason: &str,
-    queue_capacity: usize,
-) -> Result<(), WsTrySendError> {
-    if !should_warn_slow_client(sender) {
-        return Ok(());
-    }
-    let warning_payload = json!({
-        "event": "slow_client",
-        "data": {
-            "reason": reason,
-            "queue_capacity": queue_capacity,
-            "resume_recommended": true,
-            "ts": Utc::now().to_rfc3339(),
-        },
-    });
-    let warning_text = build_ws_text("event", request_id, Some(warning_payload));
-    send_text_backpressured(sender, warning_text).await
-}
-
 pub(crate) async fn send_ws_ready(
     tx: &WsSender,
     request_id: Option<&str>,
@@ -431,19 +409,8 @@ pub(crate) async fn send_ws_event(
         "data": data,
     });
     if is_delta {
-        let queue_capacity = tx.tx.capacity();
-        if queue_capacity <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
-            let _ = send_slow_client_warning_backpressured(
-                tx,
-                request_id,
-                "queue_full_resume_required",
-                queue_capacity,
-            )
-            .await;
-            return Err(());
-        }
         let text = build_ws_text("event", request_id, Some(payload));
-        return try_send_text_lossy(tx, text).map_err(|_| ());
+        return send_text_backpressured(tx, text).await.map_err(|_| ());
     }
     let text = build_ws_text("event", request_id, Some(payload.clone()));
     match try_send_text_strict(tx, text) {
@@ -1254,10 +1221,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delta_event_requests_resume_when_queue_is_low() {
-        let (tx, mut rx) = mpsc::channel::<Message>(2);
+    async fn delta_event_waits_for_queue_capacity_and_succeeds() {
+        let (tx, mut rx) = mpsc::channel::<Message>(1);
         tx.try_send(Message::Text("busy".into()))
-            .expect("occupy one slot");
+            .expect("fill queue");
         let sender = WsSender::new(tx);
         let event = StreamEvent {
             event: "llm_output_delta".to_string(),
@@ -1265,14 +1232,18 @@ mod tests {
             id: Some("2".to_string()),
             timestamp: None,
         };
-        assert!(send_ws_event(&sender, Some("req-2"), event).await.is_err());
-        let first = rx.recv().await.expect("queued message");
+        let send = tokio::spawn(async move { send_ws_event(&sender, Some("req-2"), event).await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!send.is_finished(), "delta send should wait while the queue is full");
+        let first = rx.recv().await.expect("queued busy message");
         assert!(matches!(first, Message::Text(_)));
-        let second = rx.recv().await.expect("slow client warning");
+        assert!(send.await.expect("send task should finish").is_ok());
+        let second = rx.recv().await.expect("delta message");
         let Message::Text(raw) = second else {
-            panic!("expected slow client warning");
+            panic!("expected delta message");
         };
-        assert!(raw.contains("queue_full_resume_required"));
+        assert!(raw.contains("\"event\":\"llm_output_delta\""));
+        assert!(raw.contains("\"delta\":\"hello\""));
     }
 
     #[tokio::test]

@@ -819,7 +819,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return [
           ctx.latestAgentRenderableMessageKey.value,
           String(message.id || message.localId || '').trim(),
-          String(message.content || '').length,
           String(message.reasoning || '').length,
           Boolean(message.workflowStreaming),
           Boolean(message.reasoningStreaming),

@@ -68,6 +68,10 @@ const ACTIVE_SUBAGENT_STATUSES = new Set([
   'waiting'
 ]);
 const TOOL_RESULT_EVENT_TYPES = new Set(['tool_call_completed', 'tool_call_failed']);
+const PROJECTED_TOOL_RESULT_EVENT_TYPES = new Set(['tool_result']);
+const isTerminalWorkflowStatus = (status: string): boolean =>
+  Boolean(status) && !ACTIVE_WORKFLOW_STATUSES.has(status);
+const WORKFLOW_CONTEXT_SNAPSHOT_KEY = '__workflowContextSnapshot';
 const SUBAGENT_WORKFLOW_EVENT_TYPES = new Set([
   'subagent_dispatch_start',
   'subagent_dispatch_item_update',
@@ -129,6 +133,14 @@ const isCommandSessionRuntimeEvent = (event: { payload?: Record<string, unknown>
     )
   );
 };
+
+const CONTENT_ONLY_EVENT_TYPES = new Set([
+  'assistant_delta',
+  'assistant_reasoning_delta'
+]);
+
+const isContentOnlyRuntimeEvent = (event: { type?: string }): boolean =>
+  CONTENT_ONLY_EVENT_TYPES.has(normalizeText(event.type));
 
 export const createChatRuntimeProjection = (): ChatRuntimeProjection => ({
   activeSessionId: null,
@@ -215,11 +227,12 @@ export const applyChatRuntimeEvent = (
     return {
       applied: false,
       ignored: true,
-      quarantined: false,
-      sessionId: session.sessionId,
-      eventSeq: event.eventSeq,
-      reason: 'duplicate_event_id'
-    };
+    quarantined: false,
+    sessionId: session.sessionId,
+    messageId: event.messageId,
+    eventSeq: event.eventSeq,
+    reason: 'duplicate_event_id'
+  };
   }
 
   if (
@@ -232,11 +245,12 @@ export const applyChatRuntimeEvent = (
     return {
       applied: false,
       ignored: true,
-      quarantined: false,
-      sessionId: session.sessionId,
-      eventSeq: event.eventSeq,
-      reason: 'stale_event_seq'
-    };
+    quarantined: false,
+    sessionId: session.sessionId,
+    messageId: event.messageId,
+    eventSeq: event.eventSeq,
+    reason: 'stale_event_seq'
+  };
   }
 
   if (event.strict) {
@@ -247,11 +261,12 @@ export const applyChatRuntimeEvent = (
       return {
         applied: false,
         ignored: false,
-        quarantined: true,
-        sessionId: session.sessionId,
-        eventSeq: event.eventSeq,
-        reason: quarantineReason
-      };
+      quarantined: true,
+      sessionId: session.sessionId,
+      messageId: event.messageId,
+      eventSeq: event.eventSeq,
+      reason: quarantineReason
+    };
     }
   }
 
@@ -265,12 +280,34 @@ export const applyChatRuntimeEvent = (
       quarantined: false,
       pending: pendingReason !== 'duplicate_pending_event_id',
       sessionId: session.sessionId,
+      messageId: event.messageId,
       eventSeq: event.eventSeq,
       reason: pendingReason
     };
   }
 
   const hardGapReason = shouldApplySequentialGapImmediately(session, event) ? 'event_seq_gap' : '';
+  const contentOnlyMessageId = resolveContentOnlyRuntimeMessageId(session, event);
+  if (
+    contentOnlyMessageId &&
+    !expiredGapReason &&
+    !hardGapReason &&
+    session.pendingSequentialEvents.length === 0 &&
+    !shouldIgnoreEventForCancelledTurn(session, event)
+  ) {
+    applyContentOnlyRuntimeEvent(session, event, contentOnlyMessageId);
+    appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
+    return {
+      applied: true,
+      ignored: false,
+      quarantined: false,
+      contentOnly: true,
+      drained: 0,
+      sessionId: session.sessionId,
+      messageId: contentOnlyMessageId,
+      eventSeq: event.eventSeq
+    };
+  }
   applyNormalizedRuntimeEvent(session, event);
   const drained = drainPendingSequentialEvents(session);
   appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
@@ -278,11 +315,77 @@ export const applyChatRuntimeEvent = (
     applied: true,
     ignored: false,
     quarantined: false,
+    contentOnly: drained === 0 && Boolean(contentOnlyMessageId),
     drained,
     sessionId: session.sessionId,
+    messageId: contentOnlyMessageId || event.messageId,
     eventSeq: event.eventSeq,
     reason: expiredGapReason || hardGapReason || undefined
   };
+};
+
+const resolveContentOnlyRuntimeMessageId = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): string => {
+  if (!isContentOnlyRuntimeEvent(event)) return '';
+  const modelTurn = session.modelTurnById[event.modelTurnId];
+  const messageId = modelTurn
+    ? resolveAssistantMessageIdForModelTurn(session, modelTurn, event.messageId)
+    : event.messageId;
+  const message = messageId ? session.messageById[messageId] : null;
+  if (!message || message.role !== 'assistant') return '';
+  if (message.status !== 'streaming') return '';
+  if (event.type === 'assistant_delta') {
+    if ((event.reasoningDelta || event.reasoning) && !message.reasoning) return '';
+    return message.content ? message.id : '';
+  }
+  if (event.type === 'assistant_reasoning_delta') {
+    return message.reasoning ? message.id : '';
+  }
+  return '';
+};
+
+const applyContentOnlyRuntimeEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent,
+  messageId: string
+): void => {
+  if (event.eventId) {
+    session.eventIdIndex[event.eventId] = true;
+  }
+  markAppliedStreamEventId(session, event.eventId);
+  if (event.agentId) {
+    session.agentId = event.agentId;
+  }
+  const modelTurn = session.modelTurnById[event.modelTurnId];
+  const message = session.messageById[messageId];
+  if (modelTurn) {
+    modelTurn.status = 'streaming';
+  }
+  if (message?.role === 'assistant') {
+    if (event.type === 'assistant_delta') {
+      message.content += event.delta || event.content;
+      if (event.reasoningDelta || event.reasoning) {
+        message.reasoning += event.reasoningDelta || event.reasoning;
+      }
+    } else if (event.type === 'assistant_reasoning_delta') {
+      message.reasoning += event.reasoningDelta || event.reasoning;
+    }
+    if (isPlainRecord(message.display)) {
+      clearProjectedRetryDisplay(message.display);
+    }
+    message.status = 'streaming';
+    message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  }
+  if (
+    !isCommandSessionRuntimeEvent(event) &&
+    event.eventSeq !== null &&
+    event.eventSeq > session.appliedSeq
+  ) {
+    session.appliedSeq = event.eventSeq;
+  }
+  setSessionBusy(session, 'running', 'streaming');
 };
 
 type NormalizedRuntimeEvent = ChatRuntimeEvent & {
@@ -898,6 +1001,7 @@ const applyAssistantOutputSnapshot = (
     clearProjectedRetryDisplay(message.display);
   }
   applyProjectedUsageStatsDisplay(message, event, 'token_usage');
+  updateWorkflowContextSnapshot(message, event, modelTurn);
   message.status = 'streaming';
   message.final = false;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -924,6 +1028,7 @@ const applyAssistantFinal = (
     clearProjectedRetryDisplay(message.display);
   }
   applyProjectedUsageStatsDisplay(message, event, 'round_usage');
+  updateWorkflowContextSnapshot(message, event, modelTurn);
   message.status = 'final';
   message.final = true;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -949,7 +1054,7 @@ const applyToolActivity = (
     event,
     completed ? 'streaming' : 'tooling'
   );
-  upsertToolWorkflowItem(message, event, completed ? 'completed' : 'loading');
+  upsertToolWorkflowItem(message, event, completed ? 'completed' : 'loading', modelTurn);
   syncProjectedToolCallStats(message);
   message.status = completed ? 'streaming' : 'tooling';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
@@ -972,7 +1077,7 @@ const applyToolFailed = (
 ): void => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(session, event, 'failed');
-  upsertToolWorkflowItem(message, event, 'failed');
+  upsertToolWorkflowItem(message, event, 'failed', modelTurn);
   syncProjectedToolCallStats(message);
   message.status = 'failed';
   message.failed = true;
@@ -990,7 +1095,7 @@ const applyWorkflowEvent = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
   const status = resolveProjectedWorkflowStatus(sourceType, event.payload);
-  upsertProjectedWorkflowEventItem(message, event, sourceType, status);
+  upsertProjectedWorkflowEventItem(message, event, sourceType, status, modelTurn);
   applyProjectedWorkflowDisplay(message, event, sourceType, status);
   if (SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType)) {
     upsertProjectedSubagents(message, event, sourceType, status);
@@ -1031,10 +1136,22 @@ const applyUsageStats = (
   event: NormalizedRuntimeEvent
 ): void => {
   const sourceType = normalizeText(event.payload.source_event_type);
+  const modelTurn = event.modelTurnId || event.userTurnId
+    ? ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq)
+    : null;
   const existing = resolveUsageStatsTargetMessage(session, event);
-  if (!existing) return;
+  if (!existing) {
+    if (modelTurn) {
+      updateWorkflowContextSnapshotRecord(modelTurn as unknown as Record<string, unknown>, event);
+    }
+    return;
+  }
   const message = existing;
   applyProjectedUsageStatsDisplay(message, event, sourceType);
+  updateWorkflowContextSnapshot(message, event, modelTurn);
+  if (modelTurn) {
+    updateWorkflowContextSnapshotRecord(modelTurn as unknown as Record<string, unknown>, event);
+  }
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
 };
 
@@ -2918,6 +3035,18 @@ const ensureAssistantMessageForModelTurn = (
     userTurnId: modelTurn.userTurnId,
     modelTurnId: modelTurn.id
   });
+  const messageRecord = message as unknown as Record<string, unknown>;
+  const modelTurnSnapshot = asRecord(
+    (modelTurn as unknown as Record<string, unknown>)[WORKFLOW_CONTEXT_SNAPSHOT_KEY]
+  );
+  if (!isPlainRecord(messageRecord[WORKFLOW_CONTEXT_SNAPSHOT_KEY]) && Object.keys(modelTurnSnapshot).length > 0) {
+    messageRecord[WORKFLOW_CONTEXT_SNAPSHOT_KEY] = {
+      ...modelTurnSnapshot,
+      ...(isPlainRecord(modelTurnSnapshot.context_usage)
+        ? { context_usage: { ...modelTurnSnapshot.context_usage } }
+        : {})
+    };
+  }
   message.status = status;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   addUnique(modelTurn.messageIds, message.id);
@@ -2974,7 +3103,8 @@ const pruneModelTurnAssistantMessages = (
 const upsertToolWorkflowItem = (
   message: ChatRuntimeMessageProjection,
   event: NormalizedRuntimeEvent,
-  status: 'loading' | 'completed' | 'failed'
+  status: 'loading' | 'completed' | 'failed',
+  modelTurn?: ChatRuntimeModelTurnProjection | null
 ): void => {
   if (message.role !== 'assistant') return;
   const items = ensureProjectedWorkflowItems(message);
@@ -3066,7 +3196,7 @@ const upsertToolWorkflowItem = (
     Boolean(existing) &&
     eventType === 'tool_call' &&
     existingEventType === 'tool_result' &&
-    SUCCESS_WORKFLOW_STATUSES.has(normalizeText(existing?.status));
+    isTerminalWorkflowStatus(normalizeText(existing?.status));
   const next: ChatRuntimeWorkflowItemProjection = {
     ...(existing || {}),
     id: itemId,
@@ -3078,6 +3208,8 @@ const upsertToolWorkflowItem = (
     isTool: true,
     eventType: keepExistingTerminalResult ? existingEventType : eventType,
     sourceEventType: event.type,
+    modelTurnId: modelTurn?.id || event.modelTurnId || message.modelTurnId,
+    model_turn_id: modelTurn?.id || event.modelTurnId || message.modelTurnId,
     updatedSeq: event.eventSeq ?? message.updatedSeq
   };
   if (toolName) {
@@ -3114,8 +3246,15 @@ const upsertToolWorkflowItem = (
     next.approvalId = approvalId;
     next.approval_id = approvalId;
   }
-  const rawCallDetail = buildProjectedToolCallRawDetail(detailSource, toolFunctionName || toolRuntimeName || toolName);
-  if (rawCallDetail && (eventType === 'tool_call' || !next.toolCallRawDetail)) {
+  const rawCallDetail = eventType === 'tool_call'
+    ? buildProjectedToolCallRawDetail(detailSource, toolFunctionName || toolRuntimeName || toolName)
+    : sourceType === 'command_session_start'
+      ? buildProjectedCommandSessionStartRawDetail(
+          detailSource,
+          toolFunctionName || toolRuntimeName || toolName || 'execute_command'
+        )
+      : '';
+  if (rawCallDetail) {
     next.toolCallRawDetail = rawCallDetail;
     next.tool_call_raw_detail = rawCallDetail;
   }
@@ -3124,6 +3263,7 @@ const upsertToolWorkflowItem = (
     next.toolResultRawDetail = rawResultDetail;
     next.tool_result_raw_detail = rawResultDetail;
   }
+  attachWorkflowContextSnapshot(next, message, detailSource, modelTurn);
 
   if (existing) {
     Object.assign(existing, next);
@@ -3152,6 +3292,33 @@ const resolveProjectedWorkflowStatus = (
   }
   if (sourceType === 'team_error') return 'failed';
   if (sourceType === 'team_finish') return 'completed';
+  if (COMMAND_SESSION_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    const data = asRecord(payload.data);
+    const exitCode = parseNonNegativeInt(
+      data.exit_code ??
+        data.exitCode ??
+        data.returncode ??
+        data.return_code ??
+        data.returnCode ??
+        payload.exit_code ??
+        payload.exitCode
+    );
+    const timedOut = normalizeFlag(data.timed_out ?? data.timedOut ?? payload.timed_out ?? payload.timedOut);
+    const errorText = firstText(
+      data.error,
+      data.error_message,
+      data.errorMessage,
+      payload.error,
+      payload.error_message,
+      payload.errorMessage
+    );
+    if (timedOut || errorText || (exitCode !== null && exitCode !== 0)) {
+      return 'failed';
+    }
+    if (COMMAND_SESSION_TERMINAL_EVENT_TYPES.has(sourceType) && exitCode === 0) {
+      return 'completed';
+    }
+  }
   const data = asRecord(payload.data);
   const status = normalizeText(
     data.status ??
@@ -3263,7 +3430,7 @@ const applyProjectedUsageStatsDisplay = (
       }
     }
     applyProjectedTimingStats(stats, source);
-    applyProjectedContextUsageStats(stats, source);
+    applyProjectedContextUsageStats(stats, source, normalizedUsage);
   } else if (sourceType === 'round_usage') {
     if (normalizedRoundUsage) {
       stats.roundUsage = normalizedRoundUsage;
@@ -3279,6 +3446,172 @@ const applyProjectedUsageStatsDisplay = (
     applyProjectedQuotaStats(stats, source);
   }
   mirrorProjectedStatsDisplay(display, stats);
+};
+
+const updateWorkflowContextSnapshot = (
+  message: ChatRuntimeMessageProjection,
+  event: NormalizedRuntimeEvent,
+  modelTurn?: ChatRuntimeModelTurnProjection | null
+): void => {
+  if (message.role !== 'assistant') return;
+  updateWorkflowContextSnapshotRecord(message as unknown as Record<string, unknown>, event);
+  if (modelTurn) {
+    updateWorkflowContextSnapshotRecord(modelTurn as unknown as Record<string, unknown>, event);
+  }
+  backfillWorkflowItemsContextSnapshot(message, modelTurn);
+};
+
+const updateWorkflowContextSnapshotRecord = (
+  target: Record<string, unknown>,
+  event: NormalizedRuntimeEvent
+): void => {
+  const payload = event.payload;
+  const data = asRecord(payload.data);
+  const source = Object.keys(data).length > 0 ? data : payload;
+  const contextTokens = resolveProjectedContextTokensForEvent(source, event, payload);
+  const contextTotalTokens = resolveProjectedContextTotalTokens(source);
+  if ((contextTokens === null || contextTokens <= 0) && contextTotalTokens === null) return;
+  const snapshot: Record<string, unknown> = {
+    sourceEventType: normalizeText(payload.source_event_type) || event.type,
+    modelTurnId: event.modelTurnId || undefined,
+    model_turn_id: event.modelTurnId || undefined,
+    eventSeq: event.eventSeq ?? null
+  };
+  if (contextTokens !== null && contextTokens > 0) {
+    snapshot.contextTokens = contextTokens;
+    snapshot.context_tokens = contextTokens;
+    snapshot.context_occupancy_tokens = contextTokens;
+    snapshot.contextOccupancyTokens = contextTokens;
+  }
+  if (contextTotalTokens !== null) {
+    snapshot.contextTotalTokens = contextTotalTokens;
+    snapshot.context_total_tokens = contextTotalTokens;
+    snapshot.context_max_tokens = contextTotalTokens;
+    snapshot.max_context = contextTotalTokens;
+  }
+  snapshot.context_usage = {
+    ...(contextTokens !== null && contextTokens > 0
+      ? {
+          context_tokens: contextTokens,
+          contextTokens,
+          context_occupancy_tokens: contextTokens,
+          contextOccupancyTokens: contextTokens
+        }
+      : {}),
+    ...(contextTotalTokens !== null
+      ? {
+          max_context: contextTotalTokens,
+          maxContext: contextTotalTokens,
+          context_max_tokens: contextTotalTokens,
+          contextMaxTokens: contextTotalTokens
+        }
+      : {})
+  };
+  target[WORKFLOW_CONTEXT_SNAPSHOT_KEY] = snapshot;
+};
+
+const resolveWorkflowContextSnapshot = (
+  source: Record<string, unknown>
+): { contextTokens: number | null; contextTotalTokens: number | null } | null => {
+  const contextTokens = resolveProjectedContextTokens(source);
+  const contextTotalTokens = resolveProjectedContextTotalTokens(source);
+  if ((contextTokens === null || contextTokens <= 0) && contextTotalTokens === null) return null;
+  return { contextTokens, contextTotalTokens };
+};
+
+const writeWorkflowContextFields = (
+  item: ChatRuntimeWorkflowItemProjection,
+  contextTokens: number | null,
+  contextTotalTokens: number | null
+): void => {
+  if (contextTokens !== null && contextTokens > 0) {
+    item.contextTokens = contextTokens;
+    item.context_tokens = contextTokens;
+    item.context_occupancy_tokens = contextTokens;
+    item.contextOccupancyTokens = contextTokens;
+  }
+  if (contextTotalTokens !== null) {
+    item.contextTotalTokens = contextTotalTokens;
+    item.context_total_tokens = contextTotalTokens;
+    item.context_max_tokens = contextTotalTokens;
+    item.max_context = contextTotalTokens;
+  }
+  const existingUsage = asRecord(item.context_usage);
+  item.context_usage = {
+    ...existingUsage,
+    ...(contextTokens !== null && contextTokens > 0
+      ? {
+          context_tokens: contextTokens,
+          contextTokens,
+          context_occupancy_tokens: contextTokens,
+          contextOccupancyTokens: contextTokens
+        }
+      : {}),
+    ...(contextTotalTokens !== null
+      ? {
+          max_context: contextTotalTokens,
+          maxContext: contextTotalTokens,
+          context_max_tokens: contextTotalTokens,
+          contextMaxTokens: contextTotalTokens
+        }
+      : {})
+  };
+};
+
+const attachWorkflowContextSnapshot = (
+  item: ChatRuntimeWorkflowItemProjection,
+  message: ChatRuntimeMessageProjection,
+  explicitSource?: Record<string, unknown>,
+  modelTurn?: ChatRuntimeModelTurnProjection | null
+): void => {
+  const explicit = explicitSource ? resolveWorkflowContextSnapshot(explicitSource) : null;
+  if (explicit) {
+    writeWorkflowContextFields(item, explicit.contextTokens, explicit.contextTotalTokens);
+    return;
+  }
+
+  const existingContextTokens = resolveProjectedContextTokens(item);
+  const existingContextTotalTokens = resolveProjectedContextTotalTokens(item);
+  const itemModelTurnId = firstText(item.modelTurnId, item.model_turn_id);
+  const modelTurnSnapshot = resolveWorkflowContextSnapshot(
+    asRecord((modelTurn as unknown as Record<string, unknown> | null | undefined)?.[WORKFLOW_CONTEXT_SNAPSHOT_KEY])
+  );
+  const messageSnapshotRecord = asRecord((message as Record<string, unknown>)[WORKFLOW_CONTEXT_SNAPSHOT_KEY]);
+  const messageSnapshotModelTurnId = firstText(messageSnapshotRecord.modelTurnId, messageSnapshotRecord.model_turn_id);
+  const canUseMessageSnapshot =
+    !itemModelTurnId ||
+    !messageSnapshotModelTurnId ||
+    itemModelTurnId === messageSnapshotModelTurnId;
+  const messageSnapshot = canUseMessageSnapshot
+    ? resolveWorkflowContextSnapshot(messageSnapshotRecord)
+    : null;
+  if (existingContextTokens !== null && existingContextTokens > 0) {
+    if (existingContextTotalTokens === null) {
+      const snapshotTotal =
+        modelTurnSnapshot?.contextTotalTokens ?? messageSnapshot?.contextTotalTokens ?? null;
+      if (snapshotTotal !== null) {
+        writeWorkflowContextFields(item, existingContextTokens, snapshotTotal);
+      }
+    }
+    return;
+  }
+
+  const snapshot = modelTurnSnapshot || messageSnapshot;
+  if (!snapshot) return;
+  writeWorkflowContextFields(item, snapshot.contextTokens, snapshot.contextTotalTokens);
+};
+
+const backfillWorkflowItemsContextSnapshot = (
+  message: ChatRuntimeMessageProjection,
+  modelTurn?: ChatRuntimeModelTurnProjection | null
+): void => {
+  if (message.role !== 'assistant' || !Array.isArray(message.workflowItems)) return;
+  message.workflowItems.forEach((item) => {
+    if (!isPlainRecord(item)) return;
+    const itemModelTurnId = firstText(item.modelTurnId, item.model_turn_id);
+    if (itemModelTurnId && modelTurn?.id && itemModelTurnId !== modelTurn.id) return;
+    attachWorkflowContextSnapshot(item, message, undefined, modelTurn);
+  });
 };
 
 const ensureProjectedStatsDisplay = (
@@ -3438,9 +3771,11 @@ const applyProjectedQuotaStats = (
 
 const applyProjectedContextUsageStats = (
   stats: Record<string, unknown>,
-  source: Record<string, unknown>
+  source: Record<string, unknown>,
+  usageFallback?: { input: number; output: number; total: number } | null
 ): void => {
-  const contextTokens = resolveProjectedContextTokens(source);
+  const contextTokens = resolveProjectedContextTokens(source) ??
+    (usageFallback && usageFallback.total > 0 ? usageFallback.total : null);
   const contextTotalTokens = resolveProjectedContextTotalTokens(source);
   if (contextTokens !== null && contextTokens > 0) {
     stats.contextTokens = contextTokens;
@@ -3658,6 +3993,19 @@ const resolveProjectedContextTokens = (
   );
 };
 
+const resolveProjectedContextTokensForEvent = (
+  source: Record<string, unknown>,
+  event: NormalizedRuntimeEvent,
+  payload: Record<string, unknown>
+): number | null => {
+  const explicit = resolveProjectedContextTokens(source);
+  if (explicit !== null) return explicit;
+  const sourceType = normalizeText(payload.source_event_type) || event.type;
+  if (sourceType !== 'llm_output' && sourceType !== 'token_usage') return null;
+  const usage = normalizeProjectedUsagePayload(source.usage ?? source);
+  return usage && usage.total > 0 ? usage.total : null;
+};
+
 const resolveProjectedContextTotalTokens = (
   source: Record<string, unknown>
 ): number | null => {
@@ -3714,7 +4062,8 @@ const upsertProjectedWorkflowEventItem = (
   message: ChatRuntimeMessageProjection,
   event: NormalizedRuntimeEvent,
   sourceType: string,
-  status: 'loading' | 'completed' | 'failed'
+  status: 'loading' | 'completed' | 'failed',
+  modelTurn?: ChatRuntimeModelTurnProjection | null
 ): void => {
   if (message.role !== 'assistant') return;
   const items = ensureProjectedWorkflowItems(message);
@@ -3807,6 +4156,7 @@ const upsertProjectedWorkflowEventItem = (
     next.toolCallId = refs.toolCallId || resolveCompactionWorkflowRef(event, detailSource);
     next.tool_call_id = next.toolCallId;
   }
+  attachWorkflowContextSnapshot(next, message, detailSource, modelTurn);
 
   if (existing) {
     Object.assign(existing, next);
@@ -4497,7 +4847,11 @@ const findProjectedWorkflowItem = (
     );
     if (candidate !== ref) return false;
     const eventType = normalizeText(item.eventType ?? item.event ?? item.event_type);
-    return !TOOL_RESULT_EVENT_TYPES.has(eventType);
+    const status = normalizeText(item.status);
+    const canMergeTerminalToolCall =
+      eventType === 'tool_result' &&
+      isTerminalWorkflowStatus(status);
+    return !PROJECTED_TOOL_RESULT_EVENT_TYPES.has(eventType) || canMergeTerminalToolCall;
   }) || null;
 };
 
@@ -4605,6 +4959,36 @@ const buildProjectedToolCallRawDetail = (
   if (!args) return '';
   return stringifyWorkflowDetail({
     tool: toolName || firstText(source.tool, source.name, nestedFunction.name),
+    arguments: args
+  });
+};
+
+const buildProjectedCommandSessionStartRawDetail = (
+  source: Record<string, unknown>,
+  toolName: string
+): string => {
+  const command = firstText(
+    source.content,
+    source.command,
+    source.cmd,
+    source.input,
+    source.raw,
+    source.script
+  );
+  if (!command) return '';
+  const args: Record<string, unknown> = {
+    content: command
+  };
+  const workdir = firstText(source.workdir, source.cwd);
+  if (workdir) {
+    args.workdir = workdir;
+  }
+  const timeout = source.timeout_s ?? source.timeoutS ?? source.timeout;
+  if (timeout !== undefined && timeout !== null && timeout !== '') {
+    args.timeout_s = timeout;
+  }
+  return stringifyWorkflowDetail({
+    tool: toolName || 'execute_command',
     arguments: args
   });
 };

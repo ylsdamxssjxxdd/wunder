@@ -8,6 +8,7 @@ import {
   applyChatRuntimeEventsWithInvalidation,
   clearRuntimeProjectionInvalidation,
   markRuntimeProjectionChanged,
+  runtimeProjectionContentInvalidationState,
   runtimeProjectionInvalidationState
 } from '../../src/realtime/chat/chatRuntimeProjectionInvalidation';
 
@@ -17,7 +18,9 @@ const createStore = () => ({
   messages: [],
   loadingBySession: {},
   runtimeProjection: createChatRuntimeProjection(),
-  runtimeProjectionVersion: 0
+  runtimeProjectionVersion: 0,
+  runtimeProjectionContentVersion: 0,
+  runtimeProjectionContentVersionByMessage: {}
 });
 
 const flushTimers = () => new Promise((resolve) => setTimeout(resolve, 25));
@@ -69,6 +72,220 @@ test('runtime projection invalidation batches non-immediate stream updates', asy
 
   assert.equal(store.runtimeProjectionVersion, 1);
   assert.equal(runtimeProjectionInvalidationState.pending, false);
+});
+
+test('runtime projection invalidation isolates steady assistant text deltas to content clock', async () => {
+  const store = createStore();
+
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      payload: {
+        event_id: 1,
+        event_seq: 1,
+        user_round: 1,
+        model_round: 1,
+        delta: 'a'
+      },
+      eventId: 1,
+      requestId: 'request-1',
+      phase: 'send'
+    }),
+    { reason: 'stream:send' }
+  );
+  await flushTimers();
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 0);
+
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      payload: {
+        event_id: 2,
+        event_seq: 2,
+        user_round: 1,
+        model_round: 1,
+        delta: 'b'
+      },
+      eventId: 2,
+      requestId: 'request-1',
+      phase: 'send'
+    }),
+    { reason: 'stream:send' }
+  );
+  await flushTimers();
+
+  const messageId = 'assistant-message:model-turn:session-1:user:1:model:1';
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersionByMessage[messageId], 1);
+});
+
+test('runtime projection invalidation coalesces bursty steady assistant text deltas', async () => {
+  const store = createStore();
+
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      payload: {
+        event_id: 1,
+        event_seq: 1,
+        user_round: 1,
+        model_round: 1,
+        delta: 'a'
+      },
+      eventId: 1,
+      requestId: 'request-1',
+      phase: 'send'
+    }),
+    { reason: 'stream:send' }
+  );
+  await flushTimers();
+
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      payload: {
+        event_id: 2,
+        event_seq: 2,
+        user_round: 1,
+        model_round: 1,
+        delta: 'b'
+      },
+      eventId: 2,
+      requestId: 'request-1',
+      phase: 'send'
+    }),
+    { reason: 'stream:send' }
+  );
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    buildCanonicalChatRuntimeEvents({
+      sessionId: 'session-1',
+      eventType: 'llm_output_delta',
+      payload: {
+        event_id: 3,
+        event_seq: 3,
+        user_round: 1,
+        model_round: 1,
+        delta: 'c'
+      },
+      eventId: 3,
+      requestId: 'request-1',
+      phase: 'send'
+    }),
+    { reason: 'stream:send' }
+  );
+
+  const messageId = 'assistant-message:model-turn:session-1:user:1:model:1';
+  assert.equal(
+    store.runtimeProjection.sessions['session-1'].messageById[messageId]?.content,
+    'abc'
+  );
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 0);
+  assert.equal(store.runtimeProjectionContentVersionByMessage[messageId], undefined);
+  assert.equal(runtimeProjectionContentInvalidationState.pending, true);
+
+  await flushTimers();
+
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersionByMessage[messageId], 1);
+  assert.equal(runtimeProjectionContentInvalidationState.pending, false);
+});
+
+test('runtime projection content invalidation has a timer fallback when animation frames stall', async () => {
+  const store = createStore();
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+  const hadRequestAnimationFrame = 'requestAnimationFrame' in globalThis;
+  const hadCancelAnimationFrame = 'cancelAnimationFrame' in globalThis;
+  (globalThis as typeof globalThis & {
+    requestAnimationFrame?: (callback: FrameRequestCallback) => number;
+    cancelAnimationFrame?: (handle: number) => void;
+  }).requestAnimationFrame = () => 1;
+  (globalThis as typeof globalThis & {
+    cancelAnimationFrame?: (handle: number) => void;
+  }).cancelAnimationFrame = () => undefined;
+
+  try {
+    applyChatRuntimeEventsWithInvalidation(
+      store,
+      store.runtimeProjection,
+      buildCanonicalChatRuntimeEvents({
+        sessionId: 'session-1',
+        eventType: 'llm_output_delta',
+        payload: {
+          event_id: 1,
+          event_seq: 1,
+          user_round: 1,
+          model_round: 1,
+          delta: 'a'
+        },
+        eventId: 1,
+        requestId: 'request-1',
+        phase: 'send'
+      }),
+      { reason: 'stream:send' }
+    );
+    await flushTimers();
+
+    applyChatRuntimeEventsWithInvalidation(
+      store,
+      store.runtimeProjection,
+      buildCanonicalChatRuntimeEvents({
+        sessionId: 'session-1',
+        eventType: 'llm_output_delta',
+        payload: {
+          event_id: 2,
+          event_seq: 2,
+          user_round: 1,
+          model_round: 1,
+          delta: 'b'
+        },
+        eventId: 2,
+        requestId: 'request-1',
+        phase: 'send'
+      }),
+      { reason: 'stream:send' }
+    );
+
+    const messageId = 'assistant-message:model-turn:session-1:user:1:model:1';
+    assert.equal(runtimeProjectionContentInvalidationState.pending, true);
+    await flushTimers();
+    assert.equal(store.runtimeProjectionContentVersion, 1);
+    assert.equal(store.runtimeProjectionContentVersionByMessage[messageId], 1);
+    assert.equal(runtimeProjectionContentInvalidationState.pending, false);
+  } finally {
+    if (hadRequestAnimationFrame) {
+      (globalThis as typeof globalThis & {
+        requestAnimationFrame?: typeof requestAnimationFrame;
+      }).requestAnimationFrame = originalRequestAnimationFrame;
+    } else {
+      delete (globalThis as typeof globalThis & { requestAnimationFrame?: unknown }).requestAnimationFrame;
+    }
+    if (hadCancelAnimationFrame) {
+      (globalThis as typeof globalThis & {
+        cancelAnimationFrame?: typeof cancelAnimationFrame;
+      }).cancelAnimationFrame = originalCancelAnimationFrame;
+    } else {
+      delete (globalThis as typeof globalThis & { cancelAnimationFrame?: unknown }).cancelAnimationFrame;
+    }
+  }
 });
 
 test('runtime projection invalidation ignores duplicate stream event ids', async () => {

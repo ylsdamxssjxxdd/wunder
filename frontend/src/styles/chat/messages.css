@@ -1077,6 +1077,11 @@
   color: var(--code-text);
 }
 
+.chat-shell .message-markdown-body--streaming-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .chat-shell .markdown-body .ai-resource-card {
   margin: 8px 0;
   border-radius: 12px;

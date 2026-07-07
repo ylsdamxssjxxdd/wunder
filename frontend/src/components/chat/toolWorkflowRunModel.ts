@@ -148,9 +148,22 @@ export const resolveWorkflowToolName = (item: WorkflowItem): string => {
 
 export const resolveWorkflowToolEventKind = (item: WorkflowItem): ToolEventKind | null => {
   const eventType = resolveWorkflowEventType(item);
-  if (eventType === 'tool_call') return 'call';
-  if (eventType === 'tool_output_delta' || eventType === 'compaction_progress') return 'output';
-  if (eventType === 'tool_result' || eventType === 'compaction') return 'result';
+  if (eventType === 'tool_call' || eventType === 'tool_call_started') return 'call';
+  if (
+    eventType === 'tool_call_delta' ||
+    eventType === 'tool_output_delta' ||
+    eventType === 'compaction_progress'
+  ) {
+    return 'output';
+  }
+  if (
+    eventType === 'tool_call_completed' ||
+    eventType === 'tool_call_failed' ||
+    eventType === 'tool_result' ||
+    eventType === 'compaction'
+  ) {
+    return 'result';
+  }
   if (COMMAND_SESSION_EVENT_TYPES.has(eventType)) {
     return COMMAND_SESSION_RESULT_EVENT_TYPES.has(eventType) ? 'result' : 'output';
   }

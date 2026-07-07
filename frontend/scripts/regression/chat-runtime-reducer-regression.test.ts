@@ -15,6 +15,10 @@ import {
   selectVisibleMessageProjections
 } from '../../src/realtime/chat/chatRuntimeSelectors';
 import type { ChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeTypes';
+import {
+  analyzeTerminalSnapshotSmoothing,
+  buildTerminalSnapshotDeltaPayload
+} from '../../src/stores/chatTerminalSnapshotSmoothing';
 
 const baseEvent = (overrides: ChatRuntimeEvent): ChatRuntimeEvent => ({
   source: 'test',
@@ -2281,7 +2285,23 @@ test('canonical visible workflow events project retry slow-client and compaction
 
 test('canonical command session events project into execute command workflow item', () => {
   const projection = createChatRuntimeProjection();
-  const events = buildCanonicalChatRuntimeEvents({
+  const startEvents = buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'command_session_start',
+    eventId: 39,
+    requestId: 'req-command',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        command_session_id: 'cmd-1',
+        command: 'run',
+        cwd: 'C:\\workspace',
+        status: 'running'
+      }
+    }
+  });
+  const summaryEvents = buildCanonicalChatRuntimeEvents({
     sessionId: 'session-1',
     eventType: 'command_session_summary',
     eventId: 40,
@@ -2298,9 +2318,11 @@ test('canonical command session events project into execute command workflow ite
     }
   });
 
-  assert.equal(events.length, 1);
-  assert.equal(events[0].event_type, 'tool_call_completed');
-  events.forEach((event) => applyChatRuntimeEvent(projection, event));
+  assert.equal(startEvents.length, 1);
+  assert.equal(startEvents[0].event_type, 'tool_call_delta');
+  assert.equal(summaryEvents.length, 1);
+  assert.equal(summaryEvents[0].event_type, 'tool_call_completed');
+  startEvents.concat(summaryEvents).forEach((event) => applyChatRuntimeEvent(projection, event));
 
   const visible = selectVisibleMessageProjections(projection, 'session-1');
   const assistant = visible.find((message) => message.role === 'assistant');
@@ -2311,6 +2333,66 @@ test('canonical command session events project into execute command workflow ite
   assert.equal(assistant.workflowItems?.[0]?.commandSessionId, 'cmd-1');
   assert.equal(assistant.workflowItems?.[0]?.isTool, true);
   assert.equal(assistant.workflowItems?.[0]?.toolName, 'execute_command');
+  assert.ok(String(assistant.workflowItems?.[0]?.toolCallRawDetail || '').includes('run'));
+  assert.ok(!String(assistant.workflowItems?.[0]?.toolCallRawDetail || '').includes('exit_code'));
+});
+
+test('canonical command session failure projects failed workflow status', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'command_session_summary',
+    eventId: 41,
+    requestId: 'req-command-failed',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        command_session_id: 'cmd-failed',
+        command: 'run failing command',
+        status: 'completed',
+        exit_code: 1,
+        stderr_tail: 'failed'
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.eventType, 'tool_result');
+  assert.equal(assistant.workflowItems?.[0]?.status, 'failed');
+});
+
+test('tool result events do not synthesize raw tool call detail from result payload', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'tool_result',
+    eventId: 42,
+    requestId: 'req-result-only',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        tool_call_id: 'tool-result-only',
+        tool: 'execute_command',
+        command: 'result command should not become model call',
+        result: {
+          ok: true
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.toolCallRawDetail, undefined);
+  assert.equal(assistant.workflowItems?.[0]?.tool_call_raw_detail, undefined);
+  assert.ok(String(assistant.workflowItems?.[0]?.toolResultRawDetail || '').includes('ok'));
 });
 
 test('canonical command session events merge with prior execute command tool call by tool call id', () => {
@@ -2410,6 +2492,213 @@ test('canonical command session summary before execute command tool call still f
   assert.equal(assistant.workflowItems?.[0]?.eventType, 'tool_result');
   assert.equal(assistant.workflowItems?.[0]?.status, 'completed');
   assert.ok(String(assistant.workflowItems?.[0]?.toolCallRawDetail || '').includes('timeout_s'));
+});
+
+test('workflow items keep the context snapshot from their own model step', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    event_id: 'evt-context-1',
+    event_seq: 1,
+    user_turn_id: 'ut-context',
+    model_turn_id: 'mt-context',
+    message_id: 'am-context',
+    payload: {
+      source_event_type: 'context_usage',
+      data: {
+        context_occupancy_tokens: 4096,
+        max_context: 32768
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-context-1',
+    event_seq: 2,
+    user_turn_id: 'ut-context',
+    model_turn_id: 'mt-context',
+    message_id: 'am-context',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-context-1',
+        tool: 'execute_command',
+        tool_function_name: 'execute_command',
+        args: {
+          content: 'first command'
+        }
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    event_id: 'evt-context-2',
+    event_seq: 3,
+    user_turn_id: 'ut-context',
+    model_turn_id: 'mt-context',
+    message_id: 'am-context',
+    payload: {
+      source_event_type: 'context_usage',
+      data: {
+        context_occupancy_tokens: 8192,
+        max_context: 32768
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-context-2',
+    event_seq: 4,
+    user_turn_id: 'ut-context',
+    model_turn_id: 'mt-context',
+    message_id: 'am-context',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-context-2',
+        tool: 'execute_command',
+        tool_function_name: 'execute_command',
+        args: {
+          content: 'second command'
+        }
+      }
+    }
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 2);
+  assert.equal(assistant.workflowItems?.[0]?.context_occupancy_tokens, 4096);
+  assert.equal(assistant.workflowItems?.[1]?.context_occupancy_tokens, 8192);
+  assert.equal(assistant.display?.stats?.contextTokens, 8192);
+});
+
+test('first workflow item inherits context snapshot stored on the model turn', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'usage_stats',
+    strict: false,
+    event_id: 'evt-context-model-turn-only',
+    event_seq: 1,
+    user_turn_id: 'ut-context-first',
+    model_turn_id: 'mt-context-first',
+    message_id: '',
+    payload: {
+      source_event_type: 'context_usage',
+      data: {
+        context_occupancy_tokens: 2048,
+        max_context: 16384
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-context-first',
+    event_seq: 2,
+    user_turn_id: 'ut-context-first',
+    model_turn_id: 'mt-context-first',
+    message_id: 'am-context-first',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-context-first',
+        tool: 'read_file',
+        tool_function_name: 'read_file',
+        args: {
+          path: 'sample.txt'
+        }
+      }
+    }
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.workflowItems?.length, 1);
+  assert.equal(assistant.workflowItems?.[0]?.context_occupancy_tokens, 2048);
+  assert.equal(assistant.workflowItems?.[0]?.context_max_tokens, 16384);
+});
+
+test('first workflow item in a later user round keeps that round llm output occupancy', () => {
+  const projection = createChatRuntimeProjection();
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_output',
+    eventId: 1,
+    requestId: 'req-round-1-final',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 2,
+        content: 'first answer',
+        usage: {
+          input_tokens: 9793,
+          output_tokens: 111,
+          total_tokens: 9904
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'llm_output',
+    eventId: 2,
+    requestId: 'req-round-2-tool',
+    payload: {
+      data: {
+        user_round: 2,
+        model_round: 1,
+        reasoning: 'will call a tool',
+        usage: {
+          input_tokens: 9852,
+          output_tokens: 73,
+          total_tokens: 9925
+        },
+        tool_calls: [
+          {
+            id: 'call-round-2-first',
+            type: 'function',
+            function: {
+              name: 'read_file',
+              arguments: '{"path":"sample.md"}'
+            }
+          }
+        ]
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'tool_call',
+    eventId: 3,
+    requestId: 'req-round-2-tool',
+    payload: {
+      data: {
+        user_round: 2,
+        model_round: 1,
+        tool_call_id: 'call-round-2-first',
+        tool: 'read_file',
+        arguments: {
+          path: 'sample.md'
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const secondRoundAssistant = visible.find((message) =>
+    message.role === 'assistant' && message.userTurnId === 'user-turn:session-1:round:2'
+  );
+  assert.ok(secondRoundAssistant);
+  assert.equal(secondRoundAssistant.workflowItems?.length, 1);
+  assert.equal(secondRoundAssistant.workflowItems?.[0]?.context_occupancy_tokens, 9925);
+  assert.equal(secondRoundAssistant.workflowItems?.[0]?.model_turn_id, 'model-turn:session-1:user:2:model:1');
 });
 
 test('canonical thread control event projects a workflow item', () => {
@@ -3125,6 +3414,103 @@ test('strict runtime reducer buffers small event_seq gaps until missing deltas a
   assert.equal(projection.sessions['session-1'].appliedSeq, 3);
   assert.equal(selectRuntimeLastAppliedEventId(projection, 'session-1'), 0);
   assert.equal(projection.sessions['session-1'].pendingSequentialEvents.length, 0);
+});
+
+test('send stream text deltas keep flowing across persisted event id gaps', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-1';
+  const modelTurnId = 'mt-1';
+  const messageId = 'am-1';
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'thread_status',
+    eventId: 384,
+    requestId: 'request-1',
+    phase: 'send',
+    payload: {
+      event_id: 384,
+      event_seq: 384,
+      status: 'running'
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const firstDelta = buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output_delta',
+    eventId: 390,
+    requestId: 'request-1',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId: messageId,
+    payload: {
+      event_id: 390,
+      event_seq: 390,
+      user_round: 1,
+      model_round: 1,
+      delta: 'hello'
+    }
+  });
+  const firstResults = firstDelta.map((event) => applyChatRuntimeEvent(projection, event));
+
+  const toolEvents = buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'tool_call',
+    eventId: 392,
+    requestId: 'request-1',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId: messageId,
+    payload: {
+      event_id: 392,
+      event_seq: 392,
+      user_round: 1,
+      model_round: 1,
+      tool_call_id: 'tool-1',
+      tool: 'sample_tool'
+    }
+  });
+  const toolResults = toolEvents.map((event) => {
+    assert.equal(event.strict, false);
+    return applyChatRuntimeEvent(projection, event);
+  });
+
+  const secondDelta = buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output_delta',
+    eventId: 396,
+    requestId: 'request-1',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId: messageId,
+    payload: {
+      event_id: 396,
+      event_seq: 396,
+      user_round: 1,
+      model_round: 1,
+      delta: ' world'
+    }
+  });
+  const secondResults = secondDelta.map((event) => applyChatRuntimeEvent(projection, event));
+
+  const session = projection.sessions[sessionId];
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  assert.equal(firstDelta[0]?.strict, false);
+  assert.equal(secondDelta[0]?.strict, false);
+  assert.equal(toolResults[0]?.applied, true);
+  assert.equal(toolResults[0]?.reason, undefined);
+  assert.equal(firstResults[0]?.applied, true);
+  assert.equal(secondResults[0]?.applied, true);
+  assert.equal(firstResults[0]?.reason, undefined);
+  assert.equal(secondResults[0]?.reason, undefined);
+  assert.equal(session.syncRequired, false);
+  assert.equal(session.pendingSequentialEvents.length, 0);
+  assert.equal(visible[0]?.content, 'hello world');
+  assert.equal(selectRuntimeLastAppliedEventId(projection, sessionId), 396);
 });
 
 test('runtime reducer exposes only applied numeric event ids as replay cursor', () => {
@@ -4231,4 +4617,126 @@ test('folded legacy snapshot merge keeps projected workflow stats aliases', () =
   assert.equal(assistant?.display?.toolCalls, 1);
   assert.equal(assistant?.display?.stats?.avg_model_round_speed_tps, 33.5);
   assert.equal(assistant?.display?.avg_model_round_speed_tps, 33.5);
+});
+
+test('terminal snapshot smoothing applies only the missing plain text tail', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-terminal-smooth';
+  const modelTurnId = 'mt-terminal-smooth';
+  const assistantMessageId = 'am-terminal-smooth';
+  const prefix = 'The first part ';
+  const finalContent =
+    `${prefix}continues with a longer plain response that should be revealed as a terminal tail.`;
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-terminal-smooth-user',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    message_id: 'um-terminal-smooth',
+    content: 'request'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-terminal-smooth-prefix',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: prefix
+  }));
+
+  const analysis = analyzeTerminalSnapshotSmoothing({
+    projection,
+    sessionId,
+    payload: {
+      content: finalContent,
+      done: true
+    },
+    requestId: 'req-terminal-smooth',
+    eventId: 3,
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  });
+
+  assert.ok(analysis.plan);
+  assert.equal(analysis.plan?.tail, finalContent.slice(prefix.length));
+
+  const syntheticPayload = buildTerminalSnapshotDeltaPayload(
+    analysis.plan,
+    analysis.plan.tail,
+    1
+  );
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output_delta',
+    payload: syntheticPayload,
+    eventId: syntheticPayload.event_id as string,
+    requestId: 'req-terminal-smooth',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output',
+    payload: {
+      content: finalContent,
+      done: true,
+      user_turn_id: userTurnId,
+      model_turn_id: modelTurnId,
+      message_id: assistantMessageId
+    },
+    eventId: 3,
+    requestId: 'req-terminal-smooth',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const assistants = visible.filter((message) => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0]?.content, finalContent);
+  assert.equal(assistants[0]?.status, 'final');
+});
+
+test('terminal snapshot smoothing skips non-prefix final content', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-terminal-skip';
+  const modelTurnId = 'mt-terminal-skip';
+  const assistantMessageId = 'am-terminal-skip';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-terminal-skip-prefix',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: 'existing prefix'
+  }));
+
+  const analysis = analyzeTerminalSnapshotSmoothing({
+    projection,
+    sessionId,
+    payload: {
+      content: 'Different final content that must replace the previous visible text instead of appending.',
+      done: true
+    },
+    requestId: 'req-terminal-skip',
+    eventId: 2,
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  });
+
+  assert.equal(analysis.plan, null);
+  assert.equal(analysis.debug.smoothReason, 'not_prefix');
 });

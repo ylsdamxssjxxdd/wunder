@@ -426,6 +426,9 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
           String(item?.toolCallId || item?.tool_call_id || item?.callId || item?.call_id || ''),
           String(item?.status || ''),
           String(item?.title || ''),
+          String(item?.toolCallRawDetail || item?.tool_call_raw_detail || '').length,
+          String(item?.context_occupancy_tokens || item?.contextTokens || item?.context_tokens || ''),
+          String(item?.context_usage || item?.contextUsage || '').length,
           String(item?.detail || '').length
       ].join(':'))
           .join('|');

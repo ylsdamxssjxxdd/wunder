@@ -68,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch, watchEffect } from 'vue';
 import { useRouter } from 'vue-router';
 
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
@@ -88,6 +88,7 @@ import {
   resolveCompanionSpriteStateForRuntime
 } from '@/utils/companionRuntimeState';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
+import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
 import { openCompanionAgent } from '@/views/messenger/companionOpenBridge';
 
 type FloatingEntry = {
@@ -271,25 +272,39 @@ const activeConversationBubbleKey = computed(() => {
 
 const latestActiveAssistantBubble = computed<Record<string, unknown> | null>(() => {
   const targetAgentId = activeSessionAgentId.value;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  const _projectionVersion = Number(chatStore.runtimeProjectionVersion || 0);
   if (!targetAgentId) {
     return null;
   }
-  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  if (!sessionId) {
+    return null;
+  }
+  const messages = selectVisibleMessageProjections(toRaw(chatStore.runtimeProjection), sessionId);
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = (messages[index] || {}) as Record<string, unknown>;
-    if (String(message?.role || '').trim().toLowerCase() !== 'assistant') {
+    const projected = messages[index];
+    if (projected?.role !== 'assistant') {
       continue;
     }
-    if (message?.isGreeting === true) {
+    const display = (projected.display || {}) as Record<string, unknown>;
+    if (display.isGreeting === true || display.is_greeting === true) {
       return null;
     }
     if (
-      message?.stream_incomplete === true ||
-      message?.workflowStreaming === true ||
-      message?.reasoningStreaming === true
+      projected.status === 'placeholder' ||
+      projected.status === 'waiting_first_output' ||
+      projected.status === 'streaming' ||
+      projected.status === 'tooling'
     ) {
       return null;
     }
+    const message = {
+      ...display,
+      role: projected.role,
+      content: projected.content,
+      reasoning: projected.reasoning,
+      runtime_status: projected.status
+    } as Record<string, unknown>;
     const content = truncateBubbleText(
       normalizeBubbleText(prepareMessageMarkdownContent(message?.content, message))
     );
@@ -301,8 +316,8 @@ const latestActiveAssistantBubble = computed<Record<string, unknown> | null>(() 
       content,
       signature: [
         targetAgentId,
-        String(message?.history_id || message?.id || '').trim(),
-        String(message?.created_at || '').trim(),
+        String(projected.id || '').trim(),
+        String(projected.createdAt || '').trim(),
         content
       ].join('::')
     };

@@ -209,3 +209,88 @@ test('command tool call debug text preserves timeout from raw call detail on mer
   assert.ok(debugText.includes('"timeout_s": 35'));
   assert.ok(!debugText.includes('command_session_id'));
 });
+
+test('command tool call debug text does not synthesize call text from result-only output', () => {
+  const debugText = buildWorkflowToolCallDebugText({
+    key: 'cmd-result-only',
+    toolName: 'execute_command',
+    toolDisplayName: 'execute_command',
+    toolRuntimeName: 'execute_command',
+    toolFunctionName: 'execute_command',
+    callItem: null,
+    outputItem: null,
+    resultItem: {
+      id: 'result-only',
+      eventType: 'tool_result',
+      toolName: 'execute_command',
+      toolCallId: 'tool-result-only',
+      toolResultRawDetail: '{"stdout":"result text"}',
+      detail: JSON.stringify({
+        command_session_id: 'cmd-result-only',
+        command: 'result command should not be treated as model call',
+        stdout_tail: 'result text',
+        exit_code: 0
+      })
+    }
+  });
+
+  assert.equal(debugText, '');
+  assert.ok(!debugText.includes('result command should not be treated as model call'));
+});
+
+test('command tool call debug text can fall back to command session start input', () => {
+  const debugText = buildWorkflowToolCallDebugText({
+    key: 'cmd-start-only',
+    toolName: 'execute_command',
+    toolDisplayName: 'execute_command',
+    toolRuntimeName: 'execute_command',
+    toolFunctionName: 'execute_command',
+    callItem: null,
+    outputItem: {
+      id: 'cmd-start',
+      eventType: 'command_session_start',
+      toolName: 'execute_command',
+      toolCallId: 'tool-start',
+      commandSessionId: 'cmd-start',
+      detail: JSON.stringify({
+        command_session_id: 'cmd-start',
+        tool_call_id: 'tool-start',
+        command: 'npm run check',
+        cwd: 'C:\\workspace',
+        status: 'running',
+        started_at: '2026-05-20T00:00:00Z'
+      })
+    },
+    resultItem: {
+      id: 'cmd-summary',
+      eventType: 'command_session_summary',
+      toolName: 'execute_command',
+      toolCallId: 'tool-start',
+      commandSessionId: 'cmd-start',
+      detail: JSON.stringify({
+        command_session_id: 'cmd-start',
+        tool_call_id: 'tool-start',
+        command: 'npm run check',
+        exit_code: 0,
+        stdout_tail: 'ok'
+      })
+    }
+  });
+
+  assert.equal(
+    debugText,
+    JSON.stringify(
+      {
+        tool: 'execute_command',
+        arguments: {
+          command: 'npm run check',
+          cwd: 'C:\\workspace'
+        }
+      },
+      null,
+      2
+    )
+  );
+  assert.ok(!debugText.includes('stdout_tail'));
+  assert.ok(!debugText.includes('exit_code'));
+});

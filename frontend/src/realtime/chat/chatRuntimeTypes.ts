@@ -211,8 +211,10 @@ export type ChatRuntimeApplyResult = {
   ignored: boolean;
   quarantined: boolean;
   pending?: boolean;
+  contentOnly?: boolean;
   drained?: number;
   sessionId: string;
+  messageId?: string;
   eventSeq: number | null;
   reason?: string;
 };

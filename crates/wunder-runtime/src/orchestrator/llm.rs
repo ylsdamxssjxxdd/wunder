@@ -6,6 +6,10 @@ use sha2::{Digest, Sha256};
 struct OutputTiming {
     first_output_at: Option<Instant>,
     last_output_at: Option<Instant>,
+    output_chunk_count: u64,
+    content_delta_chars: usize,
+    reasoning_delta_chars: usize,
+    max_chunk_gap_s: f64,
 }
 
 struct ChatMessageRepairReport {
@@ -32,11 +36,21 @@ const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [1_200, 3_000, 6_000, 12_000, 
 const DEFAULT_LLM_MAX_ATTEMPTS: u32 = 2;
 
 impl OutputTiming {
-    fn mark_output(&mut self, now: Instant) {
+    fn mark_output(&mut self, now: Instant, content_delta_len: usize, reasoning_delta_len: usize) {
         if self.first_output_at.is_none() {
             self.first_output_at = Some(now);
         }
+        if let Some(previous) = self.last_output_at {
+            self.max_chunk_gap_s = self
+                .max_chunk_gap_s
+                .max(now.saturating_duration_since(previous).as_secs_f64());
+        }
         self.last_output_at = Some(now);
+        self.output_chunk_count = self.output_chunk_count.saturating_add(1);
+        self.content_delta_chars = self.content_delta_chars.saturating_add(content_delta_len);
+        self.reasoning_delta_chars = self
+            .reasoning_delta_chars
+            .saturating_add(reasoning_delta_len);
     }
 
     fn durations(
@@ -55,6 +69,29 @@ impl OutputTiming {
             .saturating_duration_since(first_output_at)
             .as_secs_f64();
         (Some(prefill), Some(decode))
+    }
+
+    fn stream_timing_payload(
+        &self,
+        request_start: Instant,
+        response_end: Instant,
+    ) -> Option<Value> {
+        let first_output_at = self.first_output_at?;
+        let last_output_at = self.last_output_at.unwrap_or(response_end);
+        let prefill_ms = first_output_at
+            .saturating_duration_since(request_start)
+            .as_millis() as u64;
+        let decode_ms = last_output_at
+            .saturating_duration_since(first_output_at)
+            .as_millis() as u64;
+        Some(json!({
+            "chunk_count": self.output_chunk_count,
+            "content_delta_chars": self.content_delta_chars,
+            "reasoning_delta_chars": self.reasoning_delta_chars,
+            "prefill_ms": prefill_ms,
+            "decode_ms": decode_ms,
+            "max_chunk_gap_ms": (self.max_chunk_gap_s * 1000.0).round() as u64,
+        }))
     }
 }
 
@@ -757,7 +794,11 @@ impl Orchestrator {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
-                        timing.lock().mark_output(Instant::now());
+                        let delta_len = delta.len();
+                        let reasoning_delta_len = reasoning_delta.len();
+                        timing
+                            .lock()
+                            .mark_output(Instant::now(), delta_len, reasoning_delta_len);
                         if emit_events && (!delta.is_empty() || !reasoning_delta.is_empty()) {
                             let mut payload = serde_json::Map::new();
                             if !delta.is_empty() {
@@ -807,6 +848,13 @@ impl Orchestrator {
             } else {
                 (None, None)
             };
+            let stream_timing = if will_stream {
+                output_timing
+                    .lock()
+                    .stream_timing_payload(request_started_at, response_finished_at)
+            } else {
+                None
+            };
             let decode_output_tokens = usage.total.saturating_sub(usage.input);
             let round_speed = LlmSpeedSummary::from_usage_and_durations(
                 Some(usage.input),
@@ -823,6 +871,7 @@ impl Orchestrator {
                     "tool_calls": tool_calls,
                     "prefill_duration_s": prefill_duration_s,
                     "decode_duration_s": decode_duration_s,
+                    "stream_timing": stream_timing,
                 });
                 if let Value::Object(ref mut map) = output_payload {
                     if let Value::Object(meta) =
@@ -876,7 +925,11 @@ impl Orchestrator {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
-                        timing.lock().mark_output(Instant::now());
+                        let delta_len = delta.len();
+                        let reasoning_delta_len = reasoning_delta.len();
+                        timing
+                            .lock()
+                            .mark_output(Instant::now(), delta_len, reasoning_delta_len);
                         if emit_events && (!delta.is_empty() || !reasoning_delta.is_empty()) {
                             let mut payload = serde_json::Map::new();
                             if !delta.is_empty() {
@@ -995,6 +1048,13 @@ impl Orchestrator {
                     } else {
                         (None, None)
                     };
+                    let stream_timing = if will_stream {
+                        output_timing
+                            .lock()
+                            .stream_timing_payload(request_started_at, response_finished_at)
+                    } else {
+                        None
+                    };
                     let decode_output_tokens = usage.total.saturating_sub(usage.input);
                     let round_speed = LlmSpeedSummary::from_usage_and_durations(
                         Some(usage.input),
@@ -1012,6 +1072,7 @@ impl Orchestrator {
                             "tool_calls": tool_calls_snapshot,
                             "prefill_duration_s": prefill_duration_s,
                             "decode_duration_s": decode_duration_s,
+                            "stream_timing": stream_timing,
                         });
                         if let Value::Object(ref mut map) = output_payload {
                             round_info.insert_into(map);
@@ -1333,6 +1394,7 @@ mod tests {
     use crate::core::config::LlmModelConfig;
     use crate::llm::ChatMessage;
     use serde_json::json;
+    use std::time::{Duration, Instant};
 
     fn test_message(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
@@ -1342,6 +1404,28 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
         }
+    }
+
+    #[test]
+    fn output_timing_reports_stream_chunk_diagnostics() {
+        let request_start = Instant::now();
+        let first = request_start + Duration::from_millis(120);
+        let second = first + Duration::from_millis(35);
+        let end = second + Duration::from_millis(10);
+        let mut timing = super::OutputTiming::default();
+
+        timing.mark_output(first, 4, 0);
+        timing.mark_output(second, 2, 3);
+
+        let payload = timing
+            .stream_timing_payload(request_start, end)
+            .expect("stream timing payload");
+        assert_eq!(payload["chunk_count"], json!(2));
+        assert_eq!(payload["content_delta_chars"], json!(6));
+        assert_eq!(payload["reasoning_delta_chars"], json!(3));
+        assert_eq!(payload["prefill_ms"], json!(120));
+        assert_eq!(payload["decode_ms"], json!(35));
+        assert_eq!(payload["max_chunk_gap_ms"], json!(35));
     }
 
     #[test]

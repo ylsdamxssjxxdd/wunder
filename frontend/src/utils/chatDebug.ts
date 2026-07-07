@@ -17,6 +17,15 @@ const DEBUG_ENABLE_VERBOSE_FN_KEY = '__wunderChatDebugEnableVerbose';
 const DEBUG_DISABLE_VERBOSE_FN_KEY = '__wunderChatDebugDisableVerbose';
 const DEBUG_STATUS_FN_KEY = '__wunderChatDebugStatus';
 const DEBUG_MAX_HISTORY = 2000;
+const DEBUG_CONSOLE_PAYLOAD_MAX_CHARS = 1200;
+const DEBUG_HISTORY_ONLY_SCOPES = new Set([
+  'chat.stream.perf'
+]);
+const DEBUG_HEAVY_CONSOLE_SCOPES = new Set([
+  'chat.runtime.shadow',
+  'chat.runtime.render',
+  'chat.store.terminal-debug'
+]);
 const DEBUG_VERBOSE_SCOPES = new Set([
   'chat.store.preload',
   'chat.llm.request',
@@ -241,6 +250,38 @@ const pushDebugEntry = (entry: ChatDebugEntry) => {
   ensureDebugAccessors();
 };
 
+const estimateDebugPayloadSize = (payload: unknown): number => {
+  if (payload === undefined) return 0;
+  if (typeof payload === 'string') return payload.length;
+  try {
+    return JSON.stringify(payload).length;
+  } catch {
+    return String(payload).length;
+  }
+};
+
+const shouldPrintDebugPayloadToConsole = (scope: string, payload: unknown): boolean => {
+  if (payload === undefined) return false;
+  if (DEBUG_HISTORY_ONLY_SCOPES.has(scope)) return false;
+  if (DEBUG_HEAVY_CONSOLE_SCOPES.has(scope)) return false;
+  return estimateDebugPayloadSize(payload) <= DEBUG_CONSOLE_PAYLOAD_MAX_CHARS;
+};
+
+const buildDebugPayloadOmissionMeta = (scope: string, payload: unknown): Record<string, unknown> => {
+  const payloadType = Array.isArray(payload) ? 'array' : typeof payload;
+  if (DEBUG_HEAVY_CONSOLE_SCOPES.has(scope)) {
+    return { payloadOmitted: true, payloadType };
+  }
+  if (DEBUG_HISTORY_ONLY_SCOPES.has(scope)) {
+    return { payloadOmitted: true, payloadType, historyOnly: true };
+  }
+  return {
+    payloadOmitted: true,
+    payloadType,
+    payloadSize: estimateDebugPayloadSize(payload)
+  };
+};
+
 export const chatDebugLog = (scope: string, event: string, payload?: unknown): void => {
   if (!isChatDebugEnabled()) return;
   const normalizedScope = String(scope || '').trim() || 'unknown';
@@ -259,6 +300,10 @@ export const chatDebugLog = (scope: string, event: string, payload?: unknown): v
   const prefix = `[wunder-chat-debug][${entry.time}][${entry.scope}] ${entry.event}`;
   if (payload === undefined) {
     console.info(prefix);
+    return;
+  }
+  if (!shouldPrintDebugPayloadToConsole(normalizedScope, payload)) {
+    console.info(prefix, buildDebugPayloadOmissionMeta(normalizedScope, payload));
     return;
   }
   console.info(prefix, payload);

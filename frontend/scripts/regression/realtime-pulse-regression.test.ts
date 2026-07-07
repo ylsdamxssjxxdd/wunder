@@ -233,3 +233,31 @@ test('realtime pulse trigger while running schedules follow-up tick without over
 
   pulse.stop();
 });
+
+test('realtime pulse defers background tasks during an interactive stream', async (context) => {
+  const browser = installBrowserMocks('visible');
+  context.after(() => browser.cleanup());
+
+  let runningCount = 0;
+  let defer = true;
+
+  const pulse = createMessengerRealtimePulse({
+    refreshRunningAgents: () => {
+      runningCount += 1;
+    },
+    refreshCronAgentIds: () => undefined,
+    refreshChannelBoundAgentIds: () => undefined,
+    shouldDefer: () => defer,
+    isHotState: () => true
+  });
+
+  pulse.start();
+  await sleep(30);
+  assert.equal(runningCount, 0);
+
+  defer = false;
+  pulse.trigger('stream-finished');
+  await waitFor(() => runningCount === 1);
+
+  pulse.stop();
+});

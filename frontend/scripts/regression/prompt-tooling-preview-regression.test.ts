@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveAbilityVisual, resolveToolIconClass } from '../../src/utils/abilityVisuals';
+import { buildDefaultAgentOverviewSource } from '../../src/views/messenger/agentOverviewCards';
 import { resolveAgentOverviewAbilityCounts } from '../../src/views/messenger/agentOverviewAbilities';
 import {
   extractPromptToolingPreview,
@@ -280,4 +281,75 @@ test('agent overview does not infer MCP count from declared tool names without e
       mcpCount: 0
     }
   );
+});
+
+test('agent overview infers MCP count from configured MCP runtime names', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['read_file', 'connector@template_read'],
+      declared_skill_names: ['planner']
+    }),
+    {
+      skillCount: 1,
+      mcpCount: 1
+    }
+  );
+});
+
+test('agent overview falls back to runtime names when legacy ability items are builtin', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['connector@template_read'],
+      ability_items: [
+        {
+          runtime_name: 'connector@template_read',
+          name: 'connector@template_read',
+          kind: 'tool',
+          group: 'builtin',
+          source: 'builtin',
+          selected: true
+        }
+      ]
+    }),
+    {
+      skillCount: 0,
+      mcpCount: 1
+    }
+  );
+});
+
+test('default agent overview source preserves ability counts for grid cards', () => {
+  const source = buildDefaultAgentOverviewSource({
+    profile: {
+      name: 'Default',
+      ability_items: [
+        {
+          runtime_name: 'planner',
+          name: 'planner',
+          kind: 'skill',
+          group: 'skills',
+          source: 'skill',
+          selected: true
+        },
+        {
+          runtime_name: 'connector@template_read',
+          name: 'connector@template_read',
+          kind: 'tool',
+          group: 'mcp',
+          source: 'mcp',
+          selected: true
+        }
+      ],
+      declared_tool_names: ['connector@template_read'],
+      declared_skill_names: ['planner']
+    },
+    defaultAgentKey: '__default__',
+    defaultName: 'Default Agent',
+    defaultDescription: 'Default entry'
+  });
+
+  assert.deepEqual(resolveAgentOverviewAbilityCounts(source), {
+    skillCount: 1,
+    mcpCount: 1
+  });
 });

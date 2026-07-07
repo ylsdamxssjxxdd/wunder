@@ -296,16 +296,16 @@ export const resolveWorkflowEntryContextTokenResolution = (
 ): WorkflowContextTokenResolution => {
   const orderedSources = [
     {
-      source: 'result' as const,
-      values: [entry?.resultItem, asObject(entry?.resultItem)?.detail]
+      source: 'call' as const,
+      values: [entry?.callItem, asObject(entry?.callItem)?.detail]
     },
     {
       source: 'output' as const,
       values: [entry?.outputItem, asObject(entry?.outputItem)?.detail]
     },
     {
-      source: 'call' as const,
-      values: [entry?.callItem, asObject(entry?.callItem)?.detail]
+      source: 'result' as const,
+      values: [entry?.resultItem, asObject(entry?.resultItem)?.detail]
     }
   ];
   let selected: WorkflowContextTokenResolution | null = null;
@@ -332,41 +332,8 @@ export const resolveWorkflowEntryContextTokenResolution = (
   return { tokens: null, totalTokens: fallbackTotalTokens, source: 'none' };
 };
 
-const formatCompactTokenCount = (value: number): string => {
-  const normalized = Math.max(0, Math.round(value));
-  if (normalized >= 1_000_000) {
-    return `${(normalized / 1_000_000).toFixed(1)}M`;
-  }
-  if (normalized >= 1_000) {
-    return `${(normalized / 1_000).toFixed(1)}k`;
-  }
-  return String(normalized);
-};
-
-const formatFullTokenCount = (value: number): string => Math.max(0, Math.round(value)).toLocaleString('en-US');
-
-export const formatWorkflowContextTokensLabel = (
-  tokens: number | null,
-  totalTokens: number | null,
-  label: string
-): string => {
+export const formatWorkflowContextTokensLabel = (tokens: number | null): string => {
   if (tokens === null || tokens <= 0) return '';
-  const prefix = String(label || '').trim();
-  const value = totalTokens !== null && totalTokens > 0
-    ? `${formatCompactTokenCount(tokens)}/${formatCompactTokenCount(totalTokens)}`
-    : formatCompactTokenCount(tokens);
-  return [prefix, value].filter(Boolean).join(' ');
-};
-
-export const formatWorkflowContextTokensTitle = (
-  tokens: number | null,
-  totalTokens: number | null,
-  label: string
-): string => {
-  if (tokens === null || tokens <= 0) return '';
-  const prefix = String(label || '').trim();
-  const value = totalTokens !== null && totalTokens > 0
-    ? `${formatFullTokenCount(tokens)} / ${formatFullTokenCount(totalTokens)} token`
-    : `${formatFullTokenCount(tokens)} token`;
-  return [prefix, value].filter(Boolean).join(' ');
+  const value = String(Math.max(0, Math.round(tokens)));
+  return `${value} token`;
 };

@@ -196,7 +196,8 @@ fn should_persist_stream_event(event_type: &str) -> bool {
 fn should_backpressure_online_stream_event(event_type: &str) -> bool {
     matches!(
         event_type,
-        "command_session_delta"
+        "llm_output_delta"
+            | "command_session_delta"
             | "command_session_start"
             | "command_session_status"
             | "command_session_exit"
@@ -966,6 +967,13 @@ mod tests {
         assert!(should_persist_stream_event("thread_status"));
         assert!(should_persist_stream_event("thread_closed"));
         assert!(!should_persist_stream_event("command_session_delta"));
+    }
+
+    #[test]
+    fn online_llm_delta_uses_backpressure_instead_of_lossy_overflow() {
+        assert!(should_backpressure_online_stream_event("llm_output_delta"));
+        assert!(should_backpressure_online_stream_event("command_session_delta"));
+        assert!(!should_backpressure_online_stream_event("progress"));
     }
 
     #[test]

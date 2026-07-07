@@ -32,7 +32,10 @@
               row.mono ? 'is-mono' : ''
             ]"
           >
-            <div class="tool-workflow-structured-row-head">
+            <div
+              v-if="row.title || row.meta"
+              class="tool-workflow-structured-row-head"
+            >
               <span class="tool-workflow-structured-row-title">{{ row.title }}</span>
               <span v-if="row.meta" class="tool-workflow-structured-row-meta">{{ row.meta }}</span>
             </div>

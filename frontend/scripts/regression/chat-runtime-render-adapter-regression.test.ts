@@ -104,7 +104,7 @@ test('chat runtime render adapter keeps stable keys across streaming updates', (
   assert.equal(second[0].sourceIndex, 0);
 });
 
-test('chat runtime render adapter reuses materialized objects until projection content changes', () => {
+test('chat runtime render adapter reuses materialized objects across steady content changes', () => {
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
     event_type: 'assistant_delta',
@@ -126,7 +126,7 @@ test('chat runtime render adapter reuses materialized objects until projection c
   second[0].content = 'external mutation';
 
   const recovered = materializeChatRuntimeMessages(projection, 'session-1');
-  assert.notEqual(recovered[0], second[0]);
+  assert.equal(recovered[0], second[0]);
   assert.equal(recovered[0].content, 'stable');
 
   applyChatRuntimeEvent(projection, {
@@ -143,7 +143,7 @@ test('chat runtime render adapter reuses materialized objects until projection c
   });
   const updated = materializeChatRuntimeMessages(projection, 'session-1');
 
-  assert.notEqual(updated[0], recovered[0]);
+  assert.equal(updated[0], recovered[0]);
   assert.equal(updated[0].content, 'stable update');
 });
 

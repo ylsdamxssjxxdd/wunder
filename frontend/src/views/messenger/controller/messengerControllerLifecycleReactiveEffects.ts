@@ -733,6 +733,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
   watch(() => ctx.showAgentGridOverview.value, (visible) => {
       if (visible) {
           ctx.loadAgentUserRounds();
+          void ctx.loadDefaultAgentProfile();
       }
   });
 
@@ -1049,9 +1050,28 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           ctx.buildLatestAssistantLayoutSignature(latestMessage)
       ].join('::');
   }, () => {
-      const latestKey = ctx.latestAgentRenderableMessageKey.value;
-      ctx.scheduleWorkspaceResourceHydration('latest-assistant-signature', latestKey ? { messageKeys: [latestKey] } : {});
       ctx.refreshLatestAssistantMessageLayout('latest-assistant-signature');
+  }, { flush: 'post' });
+
+  watch(() => {
+      const latestMessage = ctx.agentRenderableMessages.value[ctx.agentRenderableMessages.value.length - 1]?.message as Record<string, unknown> | undefined;
+      if (!latestMessage) {
+          return '';
+      }
+      const workflowItems = Array.isArray(latestMessage.workflowItems)
+          ? (latestMessage.workflowItems as unknown[])
+          : [];
+      const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
+      return [
+          ctx.chatStore.activeSessionId,
+          ctx.latestAgentRenderableMessageKey.value,
+          workflowItems.length,
+          String(lastWorkflowItem?.id || lastWorkflowItem?.toolCallId || lastWorkflowItem?.eventType || '').trim(),
+          String(lastWorkflowItem?.status || '').trim()
+      ].join('::');
+  }, () => {
+      const latestKey = ctx.latestAgentRenderableMessageKey.value;
+      ctx.scheduleWorkspaceResourceHydration('latest-assistant-workflow-resources', latestKey ? { messageKeys: [latestKey] } : {});
   }, { flush: 'post' });
 
   watch(() => ctx.userWorldStore.activeMessages[ctx.userWorldStore.activeMessages.length - 1]?.content, () => {
@@ -1235,6 +1255,7 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           refreshChatSessions: ctx.refreshRealtimeChatSessions,
           refreshContacts: ctx.refreshRealtimeContacts,
           runSequentially: ctx.desktopMode.value,
+          shouldDefer: () => ctx.isActiveChatInteractiveStream?.() === true,
           isHotState: () => ctx.hasHotRuntimeState.value,
           shouldRefreshCron: () => !ctx.cronPermissionDenied.value,
           shouldRefreshChannelBoundAgentIds: ctx.shouldRefreshAgentMeta,

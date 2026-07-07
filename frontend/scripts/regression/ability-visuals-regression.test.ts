@@ -56,3 +56,28 @@ test('ability visuals keep skill and knowledge defaults when descriptions mentio
     }
   );
 });
+
+test('ability visuals keep MCP sources on plug icon over skill-like wording', () => {
+  assert.deepEqual(
+    resolveAbilityVisual({
+      group: 'mcp',
+      source: 'mcp',
+      name: 'template_read',
+      description: 'Read presentation template metadata for generated pages.'
+    }),
+    {
+      icon: 'fa-plug',
+      tone: 'mcp'
+    }
+  );
+
+  assert.equal(
+    resolveToolIconClass({
+      group: 'user-mcp',
+      source: 'user_mcp',
+      name: 'prompt_template_query',
+      description: 'Query knowledge documents through a prompt template.'
+    }),
+    'fa-plug'
+  );
+});

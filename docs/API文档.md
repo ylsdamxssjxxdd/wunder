@@ -135,6 +135,12 @@
 - WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
 - 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。
+- 流式终态事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
+  - `stream_timing.chunk_count`：本次上游流中包含正文或推理增量的分片数。
+  - `stream_timing.content_delta_chars` / `stream_timing.reasoning_delta_chars`：正文与推理增量字符数，用于判断最终快照是否来自流式累积。
+  - `stream_timing.prefill_ms`：请求发出到首个可见增量的耗时。
+  - `stream_timing.decode_ms`：首个可见增量到最后一个可见增量的耗时。
+  - `stream_timing.max_chunk_gap_ms`：相邻可见增量的最大间隔，用于区分本地模型预填充、服务端上游分片突发和前端 flush 掉帧。
 
 ### 4.1.A 外部一次性工作流 API
 

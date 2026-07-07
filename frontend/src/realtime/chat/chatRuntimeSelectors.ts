@@ -18,6 +18,17 @@ export const selectChatRuntimeSession = (
   return projection?.sessions?.[key] || null;
 };
 
+export const selectChatRuntimeMessage = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: unknown,
+  messageId: unknown
+): ChatRuntimeMessageProjection | null => {
+  const session = selectChatRuntimeSession(projection, sessionId);
+  const key = String(messageId ?? '').trim();
+  if (!session || !key) return null;
+  return session.messageById[key] || null;
+};
+
 export const selectSessionBusy = (
   projection: ChatRuntimeProjection | null | undefined,
   sessionId: unknown

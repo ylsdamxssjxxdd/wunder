@@ -1,4 +1,5 @@
 import type { ToolWorkflowStructuredGroup, ToolWorkflowStructuredMetric, ToolWorkflowStructuredView } from './toolWorkflowTypes';
+import { normalizeToolResultDataObject } from './toolWorkflowResultPayload';
 
 type UnknownObject = Record<string, unknown>;
 
@@ -199,78 +200,26 @@ const buildReadStructuredView = (
 ): ToolWorkflowStructuredView | null => {
   const content = pickString(dataObject.content);
   const sections = parseReadSections(content);
-  const meta = asObject(dataObject.meta);
-  const metaFiles = Array.isArray(meta?.files)
-    ? (meta.files.map((item) => asObject(item)).filter(Boolean) as UnknownObject[])
-    : [];
 
-  if (!sections.length && !metaFiles.length) return null;
+  if (!sections.length) return null;
 
-  const fileMetaByPath = new Map<string, UnknownObject>();
-  metaFiles.forEach((item) => {
-    const path = pickString(item.path);
-    if (path) fileMetaByPath.set(path, item);
-  });
-
-  // Group file reads by file path so users can scan file-by-file instead of parsing one large blob.
   const groups: ToolWorkflowStructuredGroup[] = sections.slice(0, READ_FILE_LIMIT).map((section, index) => {
-    const fileMeta = fileMetaByPath.get(section.path);
-    const readLines = toInt(fileMeta?.read_lines);
-    const totalLines = toInt(fileMeta?.total_lines);
-    const binary = fileMeta?.binary === true;
-    const metaText = binary
-      ? t('chat.toolWorkflow.detail.binary')
-      : readLines > 0 && totalLines > 0
-        ? `${readLines}/${totalLines}`
-        : totalLines > 0
-          ? `${totalLines}`
-          : '';
     return {
       key: `read-${index}`,
       rows: [
         {
           key: `read-row-${index}`,
-          title: section.path || '(unknown)',
-          meta: metaText,
-          body: binary ? '' : truncateText(section.body),
+          title: '',
+          body: truncateText(section.body),
           mono: true
         }
       ]
     };
   });
 
-  if (!groups.length && metaFiles.length) {
-    metaFiles.slice(0, READ_FILE_LIMIT).forEach((item, index) => {
-      const path = pickString(item.path);
-      const readLines = toInt(item.read_lines);
-      const totalLines = toInt(item.total_lines);
-      const binary = item.binary === true;
-      groups.push({
-        key: `read-meta-${index}`,
-        rows: [
-          {
-            key: `read-meta-row-${index}`,
-            title: path || '(unknown)',
-            meta: binary
-              ? t('chat.toolWorkflow.detail.binary')
-              : readLines > 0 && totalLines > 0
-                ? `${readLines}/${totalLines}`
-                : totalLines > 0
-                  ? `${totalLines}`
-                  : ''
-          }
-        ]
-      });
-    });
-  }
-
-  const metrics = [
-    buildMetric('files', t('chat.toolWorkflow.detail.files'), metaFiles.length || sections.length)
-  ].filter(Boolean) as ToolWorkflowStructuredMetric[];
-
   return {
     variant: 'read',
-    metrics,
+    metrics: [],
     groups
   };
 };
@@ -434,52 +383,37 @@ const buildWriteStructuredView = (
   const firstResult = Array.isArray(dataObject.results)
     ? (dataObject.results.find((item) => asObject(item)) as UnknownObject | undefined)
     : undefined;
-  const path = pickString(
-    firstResult?.path,
-    firstResult?.file,
-    firstResult?.file_path,
-    dataObject.path,
-    dataObject.file,
-    dataObject.file_path,
-    resultObject?.path,
-    resultObject?.file,
-    resultObject?.file_path,
-    dataObject.target
-  );
-  if (!path) return null;
-  const bytes = toOptionalInt(
-    firstResult?.bytes,
-    firstResult?.written_bytes,
-    dataObject.bytes,
-    dataObject.written_bytes,
-    resultObject?.bytes,
-    resultObject?.written_bytes
-  );
   const preview = truncateText(
     pickString(
-      firstResult?.content_preview,
-      firstResult?.preview,
-      dataObject.content_preview,
-      dataObject.preview,
-      resultObject?.content_preview,
-      resultObject?.preview,
       callArgs?.content,
       callArgs?.text,
-      callArgs?.input
+      callArgs?.input,
+      callArgs?.body,
+      firstResult?.content_preview,
+      firstResult?.content,
+      firstResult?.text,
+      firstResult?.preview,
+      dataObject.content_preview,
+      dataObject.content,
+      dataObject.text,
+      dataObject.preview,
+      resultObject?.content_preview,
+      resultObject?.content,
+      resultObject?.text,
+      resultObject?.preview
     )
   );
+  if (!preview) return null;
   return {
     variant: 'write',
-    metrics: [
-      buildMetric('bytes', t('chat.toolWorkflow.detail.bytes'), bytes === null ? '' : bytes)
-    ].filter(Boolean) as ToolWorkflowStructuredMetric[],
+    metrics: [],
     groups: [
       {
         key: 'write',
         rows: [
           {
             key: 'write-row',
-            title: path,
+            title: '',
             body: preview,
             mono: true
           }
@@ -701,13 +635,14 @@ export const buildStructuredToolResultView = (
   t: Translate,
   callArgs: UnknownObject | null = null
 ): ToolWorkflowStructuredView | null => {
-  if (!dataObject) return null;
-  if (isReadFileTool(toolName)) return buildReadStructuredView(dataObject, t);
-  if (isListFilesTool(toolName)) return buildListStructuredView(dataObject, t);
-  if (isSearchContentTool(toolName)) return buildSearchStructuredView(dataObject, t);
-  if (isWriteFileTool(toolName)) return buildWriteStructuredView(resultObject, dataObject, t, callArgs);
-  if (isDatabaseQueryTool(toolName)) return buildDatabaseStructuredView(dataObject, t, callArgs);
-  if (isKnowledgeQueryTool(toolName)) return buildKnowledgeStructuredView(dataObject, t, callArgs);
+  const normalizedDataObject = normalizeToolResultDataObject(dataObject);
+  if (!normalizedDataObject) return null;
+  if (isReadFileTool(toolName)) return buildReadStructuredView(normalizedDataObject, t);
+  if (isListFilesTool(toolName)) return buildListStructuredView(normalizedDataObject, t);
+  if (isSearchContentTool(toolName)) return buildSearchStructuredView(normalizedDataObject, t);
+  if (isWriteFileTool(toolName)) return buildWriteStructuredView(resultObject, normalizedDataObject, t, callArgs);
+  if (isDatabaseQueryTool(toolName)) return buildDatabaseStructuredView(normalizedDataObject, t, callArgs);
+  if (isKnowledgeQueryTool(toolName)) return buildKnowledgeStructuredView(normalizedDataObject, t, callArgs);
   return null;
 };
 
@@ -717,31 +652,32 @@ export const buildStructuredToolResultNote = (
   dataObject: UnknownObject | null,
   t: Translate
 ): string => {
-  if (!dataObject) return '';
+  const normalizedDataObject = normalizeToolResultDataObject(dataObject);
+  if (!normalizedDataObject) return '';
   if (isReadFileTool(toolName)) {
-    const meta = asObject(dataObject.meta);
+    const meta = asObject(normalizedDataObject.meta);
     const metaFiles = Array.isArray(meta?.files) ? meta.files.length : 0;
-    const sections = parseReadSections(pickString(dataObject.content));
+    const sections = parseReadSections(pickString(normalizedDataObject.content));
     const count = metaFiles || sections.length;
     return count > 0 ? `${t('chat.toolWorkflow.detail.files')} ${count}` : '';
   }
   if (isListFilesTool(toolName)) {
     const count =
-      toInt(dataObject.items_count)
-      || (Array.isArray(dataObject.items)
-        ? dataObject.items.length
-        : parseJsonlRows(dataObject.items_jsonl).length);
+      toInt(normalizedDataObject.items_count)
+      || (Array.isArray(normalizedDataObject.items)
+        ? normalizedDataObject.items.length
+        : parseJsonlRows(normalizedDataObject.items_jsonl).length);
     return count > 0 ? `${t('chat.toolWorkflow.detail.items')} ${count}` : '';
   }
   if (isSearchContentTool(toolName)) {
     const count =
-      toInt(dataObject.returned_match_count, dataObject.hits_count, dataObject.matches_count)
-      || (Array.isArray(dataObject.hits)
-        ? dataObject.hits.length
-        : Array.isArray(dataObject.matches)
-          ? dataObject.matches.length
-          : parseJsonlRows(dataObject.hits_jsonl).length || parseJsonlRows(dataObject.matches_jsonl).length);
-    const scanned = toInt(dataObject.scanned_files);
+      toInt(normalizedDataObject.returned_match_count, normalizedDataObject.hits_count, normalizedDataObject.matches_count)
+      || (Array.isArray(normalizedDataObject.hits)
+        ? normalizedDataObject.hits.length
+        : Array.isArray(normalizedDataObject.matches)
+          ? normalizedDataObject.matches.length
+          : parseJsonlRows(normalizedDataObject.hits_jsonl).length || parseJsonlRows(normalizedDataObject.matches_jsonl).length);
+    const scanned = toInt(normalizedDataObject.scanned_files);
     if (count > 0 && scanned > 0) {
       return `${t('chat.toolWorkflow.detail.hits')} ${count} · ${t('chat.toolWorkflow.detail.scannedFiles')} ${scanned}`;
     }
@@ -750,18 +686,7 @@ export const buildStructuredToolResultNote = (
     return '';
   }
   if (isWriteFileTool(toolName)) {
-    const firstResult = Array.isArray(dataObject.results)
-      ? (dataObject.results.find((item) => asObject(item)) as UnknownObject | undefined)
-      : undefined;
-    const bytes = toInt(
-      firstResult?.bytes,
-      firstResult?.written_bytes,
-      dataObject.bytes,
-      dataObject.written_bytes,
-      resultObject?.bytes,
-      resultObject?.written_bytes
-    );
-    return bytes > 0 ? `${t('chat.toolWorkflow.detail.bytes')} ${bytes}` : '';
+    return '';
   }
   return '';
 };

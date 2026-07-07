@@ -108,10 +108,19 @@ const isRuntimeCommandSessionPayload = (payload: UnknownObject): boolean => {
   ].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
 };
 
+const isCommandSessionStartWorkflowItem = (item: WorkflowItem | null): boolean => {
+  if (!item) return false;
+  const eventType = String(item.eventType ?? item.event ?? item.event_type ?? '').trim().toLowerCase();
+  return eventType === 'command_session_start';
+};
+
 const extractBareCommandArgs = (item: WorkflowItem | null): UnknownObject | null => {
   if (!item) return null;
   const detailObject = parseDetailObject(item.detail);
-  if (!detailObject || isRuntimeCommandSessionPayload(detailObject)) return null;
+  if (!detailObject) return null;
+  if (isRuntimeCommandSessionPayload(detailObject) && !isCommandSessionStartWorkflowItem(item)) {
+    return null;
+  }
   const command = pickString(
     detailObject.content,
     detailObject.command,
@@ -214,6 +223,7 @@ const readToolResultRawDetail = (...items: Array<WorkflowItem | null>): string =
 
 const findFirstExplicitArgs = (...items: Array<WorkflowItem | null>): UnknownObject | null => {
   for (const item of items) {
+    if (!isCallLikeWorkflowItem(item)) continue;
     const explicitArgs = extractExplicitCallArgs(item);
     if (explicitArgs) return explicitArgs;
   }
@@ -222,6 +232,7 @@ const findFirstExplicitArgs = (...items: Array<WorkflowItem | null>): UnknownObj
 
 const findFirstWorkflowCallArgs = (...items: Array<WorkflowItem | null>): UnknownObject | null => {
   for (const item of items) {
+    if (!isCallLikeWorkflowItem(item)) continue;
     const callArgs = extractWorkflowCallArgs(item);
     if (callArgs) return callArgs;
   }
@@ -230,6 +241,7 @@ const findFirstWorkflowCallArgs = (...items: Array<WorkflowItem | null>): Unknow
 
 const findFirstBareCommandArgs = (...items: Array<WorkflowItem | null>): UnknownObject | null => {
   for (const item of items) {
+    if (!isCallLikeWorkflowItem(item)) continue;
     const bareArgs = extractBareCommandArgs(item);
     if (bareArgs) return bareArgs;
   }
@@ -238,10 +250,25 @@ const findFirstBareCommandArgs = (...items: Array<WorkflowItem | null>): Unknown
 
 const findFirstCommand = (...items: Array<WorkflowItem | null>): string => {
   for (const item of items) {
+    if (!isCallLikeWorkflowItem(item)) continue;
     const command = extractCommandFromItem(item);
     if (command) return command;
   }
   return '';
+};
+
+const isCallLikeWorkflowItem = (item: WorkflowItem | null): boolean => {
+  if (!item) return false;
+  const eventType = String(item.eventType ?? item.event ?? item.event_type ?? '').trim().toLowerCase();
+  if (
+    eventType === 'tool_call' ||
+    eventType === 'tool_call_delta' ||
+    eventType === 'tool_call_started' ||
+    eventType === 'command_session_start'
+  ) {
+    return true;
+  }
+  return Boolean(readToolCallRawDetail(item));
 };
 
 export const buildWorkflowToolCallDebugText = (entry: RawToolRun): string => {
@@ -264,8 +291,6 @@ export const buildWorkflowToolCallDebugText = (entry: RawToolRun): string => {
     if (command) {
       return buildDebugText(toolName, { content: command });
     }
-    const resultDetail = readToolResultRawDetail(entry.resultItem, entry.outputItem);
-    if (resultDetail) return resultDetail;
     return '';
   }
 
@@ -277,6 +302,5 @@ export const buildWorkflowToolCallDebugText = (entry: RawToolRun): string => {
   if (callArgs) {
     return buildDebugText(toolName, callArgs);
   }
-  return readToolResultRawDetail(entry.resultItem, entry.outputItem) ||
-    normalizeDetailText(entry.callItem?.detail ?? entry.resultItem?.detail ?? entry.outputItem?.detail);
+  return normalizeDetailText(entry.callItem?.detail);
 };

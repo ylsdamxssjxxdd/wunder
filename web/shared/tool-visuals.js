@@ -57,7 +57,10 @@ const buildSearchText = (input) => {
 
 const buildCategoryKey = (input) => {
   if (!input || typeof input !== "object" || Array.isArray(input)) return "";
-  return normalizeText(input.category || input.group || input.source);
+  return [input.category, input.group, input.source]
+    .map((item) => normalizeText(item))
+    .filter(Boolean)
+    .join(":");
 };
 
 const matchesKeyword = (text, normalizedText, keyword) => {
@@ -73,7 +76,12 @@ export const resolveToolIconClass = (input) => {
   const text = normalizeText(rawText);
   const normalizedText = normalizeMatchKey(rawText);
   const categoryKey = buildCategoryKey(input);
+  const categoryParts = categoryKey.split(":").filter(Boolean);
+  const hasCategory = (...values) => categoryParts.some((item) => values.includes(item));
   if (!text && !categoryKey) return "fa-toolbox";
+  if (hasCategory("mcp", "user_mcp", "user-mcp")) {
+    return "fa-plug";
+  }
   if (text === "wunder@excute" || text.endsWith("@wunder@excute")) return "fa-dragon";
   if (text === "wunder@doc2md" || text.endsWith("@wunder@doc2md")) return "fa-file-lines";
   for (const rule of TOOL_ICON_RULES) {
@@ -81,9 +89,13 @@ export const resolveToolIconClass = (input) => {
       return rule.icon;
     }
   }
-  if (categoryKey === "mcp" || rawText.includes("@")) return "fa-plug";
-  if (categoryKey === "knowledge") return "fa-database";
-  if (categoryKey === "skill") return "fa-book";
-  if (categoryKey === "shared" || categoryKey === "user") return "fa-wrench";
+  if (rawText.includes("@")) return "fa-plug";
+  if (hasCategory("knowledge", "user_knowledge", "user-knowledge")) {
+    return "fa-database";
+  }
+  if (hasCategory("skill", "skills", "user_skill", "user-skills")) {
+    return "fa-book";
+  }
+  if (hasCategory("shared", "user")) return "fa-wrench";
   return "fa-toolbox";
 };

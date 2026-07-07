@@ -52,9 +52,13 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(workflowComponent.includes('<script lang="ts">'));
   assert.ok(workflowComponent.includes('const workflowStateCache = new Map<string, WorkflowPanelState>();'));
   assert.ok(workflowComponent.includes('restoreWorkflowPanelState(value);'));
-  assert.ok(workflowComponent.includes('if (liveKey && !nextUserCollapsed.has(liveKey))'));
-  assert.ok(!workflowComponent.includes('validKeys.has(key) && key !== liveKey'));
+  assert.ok(!workflowComponent.includes('if (liveKey && !nextUserCollapsed.has(liveKey))'));
+  assert.ok(workflowComponent.includes('if (validKeys.has(key)) nextExpanded.add(key);'));
   assert.ok(workflowComponent.includes('if (!workflowOpen.value) return;'));
+
+  const routingPreferences = readSource('src/views/messenger/controller/messengerControllerMessageRoutingPreferences.ts');
+  assert.ok(routingPreferences.includes('toolCallRawDetail || item?.tool_call_raw_detail'));
+  assert.ok(routingPreferences.includes('context_occupancy_tokens'));
 });
 
 test('active agent plan panel preserves user expansion across streaming projection churn', () => {
@@ -111,7 +115,19 @@ test('streaming projection changes only refresh the latest message layout', () =
     latestWatchStart + 160
   );
   assert.ok(!latestWatchSource.includes('ctx.chatStore.runtimeProjectionVersion'));
-  assert.ok(latestWatchSource.includes("messageKeys: [latestKey]"));
+  assert.ok(!latestWatchSource.includes('scheduleWorkspaceResourceHydration'));
+
+  const messageViewport = readSource('src/views/messenger/controller/messengerControllerLifecycleMessageViewport.ts');
+  const markdownRenderedStart = messageViewport.indexOf('ctx.handleMessageMarkdownRendered =');
+  assert.ok(markdownRenderedStart >= 0);
+  const markdownRenderedEnd = messageViewport.indexOf('ctx.updateMessageScrollState =', markdownRenderedStart);
+  assert.ok(markdownRenderedEnd > markdownRenderedStart);
+  const markdownRenderedSource = messageViewport.slice(markdownRenderedStart, markdownRenderedEnd);
+  assert.ok(markdownRenderedSource.includes("reason: payload.streaming ? 'streaming-markdown-rendered' : 'markdown-rendered'"));
+  assert.ok(markdownRenderedSource.includes('const lightweightStreaming = payload.streaming === true && payload.lightweight === true;'));
+  assert.ok(markdownRenderedSource.includes('if (!lightweightStreaming)'));
+  assert.ok(markdownRenderedSource.includes('payload.needsHydration === true'));
+  assert.ok(markdownRenderedSource.includes("messageKeys: [normalizedKey]"));
 
   const layoutSignatureStart = renderableMessages.indexOf('ctx.buildLatestAssistantLayoutSignature =');
   assert.ok(layoutSignatureStart >= 0);
@@ -202,12 +218,18 @@ test('projection render source has an explicit batched invalidation clock', () =
   const lifecycleReactive = readSource('src/views/messenger/controller/messengerControllerLifecycleReactiveEffects.ts');
 
   assert.ok(chatStore.includes('runtimeProjectionVersion: 0'));
+  assert.ok(chatStore.includes('runtimeProjectionContentVersion: 0'));
+  assert.ok(chatStore.includes('runtimeProjectionContentVersionByMessage: {} as Record<string, number>'));
   assert.ok(chatStore.includes('const _projectionVersion = state.runtimeProjectionVersion;'));
   assert.ok(runtimeState.includes('markRuntimeProjectionChanged'));
   assert.ok(runtimeState.includes('applyChatRuntimeEventsWithInvalidation'));
   assert.ok(invalidation.includes('export const markRuntimeProjectionChanged = ('));
+  assert.ok(invalidation.includes('runtimeProjectionContentVersionByMessage'));
+  assert.ok(invalidation.includes('contentOnlyResults.length === appliedResults.length'));
   assert.ok(invalidation.includes('requestAnimationFrame'));
-  assert.ok(invalidation.includes('globalThis.setTimeout(() => bump(), 16)'));
+  assert.ok(invalidation.includes('DEFAULT_PROJECTION_INVALIDATION_DELAY_MS = 24'));
+  assert.ok(invalidation.includes('lastBumpedAt'));
+  assert.ok(invalidation.includes('Math.max(16, delayMs)'));
   assert.ok(runtimeState.includes('markRuntimeProjectionChanged(store, {'));
   assert.ok(renderableMessages.includes('const _projectionRenderVersion = ctx.chatStore.runtimeProjectionVersion;'));
   assert.ok(renderableMessages.includes('const projection = toRaw(ctx.chatStore.runtimeProjection);'));
@@ -216,6 +238,75 @@ test('projection render source has an explicit batched invalidation clock', () =
   assert.ok(!renderableMessages.includes('projection-empty-fallback'));
   assert.ok(!renderableMessages.includes('return legacyRenderable;'));
   assert.ok(!lifecycleReactive.includes('ctx.chatStore.messageMutationVersion'));
+});
+
+test('realtime pulse does not refresh the full session list during interactive send streams', () => {
+  const runtimeMeta = readSource('src/views/messenger/controller/messengerControllerLifecycleRuntimeMeta.ts');
+  const sessionOpenLoadActions = readSource('src/stores/chatSessionOpenLoadActions.ts');
+
+  assert.ok(runtimeMeta.includes('ctx.isActiveChatInteractiveStream = () => {'));
+  assert.ok(runtimeMeta.includes('runtime?.sendController || runtime?.resumeController'));
+  assert.ok(runtimeMeta.includes("session-refresh-skip-interactive-stream"));
+  assert.ok(runtimeMeta.includes('buildRuntimeDebugSnapshot(getRuntime(ctx.chatStore.activeSessionId))'));
+  assert.ok(sessionOpenLoadActions.includes('const activeRuntimeInteractive = Boolean('));
+  assert.ok(sessionOpenLoadActions.includes("traceSource === 'realtime-pulse'"));
+  assert.ok(sessionOpenLoadActions.includes('activeRuntimeInteractive'));
+  assert.ok(sessionOpenLoadActions.includes("load-sessions-skip-interactive-stream"));
+});
+
+test('streaming message text updates are scoped to the markdown body component', () => {
+  const messengerView = readSource('src/views/MessengerView.vue');
+  const markdownBody = readSource('src/components/chat/MessageMarkdownBody.vue');
+  const renderAdapter = readSource('src/realtime/chat/chatRuntimeRenderAdapter.ts');
+  const companionFloatingLayer = readSource('src/components/companions/CompanionFloatingLayer.vue');
+
+  assert.ok(messengerView.includes(':runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || \'\')"'));
+  assert.ok(messengerView.includes(':session-id="String(chatStore.activeSessionId || \'\')"'));
+  assert.ok(markdownBody.includes('selectChatRuntimeMessage(toRaw(chatStore.runtimeProjection), sessionId, messageId)'));
+  assert.ok(markdownBody.includes('runtimeProjectionContentVersionByMessage?.[messageId]'));
+  assert.ok(markdownBody.includes('const resolveRuntimeProjectedMessage = () => {'));
+  assert.ok(markdownBody.includes('const _contentVersion = runtimeContentVersion.value;'));
+  assert.ok(markdownBody.includes('const projected = resolveRuntimeProjectedMessage();'));
+
+  const revisionStart = renderAdapter.indexOf('const buildProjectionMessageMaterializationRevision =');
+  assert.ok(revisionStart >= 0);
+  const revisionEnd = renderAdapter.indexOf('const buildProjectionMetadataRevision =', revisionStart);
+  assert.ok(revisionEnd > revisionStart);
+  const revisionSource = renderAdapter.slice(revisionStart, revisionEnd);
+  assert.ok(!revisionSource.includes('message.content'));
+  assert.ok(!revisionSource.includes('message.reasoning'));
+  assert.ok(!revisionSource.includes('message.updatedSeq'));
+  assert.ok(renderAdapter.includes('syncMaterializedStreamingFields(cached.message, message);'));
+
+  const bubbleStart = companionFloatingLayer.indexOf('const latestActiveAssistantBubble = computed');
+  assert.ok(bubbleStart >= 0);
+  const bubbleEnd = companionFloatingLayer.indexOf('const allVisibleEntries = computed', bubbleStart);
+  assert.ok(bubbleEnd > bubbleStart);
+  const bubbleSource = companionFloatingLayer.slice(bubbleStart, bubbleEnd);
+  assert.ok(bubbleSource.includes('selectVisibleMessageProjections(toRaw(chatStore.runtimeProjection), sessionId)'));
+  assert.ok(!bubbleSource.includes('runtimeProjectionContentVersion'));
+  assert.ok(!bubbleSource.includes('chatStore.messages'));
+});
+
+test('streaming text performance breadcrumbs are available behind debug and perf switches', () => {
+  const markdownBody = readSource('src/components/chat/MessageMarkdownBody.vue');
+  const invalidation = readSource('src/realtime/chat/chatRuntimeProjectionInvalidation.ts');
+  const chatDebug = readSource('src/utils/chatDebug.ts');
+
+  assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'plain-text-slow-flush'"));
+  assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'markdown-slow-render'"));
+  assert.ok(markdownBody.includes("chatPerf.recordDuration('chat_stream_plain_text_slow_flush'"));
+  assert.ok(markdownBody.includes("chatPerf.recordDuration('chat_stream_markdown_slow_render'"));
+  assert.ok(markdownBody.includes('PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS'));
+  assert.ok(markdownBody.includes('lightweight'));
+  assert.ok(invalidation.includes("chatDebugLog('chat.stream.perf', 'content-clock-slow-flush'"));
+  assert.ok(invalidation.includes("chatPerf.recordDuration('chat_stream_content_clock_slow_flush'"));
+  assert.ok(invalidation.includes('slowFlushCount'));
+  assert.ok(invalidation.includes('PROJECTION_CONTENT_TIMER_FALLBACK_MS'));
+  assert.ok(chatDebug.includes("const DEBUG_HISTORY_ONLY_SCOPES = new Set(["));
+  assert.ok(chatDebug.includes("'chat.stream.perf'"));
+  assert.ok(chatDebug.includes('const DEBUG_HEAVY_CONSOLE_SCOPES = new Set(['));
+  assert.ok(chatDebug.includes('buildDebugPayloadOmissionMeta'));
 });
 
 test('store visibleMessages getter materializes projection without legacy raw fallback', () => {

@@ -129,8 +129,26 @@ import { SendMessageOptions } from './chatTypes';
 import { abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
 import { buildDetail, buildSessionTitle, handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldAutoTitle, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
 import { shouldUseProjectionOnlyInteractiveStreamEvent } from './chatProjectionOnlyEvents';
+import {
+  analyzeTerminalSnapshotSmoothing,
+  buildTerminalSnapshotDeltaPayload,
+  resolveProjectedAssistantTextState,
+  resolveStreamEventTextStats,
+  runTerminalSnapshotSmoothing
+} from './chatTerminalSnapshotSmoothing';
 
 const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
+const STREAM_TEXT_EVENT_TYPES = new Set([
+  'llm_output_delta',
+  'delta',
+  'message',
+  'think_delta',
+  'reasoning_delta',
+  'llm_output'
+]);
+
+const isStreamTextEventType = (value: unknown): boolean =>
+  STREAM_TEXT_EVENT_TYPES.has(String(value || '').trim().toLowerCase());
 
 const resolveMaxProjectionUserRound = (projection: ChatRuntimeProjection | null | undefined, sessionId: unknown): number => {
   const key = String(sessionId ?? '').trim();
@@ -358,6 +376,68 @@ export const chatSendActions = {
         );
         return appliedEventId;
       };
+      let lastSendContentEventAt = 0;
+      let lastSendDeltaContentEventAt = 0;
+      let sendContentEventCount = 0;
+      let pendingTerminalSnapshotSmoothing: Promise<void> | null = null;
+      let terminalSnapshotSmoothingApplied = false;
+      const beginSendContentEventTrace = (
+        normalizedEventType: string,
+        stats: ReturnType<typeof resolveStreamEventTextStats>
+      ) => {
+        if (
+          stats.contentDeltaChars <= 0 &&
+          stats.reasoningDeltaChars <= 0 &&
+          stats.finalContentChars <= 0 &&
+          stats.finalReasoningChars <= 0
+        ) {
+          return null;
+        }
+        const now = Date.now();
+        const gapMs = lastSendContentEventAt > 0 ? now - lastSendContentEventAt : null;
+        lastSendContentEventAt = now;
+        sendContentEventCount += 1;
+        if (
+          normalizedEventType !== 'llm_output' &&
+          (stats.contentDeltaChars > 0 || stats.reasoningDeltaChars > 0)
+        ) {
+          lastSendDeltaContentEventAt = now;
+        }
+        return {
+          ordinal: sendContentEventCount,
+          receivedAt: now,
+          gapMs
+        };
+      };
+      const logSendContentEventTrace = (
+        stage: string,
+        normalizedEventType: string,
+        eventId: unknown,
+        stats: ReturnType<typeof resolveStreamEventTextStats>,
+        marker: ReturnType<typeof beginSendContentEventTrace>,
+        extra: Record<string, unknown> = {}
+      ) => {
+        if (!marker) return;
+        chatDebugLog('chat.stream.perf', 'send-content-event', {
+          sessionId,
+          requestId: runtime?.sendRequestId || sendRequestId || null,
+          stage,
+          eventType: normalizedEventType,
+          eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
+          ordinal: marker.ordinal,
+          gapMs: marker.gapMs,
+          applyLagMs: Math.max(0, Date.now() - marker.receivedAt),
+          ...stats,
+          projected: resolveProjectedAssistantTextState(
+            this.runtimeProjection,
+            sessionId,
+            localUserTurnId,
+            localModelTurnId,
+            `local-assistant:${localModelTurnId}`
+          ),
+          ...extra
+        });
+      };
 
       try {
         if (runtime) {
@@ -392,20 +472,235 @@ export const chatSendActions = {
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+          const effectiveEventType = normalizedEventType || eventType;
           const terminalLlmOutput =
             normalizedEventType === 'llm_output' &&
             isTerminalLlmOutputPayload(payload, approvalPayload);
+          const textStats = isStreamTextEventType(effectiveEventType)
+            ? resolveStreamEventTextStats(effectiveEventType, payload, approvalPayload)
+            : {
+                contentDeltaChars: 0,
+                reasoningDeltaChars: 0,
+                finalContentChars: 0,
+                finalReasoningChars: 0
+              };
+          const contentTraceMarker = beginSendContentEventTrace(effectiveEventType, textStats);
+          if (terminalLlmOutput) {
+            const streamTiming =
+              payload?.stream_timing ??
+              payload?.streamTiming ??
+              payload?.data?.stream_timing ??
+              payload?.data?.streamTiming ??
+              approvalPayload?.stream_timing ??
+              approvalPayload?.streamTiming;
+            if (streamTiming && typeof streamTiming === 'object' && !Array.isArray(streamTiming)) {
+              chatDebugLog('chat.stream.perf', 'llm-stream-timing', {
+                sessionId,
+                requestId: runtime?.sendRequestId || sendRequestId || requestId,
+                eventId: normalizeStreamEventId(eventId),
+                chunkCount: Number(streamTiming.chunk_count ?? streamTiming.chunkCount ?? 0) || 0,
+                contentDeltaChars: Number(streamTiming.content_delta_chars ?? streamTiming.contentDeltaChars ?? 0) || 0,
+                reasoningDeltaChars: Number(streamTiming.reasoning_delta_chars ?? streamTiming.reasoningDeltaChars ?? 0) || 0,
+                prefillMs: Number(streamTiming.prefill_ms ?? streamTiming.prefillMs ?? 0) || 0,
+                decodeMs: Number(streamTiming.decode_ms ?? streamTiming.decodeMs ?? 0) || 0,
+                maxChunkGapMs: Number(streamTiming.max_chunk_gap_ms ?? streamTiming.maxChunkGapMs ?? 0) || 0
+              });
+            }
+            chatDebugLog('chat.stream.perf', 'llm-terminal', {
+              sessionId,
+              requestId: runtime?.sendRequestId || sendRequestId || requestId,
+              eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
+              hasStreamTiming: Boolean(streamTiming && typeof streamTiming === 'object' && !Array.isArray(streamTiming)),
+              ...textStats,
+              gapSinceLastContentMs: contentTraceMarker?.gapMs ?? null,
+              gapSinceLastDeltaMs: lastSendDeltaContentEventAt > 0
+                ? Math.max(0, Date.now() - lastSendDeltaContentEventAt)
+                : null,
+              projectedBefore: resolveProjectedAssistantTextState(
+                this.runtimeProjection,
+                sessionId,
+                localUserTurnId,
+                localModelTurnId,
+                `local-assistant:${localModelTurnId}`
+              )
+            });
+          }
           const projectionOnlyInteractiveEvent = shouldUseProjectionOnlyInteractiveStreamEvent(
-            normalizedEventType,
+            effectiveEventType,
             { terminalLlmOutput }
           );
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
+          if (terminalLlmOutput) {
+            const smoothing = analyzeTerminalSnapshotSmoothing({
+              projection: this.runtimeProjection,
+              sessionId,
+              payload,
+              approvalPayload,
+              requestId: runtime?.sendRequestId || sendRequestId || requestId,
+              eventId,
+              userTurnId: localUserTurnId,
+              modelTurnId: localModelTurnId,
+              assistantMessageId: `local-assistant:${localModelTurnId}`,
+              lastContentEventAt: lastSendDeltaContentEventAt
+            });
+            chatDebugLog('chat.stream.perf', 'terminal-tail-smoothing-plan', smoothing.debug);
+            if (smoothing.plan) {
+              finalSeen = true;
+              terminalSnapshotSmoothingApplied = true;
+              const terminalPlan = smoothing.plan;
+              pendingTerminalSnapshotSmoothing = (async () => {
+                const startedAt = Date.now();
+                const result = await runTerminalSnapshotSmoothing({
+                  plan: terminalPlan,
+                  applyDelta: (delta, chunkIndex) => {
+                    const syntheticPayload = buildTerminalSnapshotDeltaPayload(
+                      terminalPlan,
+                      delta,
+                      chunkIndex
+                    );
+                    const syntheticStats = resolveStreamEventTextStats(
+                      'llm_output_delta',
+                      syntheticPayload,
+                      syntheticPayload
+                    );
+                    const syntheticTrace = beginSendContentEventTrace(
+                      'llm_output_delta',
+                      syntheticStats
+                    );
+                    applyCanonicalStreamRuntimeEvent(
+                      this,
+                      sessionId,
+                      'llm_output_delta',
+                      syntheticPayload,
+                      syntheticPayload.event_id as string,
+                      {
+                        requestId: runtime?.sendRequestId || sendRequestId || requestId,
+                        phase: 'send',
+                        sideEffects: shouldUseProjectionOnlyInteractiveStreamEvent('llm_output_delta')
+                      }
+                    );
+                    logSendContentEventTrace(
+                      'synthetic-terminal-tail',
+                      'llm_output_delta',
+                      syntheticPayload.event_id,
+                      syntheticStats,
+                      syntheticTrace,
+                      {
+                        chunkIndex,
+                        terminalEventId: terminalPlan.terminalEventId || null
+                      }
+                    );
+                  }
+                });
+                applyCanonicalStreamRuntimeEvent(
+                  this,
+                  sessionId,
+                  normalizedEventType || eventType,
+                  payload,
+                  eventId,
+                  {
+                    requestId: runtime?.sendRequestId || sendRequestId || requestId,
+                    phase: 'send',
+                    sideEffects: projectionOnlyInteractiveEvent,
+                    onSyncRequired: (reason) => {
+                      const run = () => {
+                        void this.ensureActiveSessionRealtime({
+                          sessionId,
+                          reason: String(reason || '') === 'event_seq_gap'
+                            ? 'send_event_seq_gap'
+                            : 'send_pending_event_seq_gap',
+                          forceHydrate: true
+                        }).catch(() => {});
+                      };
+                      if (String(reason || '') === 'event_seq_gap') {
+                        run();
+                        return;
+                      }
+                      globalThis.setTimeout(run, RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS);
+                    }
+                  }
+                );
+                handleApprovalEvent(
+                  this,
+                  normalizedEventType || eventType,
+                  approvalPayload,
+                  runtime?.sendRequestId || '',
+                  sessionId
+                );
+                logSendContentEventTrace(
+                  'terminal-after-smoothing',
+                  normalizedEventType || eventType,
+                  eventId,
+                  textStats,
+                  contentTraceMarker,
+                  {
+                    smoothingMs: Date.now() - startedAt,
+                    smoothingCompleted: result.completed,
+                    smoothingAppliedChars: result.appliedChars,
+                    smoothingChunkCount: result.chunkCount
+                  }
+                );
+                syncRuntimeLastAppliedEventId();
+              })().catch((error) => {
+                chatDebugLog('chat.stream.perf', 'terminal-tail-smoothing-error', {
+                  sessionId,
+                  requestId: runtime?.sendRequestId || sendRequestId || requestId,
+                  eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
+                  message: error?.message || String(error || '')
+                });
+                applyCanonicalStreamRuntimeEvent(
+                  this,
+                  sessionId,
+                  normalizedEventType || eventType,
+                  payload,
+                  eventId,
+                  {
+                    requestId: runtime?.sendRequestId || sendRequestId || requestId,
+                    phase: 'send',
+                    sideEffects: projectionOnlyInteractiveEvent,
+                    onSyncRequired: (reason) => {
+                      const run = () => {
+                        void this.ensureActiveSessionRealtime({
+                          sessionId,
+                          reason: String(reason || '') === 'event_seq_gap'
+                            ? 'send_event_seq_gap'
+                            : 'send_pending_event_seq_gap',
+                          forceHydrate: true
+                        }).catch(() => {});
+                      };
+                      if (String(reason || '') === 'event_seq_gap') {
+                        run();
+                        return;
+                      }
+                      globalThis.setTimeout(run, RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS);
+                    }
+                  }
+                );
+                handleApprovalEvent(
+                  this,
+                  normalizedEventType || eventType,
+                  approvalPayload,
+                  runtime?.sendRequestId || '',
+                  sessionId
+                );
+                logSendContentEventTrace(
+                  'terminal-smoothing-fallback',
+                  normalizedEventType || eventType,
+                  eventId,
+                  textStats,
+                  contentTraceMarker
+                );
+                syncRuntimeLastAppliedEventId();
+              });
+              return;
+            }
+          }
           applyCanonicalStreamRuntimeEvent(
             this,
             sessionId,
-            normalizedEventType || eventType,
+            effectiveEventType,
             payload,
             eventId,
             {
@@ -430,9 +725,16 @@ export const chatSendActions = {
               }
             }
           );
+          logSendContentEventTrace(
+            'after-apply',
+            effectiveEventType,
+            eventId,
+            textStats,
+            contentTraceMarker
+          );
           handleApprovalEvent(
             this,
-            normalizedEventType || eventType,
+            effectiveEventType,
             approvalPayload,
             runtime?.sendRequestId || '',
             sessionId
@@ -535,6 +837,9 @@ export const chatSendActions = {
           keepPendingAfterQueuedAck: false,
           cancelOnAbort: false
         });
+        if (pendingTerminalSnapshotSmoothing) {
+          await pendingTerminalSnapshotSmoothing;
+        }
       } catch (error) {
         const abortReason = String(runtime?.sendAbortReason || '').trim();
         if (error?.name === 'AbortError' && abortReason === 'local_recovery') {
@@ -719,6 +1024,22 @@ export const chatSendActions = {
         if (bootstrappingDraftSession) {
           notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         }
+        const projectedVisibleMessages = selectVisibleMessageProjections(this.runtimeProjection, sessionId);
+        let projectedLatestAssistant = null;
+        let projectedLatestAssistantIndex = -1;
+        const expectedAssistantMessageId = `local-assistant:${localModelTurnId}`;
+        for (let index = projectedVisibleMessages.length - 1; index >= 0; index -= 1) {
+          const message = projectedVisibleMessages[index];
+          if (message?.role !== 'assistant') continue;
+          const sameTurn =
+            String(message.modelTurnId || '').trim() === localModelTurnId ||
+            String(message.id || '').trim() === expectedAssistantMessageId ||
+            String(message.userTurnId || '').trim() === localUserTurnId;
+          if (!sameTurn) continue;
+          projectedLatestAssistant = message;
+          projectedLatestAssistantIndex = index;
+          break;
+        }
         chatDebugLog('messenger.send', 'stream-finish', {
           sessionId,
           requestId: finishedRequestId || null,
@@ -726,8 +1047,31 @@ export const chatSendActions = {
           terminalSeen,
           queued,
           keepStreaming,
+          terminalSnapshotSmoothingApplied,
           runtime: runtime ? buildRuntimeDebugSnapshot(runtime) : null,
           latestAssistant: buildMessageIdentityDebugSnapshot(assistantMessage, sessionMessagesRef.indexOf(assistantMessage)),
+          projectedLatestAssistant: projectedLatestAssistant
+            ? {
+                index: projectedLatestAssistantIndex,
+                role: projectedLatestAssistant.role,
+                key: `runtime:${projectedLatestAssistant.role}:${projectedLatestAssistant.id}`,
+                messageId: projectedLatestAssistant.id,
+                userTurnId: projectedLatestAssistant.userTurnId,
+                modelTurnId: projectedLatestAssistant.modelTurnId,
+                status: projectedLatestAssistant.status,
+                contentLength: String(projectedLatestAssistant.content || '').length,
+                reasoningLength: String(projectedLatestAssistant.reasoning || '').length,
+                final: Boolean(projectedLatestAssistant.final),
+                failed: Boolean(projectedLatestAssistant.failed),
+                cancelled: Boolean(projectedLatestAssistant.cancelled),
+                workflowCount: Array.isArray(projectedLatestAssistant.workflowItems)
+                  ? projectedLatestAssistant.workflowItems.length
+                  : 0,
+                subagentCount: Array.isArray(projectedLatestAssistant.subagents)
+                  ? projectedLatestAssistant.subagents.length
+                  : 0
+              }
+            : null,
           messages: buildMessageIdentityDebugList(sessionMessagesRef)
         });
         if (perfEnabled) {
