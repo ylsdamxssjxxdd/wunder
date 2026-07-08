@@ -177,6 +177,20 @@ test('workflow result section prefers file content and model observation before 
   assert.ok(source.includes('pickFileContentText(extractCallArgs(entry.callItem), ...detailObjects, dataObject, resultObject)'));
 });
 
+test('apply patch workflow result uses patch card before generic observation fallback', () => {
+  const source = readSource('src/components/chat/MessageToolWorkflow.vue');
+  const commandBranch = source.indexOf('if (isExecuteCommandTool(entry.toolName))');
+  const patchBranch = source.indexOf('if (isApplyPatchTool(entry.toolName))', commandBranch);
+  const observationBranch = source.indexOf('const observation = buildTextPreview', commandBranch);
+  assert.ok(commandBranch >= 0);
+  assert.ok(patchBranch > commandBranch);
+  assert.ok(observationBranch > patchBranch);
+  const patchBranchSource = source.slice(patchBranch, observationBranch);
+  assert.ok(patchBranchSource.includes("kind: 'patch'"));
+  assert.ok(patchBranchSource.includes('patchView'));
+  assert.ok(patchBranchSource.includes('buildPatchResultView'));
+});
+
 test('read file workflow summary can recover filename from call args and read result content headers', () => {
   const source = readSource('src/components/chat/MessageToolWorkflow.vue');
   const collectResultStart = source.indexOf('const collectPathHintsFromResult =');

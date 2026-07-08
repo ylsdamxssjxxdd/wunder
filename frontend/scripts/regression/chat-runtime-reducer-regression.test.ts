@@ -2396,6 +2396,45 @@ test('tool result events do not synthesize raw tool call detail from result payl
   assert.ok(String(assistant.workflowItems?.[0]?.toolResultRawDetail || '').includes('ok'));
 });
 
+test('tool result raw detail keeps structured result before model observation', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'tool_result',
+    eventId: 43,
+    requestId: 'req-result-observation',
+    payload: {
+      data: {
+        user_round: 1,
+        model_round: 1,
+        tool_call_id: 'tool-patch',
+        tool: 'apply_patch',
+        model_observation: '{"changed_files":1}',
+        data: {
+          action: 'apply_patch',
+          state: 'completed',
+          data: {
+            changed_files: 1,
+            files: [
+              {
+                action: 'update',
+                path: './sample.ts'
+              }
+            ]
+          }
+        }
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  const raw = String(assistant?.workflowItems?.[0]?.toolResultRawDetail || '');
+  assert.ok(raw.includes('"action": "apply_patch"'));
+  assert.ok(raw.includes('"files"'));
+  assert.ok(!raw.includes('"{\\"changed_files\\":1}"'));
+});
+
 test('canonical command session events merge with prior execute command tool call by tool call id', () => {
   const projection = createChatRuntimeProjection();
   buildCanonicalChatRuntimeEvents({

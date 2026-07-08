@@ -5043,12 +5043,12 @@ const parseProjectedToolCallArgs = (value: unknown): unknown => {
 const buildProjectedToolResultRawDetail = (
   source: Record<string, unknown>
 ): string => {
-  const observation = firstText(source.model_observation, source.modelObservation);
-  if (observation) return observation;
   const data = source.data !== undefined ? source.data : source.result;
   if (data !== undefined) {
     return stringifyWorkflowDetail(data);
   }
+  const observation = firstText(source.model_observation, source.modelObservation);
+  if (observation) return observation;
   return '';
 };
 

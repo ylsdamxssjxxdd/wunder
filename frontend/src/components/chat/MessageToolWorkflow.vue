@@ -3337,6 +3337,36 @@ const buildToolResultSection = (
     }
   }
 
+  if (isApplyPatchTool(entry.toolName)) {
+    const errorText = status === 'failed' ? buildErrorText(entry.resultItem, null) : '';
+    const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
+    const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
+    const resultDiffFiles = buildApplyPatchResultFilesFromDiffBlocks(
+      entry.resultItem,
+      entry.toolName,
+      errorText
+    );
+    const patchFiles =
+      resultDiffFiles.length > 0
+        ? resultDiffFiles
+        : mergeApplyPatchResultFilesWithPreview(patchEntries, patchDiffBlocks, errorText);
+    const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
+    const patchView = buildPatchResultView(counts, patchFiles, t);
+    const summary = buildPatchResultNote(counts, t);
+    const copyText = [rawResultDetail, rawOutputDetail].filter(Boolean).join('\n\n').trim();
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'patch',
+      summary,
+      body: copyText,
+      copyText: copyText || undefined,
+      commandView: null,
+      patchLines: buildApplyPatchResultLines(patchEntries, errorText),
+      patchView
+    };
+  }
+
   const observation = buildTextPreview(
     formatToolObservationText(pickObservationText(...detailObjects, dataObject, resultObject)),
     12,
@@ -3367,36 +3397,6 @@ const buildToolResultSection = (
       commandView: null,
       patchLines: [],
       compactionView: compactionDisplay.view
-    };
-  }
-
-  if (isApplyPatchTool(entry.toolName)) {
-    const errorText = status === 'failed' ? buildErrorText(entry.resultItem, null) : '';
-    const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
-    const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
-    const resultDiffFiles = buildApplyPatchResultFilesFromDiffBlocks(
-      entry.resultItem,
-      entry.toolName,
-      errorText
-    );
-    const patchFiles =
-      resultDiffFiles.length > 0
-        ? resultDiffFiles
-        : mergeApplyPatchResultFilesWithPreview(patchEntries, patchDiffBlocks, errorText);
-    const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
-    const patchView = buildPatchResultView(counts, patchFiles, t);
-    const summary = buildPatchResultNote(counts, t);
-    const copyText = [rawResultDetail, rawOutputDetail].filter(Boolean).join('\n\n').trim();
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'patch',
-      summary,
-      body: copyText,
-      copyText: copyText || undefined,
-      commandView: null,
-      patchLines: buildApplyPatchResultLines(patchEntries, errorText),
-      patchView
     };
   }
 
