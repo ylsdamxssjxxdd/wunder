@@ -411,6 +411,42 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleMessageViewport(ctx: MessengerControllerContext): void {
+  let lightweightMarkdownStickTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastLightweightMarkdownStickAt = 0;
+  const LIGHTWEIGHT_MARKDOWN_STICK_MIN_MS = 160;
+
+  const clearLightweightMarkdownStickTimer = () => {
+      if (lightweightMarkdownStickTimer !== null) {
+          clearTimeout(lightweightMarkdownStickTimer);
+          lightweightMarkdownStickTimer = null;
+      }
+  };
+
+  const scheduleLightweightMarkdownStickToBottom = () => {
+      if (typeof window === 'undefined') {
+          void ctx.scrollMessagesToBottom();
+          return;
+      }
+      const elapsedMs = Date.now() - lastLightweightMarkdownStickAt;
+      const waitMs = Math.max(0, LIGHTWEIGHT_MARKDOWN_STICK_MIN_MS - elapsedMs);
+      if (waitMs <= 0) {
+          lastLightweightMarkdownStickAt = Date.now();
+          void ctx.scrollMessagesToBottom();
+          return;
+      }
+      if (lightweightMarkdownStickTimer !== null)
+          return;
+      lightweightMarkdownStickTimer = window.setTimeout(() => {
+          lightweightMarkdownStickTimer = null;
+          lastLightweightMarkdownStickAt = Date.now();
+          void ctx.scrollMessagesToBottom();
+      }, waitMs);
+  };
+
+  onBeforeUnmount(() => {
+      clearLightweightMarkdownStickTimer();
+  });
+
   ctx.syncMessageVirtualMetrics = () => {
       ctx.messageViewportRuntime?.syncMessageVirtualMetrics();
   };
@@ -462,7 +498,14 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
           normalizedKey &&
           normalizedKey === ctx.latestAgentRenderableMessageKey.value
       ) {
-          void ctx.scrollMessagesToBottom();
+          if (lightweightStreaming) {
+              scheduleLightweightMarkdownStickToBottom();
+          }
+          else {
+              clearLightweightMarkdownStickTimer();
+              lastLightweightMarkdownStickAt = Date.now();
+              void ctx.scrollMessagesToBottom();
+          }
       }
       if (payload.needsHydration === true) {
           ctx.scheduleWorkspaceResourceHydration('markdown-rendered-resources', normalizedKey ? { messageKeys: [normalizedKey] } : {});

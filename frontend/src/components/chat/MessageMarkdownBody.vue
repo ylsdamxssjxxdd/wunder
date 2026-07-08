@@ -1,7 +1,11 @@
 <template>
   <div
-    v-if="usePlainStreamingText"
-    class="markdown-body message-markdown-body message-markdown-body--streaming-text"
+    v-if="usePlainTextRender"
+    class="markdown-body message-markdown-body"
+    :class="{
+      'message-markdown-body--streaming-text': isStreamingTextPreview,
+      'message-markdown-body--plain-text': !isStreamingTextPreview
+    }"
   >{{ visiblePlainText }}</div>
   <div
     v-else
@@ -80,10 +84,16 @@ const visibleHtml = ref('');
 const visiblePlainText = ref('');
 let renderTimer: number | null = null;
 let plainTextLayoutTimer: number | null = null;
+let plainTextFlushTimer: number | null = null;
+let pendingPlainText = '';
+let pendingPlainTextScheduledAt = 0;
 let lastPlainTextLayoutAt = 0;
+let lastPlainTextFlushAt = 0;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
+const STREAM_TEXT_FLUSH_MIN_MS = 32;
 const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
+const STREAMING_TEXT_PREVIEW_MAX_CHARS = 60000;
 let lastStreamRenderTraceAt = 0;
 let lastStreamRenderTraceSignature = '';
 
@@ -212,7 +222,7 @@ const trimStreamingMarkdownCache = () => {
   }
 };
 
-const looksLikePlainStreamingText = (source: string): boolean => {
+const looksLikeSimplePlainText = (source: string): boolean => {
   if (!source) return false;
   if (source.includes('```') || source.includes('~~~')) return false;
   if (source.includes('|') && /\n\s*\|?[\s:-]+\|/.test(source)) return false;
@@ -222,7 +232,16 @@ const looksLikePlainStreamingText = (source: string): boolean => {
   return source.length < 12000;
 };
 
-const usePlainStreamingText = computed(() => looksLikePlainStreamingText(normalizedContent.value));
+const isStreamingTextPreview = computed(() =>
+  props.streaming === true &&
+  normalizedContent.value.length > 0 &&
+  normalizedContent.value.length <= STREAMING_TEXT_PREVIEW_MAX_CHARS
+);
+const usePlainTextRender = computed(() =>
+  props.streaming === true
+    ? isStreamingTextPreview.value
+    : looksLikeSimplePlainText(normalizedContent.value)
+);
 
 const clearPlainTextLayoutTimer = () => {
   if (plainTextLayoutTimer !== null && typeof window !== 'undefined') {
@@ -231,14 +250,24 @@ const clearPlainTextLayoutTimer = () => {
   }
 };
 
-const updateVisiblePlainText = (source: string, immediate = false) => {
-  if (immediate || !props.streaming || typeof window === 'undefined') {
-    visiblePlainText.value = source;
-    return;
+const clearPlainTextFlushTimer = () => {
+  if (plainTextFlushTimer !== null && typeof window !== 'undefined') {
+    window.clearTimeout(plainTextFlushTimer);
   }
-  const scheduledAt = Date.now();
+  plainTextFlushTimer = null;
+  pendingPlainText = '';
+  pendingPlainTextScheduledAt = 0;
+};
+
+const flushPendingPlainText = () => {
+  const source = pendingPlainText;
+  const scheduledAt = pendingPlainTextScheduledAt;
+  plainTextFlushTimer = null;
+  pendingPlainText = '';
+  pendingPlainTextScheduledAt = 0;
   visiblePlainText.value = source;
-  const latencyMs = Date.now() - scheduledAt;
+  lastPlainTextFlushAt = Date.now();
+  const latencyMs = scheduledAt > 0 ? lastPlainTextFlushAt - scheduledAt : 0;
   if (latencyMs >= STREAM_RENDER_DEBUG_SLOW_MS) {
     const payload = {
       latencyMs,
@@ -253,6 +282,23 @@ const updateVisiblePlainText = (source: string, immediate = false) => {
       contentLength: source.length
     });
   }
+};
+
+const updateVisiblePlainText = (source: string, immediate = false) => {
+  if (immediate || !props.streaming || typeof window === 'undefined') {
+    clearPlainTextFlushTimer();
+    visiblePlainText.value = source;
+    lastPlainTextFlushAt = Date.now();
+    return;
+  }
+  pendingPlainText = source;
+  if (!pendingPlainTextScheduledAt) {
+    pendingPlainTextScheduledAt = Date.now();
+  }
+  if (plainTextFlushTimer !== null) return;
+  const elapsedMs = Date.now() - lastPlainTextFlushAt;
+  const waitMs = Math.max(0, STREAM_TEXT_FLUSH_MIN_MS - elapsedMs);
+  plainTextFlushTimer = window.setTimeout(flushPendingPlainText, waitMs);
 };
 
 const buildRenderedPayload = (
@@ -312,11 +358,13 @@ const renderNow = () => {
   }
   const source = normalizedContent.value;
   const cacheKey = normalizedCacheKey.value;
-  const plainStreaming = usePlainStreamingText.value;
-  traceStreamingRenderSource(source, plainStreaming);
-  if (plainStreaming) {
-    updateVisiblePlainText(source);
+  const plainTextRender = usePlainTextRender.value;
+  const streamingTextPreview = isStreamingTextPreview.value;
+  traceStreamingRenderSource(source, plainTextRender);
+  if (plainTextRender) {
+    updateVisiblePlainText(source, !streamingTextPreview);
   } else {
+    clearPlainTextFlushTimer();
     visiblePlainText.value = '';
   }
   if (!source) {
@@ -326,8 +374,12 @@ const renderNow = () => {
     emit('rendered', buildRenderedPayload(source));
     return;
   }
-  if (plainStreaming) {
-    schedulePlainTextLayout();
+  if (plainTextRender) {
+    if (streamingTextPreview) {
+      schedulePlainTextLayout();
+    } else {
+      emit('rendered', buildRenderedPayload(source));
+    }
     return;
   }
   clearPlainTextLayoutTimer();
@@ -396,11 +448,13 @@ const traceStreamingRenderSource = (source: string, plainStreaming: boolean) => 
 
 const scheduleRender = () => {
   const source = normalizedContent.value;
-  const plainStreaming = usePlainStreamingText.value;
-  traceStreamingRenderSource(source, plainStreaming);
-  if (plainStreaming) {
-    updateVisiblePlainText(source);
+  const plainTextRender = usePlainTextRender.value;
+  const streamingTextPreview = isStreamingTextPreview.value;
+  traceStreamingRenderSource(source, plainTextRender);
+  if (plainTextRender) {
+    updateVisiblePlainText(source, !streamingTextPreview);
   } else {
+    clearPlainTextFlushTimer();
     visiblePlainText.value = '';
   }
   if (!shouldThrottle.value || typeof window === 'undefined') {
@@ -414,8 +468,12 @@ const scheduleRender = () => {
     visibleHtml.value = cached.html;
     return;
   }
-  if (plainStreaming) {
-    schedulePlainTextLayout();
+  if (plainTextRender) {
+    if (streamingTextPreview) {
+      schedulePlainTextLayout();
+    } else {
+      emit('rendered', buildRenderedPayload(source));
+    }
     return;
   }
   clearPlainTextLayoutTimer();
@@ -453,5 +511,6 @@ onBeforeUnmount(() => {
     renderTimer = null;
   }
   clearPlainTextLayoutTimer();
+  clearPlainTextFlushTimer();
 });
 </script>

@@ -277,6 +277,11 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(markdownBody.includes('const _contentVersion = runtimeContentVersion.value;'));
   assert.ok(markdownBody.includes('const projected = resolveRuntimeProjectedMessage();'));
   assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'message-body-stream-render'"));
+  assert.ok(markdownBody.includes('const isStreamingTextPreview = computed(() =>'));
+  assert.ok(markdownBody.includes('STREAMING_TEXT_PREVIEW_MAX_CHARS'));
+  assert.ok(markdownBody.includes('props.streaming === true'));
+  assert.ok(markdownBody.includes('? isStreamingTextPreview.value'));
+  assert.ok(markdownBody.includes('STREAM_TEXT_FLUSH_MIN_MS'));
   assert.ok(renderableController.includes('ctx.shouldMountAgentMessageBubble ='));
   assert.ok(renderableController.includes('ctx.shouldMountAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.shouldShowAgentMessageBubble(message);'));
   assert.ok(!renderableController.includes("runtimeStatus === 'tooling'"));
@@ -308,6 +313,7 @@ test('streaming text performance breadcrumbs are available behind debug and perf
   const markdownBody = readSource('src/components/chat/MessageMarkdownBody.vue');
   const invalidation = readSource('src/realtime/chat/chatRuntimeProjectionInvalidation.ts');
   const chatDebug = readSource('src/utils/chatDebug.ts');
+  const companionSprite = readSource('src/components/companions/CompanionSprite.vue');
 
   assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'plain-text-slow-flush'"));
   assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'markdown-slow-render'"));
@@ -315,18 +321,24 @@ test('streaming text performance breadcrumbs are available behind debug and perf
   assert.ok(markdownBody.includes("chatPerf.recordDuration('chat_stream_plain_text_slow_flush'"));
   assert.ok(markdownBody.includes("chatPerf.recordDuration('chat_stream_markdown_slow_render'"));
   assert.ok(markdownBody.includes('visiblePlainText.value = source;'));
-  assert.ok(markdownBody.includes('traceStreamingRenderSource(source, plainStreaming);'));
+  assert.ok(markdownBody.includes('traceStreamingRenderSource(source, plainTextRender);'));
   assert.ok(markdownBody.includes('PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS'));
   assert.ok(markdownBody.includes('lightweight'));
   assert.ok(invalidation.includes("chatDebugLog('chat.stream.perf', 'content-clock-slow-flush'"));
   assert.ok(invalidation.includes("chatPerf.recordDuration('chat_stream_content_clock_slow_flush'"));
   assert.ok(invalidation.includes('slowFlushCount'));
-  assert.ok(invalidation.includes('DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 8'));
+  assert.ok(invalidation.includes('DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 24'));
   assert.ok(chatDebug.includes("const DEBUG_HISTORY_ONLY_SCOPES = new Set(["));
   assert.ok(chatDebug.includes("'chat.stream.perf'"));
   assert.ok(chatDebug.includes('const DEBUG_HEAVY_CONSOLE_SCOPES = new Set(['));
   assert.ok(chatDebug.includes('buildDebugPayloadOmissionMeta'));
   assert.ok(chatDebug.includes('if (DEBUG_HISTORY_ONLY_SCOPES.has(normalizedScope)) return;'));
+  assert.ok(companionSprite.includes('animation: props.paused'));
+  assert.ok(companionSprite.includes('companion-sprite-step'));
+  assert.ok(companionSprite.includes('will-change: transform'));
+  assert.ok(companionSprite.includes('this keyframe must stay unscoped'));
+  assert.ok(companionSprite.indexOf('@keyframes companion-sprite-step') > companionSprite.indexOf('</style>'));
+  assert.ok(!companionSprite.includes('window.setInterval'));
 });
 
 test('store visibleMessages getter materializes projection without legacy raw fallback', () => {

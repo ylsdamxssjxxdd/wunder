@@ -30,7 +30,7 @@ export const runtimeProjectionContentInvalidationState = {
 };
 
 const DEFAULT_PROJECTION_INVALIDATION_DELAY_MS = 24;
-const DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 8;
+const DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 24;
 const STREAM_CONTENT_DEBUG_SLOW_MS = 48;
 
 const flushRuntimeProjectionContentVersion = (store: ProjectionVersionStore) => {

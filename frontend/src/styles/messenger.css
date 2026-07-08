@@ -5759,6 +5759,13 @@ button.messenger-chat-header-model {
   margin-bottom: 0;
 }
 
+.messenger-markdown .message-markdown-body--streaming-text,
+.messenger-markdown .message-markdown-body--plain-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .messenger-markdown .markdown-body .ai-math-block {
   margin: 8px 0;
   padding: 10px 12px;

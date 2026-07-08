@@ -1,6 +1,8 @@
 <template>
   <div ref="rootRef" class="companion-sprite" :style="rootStyle" aria-hidden="true">
-    <div class="companion-sprite__sheet" :style="sheetStyle"></div>
+    <div class="companion-sprite__frame" :style="frameStyle">
+      <div class="companion-sprite__sheet" :style="sheetStyle"></div>
+    </div>
   </div>
 </template>
 
@@ -47,13 +49,10 @@ const props = withDefaults(
   }
 );
 
-const frameIndex = ref(0);
 const rootRef = ref<HTMLElement | null>(null);
 const rootSize = ref({ width: 0, height: 0 });
-let animationTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeListenerAttached = false;
-let animationSignature = '';
 
 const normalizedScale = computed(() => Math.min(1.8, Math.max(0.5, Number(props.scale) || 1)));
 const stateConfig = computed(() => STATE_CONFIG[props.state] || STATE_CONFIG.idle);
@@ -77,11 +76,9 @@ const rootStyle = computed(() => ({
   height: props.fit ? '100%' : `${FRAME_HEIGHT * normalizedScale.value}px`
 }));
 
-const sheetStyle = computed<CSSProperties>(() => ({
+const frameStyle = computed<CSSProperties>(() => ({
   width: `${FRAME_WIDTH}px`,
   height: `${FRAME_HEIGHT}px`,
-  backgroundImage: `url("${props.source}")`,
-  backgroundPosition: `-${frameIndex.value * FRAME_WIDTH}px -${stateConfig.value.row * FRAME_HEIGHT}px`,
   left: props.fit ? '50%' : '0',
   top: props.fit ? '50%' : '0',
   transformOrigin: props.fit ? 'center center' : 'left top',
@@ -90,6 +87,17 @@ const sheetStyle = computed<CSSProperties>(() => ({
     : `scale(${stableRenderedScale.value})`,
   visibility: fitReady.value ? 'visible' : 'hidden'
 }));
+
+const sheetStyle = computed<CSSProperties>(() => ({
+  width: `${FRAME_WIDTH * Math.max(1, stateConfig.value.frames)}px`,
+  height: `${FRAME_HEIGHT}px`,
+  backgroundImage: `url("${props.source}")`,
+  backgroundPosition: `0 -${stateConfig.value.row * FRAME_HEIGHT}px`,
+  animation: props.paused
+    ? 'none'
+    : `companion-sprite-step ${stateConfig.value.duration}ms steps(${Math.max(1, stateConfig.value.frames)}) infinite`,
+  '--companion-sprite-final-x': `-${Math.max(1, stateConfig.value.frames) * FRAME_WIDTH}px`
+} as CSSProperties));
 
 const updateRootSize = () => {
   const element = rootRef.value;
@@ -101,13 +109,6 @@ const updateRootSize = () => {
     width: Math.max(0, Math.round(rect.width || element.clientWidth || 0)),
     height: Math.max(0, Math.round(rect.height || element.clientHeight || 0))
   };
-};
-
-const stopAnimation = () => {
-  if (animationTimer !== null && typeof window !== 'undefined') {
-    window.clearInterval(animationTimer);
-  }
-  animationTimer = null;
 };
 
 const stopResizeTracking = () => {
@@ -138,38 +139,6 @@ const startResizeTracking = () => {
   resizeListenerAttached = true;
 };
 
-const startAnimation = () => {
-  stopAnimation();
-  if (props.paused || typeof window === 'undefined') {
-    return;
-  }
-  const config = stateConfig.value;
-  const frameMs = Math.max(50, Math.round(config.duration / Math.max(1, config.frames)));
-  animationTimer = window.setInterval(() => {
-    frameIndex.value = (frameIndex.value + 1) % config.frames;
-  }, frameMs);
-};
-
-const refreshAnimationIfNeeded = () => {
-  const nextSignature = [
-    props.state,
-    props.source,
-    props.paused ? 'paused' : 'playing'
-  ].join('|');
-  if (nextSignature === animationSignature) {
-    return;
-  }
-  animationSignature = nextSignature;
-  frameIndex.value = 0;
-  startAnimation();
-};
-
-watch(
-  () => [props.state, props.source, props.paused] as const,
-  refreshAnimationIfNeeded,
-  { immediate: true }
-);
-
 watch(
   () => [props.fit, props.scale] as const,
   () => {
@@ -199,8 +168,6 @@ watch(
 );
 
 onBeforeUnmount(() => {
-  animationSignature = '';
-  stopAnimation();
   stopResizeTracking();
 });
 </script>
@@ -212,9 +179,26 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+.companion-sprite__frame {
+  position: absolute;
+  overflow: hidden;
+}
+
 .companion-sprite__sheet {
   position: absolute;
+  left: 0;
+  top: 0;
   background-repeat: no-repeat;
-  will-change: background-position;
+  transform: translateX(0);
+  will-change: transform;
+}
+</style>
+
+<style>
+/* The animation name is assigned through inline style, so this keyframe must stay unscoped. */
+@keyframes companion-sprite-step {
+  to {
+    transform: translateX(var(--companion-sprite-final-x));
+  }
 }
 </style>
