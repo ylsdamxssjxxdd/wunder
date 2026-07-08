@@ -62,7 +62,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
 import {
@@ -124,7 +124,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistActiveSession, persistAgentSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { HISTORY_PAGE_LIMIT, clearDraftSessionBootstrapMarkers, clearRuntimeInteractiveControllers, clearSessionWatcher, normalizeHistoryPageLimit, recoverRuntimeInteractiveControllers, resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveMessageWindowMax, resolveSessionDetailMessageLimit, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyLocalChatMessageRuntimeEvent, applyMessageWindow, applySessionRuntimeSnapshot, buildMessageIdentityDebugList, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, countAssistantStreamingMessages, ensureRuntime, filterSessionsByAgent, findOldestHistoryId, getHistoryState, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, mergeForegroundHydratedMessagesWithLive, mergeRetainedActiveSessionIntoList, notifySessionSnapshot, purgeUnavailableSession, readSessionDetailSnapshot, readSessionEventsSnapshot, readSessionHydratedMessageVersion, readSessionListCacheEntry, refreshRuntimeStreamLifecycle, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, resolveSessionMessageArray, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, shouldPreferCachedMessages, syncChatRuntimeProjectionFromSnapshot, touchSessionUpdatedAt, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { normalizeSnapshotMessage } from './chatSnapshot';
 import { buildMessage } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -764,14 +764,25 @@ export const chatSessionOpenLoadActions = {
         );
         const runtime = ensureRuntime(targetSessionId);
         applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
-        applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
-          phase: 'detail'
-        });
         const remoteRunning = eventsPayload?.running === true;
         const remoteLastEventId = normalizeStreamEventId(
           eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
         );
         updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
+        if (shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)) {
+          applyCanonicalSessionEventsSnapshot(this, targetSessionId, eventsPayload, {
+            phase: 'detail'
+          });
+        } else {
+          chatDebugLog('chat.store.detail', 'events-snapshot-skip-idle-transcript', {
+            sessionId: targetSessionId,
+            remoteRunning,
+            remoteLastEventId,
+            eventCount: detailEventCount,
+            transcriptCount: detailTranscriptCount,
+            runtime: buildRuntimeDebugSnapshot(runtime)
+          });
+        }
         recoverRuntimeInteractiveControllers(this, targetSessionId, runtime, {
           remoteRunning: eventsPayload?.running,
           remoteLastEventId,
@@ -1104,11 +1115,19 @@ export const chatSessionOpenLoadActions = {
           sessionId: targetSessionId,
           hasCanonicalTranscript,
           remoteRunning,
-          transcriptSummary: buildMessageIdentityDebugList(
-            resolveCanonicalSessionTranscript(sessionDetail)
-          ),
-          hydratedSummary: buildMessageIdentityDebugList(nextMessages),
-          foregroundSummary: buildMessageIdentityDebugList(this.messages)
+          ...(isChatDebugVerboseEnabled()
+            ? {
+                transcriptSummary: buildMessageIdentityDebugList(
+                  resolveCanonicalSessionTranscript(sessionDetail)
+                ),
+                hydratedSummary: buildMessageIdentityDebugList(nextMessages),
+                foregroundSummary: buildMessageIdentityDebugList(this.messages)
+              }
+            : {
+                transcriptCount: resolveCanonicalSessionTranscript(sessionDetail).length,
+                hydratedCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+                foregroundCount: Array.isArray(this.messages) ? this.messages.length : 0
+              })
         });
         this.scheduleSnapshot(true);
         const allowStartWatcherAfterHydration = options.startWatcherAfterHydration !== false;

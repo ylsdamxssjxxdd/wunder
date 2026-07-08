@@ -129,9 +129,19 @@ const buildMessageTurnOrder = (
     .map((turnId, index) => ({
       turnId,
       index,
+      semanticOrder: resolveTurnSemanticOrder(turnId),
       createdSeq: resolveTurnCreatedSeq(session, turnId)
     }))
-    .sort((left, right) => left.createdSeq - right.createdSeq || left.index - right.index);
+    .sort((left, right) => {
+      if (
+        left.semanticOrder !== null &&
+        right.semanticOrder !== null &&
+        left.semanticOrder !== right.semanticOrder
+      ) {
+        return left.semanticOrder - right.semanticOrder;
+      }
+      return left.createdSeq - right.createdSeq || left.index - right.index;
+    });
   return new Map(orderedTurns.map((item, index) => [item.turnId, index]));
 };
 
@@ -159,6 +169,25 @@ const resolveTurnCreatedSeq = (
     })
   ].filter((value): value is number => Number.isFinite(value));
   return seqs.length > 0 ? Math.min(...seqs) : Number.MAX_SAFE_INTEGER;
+};
+
+const resolveTurnSemanticOrder = (turnId: string): number | null => {
+  const text = String(turnId || '').trim();
+  if (!text) return null;
+  const roundMatch = text.match(/(?:^|:)round:(\d+)(?::|$)/i);
+  if (roundMatch) {
+    return normalizePositiveInteger(roundMatch[1]);
+  }
+  const userMatch = text.match(/(?:^|:)user:(\d+)(?::|$)/i);
+  if (userMatch) {
+    return normalizePositiveInteger(userMatch[1]);
+  }
+  return null;
+};
+
+const normalizePositiveInteger = (value: unknown): number | null => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
 export const selectLatestAssistantForTurn = (

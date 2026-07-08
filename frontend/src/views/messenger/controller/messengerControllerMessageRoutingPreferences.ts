@@ -416,6 +416,69 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
       return resolveChatRuntimeRenderableKey(message, index);
   };
 
+  ctx.resolveMessageWorkflowStateKey = (
+      message: Record<string, unknown>,
+      index: number
+  ): string => {
+      const stableId = String(
+          message?.__runtime_message_id ||
+          message?.message_id ||
+          message?.messageId ||
+          message?.id ||
+          message?.__runtime_model_turn_id ||
+          message?.model_turn_id ||
+          message?.modelTurnId ||
+          ''
+      ).trim();
+      return stableId
+          ? `workflow-message:${stableId}`
+          : ctx.resolveAgentMessageKey(message, index);
+  };
+
+  ctx.resolveMessageWorkflowStateAliases = (
+      message: Record<string, unknown>,
+      index: number,
+      renderKey = ''
+  ): string[] => {
+      const aliases = [
+          ctx.resolveAgentMessageKey(message, index),
+          String(renderKey || '').trim(),
+          String(message?.__runtime_render_key || '').trim()
+      ];
+      const messageId = String(
+          message?.__runtime_message_id ||
+          message?.message_id ||
+          message?.messageId ||
+          message?.id ||
+          ''
+      ).trim();
+      const modelTurnId = String(
+          message?.__runtime_model_turn_id ||
+          message?.model_turn_id ||
+          message?.modelTurnId ||
+          ''
+      ).trim();
+      if (messageId) aliases.push(`workflow-message:${messageId}`);
+      if (modelTurnId) aliases.push(`workflow-model-turn:${modelTurnId}`, `workflow-message:${modelTurnId}`);
+      const firstWorkflowItem = Array.isArray(message?.workflowItems)
+          ? (message.workflowItems[0] || {}) as Record<string, unknown>
+          : {};
+      const firstWorkflowRef = String(
+          firstWorkflowItem?.toolCallId ||
+          firstWorkflowItem?.tool_call_id ||
+          firstWorkflowItem?.callId ||
+          firstWorkflowItem?.call_id ||
+          firstWorkflowItem?.commandSessionId ||
+          firstWorkflowItem?.command_session_id ||
+          firstWorkflowItem?.id ||
+          firstWorkflowItem?.itemId ||
+          firstWorkflowItem?.item_id ||
+          ''
+      ).trim();
+      if (firstWorkflowRef) aliases.push(`workflow-first-item:${firstWorkflowRef}`);
+      return Array.from(new Set(aliases.filter(Boolean)));
+  };
+
   ctx.buildMessageWorkflowRenderVersion = (message: Record<string, unknown>): string => {
       const items = Array.isArray(message?.workflowItems) ? (message.workflowItems as Array<Record<string, unknown>>) : [];
       const tail = items

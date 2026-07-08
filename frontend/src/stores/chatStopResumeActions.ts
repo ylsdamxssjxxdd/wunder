@@ -64,7 +64,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import { buildMessageIdentityDebugList, buildMessageIdentityDebugSnapshot } from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
@@ -254,7 +254,9 @@ export const chatStopResumeActions = {
           pendingAssistant,
           Array.isArray(targetMessages) ? targetMessages.indexOf(pendingAssistant) : -1
         ),
-        messages: buildMessageIdentityDebugList(targetMessages)
+        ...(isChatDebugVerboseEnabled()
+          ? { messages: buildMessageIdentityDebugList(targetMessages) }
+          : {})
       });
       this.dismissPendingInquiryPanel();
       if (Array.isArray(targetMessages)) {
@@ -273,7 +275,9 @@ export const chatStopResumeActions = {
         sessionId: targetSessionId,
         locallyStopped,
         runtime: runtime ? buildRuntimeDebugSnapshot(runtime) : null,
-        messages: buildMessageIdentityDebugList(targetMessages)
+        ...(isChatDebugVerboseEnabled()
+          ? { messages: buildMessageIdentityDebugList(targetMessages) }
+          : {})
       });
       try {
         const { data } = await cancelMessageStream(targetSessionId);

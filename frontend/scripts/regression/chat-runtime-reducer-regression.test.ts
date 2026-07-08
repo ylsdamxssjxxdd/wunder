@@ -1266,6 +1266,193 @@ test('authoritative legacy reconcile reorders same-count refresh snapshots to le
   assert.equal(projection.sessions['session-1'].messages.length, 3);
 });
 
+test('canonical transcript refresh overwrites stale event-created order', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-late-user',
+    event_seq: 100,
+    user_turn_id: 'ut-second',
+    message_id: 'history:3',
+    content: 'second question'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-late-assistant',
+    event_seq: 101,
+    user_turn_id: 'ut-second',
+    model_turn_id: 'mt-second',
+    message_id: 'history:4',
+    content: 'second answer'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-early-user',
+    event_seq: 102,
+    user_turn_id: 'ut-first',
+    message_id: 'history:1',
+    content: 'first question'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-early-assistant',
+    event_seq: 103,
+    user_turn_id: 'ut-first',
+    model_turn_id: 'mt-first',
+    message_id: 'history:2',
+    content: 'first answer'
+  }));
+
+  assert.deepEqual(
+    selectVisibleMessageProjections(projection, 'session-1').map((message) => message.content),
+    ['second question', 'second answer', 'first question', 'first answer']
+  );
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-1',
+    authoritative: true,
+    snapshot_seq: 200,
+    messages: [
+      {
+        message_id: 'history:1',
+        role: 'user',
+        content: 'first question',
+        user_turn_id: 'ut-first',
+        turn_index: 1
+      },
+      {
+        message_id: 'history:2',
+        role: 'assistant',
+        content: 'first answer',
+        user_turn_id: 'ut-first',
+        model_turn_id: 'mt-first',
+        turn_index: 2
+      },
+      {
+        message_id: 'history:3',
+        role: 'user',
+        content: 'second question',
+        user_turn_id: 'ut-second',
+        turn_index: 3
+      },
+      {
+        message_id: 'history:4',
+        role: 'assistant',
+        content: 'second answer',
+        user_turn_id: 'ut-second',
+        model_turn_id: 'mt-second',
+        turn_index: 4
+      }
+    ],
+    loading: false,
+    running: false
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.deepEqual(
+    visible.map((message) => message.content),
+    ['first question', 'first answer', 'second question', 'second answer']
+  );
+  assert.ok(visible[0].createdSeq < visible[2].createdSeq);
+  assert.ok(visible[1].createdSeq < visible[3].createdSeq);
+});
+
+test('local optimistic turn stays after hydrated historical rounds', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_runtime',
+    event_id: 'evt-cursor',
+    event_seq: 371,
+    runtime_status: 'idle'
+  }));
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    payload: {
+      transcript: [
+        {
+          message_id: 'history:1',
+          role: 'user',
+          content: 'first question',
+          user_turn_id: 'user-turn:session-1:round:1',
+          turn_index: 1
+        },
+        {
+          message_id: 'history:2',
+          role: 'assistant',
+          content: 'first answer',
+          user_turn_id: 'user-turn:session-1:round:1',
+          model_turn_id: 'model-turn:session-1:user:1:model:1',
+          turn_index: 2
+        },
+        {
+          message_id: 'history:3',
+          role: 'user',
+          content: 'second question',
+          user_turn_id: 'user-turn:session-1:round:2',
+          turn_index: 3
+        },
+        {
+          message_id: 'history:4',
+          role: 'assistant',
+          content: 'second answer',
+          user_turn_id: 'user-turn:session-1:round:2',
+          model_turn_id: 'model-turn:session-1:user:2:model:1',
+          turn_index: 4
+        }
+      ]
+    },
+    loading: false,
+    running: false
+  });
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId,
+      content: 'third question',
+      clientMessageId: 'local-user-3',
+      createdAt: '2026-04-30T02:15:00.000Z',
+      userTurnId: 'user-turn:session-1:round:3'
+    })
+  );
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: sessionId,
+    event_id: 'local-assistant-3',
+    user_turn_id: 'user-turn:session-1:round:3',
+    model_turn_id: 'model-turn:session-1:user:3:model:1',
+    message_id: 'local-assistant:model-turn:session-1:user:3:model:1'
+  });
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    [
+      'user:first question',
+      'assistant:first answer',
+      'user:second question',
+      'assistant:second answer',
+      'user:third question',
+      'assistant:'
+    ]
+  );
+  const secondUser = visible.find((message) => message.content === 'second question');
+  const thirdUser = visible.find((message) => message.content === 'third question');
+  assert.ok(thirdUser && secondUser);
+  assert.ok(thirdUser.createdSeq > secondUser.createdSeq);
+});
+
 test('legacy reconcile replaces repeated full assistant snapshots without inflating content', () => {
   const projection = createChatRuntimeProjection();
 
@@ -3517,6 +3704,8 @@ test('send stream text deltas keep flowing across persisted event id gaps', () =
     assert.equal(event.strict, false);
     return applyChatRuntimeEvent(projection, event);
   });
+  let visible = selectVisibleMessageProjections(projection, sessionId);
+  assert.equal(visible[0]?.content, '');
 
   const secondDelta = buildCanonicalChatRuntimeEvents({
     sessionId,
@@ -3538,7 +3727,7 @@ test('send stream text deltas keep flowing across persisted event id gaps', () =
   const secondResults = secondDelta.map((event) => applyChatRuntimeEvent(projection, event));
 
   const session = projection.sessions[sessionId];
-  const visible = selectVisibleMessageProjections(projection, sessionId);
+  visible = selectVisibleMessageProjections(projection, sessionId);
   assert.equal(firstDelta[0]?.strict, false);
   assert.equal(secondDelta[0]?.strict, false);
   assert.equal(toolResults[0]?.applied, true);
@@ -3549,7 +3738,7 @@ test('send stream text deltas keep flowing across persisted event id gaps', () =
   assert.equal(secondResults[0]?.reason, undefined);
   assert.equal(session.syncRequired, false);
   assert.equal(session.pendingSequentialEvents.length, 0);
-  assert.equal(visible[0]?.content, 'hello world');
+  assert.equal(visible[0]?.content, ' world');
   assert.equal(selectRuntimeLastAppliedEventId(projection, sessionId), 396);
 });
 
@@ -4864,7 +5053,7 @@ test('llm_output snapshots still replace non-prefix live text', () => {
   assert.equal(assistant?.status, 'streaming');
 });
 
-test('llm_output segment snapshots do not replace accumulated tool-turn text', () => {
+test('tool-turn intermediate text is cleared when the next model output starts', () => {
   const projection = createChatRuntimeProjection();
   const sessionId = 'session-1';
   const userTurnId = 'ut-tool-segments';
@@ -4883,14 +5072,32 @@ test('llm_output segment snapshots do not replace accumulated tool-turn text', (
     delta: firstSegment
   }));
   applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-segment-tool-1',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    payload: {
+      source_event_type: 'tool_call',
+      tool_name: 'test_tool',
+      tool_call_id: 'tool-1'
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
     event_type: 'assistant_delta',
     event_id: 'evt-tool-segment-delta-2',
-    event_seq: 2,
+    event_seq: 3,
     user_turn_id: userTurnId,
     model_turn_id: modelTurnId,
     message_id: assistantMessageId,
     delta: secondSegment
   }));
+
+  let visible = selectVisibleMessageProjections(projection, sessionId);
+  let assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, secondSegment);
+  assert.equal(assistant?.status, 'streaming');
 
   buildCanonicalChatRuntimeEvents({
     sessionId,
@@ -4909,10 +5116,103 @@ test('llm_output segment snapshots do not replace accumulated tool-turn text', (
     assistantMessageId
   }).forEach((event) => applyChatRuntimeEvent(projection, event));
 
+  visible = selectVisibleMessageProjections(projection, sessionId);
+  assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, secondSegment);
+  assert.equal(assistant?.status, 'streaming');
+});
+
+test('final answer after multiple tool calls does not include intermediate model text', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-tool-final';
+  const modelTurnId = 'mt-tool-final';
+  const assistantMessageId = 'am-tool-final';
+  const firstIntermediate = 'I will inspect the file. ';
+  const secondIntermediate = 'The command finished. ';
+  const finalContent = 'Final answer only.';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-tool-final-delta-1',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: firstIntermediate
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-final-tool-1',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    payload: {
+      source_event_type: 'tool_call',
+      tool_name: 'read_file',
+      tool_call_id: 'tool-1'
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_completed',
+    event_id: 'evt-tool-final-tool-1-result',
+    event_seq: 3,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    payload: {
+      source_event_type: 'tool_result',
+      tool_name: 'read_file',
+      tool_call_id: 'tool-1'
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-tool-final-delta-2',
+    event_seq: 4,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: secondIntermediate
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-final-tool-2',
+    event_seq: 5,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    payload: {
+      source_event_type: 'tool_call',
+      tool_name: 'execute_command',
+      tool_call_id: 'tool-2'
+    }
+  }));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'final',
+    payload: {
+      content: finalContent,
+      user_turn_id: userTurnId,
+      model_turn_id: modelTurnId,
+      message_id: assistantMessageId
+    },
+    eventId: 6,
+    requestId: 'req-tool-final',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
   const visible = selectVisibleMessageProjections(projection, sessionId);
   const assistant = visible.find((message) => message.role === 'assistant');
-  assert.equal(assistant?.content, `${firstSegment}${secondSegment}`);
-  assert.equal(assistant?.status, 'streaming');
+  assert.equal(assistant?.content, finalContent);
+  assert.ok(!assistant?.content.includes(firstIntermediate.trim()));
+  assert.ok(!assistant?.content.includes(secondIntermediate.trim()));
+  assert.equal(assistant?.status, 'final');
 });
 
 test('final stream snapshot replaces accumulated final-response previews', () => {

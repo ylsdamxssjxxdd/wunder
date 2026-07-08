@@ -636,14 +636,27 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           }
           if (section === 'messages') {
               if (isChatDebugEnabled()) {
-                  chatDebugLog('messenger.enter', 'messages-section', ctx.buildMessageVirtualDebugSnapshot?.());
+                  chatDebugLog('messenger.enter', 'messages-section', {
+                      activeConversationKey: ctx.sessionHub.activeConversationKey,
+                      renderKind: String(ctx.retainedMessageRenderKind?.value || ''),
+                      shouldVirtualize: Boolean(ctx.shouldVirtualizeMessages?.value),
+                      agentCount: ctx.agentRenderableMessages.value.length,
+                      worldCount: ctx.worldRenderableMessages.value.length,
+                      snapshot: isChatDebugVerboseEnabled()
+                          ? ctx.buildMessageVirtualDebugSnapshot?.()
+                          : undefined
+                  });
               }
               void nextTick(async () => {
-                  const restored = await ctx.restoreConversationScroll?.();
+                  const restored = await ctx.restoreConversationScroll?.({ deferMeasure: true });
                   if (isChatDebugEnabled()) {
                       chatDebugLog('messenger.enter', 'restore-scroll', {
                           restored,
-                          snapshot: ctx.buildMessageVirtualDebugSnapshot?.()
+                          renderKind: String(ctx.retainedMessageRenderKind?.value || ''),
+                          shouldVirtualize: Boolean(ctx.shouldVirtualizeMessages?.value),
+                          snapshot: isChatDebugVerboseEnabled()
+                              ? ctx.buildMessageVirtualDebugSnapshot?.()
+                              : undefined
                       });
                   }
                   if (!restored) {
@@ -986,11 +999,14 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.refreshSessionPreviewCache(sessionId, (activeSession || null) as Record<string, unknown> | null);
   });
 
-  watch(() => ctx.showChatSettingsView.value, () => {
+  watch(() => ctx.showChatSettingsView.value, (settingsView) => {
+      if (settingsView) {
+          ctx.rememberCurrentMessageScroll?.();
+          return;
+      }
       ctx.scheduleMessageViewportRefresh({
           updateScrollState: true,
-          measure: true,
-          reason: 'settings-view-change'
+          reason: 'settings-view-enter-messages'
       });
   });
 

@@ -121,7 +121,7 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
 import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveSessionDetailMessageLimit } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, syncChatRuntimeProjectionFromSnapshot, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
@@ -367,9 +367,6 @@ export const chatCacheActions = {
         );
         const runtime = ensureRuntime(targetId);
         applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
-        applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
-          phase: 'preload'
-        });
         const remoteRunning = eventsPayload?.running === true;
         const remoteLastEventId = normalizeStreamEventId(
           eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
@@ -378,6 +375,19 @@ export const chatCacheActions = {
           runtime,
           remoteLastEventId
         );
+        if (shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)) {
+          applyCanonicalSessionEventsSnapshot(this, targetId, eventsPayload, {
+            phase: 'preload'
+          });
+        } else {
+          chatDebugLog('chat.store.preload', 'events-snapshot-skip-idle-transcript', {
+            sessionId: targetId,
+            remoteRunning,
+            remoteLastEventId,
+            eventCount: Array.isArray(eventsPayload?.events) ? eventsPayload.events.length : 0,
+            runtime: buildRuntimeDebugSnapshot(runtime)
+          });
+        }
         const cachedHydratedMessages = getSessionMessages(targetId) || [];
         const hasCanonicalTranscript = hasCanonicalSessionTranscript(sessionDetail);
         const canReuseHydratedMessages =
@@ -418,6 +428,20 @@ export const chatCacheActions = {
           runtime,
           Math.max(resolveMaterializedMessageEventId(greetingMessages), remoteLastEventId || 0)
         );
+        if (
+          !remoteRunning &&
+          (
+            resolveSessionKey(this.activeSessionId) === targetId ||
+            Boolean(this.runtimeProjection?.sessions?.[targetId])
+          )
+        ) {
+          syncChatRuntimeProjectionFromSnapshot(this, targetId, greetingMessages, {
+            immediate: false,
+            loading: false,
+            running: false,
+            authoritative: true
+          });
+        }
         writeSessionHydratedMessageVersion(targetId, hydratedVersion);
         markSessionDetailWarm(targetId);
         chatDebugLog('chat.store.preload', 'fetch-complete', {

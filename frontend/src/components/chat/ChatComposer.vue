@@ -682,6 +682,8 @@ const gifFrameStepDrafts = ref<Record<string, string>>({});
 const attachmentProcessingIds = ref<string[]>([]);
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
+const DRAFT_PERSIST_DEBOUNCE_MS = 240;
+let draftPersistTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
 const chatStore = useChatStore();
 
@@ -1684,7 +1686,7 @@ const insertTextIntoComposer = (text: unknown, mode: 'append' | 'cursor' = 'appe
     nextCursor = String(inputText.value || '').length;
   }
   commandMenuDismissed.value = false;
-  persistDraftState();
+  flushPersistDraftState();
   void nextTick(() => {
     resizeInput();
     focusComposerInputAt(nextCursor);
@@ -1946,6 +1948,25 @@ const persistDraftStateByKey = (key: string) => {
 
 const persistDraftState = () => {
   persistDraftStateByKey(resolveDraftKey());
+};
+
+const clearScheduledDraftPersist = () => {
+  if (draftPersistTimer === null) return;
+  clearTimeout(draftPersistTimer);
+  draftPersistTimer = null;
+};
+
+const flushPersistDraftState = (key = resolveDraftKey()) => {
+  clearScheduledDraftPersist();
+  persistDraftStateByKey(key);
+};
+
+const schedulePersistDraftState = () => {
+  clearScheduledDraftPersist();
+  draftPersistTimer = setTimeout(() => {
+    draftPersistTimer = null;
+    persistDraftState();
+  }, DRAFT_PERSIST_DEBOUNCE_MS);
 };
 
 const restoreDraftStateByKey = (key: string) => {
@@ -2677,6 +2698,7 @@ const sendQuickCommand = async (command: string) => {
   caretPosition.value = 0;
   resetInputHeight();
   clearAttachments();
+  flushPersistDraftState();
 };
 
 const applyPresetQuestion = (question: string) => {
@@ -2732,6 +2754,7 @@ const handleSend = async () => {
   caretPosition.value = 0;
   resetInputHeight();
   clearAttachments();
+  flushPersistDraftState();
   focusComposerInputAtEnd();
 };
 
@@ -2800,6 +2823,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  flushPersistDraftState();
   stopWorldComposerResize();
   clearWorldCommandPanelCloseTimer();
   if (typeof window !== 'undefined') {
@@ -2879,7 +2903,7 @@ watch(
 watch(
   () => props.draftKey,
   (value, previousValue) => {
-    persistDraftStateByKey(String(previousValue || ''));
+    flushPersistDraftState(String(previousValue || ''));
     restoreDraftStateByKey(String(value || ''));
   },
   { immediate: true }
@@ -2888,7 +2912,7 @@ watch(
 watch(
   () => inputText.value,
   () => {
-    persistDraftState();
+    schedulePersistDraftState();
   }
 );
 
@@ -2896,7 +2920,7 @@ watch(
   () => attachments.value,
   () => {
     syncVideoAttachmentDrafts();
-    persistDraftState();
+    schedulePersistDraftState();
   },
   { deep: true }
 );

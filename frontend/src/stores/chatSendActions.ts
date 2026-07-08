@@ -64,7 +64,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import { buildMessageIdentityDebugList, buildMessageIdentityDebugSnapshot } from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
@@ -328,7 +328,9 @@ export const chatSendActions = {
             sessionMessagesRef.indexOf(assistantMessage)
           )
         },
-        messages: buildMessageIdentityDebugList(sessionMessagesRef)
+        ...(isChatDebugVerboseEnabled()
+          ? { messages: buildMessageIdentityDebugList(sessionMessagesRef) }
+          : {})
       });
       if (bootstrappingDraftSession) {
         clearDraftSessionBootstrapMarkers(sessionMessagesRef);
@@ -764,7 +766,9 @@ export const chatSendActions = {
                 assistantMessage,
                 sessionMessagesRef.indexOf(assistantMessage)
               ),
-              messages: buildMessageIdentityDebugList(sessionMessagesRef)
+              ...(isChatDebugVerboseEnabled()
+                ? { messages: buildMessageIdentityDebugList(sessionMessagesRef) }
+                : {})
             });
             if (shouldTreatRuntimeEventAsTerminal(normalizedEventType, approvalPayload)) {
               const runtimeStatus = normalizeThreadRuntimeStatus(
@@ -1076,7 +1080,9 @@ export const chatSendActions = {
                   : 0
               }
             : null,
-          messages: buildMessageIdentityDebugList(sessionMessagesRef)
+          ...(isChatDebugVerboseEnabled()
+            ? { messages: buildMessageIdentityDebugList(sessionMessagesRef) }
+            : {})
         });
         if (perfEnabled) {
           chatPerf.recordDuration('chat_stream_total', performance.now() - perfStreamStart, {

@@ -520,8 +520,8 @@ export function installMessengerControllerLifecycleMessageViewport(ctx: Messenge
       ctx.messageViewportRuntime?.handleMessageListScroll();
   };
 
-  ctx.restoreConversationScroll = async () => {
-      return ctx.messageViewportRuntime?.restoreConversationScroll() ?? Promise.resolve(false);
+  ctx.restoreConversationScroll = async (options: { deferMeasure?: boolean } = {}) => {
+      return ctx.messageViewportRuntime?.restoreConversationScroll(options) ?? Promise.resolve(false);
   };
 
   ctx.rememberCurrentMessageScroll = () => {

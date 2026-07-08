@@ -205,6 +205,79 @@ test('message viewport runtime restores remembered conversation scroll after rem
   secondRuntime.dispose();
 });
 
+test('message viewport runtime can defer row measurement while restoring scroll', async () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const idleQueue: Array<() => void> = [];
+  const flushIdle = () => {
+    while (idleQueue.length > 0) {
+      idleQueue.shift()?.();
+    }
+  };
+
+  try {
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(performance.now());
+        return 1;
+      },
+      cancelAnimationFrame: () => {},
+      requestIdleCallback: (callback: () => void) => {
+        idleQueue.push(callback);
+        return idleQueue.length;
+      },
+      cancelIdleCallback: () => {}
+    };
+
+    const messageNode = createFakeMessageNode('assistant-deferred', 188);
+    const container = {
+      scrollTop: 260,
+      clientHeight: 500,
+      scrollHeight: 1800,
+      querySelectorAll: () => [messageNode],
+      getBoundingClientRect: () => ({ top: 0, height: 500 })
+    } as unknown as HTMLElement;
+    const messageVirtualHeightCache = new Map<string, number>();
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container),
+      showChatSettingsView: ref(false),
+      autoStickToBottom: ref(false),
+      showScrollTopButton: ref(false),
+      showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true),
+      isWorldConversationActive: ref(false),
+      activeConversationKey: ref('agent:session-deferred'),
+      shouldVirtualizeMessages: ref(true),
+      agentRenderableMessages: ref([{ key: 'assistant-deferred', message: { role: 'assistant' } }]),
+      worldRenderableMessages: ref([]),
+      messageVirtualHeightCache,
+      messageVirtualLayoutVersion: ref(0),
+      messageVirtualScrollTop: ref(0),
+      messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0,
+      resolveVirtualMessageHeight: (key: string) => messageVirtualHeightCache.get(key) || 0
+    });
+
+    runtime.rememberCurrentScroll();
+    container.scrollTop = 0;
+
+    assert.equal(await runtime.restoreConversationScroll({ deferMeasure: true }), true);
+    assert.equal(container.scrollTop, 260);
+    assert.equal(messageVirtualHeightCache.has('assistant-deferred'), false);
+    assert.equal(idleQueue.length, 1);
+
+    flushIdle();
+
+    assert.equal(messageVirtualHeightCache.get('assistant-deferred'), 188);
+    runtime.dispose();
+  } finally {
+    if (originalWindow === undefined) {
+      delete (globalThis as Record<string, unknown>).window;
+    } else {
+      (globalThis as Record<string, unknown>).window = originalWindow;
+    }
+  }
+});
+
 test('message viewport runtime can store scroll under an explicit previous conversation key', async () => {
   const activeConversationKey = ref('agent:session-b');
   const container = {

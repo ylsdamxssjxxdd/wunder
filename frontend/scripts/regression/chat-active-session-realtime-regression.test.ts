@@ -80,7 +80,27 @@ test('active session realtime recovery skips an idle warm cached session', () =>
   );
 });
 
-test('active session realtime recovery keeps the active session warm when requested', () => {
+test('active session realtime recovery hydrates before keeping a cold active session warm', () => {
+  assert.equal(
+    resolveActiveSessionRealtimeRecoveryPlan({
+      targetSessionId: 'session_demo',
+      activeSessionId: 'session_demo',
+      hasWatchController: false,
+      hasSendController: false,
+      hasResumeController: false,
+      loading: false,
+      hasPendingAssistant: false,
+      hasRunningAssistant: false,
+      hydrateIfCold: true,
+      hasWarmDetail: false,
+      hasCachedMessages: false,
+      keepActiveSessionWarm: true
+    }),
+    'hydrate_then_watch'
+  );
+});
+
+test('active session realtime recovery keeps a warm active session watched when requested', () => {
   assert.equal(
     resolveActiveSessionRealtimeRecoveryPlan({
       targetSessionId: 'session_demo',

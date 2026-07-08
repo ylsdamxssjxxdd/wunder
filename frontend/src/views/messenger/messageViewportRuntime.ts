@@ -40,7 +40,7 @@ export type MessageViewportRuntime = {
   jumpToMessageTop: () => Promise<void>;
   scrollVirtualMessageToIndex: (keys: string[], index: number, align?: 'center' | 'start') => void;
   scrollLatestAssistantToCenter: () => Promise<void>;
-  restoreConversationScroll: () => Promise<boolean>;
+  restoreConversationScroll: (options?: { deferMeasure?: boolean }) => Promise<boolean>;
   rememberCurrentScroll: () => void;
   rememberScrollForKey: (key: string) => void;
   scheduleMessageViewportRefresh: (options?: {
@@ -95,8 +95,11 @@ export const createMessageViewportRuntime = (
 
   const syncMessageVirtualMetrics = () => {
     const container = options.messageListRef.value;
-    if (!container || options.showChatSettingsView.value) {
+    if (!container) {
       applyMessageVirtualMetrics(0, 0);
+      return;
+    }
+    if (options.showChatSettingsView.value) {
       return;
     }
     applyMessageVirtualMetrics(container.scrollTop, container.clientHeight);
@@ -315,10 +318,15 @@ export const createMessageViewportRuntime = (
 
   const updateMessageScrollState = () => {
     const container = options.messageListRef.value;
-    if (!container || options.showChatSettingsView.value) {
+    if (!container) {
       options.showScrollTopButton.value = false;
       options.showScrollBottomButton.value = false;
       options.autoStickToBottom.value = true;
+      return;
+    }
+    if (options.showChatSettingsView.value) {
+      options.showScrollTopButton.value = false;
+      options.showScrollBottomButton.value = false;
       return;
     }
     const nearTop = container.scrollTop <= 72;
@@ -375,7 +383,7 @@ export const createMessageViewportRuntime = (
     rememberMessageScrollPosition(key, options.messageListRef.value);
   };
 
-  const restoreConversationScroll = async () => {
+  const restoreConversationScroll = async (restoreOptions: { deferMeasure?: boolean } = {}) => {
     await nextTick();
     const container = options.messageListRef.value;
     if (!container || options.showChatSettingsView.value) return false;
@@ -383,7 +391,11 @@ export const createMessageViewportRuntime = (
     if (!restored) return false;
     syncMessageVirtualMetrics();
     updateMessageScrollState();
-    scheduleMessageVirtualMeasure();
+    if (restoreOptions.deferMeasure === true) {
+      scheduleDeferredVisibleMeasure('restore-conversation-scroll');
+    } else {
+      scheduleMessageVirtualMeasure();
+    }
     return true;
   };
 

@@ -63,28 +63,31 @@ export const resolveActiveSessionRealtimeRecoveryPlan = (
     return 'hydrate_then_watch';
   }
 
-  if (normalizeFlag(input.keepActiveSessionWarm)) {
-    return 'watch';
-  }
-
   const hasPendingAssistant = normalizeFlag(input.hasPendingAssistant);
-  if (
-    normalizeFlag(input.hydrateIfCold) &&
-    normalizeFlag(input.hasWarmDetail) &&
-    normalizeFlag(input.hasCachedMessages)
-  ) {
-    return hasPendingAssistant ||
-      normalizeFlag(input.loading) ||
-      normalizeFlag(input.runtimeBusy) ||
-      normalizeFlag(input.hasRunningAssistant)
-      ? 'watch_cached'
-      : 'skip_idle_session';
-  }
-
   const localRuntimeHot =
     normalizeFlag(input.loading) ||
     normalizeFlag(input.runtimeBusy) ||
     normalizeFlag(input.hasRunningAssistant);
+  const hasWarmCachedDetail =
+    normalizeFlag(input.hasWarmDetail) &&
+    normalizeFlag(input.hasCachedMessages);
+
+  if (normalizeFlag(input.keepActiveSessionWarm)) {
+    if (localRuntimeHot || hasPendingAssistant || hasWarmCachedDetail) {
+      return 'watch';
+    }
+    return normalizeFlag(input.hydrateIfCold) ? 'hydrate_then_watch' : 'skip_idle_session';
+  }
+
+  if (
+    normalizeFlag(input.hydrateIfCold) &&
+    hasWarmCachedDetail
+  ) {
+    return hasPendingAssistant ||
+      localRuntimeHot
+      ? 'watch_cached'
+      : 'skip_idle_session';
+  }
 
   if (
     normalizeFlag(input.hydrateIfCold) &&

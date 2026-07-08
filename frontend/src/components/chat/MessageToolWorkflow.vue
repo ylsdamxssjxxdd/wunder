@@ -113,9 +113,11 @@ type WorkflowPanelState = {
   collapsed: boolean;
   expandedKeys: string[];
   userCollapsedEntryKeys: string[];
+  updatedAt?: number;
 };
 
 const workflowStateCache = new Map<string, WorkflowPanelState>();
+let workflowStateCacheClock = 0;
 </script>
 
 <script setup lang="ts">
@@ -235,6 +237,7 @@ type Props = {
   terminalAutoStick?: TerminalAutoStickMode;
   renderVersion?: number | string;
   stateKey?: string;
+  stateAliases?: string[];
 };
 
 type UnknownObject = Record<string, unknown>;
@@ -290,7 +293,8 @@ const props = withDefaults(defineProps<Props>(), {
   visible: false,
   terminalAutoStick: 'smart',
   renderVersion: 0,
-  stateKey: ''
+  stateKey: '',
+  stateAliases: () => []
 });
 const emit = defineEmits<{
   (event: 'layout-change'): void;
@@ -325,6 +329,20 @@ const streamKey = (entryKey: string, stream: CommandStreamName): string => `${en
 
 const normalizeWorkflowStateKey = (value: unknown): string => String(value || '').trim();
 
+const normalizeWorkflowStateKeys = (
+  value: unknown,
+  aliases: unknown[] | null | undefined = []
+): string[] => {
+  const keys = [
+    normalizeWorkflowStateKey(value),
+    ...(Array.isArray(aliases) ? aliases.map(normalizeWorkflowStateKey) : [])
+  ].filter(Boolean);
+  return Array.from(new Set(keys));
+};
+
+const currentWorkflowStateKeys = (): string[] =>
+  normalizeWorkflowStateKeys(props.stateKey, props.stateAliases);
+
 const rememberWorkflowStateCacheOrder = (key: string): void => {
   if (!workflowStateCache.has(key)) return;
   const value = workflowStateCache.get(key);
@@ -338,26 +356,52 @@ const rememberWorkflowStateCacheOrder = (key: string): void => {
   }
 };
 
-const saveWorkflowPanelState = (): void => {
-  const key = normalizeWorkflowStateKey(props.stateKey);
-  if (!key) return;
-  workflowStateCache.set(key, {
+const saveWorkflowPanelStateForKeys = (keys: string[]): void => {
+  if (!keys.length) return;
+  const state = {
     collapsed: Boolean(workflowUserCollapsed.value),
     expandedKeys: Array.from(expandedKeys.value),
-    userCollapsedEntryKeys: Array.from(userCollapsedEntryKeys.value)
+    userCollapsedEntryKeys: Array.from(userCollapsedEntryKeys.value),
+    updatedAt: ++workflowStateCacheClock
+  };
+  keys.forEach((key) => {
+    workflowStateCache.set(key, state);
+    rememberWorkflowStateCacheOrder(key);
   });
-  rememberWorkflowStateCacheOrder(key);
 };
 
-const restoreWorkflowPanelState = (keyValue: unknown): void => {
-  const key = normalizeWorkflowStateKey(keyValue);
-  if (!key) return;
-  const cached = workflowStateCache.get(key);
-  if (!cached) return;
+const saveWorkflowPanelState = (): void => {
+  saveWorkflowPanelStateForKeys(currentWorkflowStateKeys());
+};
+
+const restoreWorkflowPanelState = (
+  keyValue: unknown,
+  aliases: unknown[] | null | undefined = props.stateAliases
+): boolean => {
+  const keys = normalizeWorkflowStateKeys(keyValue, aliases);
+  const validKeys = new Set(keys);
+  let cached: WorkflowPanelState | undefined;
+  let cachedOrder = -1;
+  let order = 0;
+  workflowStateCache.forEach((state, key) => {
+    order += 1;
+    if (!validKeys.has(key)) return;
+    const stateUpdatedAt = Number(state.updatedAt || 0);
+    const cachedUpdatedAt = Number(cached?.updatedAt || 0);
+    if (!cached || stateUpdatedAt > cachedUpdatedAt || (stateUpdatedAt === cachedUpdatedAt && order > cachedOrder)) {
+      cached = state;
+      cachedOrder = order;
+    }
+  });
+  if (!cached) return false;
   workflowUserCollapsed.value = Boolean(cached.collapsed);
   expandedKeys.value = new Set(cached.expandedKeys);
   userCollapsedEntryKeys.value = new Set(cached.userCollapsedEntryKeys);
-  rememberWorkflowStateCacheOrder(key);
+  keys.forEach((key) => {
+    workflowStateCache.set(key, cached);
+    rememberWorkflowStateCacheOrder(key);
+  });
+  return true;
 };
 
 const isNearBottom = (element: HTMLElement, threshold = 20): boolean =>
@@ -1041,7 +1085,44 @@ const isWriteFileTool = (toolName: string): boolean => {
   return normalized === 'write_file' || toolName.includes('写入文件');
 };
 
-const isCompactionTool = (toolName: string): boolean => toolName.trim() === '上下文压缩';
+const COMPACTION_EVENT_TYPES = new Set(['compaction', 'compaction_progress', 'compaction_notice']);
+const CONTEXT_CN = '\u4e0a\u4e0b\u6587';
+const COMPACTION_CN = '\u538b\u7f29';
+
+const normalizeToolText = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+
+const isCompactionToolName = (value: unknown): boolean => {
+  const text = normalizeToolText(value);
+  if (!text) return false;
+  if (
+    text === 'context_compaction' ||
+    text === 'context_compact' ||
+    text === 'compact_context' ||
+    text === 'compaction' ||
+    text === `${CONTEXT_CN}${COMPACTION_CN}`
+  ) {
+    return true;
+  }
+  if (text.includes('context') && (text.includes('compact') || text.includes('compaction'))) {
+    return true;
+  }
+  return text.includes(CONTEXT_CN) && text.includes(COMPACTION_CN);
+};
+
+const isCompactionEventItem = (item: WorkflowItem | null | undefined): boolean =>
+  Boolean(
+    item &&
+      (
+        COMPACTION_EVENT_TYPES.has(normalizeToolText(item.eventType ?? item.event ?? item.event_type)) ||
+        isCompactionToolName(item.toolName ?? item.tool ?? item.tool_name ?? item.name)
+      )
+  );
+
+const isCompactionEntry = (entry: RawEntry): boolean =>
+  isCompactionToolName(entry.toolName) ||
+  isCompactionEventItem(entry.callItem) ||
+  isCompactionEventItem(entry.outputItem) ||
+  isCompactionEventItem(entry.resultItem);
 
 const extractToolResultObject = (detailObject: UnknownObject | null): UnknownObject | null => {
   if (!detailObject) return null;
@@ -2219,8 +2300,8 @@ const isWebFetchTool = (toolName: string): boolean => {
   );
 };
 
-const resolveWorkflowToolIconClass = (toolName: string): string => {
-  if (isCompactionTool(toolName)) return 'fa-compress';
+const resolveWorkflowToolIconClass = (toolName: string, isCompaction = false): string => {
+  if (isCompaction || isCompactionToolName(toolName)) return 'fa-compress';
   const icon = resolveToolIconClass({
     name: toolName,
     kind: 'tool',
@@ -3532,7 +3613,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
   const status = resolveEntryStatus(entry, commandSession);
-  const compactionDisplay = isCompactionTool(entry.toolName)
+  const isCompaction = isCompactionEntry(entry);
+  const compactionDisplay = isCompaction
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
   const compactionInstanceLabel = compactionDisplay
@@ -3573,8 +3655,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     summaryBrief: summary.summaryBrief,
     summaryTitle,
     toolCallRawTitle: buildToolCallDebugText(entry),
-    toolIconClass: resolveWorkflowToolIconClass(entry.toolName),
-    isCompaction: Boolean(compactionDisplay),
+    toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
+    isCompaction,
     status,
     contextTokensLabel,
     contextTokensSource: contextTokenResolution.source,
@@ -3667,18 +3749,17 @@ const entries = computed<ToolEntryView[]>(() => {
 });
 
 watch(
-  () => props.stateKey,
-  (value, oldValue) => {
-    const oldKey = normalizeWorkflowStateKey(oldValue);
-    if (oldKey) {
-      workflowStateCache.set(oldKey, {
-        collapsed: Boolean(workflowUserCollapsed.value),
-        expandedKeys: Array.from(expandedKeys.value),
-        userCollapsedEntryKeys: Array.from(userCollapsedEntryKeys.value)
-      });
-      rememberWorkflowStateCacheOrder(oldKey);
-    }
-    restoreWorkflowPanelState(value);
+  () => [
+    normalizeWorkflowStateKey(props.stateKey),
+    ...normalizeWorkflowStateKeys('', props.stateAliases)
+  ].join('\u0001'),
+  (_value, oldValue) => {
+    const oldKeys = String(oldValue || '')
+      .split('\u0001')
+      .map(normalizeWorkflowStateKey)
+      .filter(Boolean);
+    saveWorkflowPanelStateForKeys(oldKeys);
+    restoreWorkflowPanelState(props.stateKey, props.stateAliases);
     void nextTick(() => {
       syncWorkflowOpenState();
       if (workflowOpen.value) {
@@ -3906,7 +3987,7 @@ const buildPendingEntryView = (
     summaryBrief: '',
     summaryTitle,
     toolCallRawTitle: summaryTitle,
-    toolIconClass: resolveWorkflowToolIconClass(toolName),
+    toolIconClass: resolveWorkflowToolIconClass(toolName, isCompaction),
     isCompaction,
     status: 'loading',
     contextTokensLabel: '',
@@ -3982,6 +4063,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  saveWorkflowPanelState();
   clearToolCallDebugHintHideTimer();
   hideToolCallDebugHint();
   entryDetailRefMap.clear();

@@ -2208,14 +2208,12 @@ button.messenger-chat-header-model {
   cursor: pointer;
   transition:
     transform var(--messenger-motion-fast) var(--messenger-ease-standard),
-    box-shadow var(--messenger-motion-fast) var(--messenger-ease-standard),
-    filter var(--messenger-motion-fast) var(--messenger-ease-standard);
+    box-shadow var(--messenger-motion-fast) var(--messenger-ease-standard);
 }
 
 .messenger-message-avatar--clickable:hover {
   transform: translateY(-1px);
   box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.22);
-  filter: saturate(1.06);
 }
 
 .messenger-message-avatar--clickable:focus-visible {
@@ -2499,16 +2497,19 @@ button.messenger-chat-header-model {
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  transition: opacity 0.12s ease, border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
-.messenger-message-main:hover .messenger-message-footer-copy,
+.messenger-message:hover .messenger-message-footer-copy,
+.messenger-message:focus-within .messenger-message-footer-copy,
 .messenger-message-footer-copy:focus-visible {
-  opacity: 1;
+  opacity: 0.86;
   pointer-events: auto;
 }
 
-.messenger-message-footer-copy:hover {
+.messenger-message-footer-copy:hover,
+.messenger-message-footer-copy:focus-visible {
+  opacity: 1;
   border-color: rgba(var(--ui-accent-rgb), 0.45);
   background: var(--ui-accent-soft-5);
   color: var(--hula-accent);
@@ -2524,8 +2525,6 @@ button.messenger-chat-header-model {
 
 .messenger-message-footer-copy:disabled {
   cursor: wait;
-  opacity: 0.72;
-  pointer-events: auto;
 }
 
 .messenger-message-feedback-actions {
@@ -2540,8 +2539,6 @@ button.messenger-chat-header-model {
 }
 
 .messenger-message-feedback-btn:disabled {
-  opacity: 0.56;
-  pointer-events: auto;
   cursor: not-allowed;
 }
 
@@ -2567,16 +2564,17 @@ button.messenger-chat-header-model {
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+  transition: opacity 0.12s ease, border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
-.messenger-message-bubble:hover .messenger-bubble-copy-btn,
 .messenger-bubble-copy-btn:focus-visible {
-  opacity: 1;
+  opacity: 0.86;
   pointer-events: auto;
 }
 
-.messenger-bubble-copy-btn:hover {
+.messenger-bubble-copy-btn:hover,
+.messenger-bubble-copy-btn:focus-visible {
+  opacity: 1;
   border-color: rgba(var(--ui-accent-rgb), 0.45);
   background: var(--ui-accent-soft-5);
   color: var(--hula-accent);

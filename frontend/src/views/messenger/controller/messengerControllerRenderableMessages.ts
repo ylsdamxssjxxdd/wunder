@@ -35,6 +35,7 @@ import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelect
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { buildMessageVirtualWindow, resolveVirtualOffsetTop } from '@/views/messenger/messageVirtualWindow';
+import type { MessageConversationKind } from '@/views/messenger/messageConversationRetention';
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
@@ -182,7 +183,7 @@ import {
 } from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
 import {
   buildChatRuntimeRenderableMessages,
@@ -673,7 +674,13 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       lastAgentRenderSourceSignature = signature;
       chatDebugLog('chat.runtime.render', event, {
           ...payload,
-          messages: buildMessageIdentityDebugList(renderable.map((item) => item.message as Record<string, unknown>))
+          ...(isChatDebugVerboseEnabled()
+              ? {
+                  messages: buildMessageIdentityDebugList(
+                      renderable.map((item) => item.message as Record<string, unknown>)
+                  )
+              }
+              : {})
       });
   };
 
@@ -835,21 +842,30 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
       return String(latest?.key || '').trim();
   });
 
-  ctx.MESSAGE_VIRTUAL_OVERSCAN = 10;
+  ctx.MESSAGE_VIRTUAL_OVERSCAN = 4;
 
-  ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT = 8;
+  ctx.MESSAGE_VIRTUAL_TAIL_PIN_COUNT = 4;
+
+  ctx.retainedMessageRenderKind = computed<MessageConversationKind>(() => {
+      const activeKind = String(ctx.resolvedMessageConversationKind?.value || '') as MessageConversationKind;
+      if (activeKind === 'agent' || activeKind === 'world') {
+          return activeKind;
+      }
+      if (ctx.isAgentConversationActive?.value) {
+          return 'agent';
+      }
+      if (String(ctx.userWorldStore.activeConversationId || '').trim() ||
+          (Array.isArray(ctx.userWorldStore.activeMessages) && ctx.userWorldStore.activeMessages.length > 0)) {
+          return 'world';
+      }
+      return '';
+  });
 
   ctx.shouldVirtualizeMessages = computed(() => {
-      if (ctx.sessionHub.activeSection !== 'messages') {
-          return false;
-      }
-      if (ctx.showChatSettingsView.value) {
-          return false;
-      }
       if (ctx.isAgentConversationActive.value) {
           return ctx.agentRenderableMessages.value.length > 12;
       }
-      if (ctx.isWorldConversationActive.value) {
+      if (ctx.retainedMessageRenderKind?.value === 'world' || ctx.isWorldConversationActive.value) {
           return ctx.worldRenderableMessages.value.length > 12;
       }
       return false;
@@ -944,7 +960,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.worldVirtualWindow = computed(() => buildMessageVirtualWindow({
       items: ctx.worldRenderableMessages.value,
-      enabled: ctx.shouldVirtualizeMessages.value && ctx.isWorldConversationActive.value,
+      enabled: ctx.shouldVirtualizeMessages.value &&
+          (ctx.retainedMessageRenderKind?.value === 'world' || ctx.isWorldConversationActive.value),
       scrollTop: ctx.messageVirtualScrollTop.value,
       viewportHeight: ctx.messageVirtualViewportHeight.value,
       overscan: ctx.MESSAGE_VIRTUAL_OVERSCAN,

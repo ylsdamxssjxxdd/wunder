@@ -65,7 +65,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
   isCommandStreamRuntimeEvent,
   isCommandStreamVisualizationEnabled
@@ -1414,7 +1414,9 @@ export function settleTerminalSessionRuntime(
     runtime: beforeRuntime,
     streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
     latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
-    messages: buildMessageIdentityDebugList(targetMessages)
+    ...(isChatDebugVerboseEnabled()
+      ? { messages: buildMessageIdentityDebugList(targetMessages) }
+      : {})
   });
   const settledTerminalArtifacts = settleTerminalAssistantArtifacts(targetMessages, {
     failed: options.failed === true || runtime.threadStatus === 'system_error'
@@ -1428,7 +1430,9 @@ export function settleTerminalSessionRuntime(
     streamingAssistantCount: countAssistantStreamingMessages(targetMessages),
     latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(targetMessages),
     settledTerminalArtifacts,
-    messages: buildMessageIdentityDebugList(targetMessages)
+    ...(isChatDebugVerboseEnabled()
+      ? { messages: buildMessageIdentityDebugList(targetMessages) }
+      : {})
   });
   if (settledTerminalArtifacts) {
     notifySessionSnapshot(store, targetId, targetMessages, true);
@@ -1472,9 +1476,9 @@ export function settleUserStoppedSessionRuntime(store, sessionId) {
       Array.isArray(store?.messages) ? store.messages[store.messages.length - 1] : null,
       Array.isArray(store?.messages) ? store.messages.length - 1 : -1
     ),
-    messages: buildMessageIdentityDebugList(
-      targetMessages
-    )
+    ...(isChatDebugVerboseEnabled()
+      ? { messages: buildMessageIdentityDebugList(targetMessages) }
+      : {})
   });
   return true;
 }
@@ -1997,7 +2001,7 @@ export const inspectChatRuntimeShadow = (
   messages = null,
   options: { phase?: string; legacyBusy?: boolean | null } = {}
 ) => {
-  if (!isChatDebugEnabled()) return null;
+  if (!isChatDebugEnabled() || !isChatDebugVerboseEnabled()) return null;
   const key = resolveSessionKey(sessionId);
   const projection = store?.runtimeProjection as ChatRuntimeProjection | undefined;
   if (!key || !projection) return null;
@@ -2352,6 +2356,23 @@ export const applyCanonicalSessionEventsSnapshot = (
   });
   pruneDesktopChatMemoryForStore(store);
   return events;
+};
+
+export const shouldApplySessionEventsSnapshotToProjection = (
+  payload,
+  runtime = null
+): boolean => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+  if (payload.running === true) {
+    return true;
+  }
+  if (hasRuntimeControllers(runtime)) {
+    return true;
+  }
+  const runtimeStatus = normalizeThreadRuntimeStatus(runtime?.threadStatus);
+  return isThreadRuntimeBusy(runtimeStatus);
 };
 
 export const resolveCanonicalSessionTranscript = (sessionDetail, fallbackMessages = null) => {

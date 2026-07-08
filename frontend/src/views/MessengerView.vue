@@ -981,7 +981,7 @@
         >
           <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
           <div
-            v-else-if="!hasRetainedMessageConversationContext && resolvedMessageConversationKind === ''"
+            v-else-if="!hasRetainedMessageConversationContext && retainedMessageRenderKind === ''"
             class="messenger-chat-empty-state"
           >
             <div class="messenger-chat-empty-icon">
@@ -990,7 +990,7 @@
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
           <div
-            v-else-if="resolvedMessageConversationKind === ''"
+            v-else-if="retainedMessageRenderKind === ''"
             class="messenger-chat-empty-state"
           >
             <div class="messenger-chat-empty-icon">
@@ -999,7 +999,7 @@
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
 
-          <div v-show="resolvedMessageConversationKind === 'agent'">
+          <div v-show="retainedMessageRenderKind === 'agent'">
             <div
               v-if="agentVirtualTopSpacer"
               class="messenger-message-virtual-spacer"
@@ -1110,7 +1110,9 @@
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
                     :render-version="buildMessageWorkflowRenderVersion(item.message)"
-                    :state-key="`${sessionHub.activeConversationKey}:workflow:${item.key}`"
+                    :state-key="`${sessionHub.activeConversationKey}:workflow:${resolveMessageWorkflowStateKey(item.message, item.sourceIndex)}`"
+                    :state-aliases="resolveMessageWorkflowStateAliases(item.message, item.sourceIndex, item.key)
+                      .map((key) => `${sessionHub.activeConversationKey}:workflow:${key}`)"
                     :visible="
                       Boolean(
                         item.message.workflowStreaming ||
@@ -1366,7 +1368,7 @@
             ></div>
           </div>
 
-          <div v-show="resolvedMessageConversationKind === 'world'">
+          <div v-show="retainedMessageRenderKind === 'world'">
             <div
               v-if="worldVirtualTopSpacer"
               class="messenger-message-virtual-spacer"
@@ -1516,7 +1518,7 @@
             ></div>
           </div>
           <div
-            v-show="resolvedMessageConversationKind !== 'agent' && resolvedMessageConversationKind !== 'world'"
+            v-show="retainedMessageRenderKind !== 'agent' && retainedMessageRenderKind !== 'world'"
             class="messenger-chat-empty"
           >
             {{ t('messenger.empty.selectConversation') }}
@@ -2762,6 +2764,8 @@ const resolveAgentIconForDisplay = controller.resolveAgentIconForDisplay;
 const resolveAgentInquirySelectionRoutes = controller.resolveAgentInquirySelectionRoutes;
 const resolveAgentMarkdownWorkspacePath = controller.resolveAgentMarkdownWorkspacePath;
 const resolveAgentMessageKey = controller.resolveAgentMessageKey;
+const resolveMessageWorkflowStateKey = controller.resolveMessageWorkflowStateKey;
+const resolveMessageWorkflowStateAliases = controller.resolveMessageWorkflowStateAliases;
 const resolveAgentOverviewAbilityCounts = controller.resolveAgentOverviewAbilityCounts;
 const resolveAgentRuntimeState = controller.resolveAgentRuntimeState;
 const resolveAgentSelectionAfterRemoval = controller.resolveAgentSelectionAfterRemoval;
@@ -2797,6 +2801,7 @@ const resolveHttpStatus = controller.resolveHttpStatus;
 const resolveLatestCompactionSnapshot = controller.resolveLatestCompactionSnapshot;
 const resolveLatestConversationMessageTimestamp = controller.resolveLatestConversationMessageTimestamp;
 const resolveLeftNavButtonLabel = controller.resolveLeftNavButtonLabel;
+const retainedMessageRenderKind = controller.retainedMessageRenderKind;
 const handleActivateSettingsPanelFromMiddlePane = (value) => {
   const normalized = String(value || '').trim();
   if (normalized.startsWith('desktop-models:add')) {

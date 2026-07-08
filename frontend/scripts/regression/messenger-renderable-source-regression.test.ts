@@ -48,15 +48,31 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(workflowSource.includes(':key="`workflow:${item.key}`"'));
   assert.ok(!workflowSource.includes(':key="`workflow:${item.key}:${buildMessageWorkflowRenderVersion'));
   assert.ok(workflowSource.includes(':render-version="buildMessageWorkflowRenderVersion(item.message)"'));
-  assert.ok(workflowSource.includes(':state-key="`${sessionHub.activeConversationKey}:workflow:${item.key}`"'));
+  assert.ok(workflowSource.includes(':state-key="`${sessionHub.activeConversationKey}:workflow:${resolveMessageWorkflowStateKey(item.message, item.sourceIndex)}`"'));
+  assert.ok(workflowSource.includes(':state-aliases="resolveMessageWorkflowStateAliases(item.message, item.sourceIndex, item.key)'));
+  assert.ok(workflowSource.includes('.map((key) => `${sessionHub.activeConversationKey}:workflow:${key}`)"'));
   assert.ok(workflowComponent.includes('<script lang="ts">'));
   assert.ok(workflowComponent.includes('const workflowStateCache = new Map<string, WorkflowPanelState>();'));
-  assert.ok(workflowComponent.includes('restoreWorkflowPanelState(value);'));
+  assert.ok(workflowComponent.includes('let workflowStateCacheClock = 0;'));
+  assert.ok(workflowComponent.includes('stateAliases?: string[];'));
+  assert.ok(workflowComponent.includes('updatedAt: ++workflowStateCacheClock'));
+  assert.ok(workflowComponent.includes('normalizeWorkflowStateKeys(props.stateKey, props.stateAliases)'));
+  assert.ok(workflowComponent.includes('restoreWorkflowPanelState(props.stateKey, props.stateAliases);'));
+  assert.ok(workflowComponent.includes('stateUpdatedAt > cachedUpdatedAt'));
+  assert.ok(workflowComponent.includes('workflowStateCache.set(key, cached);'));
+  assert.ok(workflowComponent.includes('saveWorkflowPanelState();\n  clearToolCallDebugHintHideTimer();'));
   assert.ok(!workflowComponent.includes('if (liveKey && !nextUserCollapsed.has(liveKey))'));
   assert.ok(workflowComponent.includes('if (validKeys.has(key)) nextExpanded.add(key);'));
   assert.ok(workflowComponent.includes('if (!workflowOpen.value) return;'));
 
   const routingPreferences = readSource('src/views/messenger/controller/messengerControllerMessageRoutingPreferences.ts');
+  assert.ok(routingPreferences.includes('ctx.resolveMessageWorkflowStateKey ='));
+  assert.ok(routingPreferences.includes('message?.__runtime_message_id'));
+  assert.ok(routingPreferences.includes("message?.__runtime_model_turn_id"));
+  assert.ok(routingPreferences.includes("message?.model_turn_id"));
+  assert.ok(routingPreferences.includes('ctx.resolveMessageWorkflowStateAliases ='));
+  assert.ok(routingPreferences.includes('`workflow-model-turn:${modelTurnId}`'));
+  assert.ok(routingPreferences.includes('`workflow-first-item:${firstWorkflowRef}`'));
   assert.ok(routingPreferences.includes('toolCallRawDetail || item?.tool_call_raw_detail'));
   assert.ok(routingPreferences.includes('context_occupancy_tokens'));
 });
@@ -142,6 +158,42 @@ test('streaming projection changes only refresh the latest message layout', () =
   assert.ok(statsEnd > statsStart);
   const statsSource = renderableMessages.slice(statsStart, statsEnd);
   assert.ok(!statsSource.includes('ctx.chatStore.runtimeProjectionVersion'));
+});
+
+test('message panel keeps actions quiet and preserves virtual rendering outside chat section', () => {
+  const messengerView = readSource('src/views/MessengerView.vue');
+  const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
+  const viewportRuntime = readSource('src/views/messenger/messageViewportRuntime.ts');
+  const lifecycleReactive = readSource('src/views/messenger/controller/messengerControllerLifecycleReactiveEffects.ts');
+  const styles = readSource('src/styles/messenger.css');
+
+  assert.ok(messengerView.includes('v-show="retainedMessageRenderKind === \'agent\'"'));
+  assert.ok(messengerView.includes('v-show="retainedMessageRenderKind === \'world\'"'));
+  assert.ok(messengerView.includes('const retainedMessageRenderKind = controller.retainedMessageRenderKind;'));
+  assert.ok(renderableMessages.includes('ctx.retainedMessageRenderKind = computed<MessageConversationKind>(() => {'));
+  assert.ok(renderableMessages.includes("ctx.retainedMessageRenderKind?.value === 'world'"));
+
+  const virtualizationStart = renderableMessages.indexOf('ctx.shouldVirtualizeMessages = computed(() => {');
+  assert.ok(virtualizationStart >= 0);
+  const virtualizationEnd = renderableMessages.indexOf('ctx.resolveVirtualMessageHeight =', virtualizationStart);
+  assert.ok(virtualizationEnd > virtualizationStart);
+  const virtualizationSource = renderableMessages.slice(virtualizationStart, virtualizationEnd);
+  assert.ok(!virtualizationSource.includes("ctx.sessionHub.activeSection !== 'messages'"));
+  assert.ok(!virtualizationSource.includes('ctx.showChatSettingsView.value'));
+
+  assert.ok(viewportRuntime.includes('restoreConversationScroll = async (restoreOptions: { deferMeasure?: boolean } = {})'));
+  assert.ok(viewportRuntime.includes("scheduleDeferredVisibleMeasure('restore-conversation-scroll')"));
+  assert.ok(lifecycleReactive.includes('ctx.restoreConversationScroll?.({ deferMeasure: true })'));
+
+  const actionButtonStart = styles.indexOf('.messenger-message-footer-copy {');
+  assert.ok(actionButtonStart >= 0);
+  const actionButtonEnd = styles.indexOf('.messenger-message-footer-copy:hover', actionButtonStart);
+  assert.ok(actionButtonEnd > actionButtonStart);
+  const actionButtonSource = styles.slice(actionButtonStart, actionButtonEnd);
+  assert.ok(actionButtonSource.includes('opacity: 0;'));
+  assert.ok(actionButtonSource.includes('pointer-events: none;'));
+  assert.ok(styles.includes('.messenger-message:hover .messenger-message-footer-copy'));
+  assert.ok(styles.includes('.messenger-message:focus-within .messenger-message-footer-copy'));
 });
 
 test('messenger display-derived agent state reads the renderable source instead of the legacy message array', () => {
@@ -270,7 +322,8 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(markdownBody.includes('resolveRuntimeContentSubscriptionMessageIds'));
   assert.ok(markdownBody.includes('props.runtimeUserTurnId'));
   assert.ok(markdownBody.includes('props.runtimeModelTurnId'));
-  assert.ok(markdownBody.includes('runtimeProjectionVersion.value'));
+  assert.ok(!markdownBody.includes('runtimeProjectionVersion'));
+  assert.ok(markdownBody.includes('runtimeContentVersion.value'));
   assert.ok(markdownBody.includes('const turnMessage = resolveRuntimeProjectedMessageByTurn(projection, sessionId);'));
   assert.ok(markdownBody.includes('runtimeProjectionContentVersionByMessage?.[messageId]'));
   assert.ok(markdownBody.includes('const resolveRuntimeProjectedMessage = () => {'));
@@ -278,6 +331,10 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(markdownBody.includes('const projected = resolveRuntimeProjectedMessage();'));
   assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'message-body-stream-render'"));
   assert.ok(markdownBody.includes('const isStreamingTextPreview = computed(() =>'));
+  assert.ok(markdownBody.includes('ref="plainTextRef"'));
+  assert.ok(markdownBody.includes('syncPlainTextDom(source);'));
+  assert.ok(markdownBody.includes('if (!isChatDebugEnabled() || !props.streaming'));
+  assert.ok(!markdownBody.includes('{{ visiblePlainText }}'));
   assert.ok(markdownBody.includes('STREAMING_TEXT_PREVIEW_MAX_CHARS'));
   assert.ok(markdownBody.includes('props.streaming === true'));
   assert.ok(markdownBody.includes('? isStreamingTextPreview.value'));
@@ -321,6 +378,7 @@ test('streaming text performance breadcrumbs are available behind debug and perf
   assert.ok(markdownBody.includes("chatPerf.recordDuration('chat_stream_plain_text_slow_flush'"));
   assert.ok(markdownBody.includes("chatPerf.recordDuration('chat_stream_markdown_slow_render'"));
   assert.ok(markdownBody.includes('visiblePlainText.value = source;'));
+  assert.ok(markdownBody.includes('plainTextRef.value'));
   assert.ok(markdownBody.includes('traceStreamingRenderSource(source, plainTextRender);'));
   assert.ok(markdownBody.includes('PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS'));
   assert.ok(markdownBody.includes('lightweight'));
@@ -339,6 +397,81 @@ test('streaming text performance breadcrumbs are available behind debug and perf
   assert.ok(companionSprite.includes('this keyframe must stay unscoped'));
   assert.ok(companionSprite.indexOf('@keyframes companion-sprite-step') > companionSprite.indexOf('</style>'));
   assert.ok(!companionSprite.includes('window.setInterval'));
+});
+
+test('normal chat debug avoids full-history work on streaming hot paths', () => {
+  const runtimeState = readSource('src/stores/chatRuntimeState.ts');
+  const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
+  const watcher = readSource('src/stores/chatWatcher.ts');
+  const sendActions = readSource('src/stores/chatSendActions.ts');
+  const stopResume = readSource('src/stores/chatStopResumeActions.ts');
+  const sessionOpen = readSource('src/stores/chatSessionOpenLoadActions.ts');
+
+  assert.ok(runtimeState.includes('if (!isChatDebugEnabled() || !isChatDebugVerboseEnabled()) return null;'));
+  assert.ok(runtimeState.includes('isChatDebugVerboseEnabled()'));
+  assert.ok(renderableMessages.includes('isChatDebugVerboseEnabled()'));
+  assert.ok(watcher.includes('isChatDebugVerboseEnabled()'));
+  assert.ok(sendActions.includes('isChatDebugVerboseEnabled()'));
+  assert.ok(stopResume.includes('isChatDebugVerboseEnabled()'));
+  assert.ok(sessionOpen.includes('isChatDebugVerboseEnabled()'));
+
+  const shadowStart = runtimeState.indexOf('export const inspectChatRuntimeShadow =');
+  assert.ok(shadowStart >= 0);
+  const shadowEnd = runtimeState.indexOf('export const applyCanonicalStreamRuntimeEvent =', shadowStart);
+  assert.ok(shadowEnd > shadowStart);
+  const shadowSource = runtimeState.slice(shadowStart, shadowEnd);
+  requireInOrder(shadowSource, [
+    'if (!isChatDebugEnabled() || !isChatDebugVerboseEnabled()) return null;',
+    'const report = compareChatRuntimeShadow({',
+    "chatDebugLog('chat.runtime.shadow', 'projection-legacy-drift'"
+  ]);
+
+  const renderLogStart = renderableMessages.indexOf('const logAgentRenderSource =');
+  assert.ok(renderLogStart >= 0);
+  const renderLogEnd = renderableMessages.indexOf('ctx.agentRenderableMessages = computed', renderLogStart);
+  assert.ok(renderLogEnd > renderLogStart);
+  const renderLogSource = renderableMessages.slice(renderLogStart, renderLogEnd);
+  assert.ok(renderLogSource.includes('...(isChatDebugVerboseEnabled()'));
+  assert.ok(renderLogSource.includes('messages: buildMessageIdentityDebugList('));
+});
+
+test('chat composer debounces draft persistence during typing', () => {
+  const chatComposer = readSource('src/components/chat/ChatComposer.vue');
+
+  assert.ok(chatComposer.includes('const DRAFT_PERSIST_DEBOUNCE_MS = 240;'));
+  assert.ok(chatComposer.includes('let draftPersistTimer: ReturnType<typeof setTimeout> | null = null;'));
+  assert.ok(chatComposer.includes('const schedulePersistDraftState = () => {'));
+  assert.ok(chatComposer.includes('flushPersistDraftState(String(previousValue || \'\'));'));
+  assert.ok(chatComposer.includes('flushPersistDraftState();\n  stopWorldComposerResize();'));
+
+  const inputWatchStart = chatComposer.indexOf('watch(\n  () => inputText.value');
+  assert.ok(inputWatchStart >= 0);
+  const inputWatchEnd = chatComposer.indexOf('watch(\n  () => attachments.value', inputWatchStart);
+  assert.ok(inputWatchEnd > inputWatchStart);
+  const inputWatchSource = chatComposer.slice(inputWatchStart, inputWatchEnd);
+  assert.ok(inputWatchSource.includes('schedulePersistDraftState();'));
+  assert.ok(!inputWatchSource.includes('persistDraftState();'));
+});
+
+test('idle session detail hydration skips event projection replay and avoids bubble-wide hover churn', () => {
+  const sessionOpen = readSource('src/stores/chatSessionOpenLoadActions.ts');
+  const cacheActions = readSource('src/stores/chatCacheActions.ts');
+  const runtimeState = readSource('src/stores/chatRuntimeState.ts');
+  const styles = readSource('src/styles/messenger.css');
+
+  assert.ok(runtimeState.includes('export const shouldApplySessionEventsSnapshotToProjection ='));
+  assert.ok(runtimeState.includes('payload.running === true'));
+  assert.ok(runtimeState.includes('hasRuntimeControllers(runtime)'));
+  assert.ok(sessionOpen.includes('shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)'));
+  assert.ok(sessionOpen.includes("events-snapshot-skip-idle-transcript"));
+  assert.ok(cacheActions.includes('shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)'));
+  assert.ok(cacheActions.includes("events-snapshot-skip-idle-transcript"));
+
+  assert.ok(!styles.includes('.messenger-message-main:hover .messenger-message-footer-copy'));
+  assert.ok(!styles.includes('.messenger-message-bubble:hover .messenger-bubble-copy-btn'));
+  assert.ok(!styles.includes('filter: saturate(1.06)'));
+  assert.ok(styles.includes('.messenger-bubble-copy-btn:hover,\n.messenger-bubble-copy-btn:focus-visible'));
+  assert.ok(styles.includes('.messenger-message-footer-copy:hover,\n.messenger-message-footer-copy:focus-visible'));
 });
 
 test('store visibleMessages getter materializes projection without legacy raw fallback', () => {

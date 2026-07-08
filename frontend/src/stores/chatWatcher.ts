@@ -64,7 +64,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import { buildMessageIdentityDebugList } from '@/utils/chatMessageDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { resolveAccessToken } from '@/api/requestAuth';
@@ -158,9 +158,10 @@ export const startSessionWatcher = (store, sessionId) => {
   const hasProjectionSession = Boolean(store?.runtimeProjection?.sessions?.[key]);
   const projectionLastEventId = selectRuntimeLastAppliedEventId(store?.runtimeProjection, key);
   const runtimeLastEventId = getRuntimeLastEventId(runtime);
+  const runtimeRemoteLastEventId = normalizeStreamEventId(runtime?.remoteLastEventId) || 0;
   let lastEventId = hasProjectionSession
-    ? projectionLastEventId
-    : Math.max(runtimeLastEventId, tailEventId);
+    ? Math.max(projectionLastEventId, runtimeLastEventId, runtimeRemoteLastEventId, tailEventId)
+    : Math.max(runtimeLastEventId, runtimeRemoteLastEventId, tailEventId);
 
   const refreshLastAppliedEventId = () => {
     const appliedEventId = selectRuntimeLastAppliedEventId(store?.runtimeProjection, key);
@@ -346,7 +347,9 @@ export const startSessionWatcher = (store, sessionId) => {
         runtimeBefore: buildRuntimeDebugSnapshot(runtime),
         streamingAssistantCount: countAssistantStreamingMessages(sessionMessagesRef),
         latestAssistant: buildLatestAssistantRuntimeDebugSnapshot(sessionMessagesRef),
-        messages: buildMessageIdentityDebugList(sessionMessagesRef)
+        ...(isChatDebugVerboseEnabled()
+          ? { messages: buildMessageIdentityDebugList(sessionMessagesRef) }
+          : {})
       });
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
       return;

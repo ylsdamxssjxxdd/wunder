@@ -1,12 +1,13 @@
 <template>
   <div
     v-if="usePlainTextRender"
+    ref="plainTextRef"
     class="markdown-body message-markdown-body"
     :class="{
       'message-markdown-body--streaming-text': isStreamingTextPreview,
       'message-markdown-body--plain-text': !isStreamingTextPreview
     }"
-  >{{ visiblePlainText }}</div>
+  ></div>
   <div
     v-else
     class="markdown-body message-markdown-body"
@@ -15,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRaw, watch } from 'vue';
 import { renderMarkdown } from '@/utils/markdown';
 import { t } from '@/i18n';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
@@ -29,7 +30,7 @@ import type {
   ChatRuntimeProjection
 } from '@/realtime/chat/chatRuntimeTypes';
 import { useChatStore } from '@/stores/chat';
-import { chatDebugLog } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
 
 type MessageRecord = Record<string, unknown>;
@@ -82,9 +83,11 @@ const chatStore = useChatStore();
 
 const visibleHtml = ref('');
 const visiblePlainText = ref('');
+const plainTextRef = ref<HTMLElement | null>(null);
 let renderTimer: number | null = null;
 let plainTextLayoutTimer: number | null = null;
 let plainTextFlushTimer: number | null = null;
+let plainTextDomSyncPending = false;
 let pendingPlainText = '';
 let pendingPlainTextScheduledAt = 0;
 let lastPlainTextLayoutAt = 0;
@@ -97,9 +100,7 @@ const STREAMING_TEXT_PREVIEW_MAX_CHARS = 60000;
 let lastStreamRenderTraceAt = 0;
 let lastStreamRenderTraceSignature = '';
 
-const runtimeProjectionVersion = computed(() => Number(chatStore.runtimeProjectionVersion || 0));
 const runtimeContentVersion = computed(() => {
-  const _projectionVersion = runtimeProjectionVersion.value;
   const messageIds = resolveRuntimeContentSubscriptionMessageIds();
   if (messageIds.length === 0) return 0;
   return messageIds.reduce(
@@ -178,7 +179,6 @@ const resolveRuntimeProjectedMessage = () => {
   return turnMessage || explicitMessage;
 };
 const displayMessage = computed<MessageRecord>(() => {
-  const _projectionVersion = runtimeProjectionVersion.value;
   const _contentVersion = runtimeContentVersion.value;
   const projected = resolveRuntimeProjectedMessage();
   if (!projected) {
@@ -199,7 +199,6 @@ const displayMessage = computed<MessageRecord>(() => {
   return base;
 });
 const normalizedContent = computed(() => {
-  const _projectionVersion = runtimeProjectionVersion.value;
   const _contentVersion = runtimeContentVersion.value;
   const projected = resolveRuntimeProjectedMessage();
   return props.assistantDisplay
@@ -259,13 +258,37 @@ const clearPlainTextFlushTimer = () => {
   pendingPlainTextScheduledAt = 0;
 };
 
+const syncPlainTextDom = (source: string) => {
+  const el = plainTextRef.value;
+  if (el) {
+    if (el.textContent !== source) {
+      el.textContent = source;
+    }
+    return;
+  }
+  if (plainTextDomSyncPending) return;
+  plainTextDomSyncPending = true;
+  void nextTick(() => {
+    plainTextDomSyncPending = false;
+    const target = plainTextRef.value;
+    if (target && target.textContent !== visiblePlainText.value) {
+      target.textContent = visiblePlainText.value;
+    }
+  });
+};
+
+const setVisiblePlainText = (source: string) => {
+  visiblePlainText.value = source;
+  syncPlainTextDom(source);
+};
+
 const flushPendingPlainText = () => {
   const source = pendingPlainText;
   const scheduledAt = pendingPlainTextScheduledAt;
   plainTextFlushTimer = null;
   pendingPlainText = '';
   pendingPlainTextScheduledAt = 0;
-  visiblePlainText.value = source;
+  setVisiblePlainText(source);
   lastPlainTextFlushAt = Date.now();
   const latencyMs = scheduledAt > 0 ? lastPlainTextFlushAt - scheduledAt : 0;
   if (latencyMs >= STREAM_RENDER_DEBUG_SLOW_MS) {
@@ -287,7 +310,7 @@ const flushPendingPlainText = () => {
 const updateVisiblePlainText = (source: string, immediate = false) => {
   if (immediate || !props.streaming || typeof window === 'undefined') {
     clearPlainTextFlushTimer();
-    visiblePlainText.value = source;
+    setVisiblePlainText(source);
     lastPlainTextFlushAt = Date.now();
     return;
   }
@@ -365,7 +388,7 @@ const renderNow = () => {
     updateVisiblePlainText(source, !streamingTextPreview);
   } else {
     clearPlainTextFlushTimer();
-    visiblePlainText.value = '';
+    setVisiblePlainText('');
   }
   if (!source) {
     updateVisiblePlainText('', true);
@@ -421,7 +444,7 @@ const renderNow = () => {
 };
 
 const traceStreamingRenderSource = (source: string, plainStreaming: boolean) => {
-  if (!props.streaming || !source || typeof window === 'undefined') return;
+  if (!isChatDebugEnabled() || !props.streaming || !source || typeof window === 'undefined') return;
   const now = Date.now();
   const runtimeMessage = resolveRuntimeProjectedMessage();
   const signature = [
@@ -455,7 +478,7 @@ const scheduleRender = () => {
     updateVisiblePlainText(source, !streamingTextPreview);
   } else {
     clearPlainTextFlushTimer();
-    visiblePlainText.value = '';
+    setVisiblePlainText('');
   }
   if (!shouldThrottle.value || typeof window === 'undefined') {
     renderNow();
@@ -498,7 +521,6 @@ watch(
     props.resolveWorkspacePath,
     props.workspacePathContext,
     props.assistantDisplay,
-    runtimeProjectionVersion.value,
     runtimeContentVersion.value
   ],
   () => scheduleRender(),

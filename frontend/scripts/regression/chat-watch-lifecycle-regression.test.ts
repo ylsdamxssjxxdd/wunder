@@ -243,6 +243,8 @@ test('watcher keeps projection events flowing while send or resume controllers e
   const canonicalIndex = watcherSource.indexOf('applyCanonicalStreamRuntimeEvent(');
   assert.ok(canonicalIndex >= 0);
   assert.ok(watcherSource.includes('selectRuntimeLastAppliedEventId'));
+  assert.ok(watcherSource.includes('const runtimeRemoteLastEventId = normalizeStreamEventId(runtime?.remoteLastEventId) || 0;'));
+  assert.ok(watcherSource.includes('Math.max(projectionLastEventId, runtimeLastEventId, runtimeRemoteLastEventId, tailEventId)'));
   assert.ok(watcherSource.includes('refreshLastAppliedEventId();'));
   assert.equal(watcherSource.includes('lastEventId = Math.max(lastEventId, normalizedEventId)'), false);
   assert.equal(watcherSource.includes('updateRuntimeLastEventId(runtime, normalizedEventId)'), false);
