@@ -992,10 +992,10 @@ const applyAssistantOutputSnapshot = (
   modelTurn.status = 'streaming';
   const message = ensureAssistantMessageForModelTurn(session, event, 'streaming');
   if (event.content) {
-    message.content = event.content;
+    message.content = mergeRuntimeSnapshotText(message.content, event.content, event);
   }
   if (event.reasoning) {
-    message.reasoning = event.reasoning;
+    message.reasoning = mergeRuntimeSnapshotText(message.reasoning, event.reasoning, event);
   }
   if (isPlainRecord(message.display)) {
     clearProjectedRetryDisplay(message.display);
@@ -1019,10 +1019,10 @@ const applyAssistantFinal = (
     : event;
   const message = ensureAssistantMessageForModelTurn(session, finalEvent, 'final');
   if (event.content) {
-    message.content = event.content;
+    message.content = mergeRuntimeSnapshotText(message.content, event.content, event);
   }
   if (event.reasoning) {
-    message.reasoning = event.reasoning;
+    message.reasoning = mergeRuntimeSnapshotText(message.reasoning, event.reasoning, event);
   }
   if (isPlainRecord(message.display)) {
     clearProjectedRetryDisplay(message.display);
@@ -2293,6 +2293,35 @@ const mergeLegacyText = (current: string, incoming: string): string => {
   if (current.startsWith(incoming)) return current;
   const overlap = resolveTextOverlapLength(current, incoming);
   return overlap > 0 ? `${current}${incoming.slice(overlap)}` : `${current}${incoming}`;
+};
+
+const shouldMergeRuntimeSnapshotText = (event: NormalizedRuntimeEvent): boolean => {
+  const sourceType = normalizeText(event.payload.source_event_type);
+  return sourceType === 'llm_output' || sourceType === 'final';
+};
+
+const mergeRuntimeSnapshotText = (
+  current: string,
+  incoming: string,
+  event: NormalizedRuntimeEvent
+): string => {
+  const currentText = String(current || '');
+  const incomingText = String(incoming || '');
+  const sourceType = normalizeText(event.payload.source_event_type);
+  if (event.type === 'assistant_final' && sourceType === 'final') {
+    return incomingText || currentText;
+  }
+  if (!shouldMergeRuntimeSnapshotText(event)) {
+    return incomingText || currentText;
+  }
+  if (!incomingText) return currentText;
+  if (!currentText) return incomingText;
+  if (incomingText === currentText) return currentText;
+  if (incomingText.startsWith(currentText)) return incomingText;
+  if (currentText.startsWith(incomingText)) return currentText;
+  if (currentText.includes(incomingText)) return currentText;
+  if (incomingText.length < currentText.length) return currentText;
+  return incomingText;
 };
 
 const resolveTextOverlapLength = (current: string, incoming: string): number => {

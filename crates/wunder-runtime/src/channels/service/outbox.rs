@@ -8,7 +8,7 @@ use crate::channels::outbound_attachments::{
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::types::{ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage};
 use crate::channels::weixin;
-use crate::core::blocking;
+use crate::core::{blocking, runtime_metrics};
 use crate::storage::{ChannelOutboxRecord, UpdateChannelOutboxStatusParams};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -323,11 +323,13 @@ impl ChannelHub {
         loop {
             let config = self.config_store.get().await;
             if !channels_runtime_enabled(&config) {
+                runtime_metrics::record_loop_tick("channels.outbox.loop", "disabled");
                 sleep(Duration::from_millis(1000)).await;
                 continue;
             }
             let outbox_cfg = resolve_outbox_config(config.channels.outbox.clone());
             if !outbox_cfg.worker_enabled {
+                runtime_metrics::record_loop_tick("channels.outbox.loop", "worker_disabled");
                 sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
                 continue;
             }
@@ -335,9 +337,11 @@ impl ChannelHub {
             match pending {
                 Ok(items) => {
                     if items.is_empty() {
+                        runtime_metrics::record_loop_tick("channels.outbox.loop", "empty");
                         sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
                         continue;
                     }
+                    runtime_metrics::record_loop_tick("channels.outbox.loop", "deliver");
                     for record in items {
                         let outcome = self.deliver_outbox_record(&record).await;
                         if let Err(err) = outcome {
@@ -385,6 +389,7 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
+                    runtime_metrics::record_loop_tick("channels.outbox.loop", "error");
                     error!("load pending outbox failed: {err}");
                     sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
                 }

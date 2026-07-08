@@ -94,3 +94,36 @@
 - 渲染补充：纯文本终态继续走轻量文本路径，避免最后从 streaming text 切换到 Markdown 全量渲染造成额外主线程抖动；含代码块、表格、链接、标题、列表、强调符号或公式的内容仍走原 Markdown 终态逻辑。
 - 回归验证：`npm run test:chat-runtime-reducer`、`npm run test:chat-runtime-render-adapter`、`npm run test:messenger-renderable-source`、`npm run test:realtime-pulse`、`npm run test:message-render`、`npm run typecheck` 通过。
 - 回退结论：若后续 debug 中 `send-content-event` 显示终态前仍长时间没有真实 `llm_output_delta`，前端只能平滑显示终态尾部；真实流式连续性仍需继续检查本地模型服务的 chunk 输出和上游转发策略。
+
+## 2026-07-08 补充：工具轮次终态快照回滚
+
+- 样本：`C:\Users\sjxx\Desktop\debug.txt`，有工具调用的轮次在每次模型动作结束时都会出现终态 `llm_output` 快照；这些快照不是整轮累计正文，而是单次模型调用片段。
+- 现象：第 2 轮最后一个终态快照从已流式累计的 `contentLength=165` 回写为 `finalContentChars=144`；第 3 轮多次出现 `86 -> 64`、`106 -> 42`、`69 -> 27`、`356 -> 329`。这会让页面表现为工具后正文突然回退、最后再跳变。
+- 原因：前端 reducer 之前把 `llm_output/final` 终态快照直接当成 authoritative message snapshot 覆盖 `message.content`；工具轮次里这个语义不成立，`answer/final_response` 或模型动作终态常常只代表当前片段。
+- 优化：`llm_output/final` 快照只在确实扩展当前正文时替换；如果快照比当前正文短，或只是当前正文的尾部/子串，则保留已流式累计正文。发送流和继续/恢复流都纳入 `final` 终态诊断与尾部平滑，恢复流额外记录 `resume-terminal` 和 `resume-terminal-tail-smoothing-plan`。
+- 回归验证：`npm run test:chat-runtime-reducer`、`npm run test:chat-runtime-render-adapter`、`npm run test:message-render`、`npm run test:realtime-pulse`、`npm run typecheck` 通过。
+- 回退结论：如果后续仍有最后一段卡顿，优先看 `llm-terminal/resume-terminal` 中 `finalContentChars` 与 `projectedBefore.contentLength` 的关系；若终态快照短于投影但页面仍跳变，说明还有其他覆盖路径绕过了 runtime reducer。
+
+## 2026-07-08 补充：正文显示 flush 延迟
+
+- 样本：`C:\Users\sjxx\Desktop\debug.txt`，终态快照已不再回滚正文；第 2 轮终态 `finalContentChars=123`，投影已是 `contentLength=138`，第 3 轮终态 `finalContentChars=391`，投影已是 `contentLength=439`，均被正确保留。
+- 仍可见卡顿的原因拆分：第 3 轮存在 `gapMs=56212` 和 `gapMs=9358`，表示工具/本地模型下一次动作期间上游长时间没有正文 delta；这部分前端无法变成真实流式。与此同时，前端仍有 `plain-text-slow-flush=51-130ms`、`content-clock-slow-flush=68-144ms`，说明收到 delta 后还有显示延迟。
+- 优化：纯文本流式正文不再等待 `requestAnimationFrame` 后写入 `visiblePlainText`，收到 projection content tick 后同步更新文本节点；runtime projection content clock 改为 8ms timer，避免本地推理占用主线程时 rAF 延迟；`MessageMarkdownBody` 按 messageId 订阅 content clock 并直接读取 runtime projection 正文，外层 renderable 消息列表不订阅 token 级 content clock，让头像、统计、滚动、工作目录和调试不再随每个 token 重建。
+- 回归验证：`npm run test:chat-runtime-reducer`、`npm run test:chat-runtime-render-adapter`、`npm run test:chat-runtime-projection-version`、`npm run test:messenger-renderable-source`、`npm run test:realtime-pulse`、`npm run test:message-render`、`npm run typecheck` 通过。
+- 回退结论：后续如果 `send-content-event.gapMs` 仍是多秒级，瓶颈在工具执行、本地模型 prefill 或上游 chunk 转发；如果 `gapMs` 正常但仍卡，应优先看 `plain-text-slow-flush`、`content-clock-slow-flush` 是否继续出现。
+
+## 2026-07-08 补充：final_response 工具参数可见流桥接
+
+- 样本：`C:\Users\sjxx\Desktop\debug.txt`，会话 `sess_20711044aad444c7bbd0d7393ea5f069`。第三轮在工具调用后出现 `send-content-event` 空窗：`eventId=211 -> 212` 间隔约 56213ms，随后 `eventId=212 -> 239` 仍间隔约 9358ms；后续 218 个 `llm_output_delta` 基本能以 15-35ms 推进，说明中后段前端渲染已自然，卡顿主要来自上游/后端在工具参数阶段没有产生可见文本增量。
+- 优化：后端 LLM SSE 解析层新增 `final_response`/`最终回复` 预览桥接，支持 OpenAI Chat Completions、Responses API 与 Anthropic `input_json_delta` 三类工具参数流；从 `content`、`answer`、`message` 字段提取增长文本并通过现有 `on_delta` 发给前端。该预览只用于可见流，不追加到 LLM `combined` 内容，避免改变最终工具调用、历史和统计语义。
+- 前端配合：外层 renderable 消息列表不订阅 `runtimeProjectionContentVersion`，token 级更新只推动对应 `MessageMarkdownBody`；纯文本流式正文同步写入轻量文本节点，content clock 使用短 timer，减少头像、外部形象和工作目录被 token 级更新拖慢。
+- 回归验证：新增后端单测覆盖 OpenAI 兼容流、Responses API 和 Anthropic 输入 JSON 的最终回复工具参数分片；前端回归继续断言 renderable 控制器不订阅内容时钟。
+- 回退结论：若后续 debug 的 `send-content-event.gapMs` 仍达到数秒以上，需要继续看上游本地模型 prefill、工具执行耗时或模型服务 chunk 策略；若 gap 正常但 `plain-text-slow-flush/content-clock-slow-flush` 继续出现，则优先检查前端文本节点 flush 和父级订阅是否回归。
+
+## 2026-07-08 补充：空白气泡与终态覆盖
+
+- 样本：`C:\Users\sjxx\Desktop\debug.txt`，第二轮同一模型轮次中先出现两个中间 `llm_output` 片段，最终 `finalContentChars=135`，但修复前投影 `contentLength=183`，说明中间预览没有被最终答案清掉。
+- 问题：为了让工具后的 `final_response` 参数也能可见流式输出，前端会先把这些预览 delta 写入当前 assistant；如果 `final` 事件继续沿用保守合并策略，最终答案会被当成“短快照”忽略，导致中间内容残留。同时空 `streaming` assistant 被挂载为正文气泡，用户发送后会先看到白框。
+- 优化：正文气泡只在存在真实可显示正文或失败提示时挂载，空 waiting/streaming/tooling 不再生成白框；`source_event_type=final` 的 `assistant_final` 作为整轮权威结果直接覆盖正文，普通 `llm_output` 仍保持片段快照保护，避免工具轮次回滚。
+- 回归验证：新增 `final stream snapshot replaces accumulated final-response previews`，覆盖中间预览加最终 `final` 的投影结果；并验证 `npm run test:messenger-renderable-source`、`npm run test:chat-runtime-reducer`、`npm run test:chat-runtime-projection-version`、`npm run test:message-render`、`npm run typecheck`、`cargo test -p wunder-runtime --lib final_response -j 8`、`cargo check -p wunder-runtime -j 8` 通过。
+- 回退结论：如果后续仍看到最终气泡拼入中间内容，优先检查最终事件是否以 `eventType=final` 进入 canonical reducer；如果只是生成过程中短暂显示预览但最终正确覆盖，说明是可见预览链路本身在工作，不应再用 `llm_output` 片段快照覆盖整轮正文。

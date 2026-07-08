@@ -299,9 +299,11 @@ export const chatDebugLog = (scope: string, event: string, payload?: unknown): v
   pushDebugEntry(entry);
   const prefix = `[wunder-chat-debug][${entry.time}][${entry.scope}] ${entry.event}`;
   if (payload === undefined) {
+    if (DEBUG_HISTORY_ONLY_SCOPES.has(normalizedScope)) return;
     console.info(prefix);
     return;
   }
+  if (DEBUG_HISTORY_ONLY_SCOPES.has(normalizedScope)) return;
   if (!shouldPrintDebugPayloadToConsole(normalizedScope, payload)) {
     console.info(prefix, buildDebugPayloadOmissionMeta(normalizedScope, payload));
     return;

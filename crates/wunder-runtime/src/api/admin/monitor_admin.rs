@@ -75,6 +75,7 @@ async fn admin_monitor(
     State(state): State<Arc<AppState>>,
     Query(query): Query<MonitorQuery>,
 ) -> Result<Json<Value>, Response> {
+    runtime_metrics::record_loop_tick("api.admin.monitor", "request");
     let request_started_at = Instant::now();
     let mut stage_started_at = Instant::now();
     state.monitor.warm_history(true);
@@ -166,6 +167,7 @@ async fn admin_monitor(
 }
 
 async fn admin_runtime_metrics() -> Json<Value> {
+    runtime_metrics::record_loop_tick("api.admin.runtime_metrics", "request");
     Json(json!({
         "runtime": runtime_metrics::snapshot(),
     }))

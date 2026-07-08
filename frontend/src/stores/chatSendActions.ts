@@ -476,7 +476,10 @@ export const chatSendActions = {
           const terminalLlmOutput =
             normalizedEventType === 'llm_output' &&
             isTerminalLlmOutputPayload(payload, approvalPayload);
+          const terminalFinalOutput = effectiveEventType === 'final';
+          const terminalTextSnapshot = terminalLlmOutput || terminalFinalOutput;
           const textStats = isStreamTextEventType(effectiveEventType)
+            || terminalFinalOutput
             ? resolveStreamEventTextStats(effectiveEventType, payload, approvalPayload)
             : {
                 contentDeltaChars: 0,
@@ -485,7 +488,7 @@ export const chatSendActions = {
                 finalReasoningChars: 0
               };
           const contentTraceMarker = beginSendContentEventTrace(effectiveEventType, textStats);
-          if (terminalLlmOutput) {
+          if (terminalTextSnapshot) {
             const streamTiming =
               payload?.stream_timing ??
               payload?.streamTiming ??
@@ -509,6 +512,7 @@ export const chatSendActions = {
             chatDebugLog('chat.stream.perf', 'llm-terminal', {
               sessionId,
               requestId: runtime?.sendRequestId || sendRequestId || requestId,
+              terminalSource: terminalFinalOutput ? 'final' : 'llm_output',
               eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
               hasStreamTiming: Boolean(streamTiming && typeof streamTiming === 'object' && !Array.isArray(streamTiming)),
               ...textStats,
@@ -532,7 +536,7 @@ export const chatSendActions = {
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
-          if (terminalLlmOutput) {
+          if (terminalTextSnapshot) {
             const smoothing = analyzeTerminalSnapshotSmoothing({
               projection: this.runtimeProjection,
               sessionId,

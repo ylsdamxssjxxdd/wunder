@@ -15,7 +15,15 @@ import { computed, onBeforeUnmount, ref, toRaw, watch } from 'vue';
 import { renderMarkdown } from '@/utils/markdown';
 import { t } from '@/i18n';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
-import { selectChatRuntimeMessage } from '@/realtime/chat/chatRuntimeSelectors';
+import {
+  selectChatRuntimeMessage,
+  selectChatRuntimeSession,
+  selectLatestAssistantForTurn
+} from '@/realtime/chat/chatRuntimeSelectors';
+import type {
+  ChatRuntimeMessageProjection,
+  ChatRuntimeProjection
+} from '@/realtime/chat/chatRuntimeTypes';
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
@@ -27,6 +35,8 @@ const props = withDefaults(defineProps<{
   content: string;
   message?: MessageRecord | null;
   runtimeMessageId?: string;
+  runtimeUserTurnId?: string;
+  runtimeModelTurnId?: string;
   sessionId?: string;
   assistantDisplay?: boolean;
   streaming?: boolean;
@@ -36,6 +46,8 @@ const props = withDefaults(defineProps<{
 }>(), {
   message: null,
   runtimeMessageId: '',
+  runtimeUserTurnId: '',
+  runtimeModelTurnId: '',
   sessionId: '',
   assistantDisplay: false,
   streaming: false,
@@ -68,35 +80,95 @@ const visibleHtml = ref('');
 const visiblePlainText = ref('');
 let renderTimer: number | null = null;
 let plainTextLayoutTimer: number | null = null;
-let plainTextFrame: number | null = null;
-let plainTextFrameFallbackTimer: number | null = null;
-let pendingVisiblePlainText = '';
-let pendingVisiblePlainTextScheduledAt = 0;
 let lastPlainTextLayoutAt = 0;
-const PLAIN_TEXT_VISIBLE_FALLBACK_MS = 16;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
 const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
+let lastStreamRenderTraceAt = 0;
+let lastStreamRenderTraceSignature = '';
 
+const runtimeProjectionVersion = computed(() => Number(chatStore.runtimeProjectionVersion || 0));
 const runtimeContentVersion = computed(() => {
-  const messageId = String(props.runtimeMessageId || '').trim();
-  if (!messageId) return 0;
-  return Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0);
+  const _projectionVersion = runtimeProjectionVersion.value;
+  const messageIds = resolveRuntimeContentSubscriptionMessageIds();
+  if (messageIds.length === 0) return 0;
+  return messageIds.reduce(
+    (sum, messageId) =>
+      sum + Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0),
+    0
+  );
 });
-const runtimeProjectedMessage = computed(() => {
-  const _contentVersion = runtimeContentVersion.value;
+
+const resolveRuntimeContentSubscriptionMessageIds = (): string[] => {
   const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
-  const messageId = String(props.runtimeMessageId || '').trim();
-  if (!sessionId || !messageId) return null;
-  return selectChatRuntimeMessage(toRaw(chatStore.runtimeProjection), sessionId, messageId);
-});
+  const projection = toRaw(chatStore.runtimeProjection);
+  const ids = new Set<string>();
+  const explicitMessageId = String(props.runtimeMessageId || '').trim();
+  if (explicitMessageId) ids.add(explicitMessageId);
+  if (!sessionId) return Array.from(ids);
+
+  const turnMessage = resolveRuntimeProjectedMessageByTurn(projection, sessionId);
+  if (turnMessage?.id) ids.add(turnMessage.id);
+  return Array.from(ids);
+};
+
+const resolveMessageText = (...values: unknown[]): string => {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+};
+
+const resolveRuntimeProjectedMessageByTurn = (
+  projection: ChatRuntimeProjection | null | undefined,
+  sessionId: string
+): ChatRuntimeMessageProjection | null => {
+  const message = (props.message || {}) as MessageRecord;
+  if (String(message.role || '').trim() !== 'assistant') {
+    return null;
+  }
+  const modelTurnId = resolveMessageText(
+    props.runtimeModelTurnId,
+    message.__runtime_model_turn_id,
+    message.model_turn_id,
+    message.modelTurnId
+  );
+  if (modelTurnId) {
+    const session = selectChatRuntimeSession(projection, sessionId);
+    const modelTurn = session?.modelTurnById?.[modelTurnId];
+    if (modelTurn) {
+      for (let index = modelTurn.messageIds.length - 1; index >= 0; index -= 1) {
+        const candidate = session.messageById[modelTurn.messageIds[index]];
+        if (candidate?.role === 'assistant') return candidate;
+      }
+    }
+  }
+
+  const userTurnId = resolveMessageText(
+    props.runtimeUserTurnId,
+    message.__runtime_user_turn_id,
+    message.user_turn_id,
+    message.userTurnId
+  );
+  return userTurnId
+    ? selectLatestAssistantForTurn(projection, sessionId, userTurnId)
+    : null;
+};
+
 const resolveRuntimeProjectedMessage = () => {
   const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
+  if (!sessionId) return null;
+  const projection = toRaw(chatStore.runtimeProjection);
   const messageId = String(props.runtimeMessageId || '').trim();
-  if (!sessionId || !messageId) return null;
-  return selectChatRuntimeMessage(toRaw(chatStore.runtimeProjection), sessionId, messageId);
+  const explicitMessage = messageId
+    ? selectChatRuntimeMessage(projection, sessionId, messageId)
+    : null;
+  const turnMessage = resolveRuntimeProjectedMessageByTurn(projection, sessionId);
+  return turnMessage || explicitMessage;
 };
 const displayMessage = computed<MessageRecord>(() => {
+  const _projectionVersion = runtimeProjectionVersion.value;
   const _contentVersion = runtimeContentVersion.value;
   const projected = resolveRuntimeProjectedMessage();
   if (!projected) {
@@ -117,6 +189,7 @@ const displayMessage = computed<MessageRecord>(() => {
   return base;
 });
 const normalizedContent = computed(() => {
+  const _projectionVersion = runtimeProjectionVersion.value;
   const _contentVersion = runtimeContentVersion.value;
   const projected = resolveRuntimeProjectedMessage();
   return props.assistantDisplay
@@ -158,67 +231,28 @@ const clearPlainTextLayoutTimer = () => {
   }
 };
 
-const clearPlainTextFrame = () => {
-  if (plainTextFrame !== null && typeof window !== 'undefined') {
-    window.cancelAnimationFrame(plainTextFrame);
-    plainTextFrame = null;
-  }
-  if (plainTextFrameFallbackTimer !== null && typeof window !== 'undefined') {
-    window.clearTimeout(plainTextFrameFallbackTimer);
-    plainTextFrameFallbackTimer = null;
-  }
-};
-
 const updateVisiblePlainText = (source: string, immediate = false) => {
   if (immediate || !props.streaming || typeof window === 'undefined') {
-    clearPlainTextFrame();
-    pendingVisiblePlainText = '';
-    pendingVisiblePlainTextScheduledAt = 0;
     visiblePlainText.value = source;
     return;
   }
-  pendingVisiblePlainText = source;
-  if (pendingVisiblePlainTextScheduledAt <= 0) {
-    pendingVisiblePlainTextScheduledAt = Date.now();
+  const scheduledAt = Date.now();
+  visiblePlainText.value = source;
+  const latencyMs = Date.now() - scheduledAt;
+  if (latencyMs >= STREAM_RENDER_DEBUG_SLOW_MS) {
+    const payload = {
+      latencyMs,
+      contentLength: source.length,
+      cacheKey: normalizedCacheKey.value,
+      runtimeMessageId: props.runtimeMessageId || ''
+    };
+    chatDebugLog('chat.stream.perf', 'plain-text-slow-flush', payload);
+    chatPerf.recordDuration('chat_stream_plain_text_slow_flush', latencyMs, payload);
+  } else if (chatPerf.enabled()) {
+    chatPerf.recordDuration('chat_stream_plain_text_flush', latencyMs, {
+      contentLength: source.length
+    });
   }
-  if (plainTextFrame !== null) return;
-  const flush = () => {
-    if (plainTextFrame !== null) {
-      window.cancelAnimationFrame(plainTextFrame);
-      plainTextFrame = null;
-    }
-    if (plainTextFrameFallbackTimer !== null) {
-      window.clearTimeout(plainTextFrameFallbackTimer);
-      plainTextFrameFallbackTimer = null;
-    }
-    const nextText = pendingVisiblePlainText;
-    const scheduledAt = pendingVisiblePlainTextScheduledAt;
-    const latencyMs = scheduledAt > 0 ? Date.now() - scheduledAt : 0;
-    pendingVisiblePlainText = '';
-    pendingVisiblePlainTextScheduledAt = 0;
-    visiblePlainText.value = nextText;
-    if (latencyMs >= STREAM_RENDER_DEBUG_SLOW_MS) {
-      const payload = {
-        latencyMs,
-        contentLength: nextText.length,
-        cacheKey: normalizedCacheKey.value,
-        runtimeMessageId: props.runtimeMessageId || ''
-      };
-      chatDebugLog('chat.stream.perf', 'plain-text-slow-flush', payload);
-      chatPerf.recordDuration('chat_stream_plain_text_slow_flush', latencyMs, payload);
-    } else if (chatPerf.enabled()) {
-      chatPerf.recordDuration('chat_stream_plain_text_flush', latencyMs, {
-        contentLength: nextText.length
-      });
-    }
-  };
-  plainTextFrame = window.requestAnimationFrame(() => {
-    flush();
-  });
-  // Keep local-model bursts visibly streaming even when rAF is delayed by inference load.
-  plainTextFrameFallbackTimer = window.setTimeout(() => {
-    flush();
-  }, PLAIN_TEXT_VISIBLE_FALLBACK_MS);
 };
 
 const buildRenderedPayload = (
@@ -279,12 +313,11 @@ const renderNow = () => {
   const source = normalizedContent.value;
   const cacheKey = normalizedCacheKey.value;
   const plainStreaming = usePlainStreamingText.value;
+  traceStreamingRenderSource(source, plainStreaming);
   if (plainStreaming) {
     updateVisiblePlainText(source);
   } else {
-    clearPlainTextFrame();
-    pendingVisiblePlainText = '';
-    pendingVisiblePlainTextScheduledAt = 0;
+    visiblePlainText.value = '';
   }
   if (!source) {
     updateVisiblePlainText('', true);
@@ -335,15 +368,40 @@ const renderNow = () => {
   emit('rendered', buildRenderedPayload(source, html));
 };
 
+const traceStreamingRenderSource = (source: string, plainStreaming: boolean) => {
+  if (!props.streaming || !source || typeof window === 'undefined') return;
+  const now = Date.now();
+  const runtimeMessage = resolveRuntimeProjectedMessage();
+  const signature = [
+    runtimeMessage?.id || props.runtimeMessageId || '',
+    runtimeMessage?.userTurnId || props.runtimeUserTurnId || '',
+    runtimeMessage?.modelTurnId || props.runtimeModelTurnId || '',
+    source.length,
+    runtimeContentVersion.value
+  ].join('|');
+  if (signature === lastStreamRenderTraceSignature) return;
+  if (now - lastStreamRenderTraceAt < 500 && source.length % 80 !== 0) return;
+  lastStreamRenderTraceAt = now;
+  lastStreamRenderTraceSignature = signature;
+  chatDebugLog('chat.stream.perf', 'message-body-stream-render', {
+    cacheKey: normalizedCacheKey.value,
+    runtimeMessageId: runtimeMessage?.id || props.runtimeMessageId || '',
+    runtimeUserTurnId: runtimeMessage?.userTurnId || props.runtimeUserTurnId || '',
+    runtimeModelTurnId: runtimeMessage?.modelTurnId || props.runtimeModelTurnId || '',
+    contentLength: source.length,
+    contentVersion: runtimeContentVersion.value,
+    plainStreaming
+  });
+};
+
 const scheduleRender = () => {
   const source = normalizedContent.value;
   const plainStreaming = usePlainStreamingText.value;
+  traceStreamingRenderSource(source, plainStreaming);
   if (plainStreaming) {
     updateVisiblePlainText(source);
   } else {
-    clearPlainTextFrame();
-    pendingVisiblePlainText = '';
-    pendingVisiblePlainTextScheduledAt = 0;
+    visiblePlainText.value = '';
   }
   if (!shouldThrottle.value || typeof window === 'undefined') {
     renderNow();
@@ -382,6 +440,7 @@ watch(
     props.resolveWorkspacePath,
     props.workspacePathContext,
     props.assistantDisplay,
+    runtimeProjectionVersion.value,
     runtimeContentVersion.value
   ],
   () => scheduleRender(),
@@ -394,6 +453,5 @@ onBeforeUnmount(() => {
     renderTimer = null;
   }
   clearPlainTextLayoutTimer();
-  clearPlainTextFrame();
 });
 </script>

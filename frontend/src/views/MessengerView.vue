@@ -1125,7 +1125,7 @@
                   />
                 </div>
                 <div
-                  v-if="item.message.role === 'user' || shouldShowAgentMessageBubble(item.message)"
+                  v-if="item.message.role === 'user' || shouldMountAgentMessageBubble(item.message)"
                   class="messenger-message-bubble messenger-markdown"
                   :class="{ 'messenger-message-bubble--greeting': isGreetingMessage(item.message) }"
                 >
@@ -1208,6 +1208,8 @@
                     :content="String(item.message.content || '')"
                     :message="item.message"
                     :runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || '')"
+                    :runtime-user-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.userTurnId || '')"
+                    :runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || '')"
                     :session-id="String(chatStore.activeSessionId || '')"
                     :assistant-display="true"
                     :streaming="
@@ -3022,6 +3024,7 @@ const shouldRefreshRealtimeChatSessions = controller.shouldRefreshRealtimeChatSe
 const shouldRenderAgentMessage = controller.shouldRenderAgentMessage;
 const shouldReuseAgentMetaResult = controller.shouldReuseAgentMetaResult;
 const shouldShowAgentMessageBubble = controller.shouldShowAgentMessageBubble;
+const shouldMountAgentMessageBubble = controller.shouldMountAgentMessageBubble;
 const shouldShowAgentResumeButton = controller.shouldShowAgentResumeButton;
 const shouldShowCompactionDivider = controller.shouldShowCompactionDivider;
 const shouldShowMessageStats = controller.shouldShowMessageStats;

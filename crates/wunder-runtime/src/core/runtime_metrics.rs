@@ -15,6 +15,7 @@ pub struct RuntimeMetricsSnapshot {
     pub blocking: Vec<BlockingMetricSnapshot>,
     pub queues: Vec<QueueMetricSnapshot>,
     pub long_tasks: Vec<LongTaskMetricSnapshot>,
+    pub loop_ticks: Vec<LoopTickMetricSnapshot>,
     pub alerts: Vec<RuntimeMetricAlert>,
     pub thresholds: RuntimeMetricThresholds,
 }
@@ -80,11 +81,20 @@ pub struct LongTaskMetricSnapshot {
     pub max_elapsed_ms: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct LoopTickMetricSnapshot {
+    pub label: String,
+    pub ticks: u64,
+    pub last_tick_s: f64,
+    pub last_reason: String,
+}
+
 #[derive(Default)]
 struct RuntimeMetrics {
     blocking: Mutex<BTreeMap<String, Arc<BlockingMetric>>>,
     queues: Mutex<BTreeMap<String, Arc<QueueMetric>>>,
     long_tasks: Mutex<BTreeMap<String, Arc<LongTaskMetric>>>,
+    loop_ticks: Mutex<BTreeMap<String, Arc<LoopTickMetric>>>,
 }
 
 #[derive(Default)]
@@ -130,6 +140,14 @@ struct LongTaskMetric {
     in_flight: AtomicU64,
     total_elapsed_ms: AtomicU64,
     max_elapsed_ms: AtomicU64,
+}
+
+#[derive(Default)]
+struct LoopTickMetric {
+    label: String,
+    ticks: AtomicU64,
+    last_tick_ms: AtomicU64,
+    last_reason: Mutex<String>,
 }
 
 static RUNTIME_METRICS: OnceLock<RuntimeMetrics> = OnceLock::new();
@@ -257,16 +275,31 @@ pub fn record_long_task_panic(label: &str, elapsed_ms: u64) {
     update_max(&metric.max_elapsed_ms, elapsed_ms);
 }
 
+pub fn record_loop_tick(label: &str, reason: &str) {
+    let metric = loop_tick_metric(label);
+    metric.ticks.fetch_add(1, Ordering::Relaxed);
+    metric.last_tick_ms.store(now_ms_u64(), Ordering::Relaxed);
+    let cleaned = reason.trim();
+    if !cleaned.is_empty() {
+        if let Ok(mut guard) = metric.last_reason.lock() {
+            guard.clear();
+            guard.push_str(cleaned);
+        }
+    }
+}
+
 pub fn snapshot() -> RuntimeMetricsSnapshot {
     let blocking = snapshot_blocking();
     let queues = snapshot_queues();
     let long_tasks = snapshot_long_tasks();
+    let loop_ticks = snapshot_loop_ticks();
     let alerts = build_alerts(&blocking, &queues, &long_tasks);
     RuntimeMetricsSnapshot {
         generated_at_s: now_ts(),
         blocking,
         queues,
         long_tasks,
+        loop_ticks,
         alerts,
         thresholds: RuntimeMetricThresholds {
             blocking_max_queue_ms: ALERT_BLOCKING_MAX_QUEUE_MS,
@@ -320,6 +353,22 @@ fn long_task_metric(label: &str) -> Arc<LongTaskMetric> {
         .entry(label.to_string())
         .or_insert_with(|| {
             Arc::new(LongTaskMetric {
+                label: label.to_string(),
+                ..Default::default()
+            })
+        })
+        .clone()
+}
+
+fn loop_tick_metric(label: &str) -> Arc<LoopTickMetric> {
+    let mut guard = metrics()
+        .loop_ticks
+        .lock()
+        .expect("runtime loop tick metrics lock poisoned");
+    guard
+        .entry(label.to_string())
+        .or_insert_with(|| {
+            Arc::new(LoopTickMetric {
                 label: label.to_string(),
                 ..Default::default()
             })
@@ -432,6 +481,33 @@ fn snapshot_long_tasks() -> Vec<LongTaskMetricSnapshot> {
     items
 }
 
+fn snapshot_loop_ticks() -> Vec<LoopTickMetricSnapshot> {
+    let guard = metrics()
+        .loop_ticks
+        .lock()
+        .expect("runtime loop tick metrics lock poisoned");
+    let mut items = guard
+        .values()
+        .map(|metric| LoopTickMetricSnapshot {
+            label: metric.label.clone(),
+            ticks: metric.ticks.load(Ordering::Relaxed),
+            last_tick_s: metric.last_tick_ms.load(Ordering::Relaxed) as f64 / 1000.0,
+            last_reason: metric
+                .last_reason
+                .lock()
+                .map(|guard| guard.clone())
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        right
+            .ticks
+            .cmp(&left.ticks)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    items
+}
+
 fn build_alerts(
     blocking: &[BlockingMetricSnapshot],
     queues: &[QueueMetricSnapshot],
@@ -521,6 +597,13 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn now_ms_u64() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
 fn duration_ms_u64(elapsed_ms: f64) -> u64 {
     if !elapsed_ms.is_finite() || elapsed_ms <= 0.0 {
         0
@@ -554,6 +637,8 @@ mod tests {
         super::record_queue_busy(&queue_label);
         super::record_long_task_started(&long_label);
         super::record_long_task_finished(&long_label, 4, false);
+        let loop_label = unique_label("loop");
+        super::record_loop_tick(&loop_label, "poll");
 
         let snapshot = super::snapshot();
         assert!(snapshot
@@ -568,6 +653,10 @@ mod tests {
             .long_tasks
             .iter()
             .any(|item| item.label == long_label && item.finished > 0));
+        assert!(snapshot
+            .loop_ticks
+            .iter()
+            .any(|item| item.label == loop_label && item.ticks > 0));
     }
 
     #[test]

@@ -129,8 +129,26 @@ import { ResumeStreamOptions } from './chatTypes';
 import { abortCompactRequest, abortResumeStream, abortSendStream, buildWsRequestId, chatWsClient, finalizeManualCompactionAsCancelled, scheduleSlowClientResume, startSessionWatcher } from './chatWatcher';
 import { handleApprovalEvent, isTerminalLlmOutputPayload, isTerminalStreamEventType, resolveNormalizedStreamEventType, shouldTreatRuntimeEventAsTerminal } from './chatWorkflowHydration';
 import { shouldUseProjectionOnlyInteractiveStreamEvent } from './chatProjectionOnlyEvents';
+import {
+  analyzeTerminalSnapshotSmoothing,
+  buildTerminalSnapshotDeltaPayload,
+  resolveProjectedAssistantTextState,
+  resolveStreamEventTextStats,
+  runTerminalSnapshotSmoothing
+} from './chatTerminalSnapshotSmoothing';
 
 const RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS = 150;
+const RESUME_STREAM_TEXT_EVENT_TYPES = new Set([
+  'llm_output_delta',
+  'delta',
+  'message',
+  'think_delta',
+  'reasoning_delta',
+  'llm_output'
+]);
+
+const isResumeStreamTextEventType = (value: unknown): boolean =>
+  RESUME_STREAM_TEXT_EVENT_TYPES.has(String(value || '').trim().toLowerCase());
 
 const normalizeRuntimeRequestId = (value: unknown): string =>
   String(value || '').trim();
@@ -324,6 +342,39 @@ export const chatStopResumeActions = {
       const resumeUserTurnId = String(message?.user_turn_id ?? message?.userTurnId ?? '').trim();
       const resumeModelTurnId = String(message?.model_turn_id ?? message?.modelTurnId ?? '').trim();
       const resumeAssistantMessageId = String(message?.message_id ?? message?.messageId ?? message?.id ?? '').trim();
+      let observedResumeUserTurnId = resumeUserTurnId;
+      let observedResumeModelTurnId = resumeModelTurnId;
+      let observedResumeAssistantMessageId = resumeAssistantMessageId;
+      const updateObservedResumeProjectionIds = (payload: any, approvalPayload: any) => {
+        const nextUserTurnId = String(
+          approvalPayload?.user_turn_id ??
+          approvalPayload?.userTurnId ??
+          payload?.user_turn_id ??
+          payload?.userTurnId ??
+          ''
+        ).trim();
+        const nextModelTurnId = String(
+          approvalPayload?.model_turn_id ??
+          approvalPayload?.modelTurnId ??
+          payload?.model_turn_id ??
+          payload?.modelTurnId ??
+          ''
+        ).trim();
+        const nextAssistantMessageId = String(
+          approvalPayload?.assistant_message_id ??
+          approvalPayload?.assistantMessageId ??
+          approvalPayload?.message_id ??
+          approvalPayload?.messageId ??
+          payload?.assistant_message_id ??
+          payload?.assistantMessageId ??
+          payload?.message_id ??
+          payload?.messageId ??
+          ''
+        ).trim();
+        if (nextUserTurnId) observedResumeUserTurnId = nextUserTurnId;
+        if (nextModelTurnId) observedResumeModelTurnId = nextModelTurnId;
+        if (nextAssistantMessageId) observedResumeAssistantMessageId = nextAssistantMessageId;
+      };
       const forcedEventId = options.afterEventId;
       const normalizedMessageEventId = normalizeStreamEventId(message?.stream_event_id);
       const hasProjectionSession = Boolean(this.runtimeProjection?.sessions?.[sessionId]);
@@ -353,26 +404,289 @@ export const chatStopResumeActions = {
         }
         return appliedEventId;
       };
+      let lastResumeContentEventAt = 0;
+      let lastResumeDeltaContentEventAt = 0;
+      let resumeContentEventCount = 0;
+      let pendingTerminalSnapshotSmoothing: Promise<void> | null = null;
+      let terminalSnapshotSmoothingApplied = false;
+      const beginResumeContentEventTrace = (
+        normalizedEventType: string,
+        stats: ReturnType<typeof resolveStreamEventTextStats>
+      ) => {
+        if (
+          stats.contentDeltaChars <= 0 &&
+          stats.reasoningDeltaChars <= 0 &&
+          stats.finalContentChars <= 0 &&
+          stats.finalReasoningChars <= 0
+        ) {
+          return null;
+        }
+        const now = Date.now();
+        const gapMs = lastResumeContentEventAt > 0 ? now - lastResumeContentEventAt : null;
+        lastResumeContentEventAt = now;
+        resumeContentEventCount += 1;
+        if (
+          normalizedEventType !== 'llm_output' &&
+          normalizedEventType !== 'final' &&
+          (stats.contentDeltaChars > 0 || stats.reasoningDeltaChars > 0)
+        ) {
+          lastResumeDeltaContentEventAt = now;
+        }
+        return {
+          ordinal: resumeContentEventCount,
+          receivedAt: now,
+          gapMs
+        };
+      };
+      const logResumeContentEventTrace = (
+        stage: string,
+        normalizedEventType: string,
+        eventId: unknown,
+        stats: ReturnType<typeof resolveStreamEventTextStats>,
+        marker: ReturnType<typeof beginResumeContentEventTrace>,
+        extra: Record<string, unknown> = {}
+      ) => {
+        if (!marker) return;
+        chatDebugLog('chat.stream.perf', 'resume-content-event', {
+          sessionId,
+          requestId: runtime?.resumeRequestId || resumeRequestId || null,
+          stage,
+          eventType: normalizedEventType,
+          eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
+          ordinal: marker.ordinal,
+          gapMs: marker.gapMs,
+          applyLagMs: Math.max(0, Date.now() - marker.receivedAt),
+          ...stats,
+          projected: resolveProjectedAssistantTextState(
+            this.runtimeProjection,
+            sessionId,
+            observedResumeUserTurnId,
+            observedResumeModelTurnId,
+            observedResumeAssistantMessageId
+          ),
+          ...extra
+        });
+      };
       try {
         const onEvent = (eventType, dataText, eventId) => {
           markRuntimeResumeStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
+          updateObservedResumeProjectionIds(payload, approvalPayload);
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
+          const effectiveEventType = normalizedEventType || eventType;
           const terminalLlmOutput =
             normalizedEventType === 'llm_output' &&
             isTerminalLlmOutputPayload(payload, approvalPayload);
+          const terminalFinalOutput = effectiveEventType === 'final';
+          const terminalTextSnapshot = terminalLlmOutput || terminalFinalOutput;
+          const textStats = isResumeStreamTextEventType(effectiveEventType) || terminalFinalOutput
+            ? resolveStreamEventTextStats(effectiveEventType, payload, approvalPayload)
+            : {
+                contentDeltaChars: 0,
+                reasoningDeltaChars: 0,
+                finalContentChars: 0,
+                finalReasoningChars: 0
+              };
+          const contentTraceMarker = beginResumeContentEventTrace(effectiveEventType, textStats);
+          if (terminalTextSnapshot) {
+            chatDebugLog('chat.stream.perf', 'resume-terminal', {
+              sessionId,
+              requestId: runtime?.resumeRequestId || resumeRequestId || null,
+              terminalSource: terminalFinalOutput ? 'final' : 'llm_output',
+              eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
+              ...textStats,
+              gapSinceLastContentMs: contentTraceMarker?.gapMs ?? null,
+              gapSinceLastDeltaMs: lastResumeDeltaContentEventAt > 0
+                ? Math.max(0, Date.now() - lastResumeDeltaContentEventAt)
+                : null,
+              projectedBefore: resolveProjectedAssistantTextState(
+                this.runtimeProjection,
+                sessionId,
+                observedResumeUserTurnId,
+                observedResumeModelTurnId,
+                observedResumeAssistantMessageId
+              )
+            });
+          }
           const projectionOnlyInteractiveEvent = shouldUseProjectionOnlyInteractiveStreamEvent(
-            normalizedEventType,
+            effectiveEventType,
             { terminalLlmOutput }
           );
           if (applyGoalStreamEvent(this, sessionId, normalizedEventType, approvalPayload)) {
             return;
           }
+          if (terminalTextSnapshot) {
+            const smoothing = analyzeTerminalSnapshotSmoothing({
+              projection: this.runtimeProjection,
+              sessionId,
+              payload,
+              approvalPayload,
+              requestId: runtime?.resumeRequestId || resumeRequestId,
+              eventId,
+              userTurnId: observedResumeUserTurnId,
+              modelTurnId: observedResumeModelTurnId,
+              assistantMessageId: observedResumeAssistantMessageId,
+              lastContentEventAt: lastResumeDeltaContentEventAt
+            });
+            chatDebugLog('chat.stream.perf', 'resume-terminal-tail-smoothing-plan', smoothing.debug);
+            if (smoothing.plan) {
+              finalSeen = true;
+              terminalSnapshotSmoothingApplied = true;
+              const terminalPlan = smoothing.plan;
+              pendingTerminalSnapshotSmoothing = (async () => {
+                const startedAt = Date.now();
+                const result = await runTerminalSnapshotSmoothing({
+                  plan: terminalPlan,
+                  applyDelta: (delta, chunkIndex) => {
+                    const syntheticPayload = buildTerminalSnapshotDeltaPayload(
+                      terminalPlan,
+                      delta,
+                      chunkIndex
+                    );
+                    const syntheticStats = resolveStreamEventTextStats(
+                      'llm_output_delta',
+                      syntheticPayload,
+                      syntheticPayload
+                    );
+                    const syntheticTrace = beginResumeContentEventTrace(
+                      'llm_output_delta',
+                      syntheticStats
+                    );
+                    applyCanonicalStreamRuntimeEvent(
+                      this,
+                      sessionId,
+                      'llm_output_delta',
+                      syntheticPayload,
+                      syntheticPayload.event_id as string,
+                      {
+                        requestId: runtime?.resumeRequestId || resumeRequestId,
+                        phase: 'resume',
+                        sideEffects: shouldUseProjectionOnlyInteractiveStreamEvent('llm_output_delta')
+                      }
+                    );
+                    logResumeContentEventTrace(
+                      'synthetic-terminal-tail',
+                      'llm_output_delta',
+                      syntheticPayload.event_id,
+                      syntheticStats,
+                      syntheticTrace,
+                      {
+                        chunkIndex,
+                        terminalEventId: terminalPlan.terminalEventId || null
+                      }
+                    );
+                  }
+                });
+                applyCanonicalStreamRuntimeEvent(
+                  this,
+                  sessionId,
+                  effectiveEventType,
+                  payload,
+                  eventId,
+                  {
+                    requestId: runtime?.resumeRequestId || resumeRequestId,
+                    phase: 'resume',
+                    sideEffects: projectionOnlyInteractiveEvent,
+                    onSyncRequired: (reason) => {
+                      const run = () => {
+                        void this.ensureActiveSessionRealtime({
+                          sessionId,
+                          reason: String(reason || '') === 'event_seq_gap'
+                            ? 'resume_event_seq_gap'
+                            : 'resume_pending_event_seq_gap',
+                          forceHydrate: true
+                        }).catch(() => {});
+                      };
+                      if (String(reason || '') === 'event_seq_gap') {
+                        run();
+                        return;
+                      }
+                      globalThis.setTimeout(run, RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS);
+                    }
+                  }
+                );
+                handleApprovalEvent(
+                  this,
+                  effectiveEventType,
+                  approvalPayload,
+                  runtime?.resumeRequestId || '',
+                  sessionId
+                );
+                logResumeContentEventTrace(
+                  'terminal-after-smoothing',
+                  effectiveEventType,
+                  eventId,
+                  textStats,
+                  contentTraceMarker,
+                  {
+                    smoothingMs: Date.now() - startedAt,
+                    smoothingCompleted: result.completed,
+                    smoothingAppliedChars: result.appliedChars,
+                    smoothingChunkCount: result.chunkCount
+                  }
+                );
+                updateRuntimeRemoteLastEventId(runtime, eventId);
+                syncRuntimeLastAppliedEventId();
+              })().catch((error) => {
+                chatDebugLog('chat.stream.perf', 'resume-terminal-tail-smoothing-error', {
+                  sessionId,
+                  requestId: runtime?.resumeRequestId || resumeRequestId,
+                  eventId: normalizeStreamEventId(eventId) || String(eventId ?? '').trim() || null,
+                  message: error?.message || String(error || '')
+                });
+                applyCanonicalStreamRuntimeEvent(
+                  this,
+                  sessionId,
+                  effectiveEventType,
+                  payload,
+                  eventId,
+                  {
+                    requestId: runtime?.resumeRequestId || resumeRequestId,
+                    phase: 'resume',
+                    sideEffects: projectionOnlyInteractiveEvent,
+                    onSyncRequired: (reason) => {
+                      const run = () => {
+                        void this.ensureActiveSessionRealtime({
+                          sessionId,
+                          reason: String(reason || '') === 'event_seq_gap'
+                            ? 'resume_event_seq_gap'
+                            : 'resume_pending_event_seq_gap',
+                          forceHydrate: true
+                        }).catch(() => {});
+                      };
+                      if (String(reason || '') === 'event_seq_gap') {
+                        run();
+                        return;
+                      }
+                      globalThis.setTimeout(run, RUNTIME_PENDING_GAP_RECOVERY_DELAY_MS);
+                    }
+                  }
+                );
+                handleApprovalEvent(
+                  this,
+                  effectiveEventType,
+                  approvalPayload,
+                  runtime?.resumeRequestId || '',
+                  sessionId
+                );
+                logResumeContentEventTrace(
+                  'terminal-smoothing-fallback',
+                  effectiveEventType,
+                  eventId,
+                  textStats,
+                  contentTraceMarker
+                );
+                updateRuntimeRemoteLastEventId(runtime, eventId);
+                syncRuntimeLastAppliedEventId();
+              });
+              return;
+            }
+          }
           applyCanonicalStreamRuntimeEvent(
             this,
             sessionId,
-            normalizedEventType || eventType,
+            effectiveEventType,
             payload,
             eventId,
             {
@@ -397,15 +711,22 @@ export const chatStopResumeActions = {
               }
             }
           );
+          logResumeContentEventTrace(
+            'after-apply',
+            effectiveEventType,
+            eventId,
+            textStats,
+            contentTraceMarker
+          );
           if (perfEnabled) {
-            chatPerf.count('chat_resume_event', 1, { eventType: normalizedEventType || eventType, sessionId });
+            chatPerf.count('chat_resume_event', 1, { eventType: effectiveEventType, sessionId });
           }
           if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
             return;
           }
           handleApprovalEvent(
             this,
-            normalizedEventType || eventType,
+            effectiveEventType,
             approvalPayload,
             runtime?.resumeRequestId || '',
             sessionId
@@ -469,6 +790,9 @@ export const chatStopResumeActions = {
           closeOnFinal: resumeAfterEventId > 0,
           cancelOnAbort: false
         });
+        if (pendingTerminalSnapshotSmoothing) {
+          await pendingTerminalSnapshotSmoothing;
+        }
       } catch (error) {
         const abortReason = String(runtime?.resumeAbortReason || '').trim();
         if (error?.name === 'AbortError' && abortReason === 'local_recovery') {
@@ -555,7 +879,8 @@ export const chatStopResumeActions = {
           chatPerf.recordDuration('chat_resume_total', performance.now() - perfStreamStart, {
             sessionId,
             terminalSeen,
-            aborted
+            aborted,
+            terminalSnapshotSmoothingApplied
           });
         }
         if (

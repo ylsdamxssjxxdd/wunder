@@ -1,3 +1,4 @@
+use crate::core::runtime_metrics;
 use crate::storage::{
     GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, StorageBackend,
 };
@@ -267,10 +268,12 @@ impl GatewayHub {
             loop {
                 tokio::select! {
                     _ = tick.tick() => {
+                        runtime_metrics::record_loop_tick("gateway.maintenance.loop", "tick");
                         let payload = json!({ "ts": (now_ts() * 1000.0).round() });
                         self.broadcast_event("gateway.tick", payload, None).await;
                     }
                     _ = health.tick() => {
+                        runtime_metrics::record_loop_tick("gateway.maintenance.loop", "health");
                         let snapshot = self.snapshot().await;
                         let online_nodes = snapshot.items.iter().filter(|item| item.role == "node").count();
                         let payload = json!({

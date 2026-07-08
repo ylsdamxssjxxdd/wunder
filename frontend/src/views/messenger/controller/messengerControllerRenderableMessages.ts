@@ -1071,6 +1071,8 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
 
   ctx.shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.hasMessageContent(buildAssistantDisplayContent(message, ctx.t));
 
+  ctx.shouldMountAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.shouldShowAgentMessageBubble(message);
+
   ctx.messageStatsNowTick = ref(Date.now());
 
   ctx.messageStatsTimer = null;

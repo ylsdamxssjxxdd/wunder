@@ -1,5 +1,5 @@
 use crate::config_store::ConfigStore;
-use crate::core::long_task;
+use crate::core::{long_task, runtime_metrics};
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -158,8 +158,12 @@ impl MissionRuntime {
 
         loop {
             tokio::select! {
-                _ = rx.recv() => {}
-                _ = sleep(Duration::from_millis(RUNNER_POLL_INTERVAL_MS)) => {}
+                _ = rx.recv() => {
+                    runtime_metrics::record_loop_tick("runtime.mission.queue_loop", "wake");
+                }
+                _ = sleep(Duration::from_millis(RUNNER_POLL_INTERVAL_MS)) => {
+                    runtime_metrics::record_loop_tick("runtime.mission.queue_loop", "poll");
+                }
             }
             self.cleanup_finished_workers().await;
             if let Err(err) = self.dispatch_runs().await {

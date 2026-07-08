@@ -1,6 +1,6 @@
 use crate::config_store::ConfigStore;
-use crate::core::blocking;
 use crate::core::long_task;
+use crate::core::{blocking, runtime_metrics};
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
@@ -1178,8 +1178,12 @@ impl ThreadRuntime {
             let config = self.config_store.get().await;
             let poll_interval = config.agent_queue.poll_interval_ms.max(200);
             tokio::select! {
-                _ = rx.recv() => {},
-                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_interval)) => {},
+                _ = rx.recv() => {
+                    runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "wake");
+                },
+                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_interval)) => {
+                    runtime_metrics::record_loop_tick("runtime.thread.queue_loop", "poll");
+                },
             }
             if !config.agent_queue.enabled {
                 continue;

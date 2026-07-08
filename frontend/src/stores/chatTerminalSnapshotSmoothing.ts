@@ -224,7 +224,7 @@ export const resolveStreamEventTextStats = (
   approvalPayload?: unknown
 ): StreamTextStats => {
   const normalizedEventType = String(eventType || '').trim().toLowerCase();
-  if (normalizedEventType === 'llm_output') {
+  if (normalizedEventType === 'llm_output' || normalizedEventType === 'final') {
     const finalText = extractTerminalSnapshotText(payload, approvalPayload);
     return {
       contentDeltaChars: 0,

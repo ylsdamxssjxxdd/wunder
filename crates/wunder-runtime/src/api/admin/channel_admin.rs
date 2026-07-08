@@ -3,6 +3,7 @@ use crate::channels::feishu;
 use crate::channels::types::ChannelAccountConfig;
 use crate::channels::weixin;
 use crate::channels::xmpp;
+use crate::core::runtime_metrics;
 use crate::i18n;
 use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
 use crate::state::AppState;
@@ -1237,6 +1238,7 @@ async fn admin_channel_runtime_logs(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ChannelRuntimeLogsQuery>,
 ) -> Result<Json<Value>, Response> {
+    runtime_metrics::record_loop_tick("api.admin.channels.runtime_logs", "request");
     let channel_filter = query
         .channel
         .as_deref()

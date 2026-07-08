@@ -40,15 +40,14 @@ use response::{
     openai_tool_definition_to_anthropic_tool, parse_anthropic_body, parse_chat_completion_body,
     parse_responses_body,
 };
+#[cfg(test)]
+use stream_tool::merge_stream_delta_field;
 use stream_tool::{
-    finalize_stream_tool_calls, merge_stream_tool_call_item, update_responses_tool_call_arguments,
+    finalize_stream_tool_calls, merge_stream_tool_call_item, resolve_stream_tool_call_arguments,
+    resolve_stream_tool_call_name, update_responses_tool_call_arguments,
     update_responses_tool_call_from_item, update_stream_tool_calls_delta,
     update_stream_tool_calls_snapshot, upsert_responses_tool_calls, StreamToolCall,
     StreamToolFieldMode,
-};
-#[cfg(test)]
-use stream_tool::{
-    merge_stream_delta_field, resolve_stream_tool_call_arguments, resolve_stream_tool_call_name,
 };
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -78,6 +77,8 @@ const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 4] = [
     &["embeddings"],
     &["models"],
 ];
+const FINAL_RESPONSE_TOOL_NAMES: [&str; 2] = ["final_response", "最终回复"];
+const FINAL_RESPONSE_STREAM_FIELD_NAMES: [&str; 3] = ["content", "answer", "message"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelType {
@@ -310,6 +311,33 @@ fn llm_response_has_payload(content: &str, reasoning: &str, tool_calls: Option<&
     tool_calls.is_some_and(tool_call_payload_has_items)
 }
 
+#[derive(Debug, Default)]
+struct FinalResponseToolPreview {
+    displayed: String,
+    displayed_tail: String,
+}
+
+impl FinalResponseToolPreview {
+    fn active(&self) -> bool {
+        !self.displayed.is_empty()
+    }
+
+    fn sync_from_tool_calls(&mut self, tool_calls: &[StreamToolCall]) -> Option<String> {
+        if let Some(next) = extract_final_response_preview_text(tool_calls) {
+            if let Some(delta) = visible_text_delta(self.displayed.as_str(), next.as_str()) {
+                self.displayed.push_str(delta.as_str());
+                self.displayed_tail.clear();
+                return Some(delta);
+            }
+        }
+        let tail = extract_final_response_preview_tail_delta(tool_calls, self.displayed.as_str())?;
+        let delta = visible_text_delta(self.displayed_tail.as_str(), tail.as_str())?;
+        self.displayed_tail.push_str(delta.as_str());
+        self.displayed.push_str(delta.as_str());
+        Some(delta)
+    }
+}
+
 fn tool_call_payload_has_items(payload: &Value) -> bool {
     match payload {
         Value::Null => false,
@@ -318,6 +346,310 @@ fn tool_call_payload_has_items(payload: &Value) -> bool {
         Value::String(text) => !text.trim().is_empty(),
         _ => true,
     }
+}
+
+fn sync_visible_final_response_tool_delta(
+    combined: &str,
+    reasoning: &str,
+    preview: &mut FinalResponseToolPreview,
+    tool_calls: &[StreamToolCall],
+) -> Option<String> {
+    if !preview.active() && (!combined.trim().is_empty() || !reasoning.trim().is_empty()) {
+        return None;
+    }
+    preview.sync_from_tool_calls(tool_calls)
+}
+
+fn extract_final_response_preview_text(tool_calls: &[StreamToolCall]) -> Option<String> {
+    for call in tool_calls {
+        let Some(name) = resolve_stream_tool_call_name(call) else {
+            continue;
+        };
+        if !is_final_response_tool_name(name.as_str()) {
+            continue;
+        }
+        if let Some(text) = extract_final_response_argument_text(call) {
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+fn extract_final_response_preview_tail_delta(
+    tool_calls: &[StreamToolCall],
+    displayed: &str,
+) -> Option<String> {
+    if displayed.is_empty() {
+        return None;
+    }
+    for call in tool_calls {
+        let Some(name) = resolve_stream_tool_call_name(call) else {
+            continue;
+        };
+        if !is_final_response_tool_name(name.as_str()) {
+            continue;
+        }
+        let delta = extract_final_response_argument_tail_fragment(call.arguments_delta.as_str())?;
+        if !delta.is_empty() {
+            return Some(delta);
+        }
+    }
+    None
+}
+
+fn is_final_response_tool_name(name: &str) -> bool {
+    let normalized = name.trim();
+    FINAL_RESPONSE_TOOL_NAMES
+        .iter()
+        .any(|candidate| normalized.eq_ignore_ascii_case(candidate))
+}
+
+fn extract_final_response_argument_text(call: &StreamToolCall) -> Option<String> {
+    let mut candidates: Vec<String> = Vec::new();
+    let resolved = resolve_stream_tool_call_arguments(call);
+    if !resolved.trim().is_empty() {
+        candidates.push(resolved);
+    }
+    if let Some(snapshot) = call.arguments_snapshot.as_deref() {
+        if !snapshot.trim().is_empty() {
+            candidates.push(snapshot.to_string());
+        }
+    }
+    if !call.arguments_delta.trim().is_empty() {
+        candidates.push(call.arguments_delta.clone());
+    }
+
+    let mut best: Option<String> = None;
+    for candidate in candidates {
+        if let Some(text) = extract_final_response_text_from_arguments(candidate.as_str()) {
+            if text.is_empty() {
+                continue;
+            }
+            let replace = best
+                .as_ref()
+                .map(|current| text.chars().count() > current.chars().count())
+                .unwrap_or(true);
+            if replace {
+                best = Some(text);
+            }
+        }
+    }
+    best
+}
+
+fn extract_final_response_argument_tail_fragment(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
+    let trimmed = raw.trim_start();
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return None;
+    }
+    if FINAL_RESPONSE_STREAM_FIELD_NAMES
+        .iter()
+        .any(|field| trimmed.contains(&format!("\"{field}\"")))
+    {
+        return None;
+    }
+    let decoded = decode_json_string_tail_fragment(raw);
+    (!decoded.is_empty()).then_some(decoded)
+}
+
+fn decode_json_string_tail_fragment(raw: &str) -> String {
+    let mut output = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => break,
+            '\\' => match chars.next() {
+                Some('"') => output.push('"'),
+                Some('\\') => output.push('\\'),
+                Some('/') => output.push('/'),
+                Some('b') => output.push('\u{0008}'),
+                Some('f') => output.push('\u{000c}'),
+                Some('n') => output.push('\n'),
+                Some('r') => output.push('\r'),
+                Some('t') => output.push('\t'),
+                Some('u') => {
+                    let mut hex = String::new();
+                    for _ in 0..4 {
+                        let Some(next) = chars.peek().copied() else {
+                            break;
+                        };
+                        if !next.is_ascii_hexdigit() {
+                            break;
+                        }
+                        hex.push(next);
+                        chars.next();
+                    }
+                    if hex.len() == 4 {
+                        if let Ok(code) = u32::from_str_radix(hex.as_str(), 16) {
+                            if let Some(decoded) = char::from_u32(code) {
+                                output.push(decoded);
+                            }
+                        }
+                    }
+                }
+                Some(other) => output.push(other),
+                None => break,
+            },
+            _ => output.push(ch),
+        }
+    }
+    output
+}
+
+fn extract_final_response_text_from_arguments(raw: &str) -> Option<String> {
+    let trimmed = trim_empty_object_argument_prefix(raw);
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(text) = extract_final_response_text_value(&value) {
+            return Some(text);
+        }
+    }
+    for field in FINAL_RESPONSE_STREAM_FIELD_NAMES {
+        if let Some(text) = extract_partial_json_string_field(trimmed, field) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn trim_empty_object_argument_prefix(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    trimmed
+        .strip_prefix("{}")
+        .map(str::trim_start)
+        .unwrap_or(trimmed)
+}
+
+fn extract_final_response_text_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for field in FINAL_RESPONSE_STREAM_FIELD_NAMES {
+                if let Some(inner) = map.get(field) {
+                    if let Some(text) = extract_final_response_text_value(inner) {
+                        return Some(text);
+                    }
+                }
+            }
+            None
+        }
+        Value::String(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn extract_partial_json_string_field(raw: &str, field: &str) -> Option<String> {
+    let key = format!("\"{field}\"");
+    let bytes = raw.as_bytes();
+    let mut search_start = 0usize;
+    while search_start < raw.len() {
+        let relative = raw[search_start..].find(key.as_str())?;
+        let key_end = search_start + relative + key.len();
+        let mut index = skip_ascii_ws(bytes, key_end);
+        if bytes.get(index) != Some(&b':') {
+            search_start = key_end;
+            continue;
+        }
+        index = skip_ascii_ws(bytes, index.saturating_add(1));
+        if bytes.get(index) != Some(&b'"') {
+            search_start = key_end;
+            continue;
+        }
+        return Some(decode_partial_json_string(&raw[index.saturating_add(1)..]));
+    }
+    None
+}
+
+fn skip_ascii_ws(bytes: &[u8], mut index: usize) -> usize {
+    while let Some(byte) = bytes.get(index) {
+        if !byte.is_ascii_whitespace() {
+            break;
+        }
+        index = index.saturating_add(1);
+    }
+    index
+}
+
+fn decode_partial_json_string(raw: &str) -> String {
+    let mut output = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => break,
+            '\\' => match chars.next() {
+                Some('"') => output.push('"'),
+                Some('\\') => output.push('\\'),
+                Some('/') => output.push('/'),
+                Some('b') => output.push('\u{0008}'),
+                Some('f') => output.push('\u{000c}'),
+                Some('n') => output.push('\n'),
+                Some('r') => output.push('\r'),
+                Some('t') => output.push('\t'),
+                Some('u') => {
+                    let mut hex = String::new();
+                    for _ in 0..4 {
+                        let Some(next) = chars.peek().copied() else {
+                            break;
+                        };
+                        if !next.is_ascii_hexdigit() {
+                            break;
+                        }
+                        hex.push(next);
+                        chars.next();
+                    }
+                    if hex.len() == 4 {
+                        if let Ok(code) = u32::from_str_radix(hex.as_str(), 16) {
+                            if let Some(decoded) = char::from_u32(code) {
+                                output.push(decoded);
+                            }
+                        }
+                    }
+                }
+                Some(other) => output.push(other),
+                None => break,
+            },
+            _ => output.push(ch),
+        }
+    }
+    output
+}
+
+fn visible_text_delta(current: &str, next: &str) -> Option<String> {
+    if next.is_empty() || next == current || current.starts_with(next) {
+        return None;
+    }
+    if current.is_empty() {
+        return Some(next.to_string());
+    }
+    if next.starts_with(current) {
+        return Some(next[current.len()..].to_string()).filter(|delta| !delta.is_empty());
+    }
+    let overlap = text_overlap_len(current, next);
+    if overlap == 0 || overlap >= next.len() {
+        return None;
+    }
+    Some(next[overlap..].to_string()).filter(|delta| !delta.is_empty())
+}
+
+fn text_overlap_len(current: &str, next: &str) -> usize {
+    let limit = current.len().min(next.len()).min(1024);
+    let mut size = limit;
+    while size > 0 {
+        if current.is_char_boundary(current.len() - size)
+            && next.is_char_boundary(size)
+            && current.ends_with(&next[..size])
+        {
+            return size;
+        }
+        size -= 1;
+    }
+    0
 }
 
 #[derive(Clone)]
@@ -473,6 +805,7 @@ impl LlmClient {
             let mut reasoning_combined = String::new();
             let mut usage: Option<TokenUsage> = None;
             let mut tool_calls_accumulator: Vec<StreamToolCall> = Vec::new();
+            let mut final_response_preview = FinalResponseToolPreview::default();
             let mut saw_done = false;
             while let Some(item) = stream.next().await {
                 let bytes = item?;
@@ -480,12 +813,13 @@ impl LlmClient {
                 buffer.push_str(&part);
 
                 while let Some(event_block) = take_next_sse_event(&mut buffer) {
-                    if process_sse_event_block(
+                    if process_sse_event_block_with_preview(
                         event_block.as_str(),
                         &mut combined,
                         &mut reasoning_combined,
                         &mut usage,
                         &mut tool_calls_accumulator,
+                        &mut final_response_preview,
                         &mut on_delta,
                     )
                     .await?
@@ -504,12 +838,13 @@ impl LlmClient {
                 let Some(event_block) = take_next_sse_event(&mut buffer) else {
                     break;
                 };
-                if process_sse_event_block(
+                if process_sse_event_block_with_preview(
                     event_block.as_str(),
                     &mut combined,
                     &mut reasoning_combined,
                     &mut usage,
                     &mut tool_calls_accumulator,
+                    &mut final_response_preview,
                     &mut on_delta,
                 )
                 .await?
@@ -521,12 +856,13 @@ impl LlmClient {
 
             if !saw_done
                 && !buffer.trim().is_empty()
-                && process_sse_event_block(
+                && process_sse_event_block_with_preview(
                     buffer.as_str(),
                     &mut combined,
                     &mut reasoning_combined,
                     &mut usage,
                     &mut tool_calls_accumulator,
+                    &mut final_response_preview,
                     &mut on_delta,
                 )
                 .await?
@@ -1021,12 +1357,13 @@ fn take_next_sse_event(buffer: &mut String) -> Option<String> {
     Some(event)
 }
 
-async fn process_sse_event_block<F, Fut>(
+async fn process_sse_event_block_with_preview<F, Fut>(
     block: &str,
     combined: &mut String,
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    final_response_preview: &mut FinalResponseToolPreview,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1054,6 +1391,7 @@ where
                 reasoning_combined,
                 usage,
                 tool_calls_accumulator,
+                final_response_preview,
                 on_delta,
             )
             .await;
@@ -1081,6 +1419,7 @@ where
                     reasoning_combined,
                     usage,
                     tool_calls_accumulator,
+                    final_response_preview,
                     on_delta,
                 )
                 .await?
@@ -1099,6 +1438,33 @@ where
         reasoning_combined,
         usage,
         tool_calls_accumulator,
+        final_response_preview,
+        on_delta,
+    )
+    .await
+}
+
+#[cfg(test)]
+async fn process_sse_event_block<F, Fut>(
+    block: &str,
+    combined: &mut String,
+    reasoning_combined: &mut String,
+    usage: &mut Option<TokenUsage>,
+    tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    on_delta: &mut F,
+) -> Result<bool>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let mut final_response_preview = FinalResponseToolPreview::default();
+    process_sse_event_block_with_preview(
+        block,
+        combined,
+        reasoning_combined,
+        usage,
+        tool_calls_accumulator,
+        &mut final_response_preview,
         on_delta,
     )
     .await
@@ -1110,6 +1476,7 @@ async fn process_stream_payload<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    final_response_preview: &mut FinalResponseToolPreview,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1135,6 +1502,7 @@ where
                     reasoning_combined,
                     usage,
                     tool_calls_accumulator,
+                    final_response_preview,
                     on_delta,
                 )
                 .await;
@@ -1146,6 +1514,7 @@ where
                     reasoning_combined,
                     usage,
                     tool_calls_accumulator,
+                    final_response_preview,
                     on_delta,
                 )
                 .await;
@@ -1205,6 +1574,16 @@ where
             if let Some(payload_function_call) = payload.get("function_call") {
                 update_stream_tool_calls_snapshot(tool_calls_accumulator, payload_function_call);
             }
+            let preview_delta = if content_delta.is_empty() && reasoning_delta.is_empty() {
+                sync_visible_final_response_tool_delta(
+                    combined,
+                    reasoning_combined,
+                    final_response_preview,
+                    tool_calls_accumulator,
+                )
+            } else {
+                None
+            };
             if !content_delta.is_empty() {
                 combined.push_str(content_delta.as_str());
             }
@@ -1213,6 +1592,8 @@ where
             }
             if !content_delta.is_empty() || !reasoning_delta.is_empty() {
                 on_delta(content_delta, reasoning_delta).await?;
+            } else if let Some(preview_delta) = preview_delta {
+                on_delta(preview_delta, String::new()).await?;
             } else if tool_activity && !false_tool_stop {
                 on_delta(String::new(), String::new()).await?;
             }
@@ -1260,6 +1641,7 @@ async fn process_anthropic_stream_payload<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    final_response_preview: &mut FinalResponseToolPreview,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1328,7 +1710,16 @@ where
                             &call,
                             StreamToolFieldMode::Snapshot,
                         );
-                        on_delta(String::new(), String::new()).await?;
+                        if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                            combined,
+                            reasoning_combined,
+                            final_response_preview,
+                            tool_calls_accumulator,
+                        ) {
+                            on_delta(preview_delta, String::new()).await?;
+                        } else {
+                            on_delta(String::new(), String::new()).await?;
+                        }
                     }
                     _ => {}
                 }
@@ -1386,7 +1777,16 @@ where
                                     }
                                 }
                             }
-                            on_delta(String::new(), String::new()).await?;
+                            if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                                combined,
+                                reasoning_combined,
+                                final_response_preview,
+                                tool_calls_accumulator,
+                            ) {
+                                on_delta(preview_delta, String::new()).await?;
+                            } else {
+                                on_delta(String::new(), String::new()).await?;
+                            }
                         }
                     }
                     _ => {}
@@ -1408,7 +1808,14 @@ where
             }
             if let Some(Value::Array(items)) = tool_calls {
                 upsert_responses_tool_calls(tool_calls_accumulator, &items);
-                if combined.is_empty() && reasoning_combined.is_empty() {
+                if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                    combined,
+                    reasoning_combined,
+                    final_response_preview,
+                    tool_calls_accumulator,
+                ) {
+                    on_delta(preview_delta, String::new()).await?;
+                } else if combined.is_empty() && reasoning_combined.is_empty() {
                     on_delta(String::new(), String::new()).await?;
                 }
             }
@@ -1428,6 +1835,7 @@ async fn process_responses_stream_payload<F, Fut>(
     reasoning_combined: &mut String,
     usage: &mut Option<TokenUsage>,
     tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    final_response_preview: &mut FinalResponseToolPreview,
     on_delta: &mut F,
 ) -> Result<bool>
 where
@@ -1473,16 +1881,43 @@ where
         "response.output_item.added" => {
             if let Some(item) = payload.get("item") {
                 update_responses_tool_call_from_item(tool_calls_accumulator, item);
-                on_delta(String::new(), String::new()).await?;
+                if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                    combined,
+                    reasoning_combined,
+                    final_response_preview,
+                    tool_calls_accumulator,
+                ) {
+                    on_delta(preview_delta, String::new()).await?;
+                } else {
+                    on_delta(String::new(), String::new()).await?;
+                }
             }
         }
         "response.function_call_arguments.delta" => {
             update_responses_tool_call_arguments(tool_calls_accumulator, payload);
-            on_delta(String::new(), String::new()).await?;
+            if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                combined,
+                reasoning_combined,
+                final_response_preview,
+                tool_calls_accumulator,
+            ) {
+                on_delta(preview_delta, String::new()).await?;
+            } else {
+                on_delta(String::new(), String::new()).await?;
+            }
         }
         "response.function_call_arguments.done" => {
             update_responses_tool_call_arguments(tool_calls_accumulator, payload);
-            on_delta(String::new(), String::new()).await?;
+            if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                combined,
+                reasoning_combined,
+                final_response_preview,
+                tool_calls_accumulator,
+            ) {
+                on_delta(preview_delta, String::new()).await?;
+            } else {
+                on_delta(String::new(), String::new()).await?;
+            }
         }
         "response.completed" => {
             if let Some(response) = payload.get("response") {
@@ -1500,7 +1935,14 @@ where
                 }
                 if !tool_calls.is_empty() {
                     upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
-                    if combined.is_empty() && reasoning_combined.is_empty() {
+                    if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                        combined,
+                        reasoning_combined,
+                        final_response_preview,
+                        tool_calls_accumulator,
+                    ) {
+                        on_delta(preview_delta, String::new()).await?;
+                    } else if combined.is_empty() && reasoning_combined.is_empty() {
                         on_delta(String::new(), String::new()).await?;
                     }
                 }
@@ -1522,7 +1964,14 @@ where
         }
         if !tool_calls.is_empty() {
             upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
-            if combined.is_empty() && reasoning_combined.is_empty() {
+            if let Some(preview_delta) = sync_visible_final_response_tool_delta(
+                combined,
+                reasoning_combined,
+                final_response_preview,
+                tool_calls_accumulator,
+            ) {
+                on_delta(preview_delta, String::new()).await?;
+            } else if combined.is_empty() && reasoning_combined.is_empty() {
                 on_delta(String::new(), String::new()).await?;
             }
         }
@@ -2569,6 +3018,269 @@ mod tests {
         );
         let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
         assert_eq!(finalized[0]["function"]["name"], "execute_command");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_streams_final_response_tool_arguments_as_visible_delta() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut final_response_preview = FinalResponseToolPreview::default();
+        let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
+        let mut on_delta = move |content: String, reasoning: String| {
+            let callbacks = std::sync::Arc::clone(&callbacks_for_closure);
+            async move {
+                callbacks
+                    .lock()
+                    .expect("lock callbacks")
+                    .push((content, reasoning));
+                Ok(())
+            }
+        };
+
+        let done = process_sse_event_block_with_preview(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_final","type":"function","function":{"name":"final_response","arguments":"{\"content\":\"Hel"}}]}}]}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process first final response argument delta");
+        assert!(!done);
+
+        let done = process_sse_event_block_with_preview(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_final","type":"function","function":{"arguments":"lo\"}"}}]}}]}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process second final response argument delta");
+        assert!(!done);
+
+        assert!(combined.is_empty());
+        assert!(reasoning.is_empty());
+        assert_eq!(
+            callbacks.lock().expect("lock callbacks").as_slice(),
+            &[
+                ("Hel".to_string(), String::new()),
+                ("lo".to_string(), String::new())
+            ]
+        );
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "final_response");
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                finalized[0]["function"]["arguments"].as_str().unwrap_or("")
+            )
+            .expect("final response args"),
+            json!({ "content": "Hello" })
+        );
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_prefers_cumulative_final_response_arguments() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut final_response_preview = FinalResponseToolPreview::default();
+        let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
+        let mut on_delta = move |content: String, reasoning: String| {
+            let callbacks = std::sync::Arc::clone(&callbacks_for_closure);
+            async move {
+                callbacks
+                    .lock()
+                    .expect("lock callbacks")
+                    .push((content, reasoning));
+                Ok(())
+            }
+        };
+
+        process_sse_event_block_with_preview(
+            r#"data: {"choices":[{"message":{"tool_calls":[{"index":0,"id":"call_final","type":"function","function":{"name":"final_response","arguments":"{\"content\":\"Hel\"}"}}]}}]}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process initial final response snapshot");
+
+        process_sse_event_block_with_preview(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_final","type":"function","function":{"arguments":"lo\"}"}}]}}]}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process cumulative final response delta");
+
+        assert!(combined.is_empty());
+        assert_eq!(
+            callbacks.lock().expect("lock callbacks").as_slice(),
+            &[
+                ("Hel".to_string(), String::new()),
+                ("lo".to_string(), String::new())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_streams_responses_final_response_arguments() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut final_response_preview = FinalResponseToolPreview::default();
+        let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
+        let mut on_delta = move |content: String, reasoning: String| {
+            let callbacks = std::sync::Arc::clone(&callbacks_for_closure);
+            async move {
+                callbacks
+                    .lock()
+                    .expect("lock callbacks")
+                    .push((content, reasoning));
+                Ok(())
+            }
+        };
+
+        process_sse_event_block_with_preview(
+            r#"data: {"type":"response.output_item.added","item":{"type":"function_call","id":"item_final","call_id":"call_final","name":"final_response","arguments":"{}"}}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process responses final tool start");
+
+        process_sse_event_block_with_preview(
+            r#"data: {"type":"response.function_call_arguments.delta","item_id":"item_final","call_id":"call_final","delta":"{\"answer\":\"H"}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process first responses final argument delta");
+
+        process_sse_event_block_with_preview(
+            r#"data: {"type":"response.function_call_arguments.delta","item_id":"item_final","call_id":"call_final","delta":"i\"}"}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process second responses final argument delta");
+
+        assert!(combined.is_empty());
+        assert_eq!(
+            callbacks.lock().expect("lock callbacks").as_slice(),
+            &[
+                (String::new(), String::new()),
+                ("H".to_string(), String::new()),
+                ("i".to_string(), String::new())
+            ]
+        );
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "final_response");
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                finalized[0]["function"]["arguments"].as_str().unwrap_or("")
+            )
+            .expect("final response args"),
+            json!({ "answer": "Hi" })
+        );
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_streams_anthropic_final_response_input_json() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut final_response_preview = FinalResponseToolPreview::default();
+        let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
+        let mut on_delta = move |content: String, reasoning: String| {
+            let callbacks = std::sync::Arc::clone(&callbacks_for_closure);
+            async move {
+                callbacks
+                    .lock()
+                    .expect("lock callbacks")
+                    .push((content, reasoning));
+                Ok(())
+            }
+        };
+
+        process_sse_event_block_with_preview(
+            r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_final","name":"final_response","input":{}}}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process anthropic final tool start");
+
+        process_sse_event_block_with_preview(
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"message\":\"Hel"}}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process first anthropic final input delta");
+
+        process_sse_event_block_with_preview(
+            r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"lo\"}"}}"#,
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut final_response_preview,
+            &mut on_delta,
+        )
+        .await
+        .expect("process second anthropic final input delta");
+
+        assert!(combined.is_empty());
+        assert_eq!(
+            callbacks.lock().expect("lock callbacks").as_slice(),
+            &[
+                (String::new(), String::new()),
+                ("Hel".to_string(), String::new()),
+                ("lo".to_string(), String::new())
+            ]
+        );
     }
 
     #[tokio::test]

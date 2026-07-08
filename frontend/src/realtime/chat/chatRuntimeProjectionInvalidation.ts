@@ -30,8 +30,7 @@ export const runtimeProjectionContentInvalidationState = {
 };
 
 const DEFAULT_PROJECTION_INVALIDATION_DELAY_MS = 24;
-const DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 16;
-const PROJECTION_CONTENT_TIMER_FALLBACK_MS = 24;
+const DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS = 8;
 const STREAM_CONTENT_DEBUG_SLOW_MS = 48;
 
 const flushRuntimeProjectionContentVersion = (store: ProjectionVersionStore) => {
@@ -102,53 +101,7 @@ const markRuntimeProjectionContentChanged = (
   runtimeProjectionContentInvalidationState.scheduledAt = Date.now();
   const elapsedMs = Date.now() - runtimeProjectionContentInvalidationState.lastBumpedAt;
   const delayMs = Math.max(0, DEFAULT_PROJECTION_CONTENT_INVALIDATION_DELAY_MS - elapsedMs);
-  if (typeof requestAnimationFrame === 'function') {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let frame: number | null = null;
-    let fallback: ReturnType<typeof setTimeout> | null = null;
-    let flushed = false;
-    const run = () => {
-      if (flushed) return;
-      flushed = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      if (frame !== null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(frame);
-        frame = null;
-      }
-      if (fallback !== null) {
-        clearTimeout(fallback);
-        fallback = null;
-      }
-      bump();
-    };
-    const scheduleFrame = () => {
-      frame = requestAnimationFrame(run);
-      // Local model streams can keep the main thread busy enough that rAF is delayed.
-      // Keep a hard timer so visible text keeps moving instead of flushing at the end.
-      fallback = setTimeout(run, PROJECTION_CONTENT_TIMER_FALLBACK_MS);
-    };
-    if (delayMs > 0) {
-      timer = setTimeout(scheduleFrame, delayMs);
-    } else {
-      scheduleFrame();
-    }
-    runtimeProjectionContentInvalidationState.cancel = () => {
-      if (timer !== null) {
-        clearTimeout(timer);
-      }
-      if (frame !== null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(frame);
-      }
-      if (fallback !== null) {
-        clearTimeout(fallback);
-      }
-    };
-    return;
-  }
-  const timer = globalThis.setTimeout(() => bump(), Math.max(16, delayMs));
+  const timer = globalThis.setTimeout(() => bump(), delayMs);
   runtimeProjectionContentInvalidationState.cancel = () => globalThis.clearTimeout(timer);
 };
 

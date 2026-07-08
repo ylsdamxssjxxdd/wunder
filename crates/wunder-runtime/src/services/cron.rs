@@ -2,8 +2,8 @@ mod policy;
 
 use crate::config::Config;
 use crate::config_store::ConfigStore;
-use crate::core::blocking;
 use crate::core::long_task;
+use crate::core::{blocking, runtime_metrics};
 use crate::i18n;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -2054,8 +2054,12 @@ impl CronScheduler {
             let wake_signal = self.wake_signal.clone();
             if !cron_cfg.enabled {
                 tokio::select! {
-                    _ = sleep(Duration::from_millis(cron_cfg.max_idle_sleep_ms.max(500))) => {}
-                    _ = wake_signal.wait() => {}
+                    _ = sleep(Duration::from_millis(cron_cfg.max_idle_sleep_ms.max(500))) => {
+                        runtime_metrics::record_loop_tick("cron.scheduler.loop", "disabled_sleep");
+                    }
+                    _ = wake_signal.wait() => {
+                        runtime_metrics::record_loop_tick("cron.scheduler.loop", "disabled_wake");
+                    }
                 }
                 continue;
             }
@@ -2083,8 +2087,12 @@ impl CronScheduler {
                 cron_cfg.max_idle_sleep_ms,
             );
             tokio::select! {
-                _ = sleep(Duration::from_millis(sleep_ms)) => {}
-                _ = wake_signal.wait() => {}
+                _ = sleep(Duration::from_millis(sleep_ms)) => {
+                    runtime_metrics::record_loop_tick("cron.scheduler.loop", "sleep");
+                }
+                _ = wake_signal.wait() => {
+                    runtime_metrics::record_loop_tick("cron.scheduler.loop", "wake");
+                }
             }
         }
     }

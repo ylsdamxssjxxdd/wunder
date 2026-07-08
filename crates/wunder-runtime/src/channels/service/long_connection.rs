@@ -4,8 +4,7 @@ use crate::channels::types::{
     ChannelAccountConfig, ChannelMessage, FeishuConfig, QqBotConfig, WeixinConfig, XmppConfig,
 };
 use crate::channels::{feishu, qqbot, weixin, xmpp};
-use crate::core::blocking;
-use crate::core::long_task;
+use crate::core::{blocking, long_task, runtime_metrics};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -23,6 +22,8 @@ const XMPP_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const XMPP_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 2;
 const WEIXIN_LONG_CONN_RETRY_BASE_MS: u64 = 800;
+const WEIXIN_LONG_CONN_IDLE_MIN_SLEEP_MS: u64 = 200;
+const WEIXIN_LONG_CONN_IDLE_MAX_SLEEP_MS: u64 = 1_000;
 
 #[derive(Debug, Clone)]
 struct FeishuLongConnTarget {
@@ -90,12 +91,24 @@ impl ChannelHub {
                 for (_, handle) in workers.drain() {
                     handle.abort();
                 }
+                runtime_metrics::record_loop_tick(
+                    "channels.long_connection.feishu.supervisor",
+                    "disabled",
+                );
                 sleep(Duration::from_secs(FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
             match self.list_feishu_long_connection_targets().await {
                 Ok(targets) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.feishu.supervisor",
+                        if targets.is_empty() {
+                            "empty"
+                        } else {
+                            "targets"
+                        },
+                    );
                     let mut desired_keys = HashSet::new();
                     for target in targets {
                         let task_key = target.task_key();
@@ -127,6 +140,10 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.feishu.supervisor",
+                        "error",
+                    );
                     self.record_runtime_warn(
                         feishu::FEISHU_CHANNEL,
                         None,
@@ -285,12 +302,24 @@ impl ChannelHub {
                 for (_, handle) in workers.drain() {
                     handle.abort();
                 }
+                runtime_metrics::record_loop_tick(
+                    "channels.long_connection.qqbot.supervisor",
+                    "disabled",
+                );
                 sleep(Duration::from_secs(QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
             match self.list_qqbot_long_connection_targets().await {
                 Ok(targets) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.qqbot.supervisor",
+                        if targets.is_empty() {
+                            "empty"
+                        } else {
+                            "targets"
+                        },
+                    );
                     let mut desired_keys = HashSet::new();
                     for target in targets {
                         let task_key = target.task_key();
@@ -319,6 +348,10 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.qqbot.supervisor",
+                        "error",
+                    );
                     self.record_runtime_warn(
                         qqbot::QQBOT_CHANNEL,
                         None,
@@ -566,12 +599,24 @@ impl ChannelHub {
                 for (_, handle) in workers.drain() {
                     handle.abort();
                 }
+                runtime_metrics::record_loop_tick(
+                    "channels.long_connection.xmpp.supervisor",
+                    "disabled",
+                );
                 sleep(Duration::from_secs(XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
             match self.list_xmpp_long_connection_targets().await {
                 Ok(targets) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.xmpp.supervisor",
+                        if targets.is_empty() {
+                            "empty"
+                        } else {
+                            "targets"
+                        },
+                    );
                     let mut desired_keys = HashSet::new();
                     for target in targets {
                         let task_key = target.task_key();
@@ -600,6 +645,10 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.xmpp.supervisor",
+                        "error",
+                    );
                     self.record_runtime_warn(
                         xmpp::XMPP_CHANNEL,
                         None,
@@ -739,12 +788,24 @@ impl ChannelHub {
                 for (_, handle) in workers.drain() {
                     handle.abort();
                 }
+                runtime_metrics::record_loop_tick(
+                    "channels.long_connection.weixin.supervisor",
+                    "disabled",
+                );
                 sleep(Duration::from_secs(WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
                 continue;
             }
 
             match self.list_weixin_long_connection_targets().await {
                 Ok(targets) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.weixin.supervisor",
+                        if targets.is_empty() {
+                            "empty"
+                        } else {
+                            "targets"
+                        },
+                    );
                     let mut desired_keys = HashSet::new();
                     for target in targets {
                         let task_key = target.task_key();
@@ -776,6 +837,10 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
+                    runtime_metrics::record_loop_tick(
+                        "channels.long_connection.weixin.supervisor",
+                        "error",
+                    );
                     self.record_runtime_warn(
                         weixin::WEIXIN_CHANNEL,
                         None,
@@ -912,6 +977,13 @@ impl ChannelHub {
 
                     consecutive_failures = 0;
                     if result.msgs.is_empty() {
+                        // Some deployments return successful empty getupdates responses immediately.
+                        // Without a small idle delay this worker can hot-loop and pin a CPU core.
+                        sleep(weixin_idle_poll_sleep_duration(
+                            next_poll_timeout_ms,
+                            backoff_ms,
+                        ))
+                        .await;
                         continue;
                     }
 
@@ -921,6 +993,11 @@ impl ChannelHub {
                         &target.config,
                     );
                     if messages.is_empty() {
+                        sleep(weixin_idle_poll_sleep_duration(
+                            next_poll_timeout_ms,
+                            backoff_ms,
+                        ))
+                        .await;
                         continue;
                     }
 
@@ -970,6 +1047,11 @@ impl ChannelHub {
                                         target.account_id
                                     ),
                                 );
+                                sleep(weixin_idle_poll_sleep_duration(
+                                    next_poll_timeout_ms,
+                                    backoff_ms,
+                                ))
+                                .await;
                             } else {
                                 self.record_runtime_info(
                                     weixin::WEIXIN_CHANNEL,
@@ -1025,5 +1107,38 @@ impl ChannelHub {
                 }
             }
         }
+    }
+}
+
+fn weixin_idle_poll_sleep_duration(poll_timeout_ms: u64, backoff_ms: u64) -> Duration {
+    let sleep_ms = poll_timeout_ms.min(backoff_ms).clamp(
+        WEIXIN_LONG_CONN_IDLE_MIN_SLEEP_MS,
+        WEIXIN_LONG_CONN_IDLE_MAX_SLEEP_MS,
+    );
+    Duration::from_millis(sleep_ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        weixin_idle_poll_sleep_duration, WEIXIN_LONG_CONN_IDLE_MAX_SLEEP_MS,
+        WEIXIN_LONG_CONN_IDLE_MIN_SLEEP_MS,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn weixin_idle_poll_sleep_never_busy_loops() {
+        assert_eq!(
+            weixin_idle_poll_sleep_duration(0, 0),
+            Duration::from_millis(WEIXIN_LONG_CONN_IDLE_MIN_SLEEP_MS)
+        );
+    }
+
+    #[test]
+    fn weixin_idle_poll_sleep_caps_long_empty_polls() {
+        assert_eq!(
+            weixin_idle_poll_sleep_duration(35_000, 8_000),
+            Duration::from_millis(WEIXIN_LONG_CONN_IDLE_MAX_SLEEP_MS)
+        );
     }
 }

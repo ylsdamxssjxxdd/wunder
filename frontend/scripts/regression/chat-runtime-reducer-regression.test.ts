@@ -17,7 +17,8 @@ import {
 import type { ChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeTypes';
 import {
   analyzeTerminalSnapshotSmoothing,
-  buildTerminalSnapshotDeltaPayload
+  buildTerminalSnapshotDeltaPayload,
+  resolveStreamEventTextStats
 } from '../../src/stores/chatTerminalSnapshotSmoothing';
 
 const baseEvent = (overrides: ChatRuntimeEvent): ChatRuntimeEvent => ({
@@ -4739,4 +4740,242 @@ test('terminal snapshot smoothing skips non-prefix final content', () => {
 
   assert.equal(analysis.plan, null);
   assert.equal(analysis.debug.smoothReason, 'not_prefix');
+});
+
+test('llm_output snapshots do not roll back longer live assistant text', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-tool-live';
+  const modelTurnId = 'mt-tool-live';
+  const assistantMessageId = 'am-tool-live';
+  const finalPrefix = 'visible response';
+  const liveContent = `${finalPrefix} with streamed tail`;
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-tool-live-delta',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: liveContent
+  }));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output',
+    payload: {
+      content: finalPrefix,
+      done: true,
+      user_turn_id: userTurnId,
+      model_turn_id: modelTurnId,
+      message_id: assistantMessageId
+    },
+    eventId: 2,
+    requestId: 'req-tool-live',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, liveContent);
+  assert.equal(assistant?.status, 'final');
+});
+
+test('llm_output snapshots still replace non-prefix live text', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-tool-snapshot';
+  const modelTurnId = 'mt-tool-snapshot';
+  const assistantMessageId = 'am-tool-snapshot';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-tool-snapshot-delta',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: 'first visible part. '
+  }));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output',
+    payload: {
+      content: 'second visible part.',
+      user_turn_id: userTurnId,
+      model_turn_id: modelTurnId,
+      message_id: assistantMessageId
+    },
+    eventId: 2,
+    requestId: 'req-tool-snapshot',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, 'second visible part.');
+  assert.equal(assistant?.status, 'streaming');
+});
+
+test('llm_output segment snapshots do not replace accumulated tool-turn text', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-tool-segments';
+  const modelTurnId = 'mt-tool-segments';
+  const assistantMessageId = 'am-tool-segments';
+  const firstSegment = 'First segment before a tool. ';
+  const secondSegment = 'Second segment after the tool.';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-tool-segment-delta-1',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: firstSegment
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-tool-segment-delta-2',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: secondSegment
+  }));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output',
+    payload: {
+      content: secondSegment,
+      user_turn_id: userTurnId,
+      model_turn_id: modelTurnId,
+      message_id: assistantMessageId
+    },
+    eventId: 3,
+    requestId: 'req-tool-segments',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, `${firstSegment}${secondSegment}`);
+  assert.equal(assistant?.status, 'streaming');
+});
+
+test('final stream snapshot replaces accumulated final-response previews', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-final-preview';
+  const modelTurnId = 'mt-final-preview';
+  const assistantMessageId = 'am-final-preview';
+  const previewA = 'intermediate preview. ';
+  const previewB = 'another preview. ';
+  const finalContent = 'Final answer only.';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-final-preview-delta-1',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: previewA
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_output_snapshot',
+    event_id: 'evt-final-preview-snapshot',
+    event_seq: 2,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    content: previewA
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_delta',
+    event_id: 'evt-final-preview-delta-2',
+    event_seq: 3,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId,
+    delta: previewB
+  }));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'final',
+    payload: {
+      content: finalContent,
+      user_turn_id: userTurnId,
+      model_turn_id: modelTurnId,
+      message_id: assistantMessageId
+    },
+    eventId: 4,
+    requestId: 'req-final-preview',
+    phase: 'send',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, finalContent);
+  assert.equal(assistant?.status, 'final');
+});
+
+test('final answer snapshots are eligible for terminal smoothing from an empty assistant message', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const userTurnId = 'ut-final-smooth';
+  const modelTurnId = 'mt-final-smooth';
+  const assistantMessageId = 'am-final-smooth';
+  const finalContent =
+    'This final response is long enough to be revealed progressively when no live text arrived first.';
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-final-smooth-created',
+    event_seq: 1,
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId
+  }));
+
+  const stats = resolveStreamEventTextStats('final', {
+    answer: finalContent,
+    stop_reason: 'final_tool'
+  });
+  assert.equal(stats.finalContentChars, finalContent.length);
+
+  const analysis = analyzeTerminalSnapshotSmoothing({
+    projection,
+    sessionId,
+    payload: {
+      answer: finalContent,
+      stop_reason: 'final_tool'
+    },
+    requestId: 'req-final-smooth',
+    eventId: 2,
+    userTurnId,
+    modelTurnId,
+    assistantMessageId
+  });
+
+  assert.ok(analysis.plan);
+  assert.equal(analysis.plan?.tail, finalContent);
+  assert.equal(analysis.debug.smoothReason, 'terminal_tail_prefix');
 });
