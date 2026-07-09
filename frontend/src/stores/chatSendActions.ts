@@ -150,6 +150,152 @@ const STREAM_TEXT_EVENT_TYPES = new Set([
 const isStreamTextEventType = (value: unknown): boolean =>
   STREAM_TEXT_EVENT_TYPES.has(String(value || '').trim().toLowerCase());
 
+const QUEUE_WORKFLOW_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
+
+const parseQueueAheadValue = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const resolveQueuePayloadDetail = (
+  payload: Record<string, any> | null | undefined,
+  approvalPayload: Record<string, any> | null | undefined,
+  eventType: string,
+  eventId: unknown
+): Record<string, unknown> => {
+  const payloadData =
+    payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+      ? payload.data
+      : {};
+  const approvalData =
+    approvalPayload?.data && typeof approvalPayload.data === 'object' && !Array.isArray(approvalPayload.data)
+      ? approvalPayload.data
+      : {};
+  const detailSource = Object.keys(approvalData).length > 0
+    ? approvalData
+    : Object.keys(payloadData).length > 0
+      ? payloadData
+      : approvalPayload && typeof approvalPayload === 'object'
+        ? approvalPayload
+        : payload && typeof payload === 'object'
+          ? payload
+          : {};
+  const queueAhead = parseQueueAheadValue(
+    detailSource.wait_ahead,
+    detailSource.waitAhead,
+    detailSource.active_wait_ahead,
+    detailSource.activeWaitAhead,
+    detailSource.queue_ahead,
+    detailSource.queueAhead,
+    approvalPayload?.wait_ahead,
+    approvalPayload?.waitAhead,
+    approvalPayload?.active_wait_ahead,
+    approvalPayload?.activeWaitAhead,
+    approvalPayload?.queue_ahead,
+    approvalPayload?.queueAhead,
+    payload?.wait_ahead,
+    payload?.waitAhead,
+    payload?.active_wait_ahead,
+    payload?.activeWaitAhead,
+    payload?.queue_ahead,
+    payload?.queueAhead,
+    payloadData.wait_ahead,
+    payloadData.waitAhead,
+    payloadData.active_wait_ahead,
+    payloadData.activeWaitAhead,
+    payloadData.queue_ahead,
+    payloadData.queueAhead
+  );
+  return {
+    ...(detailSource && typeof detailSource === 'object' ? detailSource : {}),
+    event_type: eventType,
+    ...(normalizeStreamEventId(eventId) ? { event_id: normalizeStreamEventId(eventId) } : {}),
+    ...(queueAhead !== null
+      ? {
+          wait_ahead: queueAhead,
+          queue_ahead: queueAhead
+        }
+      : {})
+  };
+};
+
+const markAssistantMessageQueued = (
+  assistantMessage: Record<string, any>,
+  payload: Record<string, any> | null | undefined,
+  approvalPayload: Record<string, any> | null | undefined,
+  eventType: string,
+  eventId: unknown
+): void => {
+  if (!assistantMessage || assistantMessage.role !== 'assistant') return;
+  const normalizedEventType = QUEUE_WORKFLOW_EVENT_TYPES.has(eventType) ? eventType : 'queued';
+  const detail = resolveQueuePayloadDetail(payload, approvalPayload, normalizedEventType, eventId);
+  const queueAhead = parseQueueAheadValue(
+    detail.wait_ahead,
+    detail.waitAhead,
+    detail.active_wait_ahead,
+    detail.activeWaitAhead,
+    detail.queue_ahead,
+    detail.queueAhead
+  );
+  assistantMessage.state = 'queued';
+  assistantMessage.status = 'queued';
+  assistantMessage.workflowStreaming = true;
+  assistantMessage.stream_incomplete = true;
+  assistantMessage.waiting_updated_at_ms = Date.now();
+  if (!assistantMessage.stats || typeof assistantMessage.stats !== 'object') {
+    assistantMessage.stats = {};
+  }
+  if (!Number.isFinite(Number(assistantMessage.stats.interaction_start_ms))) {
+    assistantMessage.stats.interaction_start_ms = assistantMessage.waiting_updated_at_ms;
+  }
+  if (!Array.isArray(assistantMessage.workflowItems)) {
+    assistantMessage.workflowItems = [];
+  }
+  const items = assistantMessage.workflowItems;
+  const existing = [...items]
+    .reverse()
+    .find((item) => QUEUE_WORKFLOW_EVENT_TYPES.has(String(item?.eventType || item?.event || '').trim().toLowerCase()));
+  const patch = {
+    title: t('chat.waiting.queuedTitle'),
+    detail: buildDetail(detail),
+    status: 'pending',
+    eventType: normalizedEventType,
+    sourceEventType: normalizedEventType,
+    ...(queueAhead !== null
+      ? {
+          wait_ahead: queueAhead,
+          queue_ahead: queueAhead
+        }
+      : {})
+  };
+  if (existing) {
+    Object.assign(existing, patch);
+    return;
+  }
+  items.push(
+    buildWorkflowItem(
+      patch.title,
+      patch.detail,
+      patch.status,
+      {
+        eventType: patch.eventType,
+        sourceEventType: patch.sourceEventType,
+        ...(queueAhead !== null
+          ? {
+              wait_ahead: queueAhead,
+              queue_ahead: queueAhead
+            }
+          : {})
+      }
+    )
+  );
+};
+
 const resolveMaxProjectionUserRound = (projection: ChatRuntimeProjection | null | undefined, sessionId: unknown): number => {
   const key = String(sessionId ?? '').trim();
   if (!key || !projection?.sessions?.[key]) return 0;
@@ -798,6 +944,13 @@ export const chatSendActions = {
             if (!queued) {
               queued = true;
             }
+            markAssistantMessageQueued(
+              assistantMessage,
+              payload,
+              approvalPayload,
+              normalizedEventType,
+              eventId
+            );
             syncRuntimeLastAppliedEventId();
             return;
           }

@@ -41,7 +41,10 @@ mod media;
 mod prompt;
 mod sessions;
 
-use sessions::{is_session_runtime_active, is_session_stream_active_or_queued};
+use sessions::{
+    has_active_queue_task, is_session_runtime_active, is_session_stream_active,
+    is_session_stream_active_or_queued,
+};
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -332,6 +335,8 @@ async fn send_message(
                 "session_id": info.session_id,
                 "queue_ahead": info.queue_ahead,
                 "queue_total": info.queue_total,
+                "active_ahead": info.active_ahead,
+                "wait_ahead": info.wait_ahead,
                 "queue_event_id": info.queue_event_id,
                 "queue_after_event_id": info.queue_after_event_id,
             });
@@ -573,6 +578,7 @@ pub(crate) async fn build_chat_request(
         attachments,
         allow_queue: true,
         is_admin: UserStore::is_admin(user),
+        enforce_runtime_queue: true,
         approval_tx: None,
     })
 }

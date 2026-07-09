@@ -285,6 +285,7 @@ async fn main() -> Result<()> {
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        enforce_runtime_queue: false,
         approval_tx: None,
     };
 

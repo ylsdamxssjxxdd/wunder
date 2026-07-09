@@ -972,7 +972,9 @@ mod tests {
     #[test]
     fn online_llm_delta_uses_backpressure_instead_of_lossy_overflow() {
         assert!(should_backpressure_online_stream_event("llm_output_delta"));
-        assert!(should_backpressure_online_stream_event("command_session_delta"));
+        assert!(should_backpressure_online_stream_event(
+            "command_session_delta"
+        ));
         assert!(!should_backpressure_online_stream_event("progress"));
     }
 

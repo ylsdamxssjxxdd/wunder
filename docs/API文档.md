@@ -129,11 +129,12 @@
 - `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
 - 约束：注册用户按累计 Token 余额限额，按每次模型调用的实际 `total_tokens` 扣减；`token_balance` 可累计、可消费，语义上等价于用户持有的 Token 货币余额。余额不足返回 429（`detail.code=USER_TOKEN_INSUFFICIENT`）。
 - 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
-- 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。请求带 `client_message_id` 时，`queue_enter.data.client_message_id` 与后续同轮对象型流事件会原样使用服务端归一化后的值。
+- 忙时队列：当 `agent_queue.enabled=true` 时，直接用户聊天请求在 `server.max_active_sessions` 达到上限后进入可见队列，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_ahead`/`data.queue_total`/`data.active_ahead`/`data.wait_ahead`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_ahead` 表示队列内排在当前任务前方的 pending/retry 任务数，`active_ahead` 表示当前阻塞执行槽的运行中直接用户轮次数，`wait_ahead` 表示用户侧可展示的总等待人数/请求数；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。请求带 `client_message_id` 时，`queue_enter.data.client_message_id` 与后续同轮对象型流事件会原样使用服务端归一化后的值。子智能体、蜂群工蜂与后台内部任务不计入用户可见队列。
 - 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。队列终止事件写入前会先 flush 当前任务已产生的流式事件持久化队列，避免恢复端先看到 `queue_finish` 再补到旧增量。
 - 聊天 WS 排队语义：`/wunder/chat/ws` 的 `start` 被排队后，服务端会沿同一个 request-scoped WS 流从 `queue_after_event_id` 继续转发本 `queue_id` 的 `queue_enter -> queue_start -> 模型/工具流式事件 -> queue_finish/queue_fail`；客户端不要在收到 `queue_enter` 或 queued ack 后主动切换到 `watch`。队列回放在匹配本 `queue_id` 的 `queue_start` 前不会转发无 `queue_id` 的模型/工具事件，遇到本 `queue_id` 的 `queue_finish/queue_fail` 会立即截断，避免旧任务尾部或下一轮事件混入当前请求。
 - WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
 - 排队活跃态：`watch/resume` 会把同 `session` 下的 `pending/retry/running` 队列任务视为活跃流状态，排队期仍会维持恢复链路与心跳。
+- 会话事件快照：`GET /wunder/chat/sessions/{session_id}/events` 会区分纯排队与真实运行态；纯排队时返回 `queued=true`，并在缺少运行时快照时补充 `runtime.thread_status/status=queued`，但 `running=false`。客户端应使用 `queued`/`runtime.status=queued` 恢复排队气泡，不应把纯排队当作模型轮次已开始。
 - 慢客户端恢复：当 WS 出站队列接近满载时，服务端会发送 `slow_client(reason=queue_full_resume_required)`，调用方应改走 `resume/watch` 补齐，而不是假设增量仍会持续直推。
 - 流式终态事件 `llm_output`：除 `content/reasoning/tool_calls/usage/prefill_duration_s/decode_duration_s` 等既有字段外，流式请求会尽量附带 `stream_timing` 诊断对象；非流式、无可见增量或旧事件回放中该字段可能为 `null` 或缺失，客户端必须兼容。
   - `stream_timing.chunk_count`：本次上游流中包含正文或推理增量的分片数。
@@ -224,9 +225,9 @@
 - 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
-- 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
+- 约束：直接用户聊天的全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待；管理员从用户侧聊天入口发起的请求同样受该可见队列约束。
 - 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；同一工具命中同一个明确的不可重试错误时，也默认在第 5 次相同失败后触发保护，避免模型持续硬撞同一错误。
-- 说明：管理员会话跳过上述限制（会话锁/Token 余额/并发上限）。
+- 说明：直接调用编排器的管理员运维/评测/内部任务仍可跳过会话锁、Token 余额或并发上限；用户侧聊天入口不因管理员身份绕过 `server.max_active_sessions`。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
 - 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。

@@ -1998,15 +1998,40 @@ const buildApplyPatchResultFiles = (patchEntries: PatchEntry[], errorText: strin
     tone: resolvePatchEntryTone(entry)
   }));
   if (errorText) {
-    files.push({
-      key: 'patch-error',
-      title: 'error',
-      meta: '',
-      lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
-      tone: 'danger'
-    });
+    const failureFile = files.length === 0 ? buildApplyPatchFailureFile(errorText) : null;
+    if (failureFile) {
+      files.push(failureFile);
+    } else {
+      files.push({
+        key: 'patch-error',
+        title: t('chat.toolWorkflow.applyPatchFailure.title'),
+        meta: t('chat.toolWorkflow.statusFailed'),
+        lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
+        tone: 'danger'
+      });
+    }
   }
   return files;
+};
+
+const buildApplyPatchFailureFile = (errorText: string): PatchFileView | null => {
+  const normalized = String(errorText || '').trim();
+  if (!normalized) return null;
+  const lines = [
+    t('chat.toolWorkflow.applyPatchFailure.notApplied'),
+    ...normalized.split('\n').filter(Boolean)
+  ];
+  return {
+    key: 'patch-failure',
+    title: t('chat.toolWorkflow.applyPatchFailure.title'),
+    meta: t('chat.toolWorkflow.statusFailed'),
+    lines: lines.map((line, index): PatchLine => ({
+      key: `patch-failure-line-${index}`,
+      kind: index === 0 ? 'error' : 'note',
+      text: line
+    })),
+    tone: 'danger'
+  };
 };
 
 const buildApplyPatchResultFilesFromDiffBlocks = (
@@ -2121,13 +2146,18 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
   });
 
   if (errorText) {
-    output.push({
-      key: 'patch-error',
-      title: 'error',
-      meta: '',
-      lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
-      tone: 'danger'
-    });
+    const failureFile = output.length === 0 ? buildApplyPatchFailureFile(errorText) : null;
+    if (failureFile) {
+      output.push(failureFile);
+    } else {
+      output.push({
+        key: 'patch-error',
+        title: t('chat.toolWorkflow.applyPatchFailure.title'),
+        meta: t('chat.toolWorkflow.statusFailed'),
+        lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
+        tone: 'danger'
+      });
+    }
   }
 
   return output;
@@ -2173,8 +2203,8 @@ const mergeApplyPatchResultFilesWithPreview = (
   if (errorText) {
     files.push({
       key: 'patch-error',
-      title: 'error',
-      meta: '',
+      title: t('chat.toolWorkflow.applyPatchFailure.title'),
+      meta: t('chat.toolWorkflow.statusFailed'),
       lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
       tone: 'danger'
     });
@@ -2752,6 +2782,22 @@ const extractResultPayload = (
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
   return { resultObject, dataObject };
+};
+
+const isToolResultPayloadFailed = (resultItem: WorkflowItem | null): boolean => {
+  if (!resultItem) return false;
+  const { resultObject, dataObject } = extractResultPayload(resultItem);
+  const explicitOk = toBool(resultObject?.ok, dataObject?.ok);
+  const explicitSuccess = toBool(resultObject?.success, dataObject?.success);
+  if (explicitOk === false || explicitSuccess === false) return true;
+  const errorCode = pickString(
+    dataObject?.error_code,
+    dataObject?.errorCode,
+    asObject(dataObject?.error_meta)?.code,
+    asObject(resultObject?.error_meta)?.code
+  );
+  const errorText = pickString(resultObject?.error, dataObject?.error);
+  return Boolean(errorCode || errorText);
 };
 
 const buildPreviewBlockWithCache = (
@@ -3419,7 +3465,10 @@ const buildToolResultSection = (
   }
 
   if (isApplyPatchTool(entry.toolName)) {
-    const errorText = status === 'failed' ? buildErrorText(entry.resultItem, null) : '';
+    const errorText =
+      status === 'failed'
+        ? buildErrorText(entry.resultItem, null) || t('chat.toolWorkflow.applyPatchFailure.empty')
+        : '';
     const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
     const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
     const resultDiffFiles = buildApplyPatchResultFilesFromDiffBlocks(
@@ -3525,6 +3574,7 @@ const buildErrorText = (
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
   const errorMeta = asObject(dataObject?.error_meta);
+  const resultErrorMeta = asObject(resultObject?.error_meta);
   const summary = truncateSingleLine(
     pickString(
       dataObject?.failure_summary,
@@ -3533,15 +3583,16 @@ const buildErrorText = (
       dataObject?.error,
       dataObject?.message,
       resultObject?.message,
+      dataObject?.detail,
       dataObject?.stderr
     ),
     200
   );
   const hint = truncateSingleLine(
-    pickString(dataObject?.next_step_hint, errorMeta?.hint),
+    pickString(dataObject?.next_step_hint, dataObject?.hint, errorMeta?.hint, resultErrorMeta?.hint),
     220
   );
-  const code = pickString(dataObject?.error_code, errorMeta?.code);
+  const code = pickString(dataObject?.error_code, dataObject?.errorCode, errorMeta?.code, resultErrorMeta?.code);
   if (summary && code) {
     return hint && hint !== summary ? `${summary} (${code})\n${hint}` : `${summary} (${code})`;
   }
@@ -3612,7 +3663,10 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
-  const status = resolveEntryStatus(entry, commandSession);
+  const status =
+    isApplyPatchTool(entry.toolName) && isToolResultPayloadFailed(entry.resultItem)
+      ? 'failed'
+      : resolveEntryStatus(entry, commandSession);
   const isCompaction = isCompactionEntry(entry);
   const compactionDisplay = isCompaction
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)

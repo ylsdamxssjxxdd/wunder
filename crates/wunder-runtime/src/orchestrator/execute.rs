@@ -90,7 +90,7 @@ impl Orchestrator {
         let request_config = self
             .resolve_config(prepared.config_overrides.as_ref())
             .await;
-        let max_active_sessions = if prepared.is_admin {
+        let max_active_sessions = if prepared.is_admin && !prepared.enforce_runtime_queue {
             i64::MAX as usize
         } else {
             request_config.server.max_active_sessions

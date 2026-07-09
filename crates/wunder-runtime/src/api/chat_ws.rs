@@ -21,9 +21,10 @@ use crate::core::approval_registry::{
 use crate::core::long_task;
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
+use crate::schemas::StreamEvent;
 use crate::services::chat_cancel_marker::persist_user_cancelled_turn_marker;
 use crate::services::goal::{self, GoalCommand};
-use crate::services::runtime::thread::ThreadSubmitOutcome;
+use crate::services::runtime::thread::{QueueInfo, ThreadSubmitOutcome};
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -123,6 +124,21 @@ struct WsStreamEntry {
     cancel: CancellationToken,
     task_id: String,
     cancel_session: bool,
+}
+
+fn build_queued_event_data(info: &QueueInfo) -> serde_json::Value {
+    json!({
+        "queued": true,
+        "queue_id": info.task_id,
+        "thread_id": info.thread_id,
+        "session_id": info.session_id,
+        "queue_ahead": info.queue_ahead,
+        "queue_total": info.queue_total,
+        "active_ahead": info.active_ahead,
+        "wait_ahead": info.wait_ahead,
+        "queue_event_id": info.queue_event_id,
+        "queue_after_event_id": info.queue_after_event_id,
+    })
 }
 
 async fn chat_ws(
@@ -478,6 +494,18 @@ async fn handle_ws(
 
                         let (request, lease, approval_rx) = match outcome {
                             ThreadSubmitOutcome::Queued(info) => {
+                                let queued_event = StreamEvent {
+                                    event: "queued".to_string(),
+                                    data: build_queued_event_data(&info),
+                                    id: None,
+                                    timestamp: Some(Utc::now()),
+                                };
+                                if send_ws_event(&ws_tx, Some(&request_id), queued_event)
+                                    .await
+                                    .is_err()
+                                {
+                                    continue;
+                                }
                                 // The task was enqueued and will be executed by the
                                 // thread runtime's dispatch loop. The queue_enter /
                                 // queue_start / queue_finish events (and all stream
@@ -485,17 +513,10 @@ async fn handle_ws(
                                 // the stream_events table by emit_queue_event and the
                                 // orchestrator's stream pump.
                                 //
-                                // Previously we only sent an ephemeral "queued" event
-                                // (no event_id, not persisted) and continued, leaving
-                                // the client with no push channel for the duration of
-                                // the queued task. That made the UI appear frozen until
-                                // the user manually refreshed.
-                                //
-                                // Now we register a WS task and spawn a queue-scoped
-                                // resume loop. It starts from the queue_after_event_id
-                                // chosen by ThreadRuntime and waits for this task's
-                                // queue terminal event, so old session events cannot be
-                                // replayed into the current pending assistant message.
+                                // The immediate queued ack updates the current bubble
+                                // without closing the request. The queue-scoped resume
+                                // loop then forwards persisted queue/start/final events
+                                // for this task only.
                                 let queue_after_event_id = info.queue_after_event_id;
                                 let queue_id = info.task_id.clone();
                                 let (cancel, task_id) = register_ws_task(
@@ -565,6 +586,7 @@ async fn handle_ws(
                                 Ok(stream) => {
                                     tokio::pin!(stream);
                                     let mut goal_continue_ready = false;
+                                    let mut ws_delivery_open = true;
                                     loop {
                                         tokio::select! {
                                             _ = cancel.cancelled() => {
@@ -581,15 +603,19 @@ async fn handle_ws(
                                                 if event.event == "goal_continuation_ready" {
                                                     goal_continue_ready = true;
                                                 }
-                                                if send_ws_event(
-                                                    &ws_tx_snapshot,
-                                                    Some(&request_id_cleanup),
-                                                    event,
-                                                )
-                                                .await
-                                                .is_err()
-                                                {
-                                                    break;
+                                                if ws_delivery_open {
+                                                    if send_ws_event(
+                                                        &ws_tx_snapshot,
+                                                        Some(&request_id_cleanup),
+                                                        event,
+                                                    )
+                                                    .await
+                                                    .is_err()
+                                                    {
+                                                        // Keep draining the backend stream so the runtime lease is
+                                                        // released only after this user turn actually completes.
+                                                        ws_delivery_open = false;
+                                                    }
                                                 }
                                             }
                                         }
@@ -1355,4 +1381,42 @@ async fn cleanup_ws_task(
         guard.remove(request_id);
     }
     should_remove
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_event_data_exposes_wait_position_and_replay_anchor() {
+        let info = QueueInfo {
+            task_id: "task_test".to_string(),
+            thread_id: "thread_test".to_string(),
+            session_id: "sess_test".to_string(),
+            queue_ahead: 2,
+            queue_total: 4,
+            active_ahead: 1,
+            wait_ahead: 3,
+            queue_event_id: 42,
+            queue_after_event_id: 41,
+        };
+
+        let payload = build_queued_event_data(&info);
+
+        assert_eq!(
+            payload,
+            json!({
+                "queued": true,
+                "queue_id": "task_test",
+                "thread_id": "thread_test",
+                "session_id": "sess_test",
+                "queue_ahead": 2,
+                "queue_total": 4,
+                "active_ahead": 1,
+                "wait_ahead": 3,
+                "queue_event_id": 42,
+                "queue_after_event_id": 41,
+            })
+        );
+    }
 }

@@ -413,6 +413,7 @@ const normalizeRole = (value: unknown): ChatRuntimeShadowRole | null => {
 const normalizeProjectionStatus = (status: ChatRuntimeMessageStatus): string => {
   if (
     status === 'placeholder' ||
+    status === 'queued' ||
     status === 'waiting_first_output' ||
     status === 'streaming' ||
     status === 'tooling'

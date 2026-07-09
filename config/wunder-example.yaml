@@ -246,6 +246,12 @@ cron: # 定时任务配置
   idle_retry_ms: 2000
   max_busy_wait_ms: 120000
   max_consecutive_failures: 5
+
+agent_queue:
+  enabled: true # Enable visible chat runtime queue when server.max_active_sessions is reached.
+  poll_interval_ms: 1500
+  max_retries: 2
+  task_ttl_s: 86400
 knowledge: # 字面知识库配置
   bases: # 知识库列表
     - name: 公司制度知识库 # 知识库名称（作为工具名）

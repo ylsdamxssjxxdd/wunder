@@ -679,6 +679,7 @@ async fn build_wunder_request(
         attachments: None,
         allow_queue: false,
         is_admin: UserStore::is_admin(&prepared.user),
+        enforce_runtime_queue: false,
         approval_tx: None,
     })
 }

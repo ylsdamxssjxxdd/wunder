@@ -251,6 +251,7 @@ export const selectLegacyMessageStatus = (
 
 export const isRuntimeMessageActive = (status: ChatRuntimeMessageStatus | null | undefined): boolean =>
   status === 'placeholder' ||
+  status === 'queued' ||
   status === 'waiting_first_output' ||
   status === 'streaming' ||
   status === 'tooling';

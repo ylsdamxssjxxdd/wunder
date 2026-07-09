@@ -104,6 +104,7 @@ impl Orchestrator {
             language,
             allow_queue: request.allow_queue,
             is_admin: request.is_admin,
+            enforce_runtime_queue: request.enforce_runtime_queue,
             approval_tx: request.approval_tx.clone(),
         })
     }

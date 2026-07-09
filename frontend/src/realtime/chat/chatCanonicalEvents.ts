@@ -310,7 +310,8 @@ const buildBaseEvent = (
     runtimeType.startsWith('assistant_') ||
     runtimeType.startsWith('tool_call_') ||
     runtimeType === 'workflow_event' ||
-    runtimeType === 'usage_stats';
+    runtimeType === 'usage_stats' ||
+    runtimeType === 'queue_status';
   return {
     event_type: runtimeType,
     source: options.source || 'ws',

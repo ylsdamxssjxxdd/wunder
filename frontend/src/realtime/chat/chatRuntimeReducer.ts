@@ -1258,7 +1258,7 @@ const applySessionIdle = (
   });
   Object.values(session.messageById).forEach((message) => {
     if (message.role !== 'assistant') return;
-    if (message.status === 'placeholder' || message.status === 'waiting_first_output' || message.status === 'streaming' || message.status === 'tooling') {
+    if (message.status === 'placeholder' || message.status === 'queued' || message.status === 'waiting_first_output' || message.status === 'streaming' || message.status === 'tooling') {
       message.status = 'final';
       message.final = true;
       settleProjectedWorkflowItems(message, 'completed');
@@ -1303,11 +1303,11 @@ const applyQueueStatus = (
   event: NormalizedRuntimeEvent
 ): void => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
-  const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
+  const message = ensureAssistantMessageForModelTurn(session, event, 'queued');
   upsertProjectedQueueWorkflowItem(message, event);
-  message.status = 'tooling';
+  message.status = 'queued';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
-  modelTurn.status = 'tool_running';
+  modelTurn.status = 'waiting_first_output';
   setSessionBusy(session, 'queued', 'queued');
 };
 
@@ -1466,6 +1466,8 @@ const mergeLegacyMessages = (
       modelTurn.status = 'failed';
     } else if (status === 'cancelled') {
       modelTurn.status = 'cancelled';
+    } else if (status === 'queued') {
+      modelTurn.status = 'waiting_first_output';
     } else if (status === 'tooling') {
       modelTurn.status = 'tool_running';
     } else if (status === 'streaming') {
@@ -1878,6 +1880,7 @@ const resolveCanonicalModelTurnStatus = (
 ): ChatRuntimeModelTurnProjection['status'] => {
   if (status === 'failed') return 'failed';
   if (status === 'cancelled') return 'cancelled';
+  if (status === 'queued') return 'waiting_first_output';
   if (status === 'tooling') return 'tool_running';
   if (status === 'streaming') return 'streaming';
   if (status === 'waiting_first_output' || status === 'placeholder') {
@@ -2376,6 +2379,7 @@ const pickMergedMessageStatus = (
   if (incoming === 'cancelled' || current === 'cancelled') return 'cancelled';
   if (incoming === 'tooling' || current === 'tooling') return 'tooling';
   if (incoming === 'streaming' || current === 'streaming') return 'streaming';
+  if (incoming === 'queued' || current === 'queued') return 'queued';
   if (incoming === 'waiting_first_output' || current === 'waiting_first_output') {
     return 'waiting_first_output';
   }
@@ -5178,6 +5182,10 @@ const deriveSessionRuntime = (session: ChatRuntimeSessionProjection): void => {
     .sort((left, right) => right.updatedSeq - left.updatedSeq)
     .find((message) => isActiveMessageStatus(message.status));
   if (activeMessage) {
+    if (activeMessage.status === 'queued') {
+      setSessionBusy(session, 'queued', 'queued');
+      return;
+    }
     const reason = activeMessage.status === 'tooling'
       ? 'tool_running'
       : activeMessage.status === 'waiting_first_output' || activeMessage.status === 'placeholder'
@@ -5216,6 +5224,7 @@ const hasActiveMessage = (session: ChatRuntimeSessionProjection): boolean =>
 
 const isActiveMessageStatus = (status: ChatRuntimeMessageStatus): boolean =>
   status === 'placeholder' ||
+  status === 'queued' ||
   status === 'waiting_first_output' ||
   status === 'streaming' ||
   status === 'tooling';

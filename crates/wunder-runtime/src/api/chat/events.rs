@@ -1,6 +1,4 @@
-use super::{
-    error_response, format_ts, is_session_runtime_active, is_session_stream_active_or_queued,
-};
+use super::{error_response, format_ts, is_session_runtime_active, is_session_stream_active};
 use crate::api::user_context::resolve_user;
 use crate::core::blocking;
 use crate::i18n;
@@ -85,11 +83,22 @@ async fn get_session_events(
         .kernel
         .orchestrator
         .get_tool_session_runtime_snapshot(&session_id);
-    let running = is_session_stream_active_or_queued(
-        &state.user_store,
-        monitor_status.as_deref(),
-        &session_id,
-    ) || is_session_runtime_active(runtime.as_ref());
+    let queued = super::has_active_queue_task(&state.user_store, &session_id);
+    let running = monitor_status
+        .as_deref()
+        .map(is_session_stream_active)
+        .unwrap_or(false)
+        || is_session_runtime_active(runtime.as_ref());
+    let runtime_payload = runtime.or_else(|| {
+        queued.then(|| {
+            json!({
+                "thread_status": "queued",
+                "status": "queued",
+                "loaded": true,
+                "active_turn_id": null
+            })
+        })
+    });
     let last_event_id = {
         let storage = state.storage.clone();
         let session_id = session_id.clone();
@@ -107,9 +116,10 @@ async fn get_session_events(
             "limit": requested_limit,
             "events_limited": requested_limit > 0,
             "running": running,
+            "queued": queued,
             "last_event_id": last_event_id,
             "goal": goal.as_ref().map(crate::services::goal::goal_payload),
-            "runtime": runtime,
+            "runtime": runtime_payload,
             "command_sessions": command_sessions
         }
     })))

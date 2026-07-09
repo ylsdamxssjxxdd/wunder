@@ -2163,7 +2163,7 @@ test('canonical stream adapter keeps queued request running until terminal event
   const visibleWhileQueued = selectVisibleMessageProjections(projection, 'session-1');
   const queuedAssistant = visibleWhileQueued.find((message) => message.role === 'assistant');
   assert.ok(queuedAssistant);
-  assert.equal(queuedAssistant.status, 'tooling');
+  assert.equal(queuedAssistant.status, 'queued');
   assert.equal(queuedAssistant.workflowItems?.[0]?.id, 'queue:status');
   assert.equal(queuedAssistant.workflowItems?.[0]?.eventType, 'queued');
   assert.equal(queuedAssistant.workflowItems?.[0]?.status, 'pending');

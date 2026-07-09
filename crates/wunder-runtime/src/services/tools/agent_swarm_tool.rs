@@ -70,6 +70,7 @@ async fn dispatch_swarm_batch_task(
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
+        enforce_runtime_queue: false,
         approval_tx: None,
     };
 

@@ -1050,6 +1050,7 @@ impl ChannelHub {
             attachments: None,
             allow_queue: false,
             is_admin: false,
+            enforce_runtime_queue: false,
             approval_tx: None,
         };
         let approval_task = if CHANNEL_OPEN_APPROVAL_FOR_TEST {

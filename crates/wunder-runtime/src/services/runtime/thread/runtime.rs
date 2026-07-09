@@ -42,6 +42,8 @@ pub struct QueueInfo {
     pub session_id: String,
     pub queue_ahead: usize,
     pub queue_total: usize,
+    pub active_ahead: usize,
+    pub wait_ahead: usize,
     pub queue_event_id: i64,
     pub queue_after_event_id: i64,
 }
@@ -72,13 +74,19 @@ pub enum ThreadSubmitOutcome {
 pub struct SessionLease {
     session_id: String,
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
+    active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
 }
 
 impl SessionLease {
-    fn new(session_id: String, pending_sessions: Arc<StdMutex<HashSet<String>>>) -> Self {
+    fn new(
+        session_id: String,
+        pending_sessions: Arc<StdMutex<HashSet<String>>>,
+        active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
+    ) -> Self {
         Self {
             session_id,
             pending_sessions,
+            active_runtime_sessions,
         }
     }
 }
@@ -89,6 +97,9 @@ impl Drop for SessionLease {
             return;
         }
         if let Ok(mut guard) = self.pending_sessions.lock() {
+            guard.remove(self.session_id.as_str());
+        }
+        if let Ok(mut guard) = self.active_runtime_sessions.lock() {
             guard.remove(self.session_id.as_str());
         }
     }
@@ -105,6 +116,7 @@ pub struct ThreadRuntime {
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
     running_threads: Arc<Mutex<HashSet<String>>>,
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
+    active_runtime_sessions: Arc<StdMutex<HashSet<String>>>,
     pending_goal_continuations: Arc<StdMutex<std::collections::HashMap<String, CancellationToken>>>,
 }
 
@@ -127,6 +139,7 @@ impl ThreadRuntime {
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             running_threads: Arc::new(Mutex::new(HashSet::new())),
             pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
+            active_runtime_sessions: Arc::new(StdMutex::new(HashSet::new())),
             pending_goal_continuations: Arc::new(StdMutex::new(std::collections::HashMap::new())),
         })
     }
@@ -156,6 +169,7 @@ impl ThreadRuntime {
         }
         request.client_message_id =
             normalize_client_message_id(request.client_message_id.as_deref());
+        request.enforce_runtime_queue = true;
         let agent_id = normalize_agent_id(request.agent_id.as_deref());
         let explicit_session = request
             .session_id
@@ -215,15 +229,13 @@ impl ThreadRuntime {
 
         if config.agent_queue.enabled {
             if let Some(session_id) = session_id.as_deref() {
-                if self.should_queue(&user_id, Some(session_id)).await
-                    || self.is_global_capacity_reached(&user_id, session_id).await
-                {
+                if self.should_queue(&user_id, Some(session_id)).await {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
                         .await?;
                     return Ok(ThreadSubmitOutcome::Queued(info));
                 }
-                lease = self.try_acquire_session_lease(session_id).await;
+                lease = self.try_acquire_start_lease(session_id).await;
                 if lease.is_none() {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
@@ -824,20 +836,14 @@ impl ThreadRuntime {
             .await
     }
 
-    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionLease> {
-        let cleaned = session_id.trim();
-        if cleaned.is_empty() {
-            return None;
-        }
-        let mut guard = self.pending_sessions.lock().ok()?;
-        if guard.contains(cleaned) {
-            return None;
-        }
-        guard.insert(cleaned.to_string());
-        Some(SessionLease::new(
-            cleaned.to_string(),
-            self.pending_sessions.clone(),
-        ))
+    async fn try_acquire_start_lease(&self, session_id: &str) -> Option<SessionLease> {
+        let config = self.config_store.get().await;
+        try_acquire_start_lease_with_limit(
+            session_id,
+            config.server.max_active_sessions.max(1),
+            &self.pending_sessions,
+            &self.active_runtime_sessions,
+        )
     }
 
     async fn enqueue_task(
@@ -878,6 +884,8 @@ impl ThreadRuntime {
         if let Value::Object(ref mut map) = request_payload {
             map.insert("queue_ahead".to_string(), json!(queue_stats.queue_ahead));
             map.insert("queue_total".to_string(), json!(queue_stats.queue_total));
+            map.insert("active_ahead".to_string(), json!(queue_stats.active_ahead));
+            map.insert("wait_ahead".to_string(), json!(queue_stats.wait_ahead));
         }
         self.user_store.insert_agent_task(&AgentTaskRecord {
             request_payload,
@@ -904,6 +912,8 @@ impl ThreadRuntime {
                     "user_id": record.user_id,
                     "queue_ahead": queue_stats.queue_ahead,
                     "queue_total": queue_stats.queue_total,
+                    "active_ahead": queue_stats.active_ahead,
+                    "wait_ahead": queue_stats.wait_ahead,
                 });
                 if let (Some(client_message_id), Value::Object(ref mut map)) =
                     (request.client_message_id.as_deref(), &mut payload)
@@ -919,6 +929,8 @@ impl ThreadRuntime {
             session_id: record.session_id,
             queue_ahead: queue_stats.queue_ahead,
             queue_total: queue_stats.queue_total,
+            active_ahead: queue_stats.active_ahead,
+            wait_ahead: queue_stats.wait_ahead,
             queue_event_id,
             queue_after_event_id: if queue_event_id > 0 {
                 queue_event_id.saturating_sub(1)
@@ -926,33 +938,6 @@ impl ThreadRuntime {
                 queue_before_event_id
             },
         })
-    }
-
-    async fn is_global_capacity_reached(&self, user_id: &str, session_id: &str) -> bool {
-        let cleaned_user = user_id.trim();
-        let cleaned_session = session_id.trim();
-        if cleaned_user.is_empty() || cleaned_session.is_empty() {
-            return false;
-        }
-        let config = self.config_store.get().await;
-        let max_active = config.server.max_active_sessions.max(1);
-        let active_locks = self
-            .user_store
-            .count_session_locks()
-            .map(|count| count.max(0) as usize)
-            .unwrap_or(0);
-        if active_locks < max_active {
-            return false;
-        }
-        self.user_store
-            .list_session_locks_by_user(cleaned_user)
-            .map(|locks| {
-                locks
-                    .into_iter()
-                    .any(|lock| lock.session_id.trim() == cleaned_session)
-            })
-            .unwrap_or(false)
-            || active_locks >= max_active
     }
 
     async fn compute_queue_stats(&self, task: &AgentTaskRecord) -> QueueStats {
@@ -966,10 +951,51 @@ impl ThreadRuntime {
             .count_pending_agent_tasks_ahead(task.retry_at, task.created_at, &task.task_id)
             .map(|count| count.max(0) as usize)
             .unwrap_or(0);
+        let queue_ahead = ahead.min(total.saturating_sub(1));
+        let active_ahead = self
+            .compute_active_wait_ahead(&task.user_id, &task.session_id)
+            .await;
         QueueStats {
-            queue_ahead: ahead.min(total.saturating_sub(1)),
+            queue_ahead,
             queue_total: total,
+            active_ahead,
+            wait_ahead: queue_ahead.saturating_add(active_ahead),
         }
+    }
+
+    async fn compute_active_wait_ahead(&self, user_id: &str, session_id: &str) -> usize {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return 0;
+        }
+        let active_sessions = self.active_runtime_session_count();
+        if active_sessions == 0 {
+            return 0;
+        }
+        let config = self.config_store.get().await;
+        if active_sessions >= config.server.max_active_sessions.max(1) {
+            return active_sessions;
+        }
+        self.session_has_active_runtime_slot(cleaned_session) as usize
+    }
+
+    fn active_runtime_session_count(&self) -> usize {
+        self.active_runtime_sessions
+            .lock()
+            .map(|guard| guard.len())
+            .unwrap_or(0)
+    }
+
+    fn session_has_active_runtime_slot(&self, session_id: &str) -> bool {
+        let cleaned = session_id.trim();
+        if cleaned.is_empty() {
+            return false;
+        }
+        self.active_runtime_sessions
+            .lock()
+            .map(|guard| guard.contains(cleaned))
+            .unwrap_or(false)
     }
 
     async fn emit_queue_update(&self, task: &AgentTaskRecord) {
@@ -978,6 +1004,8 @@ impl ThreadRuntime {
         if let Value::Object(ref mut map) = request_payload {
             map.insert("queue_ahead".to_string(), json!(stats.queue_ahead));
             map.insert("queue_total".to_string(), json!(stats.queue_total));
+            map.insert("active_ahead".to_string(), json!(stats.active_ahead));
+            map.insert("wait_ahead".to_string(), json!(stats.wait_ahead));
         }
         let _ = self.user_store.insert_agent_task(&AgentTaskRecord {
             request_payload,
@@ -995,6 +1023,8 @@ impl ThreadRuntime {
                 "user_id": task.user_id,
                 "queue_ahead": stats.queue_ahead,
                 "queue_total": stats.queue_total,
+                "active_ahead": stats.active_ahead,
+                "wait_ahead": stats.wait_ahead,
             }),
         )
         .await;
@@ -1227,31 +1257,38 @@ impl ThreadRuntime {
                     continue;
                 }
             }
-            if !self.should_attempt_task(&task).await {
+            let Some(lease) = self.should_attempt_task(&task).await else {
                 continue;
-            }
+            };
             let task_clone = task.clone();
             let runtime = self.clone();
             long_task::spawn("runtime.thread.execute_task", async move {
+                let _lease = lease;
                 runtime.execute_task(task_clone).await;
             });
         }
         Ok(())
     }
 
-    async fn should_attempt_task(&self, task: &AgentTaskRecord) -> bool {
+    async fn should_attempt_task(&self, task: &AgentTaskRecord) -> Option<SessionLease> {
         if task.status != TASK_STATUS_PENDING && task.status != TASK_STATUS_RETRY {
-            return false;
+            return None;
         }
         if !self.is_session_idle(&task.user_id, &task.session_id).await {
-            return false;
+            return None;
         }
         let mut running = self.running_threads.lock().await;
         if running.contains(&task.thread_id) {
-            return false;
+            return None;
         }
         running.insert(task.thread_id.clone());
-        true
+        drop(running);
+        if let Some(lease) = self.try_acquire_start_lease(&task.session_id).await {
+            Some(lease)
+        } else {
+            self.finish_thread(&task.thread_id).await;
+            None
+        }
     }
 
     async fn execute_task(&self, task: AgentTaskRecord) {
@@ -1509,8 +1546,70 @@ fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
+fn try_acquire_start_lease_with_limit(
+    session_id: &str,
+    max_active: usize,
+    pending_sessions: &Arc<StdMutex<HashSet<String>>>,
+    active_runtime_sessions: &Arc<StdMutex<HashSet<String>>>,
+) -> Option<SessionLease> {
+    let cleaned = session_id.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let max_active = max_active.max(1);
+    let mut pending_guard = pending_sessions.lock().ok()?;
+    let mut active_guard = active_runtime_sessions.lock().ok()?;
+    if pending_guard.contains(cleaned)
+        || active_guard.contains(cleaned)
+        || active_guard.len() >= max_active
+    {
+        return None;
+    }
+    pending_guard.insert(cleaned.to_string());
+    active_guard.insert(cleaned.to_string());
+    Some(SessionLease::new(
+        cleaned.to_string(),
+        pending_sessions.clone(),
+        active_runtime_sessions.clone(),
+    ))
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct QueueStats {
     queue_ahead: usize,
     queue_total: usize,
+    active_ahead: usize,
+    wait_ahead: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_lease_enforces_global_capacity_and_releases_on_drop() {
+        let pending = Arc::new(StdMutex::new(HashSet::new()));
+        let active = Arc::new(StdMutex::new(HashSet::new()));
+
+        let first = try_acquire_start_lease_with_limit("session-a", 1, &pending, &active)
+            .expect("first session should acquire slot");
+        assert!(try_acquire_start_lease_with_limit("session-b", 1, &pending, &active).is_none());
+        assert_eq!(active.lock().expect("active lock").len(), 1);
+
+        drop(first);
+        assert!(try_acquire_start_lease_with_limit("session-b", 1, &pending, &active).is_some());
+    }
+
+    #[test]
+    fn start_lease_blocks_same_session_until_release() {
+        let pending = Arc::new(StdMutex::new(HashSet::new()));
+        let active = Arc::new(StdMutex::new(HashSet::new()));
+
+        let first = try_acquire_start_lease_with_limit("session-a", 2, &pending, &active)
+            .expect("first session should acquire slot");
+        assert!(try_acquire_start_lease_with_limit("session-a", 2, &pending, &active).is_none());
+
+        drop(first);
+        assert!(try_acquire_start_lease_with_limit("session-a", 2, &pending, &active).is_some());
+    }
 }

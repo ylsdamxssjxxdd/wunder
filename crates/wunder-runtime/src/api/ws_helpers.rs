@@ -1234,7 +1234,10 @@ mod tests {
         };
         let send = tokio::spawn(async move { send_ws_event(&sender, Some("req-2"), event).await });
         tokio::time::sleep(Duration::from_millis(10)).await;
-        assert!(!send.is_finished(), "delta send should wait while the queue is full");
+        assert!(
+            !send.is_finished(),
+            "delta send should wait while the queue is full"
+        );
         let first = rx.recv().await.expect("queued busy message");
         assert!(matches!(first, Message::Text(_)));
         assert!(send.await.expect("send task should finish").is_ok());

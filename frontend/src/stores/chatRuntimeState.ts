@@ -1684,6 +1684,11 @@ export const syncChatRuntimeProjectionFromSnapshot = (
     options.running === undefined
       ? loading || isThreadRuntimeBusy(runtime?.threadStatus)
       : Boolean(options.running);
+  const snapshotRuntimeStatus = running || loading
+    ? 'running'
+    : normalizeThreadRuntimeStatus(runtime?.threadStatus) === 'queued'
+      ? 'queued'
+      : 'idle';
   const result = applyChatRuntimeEvent(projection, {
     event_type: 'session_snapshot',
     source: 'snapshot',
@@ -1693,7 +1698,7 @@ export const syncChatRuntimeProjectionFromSnapshot = (
     messages: projectionMessages,
     payload: {
       transcript: projectionMessages,
-      runtime_status: running || loading ? 'running' : 'idle',
+      runtime_status: snapshotRuntimeStatus,
       authoritative: options.authoritative === true
     },
     authoritative: options.authoritative === true
@@ -2366,6 +2371,9 @@ export const shouldApplySessionEventsSnapshotToProjection = (
     return false;
   }
   if (payload.running === true) {
+    return true;
+  }
+  if (payload.queued === true) {
     return true;
   }
   if (hasRuntimeControllers(runtime)) {

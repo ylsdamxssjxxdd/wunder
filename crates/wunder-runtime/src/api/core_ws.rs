@@ -411,6 +411,7 @@ async fn handle_ws(
                             attachments: payload.attachments,
                             allow_queue: true,
                             is_admin: UserStore::is_admin(&user),
+                            enforce_runtime_queue: true,
                             approval_tx: None,
                         };
                         let outcome = match state
@@ -441,6 +442,8 @@ async fn handle_ws(
                                     "session_id": info.session_id,
                                     "queue_ahead": info.queue_ahead,
                                     "queue_total": info.queue_total,
+                                    "active_ahead": info.active_ahead,
+                                    "wait_ahead": info.wait_ahead,
                                     "queue_event_id": info.queue_event_id,
                                     "queue_after_event_id": info.queue_after_event_id,
                                 });
@@ -477,6 +480,7 @@ async fn handle_ws(
                             match state_snapshot.kernel.orchestrator.stream(request).await {
                                 Ok(stream) => {
                                     tokio::pin!(stream);
+                                    let mut ws_delivery_open = true;
                                     loop {
                                         tokio::select! {
                                             _ = cancel.cancelled() => {
@@ -490,15 +494,19 @@ async fn handle_ws(
                                                     Ok(event) => event,
                                                     Err(_) => continue,
                                                 };
-                                                if send_ws_event(
-                                                    &ws_tx_snapshot,
-                                                    Some(&request_id_cleanup),
-                                                    event,
-                                                )
-                                                .await
-                                                .is_err()
-                                                {
-                                                    break;
+                                                if ws_delivery_open {
+                                                    if send_ws_event(
+                                                        &ws_tx_snapshot,
+                                                        Some(&request_id_cleanup),
+                                                        event,
+                                                    )
+                                                    .await
+                                                    .is_err()
+                                                    {
+                                                        // Keep draining the backend stream so the runtime lease is
+                                                        // released only after this user turn actually completes.
+                                                        ws_delivery_open = false;
+                                                    }
                                                 }
                                             }
                                         }

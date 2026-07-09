@@ -31,6 +31,7 @@ export type ChatRuntimeMessageRole = 'user' | 'assistant' | 'system';
 
 export type ChatRuntimeMessageStatus =
   | 'placeholder'
+  | 'queued'
   | 'waiting_first_output'
   | 'streaming'
   | 'tooling'

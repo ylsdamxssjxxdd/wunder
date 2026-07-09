@@ -5,8 +5,35 @@ import {
   didThreadRuntimeEnterBusyState,
   hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
-  hasStreamingAssistantMessage
+  hasStreamingAssistantMessage,
+  isThreadRuntimeBusy,
+  normalizeThreadRuntimeStatus
 } from '../../src/utils/chatSessionRuntime';
+
+const ensureBrowserRuntimeStub = (): void => {
+  const root = globalThis as typeof globalThis & {
+    localStorage?: {
+      getItem: (key: string) => string | null;
+      setItem: (key: string, value: string) => void;
+      removeItem: (key: string) => void;
+      clear: () => void;
+    };
+  };
+  if (root.localStorage) return;
+  const values = new Map<string, string>();
+  root.localStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+    clear: () => {
+      values.clear();
+    }
+  };
+};
 
 test('thread runtime entering running from idle requires reconcile fallback', () => {
   assert.equal(didThreadRuntimeEnterBusyState('idle', 'running'), true);
@@ -28,6 +55,15 @@ test('thread runtime leaving or staying outside busy state does not trigger reco
   assert.equal(didThreadRuntimeEnterBusyState('running', 'idle'), false);
   assert.equal(didThreadRuntimeEnterBusyState('idle', 'idle'), false);
   assert.equal(didThreadRuntimeEnterBusyState('not_loaded', 'system_error'), false);
+});
+
+test('thread runtime queued state is recoverable without masquerading as running', async () => {
+  ensureBrowserRuntimeStub();
+  const { isTerminalRuntimeStatus } = await import('../../src/stores/chatWorkflowHydration');
+  assert.equal(normalizeThreadRuntimeStatus('queued'), 'queued');
+  assert.equal(isThreadRuntimeBusy('queued'), false);
+  assert.equal(isTerminalRuntimeStatus('queued'), false);
+  assert.equal(didThreadRuntimeEnterBusyState('idle', 'queued'), false);
 });
 
 test('active subagents keep a thread busy without reopening parent stream state', () => {

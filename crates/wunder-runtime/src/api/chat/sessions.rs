@@ -403,12 +403,11 @@ async fn get_session(
         .unwrap_or(false);
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
     let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
-    let session_running = monitor_active || !active_queue_tasks.is_empty();
     let mut transcript = std::mem::take(&mut transcript_page.transcript);
     project_queued_session_messages(&mut transcript, &active_queue_tasks, pure_queue_phase);
     apply_session_running_state(
         &mut transcript,
-        session_running,
+        monitor_active,
         running_turn_hint(monitor_record.as_ref()),
     );
     let transcript = transcript
@@ -1064,7 +1063,7 @@ fn normalize_history_before_id(raw: Option<&str>) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn is_session_stream_active(status: &str) -> bool {
+pub(super) fn is_session_stream_active(status: &str) -> bool {
     matches!(
         status,
         MonitorState::STATUS_RUNNING
@@ -1109,7 +1108,7 @@ fn list_active_queue_tasks(
     tasks
 }
 
-fn has_active_queue_task(user_store: &UserStore, session_id: &str) -> bool {
+pub(super) fn has_active_queue_task(user_store: &UserStore, session_id: &str) -> bool {
     !list_active_queue_tasks(user_store, session_id).is_empty()
 }
 
@@ -1215,7 +1214,10 @@ fn build_projected_queue_assistant_message(task: &crate::storage::AgentTaskRecor
         "user_turn_id": format!("queue-turn:{}:user", task.task_id),
         "model_turn_id": format!("queue-turn:{}:model", task.task_id),
         "turn_index": i64::MAX,
-        "status": "streaming",
+        "status": "queued",
+        "state": "queued",
+        "runtime_status": "queued",
+        "workflowStreaming": true,
         "stream_incomplete": true,
     });
     if !workflow_events.is_empty() {
@@ -1260,6 +1262,16 @@ fn build_projected_queue_workflow_event(
         .get("queue_total")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let active_ahead = task
+        .request_payload
+        .get("active_ahead")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let wait_ahead = task
+        .request_payload
+        .get("wait_ahead")
+        .and_then(Value::as_u64)
+        .unwrap_or(queue_ahead.saturating_add(active_ahead));
     let mut data = json!({
         "queue_id": task.task_id,
         "thread_id": task.thread_id,
@@ -1269,6 +1281,8 @@ fn build_projected_queue_workflow_event(
         "retry_count": task.retry_count,
         "queue_ahead": queue_ahead,
         "queue_total": queue_total,
+        "active_ahead": active_ahead,
+        "wait_ahead": wait_ahead,
     });
     if let Value::Object(ref mut map) = data {
         map.insert("status".to_string(), json!(task.status));
@@ -1955,6 +1969,8 @@ mod tests {
                 "question": question,
                 "queue_ahead": 2,
                 "queue_total": 3,
+                "active_ahead": 1,
+                "wait_ahead": 3,
                 "attachments": [
                     {
                         "name": "note.txt",
@@ -1996,7 +2012,6 @@ mod tests {
         ];
 
         project_queued_session_messages(&mut messages, &[task], true);
-        apply_session_running_state(&mut messages, true, RunningTurnHint::default());
 
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[1]["role"], json!("assistant"));
@@ -2013,6 +2028,8 @@ mod tests {
             ])
         );
         assert_eq!(messages[3]["role"], json!("assistant"));
+        assert_eq!(messages[3]["status"], json!("queued"));
+        assert_eq!(messages[3]["runtime_status"], json!("queued"));
         assert_eq!(messages[3]["stream_incomplete"], json!(true));
     }
 
@@ -2038,11 +2055,12 @@ mod tests {
         })];
 
         project_queued_session_messages(&mut messages, &[task], true);
-        apply_session_running_state(&mut messages, true, RunningTurnHint::default());
 
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], json!("user"));
         assert_eq!(messages[1]["role"], json!("assistant"));
+        assert_eq!(messages[1]["status"], json!("queued"));
+        assert_eq!(messages[1]["runtime_status"], json!("queued"));
         assert_eq!(messages[1]["stream_incomplete"], json!(true));
     }
 
@@ -2187,11 +2205,38 @@ mod tests {
             .expect("workflow events");
 
         assert_eq!(message["role"], json!("assistant"));
+        assert_eq!(message["status"], json!("queued"));
+        assert_eq!(message["runtime_status"], json!("queued"));
         assert_eq!(message["stream_incomplete"], json!(true));
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["event"], json!("queue_enter"));
         assert_eq!(events[0]["data"]["queue_id"], json!("task_proj_4"));
         assert_eq!(events[0]["data"]["queue_ahead"], json!(2));
         assert_eq!(events[0]["data"]["queue_total"], json!(3));
+        assert_eq!(events[0]["data"]["active_ahead"], json!(1));
+        assert_eq!(events[0]["data"]["wait_ahead"], json!(3));
+    }
+
+    #[test]
+    fn projected_queue_workflow_derives_wait_ahead_for_legacy_task_payload() {
+        let mut task = build_queue_task(
+            "task_proj_legacy",
+            "sess_proj_legacy",
+            "pending",
+            "queued now",
+            10.0,
+        );
+        if let Value::Object(ref mut map) = task.request_payload {
+            map.remove("wait_ahead");
+        }
+        let message = build_projected_queue_assistant_message(&task);
+        let events = message
+            .get("workflow_events")
+            .and_then(Value::as_array)
+            .expect("workflow events");
+
+        assert_eq!(events[0]["data"]["queue_ahead"], json!(2));
+        assert_eq!(events[0]["data"]["active_ahead"], json!(1));
+        assert_eq!(events[0]["data"]["wait_ahead"], json!(3));
     }
 }

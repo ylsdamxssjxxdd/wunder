@@ -118,7 +118,76 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { normalizeInquiryPanelState, normalizePlanPayload, shouldAutoShowPlan } from './chatDemoPanels';
 import { buildMessageStats, normalizeHiddenInternalMessage, normalizeInteractionTimestamp, normalizeMessageStats, normalizeMessageSubagents, parseOptionalCount } from './chatStats';
 import { normalizeFlag } from './chatStreamIds';
-import { normalizeAssistantOutput, resolveAssistantReasoning } from './chatWorkflowHydration';
+import { buildDetail, normalizeAssistantOutput, resolveAssistantReasoning } from './chatWorkflowHydration';
+
+const QUEUE_WORKFLOW_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update', 'queue_start']);
+
+const normalizeWorkflowEventType = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const parseQueueAheadValue = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const resolveQueueEventTitle = (eventType: string): string => {
+  if (eventType === 'queue_start') return 'Queue start';
+  if (eventType === 'queue_update') return 'Queue update';
+  return 'Queued';
+};
+
+const hydrateQueueWorkflowItems = (message: Record<string, any>) => {
+  const rawEvents = Array.isArray(message.workflow_events)
+    ? message.workflow_events
+    : Array.isArray(message.workflowEvents)
+      ? message.workflowEvents
+      : [];
+  return rawEvents
+    .map((event, index) => {
+      const record = asRecord(event);
+      if (!record) return null;
+      const eventType = normalizeWorkflowEventType(record.event ?? record.eventType);
+      if (!QUEUE_WORKFLOW_EVENT_TYPES.has(eventType)) return null;
+      const data = asRecord(record.data) || {};
+      const queueAhead = parseQueueAheadValue(
+        data.wait_ahead,
+        data.waitAhead,
+        data.active_wait_ahead,
+        data.activeWaitAhead,
+        data.queue_ahead,
+        data.queueAhead
+      );
+      return {
+        id: `queue:${String(data.queue_id ?? data.queueId ?? index)}`,
+        title: resolveQueueEventTitle(eventType),
+        detail: buildDetail(data),
+        status: 'pending',
+        eventType,
+        sourceEventType: eventType,
+        ...(queueAhead !== null
+          ? {
+              wait_ahead: queueAhead,
+              queue_ahead: queueAhead
+            }
+          : {})
+      };
+    })
+    .filter(Boolean);
+};
+
+const isHydratedQueueWaiting = (items: Array<Record<string, unknown> | null>): boolean =>
+  items.some((item) => item?.eventType === 'queued' || item?.eventType === 'queue_enter' || item?.eventType === 'queue_update') &&
+  !items.some((item) => item?.eventType === 'queue_start');
 
 export const hydrateMessage = (message, workflowState) => {
   void workflowState;
@@ -126,6 +195,9 @@ export const hydrateMessage = (message, workflowState) => {
     return message;
   }
   const { workflow_events: _workflowEvents, workflowEvents: _workflowEventsAlias, ...messageWithoutWorkflowEvents } = message;
+  const queueWorkflowItems = hydrateQueueWorkflowItems(message);
+  const hasQueueWorkflow = queueWorkflowItems.length > 0;
+  const queueWaiting = isHydratedQueueWaiting(queueWorkflowItems);
   const normalizedOutput = normalizeAssistantOutput(
     message.content,
     resolveAssistantReasoning(message)
@@ -133,9 +205,16 @@ export const hydrateMessage = (message, workflowState) => {
   const hydrated = {
     ...messageWithoutWorkflowEvents,
     content: normalizedOutput.content,
-    workflowItems: [],
-    workflowStreaming: normalizeFlag(message?.workflowStreaming),
-    stream_incomplete: normalizeFlag(message?.stream_incomplete),
+    ...(queueWaiting
+      ? {
+          state: 'queued',
+          status: 'queued',
+          runtime_status: 'queued'
+        }
+      : {}),
+    workflowItems: queueWorkflowItems,
+    workflowStreaming: hasQueueWorkflow || normalizeFlag(message?.workflowStreaming),
+    stream_incomplete: hasQueueWorkflow || normalizeFlag(message?.stream_incomplete),
     resume_available: normalizeFlag(message?.resume_available),
     slow_client: normalizeFlag(message?.slow_client),
     reasoning: normalizedOutput.reasoning,

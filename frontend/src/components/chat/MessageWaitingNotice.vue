@@ -65,6 +65,10 @@ type MessageLike = {
   role?: unknown;
   content?: unknown;
   reasoning?: unknown;
+  state?: unknown;
+  status?: unknown;
+  runtime_status?: unknown;
+  runtimeStatus?: unknown;
   workflowStreaming?: unknown;
   stream_incomplete?: unknown;
   resume_available?: unknown;
@@ -160,6 +164,17 @@ const silentMs = computed(() => Math.max(0, nowMs.value - lastProgressMs.value))
 
 const normalizeEventType = (value: unknown) => String(value || '').trim().toLowerCase();
 
+const isMessageQueued = computed(() => {
+  if (hasVisibleOutput.value) return false;
+  const status = normalizeEventType(
+    props.message?.runtime_status ??
+      props.message?.runtimeStatus ??
+      props.message?.status ??
+      props.message?.state
+  );
+  return status === 'queued';
+});
+
 const findLatestItem = (predicate: (item: WorkflowItemLike, index: number) => boolean) => {
   for (let index = workflowItems.value.length - 1; index >= 0; index -= 1) {
     const item = workflowItems.value[index];
@@ -212,7 +227,10 @@ const phase = computed<WaitingPhase>(() => {
   if (latestSlowClient.value.index >= 0 && !normalizeFlag(props.message?.workflowStreaming)) {
     return 'resumable';
   }
-  if (latestQueue.value.index >= 0 && latestQueue.value.index > latestRequest.value.index) {
+  if (
+    isMessageQueued.value ||
+    (latestQueue.value.index >= 0 && latestQueue.value.index > latestRequest.value.index)
+  ) {
     return 'queued';
   }
   if (latestRequest.value.index >= 0) {
@@ -291,6 +309,8 @@ const shouldShowRetryPhase = computed(() =>
 
 const parseQueueAhead = (item: WorkflowItemLike | null) => {
   if (!item) return null;
+  const eventType = normalizeEventType(item?.eventType);
+  if (eventType === 'queue_start') return null;
   let detail: Record<string, unknown> | null = null;
   if (typeof item.detail === 'string') {
     try {
@@ -305,6 +325,14 @@ const parseQueueAhead = (item: WorkflowItemLike | null) => {
     detail = item.detail as Record<string, unknown>;
   }
   const candidates = [
+    detail?.wait_ahead,
+    detail?.waitAhead,
+    detail?.active_wait_ahead,
+    detail?.activeWaitAhead,
+    (detail?.data as Record<string, unknown> | undefined)?.wait_ahead,
+    (detail?.data as Record<string, unknown> | undefined)?.waitAhead,
+    (detail?.data as Record<string, unknown> | undefined)?.active_wait_ahead,
+    (detail?.data as Record<string, unknown> | undefined)?.activeWaitAhead,
     detail?.queue_ahead,
     detail?.queueAhead,
     (detail?.data as Record<string, unknown> | undefined)?.queue_ahead,

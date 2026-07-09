@@ -136,6 +136,19 @@ const resolveDisplayedLineNo = (line: ToolWorkflowPatchLine): string | number =>
   background: var(--workflow-term-bg-soft);
 }
 
+.tool-workflow-patch-file.is-danger {
+  border-color: rgba(248, 113, 113, 0.28);
+  background: rgba(127, 29, 29, 0.12);
+}
+
+.tool-workflow-patch-file.is-warning {
+  border-color: rgba(251, 191, 36, 0.24);
+}
+
+.tool-workflow-patch-file.is-success {
+  border-color: rgba(74, 222, 128, 0.24);
+}
+
 .tool-workflow-patch-file-head {
   display: flex;
   align-items: baseline;

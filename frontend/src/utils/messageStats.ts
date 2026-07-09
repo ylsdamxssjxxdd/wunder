@@ -69,6 +69,8 @@ const formatCompactElapsed = (milliseconds: number): string => {
 
 const resolveQueueAheadCount = (item: WorkflowItemLike | null | undefined): number | null => {
   if (!item) return null;
+  const eventType = normalizeWorkflowEventType(item.eventType ?? item.event);
+  if (eventType === 'queue_start') return null;
   const detail =
     typeof item.detail === 'string'
       ? (() => {
@@ -82,6 +84,18 @@ const resolveQueueAheadCount = (item: WorkflowItemLike | null | undefined): numb
         ? item.detail
         : null;
   const candidates = [
+    item.wait_ahead,
+    item.waitAhead,
+    item.active_wait_ahead,
+    item.activeWaitAhead,
+    detail?.wait_ahead,
+    detail?.waitAhead,
+    detail?.active_wait_ahead,
+    detail?.activeWaitAhead,
+    detail?.data?.wait_ahead,
+    detail?.data?.waitAhead,
+    detail?.data?.active_wait_ahead,
+    detail?.data?.activeWaitAhead,
     item.queue_ahead,
     item.queueAhead,
     detail?.queue_ahead,
@@ -334,6 +348,17 @@ const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
 
 const normalizeWorkflowEventType = (value: unknown): string => String(value || '').trim().toLowerCase();
 const normalizeWorkflowStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+const isAssistantExplicitlyQueued = (message: Record<string, any> | null | undefined): boolean => {
+  if (!message || message.role !== 'assistant' || hasAssistantVisibleOutput(message)) return false;
+  const status = normalizeWorkflowStatus(
+    message.runtime_status ??
+      message.runtimeStatus ??
+      message.status ??
+      message.state
+  );
+  return status === 'queued';
+};
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
 
@@ -664,6 +689,14 @@ const resolveAssistantStatusEntry = (
       true,
       'fa-solid fa-plug-circle-bolt'
     );
+  }
+  if (isAssistantExplicitlyQueued(message)) {
+    const queueAhead = resolveQueueAheadCount(latestQueue.item);
+    const queuedLabel =
+      queueAhead !== null
+        ? t('messenger.messageStatus.queuedAhead', { count: queueAhead })
+        : t('messenger.messageStatus.queued');
+    return buildStatusEntry(queuedLabel, 'muted', true, 'fa-solid fa-clock');
   }
   if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
     const queueAhead = resolveQueueAheadCount(latestQueue.item);

@@ -412,6 +412,7 @@ const resolveProjectedWorkflowStreaming = (
 ): boolean => {
   if (isProjectedResumablePause(message)) return false;
   return (
+    message.status === 'queued' ||
     message.status === 'tooling' ||
     hasActiveProjectedWorkflowItems(message.workflowItems) ||
     hasActiveProjectedSubagents(message.subagents) ||
@@ -496,7 +497,8 @@ const cloneProjectionRecords = (
 
 const resolveAssistantLegacyState = (
   status: ChatRuntimeMessageStatus
-): 'running' | 'done' | 'error' => {
+): 'queued' | 'running' | 'done' | 'error' => {
+  if (status === 'queued') return 'queued';
   if (isRuntimeMessageActive(status)) return 'running';
   if (status === 'failed' || status === 'cancelled') return 'error';
   return 'done';

@@ -761,6 +761,7 @@ impl A2aService {
             attachments: None,
             allow_queue: true,
             is_admin: self.is_admin_user(&user_id),
+            enforce_runtime_queue: false,
             approval_tx: None,
         };
 
@@ -854,6 +855,7 @@ impl A2aService {
             attachments: None,
             allow_queue: true,
             is_admin: self.is_admin_user(&user_id),
+            enforce_runtime_queue: false,
             approval_tx: None,
         };
 

@@ -926,7 +926,9 @@ impl MonitorState {
                 };
                 let mut sessions = self.sessions.lock();
                 if let Some(hydrated) = hydrated_record {
-                    sessions.entry(cleaned_session_id.clone()).or_insert(hydrated);
+                    sessions
+                        .entry(cleaned_session_id.clone())
+                        .or_insert(hydrated);
                 }
                 let (to_persist, user_round) = self.register_locked(
                     &mut sessions,
@@ -2245,7 +2247,9 @@ impl MonitorState {
             now,
         );
         if persisted_round_floor > 0 {
-            record.user_rounds = record.user_rounds.max(persisted_round_floor.saturating_add(1));
+            record.user_rounds = record
+                .user_rounds
+                .max(persisted_round_floor.saturating_add(1));
         }
         record.round_floor_verified = true;
         let event_type = if append_received {
@@ -2559,19 +2563,20 @@ fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
 }
 
 fn parse_positive_i64_value(value: Option<&Value>) -> Option<i64> {
-    let parsed = parse_i64_value(value).or_else(|| {
-        value
-            .and_then(Value::as_f64)
-            .filter(|value| value.is_finite())
-            .map(|value| value.trunc() as i64)
-    })
-    .or_else(|| {
-        value
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .and_then(|value| value.parse::<i64>().ok())
-    })?;
+    let parsed = parse_i64_value(value)
+        .or_else(|| {
+            value
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .map(|value| value.trunc() as i64)
+        })
+        .or_else(|| {
+            value
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.parse::<i64>().ok())
+        })?;
     (parsed > 0).then_some(parsed)
 }
 
@@ -3343,22 +3348,16 @@ mod tests {
             temp.path().to_string_lossy().to_string(),
         );
 
-        let round = monitor.register(
-            " sess-round-hydrate ",
-            "user",
-            "agent",
-            "next",
-            true,
-            false,
-        );
+        let round = monitor.register(" sess-round-hydrate ", "user", "agent", "next", true, false);
 
         assert_eq!(round, 4);
         let record = monitor.get_record("sess-round-hydrate").expect("record");
         assert_eq!(record["user_rounds"], json!(4));
         assert!(record["events"].as_array().is_some_and(|events| events
             .iter()
-            .any(|event| event["type"] == "round_start"
-                && event["data"]["user_round"] == json!(4))));
+            .any(
+                |event| event["type"] == "round_start" && event["data"]["user_round"] == json!(4)
+            )));
     }
 
     #[test]

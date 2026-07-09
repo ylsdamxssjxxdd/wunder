@@ -45,6 +45,8 @@ pub struct WunderRequest {
     #[serde(skip)]
     pub is_admin: bool,
     #[serde(skip)]
+    pub enforce_runtime_queue: bool,
+    #[serde(skip)]
     pub approval_tx: Option<ApprovalRequestTx>,
 }
 

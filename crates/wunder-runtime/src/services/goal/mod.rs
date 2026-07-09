@@ -546,6 +546,7 @@ pub async fn build_continuation_request_from_session(
         attachments: None,
         allow_queue: true,
         is_admin: false,
+        enforce_runtime_queue: false,
         approval_tx: None,
     };
     Ok(Some(GoalContinuationRequest { request, goal }))

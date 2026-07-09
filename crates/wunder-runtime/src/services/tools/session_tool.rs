@@ -188,6 +188,7 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
         attachments: None,
         allow_queue: true,
         is_admin: context.is_admin,
+        enforce_runtime_queue: false,
         approval_tx: None,
     };
     let announce_label = normalize_optional_string(payload.label);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createChatRuntimeProjection, applyChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeReducer';
+import { buildCanonicalStreamRuntimeEvents } from '../../src/realtime/chat/chatRuntimeBridge';
 import {
   buildChatRuntimeRenderableMessages,
   hasChatRuntimeRenderSession,
@@ -55,7 +56,9 @@ const t = (key: string, params?: Record<string, unknown>): string => {
     'chat.stats.userRoundStatus': `Round ${String(params?.round ?? '')}`,
     'messenger.messageStatus.done': 'Done',
     'messenger.messageStatus.requesting': 'Requesting',
-    'messenger.messageStatus.modelOutputting': 'Outputting'
+    'messenger.messageStatus.modelOutputting': 'Outputting',
+    'messenger.messageStatus.queued': 'Queued',
+    'messenger.messageStatus.queuedAhead': `Queued · ${String(params?.count ?? '')} ahead`
   };
   return table[key] || key;
 };
@@ -239,6 +242,70 @@ test('chat runtime render adapter materializes projection-owned messages with le
   assert.deepEqual(materialized[1].feedback, { vote: 'up' });
   (materialized[0].attachments as Array<Record<string, unknown>>)[0].name = 'changed';
   assert.deepEqual(user.attachments, [{ name: 'file' }]);
+});
+
+test('chat runtime render adapter materializes queued stream events as queued assistant status', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-queued-render';
+  const userTurnId = `user-turn:${sessionId}:round:1`;
+  const modelTurnId = `model-turn:${sessionId}:user:1:model:1`;
+  const assistantMessageId = `local-assistant:${modelTurnId}`;
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'client_message_submitted',
+    source: 'local',
+    strict: false,
+    session_id: sessionId,
+    event_id: 'local-submit-queued',
+    user_turn_id: userTurnId,
+    message_id: `local-user:${sessionId}:1`,
+    content: 'hello'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'assistant_message_created',
+    source: 'local',
+    strict: false,
+    session_id: sessionId,
+    event_id: 'local-assistant-queued',
+    user_turn_id: userTurnId,
+    model_turn_id: modelTurnId,
+    message_id: assistantMessageId
+  });
+
+  buildCanonicalStreamRuntimeEvents({
+    sessionId,
+    eventType: 'queue_enter',
+    eventId: 10,
+    requestId: 'request-queued-render',
+    phase: 'send',
+    source: 'ws',
+    userTurnId,
+    modelTurnId,
+    assistantMessageId,
+    payload: {
+      event_id: 10,
+      queue_id: 'queue-render-1',
+      wait_ahead: 2
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const materialized = materializeChatRuntimeMessages(projection, sessionId);
+  const assistant = materialized.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.state, 'queued');
+  assert.equal(assistant?.runtime_status, 'queued');
+  assert.equal(assistant?.workflowStreaming, true);
+
+  const entries = buildAssistantMessageStatsEntries(
+    assistant as Record<string, any>,
+    t,
+    materialized as Array<Record<string, any>>,
+    Date.UTC(2026, 6, 9, 12, 0, 0),
+    {
+      activeSessionBusy: true,
+      latestVisibleAssistant: true
+    }
+  );
+  assert.equal(entries[0]?.value, 'Queued · 2 ahead');
 });
 
 test('chat runtime render adapter never materializes synthetic greeting from projection', () => {

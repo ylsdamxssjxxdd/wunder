@@ -56,6 +56,7 @@ async fn wunder_entry(
     let _ = request.attachments.as_ref();
     let resolved = resolve_user(&state, &headers, Some(&request.user_id)).await?;
     request.is_admin = UserStore::is_admin(&resolved.user);
+    request.enforce_runtime_queue = true;
     if request
         .language
         .as_ref()
@@ -85,6 +86,8 @@ async fn wunder_entry(
                 "session_id": info.session_id,
                 "queue_ahead": info.queue_ahead,
                 "queue_total": info.queue_total,
+                "active_ahead": info.active_ahead,
+                "wait_ahead": info.wait_ahead,
                 "queue_event_id": info.queue_event_id,
                 "queue_after_event_id": info.queue_after_event_id,
             });

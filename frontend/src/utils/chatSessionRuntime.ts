@@ -11,6 +11,7 @@ export type ThreadRuntimeStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
+  | 'queued'
   | 'running'
   | 'waiting_approval'
   | 'waiting_user_input'
@@ -40,6 +41,7 @@ export const normalizeThreadRuntimeStatus = (value: unknown): ThreadRuntimeStatu
   if (normalized === 'completed' || normalized === 'complete' || normalized === 'done') return 'completed';
   if (normalized === 'failed' || normalized === 'error') return 'failed';
   if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled';
+  if (normalized === 'queued' || normalized === 'pending') return 'queued';
   if (normalized === 'running') return 'running';
   if (normalized === 'waiting_approval') return 'waiting_approval';
   if (normalized === 'waiting_user_input') return 'waiting_user_input';

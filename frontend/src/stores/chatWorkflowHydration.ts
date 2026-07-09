@@ -188,7 +188,9 @@ export const isTerminalStreamEventType = (eventType) => {
 
 export const isTerminalRuntimeStatus = (status) => {
   const normalizedStatus = normalizeThreadRuntimeStatus(status);
-  return normalizedStatus !== 'running' && !isThreadRuntimeWaiting(normalizedStatus);
+  return normalizedStatus !== 'running' &&
+    normalizedStatus !== 'queued' &&
+    !isThreadRuntimeWaiting(normalizedStatus);
 };
 
 export const shouldTreatRuntimeEventAsTerminal = (eventType, payload) => {

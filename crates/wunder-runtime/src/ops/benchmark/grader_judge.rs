@@ -47,6 +47,7 @@ pub async fn grade_with_judge(
         attachments: None,
         allow_queue: true,
         is_admin: true,
+        enforce_runtime_queue: false,
         approval_tx: None,
     };
     let result = execute_prompt(orchestrator, monitor, request, cancel_flag, session_id)

@@ -698,6 +698,95 @@ test('message stats shows queue ahead count in queued status', () => {
   assert.equal(findEntryValue(entries, ''), 'Queued · 3 ahead');
 });
 
+test('message stats keeps explicit queued status ahead of requesting fallback', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      status: 'queued',
+      runtime_status: 'queued',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      workflowItems: [
+        {
+          eventType: 'llm_request',
+          status: 'completed'
+        },
+        {
+          eventType: 'queue_update',
+          status: 'pending',
+          detail: JSON.stringify({
+            wait_ahead: 2
+          })
+        },
+        {
+          eventType: 'llm_request',
+          status: 'completed'
+        }
+      ],
+      stats: {}
+    },
+    t,
+    null,
+    Date.UTC(2026, 6, 9, 12, 0, 0),
+    {
+      activeSessionBusy: true,
+      latestVisibleAssistant: true
+    }
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Queued · 2 ahead');
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-clock');
+});
+
+test('message hydration restores queued workflow events from session detail projection', async () => {
+  ensureBrowserRuntimeStub();
+  const { hydrateMessage } = await import('../../src/stores/chatMessageHydration');
+  const t = createTranslator();
+  const hydrated = hydrateMessage(
+    {
+      role: 'assistant',
+      content: '',
+      status: 'queued',
+      stream_incomplete: true,
+      workflow_events: [
+        {
+          event: 'queue_enter',
+          data: {
+            queue_id: 'task_generic',
+            wait_ahead: 1,
+            queue_ahead: 0
+          }
+        }
+      ],
+      stats: {}
+    },
+    {}
+  );
+
+  assert.equal(hydrated.status, 'queued');
+  assert.equal(hydrated.runtime_status, 'queued');
+  assert.equal(hydrated.workflowItems?.[0]?.eventType, 'queue_enter');
+
+  const entries = buildAssistantMessageStatsEntries(
+    hydrated,
+    t,
+    null,
+    Date.UTC(2026, 6, 9, 12, 0, 0),
+    {
+      activeSessionBusy: true,
+      latestVisibleAssistant: true
+    }
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value.includes('Queued'), true);
+  assert.equal(entries[0]?.value.includes('1 ahead'), true);
+  assert.notEqual(entries[0]?.value, t('messenger.messageStatus.requesting'));
+  assert.equal(entries[0]?.iconClass, 'fa-solid fa-clock');
+});
+
 test('message stats sums explicit and partial consumed tokens across assistant messages in the same user turn', () => {
   const t = createTranslator();
   const messages = [
