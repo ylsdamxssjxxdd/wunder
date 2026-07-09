@@ -517,6 +517,21 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           ? ('messages' as MessengerSection)
           : resolveSectionFromRoute(ctx.route.path, query.section);
       if (preferredSection === 'messages') {
+          const recent = ctx.resolveRecentAgentSelection?.();
+          const recentSessionId = String(recent?.sessionId || '').trim();
+          const recentAgentRaw = String(recent?.agentId || '').trim();
+          const recentAgentId = recentAgentRaw ? ctx.normalizeAgentId(recentAgentRaw) : '';
+          if (recentSessionId) {
+              const session = ctx.chatStore.sessions.find((item) => String(item?.id || '') === recentSessionId);
+              if (session) {
+                  await ctx.openAgentSession(recentSessionId, ctx.normalizeAgentId(session?.agent_id || recentAgentId));
+                  return;
+              }
+          }
+          if (recentAgentId) {
+              await ctx.openAgentById(recentAgentId);
+              return;
+          }
           const first = ctx.mixedConversations.value[0];
           if (first) {
               await ctx.openMixedConversation(first);

@@ -40,7 +40,15 @@ const normalizeSessionId = (value: unknown): string => String(value || '').trim(
 
 const isTerminalThreadRuntimeStatus = (value: unknown): boolean => {
   const normalized = normalizeThreadRuntimeStatus(value);
-  return normalized !== 'running' && !isThreadRuntimeBusy(normalized);
+  return normalized !== 'running' && normalized !== 'queued' && !isThreadRuntimeBusy(normalized);
+};
+
+const isExplicitTerminalThreadRuntimeStatus = (value: unknown): boolean => {
+  const normalized = normalizeThreadRuntimeStatus(value);
+  return normalized === 'completed' ||
+    normalized === 'failed' ||
+    normalized === 'cancelled' ||
+    normalized === 'system_error';
 };
 
 export const resolveMergedSessionRuntimeStatus = (
@@ -64,6 +72,12 @@ export const resolveMergedSessionRuntimeStatus = (
     sessionId
   );
   if (isThreadRuntimeBusy(runtimeStatus)) {
+    return runtimeStatus;
+  }
+  if (runtimeStatus === 'queued') {
+    return runtimeStatus;
+  }
+  if (options.runtimeKnown === true && isExplicitTerminalThreadRuntimeStatus(runtimeStatus)) {
     return runtimeStatus;
   }
   if (isChatRuntimeBusyStatus(projectionStatus) && busy) {
@@ -97,13 +111,19 @@ export const resolveMergedSessionBusy = (
     messages,
     options.runtimeStatus
   );
+  const hasLoadingFlag = Boolean(options.loading);
+  const explicitTerminalRuntime =
+    options.runtimeKnown === true &&
+    isExplicitTerminalThreadRuntimeStatus(options.runtimeStatus);
+  if (!hasLoadingFlag && explicitTerminalRuntime && !hasActiveSubagentsAfterLatestUser(messages)) {
+    return false;
+  }
   if (options.runtimeHasControllers === true) {
     return true;
   }
   if (!projectionBusy && !busyBySignals) {
     return false;
   }
-  const hasLoadingFlag = Boolean(options.loading);
   const terminalRuntime =
     options.runtimeKnown === true &&
     isTerminalThreadRuntimeStatus(options.runtimeStatus);

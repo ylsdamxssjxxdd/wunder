@@ -36,6 +36,17 @@ import { resolveMessageWindowLimit } from './chatRuntimeControls';
 const normalizeErrorMessage = (error: unknown): string =>
   String((error as { message?: unknown })?.message || error || '').trim();
 
+const shouldForceInteractiveSnapshotReconcile = (
+  runtime: Record<string, unknown> | null | undefined,
+  reason: unknown
+): boolean => {
+  if (runtime?.syncRequired === true) {
+    return true;
+  }
+  const normalizedReason = String(reason || '').trim().toLowerCase();
+  return normalizedReason.includes('event_seq_gap') || normalizedReason.includes('pending_event_seq_gap');
+};
+
 export const chatRealtimeRecoveryActions = {
   async ensureActiveSessionRealtime(options: {
     sessionId?: unknown;
@@ -82,7 +93,13 @@ export const chatRealtimeRecoveryActions = {
       hasCachedMessages
     });
 
-    if (plan === 'skip_interactive_stream' && shouldReconcileInteractiveStream(runtime)) {
+    if (
+      plan === 'skip_interactive_stream' &&
+      (
+        shouldReconcileInteractiveStream(runtime) ||
+        shouldForceInteractiveSnapshotReconcile(runtime, options.reason)
+      )
+    ) {
       try {
         const localLastEventId = resolveMaterializedMessageEventId(messages);
         const detailLimit = isDesktopModeEnabled() ? resolveMessageWindowLimit(true) : undefined;

@@ -214,6 +214,11 @@ import {
   saveMessengerOrderPreferences,
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
+import {
+  buildRecentAgentSelection,
+  readRecentAgentSelection,
+  writeRecentAgentSelection
+} from '@/views/messenger/recentAgentSelection';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
@@ -455,6 +460,13 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
   ctx.sessionHub = useSessionHubStore();
 
   ctx.DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_launch_default_agent_hint_v1';
+  ctx.recentAgentSelection = ref(readRecentAgentSelection());
+  ctx.rememberRecentAgentSelection = (agentId: unknown, sessionId: unknown = '') => {
+      const selection = buildRecentAgentSelection(agentId || DEFAULT_AGENT_KEY, sessionId);
+      ctx.recentAgentSelection.value = selection;
+      writeRecentAgentSelection(selection);
+  };
+  ctx.resolveRecentAgentSelection = () => ctx.recentAgentSelection.value || readRecentAgentSelection();
 
   ctx.bootLoading = ref(true);
 

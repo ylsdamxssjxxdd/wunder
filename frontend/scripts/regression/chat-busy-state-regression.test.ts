@@ -73,6 +73,34 @@ test('merged busy state keeps running when projection is stale idle but runtime 
   );
 });
 
+test('merged runtime status preserves queued as waiting without marking composer busy', () => {
+  const projection = createChatRuntimeProjection();
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection,
+      sessionId: 'sess_queued',
+      loading: false,
+      messages: [],
+      runtimeStatus: 'waiting',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    false
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection,
+      sessionId: 'sess_queued',
+      loading: false,
+      messages: [],
+      runtimeStatus: 'waiting',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    'queued'
+  );
+});
+
 test('merged busy state suppresses stale assistant streaming after confirmed idle runtime', () => {
   const projection = createChatRuntimeProjection();
   const messages = [
@@ -191,6 +219,38 @@ test('merged busy state keeps stop available while a send controller is active',
       runtimeHasControllers: true
     }),
     'running'
+  );
+});
+
+test('merged busy state lets explicit terminal runtime beat stale controllers', () => {
+  const messages = [
+    { role: 'user', content: 'input' },
+    { role: 'assistant', content: 'done', stream_incomplete: true, workflowStreaming: true }
+  ];
+
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection: null,
+      sessionId: 'sess_terminal_with_controller',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: true
+    }),
+    false
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection: null,
+      sessionId: 'sess_terminal_with_controller',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: true
+    }),
+    'completed'
   );
 });
 

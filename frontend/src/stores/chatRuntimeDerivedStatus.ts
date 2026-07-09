@@ -35,6 +35,14 @@ export const shouldPreserveWatchRunningStatus = (
     hasWatchWork;
 };
 
+const isExplicitTerminalRuntimeStatus = (status: unknown): boolean => {
+  const current = normalizeThreadRuntimeStatus(status);
+  return current === 'completed' ||
+    current === 'failed' ||
+    current === 'cancelled' ||
+    current === 'system_error';
+};
+
 export const resolveRuntimeDerivedStatus = (
   input: ResolveRuntimeDerivedStatusInput
 ) => {
@@ -46,13 +54,13 @@ export const resolveRuntimeDerivedStatus = (
   if (Number(runtime.pendingApprovalCount) > 0) {
     return 'waiting_approval';
   }
-  const loading = Boolean(input.loading) || hasRuntimeControllers(runtime);
   const current = normalizeThreadRuntimeStatus(runtime.threadStatus);
+  if (current === 'queued' || isExplicitTerminalRuntimeStatus(current)) {
+    return current;
+  }
+  const loading = Boolean(input.loading) || hasRuntimeControllers(runtime);
   if (loading) {
     return 'running';
-  }
-  if (current === 'system_error') {
-    return current;
   }
   if (shouldPreserveWatchRunningStatus(runtime, loading)) {
     return current;

@@ -214,6 +214,9 @@ import {
   saveMessengerOrderPreferences,
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
+import {
+  resolveAgentRuntimeStateFromSignals
+} from '@/views/messenger/agentRuntimeState';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
@@ -431,31 +434,29 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
 
   ctx.resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
       const key = ctx.normalizeAgentId(agentId);
-      if (ctx.pendingApprovalAgentIdSet.value.has(key)) {
-          return 'pending';
-      }
       const inquiryAgentId = ctx.activeAgentInquiryPanel.value
           ? ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value)
           : '';
-      if (inquiryAgentId && inquiryAgentId === key) {
-          return 'pending';
-      }
-      if (ctx.streamingAgentIdSet.value.has(key)) {
-          return 'running';
-      }
+      const remoteState = ctx.agentRuntimeStateMap.value.get(key) || 'idle';
       const now = Date.now();
       const override = ctx.runtimeStateOverrides.value.get(key);
-      if (override && override.expiresAt > now) {
-          return override.state;
-      }
       if (override && override.expiresAt <= now) {
           ctx.runtimeStateOverrides.value.delete(key);
       }
-      return ctx.agentRuntimeStateMap.value.get(key) || 'idle';
+      return resolveAgentRuntimeStateFromSignals({
+          pendingApproval: ctx.pendingApprovalAgentIdSet.value.has(key),
+          pendingInquiry: Boolean(inquiryAgentId && inquiryAgentId === key),
+          localWaiting: Boolean(ctx.waitingAgentIdSet?.value?.has(key)),
+          localStreaming: ctx.streamingAgentIdSet.value.has(key),
+          remoteState,
+          overrideState: override && override.expiresAt > now ? override.state : null
+      });
   };
 
   ctx.hasHotRuntimeState = computed(() => {
-      if (ctx.pendingApprovalAgentIdSet.value.size > 0 || ctx.streamingAgentIdSet.value.size > 0) {
+      if (ctx.pendingApprovalAgentIdSet.value.size > 0 ||
+          ctx.waitingAgentIdSet?.value?.size > 0 ||
+          ctx.streamingAgentIdSet.value.size > 0) {
           return true;
       }
       const now = Date.now();

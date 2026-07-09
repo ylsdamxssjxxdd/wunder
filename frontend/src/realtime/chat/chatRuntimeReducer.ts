@@ -42,6 +42,7 @@ const TERMINAL_EVENT_TYPES = new Set([
 ]);
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+const QUEUE_WAIT_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
 const FAILED_WORKFLOW_STATUSES = new Set([
   'aborted',
   'cancelled',
@@ -946,6 +947,7 @@ const applyUserMessageCreated = (
       .filter((item): item is Record<string, unknown> => isPlainRecord(item))
       .map((item) => cloneProjectedDisplayValue(item));
   }
+  markLocalRuntimeProjectionMessage(message, event);
   addUnique(turn.messageIds, message.id);
   addUnique(session.messages, message.id);
   pruneUserTurnUserMessages(session, turn, message.id);
@@ -959,6 +961,7 @@ const applyAssistantMessageCreated = (
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
   modelTurn.status = 'waiting_first_output';
   const message = ensureAssistantMessageForModelTurn(session, event, 'waiting_first_output');
+  markLocalRuntimeProjectionMessage(message, event);
   addUnique(modelTurn.messageIds, message.id);
   setSessionBusy(session, 'running', 'waiting_first_output');
 };
@@ -1258,6 +1261,9 @@ const applySessionIdle = (
   });
   Object.values(session.messageById).forEach((message) => {
     if (message.role !== 'assistant') return;
+    if (message.status === 'queued' && isQueueMessageStillWaiting(message)) {
+      return;
+    }
     if (message.status === 'placeholder' || message.status === 'queued' || message.status === 'waiting_first_output' || message.status === 'streaming' || message.status === 'tooling') {
       message.status = 'final';
       message.final = true;
@@ -1289,6 +1295,9 @@ const applySessionRuntime = (
     return;
   }
   if (isChatRuntimeBusyStatus(explicitStatus)) {
+    if (explicitStatus === 'running') {
+      promoteQueuedModelTurnForRuntimeStart(session, event);
+    }
     setSessionBusy(session, explicitStatus, resolveBusyReasonForStatus(explicitStatus));
     return;
   }
@@ -1311,6 +1320,26 @@ const applyQueueStatus = (
   setSessionBusy(session, 'queued', 'queued');
 };
 
+const isQueueMessageStillWaiting = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  let hasQueueWait = false;
+  for (const item of items) {
+    if (!isPlainRecord(item)) continue;
+    const eventType = normalizeText(
+      item.eventType ?? item.event_type ?? item.event ?? item.sourceEventType ?? item.source_event_type
+    );
+    if (eventType === 'queue_start' || eventType === 'queue_finish' || eventType === 'queue_fail') {
+      return false;
+    }
+    if (QUEUE_WAIT_EVENT_TYPES.has(eventType)) {
+      hasQueueWait = true;
+    }
+  }
+  return hasQueueWait;
+};
+
 const applySessionSnapshot = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent
@@ -1327,15 +1356,17 @@ const applySessionSnapshot = (
       ? event.payload.messages as ChatRuntimeRawMessage[]
       : [];
   if (isCanonicalTranscript(messages)) {
-    applyCanonicalTranscriptSnapshot(session, messages, snapshotSeq);
+    const preservedLocalActive = applyCanonicalTranscriptSnapshot(session, messages, snapshotSeq);
     applySessionRuntime(session, {
       ...event,
       runtimeStatus: normalizeChatRuntimeStatus(event.payload.runtime_status ?? event.payload.status)
     });
-    if (!isSnapshotRuntimeActive(event, messages)) {
+    if (!isSnapshotRuntimeActive(event, messages) && !preservedLocalActive) {
       settleLegacyActiveMessages(session);
       session.runtimeStatus = 'idle';
       session.busyReason = null;
+      deriveSessionRuntime(session);
+    } else if (preservedLocalActive) {
       deriveSessionRuntime(session);
     }
     return;
@@ -1646,7 +1677,7 @@ const applyCanonicalTranscriptSnapshot = (
   session: ChatRuntimeSessionProjection,
   messages: ChatRuntimeRawMessage[],
   snapshotSeq: number
-): void => {
+): boolean => {
   const plans = messages
     .filter((raw) => !isSyntheticGreetingRawMessage(raw))
     .map((raw, index) => buildCanonicalTranscriptPlan(raw, index, snapshotSeq))
@@ -1723,6 +1754,13 @@ const applyCanonicalTranscriptSnapshot = (
     keepMessageIds.add(message.id);
   });
 
+  const preservedLocal = preservePendingLocalTurnsOutsideCanonicalSnapshot(
+    session,
+    keepMessageIds,
+    keepUserTurnIds,
+    keepModelTurnIds
+  );
+
   Object.keys(session.messageById).forEach((messageId) => {
     if (!keepMessageIds.has(messageId)) {
       delete session.messageById[messageId];
@@ -1739,7 +1777,10 @@ const applyCanonicalTranscriptSnapshot = (
     }
   });
 
-  session.messages = plans.map((plan) => plan.id).filter((id) => keepMessageIds.has(id));
+  session.messages = [
+    ...plans.map((plan) => plan.id),
+    ...preservedLocal.messageIds
+  ].filter((id, index, all) => keepMessageIds.has(id) && all.indexOf(id) === index);
   Object.values(session.userTurnById).forEach((turn) => {
     turn.messageIds = turn.messageIds.filter((messageId) => keepMessageIds.has(messageId));
     turn.modelTurnIds = turn.modelTurnIds.filter((modelTurnId) => keepModelTurnIds.has(modelTurnId));
@@ -1759,7 +1800,91 @@ const applyCanonicalTranscriptSnapshot = (
   );
   session.snapshotSeq = Math.max(session.snapshotSeq, snapshotSeq);
   session.syncRequired = false;
+  return preservedLocal.active;
 };
+
+const preservePendingLocalTurnsOutsideCanonicalSnapshot = (
+  session: ChatRuntimeSessionProjection,
+  keepMessageIds: Set<string>,
+  keepUserTurnIds: Set<string>,
+  keepModelTurnIds: Set<string>
+): { messageIds: string[]; active: boolean } => {
+  const messageIds: string[] = [];
+  let active = false;
+  const turnIds = Object.keys(session.userTurnById)
+    .filter((turnId) => !keepUserTurnIds.has(turnId))
+    .sort((left, right) =>
+      (session.userTurnById[left]?.createdSeq ?? Number.MAX_SAFE_INTEGER) -
+      (session.userTurnById[right]?.createdSeq ?? Number.MAX_SAFE_INTEGER)
+    );
+  turnIds.forEach((turnId) => {
+    const turn = session.userTurnById[turnId];
+    if (!turn || !shouldPreservePendingLocalUserTurn(session, turn)) return;
+    keepUserTurnIds.add(turn.id);
+    turn.messageIds.forEach((messageId) => {
+      const message = session.messageById[messageId];
+      if (!message) return;
+      keepMessageIds.add(message.id);
+      addUnique(messageIds, message.id);
+      if (message.role === 'assistant' && isActiveMessageStatus(message.status)) {
+        active = true;
+      }
+    });
+    turn.modelTurnIds.forEach((modelTurnId) => {
+      const modelTurn = session.modelTurnById[modelTurnId];
+      if (!modelTurn) return;
+      keepModelTurnIds.add(modelTurn.id);
+      if (!isTerminalModelTurnStatus(modelTurn.status)) {
+        active = true;
+      }
+      modelTurn.messageIds.forEach((messageId) => {
+        const message = session.messageById[messageId];
+        if (!message) return;
+        keepMessageIds.add(message.id);
+        addUnique(messageIds, message.id);
+        if (message.role === 'assistant' && isActiveMessageStatus(message.status)) {
+          active = true;
+        }
+      });
+    });
+  });
+  return { messageIds, active };
+};
+
+const shouldPreservePendingLocalUserTurn = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeUserTurnProjection
+): boolean => {
+  if (isTerminalUserTurnStatus(turn.status)) return false;
+  return turn.messageIds.some((messageId) => {
+    const message = session.messageById[messageId];
+    return message?.role === 'user' && isLocalRuntimeProjectionMessage(message);
+  });
+};
+
+const markLocalRuntimeProjectionMessage = (
+  message: ChatRuntimeMessageProjection,
+  event: NormalizedRuntimeEvent
+): void => {
+  if (event.source !== 'local') return;
+  ensureMessageDisplayProjection(message).__runtime_origin = 'local';
+};
+
+const isLocalRuntimeProjectionMessage = (
+  message: ChatRuntimeMessageProjection
+): boolean =>
+  isPlainRecord(message.display) &&
+  message.display.__runtime_origin === 'local';
+
+const isTerminalUserTurnStatus = (
+  status: ChatRuntimeUserTurnProjection['status']
+): boolean =>
+  status === 'completed' || status === 'failed' || status === 'cancelled';
+
+const isTerminalModelTurnStatus = (
+  status: ChatRuntimeModelTurnProjection['status']
+): boolean =>
+  status === 'completed' || status === 'failed' || status === 'cancelled';
 
 const collectCanonicalAssistantMetadataSourceIds = (
   session: ChatRuntimeSessionProjection,
@@ -2726,6 +2851,133 @@ const ensureModelTurn = (
   return session.modelTurnById[id];
 };
 
+const promoteQueuedModelTurnForRuntimeStart = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): void => {
+  if (!event.userTurnId && !event.modelTurnId) return;
+  const queuedTurn = resolveReusableModelTurnForUserTurn(session, event.userTurnId) ||
+    resolveLatestQueuedAssistantModelTurn(session);
+  if (!queuedTurn) return;
+  if (event.userTurnId && queuedTurn.userTurnId !== event.userTurnId) {
+    mergeUserTurnInto(session, queuedTurn.userTurnId, event.userTurnId);
+  }
+  if (event.modelTurnId) {
+    const canonicalTurn = session.modelTurnById[event.modelTurnId];
+    if (canonicalTurn && canonicalTurn.id !== queuedTurn.id) {
+      mergeModelTurnInto(session, queuedTurn.id, canonicalTurn.id, event.eventSeq);
+    } else if (!canonicalTurn) {
+      rekeyModelTurn(session, queuedTurn.id, event.modelTurnId, event.eventSeq);
+    }
+  }
+  const targetTurn = session.modelTurnById[event.modelTurnId] || queuedTurn;
+  markQueuedModelTurnStarted(session, targetTurn, event);
+};
+
+const resolveLatestQueuedAssistantModelTurn = (
+  session: ChatRuntimeSessionProjection
+): ChatRuntimeModelTurnProjection | null => {
+  const queuedTurns = session.modelTurns
+    .map((turnId) => session.modelTurnById[turnId])
+    .filter((turn): turn is ChatRuntimeModelTurnProjection =>
+      Boolean(turn) &&
+      turn.messageIds.some((messageId) => session.messageById[messageId]?.status === 'queued')
+    );
+  if (queuedTurns.length === 0) return null;
+  return queuedTurns.sort((left, right) =>
+    resolveModelTurnLatestMessageSeq(session, right) - resolveModelTurnLatestMessageSeq(session, left) ||
+    right.createdSeq - left.createdSeq
+  )[0] || null;
+};
+
+const resolveQueuedModelTurnForIncomingModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string
+): ChatRuntimeModelTurnProjection | null => {
+  if (!modelTurnId || !userTurnId) return null;
+  const queuedTurn = resolveLatestQueuedAssistantModelTurn(session);
+  if (!queuedTurn) return null;
+  if (queuedTurn.userTurnId === userTurnId) {
+    return shouldFoldModelTurnIntoExisting(modelTurnId, queuedTurn, userTurnId)
+      ? queuedTurn
+      : null;
+  }
+  const queuedUserTurn = session.userTurnById[queuedTurn.userTurnId];
+  const queuedUserTurnHasMessage = Boolean(queuedUserTurn?.messageIds.some((messageId) =>
+    session.messageById[messageId]?.role === 'user'
+  ));
+  const incomingUserTurn = session.userTurnById[userTurnId];
+  const incomingUserTurnHasMessage = Boolean(incomingUserTurn?.messageIds.some((messageId) =>
+    session.messageById[messageId]?.role === 'user'
+  ));
+  const sharedUserMessage = Boolean(queuedUserTurn?.messageIds.some((messageId) =>
+    incomingUserTurn?.messageIds.includes(messageId)
+  ));
+  const canBridgeUserTurnIdentity =
+    isWeakGeneratedUserTurnId(session, queuedTurn.userTurnId) ||
+    isWeakGeneratedUserTurnId(session, userTurnId) ||
+    !queuedUserTurnHasMessage ||
+    !incomingUserTurnHasMessage ||
+    sharedUserMessage;
+  const incomingWeakModelTurn =
+    isWeakGeneratedModelTurnId(session, modelTurnId, userTurnId) ||
+    shouldFoldModelTurnIntoExisting(modelTurnId, queuedTurn, userTurnId);
+  return canBridgeUserTurnIdentity && incomingWeakModelTurn ? queuedTurn : null;
+};
+
+const rekeyModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  sourceTurnId: string,
+  targetTurnId: string,
+  seq: number | null
+): ChatRuntimeModelTurnProjection | null => {
+  if (!sourceTurnId || !targetTurnId || sourceTurnId === targetTurnId) {
+    return session.modelTurnById[targetTurnId] || session.modelTurnById[sourceTurnId] || null;
+  }
+  const sourceTurn = session.modelTurnById[sourceTurnId];
+  if (!sourceTurn) return null;
+  const existingTarget = session.modelTurnById[targetTurnId];
+  if (existingTarget) {
+    mergeModelTurnInto(session, sourceTurnId, targetTurnId, seq);
+    return existingTarget;
+  }
+  delete session.modelTurnById[sourceTurnId];
+  sourceTurn.id = targetTurnId;
+  session.modelTurnById[targetTurnId] = sourceTurn;
+  session.modelTurns = session.modelTurns.map((id) => id === sourceTurnId ? targetTurnId : id);
+  const userTurn = session.userTurnById[sourceTurn.userTurnId];
+  if (userTurn) {
+    userTurn.modelTurnIds = userTurn.modelTurnIds.map((id) => id === sourceTurnId ? targetTurnId : id);
+  }
+  sourceTurn.messageIds.forEach((messageId) => {
+    const message = session.messageById[messageId];
+    if (message?.role === 'assistant') {
+      message.modelTurnId = targetTurnId;
+    }
+  });
+  return sourceTurn;
+};
+
+const markQueuedModelTurnStarted = (
+  session: ChatRuntimeSessionProjection,
+  modelTurn: ChatRuntimeModelTurnProjection | null,
+  event: NormalizedRuntimeEvent
+): void => {
+  if (!modelTurn) return;
+  if (modelTurn.status === 'created') {
+    modelTurn.status = 'waiting_first_output';
+  }
+  modelTurn.messageIds.forEach((messageId) => {
+    const message = session.messageById[messageId];
+    if (!message || message.role !== 'assistant' || message.status !== 'queued') return;
+    message.status = 'waiting_first_output';
+    message.final = false;
+    message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+    upsertProjectedQueueWorkflowItem(message, event);
+  });
+};
+
 const resolveModelTurnIdentity = (
   session: ChatRuntimeSessionProjection,
   modelTurnId: string,
@@ -2750,7 +3002,19 @@ const resolveModelTurnIdentity = (
       }
     }
     mergeWeakSiblingModelTurnsInto(session, existing, seq);
+    const queuedForExisting = resolveQueuedModelTurnForIncomingModelTurn(session, modelTurnId, userTurnId);
+    if (queuedForExisting && queuedForExisting.id !== existing.id) {
+      mergeModelTurnInto(session, queuedForExisting.id, existing.id, seq);
+    }
     return modelTurnId;
+  }
+  const queuedTurn = resolveQueuedModelTurnForIncomingModelTurn(session, modelTurnId, userTurnId);
+  if (queuedTurn) {
+    if (userTurnId && queuedTurn.userTurnId !== userTurnId) {
+      mergeUserTurnInto(session, queuedTurn.userTurnId, userTurnId);
+    }
+    mergeWeakSiblingModelTurnsInto(session, queuedTurn, seq);
+    return queuedTurn.id;
   }
   if (shouldUseActiveModelTurnForWeakRuntimeTurn(session, modelTurnId, userTurnId)) {
     const activeTurn = resolveLatestActiveAssistantModelTurn(session);
@@ -4253,7 +4517,7 @@ const upsertProjectedQueueWorkflowItem = (
     id: 'queue:status',
     title: resolveProjectedQueueTitle(sourceType),
     detail: stringifyWorkflowDetail(detailSource),
-    status: 'pending',
+    status: sourceType === 'queue_start' ? 'running' : 'pending',
     eventType: sourceType,
     sourceEventType: sourceType,
     updatedSeq: event.eventSeq ?? message.updatedSeq
@@ -4271,6 +4535,7 @@ const upsertProjectedQueueWorkflowItem = (
 const resolveProjectedQueueTitle = (sourceType: string): string => {
   if (sourceType === 'queue_enter' || sourceType === 'queued') return 'Queued';
   if (sourceType === 'queue_update') return 'Queue update';
+  if (sourceType === 'queue_start') return 'Queue start';
   return 'Queued';
 };
 

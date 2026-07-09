@@ -42,6 +42,22 @@ test('assistant runtime falls back to done for completed assistant bubbles witho
   assert.equal(resolveAssistantMessageRuntimeState({ role: 'assistant', content: 'finished' }), 'done');
 });
 
+test('assistant runtime treats queued workflow bubbles as pending instead of done', () => {
+  const message = {
+    role: 'assistant',
+    workflowStreaming: false,
+    stream_incomplete: false,
+    workflowItems: [
+      {
+        eventType: 'queue_enter',
+        status: 'pending'
+      }
+    ]
+  };
+
+  assert.equal(resolveAssistantMessageRuntimeState(message), 'pending');
+});
+
 test('assistant runtime treats local waiting placeholder before first output as waiting current output', () => {
   const startMs = Date.UTC(2026, 3, 30, 9, 0, 0);
   const message = {

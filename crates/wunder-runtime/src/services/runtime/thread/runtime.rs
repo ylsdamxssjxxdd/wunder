@@ -1293,6 +1293,13 @@ impl ThreadRuntime {
 
     async fn execute_task(&self, task: AgentTaskRecord) {
         let started_at = now_ts();
+        let task_client_message_id = task
+            .request_payload
+            .get("client_message_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         let _ = self
             .user_store
             .update_agent_task_status(UpdateAgentTaskStatusParams {
@@ -1315,7 +1322,8 @@ impl ThreadRuntime {
             &task.session_id,
             &task.user_id,
             "queue_start",
-            json!({
+            {
+                let mut payload = json!({
                 "queue_id": task.task_id,
                 "thread_id": task.thread_id,
                 "session_id": task.session_id,
@@ -1323,7 +1331,14 @@ impl ThreadRuntime {
                 "user_id": task.user_id,
                 "queue_ahead": 0,
                 "queue_total": 0,
-            }),
+                });
+                if let (Some(client_message_id), Value::Object(ref mut map)) =
+                    (task_client_message_id.as_deref(), &mut payload)
+                {
+                    map.insert("client_message_id".to_string(), json!(client_message_id));
+                }
+                payload
+            },
         )
         .await;
 
@@ -1401,7 +1416,8 @@ impl ThreadRuntime {
                     &task.session_id,
                     &task.user_id,
                     "queue_finish",
-                    json!({
+                    {
+                        let mut payload = json!({
                         "queue_id": task.task_id,
                         "thread_id": task.thread_id,
                         "session_id": task.session_id,
@@ -1409,7 +1425,14 @@ impl ThreadRuntime {
                         "user_id": task.user_id,
                         "queue_ahead": 0,
                         "queue_total": 0,
-                    }),
+                        });
+                        if let (Some(client_message_id), Value::Object(ref mut map)) =
+                            (task_client_message_id.as_deref(), &mut payload)
+                        {
+                            map.insert("client_message_id".to_string(), json!(client_message_id));
+                        }
+                        payload
+                    },
                 )
                 .await;
                 if goal_continue_ready {
@@ -1490,7 +1513,15 @@ impl ThreadRuntime {
             &task.session_id,
             &task.user_id,
             "queue_fail",
-            json!({
+            {
+                let task_client_message_id = task
+                    .request_payload
+                    .get("client_message_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+                let mut payload = json!({
                 "queue_id": task.task_id,
                 "thread_id": task.thread_id,
                 "session_id": task.session_id,
@@ -1500,7 +1531,14 @@ impl ThreadRuntime {
                 "error": message,
                 "queue_ahead": 0,
                 "queue_total": 0,
-            }),
+                });
+                if let (Some(client_message_id), Value::Object(ref mut map)) =
+                    (task_client_message_id.as_deref(), &mut payload)
+                {
+                    map.insert("client_message_id".to_string(), json!(client_message_id));
+                }
+                payload
+            },
         )
         .await;
         Ok(())

@@ -61,6 +61,7 @@ test('thread runtime queued state is recoverable without masquerading as running
   ensureBrowserRuntimeStub();
   const { isTerminalRuntimeStatus } = await import('../../src/stores/chatWorkflowHydration');
   assert.equal(normalizeThreadRuntimeStatus('queued'), 'queued');
+  assert.equal(normalizeThreadRuntimeStatus('waiting'), 'queued');
   assert.equal(isThreadRuntimeBusy('queued'), false);
   assert.equal(isTerminalRuntimeStatus('queued'), false);
   assert.equal(didThreadRuntimeEnterBusyState('idle', 'queued'), false);

@@ -570,7 +570,11 @@ export const buildCanonicalChatRuntimeEvents = (
     return [
       buildBaseEvent(options, 'session_runtime', {
         runtime_status: 'running'
-      })
+      }),
+      buildBaseEvent(options, 'queue_status', {
+        strict: false,
+        event_seq: null
+      }, 'queue')
     ];
   }
 

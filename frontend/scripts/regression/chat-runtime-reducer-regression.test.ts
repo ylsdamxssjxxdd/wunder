@@ -1453,6 +1453,83 @@ test('local optimistic turn stays after hydrated historical rounds', () => {
   assert.ok(thirdUser.createdSeq > secondUser.createdSeq);
 });
 
+test('latest local user turn remains at the bottom after a historical snapshot replay', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    snapshot_seq: 200,
+    payload: {
+      transcript: [
+        {
+          message_id: 'history:user:1',
+          role: 'user',
+          content: 'older question',
+          user_turn_id: 'user-turn:session-1:round:1',
+          turn_index: 1
+        },
+        {
+          message_id: 'history:assistant:1',
+          role: 'assistant',
+          content: 'older answer',
+          user_turn_id: 'user-turn:session-1:round:1',
+          model_turn_id: 'model-turn:session-1:user:1:model:1',
+          turn_index: 2
+        }
+      ]
+    }
+  });
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId,
+      content: 'newest question',
+      clientMessageId: 'local-user-newest',
+      createdAt: '2026-04-30T02:15:00.000Z',
+      userTurnId: 'user-turn:session-1:round:2'
+    })
+  );
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    snapshot_seq: 201,
+    payload: {
+      transcript: [
+        {
+          message_id: 'history:user:1',
+          role: 'user',
+          content: 'older question',
+          user_turn_id: 'user-turn:session-1:round:1',
+          turn_index: 1
+        },
+        {
+          message_id: 'history:assistant:1',
+          role: 'assistant',
+          content: 'older answer',
+          user_turn_id: 'user-turn:session-1:round:1',
+          model_turn_id: 'model-turn:session-1:user:1:model:1',
+          turn_index: 2
+        }
+      ]
+    }
+  });
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  assert.deepEqual(
+    visible.map((message) => `${message.role}:${message.content}`),
+    ['user:older question', 'assistant:older answer', 'user:newest question']
+  );
+  assert.equal(visible[visible.length - 1]?.content, 'newest question');
+});
+
 test('legacy reconcile replaces repeated full assistant snapshots without inflating content', () => {
   const projection = createChatRuntimeProjection();
 
@@ -2177,6 +2254,141 @@ test('canonical stream adapter keeps queued request running until terminal event
   }).forEach((event) => applyChatRuntimeEvent(projection, event));
 
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
+test('queued assistant remains pending across idle runtime snapshots before queue start', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-queued-idle',
+    eventType: 'queue_enter',
+    eventId: 11,
+    requestId: 'req-queued-idle',
+    payload: {
+      data: {
+        queue_id: 'queue-queued-idle',
+        client_message_id: 'client-queued-idle',
+        wait_ahead: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_idle',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'session-queued-idle',
+    event_id: 'idle-before-start',
+    payload: {}
+  });
+
+  const visible = selectVisibleMessageProjections(projection, 'session-queued-idle');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(assistant.status, 'queued');
+  assert.equal(selectSessionRuntimeStatus(projection, 'session-queued-idle'), 'queued');
+});
+
+test('queue start promotes queued placeholder instead of creating duplicate assistants', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-queue-start',
+    eventType: 'queue_enter',
+    eventId: 21,
+    requestId: 'req-queue-start',
+    payload: {
+      data: {
+        queue_id: 'queue-start-task',
+        client_message_id: 'client-queue-start',
+        wait_ahead: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-queue-start',
+    eventType: 'queue_start',
+    eventId: 22,
+    requestId: 'req-queue-start',
+    payload: {
+      data: {
+        queue_id: 'queue-start-task',
+        client_message_id: 'client-queue-start',
+        user_round: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-queue-start',
+    eventType: 'llm_output_delta',
+    eventId: 23,
+    requestId: 'req-queue-start',
+    payload: {
+      data: {
+        delta: 'hello',
+        client_message_id: 'client-queue-start',
+        user_round: 1,
+        model_round: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-queue-start');
+  const assistants = visible.filter((message) => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0].content, 'hello');
+  assert.equal(assistants[0].status, 'streaming');
+  assert.equal(assistants[0].workflowItems?.[0]?.eventType, 'queue_start');
+});
+
+test('queued task placeholder folds into first canonical model turn without client id', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-queue-weak-start';
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId,
+      content: 'queued question',
+      clientMessageId: `local-user:${sessionId}:1`,
+      userTurnId: `user-turn:${sessionId}:round:1`,
+      createdAt: '2026-04-30T02:14:06.000Z'
+    })
+  );
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'queue_enter',
+    eventId: 31,
+    requestId: 'req-queue-weak-start',
+    modelTurnId: 'queue:task-weak-start:assistant',
+    payload: {
+      data: {
+        queue_id: 'task-weak-start',
+        wait_ahead: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output_delta',
+    eventId: 32,
+    requestId: 'req-queue-weak-start',
+    payload: {
+      data: {
+        delta: 'started',
+        user_round: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  const assistants = visible.filter((message) => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0].content, 'started');
+  assert.equal(assistants[0].status, 'streaming');
+  assert.equal(assistants[0].userTurnId, `user-turn:${sessionId}:round:1`);
+  assert.ok(assistants[0].workflowItems?.some((item) => item.eventType === 'queue_enter'));
 });
 
 test('canonical client submit event materializes the local user turn', () => {

@@ -120,7 +120,7 @@ import { hasRetainedMessageConversationContext as hasRetainedConversationContext
 import { buildWorkflowItem, normalizeInquiryPanelState, safeJsonParse, syncDemoChatCache } from './chatDemoPanels';
 import { applyGoalStreamEvent, applyMainSession, persistAgentSession } from './chatPersist';
 import { abortWatchStream, clearDraftSessionBootstrapMarkers, clearDraftSessionBootstrapMessages, clearRuntimeSendStreamState, clearSlowClientResume, markAssistantMessageRequestFailed, markRuntimeSendStreamActivity, markRuntimeSendStreamStarted, resolveMaxStreamRound, setSessionLoading } from './chatRuntimeControls';
-import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, notifySessionSnapshot, refreshRuntimeStreamLifecycle, touchSessionUpdatedAt } from './chatRuntimeState';
+import { applyCanonicalClientMessageSubmittedRuntimeEvent, applyCanonicalStreamRuntimeEvent, applyLocalAssistantTurnTerminalRuntimeEvent, applySessionRuntimeEvent, buildRuntimeDebugSnapshot, cacheSessionMessages, clearSessionEventsSnapshot, ensureRuntime, notifySessionSnapshot, refreshRuntimeStreamLifecycle, syncChatRuntimeProjectionStatus, touchSessionUpdatedAt } from './chatRuntimeState';
 import { settleTerminalAssistantArtifacts as settleTerminalAssistantArtifactsBase } from './chatTerminalArtifacts';
 import { chatPageLifecycle } from './chatSharedState';
 import { buildMessage, resolveTimestampMs } from './chatStats';
@@ -151,6 +151,15 @@ const isStreamTextEventType = (value: unknown): boolean =>
   STREAM_TEXT_EVENT_TYPES.has(String(value || '').trim().toLowerCase());
 
 const QUEUE_WORKFLOW_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
+
+const shouldMarkQueuedRuntimeStarted = (
+  queued: boolean,
+  eventType: unknown
+): boolean => {
+  if (!queued) return false;
+  const normalized = String(eventType || '').trim().toLowerCase();
+  return normalized === 'queue_start' || isStreamTextEventType(normalized);
+};
 
 const parseQueueAheadValue = (...values: unknown[]): number | null => {
   for (const value of values) {
@@ -935,15 +944,24 @@ export const chatSendActions = {
             return;
           }
           const queuedFlag =
-            normalizedEventType === 'queued' ||
-            normalizedEventType === 'queue_enter' ||
-            normalizedEventType === 'queue_update' ||
-            payload?.queued === true ||
-            payload?.data?.queued === true;
+            normalizedEventType !== 'queue_start' &&
+            (
+              normalizedEventType === 'queued' ||
+              normalizedEventType === 'queue_enter' ||
+              normalizedEventType === 'queue_update' ||
+              payload?.queued === true ||
+              payload?.data?.queued === true
+            );
           if (queuedFlag) {
             if (!queued) {
               queued = true;
             }
+            if (runtime) {
+              runtime.threadStatus = 'queued';
+              runtime.loaded = true;
+              runtime.lastThreadStatusAt = Date.now();
+            }
+            syncChatRuntimeProjectionStatus(this, sessionId, 'queued');
             markAssistantMessageQueued(
               assistantMessage,
               payload,
@@ -953,6 +971,14 @@ export const chatSendActions = {
             );
             syncRuntimeLastAppliedEventId();
             return;
+          }
+          if (shouldMarkQueuedRuntimeStarted(queued, effectiveEventType)) {
+            if (runtime) {
+              runtime.threadStatus = 'running';
+              runtime.loaded = true;
+              runtime.lastThreadStatusAt = Date.now();
+            }
+            syncChatRuntimeProjectionStatus(this, sessionId, 'running');
           }
           if (isTerminalStreamEventType(normalizedEventType)) {
             if (normalizedEventType === 'error' || normalizedEventType === 'queue_fail') {

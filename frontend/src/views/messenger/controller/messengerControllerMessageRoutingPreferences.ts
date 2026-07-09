@@ -712,6 +712,27 @@ export function installMessengerControllerMessageRoutingPreferences(ctx: Messeng
           delete nextQuery.agent_id;
           delete nextQuery.entry;
       }
+      else if (!nextQuery.session_id && !nextQuery.agent_id && !nextQuery.entry) {
+          const recent = ctx.resolveRecentAgentSelection?.();
+          const activeConversationKey = String(ctx.sessionHub.activeConversationKey || '').trim();
+          const fallbackActiveAgentId = activeConversationKey.startsWith('agent:')
+              ? ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.chatStore.draftAgentId || '')
+              : '';
+          const recentAgentRaw = String(recent?.agentId || '').trim();
+          const recentAgentId = recentAgentRaw ? ctx.normalizeAgentId(recentAgentRaw) : fallbackActiveAgentId;
+          const recentSessionId = String(recent?.sessionId || '').trim();
+          const recentSessionKnown = recentSessionId
+              ? ctx.chatStore.sessions.some((item) => String(item?.id || item?.session_id || '').trim() === recentSessionId)
+              : false;
+          if (recentSessionId && recentSessionKnown) {
+              nextQuery.session_id = recentSessionId;
+              nextQuery.agent_id = recentAgentId === DEFAULT_AGENT_KEY ? '' : recentAgentId;
+          }
+          else if (recentAgentId) {
+              nextQuery.agent_id = recentAgentId === DEFAULT_AGENT_KEY ? '' : recentAgentId;
+              nextQuery.entry = recentAgentId === DEFAULT_AGENT_KEY ? 'default' : undefined;
+          }
+      }
       if (section !== 'users' && section !== 'groups') {
           delete nextQuery.conversation_id;
       }

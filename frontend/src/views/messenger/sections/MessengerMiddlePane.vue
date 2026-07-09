@@ -220,7 +220,7 @@
             ? selectedAgentId === normalizeAgentId(defaultAgentKey)
             : isMixedConversationActive(item),
           'messenger-conversation-item--guided': isGuidedDefaultConversation(item),
-          'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running',
+          'is-running': item.kind === 'agent' && isAgentRuntimeHot(item.agentId),
           'is-goal-locked': item.kind === 'agent' && isAgentConversationGoalActive(item),
           'is-dragging': dragState.section === 'messages' && dragState.key === resolveConversationItemKey(item),
           'is-drag-origin-hidden': isDragOriginHidden('messages', resolveConversationItemKey(item)),
@@ -573,7 +573,7 @@
         :class="{
           active: selectedAgentId === agent.agentId,
           selected: isAgentMultiSelected(agent.agentId),
-          'is-running': resolveAgentRuntimeState(agent.agentId) === 'running',
+          'is-running': isAgentRuntimeHot(agent.agentId),
           'is-dragging': dragState.section === 'agents-primary' && dragState.key === resolveAgentDragKey(agent.agentId),
           'is-drag-origin-hidden': isDragOriginHidden('agents-primary', resolveAgentDragKey(agent.agentId)),
           'is-drop-before': isDropBefore('agents-primary', index),
@@ -624,7 +624,7 @@
         :class="{
           active: selectedAgentId === normalizeAgentId(agent.id),
           selected: isAgentMultiSelected(agent.id),
-          'is-running': resolveAgentRuntimeState(agent.id) === 'running',
+          'is-running': isAgentRuntimeHot(agent.id),
           'is-dragging': dragState.section === 'agents-shared' && dragState.key === resolveAgentDragKey(agent.id),
           'is-drag-origin-hidden': isDragOriginHidden('agents-shared', resolveAgentDragKey(agent.id)),
           'is-drop-before': isDropBefore('agents-shared', index),
@@ -1867,6 +1867,11 @@ function acknowledgeDoneAgentIfNeeded(agentId: unknown) {
     return;
   }
   acknowledgeAgentRuntimeDone?.(normalizedId);
+}
+
+function isAgentRuntimeHot(agentId: unknown) {
+  const state = String(resolveAgentRuntimeState(agentId) || '').trim().toLowerCase();
+  return state === 'running' || state === 'pending';
 }
 
 async function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {

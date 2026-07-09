@@ -470,7 +470,49 @@ async fn list_running_agents(
         }
     }
 
-    // 3) Recently completed/error sessions, used to display a transient state without frontend inference.
+    // 3) Pending queued tasks may not have a hot monitor row yet, but they are
+    // still user-visible waiting work and must outrank recent done hints.
+    let pending_tasks = state
+        .storage
+        .list_pending_agent_tasks(2048)
+        .unwrap_or_default();
+    for task in pending_tasks {
+        if task.user_id.trim() != user_id {
+            continue;
+        }
+        let agent_id = task.agent_id.trim();
+        if !allowed_set.contains(agent_id) {
+            continue;
+        }
+        let task_status = task.status.trim().to_ascii_lowercase();
+        if task_status != "pending" && task_status != "retry" {
+            continue;
+        }
+        let updated_time = if task.updated_at.is_finite() && task.updated_at > 0.0 {
+            task.updated_at
+        } else {
+            task.created_at
+        };
+        let waiting_age = (now - updated_time).max(0.0);
+        if updated_time <= 0.0 || waiting_age > WAITING_TTL_S {
+            continue;
+        }
+        let next = AgentStatusCandidate {
+            state: STATE_WAITING,
+            updated_time,
+            session_id: task.session_id,
+            expires_at: None,
+            pending_question: true,
+            last_error: None,
+        };
+        if let Some(current) = status_by_agent.get(agent_id) {
+            if should_replace(current, &next, now) {
+                status_by_agent.insert(agent_id.to_string(), next);
+            }
+        }
+    }
+
+    // 4) Recently completed/error sessions, used to display a transient state without frontend inference.
     let recent_records = state.monitor.load_records_by_user(
         &user_id,
         Some(&[
@@ -2736,6 +2778,13 @@ mod tests {
             &[],
             &[("running", 0.0)],
             &[],
+        ));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[],
+            &[],
+            &["pending"],
         ));
         assert!(has_active_runtime_evidence(
             "sess_a",

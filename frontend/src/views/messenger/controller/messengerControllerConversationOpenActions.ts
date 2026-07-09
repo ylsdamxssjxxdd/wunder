@@ -700,6 +700,7 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           agent_id: normalized === DEFAULT_AGENT_KEY ? '' : normalized,
           entry: normalized === DEFAULT_AGENT_KEY ? 'default' : undefined
       } as Record<string, any>;
+      ctx.rememberRecentAgentSelection?.(normalized, '');
       delete nextQuery.conversation_id;
       delete nextQuery.session_id;
       ctx.router.replace({
@@ -1268,6 +1269,7 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       ctx.middlePaneOverlayVisible.value = false;
       ctx.clearAgentConversationDismissed(fallbackAgentId);
       ctx.selectedAgentId.value = fallbackAgentId || DEFAULT_AGENT_KEY;
+      ctx.rememberRecentAgentSelection?.(fallbackAgentId || DEFAULT_AGENT_KEY, normalizedSessionId);
       ctx.sessionHub.setActiveConversation({
           kind: 'agent',
           id: normalizedSessionId,
@@ -1329,6 +1331,7 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           const targetAgentId = ctx.normalizeAgentId(session?.agent_id ?? fallbackAgentId);
           ctx.refreshSessionPreviewCache(normalizedSessionId, (session || sessionDetail || null) as Record<string, unknown> | null);
           ctx.selectedAgentId.value = targetAgentId || DEFAULT_AGENT_KEY;
+          ctx.rememberRecentAgentSelection?.(targetAgentId || DEFAULT_AGENT_KEY, normalizedSessionId);
           ctx.sessionHub.setActiveConversation({
               kind: 'agent',
               id: normalizedSessionId,

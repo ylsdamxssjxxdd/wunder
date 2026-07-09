@@ -721,6 +721,7 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
               reason: 'realtime-pulse',
               hydrateIfCold: true
           });
+          await ctx.loadRunningAgents({ force: true });
       }
       finally {
           chatDebugLog('messenger.conversation', 'session-refresh-finish', {

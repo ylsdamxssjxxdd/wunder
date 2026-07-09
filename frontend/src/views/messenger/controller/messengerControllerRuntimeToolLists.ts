@@ -216,6 +216,12 @@ import {
   saveMessengerOrderPreferences,
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
+import {
+  TERMINAL_SESSION_RUNTIME_STATUS_SET,
+  WAITING_SESSION_RUNTIME_STATUS_SET,
+  isTerminalMessengerRuntimeStatus,
+  isWaitingMessengerRuntimeStatus
+} from '@/views/messenger/agentRuntimeState';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
@@ -438,7 +444,8 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
 
   ctx.isSessionBusy = (sessionId: unknown): boolean => Boolean(ctx.chatStore.isSessionBusy?.(sessionId) || ctx.chatStore.isSessionLoading?.(sessionId));
 
-  ctx.TERMINAL_RUNTIME_STATUS_SET = new Set(['idle', 'not_loaded', 'system_error']);
+  ctx.TERMINAL_RUNTIME_STATUS_SET = TERMINAL_SESSION_RUNTIME_STATUS_SET;
+  ctx.WAITING_RUNTIME_STATUS_SET = WAITING_SESSION_RUNTIME_STATUS_SET;
 
   ctx.resolveSessionRuntimeStatus = (sessionId: string): string => String(ctx.chatStore.sessionRuntimeStatus?.(sessionId) || '')
       .trim()
@@ -463,30 +470,38 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
               ? ctx.resolveActiveAgentRenderableMessageRecords()
               : ctx.chatStore.getCachedSessionMessages(normalizedSessionId);
       const busyByStoreGetter = ctx.isSessionBusy(normalizedSessionId);
+      if (runtimeStatus === 'queued') {
+          return false;
+      }
       if (!loadingBySession &&
-          ctx.TERMINAL_RUNTIME_STATUS_SET.has(runtimeStatus) &&
-          !hasActiveSubagentsAfterLatestUser(messages) &&
-          hasStreamingAssistantMessage(messages)) {
-          chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
-              sessionId: normalizedSessionId,
-              runtimeStatus,
-              loadingBySession,
-              busyByStoreGetter,
-              messageCount: messages.length
-          });
+          isTerminalMessengerRuntimeStatus(runtimeStatus) &&
+          !hasActiveSubagentsAfterLatestUser(messages)) {
+          if (busyByStoreGetter || hasStreamingAssistantMessage(messages)) {
+              chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
+                  sessionId: normalizedSessionId,
+                  runtimeStatus,
+                  loadingBySession,
+                  busyByStoreGetter,
+                  messageCount: messages.length
+              });
+          }
           return false;
       }
       return busyByStoreGetter;
   };
 
   ctx.activeMessengerSessionBusy = computed(() => {
+      const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
+      const _projectionContentVersion = ctx.chatStore.runtimeProjectionContentVersion;
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (!sessionId)
           return false;
       return ctx.resolveEffectiveSessionBusy(sessionId);
   });
 
-  ctx.streamingAgentIdSet = computed(() => {
+  ctx.waitingAgentIdSet = computed(() => {
+      const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
+      const _projectionContentVersion = ctx.chatStore.runtimeProjectionContentVersion;
       const sessionAgentMap = ctx.buildSessionAgentMap();
       const loadingBySession = (ctx.chatStore.loadingBySession && typeof ctx.chatStore.loadingBySession === 'object'
           ? ctx.chatStore.loadingBySession
@@ -501,7 +516,45 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       }
       const result = new Set<string>();
       sessionIds.forEach((sessionId) => {
-          if (!sessionId || !ctx.resolveEffectiveSessionBusy(sessionId))
+          if (!sessionId || !isWaitingMessengerRuntimeStatus(ctx.resolveSessionRuntimeStatus(sessionId)))
+              return;
+          const mappedAgentId = sessionAgentMap.get(sessionId);
+          if (mappedAgentId) {
+              result.add(mappedAgentId);
+              return;
+          }
+          if (sessionId === activeSessionId) {
+              const fallbackAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value || ctx.chatStore.draftAgentId) ||
+                  DEFAULT_AGENT_KEY;
+              result.add(fallbackAgentId);
+          }
+      });
+      return result;
+  });
+
+  ctx.streamingAgentIdSet = computed(() => {
+      const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
+      const _projectionContentVersion = ctx.chatStore.runtimeProjectionContentVersion;
+      const sessionAgentMap = ctx.buildSessionAgentMap();
+      const loadingBySession = (ctx.chatStore.loadingBySession && typeof ctx.chatStore.loadingBySession === 'object'
+          ? ctx.chatStore.loadingBySession
+          : {}) as Record<string, unknown>;
+      const sessionIds = new Set<string>([
+          ...Array.from(sessionAgentMap.keys()),
+          ...Object.keys(loadingBySession).map((id) => String(id || '').trim())
+      ]);
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (activeSessionId) {
+          sessionIds.add(activeSessionId);
+      }
+      const result = new Set<string>();
+      sessionIds.forEach((sessionId) => {
+          if (!sessionId)
+              return;
+          const runtimeStatus = ctx.resolveSessionRuntimeStatus(sessionId);
+          if (isWaitingMessengerRuntimeStatus(runtimeStatus) || isTerminalMessengerRuntimeStatus(runtimeStatus))
+              return;
+          if (!ctx.resolveEffectiveSessionBusy(sessionId))
               return;
           const mappedAgentId = sessionAgentMap.get(sessionId);
           if (mappedAgentId) {

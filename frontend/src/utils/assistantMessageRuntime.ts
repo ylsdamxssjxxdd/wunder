@@ -17,6 +17,7 @@ const normalizeFlag = (value: unknown): boolean => {
 const normalizeRuntimeText = (value: unknown): string => String(value || '').trim().toLowerCase();
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+const QUEUE_WORKFLOW_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
 
 const hasVisibleAssistantOutput = (message: AssistantMessageLike | null | undefined): boolean =>
   Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
@@ -37,6 +38,23 @@ const resolveLatestWorkflowStatus = (workflowItems: unknown): string => {
     }
   }
   return '';
+};
+
+const hasPendingQueueWorkflow = (workflowItems: unknown): boolean => {
+  const items = Array.isArray(workflowItems) ? workflowItems : [];
+  let hasQueueWait = false;
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as AssistantMessageLike;
+    const eventType = normalizeRuntimeText(record.eventType ?? record.event_type ?? record.event ?? record.sourceEventType ?? record.source_event_type);
+    if (eventType === 'queue_start' || eventType === 'queue_finish' || eventType === 'queue_fail') {
+      return false;
+    }
+    if (QUEUE_WORKFLOW_EVENT_TYPES.has(eventType)) {
+      hasQueueWait = true;
+    }
+  }
+  return hasQueueWait;
 };
 
 export const hasAssistantPendingQuestion = (
@@ -182,6 +200,15 @@ export const resolveAssistantMessageRuntimeState = (
   if (!message || message.role !== 'assistant') return 'idle';
   const pendingQuestion = hasAssistantPendingQuestion(message);
   if (pendingQuestion) return 'pending';
+  if (
+    normalizeRuntimeText(message.state) === 'queued' ||
+    normalizeRuntimeText(message.status) === 'queued' ||
+    normalizeRuntimeText(message.runtime_status) === 'queued' ||
+    normalizeRuntimeText(message.runtimeStatus) === 'queued' ||
+    hasPendingQueueWorkflow(message.workflowItems)
+  ) {
+    return 'pending';
+  }
   if (isAssistantMessageRunning(message)) return 'running';
   const normalized = normalizeAssistantMessageRuntimeState(message.state, pendingQuestion);
   return normalized === 'idle' ? 'done' : normalized;
