@@ -43,10 +43,10 @@ def set_version_field(payload: dict, version: str) -> bool:
     return True
 
 
-def replace_package_version(path: Path, version: str) -> bool:
+def replace_toml_package_version(path: Path, version: str) -> bool:
     text = path.read_text(encoding="utf-8-sig")
     pattern = re.compile(
-        r'(?ms)(^\[package\]\s.*?^version\s*=\s*")[^"]+("\s*$)'
+        r'(?ms)(^\[(?:workspace\.)?package\]\s.*?^version\s*=\s*")[^"]+("\s*$)'
     )
     updated, count = pattern.subn(rf"\g<1>{version}\2", text, count=1)
     if count == 0 or updated == text:
@@ -66,7 +66,7 @@ def main() -> int:
         ROOT / "crates" / "wunder-desktop" / "Cargo.toml",
     ]
     for target in sync_targets:
-        if replace_package_version(target, version):
+        if replace_toml_package_version(target, version):
             changed_files.append(str(target.relative_to(ROOT)))
 
     json_targets = [

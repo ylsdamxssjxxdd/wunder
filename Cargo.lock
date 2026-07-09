@@ -7889,7 +7889,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-cli"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7921,7 +7921,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-core"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7934,7 +7934,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-desktop"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -7956,7 +7956,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-runtime"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "aes",
  "anyhow",
@@ -8035,7 +8035,7 @@ dependencies = [
 
 [[package]]
 name = "wunder-server"
-version = "0.3.0"
+version = "0.3.9"
 dependencies = [
  "anyhow",
  "axum",

@@ -44,9 +44,33 @@ function Ensure-Nasm {
   return Split-Path -Parent $nasmExe
 }
 
+function Resolve-TauriVersion {
+  param([string]$TauriDir)
+
+  $configPath = Join-Path $TauriDir 'tauri.conf.json'
+  if (-not (Test-Path $configPath)) {
+    throw "missing tauri config: $configPath"
+  }
+
+  try {
+    $payload = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+  }
+  catch {
+    throw "failed to parse tauri config: $configPath"
+  }
+
+  $version = [string]$payload.version
+  if ([string]::IsNullOrWhiteSpace($version)) {
+    throw "missing version in tauri config: $configPath"
+  }
+
+  return $version.Trim()
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $tauriDir = (Resolve-Path (Join-Path $scriptDir '..')).Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..')).Path
+$appVersion = Resolve-TauriVersion -TauriDir $tauriDir
 if (-not $LabRoot) {
   $LabRoot = Join-Path $repoRoot 'temp_dir\win7-lab'
 }
@@ -97,5 +121,5 @@ finally {
   Pop-Location
 }
 
-$output = Join-Path $targetDir 'i686-pc-windows-msvc\release\bundle\nsis\wunder-desktop_0.3.0_x86-setup.exe'
+$output = Join-Path $targetDir ("i686-pc-windows-msvc\release\bundle\nsis\wunder-desktop_{0}_x86-setup.exe" -f $appVersion)
 Write-Step "output installer: $output"

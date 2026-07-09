@@ -1,6 +1,6 @@
 {
   "name": "wunder-desktop-electron",
-  "version": "0.3.0",
+  "version": "0.3.9",
   "private": true,
   "description": "Wunder Desktop Electron shell",
   "main": "src/main.js",
