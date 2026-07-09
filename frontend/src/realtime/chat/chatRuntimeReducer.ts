@@ -72,8 +72,6 @@ const PROJECTED_TOOL_RESULT_EVENT_TYPES = new Set(['tool_result']);
 const isTerminalWorkflowStatus = (status: string): boolean =>
   Boolean(status) && !ACTIVE_WORKFLOW_STATUSES.has(status);
 const WORKFLOW_CONTEXT_SNAPSHOT_KEY = '__workflowContextSnapshot';
-const EPHEMERAL_TEXT_BEFORE_TOOL_KEY = '__ephemeralTextBeforeTool';
-const EPHEMERAL_REASONING_BEFORE_TOOL_KEY = '__ephemeralReasoningBeforeTool';
 const SUBAGENT_WORKFLOW_EVENT_TYPES = new Set([
   'subagent_dispatch_start',
   'subagent_dispatch_item_update',
@@ -367,7 +365,6 @@ const applyContentOnlyRuntimeEvent = (
   }
   if (message?.role === 'assistant') {
     if (event.type === 'assistant_delta') {
-      clearEphemeralAssistantTextBeforeNextOutput(message);
       message.content += event.delta || event.content;
       if (event.reasoningDelta || event.reasoning) {
         message.reasoning += event.reasoningDelta || event.reasoning;
@@ -975,7 +972,6 @@ const applyAssistantDelta = (
   modelTurn.status = 'streaming';
   const message = ensureAssistantMessageForModelTurn(session, event, 'streaming');
   if (target === 'content') {
-    clearEphemeralAssistantTextBeforeNextOutput(message);
     message.content += event.delta || event.content;
   } else {
     message.reasoning += event.reasoningDelta || event.reasoning;
@@ -1022,9 +1018,6 @@ const applyAssistantFinal = (
     ? { ...event, messageId: existingFinalId }
     : event;
   const message = ensureAssistantMessageForModelTurn(session, finalEvent, 'final');
-  if (normalizeText(event.payload.source_event_type) === 'final') {
-    clearEphemeralAssistantTextBeforeNextOutput(message);
-  }
   if (event.content) {
     message.content = mergeRuntimeSnapshotText(message.content, event.content, event);
   }
@@ -2363,27 +2356,8 @@ const clearAssistantTextAtToolBoundary = (
   message: ChatRuntimeMessageProjection
 ): void => {
   if (!message || message.role !== 'assistant') return;
-  const display = ensureMessageDisplayProjection(message);
-  delete display[EPHEMERAL_TEXT_BEFORE_TOOL_KEY];
-  delete display[EPHEMERAL_REASONING_BEFORE_TOOL_KEY];
   message.content = '';
   message.reasoning = '';
-};
-
-const clearEphemeralAssistantTextBeforeNextOutput = (
-  message: ChatRuntimeMessageProjection
-): void => {
-  if (!message || message.role !== 'assistant' || !isPlainRecord(message.display)) return;
-  const contentLength = Number(message.display[EPHEMERAL_TEXT_BEFORE_TOOL_KEY] ?? 0);
-  const reasoningLength = Number(message.display[EPHEMERAL_REASONING_BEFORE_TOOL_KEY] ?? 0);
-  if (Number.isFinite(contentLength) && contentLength > 0) {
-    message.content = String(message.content || '').slice(contentLength);
-  }
-  if (Number.isFinite(reasoningLength) && reasoningLength > 0) {
-    message.reasoning = String(message.reasoning || '').slice(reasoningLength);
-  }
-  delete message.display[EPHEMERAL_TEXT_BEFORE_TOOL_KEY];
-  delete message.display[EPHEMERAL_REASONING_BEFORE_TOOL_KEY];
 };
 
 const resolveTextOverlapLength = (current: string, incoming: string): number => {
