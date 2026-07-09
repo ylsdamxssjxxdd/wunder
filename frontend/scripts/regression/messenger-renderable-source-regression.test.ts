@@ -331,8 +331,11 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(markdownBody.includes('const projected = resolveRuntimeProjectedMessage();'));
   assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'message-body-stream-render'"));
   assert.ok(markdownBody.includes('const isStreamingTextPreview = computed(() =>'));
+  assert.ok(markdownBody.includes('runtimeProjectionContentVersion || 0'));
   assert.ok(markdownBody.includes('ref="plainTextRef"'));
   assert.ok(markdownBody.includes('syncPlainTextDom(source);'));
+  assert.ok(markdownBody.includes('LIVE_STREAM_TEXT_POLL_MS'));
+  assert.ok(markdownBody.includes('syncLiveRuntimePlainText'));
   assert.ok(markdownBody.includes('if (!isChatDebugEnabled() || !props.streaming'));
   assert.ok(!markdownBody.includes('{{ visiblePlainText }}'));
   assert.ok(markdownBody.includes('STREAMING_TEXT_PREVIEW_MAX_CHARS'));

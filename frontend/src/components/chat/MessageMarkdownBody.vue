@@ -87,6 +87,7 @@ const plainTextRef = ref<HTMLElement | null>(null);
 let renderTimer: number | null = null;
 let plainTextLayoutTimer: number | null = null;
 let plainTextFlushTimer: number | null = null;
+let livePlainTextPollTimer: number | null = null;
 let plainTextDomSyncPending = false;
 let pendingPlainText = '';
 let pendingPlainTextScheduledAt = 0;
@@ -95,6 +96,7 @@ let lastPlainTextFlushAt = 0;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
 const STREAM_TEXT_FLUSH_MIN_MS = 32;
+const LIVE_STREAM_TEXT_POLL_MS = 64;
 const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
 const STREAMING_TEXT_PREVIEW_MAX_CHARS = 60000;
 let lastStreamRenderTraceAt = 0;
@@ -102,12 +104,15 @@ let lastStreamRenderTraceSignature = '';
 
 const runtimeContentVersion = computed(() => {
   const messageIds = resolveRuntimeContentSubscriptionMessageIds();
-  if (messageIds.length === 0) return 0;
-  return messageIds.reduce(
+  const messageScopedVersion = messageIds.reduce(
     (sum, messageId) =>
       sum + Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0),
     0
   );
+  if (props.streaming === true && String(props.sessionId || chatStore.activeSessionId || '').trim()) {
+    return messageScopedVersion + Number(chatStore.runtimeProjectionContentVersion || 0);
+  }
+  return messageScopedVersion;
 });
 
 const resolveRuntimeContentSubscriptionMessageIds = (): string[] => {
@@ -371,6 +376,45 @@ const schedulePlainTextLayout = () => {
   }, waitMs);
 };
 
+const resolveLiveRuntimeContent = (): string => {
+  const projected = resolveRuntimeProjectedMessage();
+  if (!projected) return normalizedContent.value;
+  if (!props.assistantDisplay) {
+    return String(projected.content || props.content || '');
+  }
+  return buildAssistantDisplayContent({
+    ...((props.message || {}) as MessageRecord),
+    role: projected.role,
+    content: projected.content,
+    reasoning: projected.reasoning,
+    runtime_status: projected.status,
+    stream_incomplete: true
+  }, t);
+};
+
+const syncLiveRuntimePlainText = () => {
+  if (props.streaming !== true || typeof window === 'undefined') return;
+  const source = resolveLiveRuntimeContent();
+  if (!source || source.length > STREAMING_TEXT_PREVIEW_MAX_CHARS) return;
+  if (source === visiblePlainText.value || source === pendingPlainText) return;
+  visibleHtml.value = '';
+  updateVisiblePlainText(source, false);
+  schedulePlainTextLayout();
+  traceStreamingRenderSource(source, true);
+};
+
+const startLivePlainTextPoll = () => {
+  if (livePlainTextPollTimer !== null || typeof window === 'undefined') return;
+  livePlainTextPollTimer = window.setInterval(syncLiveRuntimePlainText, LIVE_STREAM_TEXT_POLL_MS);
+};
+
+const stopLivePlainTextPoll = () => {
+  if (livePlainTextPollTimer !== null && typeof window !== 'undefined') {
+    window.clearInterval(livePlainTextPollTimer);
+  }
+  livePlainTextPollTimer = null;
+};
+
 const renderNow = () => {
   if (renderTimer !== null && typeof window !== 'undefined') {
     window.clearTimeout(renderTimer);
@@ -527,6 +571,25 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => [
+    props.streaming,
+    props.sessionId,
+    props.runtimeMessageId,
+    props.runtimeUserTurnId,
+    props.runtimeModelTurnId
+  ],
+  () => {
+    if (props.streaming === true) {
+      startLivePlainTextPoll();
+      syncLiveRuntimePlainText();
+      return;
+    }
+    stopLivePlainTextPoll();
+  },
+  { immediate: true }
+);
+
 onBeforeUnmount(() => {
   if (renderTimer !== null && typeof window !== 'undefined') {
     window.clearTimeout(renderTimer);
@@ -534,5 +597,6 @@ onBeforeUnmount(() => {
   }
   clearPlainTextLayoutTimer();
   clearPlainTextFlushTimer();
+  stopLivePlainTextPoll();
 });
 </script>
