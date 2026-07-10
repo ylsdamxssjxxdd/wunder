@@ -253,8 +253,8 @@ const markAssistantMessageQueued = (
   );
   assistantMessage.state = 'queued';
   assistantMessage.status = 'queued';
-  assistantMessage.workflowStreaming = true;
-  assistantMessage.stream_incomplete = true;
+  assistantMessage.workflowStreaming = false;
+  assistantMessage.stream_incomplete = false;
   assistantMessage.waiting_updated_at_ms = Date.now();
   if (!assistantMessage.stats || typeof assistantMessage.stats !== 'object') {
     assistantMessage.stats = {};

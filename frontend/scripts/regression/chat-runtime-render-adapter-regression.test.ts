@@ -7,6 +7,7 @@ import {
   buildChatRuntimeRenderableMessages,
   hasChatRuntimeRenderSession,
   isChatRuntimeProjectionRenderEnabled,
+  materializeChatRuntimeMessage,
   materializeChatRuntimeMessages,
   resolveChatRuntimeProjectionRenderMode,
   resolveChatRuntimeRenderableSourceDecision,
@@ -14,6 +15,7 @@ import {
 } from '../../src/realtime/chat/chatRuntimeRenderAdapter';
 import { resolveComposerContextUsageSource } from '../../src/components/chat/composerContextUsage';
 import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
+import { resolveAssistantMessageRuntimeState } from '../../src/utils/assistantMessageRuntime';
 import type { ChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeTypes';
 
 const apply = (events: ChatRuntimeEvent[]) => {
@@ -964,6 +966,105 @@ test('chat runtime render adapter preserves projected workflow items', () => {
   assert.equal(workflowItems[0].status, 'completed');
   assert.equal(workflowItems[0].toolCallId, 'call-1');
   assert.equal(workflowItems[0].toolName, 'lookup');
+});
+
+test('chat runtime render adapter settles queued workflow artifacts when final arrives directly', () => {
+  const projection = apply([
+    {
+      event_type: 'queue_status',
+      source: 'test',
+      strict: true,
+      session_id: 'session-terminal-queue',
+      event_id: 'event-queue-1',
+      event_seq: 1,
+      user_turn_id: 'turn-terminal-queue',
+      model_turn_id: 'model-turn-terminal-queue',
+      message_id: 'message-terminal-queue',
+      payload: {
+        source_event_type: 'queued',
+        queue_position: 1
+      }
+    },
+    {
+      event_type: 'tool_call_started',
+      source: 'test',
+      strict: true,
+      session_id: 'session-terminal-queue',
+      event_id: 'event-tool-2',
+      event_seq: 2,
+      user_turn_id: 'turn-terminal-queue',
+      model_turn_id: 'model-turn-terminal-queue',
+      message_id: 'message-terminal-queue',
+      payload: {
+        source_event_type: 'tool_call',
+        data: {
+          tool_call_id: 'call-terminal-queue',
+          tool: 'lookup'
+        }
+      }
+    },
+    {
+      event_type: 'assistant_final',
+      source: 'test',
+      strict: true,
+      session_id: 'session-terminal-queue',
+      event_id: 'event-final-3',
+      event_seq: 3,
+      user_turn_id: 'turn-terminal-queue',
+      model_turn_id: 'model-turn-terminal-queue',
+      message_id: 'message-terminal-queue',
+      content: '# Final response'
+    }
+  ]);
+
+  const message = materializeChatRuntimeMessages(projection, 'session-terminal-queue')[0];
+  const workflowItems = message.workflowItems as Array<Record<string, unknown>>;
+
+  assert.equal(message.runtime_status, 'final');
+  assert.equal(message.state, 'done');
+  assert.equal(message.final, true);
+  assert.equal(message.failed, false);
+  assert.equal(message.cancelled, false);
+  assert.equal(message.stream_incomplete, false);
+  assert.equal(message.workflowStreaming, false);
+  assert.equal(message.reasoningStreaming, false);
+  assert.equal(workflowItems.some((item) => item.status === 'loading' || item.status === 'running'), false);
+});
+
+test('chat runtime render adapter overrides stale queued display fields with terminal projection state', () => {
+  const message = materializeChatRuntimeMessage({
+    id: 'message-terminal-display',
+    role: 'assistant',
+    content: '# Final response',
+    reasoning: '',
+    status: 'final',
+    createdAt: '2026-04-30T02:14:07.000Z',
+    createdSeq: 1,
+    updatedSeq: 3,
+    userTurnId: 'turn-terminal-display',
+    modelTurnId: 'model-turn-terminal-display',
+    final: true,
+    failed: false,
+    cancelled: false,
+    display: {
+      status: 'queued',
+      state: 'queued',
+      final: false,
+      stream_incomplete: true,
+      workflowStreaming: true
+    },
+    workflowItems: [{ eventType: 'queued', status: 'queued' }]
+  });
+
+  assert.ok(message);
+  assert.equal(message.status, 'final');
+  assert.equal(message.runtime_status, 'final');
+  assert.equal(message.state, 'done');
+  assert.equal(message.final, true);
+  assert.equal(message.stream_incomplete, false);
+  assert.equal(message.workflowStreaming, false);
+  assert.equal((message.workflowItems as Array<Record<string, unknown>>)[0].status, 'completed');
+  assert.equal(resolveAssistantMessageRuntimeState(message), 'done');
 });
 
 test('chat runtime render adapter materializes projected retry and resumable fields', () => {

@@ -16,8 +16,10 @@ const normalizeFlag = (value: unknown): boolean => {
 
 const normalizeRuntimeText = (value: unknown): string => String(value || '').trim().toLowerCase();
 
-const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'queued', 'running', 'streaming']);
 const QUEUE_WORKFLOW_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
+const DONE_MESSAGE_STATUSES = new Set(['complete', 'completed', 'done', 'final', 'finished', 'success', 'succeeded']);
+const ERROR_MESSAGE_STATUSES = new Set(['aborted', 'cancelled', 'canceled', 'error', 'failed', 'terminated', 'timeout']);
 
 const hasVisibleAssistantOutput = (message: AssistantMessageLike | null | undefined): boolean =>
   Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
@@ -50,7 +52,8 @@ const hasPendingQueueWorkflow = (workflowItems: unknown): boolean => {
     if (eventType === 'queue_start' || eventType === 'queue_finish' || eventType === 'queue_fail') {
       return false;
     }
-    if (QUEUE_WORKFLOW_EVENT_TYPES.has(eventType)) {
+    const status = normalizeRuntimeText(record.status);
+    if (QUEUE_WORKFLOW_EVENT_TYPES.has(eventType) && (!status || ACTIVE_WORKFLOW_STATUSES.has(status))) {
       hasQueueWait = true;
     }
   }
@@ -200,6 +203,11 @@ export const resolveAssistantMessageRuntimeState = (
   if (!message || message.role !== 'assistant') return 'idle';
   const pendingQuestion = hasAssistantPendingQuestion(message);
   if (pendingQuestion) return 'pending';
+  const explicitStatus = normalizeRuntimeText(
+    message.runtime_status ?? message.runtimeStatus ?? message.status
+  );
+  if (DONE_MESSAGE_STATUSES.has(explicitStatus)) return 'done';
+  if (ERROR_MESSAGE_STATUSES.has(explicitStatus)) return 'error';
   if (
     normalizeRuntimeText(message.state) === 'queued' ||
     normalizeRuntimeText(message.status) === 'queued' ||

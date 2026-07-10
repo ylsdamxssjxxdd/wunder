@@ -41,7 +41,7 @@ const TERMINAL_EVENT_TYPES = new Set([
   'session_idle'
 ]);
 
-const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'queued', 'running', 'streaming']);
 const QUEUE_WAIT_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
 const QUEUE_WORKFLOW_EVENT_TYPES = new Set([
   'queued',
@@ -1042,6 +1042,9 @@ const applyAssistantFinal = (
   updateWorkflowContextSnapshot(message, event, modelTurn);
   message.status = 'final';
   message.final = true;
+  message.failed = false;
+  message.cancelled = false;
+  settleProjectedWorkflowItems(message, 'completed');
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   modelTurn.status = 'completed';
   modelTurn.finalMessageId = message.id;

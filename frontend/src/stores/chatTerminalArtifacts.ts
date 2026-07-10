@@ -4,9 +4,10 @@ import {
   normalizeSubagentRuntimeStatus
 } from '@/utils/subagentRuntime';
 
-const ACTIVE_WORKFLOW_ITEM_STATUS_SET = new Set(['loading', 'pending', 'running', 'streaming']);
+const ACTIVE_WORKFLOW_ITEM_STATUS_SET = new Set(['loading', 'pending', 'queued', 'running', 'streaming']);
 const TERMINAL_SETTLED_ASSISTANT_STATUS_SET = new Set([
   'placeholder',
+  'queued',
   'waiting_first_output',
   'streaming',
   'tooling'

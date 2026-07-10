@@ -47,6 +47,13 @@ const RENDER_SEARCH_KEYS = ['chat_runtime_render', 'chatRuntimeRender'];
 const RENDER_SHADOW_SEARCH_KEYS = ['chat_runtime_render_shadow', 'chatRuntimeRenderShadow'];
 const MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT = 64;
 const MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT = 5000;
+const ACTIVE_PROJECTED_WORKFLOW_STATUSES = new Set([
+  'loading',
+  'pending',
+  'queued',
+  'running',
+  'streaming'
+]);
 
 type MaterializedMessageCacheEntry = {
   sourceRevision: string;
@@ -185,14 +192,17 @@ export const materializeChatRuntimeMessage = (
   base.__runtime_render_key = resolveChatRuntimeProjectionKey(message);
 
   if (message.role === 'assistant') {
+    base.status = message.status;
     base.state = resolveAssistantLegacyState(message.status);
     base.stream_incomplete = active;
     base.workflowStreaming = resolveProjectedWorkflowStreaming(message);
     base.reasoningStreaming = active && Boolean(message.reasoning);
-    base.failed = message.failed || message.status === 'failed';
-    base.cancelled = message.cancelled || message.status === 'cancelled';
+    base.final = message.status === 'final';
+    base.failed = message.status === 'failed';
+    base.cancelled = message.status === 'cancelled';
     base.workflowItems = cloneProjectionRecords(message.workflowItems, base.workflowItems);
     base.subagents = cloneProjectionRecords(message.subagents, base.subagents);
+    settleTerminalMaterializedArtifacts(base, message.status);
   }
 
   return base;
@@ -348,9 +358,15 @@ const syncMaterializedStreamingFields = (
   materialized.runtime_status = source.status;
   if (source.role !== 'assistant') return;
   const active = isRuntimeMessageActive(source.status);
+  materialized.status = source.status;
   materialized.state = resolveAssistantLegacyState(source.status);
   materialized.stream_incomplete = active;
+  materialized.workflowStreaming = resolveProjectedWorkflowStreaming(source);
   materialized.reasoningStreaming = active && Boolean(source.reasoning);
+  materialized.final = source.status === 'final';
+  materialized.failed = source.status === 'failed';
+  materialized.cancelled = source.status === 'cancelled';
+  settleTerminalMaterializedArtifacts(materialized, source.status);
 };
 
 const MATERIALIZED_MUTABLE_FIELDS = [
@@ -410,6 +426,7 @@ const resolveChatRuntimeProjectionKey = (
 const resolveProjectedWorkflowStreaming = (
   message: ChatRuntimeMessageProjection
 ): boolean => {
+  if (!isRuntimeMessageActive(message.status)) return false;
   if (isProjectedResumablePause(message)) return false;
   return (
     message.status === 'queued' ||
@@ -418,6 +435,46 @@ const resolveProjectedWorkflowStreaming = (
     hasActiveProjectedSubagents(message.subagents) ||
     (isRuntimeMessageActive(message.status) && !message.content && !message.reasoning)
   );
+};
+
+const settleTerminalMaterializedArtifacts = (
+  message: ChatMessageLike,
+  status: ChatRuntimeMessageStatus
+): void => {
+  if (isRuntimeMessageActive(status)) return;
+  const terminalStatus = status === 'final' ? 'completed' : 'failed';
+  if (Array.isArray(message.workflowItems)) {
+    message.workflowItems.forEach((item) => {
+      if (!isPlainRecord(item)) return;
+      const itemStatus = normalizeStatus(item.status);
+      if (ACTIVE_PROJECTED_WORKFLOW_STATUSES.has(itemStatus)) {
+        item.status = terminalStatus;
+      }
+    });
+  }
+  if (Array.isArray(message.subagents)) {
+    message.subagents.forEach((item) => {
+      if (!isPlainRecord(item)) return;
+      const agentState = isPlainRecord(item.agent_state)
+        ? item.agent_state
+        : isPlainRecord(item.agentState)
+          ? item.agentState
+          : {};
+      const itemStatus = normalizeStatus(item.status ?? agentState.status);
+      if (!itemStatus || hasActiveProjectedSubagents([item])) {
+        item.status = terminalStatus;
+        item.terminal = true;
+        item.failed = terminalStatus === 'failed';
+        item.canTerminate = false;
+        if (Object.keys(agentState).length > 0) {
+          item.agent_state = {
+            ...agentState,
+            status: terminalStatus
+          };
+        }
+      }
+    });
+  }
 };
 
 const isProjectedResumablePause = (
@@ -433,7 +490,7 @@ const hasActiveProjectedWorkflowItems = (items: unknown): boolean => {
   return items.some((item) => {
     if (!isPlainRecord(item)) return false;
     const status = normalizeStatus(item.status);
-    return status === 'loading' || status === 'pending' || status === 'running' || status === 'streaming';
+    return ACTIVE_PROJECTED_WORKFLOW_STATUSES.has(status);
   });
 };
 

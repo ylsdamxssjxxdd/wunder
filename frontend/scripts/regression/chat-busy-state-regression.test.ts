@@ -446,6 +446,29 @@ test('terminal settle clears status-only streaming placeholders after recovery',
   );
 });
 
+test('terminal settle clears queued assistant placeholders after stream completion', () => {
+  const messages: Record<string, any>[] = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: '# Final response',
+      status: 'queued',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      reasoningStreaming: false,
+      workflowItems: [{ eventType: 'queued', status: 'queued' }]
+    }
+  ];
+
+  assert.equal(settleTerminalAssistantArtifacts(messages, { failed: false }), true);
+  assert.equal(messages[1].status, 'final');
+  assert.equal(messages[1].final, true);
+  assert.equal(messages[1].workflowStreaming, false);
+  assert.equal(messages[1].stream_incomplete, false);
+  assert.equal(messages[1].workflowItems[0].status, 'completed');
+  assert.equal(hasAssistantWaitingForCurrentOutput(messages[1]), false);
+});
+
 test('user stop settlement clears local runtime locks that would keep composer busy', () => {
   const sessionId = 'sess_user_stop_local_settle';
   const waitingUpdatedAtMs = Date.now() - 1000;
