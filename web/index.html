@@ -259,6 +259,10 @@
                             <td><strong id="metricServiceActive">-</strong></td>
                           </tr>
                           <tr>
+                            <th data-i18n="monitor.metric.sessions.queued">排队线程</th>
+                            <td><strong id="metricServiceQueued">-</strong></td>
+                          </tr>
+                          <tr>
                             <th data-i18n="monitor.metric.sessions.history">历史线程</th>
                             <td><strong id="metricServiceHistory">-</strong></td>
                           </tr>
@@ -447,6 +451,7 @@
                             <select id="monitorStatusFilter" class="select">
                               <option value="all" data-i18n="monitor.filter.status.all">全部</option>
                               <option value="active" data-i18n="monitor.filter.status.active">活动中</option>
+                              <option value="queued" data-i18n="monitor.filter.status.queued">排队中</option>
                               <option value="history" data-i18n="monitor.filter.status.history">历史</option>
                             </select>
                           </label>
@@ -6349,7 +6354,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260610-01"></script>
+    <script type="module" src="./app.js?v=20260710-01"></script>
   </body>
 </html>
 

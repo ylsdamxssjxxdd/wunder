@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20260610-01";
+import { elements } from "./modules/elements.js?v=20260710-01";
 
 import { state } from "./modules/state.js";
 
@@ -40,7 +40,7 @@ import {
 } from "./modules/prompt.js?v=20260215-01";
 
 import { initDebugPanel, toggleDebugPolling } from "./modules/debug.js?v=20260215-01";
-import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260507-02";
+import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modules/monitor.js?v=20260710-01";
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260518-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
@@ -84,7 +84,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20260508-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260610-01";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260710-01";
 
 
 

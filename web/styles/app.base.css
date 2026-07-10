@@ -2592,6 +2592,7 @@ button.btn-with-icon[aria-busy="true"] i {
   color: #1d4ed8;
 }
 
+.monitor-status.queued,
 .monitor-status.waiting {
   background: #fef3c7;
   color: #b45309;

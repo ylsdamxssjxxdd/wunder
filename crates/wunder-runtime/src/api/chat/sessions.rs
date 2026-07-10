@@ -1068,6 +1068,7 @@ pub(super) fn is_session_stream_active(status: &str) -> bool {
         status,
         MonitorState::STATUS_RUNNING
             | MonitorState::STATUS_CANCELLING
+            | MonitorState::STATUS_QUEUED
             | MonitorState::STATUS_WAITING
     )
 }

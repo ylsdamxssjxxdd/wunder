@@ -112,7 +112,7 @@ const statusIconClass = computed(() => {
     case 'done':
       return 'fa-solid fa-check';
     case 'pending':
-      return 'fa-solid fa-circle-question';
+      return 'fa-solid fa-clock';
     case 'error':
       return 'fa-solid fa-triangle-exclamation';
     default:

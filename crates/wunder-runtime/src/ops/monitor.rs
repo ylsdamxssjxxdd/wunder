@@ -776,6 +776,7 @@ pub struct MonitorState {
 impl MonitorState {
     pub const STATUS_RUNNING: &'static str = "running";
     pub const STATUS_WAITING: &'static str = "waiting";
+    pub const STATUS_QUEUED: &'static str = "queued";
     pub const STATUS_FINISHED: &'static str = "finished";
     pub const STATUS_ERROR: &'static str = "error";
     pub const STATUS_CANCELLED: &'static str = "cancelled";
@@ -941,8 +942,89 @@ impl MonitorState {
                     now,
                     false,
                     persisted_round_floor,
+                    true,
                 );
                 drop(sessions);
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                user_round
+            },
+        )
+    }
+
+    pub fn register_queued(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        agent_id: &str,
+        question: &str,
+        is_admin: bool,
+        debug_payload: bool,
+        queue_payload: &Value,
+    ) -> i64 {
+        self.run_guarded(
+            "monitor.register_queued",
+            || 1,
+            || {
+                let now = now_ts();
+                let cleaned_session_id = session_id.trim().to_string();
+                if cleaned_session_id.is_empty() {
+                    return 1;
+                }
+                let needs_hydration = {
+                    let sessions = self.sessions.lock();
+                    !sessions.contains_key(cleaned_session_id.as_str())
+                };
+                let hydrated_record = if needs_hydration {
+                    self.hydrate_session_record_for_register(cleaned_session_id.as_str())
+                } else {
+                    None
+                };
+                let persisted_round_floor = if needs_hydration {
+                    hydrated_record
+                        .as_ref()
+                        .map(|record| record.user_rounds)
+                        .unwrap_or_else(|| {
+                            self.persisted_user_round_floor(cleaned_session_id.as_str())
+                        })
+                } else {
+                    0
+                };
+                let (to_persist, user_round) = {
+                    let mut sessions = self.sessions.lock();
+                    if let Some(hydrated) = hydrated_record {
+                        sessions
+                            .entry(cleaned_session_id.clone())
+                            .or_insert(hydrated);
+                    }
+                    let (registered, user_round) = self.register_locked(
+                        &mut sessions,
+                        cleaned_session_id.as_str(),
+                        user_id,
+                        agent_id,
+                        question,
+                        is_admin,
+                        debug_payload,
+                        now,
+                        false,
+                        persisted_round_floor,
+                        false,
+                    );
+                    if let Some(record) = sessions.get_mut(cleaned_session_id.as_str()) {
+                        record.status = Self::STATUS_QUEUED.to_string();
+                        record.stage = "queued".to_string();
+                        record.summary = i18n::t("monitor.summary.queued");
+                        record.updated_time = now;
+                        record.ended_time = None;
+                        self.append_event(record, "queue_enter", queue_payload, now);
+                        record.dirty = true;
+                        let queued = self.maybe_persist_record(record, now, true);
+                        (queued.or(registered), user_round)
+                    } else {
+                        (registered, user_round)
+                    }
+                };
                 if let Some(record) = to_persist {
                     self.save_record(&record);
                 }
@@ -1210,6 +1292,10 @@ impl MonitorState {
         self.mark_status(session_id, Self::STATUS_WAITING, summary);
     }
 
+    pub fn mark_queued(&self, session_id: &str, summary: Option<&str>) {
+        self.mark_status(session_id, Self::STATUS_QUEUED, summary);
+    }
+
     pub fn mark_running(&self, session_id: &str, summary: Option<&str>) {
         self.mark_status(session_id, Self::STATUS_RUNNING, summary);
     }
@@ -1276,6 +1362,7 @@ impl MonitorState {
                     };
                     if record.status != Self::STATUS_RUNNING
                         && record.status != Self::STATUS_CANCELLING
+                        && record.status != Self::STATUS_QUEUED
                         && record.status != Self::STATUS_WAITING
                     {
                         return false;
@@ -1324,6 +1411,7 @@ impl MonitorState {
                 if let Some(record) = sessions.get(session_id) {
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
+                        || record.status == Self::STATUS_QUEUED
                         || record.status == Self::STATUS_WAITING
                     {
                         return false;
@@ -1353,6 +1441,7 @@ impl MonitorState {
                     if let Some(record) = sessions.get(cleaned) {
                         if record.status == Self::STATUS_RUNNING
                             || record.status == Self::STATUS_CANCELLING
+                            || record.status == Self::STATUS_QUEUED
                             || record.status == Self::STATUS_WAITING
                         {
                             force_cancel = true;
@@ -1364,6 +1453,7 @@ impl MonitorState {
                         let status = record.get("status").and_then(Value::as_str).unwrap_or("");
                         if status == Self::STATUS_RUNNING
                             || status == Self::STATUS_CANCELLING
+                            || status == Self::STATUS_QUEUED
                             || status == Self::STATUS_WAITING
                         {
                             force_cancel = true;
@@ -1550,6 +1640,7 @@ impl MonitorState {
                     record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                         || record.status == Self::STATUS_WAITING
+                        || record.status == Self::STATUS_QUEUED
                 })
                 .map(|record| {
                     let mut summary = record.to_summary();
@@ -1674,6 +1765,7 @@ impl MonitorState {
                         let in_range = record.updated_time >= start && record.updated_time <= end;
                         let active = record.status == Self::STATUS_RUNNING
                             || record.status == Self::STATUS_CANCELLING
+                            || record.status == Self::STATUS_QUEUED
                             || record.status == Self::STATUS_WAITING;
                         !in_range || active
                     });
@@ -1845,6 +1937,7 @@ impl MonitorState {
                 let sessions = self.sessions.lock();
                 let mut total_sessions = 0;
                 let mut active_sessions = 0;
+                let mut queued_sessions = 0;
                 let mut finished_sessions = 0;
                 let mut error_sessions = 0;
                 let mut cancelled_sessions = 0;
@@ -1864,23 +1957,35 @@ impl MonitorState {
                         continue;
                     }
                     total_sessions += 1;
-                    let context_peak = derive_effective_context_tokens(&record.events)
-                        .map(|(_, peak)| peak)
-                        .unwrap_or(record.context_tokens_peak.max(record.context_tokens));
-                    consumed_tokens_total += record.consumed_tokens.max(context_peak);
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                     {
                         active_sessions += 1;
                         continue;
                     }
-                    if record.status == Self::STATUS_FINISHED {
+                    if record.status == Self::STATUS_WAITING || record.status == "queued" {
+                        queued_sessions += 1;
+                        continue;
+                    }
+                    let is_terminal = if record.status == Self::STATUS_FINISHED {
                         finished_sessions += 1;
+                        true
                     } else if record.status == Self::STATUS_ERROR {
                         error_sessions += 1;
+                        true
                     } else if record.status == Self::STATUS_CANCELLED {
                         cancelled_sessions += 1;
+                        true
+                    } else {
+                        false
+                    };
+                    if !is_terminal {
+                        continue;
                     }
+                    let context_peak = derive_effective_context_tokens(&record.events)
+                        .map(|(_, peak)| peak)
+                        .unwrap_or(record.context_tokens_peak.max(record.context_tokens));
+                    consumed_tokens_total += record.consumed_tokens.max(context_peak);
                     let end_ts = record.ended_time.unwrap_or(record.updated_time);
                     let summary = llm_speed_summary_from_monitor_events(&record.events);
                     let prefill_tokens = summary.prefill_tokens;
@@ -1902,7 +2007,7 @@ impl MonitorState {
                     elapsed_total += (end_ts - record.start_time).max(0.0);
                     elapsed_count += 1.0;
                 }
-                let history_sessions = total_sessions - active_sessions;
+                let history_sessions = finished_sessions + error_sessions + cancelled_sessions;
                 let avg_elapsed = if elapsed_count > 0.0 {
                     round2(elapsed_total / elapsed_count)
                 } else {
@@ -1928,6 +2033,7 @@ impl MonitorState {
                 };
                 json!({
                     "active_sessions": active_sessions,
+                    "queued_sessions": queued_sessions,
                     "history_sessions": history_sessions,
                     "finished_sessions": finished_sessions,
                     "error_sessions": error_sessions,
@@ -2021,6 +2127,7 @@ impl MonitorState {
     fn fallback_service_metrics(&self) -> Value {
         json!({
             "active_sessions": 0,
+            "queued_sessions": 0,
             "history_sessions": 0,
             "finished_sessions": 0,
             "error_sessions": 0,
@@ -2163,6 +2270,7 @@ impl MonitorState {
         now: f64,
         append_received: bool,
         persisted_round_floor: i64,
+        reuse_queued_round: bool,
     ) -> (Option<SessionRecord>, i64) {
         if session_id.trim().is_empty() {
             return (None, 1);
@@ -2177,6 +2285,51 @@ impl MonitorState {
             if !record.round_floor_verified {
                 record.user_rounds = record.user_rounds.max(persisted_round_floor);
                 record.round_floor_verified = true;
+            }
+            if reuse_queued_round
+                && record.status == Self::STATUS_QUEUED
+                && record.stage == "queued"
+            {
+                if !question.trim().is_empty() {
+                    record.question = question.to_string();
+                }
+                record.is_admin = is_admin;
+                record.log_profile = log_profile;
+                let trace_id = if record.trace_id.trim().is_empty() {
+                    let generated = build_monitor_trace_id();
+                    record.trace_id = generated.clone();
+                    generated
+                } else {
+                    record.trace_id.clone()
+                };
+                if !cleaned_agent.is_empty() {
+                    record.agent_id = cleaned_agent.to_string();
+                }
+                record.status = Self::STATUS_RUNNING.to_string();
+                record.stage = "running".to_string();
+                record.summary = i18n::t("monitor.summary.received");
+                record.updated_time = now;
+                record.ended_time = None;
+                record.cancel_requested = false;
+                record.cancel_source = None;
+                record.context_tokens = 0;
+                let summary = record.summary.clone();
+                let user_round = record.user_rounds.max(1);
+                record.user_rounds = user_round;
+                self.append_event(
+                    record,
+                    "queue_start",
+                    &json!({
+                        "summary": summary,
+                        "user_round": user_round,
+                        "question": question,
+                        "trace_id": trace_id,
+                        "log_profile": log_profile.as_str(),
+                    }),
+                    now,
+                );
+                record.dirty = true;
+                return (self.maybe_persist_record(record, now, false), user_round);
             }
             record.user_rounds += 1;
             record.question = question.to_string();
@@ -2342,6 +2495,7 @@ impl MonitorState {
                     record.updated_time = now;
                     record.ended_time = if status == Self::STATUS_WAITING
                         || status == Self::STATUS_RUNNING
+                        || status == Self::STATUS_QUEUED
                         || status == Self::STATUS_CANCELLING
                     {
                         None
@@ -2360,6 +2514,12 @@ impl MonitorState {
                             if let Some(summary) = summary {
                                 record.summary = summary.to_string();
                             }
+                        }
+                        Self::STATUS_QUEUED => {
+                            record.stage = "queued".to_string();
+                            record.summary = summary
+                                .map(str::to_string)
+                                .unwrap_or_else(|| i18n::t("monitor.summary.queued"));
                         }
                         Self::STATUS_WAITING => {
                             record.stage = "question_panel".to_string();
@@ -3119,6 +3279,7 @@ fn localize_summary(summary: &str) -> String {
         "monitor.summary.finished",
         "monitor.summary.received",
         "monitor.summary.model_call",
+        "monitor.summary.queued",
         "monitor.summary.subagent_wait",
         "monitor.summary.exception",
         "monitor.summary.cancelled",
@@ -3145,6 +3306,7 @@ mod tests {
         PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
     use crate::config::ObservabilityConfig;
+    use crate::i18n;
     use crate::services::user_store::{UserStore, DEFAULT_LEVEL_UP_TOKEN_REWARD};
     use crate::storage::{SqliteStorage, StorageBackend};
     use chrono::Local;
@@ -3432,6 +3594,67 @@ mod tests {
             .iter()
             .any(|event| event["type"] == "cancelled"
                 && event["data"]["cancel_source"] == "client_abort")));
+    }
+
+    #[test]
+    fn service_metrics_counts_queued_sessions_separately() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-service-queued.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        monitor.register("sess-running", "user", "agent", "question", true, false);
+        let queued_round = monitor.register_queued(
+            "sess-queued",
+            "user",
+            "agent",
+            "question",
+            true,
+            false,
+            &json!({
+                "summary": i18n::t("monitor.summary.queued"),
+                "queue_id": "queue-test",
+                "queue_ahead": 1,
+                "queue_total": 2
+            }),
+        );
+        monitor.register("sess-finished", "user", "agent", "question", true, false);
+        monitor.mark_finished("sess-finished");
+        monitor.register("sess-error", "user", "agent", "question", true, false);
+        monitor.mark_error("sess-error", "error");
+        monitor.register("sess-cancelled", "user", "agent", "question", true, false);
+        monitor.mark_cancelled("sess-cancelled");
+
+        let metrics = monitor.get_service_metrics(None, None);
+        let active_sessions = monitor.list_sessions(true);
+        let queued = active_sessions
+            .iter()
+            .find(|item| item["session_id"] == json!("sess-queued"))
+            .expect("queued session should be visible in active monitor list");
+
+        assert_eq!(queued_round, 1);
+        assert_eq!(queued["status"], json!("queued"));
+        assert_eq!(queued["stage"], json!("queued"));
+        assert_eq!(metrics["active_sessions"], json!(1));
+        assert_eq!(metrics["queued_sessions"], json!(1));
+        assert_eq!(metrics["history_sessions"], json!(3));
+        assert_eq!(metrics["finished_sessions"], json!(1));
+        assert_eq!(metrics["error_sessions"], json!(1));
+        assert_eq!(metrics["cancelled_sessions"], json!(1));
+        assert_eq!(metrics["total_sessions"], json!(5));
+
+        let running_round =
+            monitor.register("sess-queued", "user", "agent", "question", true, false);
+        let running = monitor.get_record("sess-queued").expect("running record");
+        assert_eq!(running_round, 1);
+        assert_eq!(running["status"], json!("running"));
+        assert_eq!(running["user_rounds"], json!(1));
     }
 
     #[test]

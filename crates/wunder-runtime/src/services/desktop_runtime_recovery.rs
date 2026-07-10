@@ -38,6 +38,7 @@ pub async fn recover_desktop_runtime_state(
     for record in state.monitor.load_records_by_user(
         cleaned_user_id,
         Some(&[
+            MonitorState::STATUS_QUEUED,
             MonitorState::STATUS_WAITING,
             MonitorState::STATUS_RUNNING,
             MonitorState::STATUS_CANCELLING,

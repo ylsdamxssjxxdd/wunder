@@ -923,6 +923,28 @@ impl ThreadRuntime {
                 payload
             })
             .await;
+        let queue_monitor_payload = json!({
+            "summary": i18n::t("monitor.summary.queued"),
+            "queue_id": record.task_id,
+            "thread_id": record.thread_id,
+            "session_id": record.session_id,
+            "agent_id": record.agent_id,
+            "user_id": record.user_id,
+            "queue_ahead": queue_stats.queue_ahead,
+            "queue_total": queue_stats.queue_total,
+            "active_ahead": queue_stats.active_ahead,
+            "wait_ahead": queue_stats.wait_ahead,
+            "queue_event_id": queue_event_id,
+        });
+        self.monitor.register_queued(
+            &record.session_id,
+            &record.user_id,
+            &record.agent_id,
+            &request.question,
+            request.is_admin,
+            request.debug_payload,
+            &queue_monitor_payload,
+        );
         Ok(QueueInfo {
             task_id: record.task_id,
             thread_id: record.thread_id,
@@ -1040,6 +1062,7 @@ impl ThreadRuntime {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
             if status == crate::monitor::MonitorState::STATUS_RUNNING
                 || status == crate::monitor::MonitorState::STATUS_CANCELLING
+                || status == crate::monitor::MonitorState::STATUS_QUEUED
                 || status == crate::monitor::MonitorState::STATUS_WAITING
             {
                 return false;
@@ -1318,28 +1341,23 @@ impl ThreadRuntime {
             &task.session_id,
             THREAD_STATUS_BUSY,
         );
-        self.emit_queue_event(
-            &task.session_id,
-            &task.user_id,
-            "queue_start",
+        self.emit_queue_event(&task.session_id, &task.user_id, "queue_start", {
+            let mut payload = json!({
+            "queue_id": task.task_id,
+            "thread_id": task.thread_id,
+            "session_id": task.session_id,
+            "agent_id": task.agent_id,
+            "user_id": task.user_id,
+            "queue_ahead": 0,
+            "queue_total": 0,
+            });
+            if let (Some(client_message_id), Value::Object(ref mut map)) =
+                (task_client_message_id.as_deref(), &mut payload)
             {
-                let mut payload = json!({
-                "queue_id": task.task_id,
-                "thread_id": task.thread_id,
-                "session_id": task.session_id,
-                "agent_id": task.agent_id,
-                "user_id": task.user_id,
-                "queue_ahead": 0,
-                "queue_total": 0,
-                });
-                if let (Some(client_message_id), Value::Object(ref mut map)) =
-                    (task_client_message_id.as_deref(), &mut payload)
-                {
-                    map.insert("client_message_id".to_string(), json!(client_message_id));
-                }
-                payload
-            },
-        )
+                map.insert("client_message_id".to_string(), json!(client_message_id));
+            }
+            payload
+        })
         .await;
 
         let mut request: WunderRequest = match serde_json::from_value(task.request_payload.clone())
@@ -1412,28 +1430,23 @@ impl ThreadRuntime {
                     &task.session_id,
                     THREAD_STATUS_IDLE,
                 );
-                self.emit_queue_event(
-                    &task.session_id,
-                    &task.user_id,
-                    "queue_finish",
+                self.emit_queue_event(&task.session_id, &task.user_id, "queue_finish", {
+                    let mut payload = json!({
+                    "queue_id": task.task_id,
+                    "thread_id": task.thread_id,
+                    "session_id": task.session_id,
+                    "agent_id": task.agent_id,
+                    "user_id": task.user_id,
+                    "queue_ahead": 0,
+                    "queue_total": 0,
+                    });
+                    if let (Some(client_message_id), Value::Object(ref mut map)) =
+                        (task_client_message_id.as_deref(), &mut payload)
                     {
-                        let mut payload = json!({
-                        "queue_id": task.task_id,
-                        "thread_id": task.thread_id,
-                        "session_id": task.session_id,
-                        "agent_id": task.agent_id,
-                        "user_id": task.user_id,
-                        "queue_ahead": 0,
-                        "queue_total": 0,
-                        });
-                        if let (Some(client_message_id), Value::Object(ref mut map)) =
-                            (task_client_message_id.as_deref(), &mut payload)
-                        {
-                            map.insert("client_message_id".to_string(), json!(client_message_id));
-                        }
-                        payload
-                    },
-                )
+                        map.insert("client_message_id".to_string(), json!(client_message_id));
+                    }
+                    payload
+                })
                 .await;
                 if goal_continue_ready {
                     self.spawn_goal_continuation_after_cooldown(
@@ -1486,6 +1499,8 @@ impl ThreadRuntime {
                 last_error: Some(message.as_str()),
                 updated_at: now,
             })?;
+        self.monitor
+            .mark_queued(&task.session_id, Some(&i18n::t("monitor.summary.queued")));
         Ok(())
     }
 
@@ -1503,43 +1518,43 @@ impl ThreadRuntime {
                 last_error: Some(message.as_str()),
                 updated_at: now,
             })?;
+        if status == TASK_STATUS_CANCELLED {
+            self.monitor.mark_cancelled(&task.session_id);
+        } else {
+            self.monitor.mark_error(&task.session_id, &message);
+        }
         self.update_thread_status(
             &task.user_id,
             &task.agent_id,
             &task.session_id,
             THREAD_STATUS_IDLE,
         )?;
-        self.emit_queue_event(
-            &task.session_id,
-            &task.user_id,
-            "queue_fail",
+        self.emit_queue_event(&task.session_id, &task.user_id, "queue_fail", {
+            let task_client_message_id = task
+                .request_payload
+                .get("client_message_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let mut payload = json!({
+            "queue_id": task.task_id,
+            "thread_id": task.thread_id,
+            "session_id": task.session_id,
+            "agent_id": task.agent_id,
+            "user_id": task.user_id,
+            "status": status,
+            "error": message,
+            "queue_ahead": 0,
+            "queue_total": 0,
+            });
+            if let (Some(client_message_id), Value::Object(ref mut map)) =
+                (task_client_message_id.as_deref(), &mut payload)
             {
-                let task_client_message_id = task
-                    .request_payload
-                    .get("client_message_id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string);
-                let mut payload = json!({
-                "queue_id": task.task_id,
-                "thread_id": task.thread_id,
-                "session_id": task.session_id,
-                "agent_id": task.agent_id,
-                "user_id": task.user_id,
-                "status": status,
-                "error": message,
-                "queue_ahead": 0,
-                "queue_total": 0,
-                });
-                if let (Some(client_message_id), Value::Object(ref mut map)) =
-                    (task_client_message_id.as_deref(), &mut payload)
-                {
-                    map.insert("client_message_id".to_string(), json!(client_message_id));
-                }
-                payload
-            },
-        )
+                map.insert("client_message_id".to_string(), json!(client_message_id));
+            }
+            payload
+        })
         .await;
         Ok(())
     }

@@ -143,11 +143,27 @@ const coalesceVisibleMessagesByTurn = (
     const indexByTurn = message.role === 'user' ? userIndexByTurn : assistantIndexByTurn;
     const existingIndex = indexByTurn.get(turnKey);
     if (existingIndex === undefined) {
+      const fallbackIndex = message.role === 'assistant'
+        ? result.findIndex((candidate) => shouldMergeCrossKeyTransientAssistantDuplicate(
+          session,
+          candidate,
+          message
+        ))
+        : -1;
+      if (fallbackIndex >= 0) {
+        result[fallbackIndex] = mergeVisibleMessageProjection(
+          session,
+          result[fallbackIndex],
+          message
+        );
+        indexByTurn.set(turnKey, fallbackIndex);
+        return;
+      }
       indexByTurn.set(turnKey, result.length);
       result.push(message);
       return;
     }
-    if (!shouldMergeVisibleDuplicate(result[existingIndex], message)) {
+    if (!shouldMergeVisibleDuplicate(session, result[existingIndex], message)) {
       result.push(message);
       return;
     }
@@ -170,17 +186,31 @@ const shouldCoalesceMessageByTurn = (
 };
 
 const shouldMergeVisibleDuplicate = (
+  session: ChatRuntimeSessionProjection,
   left: ChatRuntimeMessageProjection,
   right: ChatRuntimeMessageProjection
 ): boolean => {
   if (left.role === 'user' && right.role === 'user') return true;
   if (left.role !== 'assistant' || right.role !== 'assistant') return false;
   if (isSpecialAssistantProjection(left) || isSpecialAssistantProjection(right)) return false;
+  if (shouldMergeTransientAssistantDuplicate(session, left, right)) return true;
+  if (shouldMergeSameRoundSupplementalAssistantDuplicate(left, right)) return true;
   const hasLeftPayload = hasVisibleAssistantPayload(left);
   const hasRightPayload = hasVisibleAssistantPayload(right);
   if (!hasLeftPayload || !hasRightPayload) return true;
   if (isQueueOnlyAssistantProjection(left) || isQueueOnlyAssistantProjection(right)) return true;
   return false;
+};
+
+const shouldMergeCrossKeyTransientAssistantDuplicate = (
+  session: ChatRuntimeSessionProjection,
+  left: ChatRuntimeMessageProjection,
+  right: ChatRuntimeMessageProjection
+): boolean => {
+  if (left.role !== 'assistant' || right.role !== 'assistant') return false;
+  if (isSpecialAssistantProjection(left) || isSpecialAssistantProjection(right)) return false;
+  return shouldMergeTransientAssistantDuplicate(session, left, right) ||
+    shouldMergeSameRoundSupplementalAssistantDuplicate(left, right);
 };
 
 const hasVisibleAssistantPayload = (
@@ -196,23 +226,205 @@ const hasVisibleAssistantPayload = (
 const isQueueOnlyAssistantProjection = (
   message: ChatRuntimeMessageProjection
 ): boolean =>
-  message.status === 'queued' &&
+  message.status !== 'failed' &&
+  message.status !== 'cancelled' &&
   !String(message.content || '').trim() &&
   !String(message.reasoning || '').trim() &&
   Array.isArray(message.workflowItems) &&
   message.workflowItems.length > 0 &&
   message.workflowItems.every((item) => {
     if (!isPlainRecord(item)) return false;
-    const eventType = String(item.eventType ?? item.event_type ?? item.event ?? '').trim().toLowerCase();
-    return eventType === 'queued' || eventType === 'queue_enter' || eventType === 'queue_update' || eventType === 'queue_start';
+    const eventType = normalizeText(item.eventType ?? item.event_type ?? item.event ?? item.sourceEventType ?? item.source_event_type);
+    return isQueueWorkflowEventType(eventType);
   });
 
 const resolveCoalescingTurnKey = (
   message: ChatRuntimeMessageProjection
 ): string => {
+  if (message.role === 'assistant') {
+    const semanticRound = resolveAssistantSemanticUserRound(message);
+    if (semanticRound !== null && isTransientAssistantProjectionForKey(message)) {
+      return `${message.role}:round:${semanticRound}`;
+    }
+  }
   const turnId = String(message.userTurnId || '').trim();
   if (turnId) return `${message.role}:${turnId}`;
   return '';
+};
+
+const shouldMergeTransientAssistantDuplicate = (
+  session: ChatRuntimeSessionProjection,
+  left: ChatRuntimeMessageProjection,
+  right: ChatRuntimeMessageProjection
+): boolean => {
+  const leftRound = resolveAssistantSemanticUserRound(left);
+  const rightRound = resolveAssistantSemanticUserRound(right);
+  if (leftRound === null || rightRound === null) {
+    return shouldMergeUnknownRoundQueueStartAssistant(left, right);
+  }
+  if (leftRound !== rightRound) return false;
+  const leftTransient = isTransientAssistantProjection(session, left);
+  const rightTransient = isTransientAssistantProjection(session, right);
+  if (!leftTransient && !rightTransient) return false;
+  if (hasQueueWorkflowProjection(left) || hasQueueWorkflowProjection(right)) return true;
+  const leftModelRound = resolveAssistantModelRound(left);
+  const rightModelRound = resolveAssistantModelRound(right);
+  return leftModelRound === null || rightModelRound === null;
+};
+
+const shouldMergeSameRoundSupplementalAssistantDuplicate = (
+  left: ChatRuntimeMessageProjection,
+  right: ChatRuntimeMessageProjection
+): boolean => {
+  const leftRound = resolveAssistantSemanticUserRound(left);
+  const rightRound = resolveAssistantSemanticUserRound(right);
+  if (leftRound === null || rightRound === null || leftRound !== rightRound) return false;
+  if (hasSupplementalAssistantPayload(left) || hasSupplementalAssistantPayload(right)) {
+    return true;
+  }
+  return areAssistantTextsCompatible(left, right) &&
+    (isHydratedHistoryProjection(left) || isHydratedHistoryProjection(right));
+};
+
+const hasSupplementalAssistantPayload = (
+  message: ChatRuntimeMessageProjection
+): boolean =>
+  !hasAssistantText(message) &&
+  (
+    (Array.isArray(message.workflowItems) && message.workflowItems.length > 0) ||
+    (Array.isArray(message.subagents) && message.subagents.length > 0)
+  );
+
+const hasAssistantText = (message: ChatRuntimeMessageProjection): boolean =>
+  Boolean(String(message.content || '').trim() || String(message.reasoning || '').trim());
+
+const areAssistantTextsCompatible = (
+  left: ChatRuntimeMessageProjection,
+  right: ChatRuntimeMessageProjection
+): boolean => {
+  const leftText = `${String(left.reasoning || '').trim()}\n${String(left.content || '').trim()}`.trim();
+  const rightText = `${String(right.reasoning || '').trim()}\n${String(right.content || '').trim()}`.trim();
+  if (!leftText || !rightText) return true;
+  return leftText === rightText || leftText.startsWith(rightText) || rightText.startsWith(leftText);
+};
+
+const isHydratedHistoryProjection = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const id = String(message.id || '').trim();
+  if (id.startsWith('history:')) return true;
+  const raw = isPlainRecord(message.raw) ? message.raw : {};
+  return normalizeText(raw.source ?? raw.source_type ?? raw.sourceType) === 'history';
+};
+
+const shouldMergeUnknownRoundQueueStartAssistant = (
+  left: ChatRuntimeMessageProjection,
+  right: ChatRuntimeMessageProjection
+): boolean => {
+  const leftRound = resolveAssistantSemanticUserRound(left);
+  const rightRound = resolveAssistantSemanticUserRound(right);
+  if (leftRound === null && rightRound === null) return false;
+  const unknown = leftRound === null ? left : right;
+  const known = leftRound === null ? right : left;
+  if (!hasQueueStartWorkflowProjection(unknown)) return false;
+  if (String(unknown.content || '').trim() || String(unknown.reasoning || '').trim()) return false;
+  if (isSpecialAssistantProjection(known)) return false;
+  return known.role === 'assistant' && (
+    isRuntimeMessageActive(known.status) ||
+    Boolean(String(known.content || '').trim() || String(known.reasoning || '').trim())
+  );
+};
+
+const isTransientAssistantProjection = (
+  session: ChatRuntimeSessionProjection,
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  if (isQueueOnlyAssistantProjection(message) || hasQueueWorkflowProjection(message)) return true;
+  const userTurnId = String(message.userTurnId || '').trim();
+  if (userTurnId.startsWith('queue-turn:')) return true;
+  const modelTurnId = String(message.modelTurnId || '').trim();
+  if (modelTurnId === `model-turn:${userTurnId}`) return true;
+  if (modelTurnId.startsWith(`model-turn:${session.sessionId}:request:`)) return true;
+  return resolveAssistantSemanticUserRound(message) !== null &&
+    resolveAssistantModelRound(message) === null &&
+    modelTurnId.startsWith(`model-turn:${session.sessionId}:user:`);
+};
+
+const isTransientAssistantProjectionForKey = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  if (isQueueOnlyAssistantProjection(message) || hasQueueWorkflowProjection(message)) return true;
+  const userTurnId = String(message.userTurnId || '').trim();
+  if (userTurnId.startsWith('queue-turn:')) return true;
+  const modelTurnId = String(message.modelTurnId || '').trim();
+  return resolveAssistantModelRound(message) === null &&
+    (modelTurnId.startsWith('model-turn:') || modelTurnId.startsWith('queue:'));
+};
+
+const hasQueueWorkflowProjection = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  return items.some((item) => {
+    if (!isPlainRecord(item)) return false;
+    const eventType = normalizeText(item.eventType ?? item.event_type ?? item.event ?? item.sourceEventType ?? item.source_event_type);
+    return isQueueWorkflowEventType(eventType);
+  });
+};
+
+const hasQueueStartWorkflowProjection = (
+  message: ChatRuntimeMessageProjection
+): boolean => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  return items.some((item) => {
+    if (!isPlainRecord(item)) return false;
+    const eventType = normalizeText(item.eventType ?? item.event_type ?? item.event ?? item.sourceEventType ?? item.source_event_type);
+    return eventType === 'queue_start';
+  });
+};
+
+const isQueueWorkflowEventType = (eventType: string): boolean =>
+  eventType === 'queued' ||
+  eventType === 'queue_enter' ||
+  eventType === 'queue_update' ||
+  eventType === 'queue_start' ||
+  eventType === 'queue_finish' ||
+  eventType === 'queue_fail';
+
+const resolveAssistantSemanticUserRound = (
+  message: ChatRuntimeMessageProjection
+): number | null => {
+  const turnId = String(message.userTurnId || '').trim();
+  const turnRound = turnId.match(/(?:^|:)round:(\d+)(?::|$)/i);
+  if (turnRound) return normalizePositiveInteger(turnRound[1]);
+  const modelTurnId = String(message.modelTurnId || '').trim();
+  const modelRound = modelTurnId.match(/(?:^|:)user:(\d+)(?::|$)/i);
+  if (modelRound) return normalizePositiveInteger(modelRound[1]);
+  const display = isPlainRecord(message.display) ? message.display : {};
+  const raw = isPlainRecord(message.raw) ? message.raw : {};
+  for (const value of [
+    display.user_round,
+    display.userRound,
+    display.stream_round,
+    display.streamRound,
+    raw.user_round,
+    raw.userRound,
+    raw.stream_round,
+    raw.streamRound
+  ]) {
+    const round = normalizePositiveInteger(value);
+    if (round !== null) return round;
+  }
+  return null;
+};
+
+const resolveAssistantModelRound = (
+  message: ChatRuntimeMessageProjection
+): number | null => {
+  const modelTurnId = String(message.modelTurnId || '').trim();
+  const match = modelTurnId.match(/(?:^|:)model:(\d+)(?::|$)/i);
+  if (!match) return null;
+  return normalizePositiveInteger(match[1]);
 };
 
 const isSpecialAssistantProjection = (
@@ -274,6 +486,9 @@ const scoreVisibleMergeTarget = (
 ): number => {
   let score = 0;
   if (message.content || message.reasoning) score += 8;
+  if (resolveAssistantModelRound(message) !== null) score += 5;
+  if (hasQueueWorkflowProjection(message) && !message.content && !message.reasoning) score -= 4;
+  if (String(message.userTurnId || '').startsWith('queue-turn:')) score -= 3;
   if (isRuntimeMessageActive(message.status)) score += isRuntimeStatusHot(session.runtimeStatus) ? 6 : 1;
   if (message.status === 'final') score += isRuntimeStatusHot(session.runtimeStatus) ? 1 : 6;
   if (message.status === 'failed' || message.status === 'cancelled') score += 4;
@@ -319,7 +534,35 @@ const mergeVisibleRecord = (
 ): Record<string, unknown> | undefined => {
   if (!isPlainRecord(left)) return isPlainRecord(right) ? { ...right } : undefined;
   if (!isPlainRecord(right)) return { ...left };
-  return { ...left, ...right };
+  const merged: Record<string, unknown> = { ...left };
+  Object.entries(right).forEach(([key, value]) => {
+    if (value === undefined) return;
+    const current = merged[key];
+    if (isPlainRecord(current) && isPlainRecord(value)) {
+      merged[key] = mergeVisibleRecord(current, value);
+      return;
+    }
+    if (Array.isArray(current) && Array.isArray(value)) {
+      merged[key] = mergeVisibleRecordArray(current, value) || value.slice();
+      return;
+    }
+    if (typeof current === 'number' && typeof value === 'number') {
+      merged[key] = Math.max(current, value);
+      return;
+    }
+    if (typeof current === 'boolean' && typeof value === 'boolean') {
+      merged[key] = current || value;
+      return;
+    }
+    if (current === undefined || current === null || current === '') {
+      merged[key] = value;
+      return;
+    }
+    if (value !== null && value !== '') {
+      merged[key] = value;
+    }
+  });
+  return merged;
 };
 
 const mergeVisibleRecordArray = (
@@ -327,17 +570,27 @@ const mergeVisibleRecordArray = (
   right: unknown
 ): Record<string, unknown>[] | undefined => {
   const records = [
-    ...(Array.isArray(left) ? left : []),
-    ...(Array.isArray(right) ? right : [])
-  ].filter(isPlainRecord);
+    ...(Array.isArray(left) ? left : []).map((record, index) => ({ record, index })),
+    ...(Array.isArray(right) ? right : []).map((record, index) => ({ record, index }))
+  ].filter((item): item is { record: Record<string, unknown>; index: number } => isPlainRecord(item.record));
   if (records.length === 0) return undefined;
   const merged = new Map<string, Record<string, unknown>>();
-  records.forEach((record, index) => {
+  records.forEach(({ record, index }) => {
     const key = resolveVisibleRecordKey(record, index);
     const previous = merged.get(key);
-    if (!previous || normalizeRecordSeq(record) >= normalizeRecordSeq(previous)) {
-      merged.set(key, { ...previous, ...record });
+    if (!previous) {
+      merged.set(key, { ...record });
+      return;
     }
+    const incomingIsNewer = normalizeRecordSeq(record) >= normalizeRecordSeq(previous);
+    const next = incomingIsNewer
+      ? mergeVisibleRecord(previous, record)
+      : mergeVisibleRecord(record, previous);
+    const status = pickMergedVisibleRecordStatus(previous.status, record.status);
+    if (status && next) {
+      next.status = status;
+    }
+    merged.set(key, next || { ...previous, ...record });
   });
   return Array.from(merged.values());
 };
@@ -362,8 +615,54 @@ const resolveVisibleRecordKey = (
     const value = String(record[key] ?? '').trim();
     if (value) return `${key}:${value}`;
   }
+  const semantic = resolveVisibleRecordSemanticKey(record, index);
+  if (semantic) return semantic;
   const eventType = String(record.eventType ?? record.event_type ?? record.event ?? '').trim();
   return eventType ? `event:${eventType}:${index}` : `index:${index}`;
+};
+
+const resolveVisibleRecordSemanticKey = (
+  record: Record<string, unknown>,
+  index: number
+): string => {
+  const eventType = normalizeVisibleRecordIdentityEventType(
+    record.eventType ?? record.event_type ?? record.event ?? record.sourceEventType ?? record.source_event_type
+  );
+  const modelTurnId = String(record.modelTurnId ?? record.model_turn_id ?? '').trim();
+  const toolName = normalizeText(
+    record.toolName ??
+      record.tool_name ??
+      record.tool ??
+      record.name ??
+      record.functionName ??
+      record.function_name ??
+      record.runtimeName ??
+      record.runtime_name
+  );
+  const title = normalizeText(record.title);
+  const kind = normalizeText(record.kind ?? record.type);
+  const label = normalizeText(record.label ?? record.name);
+  const semanticParts = [
+    modelTurnId,
+    eventType,
+    toolName || title || label || kind,
+    String(index)
+  ].filter(Boolean);
+  return semanticParts.length >= 2 ? `semantic:${semanticParts.join(':')}` : '';
+};
+
+const normalizeVisibleRecordIdentityEventType = (value: unknown): string => {
+  const eventType = normalizeText(value);
+  if (
+    eventType === 'tool_call' ||
+    eventType === 'tool_result' ||
+    eventType === 'tool_call_started' ||
+    eventType === 'tool_call_completed' ||
+    eventType === 'tool_call_failed'
+  ) {
+    return 'tool';
+  }
+  return eventType;
 };
 
 const normalizeRecordSeq = (record: Record<string, unknown>): number => {
@@ -371,8 +670,53 @@ const normalizeRecordSeq = (record: Record<string, unknown>): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const ACTIVE_VISIBLE_RECORD_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+const SUCCESS_VISIBLE_RECORD_STATUSES = new Set([
+  'complete',
+  'completed',
+  'done',
+  'finished',
+  'idle',
+  'success',
+  'succeeded'
+]);
+const FAILED_VISIBLE_RECORD_STATUSES = new Set([
+  'aborted',
+  'cancelled',
+  'canceled',
+  'closed',
+  'error',
+  'failed',
+  'not_found',
+  'partial',
+  'rejected',
+  'timeout'
+]);
+
+const pickMergedVisibleRecordStatus = (
+  previous: unknown,
+  incoming: unknown
+): string => {
+  const left = normalizeText(previous);
+  const right = normalizeText(incoming);
+  if (!left) return right;
+  if (!right) return left;
+  if (FAILED_VISIBLE_RECORD_STATUSES.has(left) || FAILED_VISIBLE_RECORD_STATUSES.has(right)) {
+    return FAILED_VISIBLE_RECORD_STATUSES.has(right) ? right : left;
+  }
+  if (SUCCESS_VISIBLE_RECORD_STATUSES.has(left) || SUCCESS_VISIBLE_RECORD_STATUSES.has(right)) {
+    return SUCCESS_VISIBLE_RECORD_STATUSES.has(right) ? right : left;
+  }
+  if (!ACTIVE_VISIBLE_RECORD_STATUSES.has(left) && ACTIVE_VISIBLE_RECORD_STATUSES.has(right)) return left;
+  if (!ACTIVE_VISIBLE_RECORD_STATUSES.has(right) && ACTIVE_VISIBLE_RECORD_STATUSES.has(left)) return right;
+  return right;
+};
+
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const normalizeText = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
 
 const buildMessageTurnOrder = (
   session: ChatRuntimeSessionProjection

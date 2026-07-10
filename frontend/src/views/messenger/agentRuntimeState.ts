@@ -32,6 +32,87 @@ export const isTerminalAgentRuntimeState = (value: unknown): boolean => {
   return state === 'done' || state === 'error';
 };
 
+export const isHotAgentRuntimeState = (value: unknown): boolean => {
+  const state = normalizeMessengerRuntimeStatus(value);
+  return state === 'running' || state === 'pending';
+};
+
+export const resolveAgentRuntimeTerminalStateFromSessionStatus = (
+  value: unknown
+): AgentRuntimeState | null => {
+  const status = normalizeMessengerRuntimeStatus(value);
+  if (!TERMINAL_SESSION_RUNTIME_STATUS_SET.has(status)) {
+    return null;
+  }
+  if (status === 'failed' || status === 'error' || status === 'system_error') {
+    return 'error';
+  }
+  return 'done';
+};
+
+export const shouldSettleAgentRuntimeFromTerminalSession = (options: {
+  sessionStatus?: unknown;
+  currentState?: AgentRuntimeState | null;
+  localStreaming?: boolean;
+  localWaiting?: boolean;
+  overrideState?: AgentRuntimeState | null;
+}): boolean => {
+  if (!resolveAgentRuntimeTerminalStateFromSessionStatus(options.sessionStatus)) {
+    return false;
+  }
+  return (
+    isHotAgentRuntimeState(options.currentState) ||
+    isHotAgentRuntimeState(options.overrideState) ||
+    options.localStreaming === true ||
+    options.localWaiting === true
+  );
+};
+
+export const hasAgentTerminalSettlementEvidence = (options: {
+  targetSessionId?: unknown;
+  currentRuntimeSessionId?: unknown;
+  activeSessionId?: unknown;
+  hasRuntimeActivity?: boolean;
+  currentState?: AgentRuntimeState | null;
+  localStreaming?: boolean;
+  localWaiting?: boolean;
+  overrideState?: AgentRuntimeState | null;
+}): boolean => {
+  if (options.hasRuntimeActivity === true) {
+    return true;
+  }
+  const targetSessionId = String(options.targetSessionId || '').trim();
+  if (!targetSessionId) {
+    return false;
+  }
+  const currentRuntimeSessionId = String(options.currentRuntimeSessionId || '').trim();
+  const activeSessionId = String(options.activeSessionId || '').trim();
+  const isCurrentRuntimeSession =
+    currentRuntimeSessionId === targetSessionId || activeSessionId === targetSessionId;
+  if (!isCurrentRuntimeSession) {
+    return false;
+  }
+  return (
+    isHotAgentRuntimeState(options.currentState) ||
+    isHotAgentRuntimeState(options.overrideState) ||
+    options.localStreaming === true ||
+    options.localWaiting === true
+  );
+};
+
+export const shouldSettleAgentSessionsFromRuntimeState = (options: {
+  previousState?: AgentRuntimeState | null;
+  nextState?: AgentRuntimeState | null;
+}): boolean => {
+  const previousState = options.previousState || 'idle';
+  const nextState = options.nextState || 'idle';
+  if (isTerminalAgentRuntimeState(nextState)) {
+    return true;
+  }
+  return nextState === 'idle' &&
+    (isHotAgentRuntimeState(previousState) || isTerminalAgentRuntimeState(previousState));
+};
+
 export const resolveAgentRuntimeStateFromSignals = (options: {
   pendingApproval?: boolean;
   pendingInquiry?: boolean;

@@ -308,6 +308,439 @@ test('chat runtime render adapter materializes queued stream events as queued as
   assert.equal(entries[0]?.value, 'Queued · 2 ahead');
 });
 
+test('chat runtime render adapter coalesces queue-start transient assistant duplicates', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-queue-render-duplicates';
+  const canonicalUserTurnId = `user-turn:${sessionId}:round:1`;
+  const weakUserTurnId = 'queue-turn:task-render:user';
+  const weakModelTurnId = `model-turn:${sessionId}:user:1`;
+  const strongModelTurnId = `model-turn:${sessionId}:user:1:model:1`;
+  const weakMessageId = `assistant-message:${weakModelTurnId}`;
+  const strongMessageId = `assistant-message:${strongModelTurnId}`;
+
+  projection.sessions[sessionId] = {
+    sessionId,
+    agentId: '',
+    appliedSeq: 0,
+    lastAppliedEventId: 0,
+    snapshotSeq: 0,
+    localSeq: 0,
+    syncRequired: false,
+    connectionState: 'connected',
+    runtimeStatus: 'running',
+    busyReason: 'streaming',
+    eventIdIndex: {},
+    userTurns: [canonicalUserTurnId, weakUserTurnId],
+    modelTurns: ['queue:task-render:assistant', weakModelTurnId, strongModelTurnId],
+    messages: [
+      `local-user:${sessionId}:1`,
+      'queue:task-render:assistant-message',
+      weakMessageId,
+      strongMessageId
+    ],
+    messageById: {
+      [`local-user:${sessionId}:1`]: {
+        id: `local-user:${sessionId}:1`,
+        role: 'user',
+        content: 'question',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:06.000Z',
+        createdSeq: 1,
+        updatedSeq: 1,
+        userTurnId: canonicalUserTurnId,
+        modelTurnId: '',
+        final: true,
+        failed: false,
+        cancelled: false
+      },
+      'queue:task-render:assistant-message': {
+        id: 'queue:task-render:assistant-message',
+        role: 'assistant',
+        content: '',
+        reasoning: '',
+        status: 'waiting_first_output',
+        createdAt: '2026-04-30T02:14:07.000Z',
+        createdSeq: 2,
+        updatedSeq: 2,
+        userTurnId: weakUserTurnId,
+        modelTurnId: 'queue:task-render:assistant',
+        final: false,
+        failed: false,
+        cancelled: false,
+        workflowItems: [{
+          id: 'queue:status',
+          eventType: 'queue_start',
+          status: 'running'
+        }],
+        subagents: []
+      },
+      [weakMessageId]: {
+        id: weakMessageId,
+        role: 'assistant',
+        content: 'first text',
+        reasoning: '',
+        status: 'streaming',
+        createdAt: '2026-04-30T02:14:08.000Z',
+        createdSeq: 3,
+        updatedSeq: 3,
+        userTurnId: weakUserTurnId,
+        modelTurnId: weakModelTurnId,
+        final: false,
+        failed: false,
+        cancelled: false,
+        workflowItems: [],
+        subagents: []
+      },
+      [strongMessageId]: {
+        id: strongMessageId,
+        role: 'assistant',
+        content: 'first text continued',
+        reasoning: '',
+        status: 'streaming',
+        createdAt: '2026-04-30T02:14:09.000Z',
+        createdSeq: 4,
+        updatedSeq: 4,
+        userTurnId: canonicalUserTurnId,
+        modelTurnId: strongModelTurnId,
+        final: false,
+        failed: false,
+        cancelled: false,
+        workflowItems: [],
+        subagents: []
+      }
+    },
+    userTurnById: {
+      [canonicalUserTurnId]: {
+        id: canonicalUserTurnId,
+        createdSeq: 1,
+        messageIds: [`local-user:${sessionId}:1`],
+        modelTurnIds: [strongModelTurnId],
+        status: 'model_running'
+      },
+      [weakUserTurnId]: {
+        id: weakUserTurnId,
+        createdSeq: 2,
+        messageIds: [],
+        modelTurnIds: ['queue:task-render:assistant', weakModelTurnId],
+        status: 'model_running'
+      }
+    },
+    modelTurnById: {
+      'queue:task-render:assistant': {
+        id: 'queue:task-render:assistant',
+        userTurnId: weakUserTurnId,
+        createdSeq: 2,
+        messageIds: ['queue:task-render:assistant-message'],
+        finalMessageId: '',
+        status: 'waiting_first_output'
+      },
+      [weakModelTurnId]: {
+        id: weakModelTurnId,
+        userTurnId: weakUserTurnId,
+        createdSeq: 3,
+        messageIds: [weakMessageId],
+        finalMessageId: '',
+        status: 'streaming'
+      },
+      [strongModelTurnId]: {
+        id: strongModelTurnId,
+        userTurnId: canonicalUserTurnId,
+        createdSeq: 4,
+        messageIds: [strongMessageId],
+        finalMessageId: '',
+        status: 'streaming'
+      }
+    },
+    invariantViolations: [],
+    quarantinedEvents: [],
+    pendingSequentialEvents: []
+  };
+
+  const materialized = materializeChatRuntimeMessages(projection, sessionId);
+  const assistants = materialized.filter((message) => message.role === 'assistant');
+
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0]?.message_id, strongMessageId);
+  assert.equal(assistants[0]?.content, 'first text continued');
+  assert.equal((assistants[0]?.workflowItems as unknown[])?.length, 1);
+});
+
+test('chat runtime render adapter coalesces hydrated answer with replayed workflow projection', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-history-workflow-duplicate';
+  const userTurnId = `user-turn:${sessionId}:round:1`;
+  const userMessageId = 'history:user:1';
+  const historyModelTurnId = 'legacy-model-turn:history-answer-1';
+  const replayModelTurnId = `model-turn:${sessionId}:user:1:model:1`;
+  const historyAssistantId = 'history:assistant:1';
+  const replayAssistantId = `assistant-message:${replayModelTurnId}`;
+
+  projection.sessions[sessionId] = {
+    sessionId,
+    agentId: '',
+    appliedSeq: 0,
+    lastAppliedEventId: 0,
+    snapshotSeq: 0,
+    localSeq: 0,
+    syncRequired: false,
+    connectionState: 'connected',
+    runtimeStatus: 'idle',
+    busyReason: null,
+    eventIdIndex: {},
+    userTurns: [userTurnId],
+    modelTurns: [historyModelTurnId, replayModelTurnId],
+    messages: [userMessageId, historyAssistantId, replayAssistantId],
+    messageById: {
+      [userMessageId]: {
+        id: userMessageId,
+        role: 'user',
+        content: 'question',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:06.000Z',
+        createdSeq: 1,
+        updatedSeq: 1,
+        userTurnId,
+        modelTurnId: '',
+        final: true,
+        failed: false,
+        cancelled: false
+      },
+      [historyAssistantId]: {
+        id: historyAssistantId,
+        role: 'assistant',
+        content: 'answer',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:07.000Z',
+        createdSeq: 2,
+        updatedSeq: 2,
+        userTurnId,
+        modelTurnId: historyModelTurnId,
+        final: true,
+        failed: false,
+        cancelled: false,
+        workflowItems: [],
+        subagents: [],
+        display: {
+          stats: {
+            duration: 6.87,
+            speed: 43.8,
+            contextTokens: 11187
+          },
+          user_round: 1
+        }
+      },
+      [replayAssistantId]: {
+        id: replayAssistantId,
+        role: 'assistant',
+        content: '',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:08.000Z',
+        createdSeq: 3,
+        updatedSeq: 3,
+        userTurnId,
+        modelTurnId: replayModelTurnId,
+        final: true,
+        failed: false,
+        cancelled: false,
+        workflowItems: [{
+          id: 'tool:read',
+          eventType: 'tool_result',
+          status: 'completed',
+          toolCallId: 'tool-read-1'
+        }],
+        subagents: [],
+        display: {
+          stats: {
+            toolCalls: 4,
+            contextTotalTokens: 100610
+          }
+        }
+      }
+    },
+    userTurnById: {
+      [userTurnId]: {
+        id: userTurnId,
+        createdSeq: 1,
+        messageIds: [userMessageId],
+        modelTurnIds: [historyModelTurnId, replayModelTurnId],
+        status: 'completed'
+      }
+    },
+    modelTurnById: {
+      [historyModelTurnId]: {
+        id: historyModelTurnId,
+        userTurnId,
+        createdSeq: 2,
+        messageIds: [historyAssistantId],
+        finalMessageId: historyAssistantId,
+        status: 'completed'
+      },
+      [replayModelTurnId]: {
+        id: replayModelTurnId,
+        userTurnId,
+        createdSeq: 3,
+        messageIds: [replayAssistantId],
+        finalMessageId: replayAssistantId,
+        status: 'completed'
+      }
+    },
+    invariantViolations: [],
+    quarantinedEvents: [],
+    pendingSequentialEvents: []
+  };
+
+  const materialized = materializeChatRuntimeMessages(projection, sessionId);
+  const assistants = materialized.filter((message) => message.role === 'assistant');
+  const assistant = assistants[0] as Record<string, any>;
+
+  assert.equal(assistants.length, 1);
+  assert.equal(assistant?.message_id, historyAssistantId);
+  assert.equal(assistant?.content, 'answer');
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.workflowItems?.[0]?.toolCallId, 'tool-read-1');
+  assert.equal(assistant?.stats?.duration, 6.87);
+  assert.equal(assistant?.stats?.toolCalls, 4);
+  assert.equal(assistant?.stats?.contextTotalTokens, 100610);
+});
+
+test('chat runtime render adapter merges semantic workflow records without stable ids', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-semantic-workflow';
+  const userTurnId = `user-turn:${sessionId}:round:1`;
+  const userMessageId = 'history:user:semantic';
+  const answerModelTurnId = 'legacy-model-turn:semantic-answer';
+  const workflowModelTurnId = `model-turn:${sessionId}:user:1:model:1`;
+  const answerMessageId = 'history:assistant:semantic';
+  const workflowMessageId = `assistant-message:${workflowModelTurnId}`;
+
+  projection.sessions[sessionId] = {
+    sessionId,
+    agentId: '',
+    appliedSeq: 0,
+    lastAppliedEventId: 0,
+    snapshotSeq: 0,
+    localSeq: 0,
+    syncRequired: false,
+    connectionState: 'connected',
+    runtimeStatus: 'idle',
+    busyReason: null,
+    eventIdIndex: {},
+    userTurns: [userTurnId],
+    modelTurns: [answerModelTurnId, workflowModelTurnId],
+    messages: [userMessageId, answerMessageId, workflowMessageId],
+    messageById: {
+      [userMessageId]: {
+        id: userMessageId,
+        role: 'user',
+        content: 'question',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:06.000Z',
+        createdSeq: 1,
+        updatedSeq: 1,
+        userTurnId,
+        modelTurnId: '',
+        final: true,
+        failed: false,
+        cancelled: false
+      },
+      [answerMessageId]: {
+        id: answerMessageId,
+        role: 'assistant',
+        content: 'answer',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:07.000Z',
+        createdSeq: 2,
+        updatedSeq: 2,
+        userTurnId,
+        modelTurnId: answerModelTurnId,
+        final: true,
+        failed: false,
+        cancelled: false,
+        workflowItems: [{
+          eventType: 'tool_call',
+          status: 'loading',
+          toolName: 'lookup',
+          title: 'lookup',
+          modelTurnId: workflowModelTurnId,
+          updatedSeq: 2
+        }],
+        subagents: [],
+        display: { user_round: 1 }
+      },
+      [workflowMessageId]: {
+        id: workflowMessageId,
+        role: 'assistant',
+        content: '',
+        reasoning: '',
+        status: 'final',
+        createdAt: '2026-04-30T02:14:08.000Z',
+        createdSeq: 3,
+        updatedSeq: 3,
+        userTurnId,
+        modelTurnId: workflowModelTurnId,
+        final: true,
+        failed: false,
+        cancelled: false,
+        workflowItems: [{
+          eventType: 'tool_result',
+          status: 'completed',
+          toolName: 'lookup',
+          title: 'lookup',
+          modelTurnId: workflowModelTurnId,
+          updatedSeq: 3
+        }],
+        subagents: [],
+        display: { user_round: 1 }
+      }
+    },
+    userTurnById: {
+      [userTurnId]: {
+        id: userTurnId,
+        createdSeq: 1,
+        messageIds: [userMessageId],
+        modelTurnIds: [answerModelTurnId, workflowModelTurnId],
+        status: 'completed'
+      }
+    },
+    modelTurnById: {
+      [answerModelTurnId]: {
+        id: answerModelTurnId,
+        userTurnId,
+        createdSeq: 2,
+        messageIds: [answerMessageId],
+        finalMessageId: answerMessageId,
+        status: 'completed'
+      },
+      [workflowModelTurnId]: {
+        id: workflowModelTurnId,
+        userTurnId,
+        createdSeq: 3,
+        messageIds: [workflowMessageId],
+        finalMessageId: workflowMessageId,
+        status: 'completed'
+      }
+    },
+    invariantViolations: [],
+    quarantinedEvents: [],
+    pendingSequentialEvents: []
+  };
+
+  const materialized = materializeChatRuntimeMessages(projection, sessionId);
+  const assistants = materialized.filter((message) => message.role === 'assistant') as Array<Record<string, any>>;
+
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0]?.workflowItems?.length, 1);
+  assert.equal(assistants[0]?.workflowItems?.[0]?.eventType, 'tool_result');
+  assert.equal(assistants[0]?.workflowItems?.[0]?.status, 'completed');
+  assert.equal(assistants[0]?.workflowStreaming, false);
+});
+
 test('chat runtime render adapter never materializes synthetic greeting from projection', () => {
   const greeting = {
     role: 'assistant',

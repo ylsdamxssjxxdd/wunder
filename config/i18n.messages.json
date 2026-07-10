@@ -739,6 +739,10 @@
     "en-US": "LLM request",
     "zh-CN": "调用模型请求"
   },
+  "monitor.summary.queued": {
+    "en-US": "Queued; waiting for an available runtime slot.",
+    "zh-CN": "已进入排队，等待可用运行槽位。"
+  },
   "monitor.summary.subagent_wait": {
     "en-US": "Waiting for subagent",
     "zh-CN": "等待子智能体完成"

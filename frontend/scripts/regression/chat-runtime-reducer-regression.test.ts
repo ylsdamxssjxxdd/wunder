@@ -231,6 +231,101 @@ test('chat runtime reducer keeps live message content when an older snapshot arr
   assert.equal(projection.sessions['session-1'].appliedSeq, 21);
 });
 
+test('chat runtime reducer keeps live workflow metadata when terminal snapshot omits it', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'evt-workflow-1',
+    event_seq: 1,
+    user_turn_id: 'ut-workflow-1',
+    message_id: 'um-workflow-1',
+    content: 'question'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'evt-workflow-2',
+    event_seq: 2,
+    user_turn_id: 'ut-workflow-1',
+    model_turn_id: 'mt-workflow-1',
+    message_id: 'am-workflow-1'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-workflow-3',
+    event_seq: 3,
+    user_turn_id: 'ut-workflow-1',
+    model_turn_id: 'mt-workflow-1',
+    message_id: 'am-workflow-1',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-workflow-1',
+        tool: 'lookup'
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_completed',
+    event_id: 'evt-workflow-4',
+    event_seq: 4,
+    user_turn_id: 'ut-workflow-1',
+    model_turn_id: 'mt-workflow-1',
+    message_id: 'am-workflow-1',
+    payload: {
+      source_event_type: 'tool_result',
+      data: {
+        tool_call_id: 'call-workflow-1',
+        tool: 'lookup',
+        result: 'ok'
+      }
+    }
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_final',
+    event_id: 'evt-workflow-5',
+    event_seq: 5,
+    user_turn_id: 'ut-workflow-1',
+    model_turn_id: 'mt-workflow-1',
+    message_id: 'am-workflow-1',
+    content: 'done'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_snapshot',
+    event_id: 'evt-workflow-6',
+    event_seq: 6,
+    snapshot_seq: 6,
+    messages: [
+      {
+        message_id: 'um-workflow-1',
+        role: 'user',
+        content: 'question',
+        user_turn_id: 'ut-workflow-1',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        message_id: 'am-workflow-1',
+        role: 'assistant',
+        content: 'done',
+        user_turn_id: 'ut-workflow-1',
+        model_turn_id: 'mt-workflow-1',
+        created_at: '2026-04-30T02:14:07.000Z',
+        workflowItems: []
+      }
+    ],
+    running: false,
+    loading: false
+  }));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-1')
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.status, 'final');
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.workflowItems?.[0]?.eventType, 'tool_result');
+  assert.equal(assistant?.workflowItems?.[0]?.status, 'completed');
+  assert.equal(assistant?.workflowItems?.[0]?.toolCallId, 'call-workflow-1');
+});
+
 test('terminal turn event clears session busy state', () => {
   const projection = createChatRuntimeProjection();
 
@@ -2389,6 +2484,108 @@ test('queued task placeholder folds into first canonical model turn without clie
   assert.equal(assistants[0].status, 'streaming');
   assert.equal(assistants[0].userTurnId, `user-turn:${sessionId}:round:1`);
   assert.ok(assistants[0].workflowItems?.some((item) => item.eventType === 'queue_enter'));
+});
+
+test('queued task placeholder folds weak and canonical model rounds during queue start', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-queue-start-multi-model';
+  const userTurnId = `user-turn:${sessionId}:round:1`;
+  const queueTurnId = 'queue-turn:task-multi-model:user';
+
+  applyChatRuntimeEvent(
+    projection,
+    buildCanonicalClientMessageSubmittedEvent({
+      sessionId,
+      content: 'queued question',
+      clientMessageId: `local-user:${sessionId}:1`,
+      userTurnId,
+      createdAt: '2026-04-30T02:14:06.000Z'
+    })
+  );
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'queue_enter',
+    eventId: 41,
+    requestId: 'req-queue-start-multi-model',
+    phase: 'send',
+    userTurnId: queueTurnId,
+    modelTurnId: 'queue:task-multi-model:assistant',
+    payload: {
+      data: {
+        queue_id: 'task-multi-model',
+        wait_ahead: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'queue_start',
+    eventId: 42,
+    requestId: 'req-queue-start-multi-model',
+    phase: 'send',
+    userTurnId: queueTurnId,
+    modelTurnId: 'queue:task-multi-model:assistant',
+    payload: {
+      data: {
+        queue_id: 'task-multi-model',
+        wait_ahead: 0
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  let visible = selectVisibleMessageProjections(projection, sessionId);
+  let assistants = visible.filter((message) => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.ok(assistants[0]?.workflowItems?.some((item) => item.eventType === 'queue_start'));
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output_delta',
+    eventId: 43,
+    requestId: 'req-queue-start-multi-model',
+    phase: 'send',
+    userTurnId: queueTurnId,
+    payload: {
+      data: {
+        delta: 'first ',
+        user_round: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  visible = selectVisibleMessageProjections(projection, sessionId);
+  assistants = visible.filter((message) => message.role === 'assistant');
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0]?.content, 'first ');
+  assert.equal(assistants[0]?.userTurnId, userTurnId);
+
+  buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'llm_output_delta',
+    eventId: 44,
+    requestId: 'req-queue-start-multi-model',
+    phase: 'send',
+    payload: {
+      data: {
+        delta: 'second',
+        user_round: 1,
+        model_round: 1
+      }
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  visible = selectVisibleMessageProjections(projection, sessionId);
+  assistants = visible.filter((message) => message.role === 'assistant');
+  const session = projection.sessions[sessionId];
+  const projectedAssistantCount = Object.values(session.messageById)
+    .filter((message) => message.role === 'assistant').length;
+  assert.equal(assistants.length, 1);
+  assert.equal(projectedAssistantCount, 1);
+  assert.equal(assistants[0]?.content, 'first second');
+  assert.equal(assistants[0]?.userTurnId, userTurnId);
+  assert.ok(assistants[0]?.workflowItems?.some((item) => item.eventType === 'queue_start'));
 });
 
 test('canonical client submit event materializes the local user turn', () => {
@@ -4963,6 +5160,128 @@ test('legacy snapshot without workflow metadata keeps canonical tool projection'
   assert.equal(assistant?.display?.stats?.toolCalls, 1);
   assert.equal(assistant?.display?.stats?.avg_model_round_speed_tps, 42.25);
   assert.equal(assistant?.display?.stats?.contextTokens, 128);
+});
+
+test('legacy snapshot with partial workflow metadata keeps canonical tool projection', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'evt-tool-call-partial',
+    event_seq: 1,
+    user_turn_id: 'ut-partial',
+    model_turn_id: 'mt-partial',
+    message_id: 'am-partial',
+    payload: {
+      source_event_type: 'tool_call',
+      data: {
+        tool_call_id: 'call-partial',
+        tool: 'execute_command',
+        tool_function_name: 'execute_command',
+        args: {
+          content: 'npm run check'
+        }
+      }
+    }
+  }));
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_snapshot',
+    event_id: 'legacy-snapshot-partial',
+    event_seq: 2,
+    snapshot_seq: 2,
+    running: true,
+    messages: [
+      {
+        message_id: 'um-partial',
+        role: 'user',
+        content: 'question',
+        user_turn_id: 'ut-partial',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        message_id: 'am-partial',
+        role: 'assistant',
+        content: '',
+        user_turn_id: 'ut-partial',
+        model_turn_id: 'mt-partial',
+        stream_event_id: 2,
+        workflowItems: [
+          {
+            id: 'queue:start',
+            eventType: 'queue_start',
+            status: 'completed'
+          }
+        ],
+        created_at: '2026-04-30T02:14:07.000Z'
+      }
+    ]
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.workflowItems?.length, 2);
+  assert.ok(assistant?.workflowItems?.some((item) => item.toolCallId === 'call-partial'));
+  assert.ok(assistant?.workflowItems?.some((item) => item.id === 'queue:start'));
+});
+
+test('folded legacy snapshot merge unions non-empty workflow metadata', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'session_snapshot',
+    event_id: 'legacy-snapshot-workflow-union',
+    event_seq: 1,
+    snapshot_seq: 1,
+    running: true,
+    messages: [
+      {
+        message_id: 'um-workflow-union',
+        role: 'user',
+        content: 'question',
+        user_turn_id: 'ut-workflow-union',
+        created_at: '2026-04-30T02:14:06.000Z'
+      },
+      {
+        message_id: 'am-workflow-union',
+        role: 'assistant',
+        content: '',
+        user_turn_id: 'ut-workflow-union',
+        model_turn_id: 'mt-workflow-union',
+        stream_event_id: 1,
+        workflowItems: [
+          {
+            id: 'workflow:first',
+            eventType: 'tool_call',
+            status: 'loading'
+          }
+        ],
+        created_at: '2026-04-30T02:14:07.000Z'
+      },
+      {
+        message_id: 'am-workflow-union',
+        role: 'assistant',
+        content: '',
+        user_turn_id: 'ut-workflow-union',
+        model_turn_id: 'mt-workflow-union',
+        stream_event_id: 2,
+        workflowItems: [
+          {
+            id: 'workflow:second',
+            eventType: 'tool_result',
+            status: 'completed'
+          }
+        ],
+        created_at: '2026-04-30T02:14:08.000Z'
+      }
+    ]
+  }));
+
+  const visible = selectVisibleMessageProjections(projection, 'session-1');
+  const assistant = visible.find((message) => message.role === 'assistant');
+  assert.equal(assistant?.workflowItems?.length, 2);
+  assert.ok(assistant?.workflowItems?.some((item) => item.id === 'workflow:first'));
+  assert.ok(assistant?.workflowItems?.some((item) => item.id === 'workflow:second'));
 });
 
 test('folded legacy snapshot merge keeps projected workflow stats aliases', () => {

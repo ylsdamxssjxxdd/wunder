@@ -1716,7 +1716,7 @@
 - 说明：`system` 中的主机资源指标依赖 Rust `host-metrics` feature；Docker Compose 默认启用该 feature，自定义 `WUNDER_SERVER_FEATURES` 时若移除它，CPU、内存、进程与磁盘指标会以 0 值降级。
 - 返回（JSON）：
 - `system`：系统资源占用（cpu_percent/memory_total/memory_used/memory_available/process_rss/process_cpu_percent/load_avg_1/load_avg_5/load_avg_15/disk_total/disk_used/disk_free/disk_percent/log_used/workspace_used/uptime_s）
-  - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_token_usage/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
+  - `service`：服务状态指标（active_sessions/queued_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_context_tokens/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
   - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
   - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
     + ttft_ms

@@ -1361,7 +1361,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
     state.monitor.warm_history(true);
     let sessions = state.monitor.list_sessions(false);
     let usage_stats = state.workspace.get_user_usage_stats();
-    let active_statuses = HashSet::from(["running", "cancelling"]);
+    let active_statuses = HashSet::from(["running", "cancelling", "queued", "waiting"]);
     let mut summary: HashMap<String, UserStats> = HashMap::new();
 
     for session in sessions {

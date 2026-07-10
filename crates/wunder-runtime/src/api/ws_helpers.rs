@@ -773,6 +773,7 @@ fn is_stream_active_status(status: &str) -> bool {
         status,
         MonitorState::STATUS_RUNNING
             | MonitorState::STATUS_CANCELLING
+            | MonitorState::STATUS_QUEUED
             | MonitorState::STATUS_WAITING
     )
 }

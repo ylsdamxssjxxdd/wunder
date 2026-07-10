@@ -55,6 +55,7 @@ pub async fn reset_user_work_state(
     for session in state.monitor.load_records_by_user(
         cleaned_user_id,
         Some(&[
+            crate::monitor::MonitorState::STATUS_QUEUED,
             crate::monitor::MonitorState::STATUS_WAITING,
             crate::monitor::MonitorState::STATUS_RUNNING,
             crate::monitor::MonitorState::STATUS_CANCELLING,

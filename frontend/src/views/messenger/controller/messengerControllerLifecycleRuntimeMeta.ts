@@ -32,13 +32,19 @@ import {
   splitMessengerBootstrapTasks
 } from '@/views/messenger/bootstrap';
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
+import {
+  hasAgentTerminalSettlementEvidence,
+  resolveAgentRuntimeTerminalStateFromSessionStatus,
+  shouldSettleAgentRuntimeFromTerminalSession,
+  shouldSettleAgentSessionsFromRuntimeState
+} from '@/views/messenger/agentRuntimeState';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { chatDebugLog } from '@/utils/chatDebug';
-import { buildRuntimeDebugSnapshot, getRuntime } from '@/stores/chatRuntimeState';
+import { buildRuntimeDebugSnapshot, getRuntime, settleTerminalSessionRuntime } from '@/stores/chatRuntimeState';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
@@ -398,6 +404,14 @@ type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRout
 
 type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
 
+type AgentRuntimeRemoteStatus = {
+  agentId: string;
+  sessionId: string;
+  previousSessionId: string;
+  state: AgentRuntimeState;
+  previousState: AgentRuntimeState;
+};
+
 type WorkspaceResolvedResource = ReturnType<typeof parseWorkspaceResourceUrl> & {
   requestUserId: string | null;
   requestAgentId: string | null;
@@ -413,6 +427,228 @@ type WorldScreenshotCaptureOption = {
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerControllerContext): void {
+  let agentRuntimeSessionSnapshot = new Map<string, string>();
+
+  const collectAgentRuntimeSessionIds = (
+      explicitSessionId: string,
+      previousSessionId: string
+  ): Set<string> => {
+      const result = new Set<string>();
+      if (explicitSessionId) {
+          result.add(explicitSessionId);
+      }
+      if (previousSessionId) {
+          result.add(previousSessionId);
+      }
+      return result;
+  };
+
+  const clearSettledAgentRuntimeOverride = (agentId: string) => {
+      const key = ctx.normalizeAgentId(agentId) || DEFAULT_AGENT_KEY;
+      const overrides = ctx.runtimeStateOverrides?.value;
+      if (!overrides || !overrides.has(key))
+          return;
+      overrides.delete(key);
+      ctx.runtimeStateOverrides.value = new Map(overrides);
+  };
+
+  const localTerminalRuntimeSessionSnapshot = new Map<string, string>();
+
+  const resolveAgentIdForRuntimeSession = (
+      sessionId: string,
+      sessionAgentMap: Map<string, string>
+  ): string => {
+      const targetSessionId = String(sessionId || '').trim();
+      if (!targetSessionId)
+          return '';
+      const mappedAgentId = sessionAgentMap.get(targetSessionId);
+      if (mappedAgentId) {
+          return ctx.normalizeAgentId(mappedAgentId) || DEFAULT_AGENT_KEY;
+      }
+      for (const [agentId, runtimeSessionId] of agentRuntimeSessionSnapshot.entries()) {
+          if (String(runtimeSessionId || '').trim() === targetSessionId) {
+              return ctx.normalizeAgentId(agentId) || DEFAULT_AGENT_KEY;
+          }
+      }
+      if (targetSessionId === String(ctx.chatStore.activeSessionId || '').trim()) {
+          return ctx.normalizeAgentId(
+              ctx.activeAgentId.value || ctx.selectedAgentId.value || ctx.chatStore.draftAgentId || DEFAULT_AGENT_KEY
+          ) || DEFAULT_AGENT_KEY;
+      }
+      return '';
+  };
+
+  const settleAgentRuntimeStateFromTerminalSession = (
+      sessionId: string,
+      runtimeStatus: string,
+      reason: string,
+      sessionAgentMap: Map<string, string>,
+      fallbackStateMap: Map<string, AgentRuntimeState> | null = null
+  ) => {
+      const targetSessionId = String(sessionId || '').trim();
+      if (!targetSessionId)
+          return;
+      const terminalState = resolveAgentRuntimeTerminalStateFromSessionStatus(runtimeStatus);
+      if (!terminalState) {
+          localTerminalRuntimeSessionSnapshot.delete(targetSessionId);
+          return;
+      }
+      const agentId = resolveAgentIdForRuntimeSession(targetSessionId, sessionAgentMap);
+      if (!agentId)
+          return;
+      const currentRuntimeSessionId = String(agentRuntimeSessionSnapshot.get(agentId) || '').trim();
+      if (currentRuntimeSessionId && currentRuntimeSessionId !== targetSessionId) {
+          return;
+      }
+      const runtime = getRuntime(targetSessionId);
+      const currentState =
+          ctx.agentRuntimeStateMap.value.get(agentId) ||
+          fallbackStateMap?.get(agentId) ||
+          'idle';
+      const override = ctx.runtimeStateOverrides?.value?.get(agentId);
+      const localStreaming = Boolean(ctx.streamingAgentIdSet?.value?.has(agentId));
+      const localWaiting = Boolean(ctx.waitingAgentIdSet?.value?.has(agentId));
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      const hasLocalRuntimeEvidence = hasAgentTerminalSettlementEvidence({
+          targetSessionId,
+          currentRuntimeSessionId,
+          activeSessionId,
+          hasRuntimeActivity: Boolean(
+              currentRuntimeSessionId === targetSessionId ||
+              runtime?.lastThreadStatusAt ||
+              runtime?.sendController ||
+              runtime?.resumeController ||
+              runtime?.compactController ||
+              ctx.chatStore.loadingBySession?.[targetSessionId]
+          ),
+          currentState,
+          overrideState: override?.state ?? null,
+          localStreaming,
+          localWaiting
+      });
+      if (!hasLocalRuntimeEvidence) {
+          return;
+      }
+      if (!shouldSettleAgentRuntimeFromTerminalSession({
+          sessionStatus: runtimeStatus,
+          currentState,
+          localStreaming,
+          localWaiting,
+          overrideState: override?.state ?? null
+      })) {
+          return;
+      }
+      const signature = `${agentId}:${terminalState}:${runtimeStatus}`;
+      if (
+          localTerminalRuntimeSessionSnapshot.get(targetSessionId) === signature &&
+          currentState === terminalState
+      ) {
+          return;
+      }
+      clearSettledAgentRuntimeOverride(agentId);
+      const nextStateMap = new Map<string, AgentRuntimeState>(ctx.agentRuntimeStateMap.value);
+      nextStateMap.set(agentId, terminalState);
+      ctx.handleAgentRuntimeStateUpdate(nextStateMap);
+      localTerminalRuntimeSessionSnapshot.set(targetSessionId, signature);
+      chatDebugLog('messenger.agent-runtime', 'settle-agent-from-session-runtime', {
+          agentId,
+          sessionId: targetSessionId,
+          runtimeStatus,
+          state: terminalState,
+          reason,
+          previousState: currentState,
+          runtime: buildRuntimeDebugSnapshot(runtime)
+      });
+  };
+
+  const reconcileTerminalAgentRuntimeStatesFromSessions = (
+      reason: string,
+      fallbackStateMap: Map<string, AgentRuntimeState> | null = null
+  ) => {
+      const sessionAgentMap = ctx.buildSessionAgentMap();
+      const loadingBySession = ctx.chatStore.loadingBySession && typeof ctx.chatStore.loadingBySession === 'object'
+          ? ctx.chatStore.loadingBySession as Record<string, unknown>
+          : {};
+      const sessionIds = new Set<string>([
+          ...Array.from(sessionAgentMap.keys()),
+          ...Array.from(agentRuntimeSessionSnapshot.values()).map((id) => String(id || '').trim()),
+          ...Object.keys(loadingBySession).map((id) => String(id || '').trim())
+      ]);
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      if (activeSessionId) {
+          sessionIds.add(activeSessionId);
+      }
+      sessionIds.forEach((sessionId) => {
+          if (!sessionId)
+              return;
+          const runtimeStatus = String(ctx.resolveSessionRuntimeStatus?.(sessionId) || '').trim().toLowerCase();
+          settleAgentRuntimeStateFromTerminalSession(
+              sessionId,
+              runtimeStatus,
+              reason,
+              sessionAgentMap,
+              fallbackStateMap
+          );
+      });
+  };
+
+  const settleAgentRuntimeSessionFromMeta = (
+      agentId: string,
+      sessionId: string,
+      state: AgentRuntimeState,
+      reason: string
+  ) => {
+      const targetSessionId = String(sessionId || '').trim();
+      if (!targetSessionId)
+          return;
+      const runtimeBefore = getRuntime(targetSessionId);
+      const runtimeBeforeSnapshot = buildRuntimeDebugSnapshot(runtimeBefore);
+      const statusBefore = ctx.resolveSessionRuntimeStatus?.(targetSessionId) || '';
+      const loadingBefore = Boolean(ctx.chatStore.loadingBySession?.[targetSessionId]);
+      const busyBefore = Boolean(ctx.chatStore.isSessionBusy?.(targetSessionId) || ctx.chatStore.isSessionLoading?.(targetSessionId));
+      const hasControllerBefore = Boolean(runtimeBefore?.sendController || runtimeBefore?.resumeController || runtimeBefore?.compactController);
+      if (!loadingBefore && !busyBefore && !hasControllerBefore) {
+          return;
+      }
+      if (runtimeBefore) {
+          runtimeBefore.loaded = true;
+          runtimeBefore.threadStatus = state === 'error' ? 'system_error' : 'completed';
+      }
+      const settled = settleTerminalSessionRuntime(ctx.chatStore, targetSessionId, {
+          eventType: `agent_runtime_${reason}`,
+          failed: state === 'error'
+      });
+      if (settled) {
+          chatDebugLog('messenger.agent-runtime', 'settle-session-from-agent-meta', {
+              agentId,
+              sessionId: targetSessionId,
+              state,
+              reason,
+              statusBefore,
+              loadingBefore,
+              busyBefore,
+              runtimeBefore: runtimeBeforeSnapshot,
+              runtimeAfter: buildRuntimeDebugSnapshot(getRuntime(targetSessionId))
+          });
+      }
+  };
+
+  const reconcileSettledAgentRuntimeSessions = (items: AgentRuntimeRemoteStatus[]) => {
+      items.forEach((item) => {
+          if (!shouldSettleAgentSessionsFromRuntimeState({
+              previousState: item.previousState,
+              nextState: item.state
+          })) {
+              return;
+          }
+          clearSettledAgentRuntimeOverride(item.agentId);
+          const reason = item.state === 'idle' ? 'idle_reconcile' : item.state;
+          collectAgentRuntimeSessionIds(item.sessionId, item.previousSessionId).forEach((sessionId) => {
+              settleAgentRuntimeSessionFromMeta(item.agentId, sessionId, item.state, reason);
+          });
+      });
+  };
+
   ctx.loadRunningAgents = async (options: {
       force?: boolean;
   } = {}) => {
@@ -432,13 +668,35 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
                   return;
               }
               const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
+              const previousStateMap = new Map<string, AgentRuntimeState>(
+                  ctx.agentRuntimeStateHydrated
+                      ? ctx.agentRuntimeStateSnapshot
+                      : ctx.agentRuntimeStateMap.value
+              );
+              const previousSessionMap = new Map(agentRuntimeSessionSnapshot);
               const stateMap = new Map<string, AgentRuntimeState>();
+              const nextSessionMap = new Map<string, string>();
+              const runtimeItems: AgentRuntimeRemoteStatus[] = [];
               items.forEach((item: Record<string, unknown>) => {
                   const key = ctx.normalizeAgentId(item?.agent_id || (item?.is_default === true ? DEFAULT_AGENT_KEY : '')) || DEFAULT_AGENT_KEY;
                   const state = ctx.normalizeRuntimeState(item?.state, item?.pending_question === true);
+                  const sessionId = String(item?.session_id ?? item?.sessionId ?? '').trim();
                   stateMap.set(key, state);
+                  if (sessionId) {
+                      nextSessionMap.set(key, sessionId);
+                  }
+                  runtimeItems.push({
+                      agentId: key,
+                      sessionId,
+                      previousSessionId: previousSessionMap.get(key) ?? '',
+                      state,
+                      previousState: previousStateMap.get(key) ?? 'idle'
+                  });
               });
+              agentRuntimeSessionSnapshot = nextSessionMap;
+              reconcileSettledAgentRuntimeSessions(runtimeItems);
               ctx.handleAgentRuntimeStateUpdate(stateMap);
+              reconcileTerminalAgentRuntimeStatesFromSessions('running-agents-refresh', previousStateMap);
               ctx.runningAgentsLoadedAt = Date.now();
           }
           catch (error) {
@@ -458,6 +716,20 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
       ctx.runningAgentsLoadPromise = request;
       return request;
   };
+
+  watch(
+      () => [
+          ctx.chatStore.runtimeProjectionVersion,
+          ctx.chatStore.runtimeProjectionContentVersion,
+          String(ctx.chatStore.activeSessionId || ''),
+          Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0,
+          Object.keys(ctx.chatStore.loadingBySession || {}).sort().join('|')
+      ],
+      () => {
+          reconcileTerminalAgentRuntimeStatesFromSessions('session-runtime');
+      },
+      { flush: 'post' }
+  );
 
   ctx.loadAgentUserRounds = async () => {
       const loadVersion = ++ctx.agentUserRoundsLoadVersion;

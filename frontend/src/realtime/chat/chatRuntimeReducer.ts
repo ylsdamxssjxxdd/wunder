@@ -43,6 +43,14 @@ const TERMINAL_EVENT_TYPES = new Set([
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
 const QUEUE_WAIT_EVENT_TYPES = new Set(['queued', 'queue_enter', 'queue_update']);
+const QUEUE_WORKFLOW_EVENT_TYPES = new Set([
+  'queued',
+  'queue_enter',
+  'queue_update',
+  'queue_start',
+  'queue_finish',
+  'queue_fail'
+]);
 const FAILED_WORKFLOW_STATUSES = new Set([
   'aborted',
   'cancelled',
@@ -2521,9 +2529,12 @@ const mergeProjectionRecords = (
   const incoming = value.filter(isPlainRecord).map((item) => ({ ...item }));
   if (incoming.length === 0) return;
   const existing = Array.isArray(message[field]) ? message[field] || [] : [];
-  message[field] = incoming.length >= existing.length
-    ? incoming
-    : dedupeProjectionRecords([...existing, ...incoming]);
+  const merged = mergeProjectionRecordLists(existing, incoming);
+  if (field === 'workflowItems') {
+    message.workflowItems = merged as ChatRuntimeWorkflowItemProjection[];
+  } else {
+    message.subagents = merged as ChatRuntimeSubagentProjection[];
+  }
 };
 
 const patchProjectionRecordsFromRaw = (
@@ -2536,6 +2547,15 @@ const patchProjectionRecordsFromRaw = (
   const existing = Array.isArray(message[field]) ? message[field] || [] : [];
   // Empty legacy snapshots mean "metadata not included", not "clear canonical projection".
   if (incoming.length === 0 && existing.length > 0) return;
+  if (existing.length > 0 && incoming.length > 0) {
+    const merged = mergeProjectionRecordLists(existing, incoming);
+    if (field === 'workflowItems') {
+      message.workflowItems = merged as ChatRuntimeWorkflowItemProjection[];
+    } else {
+      message.subagents = merged as ChatRuntimeSubagentProjection[];
+    }
+    return;
+  }
   if (field === 'workflowItems') {
     message.workflowItems = incoming as ChatRuntimeWorkflowItemProjection[];
   } else {
@@ -2648,16 +2668,92 @@ const cloneProjectionDisplayValue = (value: unknown): unknown => {
   return value;
 };
 
-const dedupeProjectionRecords = (
-  records: ChatRuntimeWorkflowItemProjection[] | ChatRuntimeSubagentProjection[]
-): ChatRuntimeWorkflowItemProjection[] | ChatRuntimeSubagentProjection[] => {
-  const seen = new Set<string>();
-  return records.filter((record, index) => {
+const mergeProjectionRecordLists = (
+  existing: Array<ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection>,
+  incoming: Array<ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection>
+): Array<ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection> => {
+  const merged = new Map<string, ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection>();
+  [
+    ...existing.map((record, index) => ({ record, index })),
+    ...incoming.map((record, index) => ({ record, index }))
+  ].forEach(({ record, index }) => {
     const key = resolveProjectionRecordIdentity(record, index);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const previous = merged.get(key);
+    merged.set(key, previous ? mergeProjectionRecordValue(previous, record) : { ...record });
   });
+  return Array.from(merged.values());
+};
+
+const mergeProjectionRecordValue = (
+  previous: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection,
+  incoming: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection
+): ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection => {
+  const incomingSeq = normalizeProjectedCount(incoming.updatedSeq);
+  const previousSeq = normalizeProjectedCount(previous.updatedSeq);
+  const primary = incomingSeq >= previousSeq ? incoming : previous;
+  const secondary = incomingSeq >= previousSeq ? previous : incoming;
+  const merged: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection = {
+    ...secondary,
+    ...primary
+  };
+  Object.entries(secondary).forEach(([key, value]) => {
+    if (value === undefined) return;
+    const current = merged[key];
+    if (current === undefined || current === null || current === '') {
+      merged[key] = value;
+    }
+  });
+  const status = pickMergedProjectionRecordStatus(previous.status, incoming.status);
+  if (status) {
+    merged.status = status;
+  }
+  if (isTerminalWorkflowStatus(normalizeText(previous.status))) {
+    preserveTerminalProjectionRecordFields(merged, previous);
+  }
+  if (isTerminalWorkflowStatus(normalizeText(incoming.status))) {
+    preserveTerminalProjectionRecordFields(merged, incoming);
+  }
+  return merged;
+};
+
+const preserveTerminalProjectionRecordFields = (
+  target: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection,
+  source: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection
+): void => {
+  [
+    'eventType',
+    'event_type',
+    'event',
+    'sourceEventType',
+    'source_event_type',
+    'detail',
+    'toolResultRawDetail',
+    'tool_result_raw_detail'
+  ].forEach((key) => {
+    const value = source[key];
+    if (value !== undefined && value !== null && value !== '') {
+      target[key] = value;
+    }
+  });
+};
+
+const pickMergedProjectionRecordStatus = (
+  previous: unknown,
+  incoming: unknown
+): string => {
+  const left = normalizeText(previous);
+  const right = normalizeText(incoming);
+  if (!left) return right;
+  if (!right) return left;
+  if (FAILED_WORKFLOW_STATUSES.has(left) || FAILED_WORKFLOW_STATUSES.has(right)) {
+    return FAILED_WORKFLOW_STATUSES.has(right) ? right : left;
+  }
+  if (SUCCESS_WORKFLOW_STATUSES.has(left) || SUCCESS_WORKFLOW_STATUSES.has(right)) {
+    return SUCCESS_WORKFLOW_STATUSES.has(right) ? right : left;
+  }
+  if (isTerminalWorkflowStatus(left) && ACTIVE_WORKFLOW_STATUSES.has(right)) return left;
+  if (isTerminalWorkflowStatus(right) && ACTIVE_WORKFLOW_STATUSES.has(left)) return right;
+  return right;
 };
 
 const resolveProjectionRecordIdentity = (
@@ -2685,11 +2781,57 @@ const resolveProjectionRecordIdentity = (
     record.event_id
   );
   if (stable) return stable;
+  const semantic = resolveProjectionRecordSemanticIdentity(record, index);
+  if (semantic) return semantic;
   try {
     return JSON.stringify(record);
   } catch {
     return `record:${index}`;
   }
+};
+
+const resolveProjectionRecordSemanticIdentity = (
+  record: ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection,
+  index: number
+): string => {
+  const eventType = normalizeProjectionRecordIdentityEventType(
+    record.eventType ?? record.event_type ?? record.event ?? record.sourceEventType ?? record.source_event_type
+  );
+  const modelTurnId = firstText(record.modelTurnId, record.model_turn_id);
+  const toolName = normalizeText(
+    record.toolName ??
+      record.tool_name ??
+      record.tool ??
+      record.name ??
+      record.functionName ??
+      record.function_name ??
+      record.runtimeName ??
+      record.runtime_name
+  );
+  const title = normalizeText(record.title);
+  const kind = normalizeText(record.kind ?? record.type);
+  const label = normalizeText(record.label ?? record.name);
+  const semanticParts = [
+    modelTurnId,
+    eventType,
+    toolName || title || label || kind,
+    String(index)
+  ].filter(Boolean);
+  return semanticParts.length >= 2 ? `semantic:${semanticParts.join(':')}` : '';
+};
+
+const normalizeProjectionRecordIdentityEventType = (value: unknown): string => {
+  const eventType = normalizeText(value);
+  if (
+    eventType === 'tool_call' ||
+    eventType === 'tool_result' ||
+    eventType === 'tool_call_started' ||
+    eventType === 'tool_call_completed' ||
+    eventType === 'tool_call_failed'
+  ) {
+    return 'tool';
+  }
+  return eventType;
 };
 
 const ensureUserTurn = (
@@ -2825,10 +2967,23 @@ const ensureModelTurn = (
   userTurnId: string,
   seq: number | null
 ): ChatRuntimeModelTurnProjection => {
-  const id = resolveModelTurnIdentity(session, modelTurnId, userTurnId, seq) ||
+  const preferredUserTurnId = resolvePreferredUserTurnIdForModelTurn(
+    session,
+    modelTurnId,
+    userTurnId
+  );
+  if (
+    userTurnId &&
+    preferredUserTurnId &&
+    userTurnId !== preferredUserTurnId &&
+    isWeakGeneratedUserTurnId(session, userTurnId)
+  ) {
+    mergeUserTurnInto(session, userTurnId, preferredUserTurnId);
+  }
+  const id = resolveModelTurnIdentity(session, modelTurnId, preferredUserTurnId, seq) ||
     `local-model-turn:${session.sessionId}:${session.modelTurns.length + 1}`;
   if (!session.modelTurnById[id]) {
-    const resolvedUserTurnId = userTurnId || `orphan-user-turn:${id}`;
+    const resolvedUserTurnId = preferredUserTurnId || `orphan-user-turn:${id}`;
     const userTurn = ensureUserTurn(session, resolvedUserTurnId, seq);
     session.modelTurnById[id] = {
       id,
@@ -2840,10 +2995,10 @@ const ensureModelTurn = (
     };
     addUnique(session.modelTurns, id);
     addUnique(userTurn.modelTurnIds, id);
-  } else if (userTurnId) {
+  } else if (preferredUserTurnId) {
     const turn = session.modelTurnById[id];
     if (!turn.userTurnId || turn.userTurnId.startsWith('orphan-user-turn:')) {
-      turn.userTurnId = userTurnId;
+      turn.userTurnId = preferredUserTurnId;
     }
     const userTurn = ensureUserTurn(session, turn.userTurnId, seq);
     addUnique(userTurn.modelTurnIds, id);
@@ -2857,7 +3012,7 @@ const promoteQueuedModelTurnForRuntimeStart = (
 ): void => {
   if (!event.userTurnId && !event.modelTurnId) return;
   const queuedTurn = resolveReusableModelTurnForUserTurn(session, event.userTurnId) ||
-    resolveLatestQueuedAssistantModelTurn(session);
+    resolveLatestQueueOnlyAssistantModelTurn(session);
   if (!queuedTurn) return;
   if (event.userTurnId && queuedTurn.userTurnId !== event.userTurnId) {
     mergeUserTurnInto(session, queuedTurn.userTurnId, event.userTurnId);
@@ -2890,13 +3045,30 @@ const resolveLatestQueuedAssistantModelTurn = (
   )[0] || null;
 };
 
+const resolveLatestQueueOnlyAssistantModelTurn = (
+  session: ChatRuntimeSessionProjection
+): ChatRuntimeModelTurnProjection | null => {
+  const queueOnlyTurns = session.modelTurns
+    .map((turnId) => session.modelTurnById[turnId])
+    .filter((turn): turn is ChatRuntimeModelTurnProjection =>
+      Boolean(turn) &&
+      turn.messageIds.some((messageId) => isQueueOnlyAssistantProjectionMessage(session.messageById[messageId]))
+    );
+  if (queueOnlyTurns.length === 0) return null;
+  return queueOnlyTurns.sort((left, right) =>
+    resolveModelTurnLatestMessageSeq(session, right) - resolveModelTurnLatestMessageSeq(session, left) ||
+    right.createdSeq - left.createdSeq
+  )[0] || null;
+};
+
 const resolveQueuedModelTurnForIncomingModelTurn = (
   session: ChatRuntimeSessionProjection,
   modelTurnId: string,
   userTurnId: string
 ): ChatRuntimeModelTurnProjection | null => {
   if (!modelTurnId || !userTurnId) return null;
-  const queuedTurn = resolveLatestQueuedAssistantModelTurn(session);
+  const queuedTurn = resolveCompatibleQueueOnlyModelTurn(session, modelTurnId, userTurnId) ||
+    resolveLatestQueueOnlyAssistantModelTurn(session);
   if (!queuedTurn) return null;
   if (queuedTurn.userTurnId === userTurnId) {
     return shouldFoldModelTurnIntoExisting(modelTurnId, queuedTurn, userTurnId)
@@ -2924,6 +3096,25 @@ const resolveQueuedModelTurnForIncomingModelTurn = (
     isWeakGeneratedModelTurnId(session, modelTurnId, userTurnId) ||
     shouldFoldModelTurnIntoExisting(modelTurnId, queuedTurn, userTurnId);
   return canBridgeUserTurnIdentity && incomingWeakModelTurn ? queuedTurn : null;
+};
+
+const resolveCompatibleQueueOnlyModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string
+): ChatRuntimeModelTurnProjection | null => {
+  const candidates = session.modelTurns
+    .map((turnId) => session.modelTurnById[turnId])
+    .filter((turn): turn is ChatRuntimeModelTurnProjection =>
+      Boolean(turn) &&
+      turn.messageIds.some((messageId) => isQueueOnlyAssistantProjectionMessage(session.messageById[messageId]))
+    )
+    .filter((turn) => areModelTurnsSameUserRound(session, turn.id, turn.userTurnId, modelTurnId, userTurnId))
+    .sort((left, right) =>
+      resolveModelTurnLatestMessageSeq(session, right) - resolveModelTurnLatestMessageSeq(session, left) ||
+      right.createdSeq - left.createdSeq
+    );
+  return candidates[0] || null;
 };
 
 const rekeyModelTurn = (
@@ -2987,6 +3178,20 @@ const resolveModelTurnIdentity = (
   if (!modelTurnId) return '';
   const existing = session.modelTurnById[modelTurnId];
   if (existing) {
+    const reusableForIncoming = resolveCompatibleReusableModelTurnForIncoming(
+      session,
+      existing,
+      modelTurnId,
+      userTurnId || existing.userTurnId,
+      seq
+    );
+    if (reusableForIncoming && reusableForIncoming.id !== existing.id) {
+      mergeModelTurnUserTurnIdentityForTarget(session, existing, reusableForIncoming, userTurnId);
+      mergeModelTurnInto(session, existing.id, reusableForIncoming.id, seq);
+      mergeQueueOnlySiblingModelTurnsInto(session, reusableForIncoming, modelTurnId, userTurnId, seq);
+      mergeWeakSiblingModelTurnsInto(session, reusableForIncoming, seq);
+      return reusableForIncoming.id;
+    }
     if (
       existing.id.startsWith('legacy-model-turn:') ||
       isWeakGeneratedModelTurnId(session, existing.id, existing.userTurnId)
@@ -3006,14 +3211,26 @@ const resolveModelTurnIdentity = (
     if (queuedForExisting && queuedForExisting.id !== existing.id) {
       mergeModelTurnInto(session, queuedForExisting.id, existing.id, seq);
     }
+    mergeQueueOnlySiblingModelTurnsInto(session, existing, modelTurnId, userTurnId, seq);
     return modelTurnId;
   }
   const queuedTurn = resolveQueuedModelTurnForIncomingModelTurn(session, modelTurnId, userTurnId);
   if (queuedTurn) {
-    if (userTurnId && queuedTurn.userTurnId !== userTurnId) {
-      mergeUserTurnInto(session, queuedTurn.userTurnId, userTurnId);
+    mergeIncomingUserTurnIdentityIntoModelTurn(session, queuedTurn, userTurnId);
+    const canonicalTurn = resolveExistingCanonicalModelTurnForIncoming(
+      session,
+      modelTurnId,
+      userTurnId || queuedTurn.userTurnId,
+      queuedTurn.id
+    );
+    if (canonicalTurn && canonicalTurn.id !== queuedTurn.id) {
+      mergeModelTurnInto(session, queuedTurn.id, canonicalTurn.id, seq);
+      mergeQueueOnlySiblingModelTurnsInto(session, canonicalTurn, modelTurnId, userTurnId, seq);
+      mergeWeakSiblingModelTurnsInto(session, canonicalTurn, seq);
+      return canonicalTurn.id;
     }
     mergeWeakSiblingModelTurnsInto(session, queuedTurn, seq);
+    mergeQueueOnlySiblingModelTurnsInto(session, queuedTurn, modelTurnId, userTurnId, seq);
     return queuedTurn.id;
   }
   if (shouldUseActiveModelTurnForWeakRuntimeTurn(session, modelTurnId, userTurnId)) {
@@ -3025,6 +3242,7 @@ const resolveModelTurnIdentity = (
     existingForUserTurn &&
     shouldFoldModelTurnIntoExisting(modelTurnId, existingForUserTurn, userTurnId)
   ) {
+    mergeQueueOnlySiblingModelTurnsInto(session, existingForUserTurn, modelTurnId, userTurnId, seq);
     return existingForUserTurn.id;
   }
   const terminalForUserTurn = resolveReusableModelTurnForUserTurn(session, userTurnId, true, [
@@ -3035,9 +3253,148 @@ const resolveModelTurnIdentity = (
     terminalForUserTurn &&
     shouldFoldModelTurnIntoExisting(modelTurnId, terminalForUserTurn, userTurnId)
   ) {
+    mergeQueueOnlySiblingModelTurnsInto(session, terminalForUserTurn, modelTurnId, userTurnId, seq);
     return terminalForUserTurn.id;
   }
   return modelTurnId;
+};
+
+const resolvePreferredUserTurnIdForModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string
+): string => {
+  if (!userTurnId) return userTurnId;
+  const round = resolveSemanticUserRound(session, userTurnId, modelTurnId);
+  if (round === null) return userTurnId;
+  const canonicalUserTurnId = `user-turn:${session.sessionId}:round:${round}`;
+  if (session.userTurnById[canonicalUserTurnId]) {
+    return canonicalUserTurnId;
+  }
+  if (isWeakGeneratedUserTurnId(session, userTurnId)) {
+    const existingByRound = session.userTurns.find((turnId) =>
+      resolveSemanticUserRound(session, turnId) === round &&
+      !isWeakGeneratedUserTurnId(session, turnId)
+    );
+    if (existingByRound) return existingByRound;
+  }
+  return userTurnId;
+};
+
+const mergeModelTurnUserTurnIdentityForTarget = (
+  session: ChatRuntimeSessionProjection,
+  sourceTurn: ChatRuntimeModelTurnProjection,
+  targetTurn: ChatRuntimeModelTurnProjection,
+  incomingUserTurnId: string
+): void => {
+  const preferredUserTurnId = choosePreferredUserTurnIdForMerge(
+    session,
+    targetTurn.userTurnId,
+    incomingUserTurnId || sourceTurn.userTurnId
+  );
+  if (!preferredUserTurnId || targetTurn.userTurnId === preferredUserTurnId) return;
+  mergeUserTurnInto(session, targetTurn.userTurnId, preferredUserTurnId);
+};
+
+const mergeIncomingUserTurnIdentityIntoModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  targetTurn: ChatRuntimeModelTurnProjection,
+  incomingUserTurnId: string
+): void => {
+  const preferredUserTurnId = choosePreferredUserTurnIdForMerge(
+    session,
+    targetTurn.userTurnId,
+    incomingUserTurnId
+  );
+  if (!preferredUserTurnId || targetTurn.userTurnId === preferredUserTurnId) return;
+  mergeUserTurnInto(session, targetTurn.userTurnId, preferredUserTurnId);
+};
+
+const choosePreferredUserTurnIdForMerge = (
+  session: ChatRuntimeSessionProjection,
+  leftUserTurnId: string,
+  rightUserTurnId: string
+): string => {
+  if (!leftUserTurnId) return rightUserTurnId;
+  if (!rightUserTurnId) return leftUserTurnId;
+  if (leftUserTurnId === rightUserTurnId) return leftUserTurnId;
+  const leftWeak = isWeakGeneratedUserTurnId(session, leftUserTurnId);
+  const rightWeak = isWeakGeneratedUserTurnId(session, rightUserTurnId);
+  if (leftWeak !== rightWeak) return leftWeak ? rightUserTurnId : leftUserTurnId;
+  const leftRound = resolveSemanticUserRound(session, leftUserTurnId);
+  const rightRound = resolveSemanticUserRound(session, rightUserTurnId);
+  if (leftRound !== null && leftRound === rightRound) {
+    const canonicalUserTurnId = `user-turn:${session.sessionId}:round:${leftRound}`;
+    if (session.userTurnById[canonicalUserTurnId]) return canonicalUserTurnId;
+  }
+  const leftSeq = session.userTurnById[leftUserTurnId]?.createdSeq ?? Number.MAX_SAFE_INTEGER;
+  const rightSeq = session.userTurnById[rightUserTurnId]?.createdSeq ?? Number.MAX_SAFE_INTEGER;
+  return leftSeq <= rightSeq ? leftUserTurnId : rightUserTurnId;
+};
+
+const resolveCompatibleReusableModelTurnForIncoming = (
+  session: ChatRuntimeSessionProjection,
+  incomingTurn: ChatRuntimeModelTurnProjection | null,
+  modelTurnId: string,
+  userTurnId: string,
+  seq: number | null
+): ChatRuntimeModelTurnProjection | null => {
+  if (!modelTurnId || !userTurnId) return null;
+  const incomingScore = incomingTurn ? scoreModelTurnMergeTarget(session, incomingTurn, seq) : null;
+  const incomingTransient = incomingTurn
+    ? isTransientMergeableModelTurn(session, incomingTurn, modelTurnId, userTurnId)
+    : isWeakGeneratedUserTurnId(session, userTurnId) ||
+      isWeakGeneratedModelTurnId(session, modelTurnId, userTurnId);
+  const candidates = session.modelTurns
+    .map((turnId) => session.modelTurnById[turnId])
+    .filter((turn): turn is ChatRuntimeModelTurnProjection => {
+      if (!turn || turn.id === modelTurnId) return false;
+      const candidateTransient = isTransientMergeableModelTurn(session, turn, turn.id, turn.userTurnId);
+      if (!incomingTransient && !candidateTransient) return false;
+      if (incomingScore !== null && scoreModelTurnMergeTarget(session, turn, seq) < incomingScore) return false;
+      if (!turn.messageIds.some((messageId) => session.messageById[messageId]?.role === 'assistant')) return false;
+      if (!areModelTurnsSameUserRound(session, turn.id, turn.userTurnId, modelTurnId, userTurnId)) {
+        return false;
+      }
+      return (
+        shouldFoldModelTurnIntoExisting(modelTurnId, turn, userTurnId) ||
+        shouldFoldModelTurnIntoExisting(turn.id, incomingTurn || turn, turn.userTurnId) ||
+        candidateTransient ||
+        incomingTransient
+      );
+    });
+  if (candidates.length === 0) return null;
+  return candidates.sort((left, right) => {
+    const leftScore = scoreModelTurnMergeTarget(session, left, seq);
+    const rightScore = scoreModelTurnMergeTarget(session, right, seq);
+    if (leftScore !== rightScore) return rightScore - leftScore;
+    return resolveModelTurnLatestMessageSeq(session, right) - resolveModelTurnLatestMessageSeq(session, left) ||
+      right.createdSeq - left.createdSeq;
+  })[0] || null;
+};
+
+const resolveExistingCanonicalModelTurnForIncoming = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string,
+  userTurnId: string,
+  excludeTurnId: string
+): ChatRuntimeModelTurnProjection | null => {
+  const incomingRound = resolveSemanticUserRound(session, userTurnId, modelTurnId);
+  if (incomingRound === null) return null;
+  const canonicalWithModelRound = session.modelTurns
+    .map((turnId) => session.modelTurnById[turnId])
+    .filter((turn): turn is ChatRuntimeModelTurnProjection =>
+      Boolean(turn) &&
+      turn.id !== excludeTurnId &&
+      turn.id !== modelTurnId &&
+      resolveSemanticUserRound(session, turn.userTurnId, turn.id) === incomingRound &&
+      resolveModelRoundFromModelTurnId(session, turn.id) !== null
+    )
+    .sort((left, right) =>
+      resolveModelTurnLatestMessageSeq(session, right) - resolveModelTurnLatestMessageSeq(session, left) ||
+      right.createdSeq - left.createdSeq
+    );
+  return canonicalWithModelRound[0] || null;
 };
 
 const shouldUseActiveModelTurnForWeakRuntimeTurn = (
@@ -3057,6 +3414,7 @@ const isWeakGeneratedUserTurnId = (
   return (
     userTurnId === `user-turn:${session.sessionId}:unknown` ||
     userTurnId.startsWith(`user-turn:${session.sessionId}:request:`) ||
+    userTurnId.startsWith('queue-turn:') ||
     userTurnId.startsWith('orphan-user-turn:')
   );
 };
@@ -3094,6 +3452,169 @@ const resolveRoundFromUserTurnId = (
   const round = Number.parseInt(userTurnId.slice(prefix.length), 10);
   return Number.isFinite(round) && round > 0 ? round : null;
 };
+
+const resolveSemanticUserRound = (
+  session: ChatRuntimeSessionProjection,
+  userTurnId: string,
+  modelTurnId = ''
+): number | null => {
+  const fromUserTurn = resolveRoundFromUserTurnId(session, userTurnId);
+  if (fromUserTurn !== null) return fromUserTurn;
+  const text = String(modelTurnId || '').trim();
+  const match = text.match(new RegExp(`^model-turn:${escapeRegExp(session.sessionId)}:user:(\\d+)(?::|$)`, 'i'));
+  if (!match) return null;
+  const round = Number.parseInt(match[1], 10);
+  return Number.isFinite(round) && round > 0 ? round : null;
+};
+
+const resolveModelRoundFromModelTurnId = (
+  session: ChatRuntimeSessionProjection,
+  modelTurnId: string
+): number | null => {
+  const text = String(modelTurnId || '').trim();
+  const match = text.match(new RegExp(`^model-turn:${escapeRegExp(session.sessionId)}:user:\\d+:model:(\\d+)(?::|$)`, 'i'));
+  if (!match) return null;
+  const round = Number.parseInt(match[1], 10);
+  return Number.isFinite(round) && round > 0 ? round : null;
+};
+
+const areModelTurnsSameUserRound = (
+  session: ChatRuntimeSessionProjection,
+  leftModelTurnId: string,
+  leftUserTurnId: string,
+  rightModelTurnId: string,
+  rightUserTurnId: string
+): boolean => {
+  const leftRound = resolveSemanticUserRound(session, leftUserTurnId, leftModelTurnId);
+  const rightRound = resolveSemanticUserRound(session, rightUserTurnId, rightModelTurnId);
+  if (leftRound !== null && rightRound !== null) {
+    return leftRound === rightRound;
+  }
+  if (leftUserTurnId && rightUserTurnId && leftUserTurnId === rightUserTurnId) {
+    return true;
+  }
+  return Boolean(
+    (isWeakGeneratedUserTurnId(session, leftUserTurnId) || isWeakGeneratedUserTurnId(session, rightUserTurnId)) &&
+    (
+      leftModelTurnId === rightModelTurnId ||
+      shouldModelTurnIdsShareUserRound(session, leftModelTurnId, rightModelTurnId)
+    )
+  );
+};
+
+const shouldModelTurnIdsShareUserRound = (
+  session: ChatRuntimeSessionProjection,
+  leftModelTurnId: string,
+  rightModelTurnId: string
+): boolean => {
+  const leftRound = resolveSemanticUserRound(session, '', leftModelTurnId);
+  const rightRound = resolveSemanticUserRound(session, '', rightModelTurnId);
+  return leftRound !== null && leftRound === rightRound;
+};
+
+const isQueueOnlyModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeModelTurnProjection | null | undefined
+): boolean =>
+  Boolean(turn?.messageIds?.length) &&
+  (turn?.messageIds || []).every((messageId) => {
+    const message = session.messageById[messageId];
+    return !message || isQueueOnlyAssistantProjectionMessage(message);
+  });
+
+const isTransientMergeableModelTurn = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeModelTurnProjection | null | undefined,
+  modelTurnId: string,
+  userTurnId: string
+): boolean => {
+  if (!turn) {
+    return isWeakGeneratedUserTurnId(session, userTurnId) ||
+      isWeakGeneratedModelTurnId(session, modelTurnId, userTurnId);
+  }
+  if (isQueueOnlyModelTurn(session, turn)) return true;
+  if (turn.userTurnId.startsWith('queue-turn:') || modelTurnId.startsWith('queue:')) return true;
+  const weakModel = isWeakGeneratedModelTurnId(session, modelTurnId || turn.id, userTurnId || turn.userTurnId);
+  if (!weakModel) return false;
+  const modelRound = resolveModelRoundFromModelTurnId(session, modelTurnId || turn.id);
+  return modelRound === null;
+};
+
+const isQueueOnlyAssistantProjectionMessage = (
+  message: ChatRuntimeMessageProjection | null | undefined
+): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (String(message.content || '').trim() || String(message.reasoning || '').trim()) {
+    return false;
+  }
+  if (Array.isArray(message.subagents) && message.subagents.length > 0) {
+    return false;
+  }
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  if (items.length === 0) return false;
+  return items.every((item) => {
+    if (!isPlainRecord(item)) return false;
+    const eventType = normalizeText(
+      item.eventType ?? item.event_type ?? item.event ?? item.sourceEventType ?? item.source_event_type
+    );
+    return QUEUE_WORKFLOW_EVENT_TYPES.has(eventType);
+  });
+};
+
+const mergeQueueOnlySiblingModelTurnsInto = (
+  session: ChatRuntimeSessionProjection,
+  targetTurn: ChatRuntimeModelTurnProjection,
+  incomingModelTurnId: string,
+  incomingUserTurnId: string,
+  seq: number | null = null
+): void => {
+  session.modelTurns.slice().forEach((turnId) => {
+    if (turnId === targetTurn.id) return;
+    const sibling = session.modelTurnById[turnId];
+    if (!sibling || !isQueueOnlyModelTurn(session, sibling)) return;
+    if (
+      !areModelTurnsSameUserRound(
+        session,
+        sibling.id,
+        sibling.userTurnId,
+        incomingModelTurnId || targetTurn.id,
+        incomingUserTurnId || targetTurn.userTurnId
+      ) &&
+      !areModelTurnsSameUserRound(session, sibling.id, sibling.userTurnId, targetTurn.id, targetTurn.userTurnId)
+    ) {
+      return;
+    }
+    if (sibling.userTurnId !== targetTurn.userTurnId && isWeakGeneratedUserTurnId(session, sibling.userTurnId)) {
+      mergeUserTurnInto(session, sibling.userTurnId, targetTurn.userTurnId);
+    }
+    mergeModelTurnInto(session, sibling.id, targetTurn.id, seq);
+  });
+};
+
+const scoreModelTurnMergeTarget = (
+  session: ChatRuntimeSessionProjection,
+  turn: ChatRuntimeModelTurnProjection,
+  _seq: number | null = null
+): number => {
+  let score = 0;
+  if (resolveModelRoundFromModelTurnId(session, turn.id) !== null) score += 20;
+  if (!isWeakGeneratedUserTurnId(session, turn.userTurnId)) score += 8;
+  if (!isWeakGeneratedModelTurnId(session, turn.id, turn.userTurnId)) score += 6;
+  const messages = turn.messageIds
+    .map((messageId) => session.messageById[messageId])
+    .filter((message): message is ChatRuntimeMessageProjection => Boolean(message?.role === 'assistant'));
+  if (messages.some((message) => String(message.content || '').trim() || String(message.reasoning || '').trim())) {
+    score += 6;
+  }
+  if (messages.some((message) => message.status === 'final')) score += 5;
+  if (messages.some((message) => isActiveMessageStatus(message.status))) score += 3;
+  if (isQueueOnlyModelTurn(session, turn)) score -= 12;
+  if (turn.id.startsWith('queue:') || turn.userTurnId.startsWith('queue-turn:')) score -= 8;
+  return score;
+};
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const mergeModelTurnInto = (
   session: ChatRuntimeSessionProjection,
@@ -3234,18 +3755,11 @@ const mergeAssistantProjectionRecords = (
   const existing = Array.isArray(message[field]) ? message[field] || [] : [];
   const incoming = value.filter(isPlainRecord).map((item) => ({ ...item }));
   if (incoming.length === 0) return;
-  const merged = new Map<string, ChatRuntimeWorkflowItemProjection | ChatRuntimeSubagentProjection>();
-  [...existing, ...incoming].forEach((item, index) => {
-    const key = resolveProjectionRecordIdentity(item, index);
-    const previous = merged.get(key);
-    if (!previous || normalizeProjectedCount(item.updatedSeq) >= normalizeProjectedCount(previous.updatedSeq)) {
-      merged.set(key, { ...item });
-    }
-  });
+  const merged = mergeProjectionRecordLists(existing, incoming);
   if (field === 'workflowItems') {
-    message.workflowItems = Array.from(merged.values()) as ChatRuntimeWorkflowItemProjection[];
+    message.workflowItems = merged as ChatRuntimeWorkflowItemProjection[];
   } else {
-    message.subagents = Array.from(merged.values()) as ChatRuntimeSubagentProjection[];
+    message.subagents = merged as ChatRuntimeSubagentProjection[];
   }
 };
 

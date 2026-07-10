@@ -579,6 +579,7 @@ export const elements = {
   monitorLogCleanupStatus: document.getElementById("monitorLogCleanupStatus"),
   metricWorkspaceUsage: document.getElementById("metricWorkspaceUsage"),
   metricServiceActive: document.getElementById("metricServiceActive"),
+  metricServiceQueued: document.getElementById("metricServiceQueued"),
   metricServiceHistory: document.getElementById("metricServiceHistory"),
   metricServiceTotal: document.getElementById("metricServiceTotal"),
   metricServiceAvg: document.getElementById("metricServiceAvg"),

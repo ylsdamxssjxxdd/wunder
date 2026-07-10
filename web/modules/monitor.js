@@ -1,5 +1,5 @@
 ﻿import { APP_CONFIG } from "../app.config.js?v=20260110-04";
-import { elements } from "./elements.js?v=20260215-01";
+import { elements } from "./elements.js?v=20260710-01";
 import { state } from "./state.js";
 import { appendLog } from "./log.js?v=20260108-02";
 import {
@@ -12,7 +12,7 @@ import {
 } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260710-01";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
@@ -52,10 +52,11 @@ const USER_DASHBOARD_TTL_MS = 60 * 1000;
 const DEFAULT_LOG_CLEANUP_HOURS = 24;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 // 线程状态环图配色与图例配置
-const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
+const STATUS_CHART_COLORS = ["#38bdf8", "#f59e0b", "#22c55e", "#fb7185", "#94a3b8"];
 const STATUS_CHART_EMPTY_COLOR = "#ffffff";
 const getStatusLegend = () => [
   t("monitor.status.active"),
+  t("monitor.status.queued"),
   t("monitor.status.finished"),
   t("monitor.status.failed"),
   t("monitor.status.cancelled"),
@@ -64,6 +65,7 @@ const STATUS_CHART_EMPTY_NAME = "__empty__";
 // 线程状态图例与后端状态字段映射，便于点击后过滤记录
 const getStatusLabelToKey = () => ({
   [t("monitor.status.active")]: "active",
+  [t("monitor.status.queued")]: "queued",
   [t("monitor.status.finished")]: "finished",
   [t("monitor.status.failed")]: "error",
   [t("monitor.status.cancelled")]: "cancelled",
@@ -244,6 +246,7 @@ const ensureMonitorState = () => {
   state.monitor.sessionStatusFilter = [
     "all",
     "active",
+    "queued",
     "history",
     "finished",
     "error",
@@ -1312,6 +1315,9 @@ const submitMonitorLogCleanup = async () => {
 const renderServiceMetrics = (service) => {
   if (!service) {
     elements.metricServiceActive.textContent = "-";
+    if (elements.metricServiceQueued) {
+      elements.metricServiceQueued.textContent = "-";
+    }
     elements.metricServiceHistory.textContent = "-";
     elements.metricServiceTotal.textContent = "-";
     if (elements.metricServiceTokenAvg) {
@@ -1327,6 +1333,9 @@ const renderServiceMetrics = (service) => {
     return;
   }
   elements.metricServiceActive.textContent = `${service.active_sessions ?? 0}`;
+  if (elements.metricServiceQueued) {
+    elements.metricServiceQueued.textContent = `${service.queued_sessions ?? 0}`;
+  }
   elements.metricServiceHistory.textContent = `${service.history_sessions ?? 0}`;
   elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   if (elements.metricServiceTokenAvg) {
@@ -1898,18 +1907,46 @@ const renderTokenTrendChart = () => {
   }
 };
 
+const ACTIVE_STATUSES = new Set(["running", "cancelling"]);
+const QUEUED_STATUSES = new Set(["queued", "waiting"]);
+const TERMINAL_STATUSES = new Set(["finished", "error", "cancelled"]);
+
+const normalizeSessionStatus = (status) =>
+  String(status || "")
+    .trim()
+    .toLowerCase();
+
+const statusMatches = (status, key) => {
+  const normalized = normalizeSessionStatus(status);
+  if (key === "active") {
+    return ACTIVE_STATUSES.has(normalized);
+  }
+  if (key === "queued") {
+    return QUEUED_STATUSES.has(normalized);
+  }
+  if (key === "history") {
+    return TERMINAL_STATUSES.has(normalized);
+  }
+  return normalized === key;
+};
+
 // 姹囨€荤嚎绋嬬姸鎬佸崰姣旓紝渚夸簬鍥捐〃灞曠ず
 const resolveStatusCounts = (sessions) => {
   const counts = {
     active: 0,
+    queued: 0,
     finished: 0,
     error: 0,
     cancelled: 0,
   };
   (sessions || []).forEach((session) => {
-    const status = session?.status;
-    if (ACTIVE_STATUSES.has(status)) {
+    const status = normalizeSessionStatus(session?.status);
+    if (statusMatches(status, "active")) {
       counts.active += 1;
+      return;
+    }
+    if (statusMatches(status, "queued")) {
+      counts.queued += 1;
       return;
     }
     if (status === "finished") {
@@ -1924,9 +1961,11 @@ const resolveStatusCounts = (sessions) => {
 };
 
 const buildStatusChartData = (counts) => {
-  const [activeLabel, finishedLabel, failedLabel, cancelledLabel] = getStatusLegend();
+  const [activeLabel, queuedLabel, finishedLabel, failedLabel, cancelledLabel] =
+    getStatusLegend();
   const raw = [
     { value: counts.active, name: activeLabel },
+    { value: counts.queued, name: queuedLabel },
     { value: counts.finished, name: finishedLabel },
     { value: counts.error, name: failedLabel },
     { value: counts.cancelled, name: cancelledLabel },
@@ -1976,6 +2015,7 @@ const renderServiceStatusChart = (service, sessions) => {
     ? resolveStatusCounts(sessions)
     : {
         active: Number(service?.active_sessions) || 0,
+        queued: Number(service?.queued_sessions) || 0,
         finished: Number(service?.finished_sessions) || 0,
         error: Number(service?.error_sessions) || 0,
         cancelled: Number(service?.cancelled_sessions) || 0,
@@ -2070,10 +2110,12 @@ const resizeMonitorCharts = () => {
 };
 
 const getSessionStatusLabel = (status) => {
-  const normalized = String(status || "");
+  const normalized = normalizeSessionStatus(status);
   const mapping = {
     running: t("monitor.sessionStatus.running"),
     cancelling: t("monitor.sessionStatus.cancelling"),
+    queued: t("monitor.sessionStatus.queued"),
+    waiting: t("monitor.sessionStatus.queued"),
     finished: t("monitor.sessionStatus.finished"),
     error: t("monitor.sessionStatus.error"),
     cancelled: t("monitor.sessionStatus.cancelled"),
@@ -2083,12 +2125,12 @@ const getSessionStatusLabel = (status) => {
 
 const buildStatusBadge = (status) => {
   const span = document.createElement("span");
-  span.className = `monitor-status ${status}`;
+  const normalized = normalizeSessionStatus(status);
+  const className = statusMatches(normalized, "queued") ? "queued" : normalized;
+  span.className = `monitor-status ${className}`;
   span.textContent = getSessionStatusLabel(status);
   return span;
 };
-
-const ACTIVE_STATUSES = new Set(["running", "cancelling"]);
 
 const sortSessionsByUpdate = (sessions) =>
   [...sessions].sort((a, b) => new Date(b.updated_time).getTime() - new Date(a.updated_time).getTime());
@@ -2106,7 +2148,7 @@ const normalizeMonitorSessionStatusFilter = (value) => {
     .trim()
     .toLowerCase();
   if (
-    ["all", "active", "history", "finished", "error", "cancelled"].includes(
+    ["all", "active", "queued", "history", "finished", "error", "cancelled"].includes(
       normalized
     )
   ) {
@@ -2157,15 +2199,18 @@ const filterSessionsByStatus = (sessions) => {
     return sessions;
   }
   if (filter === "active") {
-    return (sessions || []).filter((session) => ACTIVE_STATUSES.has(session?.status));
+    return (sessions || []).filter((session) => statusMatches(session?.status, "active"));
+  }
+  if (filter === "queued") {
+    return (sessions || []).filter((session) => statusMatches(session?.status, "queued"));
   }
   if (filter === "history") {
-    return (sessions || []).filter((session) => !ACTIVE_STATUSES.has(session?.status));
+    return (sessions || []).filter((session) => statusMatches(session?.status, "history"));
   }
   return (sessions || []).filter((session) => {
-    if (filter === "finished") return session?.status === "finished";
-    if (filter === "error") return session?.status === "error";
-    if (filter === "cancelled") return session?.status === "cancelled";
+    if (filter === "finished") return statusMatches(session?.status, "finished");
+    if (filter === "error") return statusMatches(session?.status, "error");
+    if (filter === "cancelled") return statusMatches(session?.status, "cancelled");
     return true;
   });
 };
@@ -2320,7 +2365,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     const stageCell = document.createElement("td");
     stageCell.textContent = session.stage || "-";
     const actionCell = document.createElement("td");
-    if (ACTIVE_STATUSES.has(session.status)) {
+    if (statusMatches(session.status, "active")) {
       const btn = document.createElement("button");
       btn.className = "danger";
       btn.textContent = t("monitor.actions.cancel");
@@ -2428,20 +2473,7 @@ const bindMonitorSessionFilters = () => {
 const resolveStatusKey = (label) => getStatusLabelToKey()[label] || "";
 
 const matchSessionByStatusKey = (session, key) => {
-  const status = session?.status;
-  if (key === "active") {
-    return ACTIVE_STATUSES.has(status);
-  }
-  if (key === "finished") {
-    return status === "finished";
-  }
-  if (key === "error") {
-    return status === "error";
-  }
-  if (key === "cancelled") {
-    return status === "cancelled";
-  }
-  return false;
+  return statusMatches(session?.status, key);
 };
 
 const renderMonitorStatusList = (sessions) => {

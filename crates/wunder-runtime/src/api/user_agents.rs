@@ -398,6 +398,7 @@ async fn list_running_agents(
     let active_records = state.monitor.load_records_by_user(
         &user_id,
         Some(&[
+            MonitorState::STATUS_QUEUED,
             MonitorState::STATUS_WAITING,
             MonitorState::STATUS_RUNNING,
             MonitorState::STATUS_CANCELLING,
@@ -428,6 +429,7 @@ async fn list_running_agents(
             .unwrap_or("")
             .trim();
         let runtime_state = match status {
+            MonitorState::STATUS_QUEUED => STATE_WAITING,
             MonitorState::STATUS_WAITING => STATE_WAITING,
             MonitorState::STATUS_CANCELLING => STATE_CANCELLING,
             MonitorState::STATUS_RUNNING => STATE_RUNNING,
