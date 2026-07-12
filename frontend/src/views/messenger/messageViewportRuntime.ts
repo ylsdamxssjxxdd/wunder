@@ -62,6 +62,7 @@ export const createMessageViewportRuntime = (
   options: MessageViewportRuntimeOptions
 ): MessageViewportRuntime => {
   let messageScrollFrame: number | null = null;
+  let messageScrollSettleHandle: number | null = null;
   let messageVirtualMeasureFrame: number | null = null;
   let messageViewportRefreshFrame: number | null = null;
   let messageDeferredMeasureHandle: number | null = null;
@@ -93,7 +94,7 @@ export const createMessageViewportRuntime = (
     }
   };
 
-  const syncMessageVirtualMetrics = () => {
+  const syncMessageVirtualMetrics = (duringScroll = false) => {
     const container = options.messageListRef.value;
     if (!container) {
       applyMessageVirtualMetrics(0, 0);
@@ -102,7 +103,15 @@ export const createMessageViewportRuntime = (
     if (options.showChatSettingsView.value) {
       return;
     }
-    applyMessageVirtualMetrics(container.scrollTop, container.clientHeight);
+    const nextScrollTop = container.scrollTop;
+    // The virtual window has overscan, so sub-row movement need not invalidate Vue's
+    // message tree. This avoids rebuilding the height prefix on every wheel tick.
+    const shouldUpdateScrollTop = !duringScroll ||
+      Math.abs(options.messageVirtualScrollTop.value - nextScrollTop) >= 48;
+    applyMessageVirtualMetrics(
+      shouldUpdateScrollTop ? nextScrollTop : options.messageVirtualScrollTop.value,
+      container.clientHeight
+    );
   };
 
   const pruneMessageVirtualHeightCache = () => {
@@ -416,6 +425,22 @@ export const createMessageViewportRuntime = (
     });
   };
 
+  const scheduleScrollSettleMeasure = () => {
+    if (typeof window === 'undefined' || !options.shouldVirtualizeMessages.value) return;
+    if (messageScrollSettleHandle !== null) {
+      window.clearTimeout(messageScrollSettleHandle);
+    }
+    // Reading row geometry during every scroll frame forces synchronous layout on older Chrome.
+    // ResizeObserver handles modern browsers; this is only a quiet-period fallback.
+    messageScrollSettleHandle = window.setTimeout(() => {
+      messageScrollSettleHandle = null;
+      syncMessageVirtualMetrics();
+      if (typeof ResizeObserver === 'undefined') {
+        scheduleMessageVirtualMeasure();
+      }
+    }, 120);
+  };
+
   const scheduleMessageViewportRefresh = (
     refreshOptions: {
       updateScrollState?: boolean;
@@ -488,10 +513,10 @@ export const createMessageViewportRuntime = (
     if (messageScrollFrame !== null) return;
     messageScrollFrame = window.requestAnimationFrame(() => {
       messageScrollFrame = null;
-      syncMessageVirtualMetrics();
+      syncMessageVirtualMetrics(true);
       updateMessageScrollState();
       rememberCurrentScroll();
-      scheduleMessageVirtualMeasure();
+      scheduleScrollSettleMeasure();
       void maybeLoadOlderHistory();
     });
   };
@@ -610,6 +635,10 @@ export const createMessageViewportRuntime = (
     if (typeof window !== 'undefined' && messageVirtualMeasureFrame !== null) {
       window.cancelAnimationFrame(messageVirtualMeasureFrame);
       messageVirtualMeasureFrame = null;
+    }
+    if (typeof window !== 'undefined' && messageScrollSettleHandle !== null) {
+      window.clearTimeout(messageScrollSettleHandle);
+      messageScrollSettleHandle = null;
     }
     if (typeof window !== 'undefined' && messageViewportRefreshFrame !== null) {
       window.cancelAnimationFrame(messageViewportRefreshFrame);

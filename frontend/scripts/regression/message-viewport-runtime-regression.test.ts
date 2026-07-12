@@ -138,6 +138,69 @@ test('message viewport runtime remeasures visible message rows on resize observe
   }
 });
 
+test('message viewport runtime does not synchronously measure rows while scrolling', () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+  const frameQueue: FrameRequestCallback[] = [];
+  try {
+    const messageNode = createFakeMessageNode('assistant-scroll', 164);
+    let measureCalls = 0;
+    const container = {
+      scrollTop: 0,
+      clientHeight: 600,
+      scrollHeight: 3200,
+      querySelectorAll: () => {
+        measureCalls += 1;
+        return [messageNode];
+      },
+      getBoundingClientRect: () => ({ top: 0, height: 600 })
+    } as unknown as HTMLElement;
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frameQueue.push(callback);
+        return frameQueue.length;
+      },
+      cancelAnimationFrame: () => {},
+      setTimeout: () => 1,
+      clearTimeout: () => {}
+    };
+    (globalThis as Record<string, unknown>).ResizeObserver = FakeResizeObserver;
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container),
+      showChatSettingsView: ref(false),
+      autoStickToBottom: ref(true),
+      showScrollTopButton: ref(false),
+      showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true),
+      isWorldConversationActive: ref(false),
+      activeConversationKey: ref('agent:scroll'),
+      shouldVirtualizeMessages: ref(true),
+      agentRenderableMessages: ref([{ key: 'assistant-scroll' }]),
+      worldRenderableMessages: ref([]),
+      messageVirtualHeightCache: new Map(),
+      messageVirtualLayoutVersion: ref(0),
+      messageVirtualScrollTop: ref(0),
+      messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0,
+      resolveVirtualMessageHeight: () => 118
+    });
+
+    for (let index = 1; index <= 12; index += 1) {
+      container.scrollTop = index * 72;
+      runtime.handleMessageListScroll();
+      frameQueue.shift()?.(performance.now());
+    }
+
+    assert.equal(measureCalls, 0);
+    runtime.dispose();
+  } finally {
+    if (originalWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+    else (globalThis as Record<string, unknown>).window = originalWindow;
+    if (originalResizeObserver === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver;
+    else (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+  }
+});
+
 test('message viewport runtime restores remembered conversation scroll after remount', async () => {
   const messageVirtualHeightCache = new Map<string, number>();
   const activeConversationKey = ref('agent:session-a');

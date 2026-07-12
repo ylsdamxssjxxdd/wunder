@@ -1823,6 +1823,13 @@ button.messenger-chat-header-model {
   gap: inherit;
 }
 
+/* Older Chrome repaints large transparent layers while a scroll container moves. */
+@media (prefers-reduced-motion: reduce) {
+  .messenger-chat-body.is-messages .messenger-message-stat.is-status.is-live .messenger-message-stat-icon {
+    animation: none;
+  }
+}
+
 .messenger-chat-body.is-settings {
   overflow-y: auto;
   overflow-x: hidden;

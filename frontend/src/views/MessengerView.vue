@@ -421,7 +421,7 @@
           'is-agent': resolvedMessageConversationKind === 'agent',
           'is-world': resolvedMessageConversationKind === 'world'
         }"
-        @scroll="handleMessageListScroll"
+        @scroll.passive="handleMessageListScroll"
         @click="handleMessageContentClick"
       >
         <template v-if="showHelperAppsWorkspace">
