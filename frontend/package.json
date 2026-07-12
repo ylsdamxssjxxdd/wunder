@@ -58,6 +58,7 @@
     "test:e2e:chat-compaction": "playwright test tests/e2e/chat-compaction-harness.spec.ts",
     "test:e2e:chat-bubble-stress": "playwright test tests/e2e/chat-bubble-stress-harness.spec.ts",
     "test:e2e:messenger-heavy-history": "playwright test tests/e2e/messenger-heavy-history-harness.spec.ts",
+    "test:e2e:messenger-view-performance": "playwright test tests/e2e/messenger-view-performance-harness.spec.ts",
     "test:e2e:messenger-send-guard": "playwright test tests/e2e/messenger-send-guard-harness.spec.ts",
     "test:e2e:messenger-return-resume": "playwright test tests/e2e/messenger-return-resume-harness.spec.ts",
     "test:e2e:messenger-stability": "npm run test:e2e:messenger-send-guard && npm run test:e2e:messenger-return-resume",

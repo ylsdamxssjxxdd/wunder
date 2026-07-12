@@ -329,7 +329,7 @@ export const chatCacheActions = {
         });
         try {
           [sessionRes, eventsPayload] = await Promise.all([
-            getSessionWithParams(targetId, { limit: detailLimit }),
+            getSessionWithParams(targetId, { limit: detailLimit, summary: true }),
             loadSessionEventsSnapshot(targetId, {
               limit: detailLimit,
               minLastEventId: knownEventFloor

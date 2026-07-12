@@ -2274,6 +2274,25 @@ button.messenger-chat-header-model {
   padding-right: 12px;
 }
 
+.message-markdown-body-expand {
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.28);
+  border-radius: 6px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.message-markdown-body-expand:hover,
+.message-markdown-body-expand:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.5);
+  background: var(--ui-accent-soft-4);
+}
+
 .messenger-message.mine .messenger-message-bubble {
   background: rgba(var(--ui-accent-rgb), 0.12);
   border-color: rgba(var(--ui-accent-rgb), 0.3);

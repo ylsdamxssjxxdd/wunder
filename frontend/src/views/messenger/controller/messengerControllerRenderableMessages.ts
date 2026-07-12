@@ -862,11 +862,24 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
   });
 
   ctx.shouldVirtualizeMessages = computed(() => {
+      const hasExpensiveRenderableMessage = (items: Array<{ message?: Record<string, unknown> }>): boolean =>
+          items.some((item) => {
+              const message = item?.message || {};
+              const content = String(message.content || '');
+              const reasoning = String(message.reasoning || '');
+              return content.length > 12000 ||
+                  reasoning.length > 4000 ||
+                  (Array.isArray(message.workflowItems) && message.workflowItems.length > 0) ||
+                  (Array.isArray(message.subagents) && message.subagents.length > 0) ||
+                  (Array.isArray(message.attachments) && message.attachments.length > 0);
+          });
       if (ctx.isAgentConversationActive.value) {
-          return ctx.agentRenderableMessages.value.length > 12;
+          const items = ctx.agentRenderableMessages.value;
+          return items.length > 12 || (items.length > 4 && hasExpensiveRenderableMessage(items));
       }
       if (ctx.retainedMessageRenderKind?.value === 'world' || ctx.isWorldConversationActive.value) {
-          return ctx.worldRenderableMessages.value.length > 12;
+          const items = ctx.worldRenderableMessages.value;
+          return items.length > 12 || (items.length > 4 && hasExpensiveRenderableMessage(items));
       }
       return false;
   });

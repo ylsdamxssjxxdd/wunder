@@ -6,6 +6,7 @@ import type { ApiPayload, QueryParams } from './types';
 type RequestConfig = {
   headers?: Record<string, string>;
   responseType?: 'blob' | 'json' | 'text';
+  signal?: AbortSignal;
   onUploadProgress?: (event: AxiosProgressEvent) => void;
   onDownloadProgress?: (event: AxiosProgressEvent) => void;
 };

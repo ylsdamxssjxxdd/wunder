@@ -13,6 +13,15 @@
     class="markdown-body message-markdown-body"
     v-html="visibleHtml"
   ></div>
+  <button
+    v-if="isContentTruncated"
+    class="message-markdown-body-expand"
+    type="button"
+    :disabled="detailLoading"
+    @click="expandLongContent"
+  >
+    {{ t('common.expand') }}
+  </button>
 </template>
 
 <script setup lang="ts">
@@ -32,6 +41,7 @@ import type {
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
+import { getSessionHistoryMessage } from '@/api/chat';
 
 type MessageRecord = Record<string, unknown>;
 
@@ -48,6 +58,8 @@ const props = withDefaults(defineProps<{
   throttleMs?: number;
   resolveWorkspacePath?: (rawPath: string, context?: string) => string;
   workspacePathContext?: string;
+  historyId?: number | string;
+  contentTruncated?: boolean;
 }>(), {
   message: null,
   runtimeMessageId: '',
@@ -58,7 +70,9 @@ const props = withDefaults(defineProps<{
   streaming: false,
   throttleMs: 120,
   resolveWorkspacePath: undefined,
-  workspacePathContext: ''
+  workspacePathContext: '',
+  historyId: '',
+  contentTruncated: false
 });
 
 const emit = defineEmits<{
@@ -69,21 +83,45 @@ const emit = defineEmits<{
     needsHydration?: boolean;
     lightweight?: boolean;
   }): void;
+  (event: 'history-message-hydrated', detail: {
+    content: string;
+    reasoning?: string;
+    attachments?: unknown;
+    questionPanel?: unknown;
+    feedback?: unknown;
+    workflowItems?: unknown;
+    subagents?: unknown;
+  }): void;
 }>();
 
 type RenderCacheEntry = {
   source: string;
   html: string;
   updatedAt: number;
+  bytes: number;
+};
+
+type HydratedHistoryContent = {
+  content: string;
+  bytes: number;
 };
 
 const MARKDOWN_BODY_CACHE_LIMIT = 240;
+const MARKDOWN_BODY_CACHE_MAX_BYTES = 12 * 1024 * 1024;
+const HYDRATED_HISTORY_CONTENT_CACHE_LIMIT = 64;
+const HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 const streamingMarkdownCache = new Map<string, RenderCacheEntry>();
+const hydratedHistoryContentCache = new Map<string, HydratedHistoryContent>();
+let streamingMarkdownCacheBytes = 0;
+let hydratedHistoryContentCacheBytes = 0;
 const chatStore = useChatStore();
 
 const visibleHtml = ref('');
 const visiblePlainText = ref('');
 const plainTextRef = ref<HTMLElement | null>(null);
+const expandedLongContent = ref(false);
+const hydratedContent = ref<string | null>(null);
+const detailLoading = ref(false);
 let renderTimer: number | null = null;
 let plainTextLayoutTimer: number | null = null;
 let plainTextFlushTimer: number | null = null;
@@ -93,12 +131,14 @@ let pendingPlainText = '';
 let pendingPlainTextScheduledAt = 0;
 let lastPlainTextLayoutAt = 0;
 let lastPlainTextFlushAt = 0;
+let historyDetailAbortController: AbortController | null = null;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
 const STREAM_TEXT_FLUSH_MIN_MS = 32;
 const LIVE_STREAM_TEXT_POLL_MS = 64;
 const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
 const STREAMING_TEXT_PREVIEW_MAX_CHARS = 60000;
+const HISTORY_MARKDOWN_INITIAL_CHARS = 24000;
 let lastStreamRenderTraceAt = 0;
 let lastStreamRenderTraceSignature = '';
 
@@ -206,11 +246,25 @@ const displayMessage = computed<MessageRecord>(() => {
 const normalizedContent = computed(() => {
   const _contentVersion = runtimeContentVersion.value;
   const projected = resolveRuntimeProjectedMessage();
-  return props.assistantDisplay
+  const source = props.assistantDisplay
     ? buildAssistantDisplayContent(displayMessage.value, t)
     : String(projected?.content ?? props.content ?? '');
+  return hydratedContent.value ?? source;
 });
 const normalizedCacheKey = computed(() => String(props.cacheKey || '').trim());
+const isContentTruncated = computed(() =>
+  props.streaming !== true &&
+  !expandedLongContent.value &&
+  hydratedContent.value === null &&
+  (props.contentTruncated === true || normalizedContent.value.length > HISTORY_MARKDOWN_INITIAL_CHARS)
+);
+const renderContent = computed(() => {
+  const source = normalizedContent.value;
+  if (!isContentTruncated.value) return source;
+  const limit = Math.min(HISTORY_MARKDOWN_INITIAL_CHARS, source.length);
+  const breakAt = source.lastIndexOf('\n', limit);
+  return source.slice(0, breakAt > limit / 2 ? breakAt : limit);
+});
 const shouldThrottle = computed(() => props.streaming === true && Number(props.throttleMs || 0) > 0);
 const workspacePathResolver = computed(() => {
   if (typeof props.resolveWorkspacePath !== 'function') return undefined;
@@ -219,10 +273,68 @@ const workspacePathResolver = computed(() => {
 });
 
 const trimStreamingMarkdownCache = () => {
-  while (streamingMarkdownCache.size > MARKDOWN_BODY_CACHE_LIMIT) {
-    const oldestKey = streamingMarkdownCache.keys().next().value;
+  while (
+    streamingMarkdownCache.size > MARKDOWN_BODY_CACHE_LIMIT ||
+    streamingMarkdownCacheBytes > MARKDOWN_BODY_CACHE_MAX_BYTES
+  ) {
+    const oldestKey = streamingMarkdownCache.keys().next().value as string | undefined;
     if (!oldestKey) break;
+    const oldest = streamingMarkdownCache.get(oldestKey);
+    if (oldest) streamingMarkdownCacheBytes -= oldest.bytes;
     streamingMarkdownCache.delete(oldestKey);
+  }
+};
+
+const deleteMarkdownCacheEntry = (key: string) => {
+  const cached = streamingMarkdownCache.get(key);
+  if (cached) streamingMarkdownCacheBytes -= cached.bytes;
+  streamingMarkdownCache.delete(key);
+};
+
+const readMarkdownCacheEntry = (key: string): RenderCacheEntry | null => {
+  const cached = streamingMarkdownCache.get(key);
+  if (!cached) return null;
+  // Refresh the LRU order without duplicating the stored HTML string.
+  streamingMarkdownCache.delete(key);
+  streamingMarkdownCache.set(key, cached);
+  return cached;
+};
+
+const writeMarkdownCacheEntry = (key: string, source: string, html: string) => {
+  deleteMarkdownCacheEntry(key);
+  streamingMarkdownCache.set(key, {
+    source,
+    html,
+    updatedAt: Date.now(),
+    bytes: source.length * 2 + html.length * 2
+  });
+  streamingMarkdownCacheBytes += source.length * 2 + html.length * 2;
+  trimStreamingMarkdownCache();
+};
+
+const readHydratedHistoryContent = (key: string): string | null => {
+  const cached = hydratedHistoryContentCache.get(key);
+  if (!cached) return null;
+  hydratedHistoryContentCache.delete(key);
+  hydratedHistoryContentCache.set(key, cached);
+  return cached.content;
+};
+
+const writeHydratedHistoryContent = (key: string, content: string) => {
+  const previous = hydratedHistoryContentCache.get(key);
+  if (previous) hydratedHistoryContentCacheBytes -= previous.bytes;
+  const entry = { content, bytes: content.length * 2 };
+  hydratedHistoryContentCache.set(key, entry);
+  hydratedHistoryContentCacheBytes += entry.bytes;
+  while (
+    hydratedHistoryContentCache.size > HYDRATED_HISTORY_CONTENT_CACHE_LIMIT ||
+    hydratedHistoryContentCacheBytes > HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES
+  ) {
+    const oldestKey = hydratedHistoryContentCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    const oldest = hydratedHistoryContentCache.get(oldestKey);
+    if (oldest) hydratedHistoryContentCacheBytes -= oldest.bytes;
+    hydratedHistoryContentCache.delete(oldestKey);
   }
 };
 
@@ -344,7 +456,7 @@ const buildRenderedPayload = (
 });
 
 const emitPlainTextLayout = (lightweight: boolean) => {
-  const source = normalizedContent.value;
+  const source = renderContent.value;
   emit('rendered', {
     cacheKey: normalizedCacheKey.value,
     streaming: props.streaming,
@@ -423,7 +535,7 @@ const renderNow = () => {
   if (!props.streaming) {
     clearPlainTextLayoutTimer();
   }
-  const source = normalizedContent.value;
+  const source = renderContent.value;
   const cacheKey = normalizedCacheKey.value;
   const plainTextRender = usePlainTextRender.value;
   const streamingTextPreview = isStreamingTextPreview.value;
@@ -437,7 +549,7 @@ const renderNow = () => {
   if (!source) {
     updateVisiblePlainText('', true);
     visibleHtml.value = '';
-    if (cacheKey) streamingMarkdownCache.delete(cacheKey);
+    if (cacheKey) deleteMarkdownCacheEntry(cacheKey);
     emit('rendered', buildRenderedPayload(source));
     return;
   }
@@ -450,7 +562,7 @@ const renderNow = () => {
     return;
   }
   clearPlainTextLayoutTimer();
-  const cached = cacheKey ? streamingMarkdownCache.get(cacheKey) : null;
+  const cached = cacheKey ? readMarkdownCacheEntry(cacheKey) : null;
   if (cached?.source === source) {
     visibleHtml.value = cached.html;
     emit('rendered', buildRenderedPayload(source, cached.html));
@@ -477,12 +589,7 @@ const renderNow = () => {
   }
   visibleHtml.value = html;
   if (cacheKey) {
-    streamingMarkdownCache.set(cacheKey, {
-      source,
-      html,
-      updatedAt: Date.now()
-    });
-    trimStreamingMarkdownCache();
+    writeMarkdownCacheEntry(cacheKey, source, html);
   }
   emit('rendered', buildRenderedPayload(source, html));
 };
@@ -514,7 +621,7 @@ const traceStreamingRenderSource = (source: string, plainStreaming: boolean) => 
 };
 
 const scheduleRender = () => {
-  const source = normalizedContent.value;
+  const source = renderContent.value;
   const plainTextRender = usePlainTextRender.value;
   const streamingTextPreview = isStreamingTextPreview.value;
   traceStreamingRenderSource(source, plainTextRender);
@@ -529,7 +636,7 @@ const scheduleRender = () => {
     return;
   }
   const cacheKey = normalizedCacheKey.value;
-  const cached = cacheKey ? streamingMarkdownCache.get(cacheKey) : null;
+  const cached = cacheKey ? readMarkdownCacheEntry(cacheKey) : null;
   const now = Date.now();
   if (cached?.source === source) {
     visibleHtml.value = cached.html;
@@ -559,7 +666,7 @@ const scheduleRender = () => {
 watch(
   () => [
     normalizedCacheKey.value,
-    normalizedContent.value,
+    renderContent.value,
     props.streaming,
     props.throttleMs,
     props.resolveWorkspacePath,
@@ -570,6 +677,48 @@ watch(
   () => scheduleRender(),
   { immediate: true }
 );
+
+watch(normalizedCacheKey, () => {
+  expandedLongContent.value = false;
+  hydratedContent.value = readHydratedHistoryContent(normalizedCacheKey.value);
+}, { immediate: true });
+
+const expandLongContent = async () => {
+  if (detailLoading.value) return;
+  const sessionId = String(props.sessionId || '').trim();
+  const historyId = String(props.historyId || '').trim();
+  if (!sessionId || !historyId || props.contentTruncated !== true) {
+    expandedLongContent.value = true;
+    return;
+  }
+  detailLoading.value = true;
+  historyDetailAbortController?.abort();
+  const controller = new AbortController();
+  historyDetailAbortController = controller;
+  try {
+    const response = await getSessionHistoryMessage(sessionId, historyId, { signal: controller.signal });
+    const message = response?.data?.data?.message as MessageRecord | undefined;
+    if (message && typeof message.content === 'string') {
+      hydratedContent.value = message.content;
+      writeHydratedHistoryContent(normalizedCacheKey.value, message.content);
+      emit('history-message-hydrated', {
+        content: message.content,
+        ...(typeof message.reasoning === 'string' ? { reasoning: message.reasoning } : {}),
+        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(message.questionPanel !== undefined ? { questionPanel: message.questionPanel } : {}),
+        ...(message.feedback !== undefined ? { feedback: message.feedback } : {}),
+        ...(message.workflowItems !== undefined ? { workflowItems: message.workflowItems } : {}),
+        ...(message.subagents !== undefined ? { subagents: message.subagents } : {})
+      });
+    }
+    expandedLongContent.value = true;
+  } finally {
+    if (historyDetailAbortController === controller) {
+      historyDetailAbortController = null;
+      detailLoading.value = false;
+    }
+  }
+};
 
 watch(
   () => [
@@ -598,5 +747,7 @@ onBeforeUnmount(() => {
   clearPlainTextLayoutTimer();
   clearPlainTextFlushTimer();
   stopLivePlainTextPoll();
+  historyDetailAbortController?.abort();
+  historyDetailAbortController = null;
 });
 </script>

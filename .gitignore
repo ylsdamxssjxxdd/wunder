@@ -82,3 +82,4 @@ config/org_units.json
 exports/
 形象/
 config/ppt_templates
+frontend/test-results

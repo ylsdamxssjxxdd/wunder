@@ -46,7 +46,9 @@ const RENDER_PROJECTION_VALUES = new Set(['projection-debug', 'force-projection'
 const RENDER_SEARCH_KEYS = ['chat_runtime_render', 'chatRuntimeRender'];
 const RENDER_SHADOW_SEARCH_KEYS = ['chat_runtime_render_shadow', 'chatRuntimeRenderShadow'];
 const MATERIALIZED_MESSAGE_CACHE_SESSION_LIMIT = 64;
-const MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT = 5000;
+// A long-running thread can contain thousands of historical messages. Materialized
+// view objects are disposable: retain only the current hot window's worth of identity.
+const MATERIALIZED_MESSAGE_CACHE_ENTRY_LIMIT = 320;
 const ACTIVE_PROJECTED_WORKFLOW_STATUSES = new Set([
   'loading',
   'pending',

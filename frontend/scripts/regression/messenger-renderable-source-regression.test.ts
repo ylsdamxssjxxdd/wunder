@@ -64,6 +64,9 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(!workflowComponent.includes('if (liveKey && !nextUserCollapsed.has(liveKey))'));
   assert.ok(workflowComponent.includes('if (validKeys.has(key)) nextExpanded.add(key);'));
   assert.ok(workflowComponent.includes('if (!workflowOpen.value) return;'));
+  assert.ok(workflowComponent.includes('const WORKFLOW_EXPANDED_ENTRY_LIMIT = 3;'));
+  assert.ok(workflowComponent.includes('const limitExpandedKeys = (keys: Iterable<string>): Set<string> => {'));
+  assert.ok(workflowComponent.includes('v-if="expandedKeys.has(entry.key)"'));
 
   const routingPreferences = readSource('src/views/messenger/controller/messengerControllerMessageRoutingPreferences.ts');
   assert.ok(routingPreferences.includes('ctx.resolveMessageWorkflowStateKey ='));
@@ -110,6 +113,18 @@ test('messenger interaction blocker leaves the right workspace dock interactive'
   assert.ok(blockerSource.includes('right: var(--messenger-right-dock-width);'));
   assert.ok(blockerSource.includes('.messenger-view.messenger-view--without-right .messenger-action-blocker'));
   assert.ok(blockerSource.includes('.messenger-view.messenger-view--right-collapsed .messenger-action-blocker'));
+});
+
+test('workspace resource hydration bounds inactive object URL cache entries', () => {
+  const hydration = readSource('src/views/messenger/controller/messengerControllerWorkspaceResourceHydration.ts');
+
+  assert.ok(hydration.includes('const WORKSPACE_RESOURCE_CACHE_LIMIT = 48;'));
+  assert.ok(hydration.includes('const collectActiveWorkspaceObjectUrls = (): Set<string> => {'));
+  assert.ok(hydration.includes("document.querySelectorAll<HTMLImageElement>('img[src^=\"blob:\"]')"));
+  assert.ok(hydration.includes('const pruneWorkspaceResourceCache = () => {'));
+  assert.ok(hydration.includes('activeUrls.has(objectUrl) || entry?.promise'));
+  assert.ok(hydration.includes('pruneWorkspaceResourceCache();'));
+  assert.ok(hydration.includes('abortWorkspaceResourceRequests();'));
 });
 
 test('streaming projection changes only refresh the latest message layout', () => {
@@ -342,6 +357,21 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(markdownBody.includes('props.streaming === true'));
   assert.ok(markdownBody.includes('? isStreamingTextPreview.value'));
   assert.ok(markdownBody.includes('STREAM_TEXT_FLUSH_MIN_MS'));
+  assert.ok(markdownBody.includes('const HISTORY_MARKDOWN_INITIAL_CHARS = 24000;'));
+  assert.ok(markdownBody.includes('const MARKDOWN_BODY_CACHE_MAX_BYTES = 12 * 1024 * 1024;'));
+  assert.ok(markdownBody.includes('const writeMarkdownCacheEntry ='));
+  assert.ok(markdownBody.includes('v-if="isContentTruncated"'));
+  assert.ok(markdownBody.includes('getSessionHistoryMessage'));
+  assert.ok(markdownBody.includes('HYDRATED_HISTORY_CONTENT_CACHE_LIMIT = 64'));
+  assert.ok(markdownBody.includes('HYDRATED_HISTORY_CONTENT_CACHE_MAX_BYTES = 8 * 1024 * 1024'));
+  assert.ok(markdownBody.includes("emit('history-message-hydrated'"));
+  assert.ok(messengerView.includes('item.message.workflowItems_truncated === true'));
+  assert.ok(messengerView.includes('item.message.subagents_truncated === true'));
+  assert.ok(messengerView.includes('@history-message-hydrated="Object.assign(item.message, $event, {'));
+  assert.ok(messengerView.includes('content_truncated: false,'));
+  assert.ok(messengerView.includes('reasoning_truncated: false,'));
+  assert.ok(messengerView.includes('workflowItems_truncated: false,'));
+  assert.ok(messengerView.includes('subagents_truncated: false'));
   assert.ok(renderableController.includes('ctx.shouldMountAgentMessageBubble ='));
   assert.ok(renderableController.includes('ctx.shouldMountAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.shouldShowAgentMessageBubble(message);'));
   assert.ok(!renderableController.includes("runtimeStatus === 'tooling'"));

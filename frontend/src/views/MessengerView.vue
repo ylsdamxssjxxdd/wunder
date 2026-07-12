@@ -2,6 +2,7 @@
   <div
     ref="messengerRootRef"
     class="messenger-view"
+    data-testid="messenger-view"
     :class="{
       'messenger-view--embedded-chat': isEmbeddedChatRoute,
       'messenger-view--without-right': !showRightDock,
@@ -412,6 +413,7 @@
       <div
         ref="messageListRef"
         class="messenger-chat-body"
+        data-testid="messenger-message-list"
         :class="{
           'is-settings': showChatSettingsView && !showHelperAppsWorkspace,
           'is-messages': !showChatSettingsView && !showHelperAppsWorkspace,
@@ -1099,13 +1101,28 @@
                   <span>{{ item.message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
                   <span>{{ formatTime(item.message.created_at) }}</span>
                   <MessageThinking
-                    v-if="item.message.role === 'assistant'"
+                    v-if="
+                      item.message.role === 'assistant' &&
+                        (Boolean(item.message.reasoningStreaming) || String(item.message.reasoning || '').trim())
+                    "
                     :content="String(item.message.reasoning || '')"
                     :streaming="Boolean(item.message.reasoningStreaming)"
                   />
                 </div>
-                <div v-if="item.message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
+                <div
+                  v-if="
+                    item.message.role === 'assistant' &&
+                      (Boolean(item.message.workflowStreaming) ||
+                        (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0) ||
+                        (Array.isArray(item.message.subagents) && item.message.subagents.length > 0))
+                  "
+                  class="messenger-workflow-scope chat-shell"
+                >
                   <MessageToolWorkflow
+                    v-if="
+                      Boolean(item.message.workflowStreaming) ||
+                        (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
+                    "
                     :key="`workflow:${item.key}`"
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
@@ -1122,6 +1139,7 @@
                     @layout-change="handleMessageWorkflowLayoutChange(item.key)"
                   />
                   <MessageSubagentPanel
+                    v-if="Array.isArray(item.message.subagents) && item.message.subagents.length > 0"
                     :session-id="chatStore.activeSessionId"
                     :items="Array.isArray(item.message.subagents) ? item.message.subagents : []"
                   />
@@ -1213,6 +1231,13 @@
                     :runtime-user-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.userTurnId || '')"
                     :runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || '')"
                     :session-id="String(chatStore.activeSessionId || '')"
+                    :history-id="item.message.history_id"
+                    :content-truncated="
+                      item.message.content_truncated === true ||
+                        item.message.reasoning_truncated === true ||
+                        item.message.workflowItems_truncated === true ||
+                        item.message.subagents_truncated === true
+                    "
                     :assistant-display="true"
                     :streaming="
                       Boolean(
@@ -1224,6 +1249,12 @@
                     :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
                     :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
                     @rendered="handleMessageMarkdownRendered(item.key, $event)"
+                    @history-message-hydrated="Object.assign(item.message, $event, {
+                      content_truncated: false,
+                      reasoning_truncated: false,
+                      workflowItems_truncated: false,
+                      subagents_truncated: false
+                    })"
                   />
                   <div
                     v-if="item.message.role === 'user' && hasUserImageAttachments(item.message)"
@@ -1269,7 +1300,10 @@
                   </div>
                 </div>
                 <MessageKnowledgeCitation
-                  v-if="item.message.role === 'assistant'"
+                  v-if="
+                    item.message.role === 'assistant' &&
+                      Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0
+                  "
                   :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                 />
                 <div

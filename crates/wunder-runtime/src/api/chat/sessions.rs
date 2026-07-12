@@ -28,6 +28,8 @@ use uuid::Uuid;
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const SESSION_DETAIL_MAX_LIMIT: i64 = 500;
 const MAX_VISIBLE_HISTORY_PAGE_FETCHES: usize = 6;
+const TRANSCRIPT_SUMMARY_CONTENT_LIMIT: usize = 6_000;
+const TRANSCRIPT_SUMMARY_REASONING_LIMIT: usize = 1_500;
 
 struct RawHistoryPage {
     history: Vec<Value>,
@@ -84,6 +86,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             "/wunder/chat/sessions/{session_id}/messages/{history_id}/feedback",
             post(submit_message_feedback),
         )
+        .route(
+            "/wunder/chat/sessions/{session_id}/messages/{history_id}",
+            get(get_session_message),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +127,8 @@ struct CreateSessionRequest {
 struct SessionDetailQuery {
     #[serde(default)]
     limit: Option<i64>,
+    #[serde(default)]
+    summary: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +137,8 @@ struct HistoryPageQuery {
     before_id: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
+    #[serde(default)]
+    summary: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -421,6 +431,11 @@ async fn get_session(
             item
         })
         .collect::<Vec<_>>();
+    let transcript = if query.summary {
+        summarize_transcript_messages(transcript)
+    } else {
+        transcript
+    };
 
     let config = state.config_store.get().await;
     let runtime = resolve_session_model_runtime(&config, agent_record.as_ref());
@@ -465,6 +480,49 @@ fn normalize_session_detail_limit(raw: Option<i64>, fallback: i64) -> i64 {
     } else {
         value.min(SESSION_DETAIL_MAX_LIMIT)
     }
+}
+
+fn summarize_transcript_messages(transcript: Vec<Value>) -> Vec<Value> {
+    transcript
+        .into_iter()
+        .map(summarize_transcript_message)
+        .collect()
+}
+
+fn summarize_transcript_message(mut message: Value) -> Value {
+    let Some(map) = message.as_object_mut() else {
+        return message;
+    };
+    summarize_transcript_text_field(map, "content", TRANSCRIPT_SUMMARY_CONTENT_LIMIT);
+    summarize_transcript_text_field(map, "reasoning", TRANSCRIPT_SUMMARY_REASONING_LIMIT);
+    // Workflow and subagent details are hydrated only for an explicitly expanded message.
+    for key in ["workflowItems", "subagents"] {
+        if let Some(Value::Array(items)) = map.get(key) {
+            if !items.is_empty() {
+                map.insert(format!("{}_truncated", key), Value::Bool(true));
+                map.remove(key);
+            }
+        }
+    }
+    message
+}
+
+fn summarize_transcript_text_field(
+    map: &mut serde_json::Map<String, Value>,
+    key: &str,
+    limit: usize,
+) {
+    let Some(text) = map.get(key).and_then(Value::as_str) else {
+        return;
+    };
+    let length = text.chars().count();
+    if length <= limit {
+        return;
+    }
+    let prefix = text.chars().take(limit).collect::<String>();
+    map.insert(key.to_string(), Value::String(prefix));
+    map.insert(format!("{key}_truncated"), Value::Bool(true));
+    map.insert(format!("{key}_length"), json!(length));
 }
 
 fn oldest_history_id_from_transcript(transcript: &[Value]) -> Option<i64> {
@@ -642,6 +700,11 @@ async fn get_session_history(
             item
         })
         .collect::<Vec<_>>();
+    let transcript = if query.summary {
+        summarize_transcript_messages(transcript)
+    } else {
+        transcript
+    };
     Ok(Json(json!({
         "data": {
             "id": session_id,
@@ -650,6 +713,40 @@ async fn get_session_history(
             "history_before_id": transcript_page.history_before_id
         }
     })))
+}
+
+async fn get_session_message(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, history_id)): AxumPath<(String, i64)>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() || history_id <= 0 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let raw = state
+        .storage
+        .load_chat_history_item(&resolved.user.user_id, &session_id, history_id)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let monitor_record = state.monitor.get_record(&session_id);
+    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
+    let message = build_chat_transcript(&session_id, vec![raw], &message_feedback)
+        .into_iter()
+        .next()
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    Ok(Json(
+        json!({ "data": { "id": session_id, "message": message } }),
+    ))
 }
 
 async fn submit_message_feedback(
@@ -1806,7 +1903,7 @@ mod tests {
         build_projected_queue_user_message, has_active_queue_task, history_page_cursor_after_merge,
         is_session_stream_active_or_queued, merge_visible_transcript_page,
         normalize_history_before_id, project_queued_session_messages,
-        raw_history_page_from_loaded_history, RunningTurnHint,
+        raw_history_page_from_loaded_history, summarize_transcript_messages, RunningTurnHint,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -1832,6 +1929,40 @@ mod tests {
         assert_eq!(normalize_history_before_id(Some("0")), None);
         assert_eq!(normalize_history_before_id(Some("-1")), None);
         assert_eq!(normalize_history_before_id(None), None);
+    }
+
+    #[test]
+    fn transcript_summary_preserves_identity_and_marks_large_fields() {
+        let content = "x".repeat(6_100);
+        let reasoning = "r".repeat(1_600);
+        let summary = summarize_transcript_messages(vec![json!({
+            "message_id": "history:42",
+            "history_id": 42,
+            "user_turn_id": "user-turn:sample:round:1",
+            "content": content,
+            "reasoning": reasoning,
+            "workflowItems": [{"event": "tool_call"}],
+            "subagents": [{"status": "completed"}]
+        })]);
+        let message = summary.first().expect("summary message");
+
+        assert_eq!(message["message_id"], json!("history:42"));
+        assert_eq!(message["history_id"], json!(42));
+        assert_eq!(
+            message["content"]
+                .as_str()
+                .unwrap_or_default()
+                .chars()
+                .count(),
+            6_000
+        );
+        assert_eq!(message["content_truncated"], json!(true));
+        assert_eq!(message["content_length"], json!(6_100));
+        assert_eq!(message["reasoning_truncated"], json!(true));
+        assert_eq!(message["workflowItems_truncated"], json!(true));
+        assert_eq!(message["subagents_truncated"], json!(true));
+        assert!(message.get("workflowItems").is_none());
+        assert!(message.get("subagents").is_none());
     }
 
     #[test]

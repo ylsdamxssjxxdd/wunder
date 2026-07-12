@@ -31,6 +31,7 @@ const BeeroomE2EHarnessView = () => import('@/views/dev/BeeroomE2EHarnessView.vu
 const ChatCompactionE2EHarnessView = () => import('@/views/dev/ChatCompactionE2EHarnessView.vue');
 const ChatBubbleStressE2EHarnessView = () => import('@/views/dev/ChatBubbleStressE2EHarnessView.vue');
 const MessengerHeavyHistoryE2EHarnessView = () => import('@/views/dev/MessengerHeavyHistoryE2EHarnessView.vue');
+const MessengerViewPerformanceE2EHarnessView = () => import('@/views/dev/MessengerViewPerformanceE2EHarnessView.vue');
 const MessengerSendGuardE2EHarnessView = () => import('@/views/dev/MessengerSendGuardE2EHarnessView.vue');
 const MessengerReturnResumeE2EHarnessView = () => import('@/views/dev/MessengerReturnResumeE2EHarnessView.vue');
 
@@ -222,6 +223,11 @@ const routes: RouteRecordRaw[] = [
           path: '/__e2e/messenger-heavy-history',
           name: 'messenger-heavy-history-e2e-harness',
           component: MessengerHeavyHistoryE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-view-performance',
+          name: 'messenger-view-performance-e2e-harness',
+          component: MessengerViewPerformanceE2EHarnessView
         },
         {
           path: '/__e2e/messenger-send-guard',

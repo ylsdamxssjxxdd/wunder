@@ -377,6 +377,7 @@ type WorkspaceResourceInvalidation = {
 };
 
 const WORKSPACE_RESOURCE_CACHE_BUST_PARAM = '_wunder_resource_version';
+const WORKSPACE_RESOURCE_CACHE_LIMIT = 48;
 
 const buildWorkspaceResourceCacheKey = (publicPath: string, preview = '', version = 0): string => {
   const previewSuffix = preview ? `#preview=${preview}` : '';
@@ -453,6 +454,8 @@ type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 export function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerControllerContext): void {
   let workspaceHydrationTimeout: number | null = null;
   let workspaceResourceCacheEpoch = 0;
+  // Requests are page-scoped: abandoned bubbles must not keep downloads alive.
+  const workspaceResourceAbortControllers = new Set<AbortController>();
   const workspaceResourceInvalidations: WorkspaceResourceInvalidation[] = [];
 
   const bumpWorkspaceResourceCacheEpoch = () => {
@@ -511,6 +514,48 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       if (!cached) {
           URL.revokeObjectURL(url);
       }
+  };
+
+  const collectActiveWorkspaceObjectUrls = (): Set<string> => {
+      const active = new Set<string>();
+      const previewUrl = String(ctx.resourcePreviewUrl?.value || '').trim();
+      if (previewUrl.startsWith('blob:')) {
+          active.add(previewUrl);
+      }
+      if (typeof document === 'undefined') {
+          return active;
+      }
+      document.querySelectorAll<HTMLImageElement>('img[src^="blob:"]').forEach((image) => {
+          const url = String(image.currentSrc || image.src || '').trim();
+          if (url.startsWith('blob:')) {
+              active.add(url);
+          }
+      });
+      return active;
+  };
+
+  const pruneWorkspaceResourceCache = () => {
+      if (ctx.workspaceResourceCache.size <= WORKSPACE_RESOURCE_CACHE_LIMIT) {
+          return;
+      }
+      const activeUrls = collectActiveWorkspaceObjectUrls();
+      for (const [cacheKey, entry] of ctx.workspaceResourceCache.entries()) {
+          if (ctx.workspaceResourceCache.size <= WORKSPACE_RESOURCE_CACHE_LIMIT) {
+              break;
+          }
+          const objectUrl = String(entry?.objectUrl || '').trim();
+          // Never revoke a URL that backs a rendered image or the open preview.
+          if (!objectUrl || activeUrls.has(objectUrl) || entry?.promise) {
+              continue;
+          }
+          URL.revokeObjectURL(objectUrl);
+          ctx.workspaceResourceCache.delete(cacheKey);
+      }
+  };
+
+  const abortWorkspaceResourceRequests = () => {
+      workspaceResourceAbortControllers.forEach((controller) => controller.abort());
+      workspaceResourceAbortControllers.clear();
   };
 
   ctx.resolveDesktopWorkspaceRoot = (): string => String(getRuntimeConfig().workspace_root || '').trim();
@@ -712,13 +757,15 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
       if (cached?.promise)
           return cached.promise;
+      const controller = new AbortController();
+      workspaceResourceAbortControllers.add(controller);
       const promise = (async () => {
           const extra: Record<string, unknown> = preview ? { preview } : {};
           if (requestEpoch > 0) {
               extra[WORKSPACE_RESOURCE_CACHE_BUST_PARAM] = String(requestEpoch);
           }
           const params = buildWorkspaceResourceRequestParams(resource, extra);
-          const response = await downloadWunderWorkspaceFile(params);
+          const response = await downloadWunderWorkspaceFile(params, { signal: controller.signal });
           try {
               const fallbackFilename = preview === 'png'
                   ? `${String(resource.filename || 'preview').replace(/\.[^.]+$/, '')}.png`
@@ -746,6 +793,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
               if (activeCacheKey !== cacheKey) {
                   ctx.workspaceResourceCache.delete(cacheKey);
               }
+              pruneWorkspaceResourceCache();
               return entry;
           }
           catch (error) {
@@ -756,6 +804,9 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
           .catch((error) => {
           ctx.workspaceResourceCache.delete(cacheKey);
           throw error;
+      })
+          .finally(() => {
+          workspaceResourceAbortControllers.delete(controller);
       });
       ctx.workspaceResourceCache.set(cacheKey, { promise });
       return promise;
@@ -994,6 +1045,7 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
   };
 
   ctx.clearWorkspaceResourceCache = () => {
+      abortWorkspaceResourceRequests();
       ctx.resetWorkspaceResourceCards();
       if (typeof window !== 'undefined' && workspaceHydrationTimeout !== null) {
           window.clearTimeout(workspaceHydrationTimeout);
@@ -1058,6 +1110,10 @@ export function installMessengerControllerWorkspaceResourceHydration(ctx: Messen
       }
       return clearedCount;
   };
+
+  onBeforeUnmount(() => {
+      abortWorkspaceResourceRequests();
+  });
 
   ctx.parseWorkspaceRefreshContainerId = (value: unknown): number | null => {
       const parsed = Number.parseInt(String(value ?? ''), 10);

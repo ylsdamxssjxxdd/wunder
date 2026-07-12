@@ -529,15 +529,17 @@ export const WATCH_RECONCILE_COOLDOWN_MS = 1800;
 export const SLOW_CLIENT_RESUME_DELAY_MS = 120;
 export const STREAM_FLUSH_BASE_MS = 40;
 export const STREAM_FLUSH_MAX_MS = 160;
-export const HISTORY_PAGE_LIMIT = 80;
+// Keep the chat hot set bounded. Older history is recovered through the stable before_id cursor.
+export const HISTORY_PAGE_LIMIT = 40;
 export const HISTORY_PAGE_MAX = 200;
-export const MESSAGE_WINDOW_LIMIT = 400;
-export const MESSAGE_WINDOW_THRESHOLD = 600;
-export const MESSAGE_WINDOW_MAX = 2000;
-export const DESKTOP_MESSAGE_WINDOW_LIMIT = 96;
-export const DESKTOP_MESSAGE_WINDOW_THRESHOLD = 140;
-export const DESKTOP_MESSAGE_WINDOW_MAX = 640;
-export const SESSION_DETAIL_MESSAGE_LIMIT = 500;
+export const MESSAGE_WINDOW_LIMIT = 120;
+export const MESSAGE_WINDOW_THRESHOLD = 160;
+// History pagination can temporarily grow the hot window, but never beyond this cap.
+export const MESSAGE_WINDOW_MAX = 320;
+export const DESKTOP_MESSAGE_WINDOW_LIMIT = 64;
+export const DESKTOP_MESSAGE_WINDOW_THRESHOLD = 96;
+export const DESKTOP_MESSAGE_WINDOW_MAX = 192;
+export const SESSION_DETAIL_MESSAGE_LIMIT = 80;
 export const DESKTOP_SESSION_DETAIL_MESSAGE_LIMIT = DESKTOP_MESSAGE_WINDOW_LIMIT;
 export const WINDOWING_ENABLED_KEY = 'wunder_chat_windowing';
 

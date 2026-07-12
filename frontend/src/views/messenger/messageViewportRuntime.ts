@@ -58,6 +58,9 @@ export type MessageViewportRuntime = {
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
+// Measurements are disposable UI state; retain only a bounded recent working set.
+export const MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT = 384;
+
 export const createMessageViewportRuntime = (
   options: MessageViewportRuntimeOptions
 ): MessageViewportRuntime => {
@@ -127,6 +130,14 @@ export const createMessageViewportRuntime = (
       options.messageVirtualHeightCache.delete(key);
       changed = true;
     });
+    while (options.messageVirtualHeightCache.size > MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT) {
+      const oldestKey = options.messageVirtualHeightCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      options.messageVirtualHeightCache.delete(oldestKey);
+      changed = true;
+    }
     if (changed) {
       options.messageVirtualLayoutVersion.value += 1;
     }
@@ -153,7 +164,13 @@ export const createMessageViewportRuntime = (
     if (cached && Math.abs(cached - height) <= 1) {
       return null;
     }
+    // Refresh insertion order so recently measured visible rows survive eviction.
+    if (cached !== undefined) {
+      options.messageVirtualHeightCache.delete(key);
+    }
     options.messageVirtualHeightCache.set(key, height);
+    // Map insertion order doubles as a cheap LRU clock for measured rows.
+    pruneMessageVirtualHeightCache();
     return {
       key,
       previous: typeof cached === 'number' ? cached : null,

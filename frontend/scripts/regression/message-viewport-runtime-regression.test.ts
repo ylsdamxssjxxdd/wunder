@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 
 import { ref } from 'vue';
 
-import { createMessageViewportRuntime } from '../../src/views/messenger/messageViewportRuntime';
+import {
+  createMessageViewportRuntime,
+  MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT
+} from '../../src/views/messenger/messageViewportRuntime';
 
 type ResizeObserverCallbackLike = (
   entries: Array<{ target: unknown }>,
@@ -136,6 +139,40 @@ test('message viewport runtime remeasures visible message rows on resize observe
       (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
     }
   }
+});
+
+test('message viewport runtime bounds retained row-height measurements', () => {
+  const messageVirtualHeightCache = new Map<string, number>();
+  const messages = Array.from({ length: MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT + 24 }, (_, index) => ({
+    key: `height-${index}`
+  }));
+  messages.forEach((item, index) => messageVirtualHeightCache.set(item.key, 100 + index));
+  const runtime = createMessageViewportRuntime({
+    messageListRef: ref(null),
+    showChatSettingsView: ref(false),
+    autoStickToBottom: ref(false),
+    showScrollTopButton: ref(false),
+    showScrollBottomButton: ref(false),
+    isAgentConversationActive: ref(true),
+    isWorldConversationActive: ref(false),
+    activeConversationKey: ref('agent:height-cache'),
+    shouldVirtualizeMessages: ref(true),
+    agentRenderableMessages: ref(messages),
+    worldRenderableMessages: ref([]),
+    messageVirtualHeightCache,
+    messageVirtualLayoutVersion: ref(0),
+    messageVirtualScrollTop: ref(0),
+    messageVirtualViewportHeight: ref(0),
+    estimateVirtualOffsetTop: () => 0,
+    resolveVirtualMessageHeight: () => 0
+  });
+
+  runtime.pruneMessageVirtualHeightCache();
+
+  assert.equal(messageVirtualHeightCache.size, MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT);
+  assert.equal(messageVirtualHeightCache.has('height-0'), false);
+  assert.equal(messageVirtualHeightCache.has(`height-${messages.length - 1}`), true);
+  runtime.dispose();
 });
 
 test('message viewport runtime does not synchronously measure rows while scrolling', () => {

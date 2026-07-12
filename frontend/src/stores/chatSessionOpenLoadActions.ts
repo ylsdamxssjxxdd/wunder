@@ -705,7 +705,7 @@ export const chatSessionOpenLoadActions = {
             [sessionRes, eventsPayload] = await Promise.all([
               getSessionWithParams(
                 targetSessionId,
-                { limit: detailLimit },
+                { limit: detailLimit, summary: true },
                 detailAbortController ? { signal: detailAbortController.signal } : {}
               ),
               loadSessionEventsSnapshot(targetSessionId, {
@@ -1201,7 +1201,10 @@ export const chatSessionOpenLoadActions = {
         let messagesForCursor = currentSessionMessages;
         const maxEmptyPages = 3;
         for (let emptyPageCount = 0; emptyPageCount <= maxEmptyPages; emptyPageCount += 1) {
-          const params: { before_id?: number; limit: number } = { limit };
+          const params: { before_id?: number; limit: number; summary: boolean } = {
+            limit,
+            summary: true
+          };
           if (cursor !== null) {
             params.before_id = cursor;
           }

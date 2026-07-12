@@ -82,7 +82,7 @@
             </span>
           </summary>
 
-          <div class="tool-workflow-entry-body">
+          <div v-if="expandedKeys.has(entry.key)" class="tool-workflow-entry-body">
             <MessageToolWorkflowSection
               v-for="section in entry.sections"
               :key="section.key"
@@ -256,6 +256,7 @@ const PATCH_RESULT_FILE_LIMIT = 10;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 const WORKFLOW_STATE_CACHE_LIMIT = 120;
+const WORKFLOW_EXPANDED_ENTRY_LIMIT = 3;
 const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
 const TOOL_CALL_DEBUG_HINT_MARGIN = 12;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH = 360;
@@ -343,6 +344,17 @@ const normalizeWorkflowStateKeys = (
 const currentWorkflowStateKeys = (): string[] =>
   normalizeWorkflowStateKeys(props.stateKey, props.stateAliases);
 
+const limitExpandedKeys = (keys: Iterable<string>): Set<string> => {
+  const limited = new Set<string>();
+  for (const key of keys) {
+    limited.add(key);
+    if (limited.size > WORKFLOW_EXPANDED_ENTRY_LIMIT) {
+      limited.delete(limited.values().next().value as string);
+    }
+  }
+  return limited;
+};
+
 const rememberWorkflowStateCacheOrder = (key: string): void => {
   if (!workflowStateCache.has(key)) return;
   const value = workflowStateCache.get(key);
@@ -395,7 +407,7 @@ const restoreWorkflowPanelState = (
   });
   if (!cached) return false;
   workflowUserCollapsed.value = Boolean(cached.collapsed);
-  expandedKeys.value = new Set(cached.expandedKeys);
+  expandedKeys.value = limitExpandedKeys(cached.expandedKeys);
   userCollapsedEntryKeys.value = new Set(cached.userCollapsedEntryKeys);
   keys.forEach((key) => {
     workflowStateCache.set(key, cached);
@@ -3839,7 +3851,7 @@ watch(
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
-    expandedKeys.value = nextExpanded;
+    expandedKeys.value = limitExpandedKeys(nextExpanded);
     saveWorkflowPanelState();
     void nextTick(() => {
       syncWorkflowOpenState();
@@ -3891,9 +3903,12 @@ const handleEntryToggle = (key: string, event: Event) => {
     userCollapsedEntryKeys.value = nextUserCollapsed;
   }
   const next = new Set(expandedKeys.value);
-  if (target.open) next.add(key);
-  else next.delete(key);
-  expandedKeys.value = next;
+  if (target.open) {
+    // Refresh recency so the least recently expanded detail is the LRU eviction target.
+    next.delete(key);
+    next.add(key);
+  } else next.delete(key);
+  expandedKeys.value = limitExpandedKeys(next);
   saveWorkflowPanelState();
   if (isChatDebugEnabled()) {
     chatDebugLog('messenger.workflow-shell', 'entry-toggle', {

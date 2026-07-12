@@ -2880,6 +2880,18 @@
   - `404`：会话或消息不存在
   - `409`：该消息已存在反馈（已锁定）
 
+### `GET /wunder/chat/sessions/{session_id}/messages/{history_id}`
+
+- 方法：`GET`
+- 鉴权：用户侧 Bearer Token；仅允许读取当前用户所属会话中的真实历史消息。
+- 用途：聊天页在历史摘要、分段正文或工具详情需要展开时，按稳定 `history_id` 取回完整可见消息，避免把所有长正文和工具结果放进首屏历史页。
+- 返回（JSON）：
+  - `data.id`：会话 ID。
+  - `data.message`：与 `data.transcript[]` 相同的单条完整消息结构，包含稳定 `message_id`、`history_id`、正文、附件、终态和反馈字段。
+- 错误码：
+  - `400`：会话 ID 或 history_id 非法。
+  - `404`：会话不存在、无权访问或消息不存在。
+
 ### 会话消息返回体补充（用户侧聊天接口）
 
 - `GET /wunder/chat/sessions/{session_id}`
@@ -2887,6 +2899,7 @@
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
 - `GET /wunder/chat/sessions/{session_id}` 与 `GET /wunder/chat/sessions/{session_id}/history` 的历史消息视图统一返回 `data.transcript[]`，不再返回 `data.messages[]`。`transcript` 是刷新页面的唯一权威消息序列，前端必须按数组顺序与 `turn_index` 渲染，不得再使用 `stream_round`、正文或时间戳推断用户/模型轮次身份。
+- 两个历史接口均接受可选 `summary=true`：服务端保留消息身份、轮次、状态和附件元数据，但会截断超长 `content/reasoning`，并移除 `workflowItems/subagents` 详情；被截断字段分别带 `content_truncated/content_length`、`reasoning_truncated/reasoning_length` 与 `workflowItems_truncated/subagents_truncated`。用户展开时应调用单条消息详情接口补全，不得重新拉取整页历史。
 - `data.transcript[]` 单项常用字段：
   - `role`：`user` / `assistant`
   - `content`：可见正文

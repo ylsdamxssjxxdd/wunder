@@ -55,6 +55,21 @@ pub trait ConversationLogStore {
         before_id: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn load_chat_history_item(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        history_id: i64,
+    ) -> Result<Option<Value>> {
+        if history_id <= 0 {
+            return Ok(None);
+        }
+        // Reuse the indexed cursor query so SQLite and PostgreSQL keep identical ownership semantics.
+        Ok(self
+            .load_chat_history_page(user_id, session_id, Some(history_id.saturating_add(1)), 1)?
+            .into_iter()
+            .find(|item| item.get("_history_id").and_then(Value::as_i64) == Some(history_id)))
+    }
     fn load_artifact_logs(&self, user_id: &str, session_id: &str, limit: i64)
         -> Result<Vec<Value>>;
     fn get_session_system_prompt(
