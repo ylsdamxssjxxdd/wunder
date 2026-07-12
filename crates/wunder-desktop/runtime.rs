@@ -650,24 +650,35 @@ struct BuiltinSkillsStamp {
 }
 
 fn should_skip_builtin_skill_sync(source: &Path, target: &Path) -> bool {
-    if std::env::var("WUNDER_FORCE_SKILL_SYNC")
+    let force_sync = std::env::var("WUNDER_FORCE_SKILL_SYNC")
         .ok()
         .map(|value| value.trim() == "1")
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    let appimage = std::env::var("APPIMAGE")
+        .unwrap_or(false);
+    let packaged_runtime = std::env::var("WUNDER_DESKTOP_PACKAGED")
         .ok()
         .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-    if !appimage {
+        .unwrap_or(false)
+        || std::env::var("APPIMAGE")
+            .ok()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    should_skip_builtin_skill_sync_for_runtime(source, target, packaged_runtime, force_sync)
+}
+
+fn should_skip_builtin_skill_sync_for_runtime(
+    source: &Path,
+    target: &Path,
+    packaged_runtime: bool,
+    force_sync: bool,
+) -> bool {
+    if force_sync || !packaged_runtime {
         return false;
     }
     if !target.is_dir() {
         return false;
     }
-    if !target.join(BUILTIN_SKILLS_MANIFEST_NAME).is_file() {
+    let manifest = read_builtin_skill_manifest(target);
+    if manifest.is_empty() || !manifest.iter().all(|name| target.join(name).is_dir()) {
         return false;
     }
     let Some(stamp) = read_builtin_skill_stamp(target) else {
@@ -2131,6 +2142,43 @@ mod tests {
         let key_v2 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
 
         assert_ne!(key_v1, key_v2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn builtin_skill_sync_reuses_matching_packaged_assets() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-skill-sync-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let source = root.join("source");
+        let target = root.join("target");
+        fs::create_dir_all(&source).expect("create source");
+        fs::create_dir_all(&target).expect("create target");
+        fs::create_dir_all(source.join("sample")).expect("create source skill");
+        fs::create_dir_all(target.join("sample")).expect("create target skill");
+        fs::write(source.join("sample/SKILL.md"), "---\nname: sample\n---\n")
+            .expect("write source skill");
+        fs::write(target.join("sample/SKILL.md"), "---\nname: sample\n---\n")
+            .expect("write target skill");
+        write_builtin_skill_manifest(&target, &HashSet::from(["sample".to_string()]))
+            .expect("write manifest");
+        write_builtin_skill_stamp(&target, &source).expect("write stamp");
+
+        assert!(should_skip_builtin_skill_sync_for_runtime(
+            &source, &target, true, false
+        ));
+        fs::remove_dir_all(target.join("sample")).expect("remove target skill");
+        assert!(!should_skip_builtin_skill_sync_for_runtime(
+            &source, &target, true, false
+        ));
+        assert!(!should_skip_builtin_skill_sync_for_runtime(
+            &source, &target, false, false
+        ));
+        assert!(!should_skip_builtin_skill_sync_for_runtime(
+            &source, &target, true, true
+        ));
 
         let _ = fs::remove_dir_all(&root);
     }

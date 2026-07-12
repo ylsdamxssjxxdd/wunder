@@ -28,6 +28,10 @@ const {
   resolveDesktopEffectWindowsDisabledReason,
   shouldDisableElectronHardwareAcceleration
 } = require('./desktopCompatibility')
+const {
+  parseNonNegativeNumber,
+  resolveLoadingShellDelayMs
+} = require('./startupPolicy')
 
 const resolveRuntimeModuleRoots = () => {
   const roots = []
@@ -165,13 +169,6 @@ let tray = null
 let closePromptInFlight = false
 let closeBehavior = 'ask'
 let linuxDesktopIntegrationScheduled = false
-const parseEnvNonNegativeNumber = (raw, fallbackValue) => {
-  const parsed = Number(raw)
-  if (Number.isFinite(parsed) && parsed >= 0) {
-    return parsed
-  }
-  return fallbackValue
-}
 const sanitizeRendererStagePayload = (payload) => {
   const source = payload && typeof payload === 'object' ? payload : {}
   const output = {}
@@ -249,12 +246,8 @@ const disableElectronHardwareAcceleration = shouldDisableElectronHardwareAcceler
 if (!desktopEffectWindowsEnabled) {
   console.info(`[desktop-effects] native overlay windows disabled by ${desktopEffectWindowsDisabledReason}`)
 }
-const defaultLoadingShellDelayMs = app.isPackaged ? 1200 : 220
-const loadingShellDelayMs = parseEnvNonNegativeNumber(
-  process.env.WUNDER_LOADING_SHELL_DELAY_MS,
-  defaultLoadingShellDelayMs
-)
-const mainWindowMinimizeRestoreCooldownMs = parseEnvNonNegativeNumber(
+const loadingShellDelayMs = resolveLoadingShellDelayMs(process.env.WUNDER_LOADING_SHELL_DELAY_MS)
+const mainWindowMinimizeRestoreCooldownMs = parseNonNegativeNumber(
   process.env.WUNDER_MAIN_WINDOW_MINIMIZE_GUARD_MS,
   DEFAULT_MINIMIZE_RESTORE_COOLDOWN_MS
 )
@@ -4833,6 +4826,10 @@ const startBridge = async () => {
   }
 
   const bridgeEnv = { ...process.env }
+  if (app.isPackaged) {
+    // Enables safe reuse of versioned, immutable bundled assets in the bridge.
+    bridgeEnv.WUNDER_DESKTOP_PACKAGED = '1'
+  }
   const bundledSkillsRoot = resolveBundledSkillsRoot()
   if (bundledSkillsRoot && !bridgeEnv.WUNDER_BUILTIN_SKILLS_ROOT) {
     bridgeEnv.WUNDER_BUILTIN_SKILLS_ROOT = bundledSkillsRoot
@@ -5708,6 +5705,11 @@ if (!gotLock) {
         lastRendererStage = stage
         const stagePayload = sanitizeRendererStagePayload(source.payload)
         console.info('[desktop-debug][renderer-stage]', {
+          stage,
+          ...stagePayload
+        })
+        // Keep renderer lifecycle timing on the same monotonic clock as Electron boot stages.
+        logStartupPoint('renderer', 'stage', {
           stage,
           ...stagePayload
         })
