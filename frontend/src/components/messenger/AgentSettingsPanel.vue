@@ -494,15 +494,6 @@
       </Teleport>
 
     </template>
-    <HoneycombWaitingOverlay
-      :visible="Boolean(agentSettingsWaitingState)"
-      :title="agentSettingsWaitingState?.title || t('messenger.waiting.title')"
-      :target-name="agentSettingsWaitingState?.targetName || ''"
-      :phase-label="agentSettingsWaitingState?.phaseLabel || ''"
-      :summary-label="agentSettingsWaitingState?.summaryLabel || ''"
-      :progress="agentSettingsWaitingState?.progress ?? 0"
-      :teleport-to-body="false"
-    />
   </div>
 </template>
 
@@ -519,7 +510,6 @@ import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import CompanionLazyList from '@/components/companions/CompanionLazyList.vue';
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
-import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -738,7 +728,7 @@ const toolSearchKeywords = reactive<Record<string, string>>({
   user: ''
 });
 const currentAgent = ref<Record<string, unknown> | null>(null);
-const agentLoading = ref(true);
+const agentLoading = ref(false);
 const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
@@ -1302,6 +1292,17 @@ const markFormClean = (): void => {
   loadedSnapshot.value = buildFormSnapshot();
 };
 
+const omitCatalogDerivedSnapshotFields = (snapshot: AgentFormSnapshot) => {
+  const { declared_tool_names: _declaredTools, declared_skill_names: _declaredSkills, ...stable } = snapshot;
+  return stable;
+};
+
+const hasUserEditedSinceSnapshot = (): boolean => {
+  if (!loadedSnapshot.value) return false;
+  return JSON.stringify(omitCatalogDerivedSnapshotFields(buildFormSnapshot())) !==
+    JSON.stringify(omitCatalogDerivedSnapshotFields(loadedSnapshot.value));
+};
+
 const addPresetQuestion = () => {
   if (isInteractionDisabled.value) {
     return;
@@ -1543,52 +1544,6 @@ const ignoreMissingDependencies = (): void => {
   ElMessage.success(t('portal.agent.dependencies.ignoreSuccess'));
 };
 
-type AgentSettingsWaitingState = {
-  title: string;
-  targetName: string;
-  phaseLabel: string;
-  summaryLabel: string;
-  progress: number;
-};
-
-const selectedAgentWaitingTargetName = computed(() => {
-  if (isDefaultAgent.value) {
-    return t('messenger.defaultAgent');
-  }
-  const targetAgentId = normalizedAgentId.value;
-  const resolvedFromCurrent =
-    currentAgent.value && String(currentAgent.value.id || '').trim() === targetAgentId
-      ? String(currentAgent.value.name || '').trim()
-      : '';
-  if (resolvedFromCurrent) {
-    return resolvedFromCurrent;
-  }
-  const resolvedFromList = [...(Array.isArray(agentStore.agents) ? agentStore.agents : []), ...(Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : [])]
-    .find((item) => String(item?.id || '').trim() === targetAgentId);
-  return (
-    String((resolvedFromList as Record<string, unknown> | undefined)?.name || '').trim() ||
-    targetAgentId ||
-    t('messenger.section.agents')
-  );
-});
-
-const agentSettingsWaitingState = computed<AgentSettingsWaitingState | null>(() => {
-  if (!canView.value) {
-    return null;
-  }
-  const targetName = selectedAgentWaitingTargetName.value;
-  if (agentLoading.value) {
-    return {
-      title: t('messenger.waiting.title'),
-      targetName,
-      phaseLabel: t('messenger.waiting.phase.preparing'),
-      summaryLabel: t('messenger.waiting.summary.agentSettings'),
-      progress: 28
-    };
-  }
-  return null;
-});
-
 const isGroupFullSelected = (group: AgentToolGroup<ToolOption>): boolean => {
   if (!group.options.length) return false;
   const selected = new Set(form.tool_names);
@@ -1607,7 +1562,8 @@ const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
 };
 
 const reconcileToolNamesAfterCatalogLoad = (wasCleanBeforeLoad: boolean): void => {
-  if (!wasCleanBeforeLoad || panelDisposed || !loadedSnapshot.value || hasUnsavedChanges.value) {
+  // Catalog hydration changes declared dependency fields without user input.
+  if (!wasCleanBeforeLoad || panelDisposed || !loadedSnapshot.value || hasUserEditedSinceSnapshot()) {
     return;
   }
   const nextToolNames = normalizeAgentToolNamesForCatalog(form.tool_names);
@@ -1667,6 +1623,42 @@ const loadModelOptions = async () => {
   }
 };
 
+const applyAgentToForm = async (
+  agent: Record<string, unknown>,
+  requestId: number,
+  options: { hydrateCompanion?: boolean } = {}
+) => {
+  if (!isAgentLoadRequestActive(requestId)) return;
+  currentAgent.value = agent;
+  const avatarConfig = parseAgentAvatarIconConfig(agent.icon);
+  form.name = String(agent.name || '');
+  form.description = String(agent.description || '');
+  form.is_shared = false;
+  form.system_prompt = String(agent.system_prompt || '');
+  form.model_name = resolveConfiguredModelName(currentAgent.value);
+  form.tool_names = normalizeAgentToolNamesForCatalog(agent.tool_names);
+  form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
+  form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id, beeroomGroupOptions.value) as ReturnType<typeof createBeeroomGroupDraft>;
+  form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
+  form.approval_mode = normalizeApprovalMode(agent.approval_mode);
+  form.preview_skill = Boolean(agent.preview_skill);
+  form.silent = Boolean(agent.silent);
+  form.prefer_mother = Boolean(agent.prefer_mother);
+  form.icon_kind = avatarConfig.kind;
+  form.icon_name = normalizeAgentAvatarName(avatarConfig.name);
+  form.icon_color = normalizeAgentAvatarColor(avatarConfig.color);
+  form.companion_scope = normalizeCompanionScope(avatarConfig.scope);
+  form.companion_id = avatarConfig.kind === 'companion' ? resolveAgentAvatarCompanionId(avatarConfig) : '';
+  form.companion_show = avatarConfig.show !== false;
+  form.companion_message_hints = avatarConfig.messageHints !== false;
+  form.companion_scale = normalizeCompanionScale(avatarConfig.scale);
+  markFormClean();
+  if (avatarConfig.kind === 'companion' && options.hydrateCompanion === true) {
+    await companionStore.hydrate().catch(() => undefined);
+    if (isAgentLoadRequestActive(requestId)) applyCompanionOverrideToForm();
+  }
+};
+
 const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
   if (!canView.value) {
     loadedSnapshot.value = null;
@@ -1675,47 +1667,24 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
   }
   agentLoading.value = true;
   try {
-    if (!beeroomStore.groups.length) {
-      await beeroomStore.loadGroups().catch(() => null);
+    const cachedAgent = agentStore.agentMap[normalizedAgentId.value] ||
+      [...agentStore.agents, ...agentStore.sharedAgents]
+        .find((item) => String(item?.id || '').trim() === normalizedAgentId.value);
+    if (cachedAgent) {
+      await applyAgentToForm(cachedAgent as Record<string, unknown>, requestId);
+      agentLoading.value = false;
     }
+    if (!beeroomStore.groups.length) void beeroomStore.loadGroups().catch(() => null);
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
     if (!isAgentLoadRequestActive(requestId)) return;
     if (!agent) {
       ElMessage.error(t('portal.agent.loadingFailed'));
       return;
     }
-    // Only the latest async selection is allowed to write into the form.
-    currentAgent.value = agent as Record<string, unknown>;
-    const avatarConfig = parseAgentAvatarIconConfig(agent.icon);
-    form.name = String(agent.name || '');
-    form.description = String(agent.description || '');
-    form.is_shared = false;
-    form.system_prompt = String(agent.system_prompt || '');
-    form.model_name = resolveConfiguredModelName(currentAgent.value);
-    form.tool_names = normalizeAgentToolNamesForCatalog(agent.tool_names);
-    form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
-    form.group = resolveBeeroomGroupDraftForAgent(
-      agent.hive_id,
-      beeroomGroupOptions.value
-    ) as ReturnType<typeof createBeeroomGroupDraft>;
-    form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
-    form.approval_mode = normalizeApprovalMode(agent.approval_mode);
-    form.preview_skill = Boolean((agent as Record<string, unknown>).preview_skill);
-    form.silent = Boolean(agent.silent);
-    form.prefer_mother = Boolean(agent.prefer_mother);
-    form.icon_kind = avatarConfig.kind;
-    form.icon_name = normalizeAgentAvatarName(avatarConfig.name);
-    form.icon_color = normalizeAgentAvatarColor(avatarConfig.color);
-    form.companion_scope = normalizeCompanionScope(avatarConfig.scope);
-    form.companion_id = avatarConfig.kind === 'companion' ? resolveAgentAvatarCompanionId(avatarConfig) : '';
-    form.companion_show = avatarConfig.show !== false;
-    form.companion_message_hints = avatarConfig.messageHints !== false;
-    form.companion_scale = normalizeCompanionScale(avatarConfig.scale);
-    if (avatarConfig.kind === 'companion') {
-      await companionStore.hydrate().catch(() => undefined);
-      applyCompanionOverrideToForm();
+    if (cachedAgent && hasUnsavedChanges.value) {
+      return;
     }
-    markFormClean();
+    await applyAgentToForm(agent as Record<string, unknown>, requestId, { hydrateCompanion: true });
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
   } finally {
@@ -1733,11 +1702,10 @@ const reloadAgent = async () => {
       reconcileToolNamesAfterCatalogLoad(wasCleanBeforeToolLoad);
     }
   });
-  await Promise.all([
-    loadModelOptions(),
-    loadAgent(requestId),
-    toolSummaryPromise
-  ]);
+  const agentPromise = loadAgent(requestId);
+  void loadModelOptions();
+  void toolSummaryPromise;
+  await agentPromise;
 };
 
 const refreshAgentFromExternalChange = () => {
