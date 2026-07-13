@@ -36,7 +36,7 @@ JavaScript 依赖统一走仓库根 `npm workspace`，共享一套根 `node_modu
 - AppImage 压缩格式默认使用 `gzip`，优先兼容老系统。
 - ARM 与 x86 构建镜像现在都内置了 `squashfs-tools`；若你预先放好了对应架构的 `appimagetool-*.AppImage`，镜像也会把它内置进去，便于离线重打包。
 - ARM 一键脚本默认把 npm / Electron / electron-builder 缓存固定到 `target/arm64-20/.cache/`，首次在线构建成功后可整体搬到内网继续复构。
-- ARM 一键脚本默认会在容器内构建最新 `frontend/dist`，无需再手工先在宿主机预编译前端。
+- ARM 一键脚本默认会在容器内构建最新 `frontend/dist-desktop`，无需再手工先在宿主机预编译桌面前端。
 
 ## 2. 关键文件
 
@@ -132,7 +132,7 @@ bash packaging/docker/scripts/build_arm64_desktop_with_python.sh
 
 1. 启动 `wunder-build-arm` 容器，不重建镜像。
 2. 预热 / 复用根 `node_modules` 与 `target/arm64-20/.cache/*`。
-3. 在容器内构建最新 `frontend/dist`。
+3. 在容器内构建最新 `frontend/dist-desktop`。
 4. 构建 `wunder-desktop-bridge`（可通过 `SKIP_ARM_BRIDGE_BUILD=1` 复用已有 bridge）。
 5. 构建 Electron arm64 基础 AppImage。
 6. 校验现有 `stage/opt/python`、`stage/opt/git` 与 `stage/opt/rg`。
@@ -150,7 +150,7 @@ bash packaging/docker/scripts/build_arm64_desktop_with_python.sh
 
 ### 6.1 常用参数
 
-- `WUNDER_BUILD_FRONTEND=1`：默认值。每次都从当前源码重建 `frontend/dist`，适合内网改前端后再打包。
+- `WUNDER_BUILD_FRONTEND=1`：默认值。每次都从当前源码重建 `frontend/dist-desktop`，适合内网改前端后再打包。
 - `SKIP_NPM_INSTALL=1`：跳过 `npm install`，直接复用已有根 `node_modules`。适合“只改代码，不改依赖”的内网重构。
 - `FORCE_NPM_INSTALL=1`：强制重新跑一次 workspace 安装，用于锁文件变化后重新落盘缓存。
 - `WUNDER_BUILD_OFFLINE=1`：启用离线模式，Cargo 会走 `CARGO_NET_OFFLINE=true`，npm 会走 `--offline`。
@@ -174,7 +174,7 @@ bash packaging/docker/scripts/prime_arm64_desktop_offline_cache.sh
 - `target/arm64-20/.cache`
 - `target/arm64-20/.build/python`
 - `node_modules`
-- `frontend/dist`
+- `frontend/dist-desktop`
 - `target/arm64-20/release/wunder-desktop-bridge`（存在时）
 
 把这个压缩包和源码一起带进内网后，解压到仓库根目录即可：

@@ -22,7 +22,10 @@ export const DesktopModelSettingsPanel = lazy(
 export const DesktopSystemSettingsPanel = lazy(
   () => import('@/components/messenger/DesktopSystemSettingsPanel.vue')
 );
-export const GlobeAppPanel = lazy(() => import('@/components/globe/GlobeAppPanel.vue'));
+// The globe is a web/server visualization. Keep its dependency graph out of desktop packages.
+export const GlobeAppPanel = __WUNDER_DESKTOP_BUILD__
+  ? null
+  : lazy(() => import('@/components/globe/GlobeAppPanel.vue'));
 export const MessengerLocalFileSearchPanel = lazy(
   () => import('@/components/messenger/MessengerLocalFileSearchPanel.vue')
 );

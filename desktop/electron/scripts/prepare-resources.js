@@ -23,7 +23,7 @@ const bridgeName = process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 
 const cliName = process.platform === 'win32' ? 'wunder-cli.exe' : 'wunder-cli'
 const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'target', 'release', bridgeName)
 const cliSource = process.env.WUNDER_CLI_BIN || path.join(repoRoot, 'target', 'release', cliName)
-const frontendSource = process.env.WUNDER_FRONTEND_DIST || path.join(repoRoot, 'frontend', 'dist')
+const frontendSource = process.env.WUNDER_FRONTEND_DIST || path.join(repoRoot, 'frontend', 'dist-desktop')
 const docsSource = process.env.WUNDER_DOCS_DIST || path.join(repoRoot, 'web', 'docs')
 const buildIconIcoSource = path.join(__dirname, '..', 'build', 'icon.ico')
 const fallbackIconIcoSource = path.join(__dirname, '..', 'assets', 'icon.ico')
@@ -188,7 +188,7 @@ if (!fs.existsSync(bridgeSource)) {
 
 if (!fs.existsSync(frontendSource)) {
   console.error(`[prepare] frontend dist not found: ${frontendSource}`)
-  console.error('[prepare] build it first: npm run build --workspace wunder-frontend')
+  console.error('[prepare] build it first: npm run build:desktop --workspace wunder-frontend')
   process.exit(1)
 }
 

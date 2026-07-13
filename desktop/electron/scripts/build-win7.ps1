@@ -107,10 +107,10 @@ function Resolve-AppVersion {
 function Invoke-FrontendBuild {
   param([string]$RepoRoot)
 
-  Write-Step "building frontend/dist from current source"
+  Write-Step "building frontend/dist-desktop from current source"
   Push-Location $RepoRoot
   try {
-    & npm.cmd run build:frontend
+    & npm.cmd run build:frontend:desktop
     if ($LASTEXITCODE -ne 0) {
       throw "frontend build failed with exit code $LASTEXITCODE"
     }
@@ -128,12 +128,12 @@ if (-not $LabRoot) {
 }
 $LabRoot = Resolve-FullPath -Path $LabRoot -BasePath $repoRoot
 
-$frontendDist = Join-Path $repoRoot 'frontend\dist'
+$frontendDist = Join-Path $repoRoot 'frontend\dist-desktop'
 if (-not $SkipFrontendBuild) {
   Invoke-FrontendBuild -RepoRoot $repoRoot
 }
 if (-not (Test-Path $frontendDist)) {
-  throw "frontend/dist is missing. Build it first: npm run build --workspace wunder-frontend"
+  throw "frontend/dist-desktop is missing. Build it first: npm run build:desktop --workspace wunder-frontend"
 }
 
 $bridgeArchDir = if ($Arch -eq 'ia32') { 'i686-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }

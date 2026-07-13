@@ -30,14 +30,14 @@ export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-${NPM_CACHE_DIR}}"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}" "${CARGO_HOME}" "${CARGO_TARGET_DIR}" "${NPM_CONFIG_CACHE}"
 
-if [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
-  echo "frontend/dist is missing, building frontend..."
+if [ ! -d "${ROOT_DIR}/frontend/dist-desktop" ]; then
+  echo "frontend/dist-desktop is missing, building desktop frontend..."
   pushd "${ROOT_DIR}" >/dev/null
   npm ci --workspaces --include-workspace-root=false
-  npm run build --workspace wunder-frontend
+  npm run build:desktop --workspace wunder-frontend
   popd >/dev/null
 else
-  echo "Using existing frontend/dist."
+  echo "Using existing frontend/dist-desktop."
 fi
 
 echo "Building bridge binary..."
@@ -52,7 +52,7 @@ echo "Building Electron AppImage (${ARCH})..."
 pushd "${ROOT_DIR}" >/dev/null
 npm ci --workspaces --include-workspace-root=false
 pushd "${ROOT_DIR}/desktop/electron" >/dev/null
-WUNDER_BRIDGE_BIN="${BRIDGE_BIN}" npm run prepare:resources
+WUNDER_BRIDGE_BIN="${BRIDGE_BIN}" WUNDER_FRONTEND_DIST="${ROOT_DIR}/frontend/dist-desktop" npm run prepare:resources
 extra_metadata_args=()
 if [ -n "${NIGHTLY_VERSION}" ]; then
   extra_metadata_args+=(--config.extraMetadata.version="${NIGHTLY_VERSION}")

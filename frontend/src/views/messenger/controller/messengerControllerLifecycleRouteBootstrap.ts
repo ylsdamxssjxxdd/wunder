@@ -587,7 +587,8 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
           Boolean(initialQueryConversationId);
       const { critical, background } = splitMessengerBootstrapTasks(initialSection, [
           {
-              sections: ['messages', 'agents', 'files', 'swarms'],
+              // Agent metadata enriches the navigation but is not needed to
+              // render or resume the initial message workspace.
               run: () => ctx.agentStore.loadAgents()
           },
           {

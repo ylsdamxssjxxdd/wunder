@@ -7,23 +7,30 @@ param(
   [ValidateRange(1000, 120000)]
   [int]$TimeoutMs = 30000,
   [string]$DataRoot = '',
+  [string]$ElectronExe = '',
+  [string]$BridgeExe = '',
+  [string]$FrontendRoot = '',
   [switch]$ResetData
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-$electronExe = Join-Path $repoRoot 'node_modules\electron\dist\electron.exe'
-$electronAppRoot = Join-Path $repoRoot 'desktop\electron'
-$bridgeExe = Join-Path $repoRoot 'target\release\wunder-desktop-bridge.exe'
-$frontendRoot = Join-Path $repoRoot 'frontend\dist'
+$electronExe = if ($ElectronExe) { $ElectronExe } else { Join-Path $repoRoot 'node_modules\electron\dist\electron.exe' }
+$bridgeExe = if ($BridgeExe) { $BridgeExe } else { Join-Path $repoRoot 'target\release\wunder-desktop-bridge.exe' }
+$frontendRoot = if ($FrontendRoot) { $FrontendRoot } else { Join-Path $repoRoot 'frontend\dist-desktop' }
 $skillsRoot = Join-Path $repoRoot 'config\skills'
 
-foreach ($requiredPath in @($electronExe, $electronAppRoot, $bridgeExe, $frontendRoot, $skillsRoot)) {
+foreach ($requiredPath in @($electronExe, $bridgeExe, $frontendRoot, $skillsRoot)) {
   if (!(Test-Path -LiteralPath $requiredPath)) {
     throw "Startup benchmark prerequisite is missing: $requiredPath"
   }
 }
+
+$electronExe = (Resolve-Path $electronExe).Path
+$bridgeExe = (Resolve-Path $bridgeExe).Path
+$frontendRoot = (Resolve-Path $frontendRoot).Path
+$isPackagedExecutable = [IO.Path]::GetFileName($electronExe) -ne 'electron.exe'
 
 if (![string]::IsNullOrWhiteSpace($DataRoot)) {
   if (![IO.Path]::IsPathRooted($DataRoot)) {
@@ -142,8 +149,13 @@ try {
     $stderrPath = "$logBase.err.log"
     Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 
+    $electronArguments = if ($isPackagedExecutable) {
+      @("--user-data-dir=$DataRoot")
+    } else {
+      @((Join-Path $repoRoot 'desktop\electron'), "--user-data-dir=$DataRoot")
+    }
     $process = Start-Process -FilePath $electronExe `
-      -ArgumentList @($electronAppRoot, "--user-data-dir=$DataRoot") `
+      -ArgumentList $electronArguments `
       -WorkingDirectory $repoRoot `
       -RedirectStandardOutput $stdoutPath `
       -RedirectStandardError $stderrPath `
@@ -178,6 +190,7 @@ try {
         bridge_ready_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'segment' -Name 'bridge_start_total'
         document_loaded_ms = Find-StartupTotalMs -Text $stdout -Scope 'electron' -Kind 'point' -Name 'main_ui_loaded'
         app_mounted_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'app-mounted'
+        messenger_shell_frame_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-shell-frame'
         messenger_ready_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-bootstrap-finish'
         stdout_path = $stdoutPath
         stderr_path = $stderrPath
@@ -194,7 +207,7 @@ try {
 }
 
 $measuredSamples = @($samples | Where-Object { $_.kind -eq 'measure' })
-$metrics = @('window_ready_to_show_ms', 'bridge_ready_ms', 'document_loaded_ms', 'app_mounted_ms', 'messenger_ready_ms')
+$metrics = @('window_ready_to_show_ms', 'bridge_ready_ms', 'document_loaded_ms', 'app_mounted_ms', 'messenger_shell_frame_ms', 'messenger_ready_ms')
 $median = [ordered]@{}
 foreach ($metric in $metrics) {
   $values = @($measuredSamples | ForEach-Object { [double]$_[$metric] })

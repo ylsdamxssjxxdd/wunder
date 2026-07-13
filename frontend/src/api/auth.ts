@@ -1,6 +1,14 @@
 import api from './http';
+import type { AxiosResponse } from 'axios';
 
+import { resolveAccessToken } from '@/api/requestAuth';
 import type { ApiPayload } from './types';
+
+let myPreferencesInFlight: { token: string; request: Promise<AxiosResponse> } | null = null;
+let myPreferencesCache: { token: string; expiresAt: number; response: AxiosResponse } | null = null;
+let myPreferencesVersion = 0;
+
+const MY_PREFERENCES_CACHE_MS = 500;
 
 export type ResetWorkStateSession = {
   agent_id: string;
@@ -42,7 +50,45 @@ export const fetchMe = () => api.get('/auth/me');
 export const logout = () => api.post('/auth/logout', {}, buildAuthConfig());
 export const updateProfile = (payload: ApiPayload) => api.patch('/auth/me', payload);
 export const resetMyWorkState = () => api.post('/auth/me/reset_work_state');
-export const fetchMyPreferences = () => api.get('/auth/me/preferences');
-export const updateMyPreferences = (payload: ApiPayload) =>
-  api.patch('/auth/me/preferences', payload);
+export const fetchMyPreferences = () => {
+  const token = resolveAccessToken();
+  if (
+    myPreferencesCache &&
+    myPreferencesCache.token === token &&
+    myPreferencesCache.expiresAt > Date.now()
+  ) {
+    return Promise.resolve(myPreferencesCache.response);
+  }
+  if (myPreferencesInFlight?.token === token) {
+    return myPreferencesInFlight.request;
+  }
+  const requestVersion = myPreferencesVersion;
+  const request = api.get('/auth/me/preferences');
+  myPreferencesInFlight = { token, request };
+  void request.then(
+    (response) => {
+      if (requestVersion === myPreferencesVersion) {
+        myPreferencesCache = {
+          token,
+          expiresAt: Date.now() + MY_PREFERENCES_CACHE_MS,
+          response
+        };
+      }
+      if (myPreferencesInFlight?.request === request) {
+        myPreferencesInFlight = null;
+      }
+    },
+    () => {
+      if (myPreferencesInFlight?.request === request) {
+        myPreferencesInFlight = null;
+      }
+    }
+  );
+  return request;
+};
+export const updateMyPreferences = (payload: ApiPayload) => {
+  myPreferencesVersion += 1;
+  myPreferencesCache = null;
+  return api.patch('/auth/me/preferences', payload);
+};
 export const fetchOrgUnits = () => api.get('/auth/org_units');

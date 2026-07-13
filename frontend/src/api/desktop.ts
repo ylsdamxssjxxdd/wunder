@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { AxiosResponse } from 'axios';
 
 import { getDesktopLocalToken } from '@/config/desktop';
 
@@ -173,6 +174,12 @@ const desktopApi = axios.create({
   timeout: 30000
 });
 
+let desktopSettingsInFlight: { token: string; request: Promise<AxiosResponse> } | null = null;
+let desktopSettingsCache: { token: string; expiresAt: number; response: AxiosResponse } | null = null;
+let desktopSettingsVersion = 0;
+
+const DESKTOP_SETTINGS_CACHE_MS = 500;
+
 const buildDesktopHeaders = (): Record<string, string> => {
   const token = getDesktopLocalToken();
   if (!token) {
@@ -184,15 +191,52 @@ const buildDesktopHeaders = (): Record<string, string> => {
   };
 };
 
-export const fetchDesktopSettings = () =>
-  desktopApi.get('/wunder/desktop/settings', {
+export const fetchDesktopSettings = (): Promise<AxiosResponse> => {
+  const token = getDesktopLocalToken();
+  if (
+    desktopSettingsCache &&
+    desktopSettingsCache.token === token &&
+    desktopSettingsCache.expiresAt > Date.now()
+  ) {
+    return Promise.resolve(desktopSettingsCache.response);
+  }
+  if (desktopSettingsInFlight?.token === token) {
+    return desktopSettingsInFlight.request;
+  }
+  const requestVersion = desktopSettingsVersion;
+  const request = desktopApi.get('/wunder/desktop/settings', {
     headers: buildDesktopHeaders()
   });
+  desktopSettingsInFlight = { token, request };
+  void request.then(
+    (response) => {
+      if (requestVersion === desktopSettingsVersion) {
+        desktopSettingsCache = {
+          token,
+          expiresAt: Date.now() + DESKTOP_SETTINGS_CACHE_MS,
+          response
+        };
+      }
+      if (desktopSettingsInFlight?.request === request) {
+        desktopSettingsInFlight = null;
+      }
+    },
+    () => {
+      if (desktopSettingsInFlight?.request === request) {
+        desktopSettingsInFlight = null;
+      }
+    }
+  );
+  return request;
+};
 
-export const updateDesktopSettings = (payload: ApiPayload) =>
-  desktopApi.put('/wunder/desktop/settings', payload, {
+export const updateDesktopSettings = (payload: ApiPayload) => {
+  desktopSettingsVersion += 1;
+  desktopSettingsCache = null;
+  return desktopApi.put('/wunder/desktop/settings', payload, {
     headers: buildDesktopHeaders()
   });
+};
 
 export const resetDesktopWorkState = () =>
   desktopApi.post('/wunder/desktop/reset_work_state', undefined, {

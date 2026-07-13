@@ -23,8 +23,7 @@ use wunder_server::user_store::UserStore;
 pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
-const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
-const BUILTIN_SKILLS_STAMP_NAME: &str = ".wunder_builtin_skills_stamp.json";
+const DESKTOP_APPROVAL_MODE_MIGRATION_VERSION: &str = "full_auto_v1";
 const DESKTOP_CONTROLLER_MIN_NORM_WIDTH: i32 = 1000;
 const DESKTOP_CONTROLLER_MIN_NORM_HEIGHT: i32 = 1000;
 
@@ -146,17 +145,10 @@ impl DesktopRuntime {
                 workspace_root.to_string_lossy()
             )
         })?;
-        if let Err(err) = seed_workspace_skills(&repo_root, &workspace_root) {
-            warn!(
-                "seed desktop workspace skills failed: {} -> {}: {err}",
-                repo_assets::builtin_skills_root(&repo_root).display(),
-                workspace_root.join("skills").display()
-            );
-        }
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
-            "prepare_workspace_and_seed_skills",
+            "prepare_workspace",
             step_start,
             startup_boot,
         );
@@ -210,18 +202,11 @@ impl DesktopRuntime {
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
         let admin_custom_skills_root = temp_root.join("admin_skills");
-        if let Err(err) = seed_user_tool_skills(&repo_root, &user_tools_root, &user_id) {
-            warn!(
-                "seed desktop user tool skills failed: {} -> {}: {err}",
-                repo_assets::builtin_skills_root(&repo_root).display(),
-                user_tools_root.display()
-            );
-        }
         let vector_root = temp_root.join("vector_knowledge");
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
-            "prepare_config_paths_and_seed_user_tools",
+            "prepare_config_paths",
             step_start,
             startup_boot,
         );
@@ -519,226 +504,6 @@ fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> {
-    let source = repo_assets::builtin_skills_root(repo_root);
-    if !source.is_dir() {
-        return Ok(());
-    }
-    let target = workspace_root.join("skills");
-    sync_builtin_skills(&source, &target)
-}
-
-fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str) -> Result<()> {
-    let source = repo_assets::builtin_skills_root(repo_root);
-    if !source.is_dir() {
-        return Ok(());
-    }
-    let safe_user_id = sanitize_user_tools_user_id(user_id);
-    let target = user_tools_root.join(safe_user_id).join("skills");
-    sync_builtin_skills(&source, &target)
-}
-
-fn sync_builtin_skills(source: &Path, target: &Path) -> Result<()> {
-    if should_skip_builtin_skill_sync(source, target) {
-        return Ok(());
-    }
-    fs::create_dir_all(target)
-        .with_context(|| format!("create skills target dir failed: {}", target.display()))?;
-    let previous = read_builtin_skill_manifest(target);
-    let mut current: HashSet<String> = HashSet::new();
-    let entries = fs::read_dir(source)
-        .with_context(|| format!("read skills source dir failed: {}", source.display()))?;
-    for entry in entries {
-        let entry = entry
-            .with_context(|| format!("read skills source entry failed: {}", source.display()))?;
-        let source_path = entry.path();
-        let entry_name = entry.file_name().to_string_lossy().to_string();
-        if entry_name.is_empty() {
-            continue;
-        }
-        let target_path = target.join(&entry_name);
-        let file_type = entry.file_type().with_context(|| {
-            format!(
-                "read skills source entry type failed: {}",
-                source_path.display()
-            )
-        })?;
-        if file_type.is_dir() {
-            remove_path_if_exists(&target_path)?;
-            copy_directory_recursive(&source_path, &target_path)?;
-            current.insert(entry_name);
-            continue;
-        }
-        if file_type.is_file() {
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("create skills target parent failed: {}", parent.display())
-                })?;
-            }
-            fs::copy(&source_path, &target_path).with_context(|| {
-                format!(
-                    "copy desktop skill file failed: {} -> {}",
-                    source_path.display(),
-                    target_path.display()
-                )
-            })?;
-        }
-    }
-    for stale in previous.difference(&current) {
-        remove_path_if_exists(&target.join(stale))?;
-    }
-    write_builtin_skill_manifest(target, &current)?;
-    write_builtin_skill_stamp(target, source)?;
-    Ok(())
-}
-
-fn copy_directory_recursive(source: &Path, target: &Path) -> Result<()> {
-    fs::create_dir_all(target)
-        .with_context(|| format!("create target dir failed: {}", target.display()))?;
-    let entries = fs::read_dir(source)
-        .with_context(|| format!("read source dir failed: {}", source.display()))?;
-    for entry in entries {
-        let entry =
-            entry.with_context(|| format!("read source entry failed: {}", source.display()))?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        let file_type = entry.file_type().with_context(|| {
-            format!(
-                "read source entry type failed: {}",
-                source_path.to_string_lossy()
-            )
-        })?;
-        if file_type.is_dir() {
-            copy_directory_recursive(&source_path, &target_path)?;
-            continue;
-        }
-        if file_type.is_file() {
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("create target parent dir failed: {}", parent.display())
-                })?;
-            }
-            fs::copy(&source_path, &target_path).with_context(|| {
-                format!(
-                    "copy desktop skill file failed: {} -> {}",
-                    source_path.display(),
-                    target_path.display()
-                )
-            })?;
-        }
-    }
-    Ok(())
-}
-
-fn remove_path_if_exists(path: &Path) -> Result<()> {
-    if !path.exists() {
-        return Ok(());
-    }
-    if path.is_dir() {
-        fs::remove_dir_all(path)
-            .with_context(|| format!("remove stale skill dir failed: {}", path.display()))?;
-        return Ok(());
-    }
-    fs::remove_file(path)
-        .with_context(|| format!("remove stale skill file failed: {}", path.display()))
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct BuiltinSkillsStamp {
-    source_root: String,
-    app_version: String,
-}
-
-fn should_skip_builtin_skill_sync(source: &Path, target: &Path) -> bool {
-    let force_sync = std::env::var("WUNDER_FORCE_SKILL_SYNC")
-        .ok()
-        .map(|value| value.trim() == "1")
-        .unwrap_or(false);
-    let packaged_runtime = std::env::var("WUNDER_DESKTOP_PACKAGED")
-        .ok()
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-        || std::env::var("APPIMAGE")
-            .ok()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-    should_skip_builtin_skill_sync_for_runtime(source, target, packaged_runtime, force_sync)
-}
-
-fn should_skip_builtin_skill_sync_for_runtime(
-    source: &Path,
-    target: &Path,
-    packaged_runtime: bool,
-    force_sync: bool,
-) -> bool {
-    if force_sync || !packaged_runtime {
-        return false;
-    }
-    if !target.is_dir() {
-        return false;
-    }
-    let manifest = read_builtin_skill_manifest(target);
-    if manifest.is_empty() || !manifest.iter().all(|name| target.join(name).is_dir()) {
-        return false;
-    }
-    let Some(stamp) = read_builtin_skill_stamp(target) else {
-        return false;
-    };
-    let source_key = build_builtin_skills_source_key(source);
-    stamp.source_root == source_key && stamp.app_version == env!("CARGO_PKG_VERSION")
-}
-
-fn read_builtin_skill_stamp(target: &Path) -> Option<BuiltinSkillsStamp> {
-    let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
-    let Ok(content) = fs::read_to_string(&stamp_path) else {
-        return None;
-    };
-    serde_json::from_str::<BuiltinSkillsStamp>(&content).ok()
-}
-
-fn write_builtin_skill_stamp(target: &Path, source: &Path) -> Result<()> {
-    let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
-    let stamp = BuiltinSkillsStamp {
-        source_root: build_builtin_skills_source_key(source),
-        app_version: env!("CARGO_PKG_VERSION").to_string(),
-    };
-    let text =
-        serde_json::to_string_pretty(&stamp).context("serialize builtin skills stamp failed")?;
-    fs::write(&stamp_path, text).with_context(|| {
-        format!(
-            "write builtin skills stamp failed: {}",
-            stamp_path.display()
-        )
-    })
-}
-
-fn read_builtin_skill_manifest(target: &Path) -> HashSet<String> {
-    let manifest_path = target.join(BUILTIN_SKILLS_MANIFEST_NAME);
-    let Ok(content) = fs::read_to_string(manifest_path) else {
-        return HashSet::new();
-    };
-    serde_json::from_str::<Vec<String>>(&content)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
-fn write_builtin_skill_manifest(target: &Path, names: &HashSet<String>) -> Result<()> {
-    let mut ordered = names.iter().cloned().collect::<Vec<_>>();
-    ordered.sort();
-    let manifest_path = target.join(BUILTIN_SKILLS_MANIFEST_NAME);
-    let text = serde_json::to_string_pretty(&ordered)
-        .context("serialize builtin skills manifest failed")?;
-    fs::write(&manifest_path, text).with_context(|| {
-        format!(
-            "write builtin skills manifest failed: {}",
-            manifest_path.display()
-        )
-    })
-}
-
 pub(crate) fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
     if !path.exists() {
         return Ok(DesktopSettings::default());
@@ -995,22 +760,6 @@ fn sanitize_workspace_scope(value: &str) -> String {
     }
 }
 
-fn sanitize_user_tools_user_id(value: &str) -> String {
-    let cleaned = value.trim();
-    if cleaned.is_empty() {
-        return "anonymous".to_string();
-    }
-    let mut output = String::with_capacity(cleaned.len());
-    for ch in cleaned.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            output.push(ch);
-        } else {
-            output.push('_');
-        }
-    }
-    output
-}
-
 fn build_default_container_root(
     workspace_root: &Path,
     user_id: &str,
@@ -1035,38 +784,6 @@ fn normalize_path_for_compare(path: &Path) -> String {
         normalized.make_ascii_lowercase();
     }
     normalized
-}
-
-fn build_builtin_skills_source_key(source: &Path) -> String {
-    let appimage = std::env::var("APPIMAGE").ok();
-    build_builtin_skills_source_key_with_appimage(source, appimage.as_deref())
-}
-
-fn build_builtin_skills_source_key_with_appimage(source: &Path, appimage: Option<&str>) -> String {
-    let Some(raw_appimage) = appimage else {
-        return normalize_path_for_compare(source);
-    };
-    let trimmed = raw_appimage.trim();
-    if trimmed.is_empty() {
-        return normalize_path_for_compare(source);
-    }
-
-    // AppImage mounts to a randomized /tmp/.mount_* path on each run.
-    // Keying by APPIMAGE file identity avoids full skill resync on every launch.
-    let appimage_path = PathBuf::from(trimmed);
-    let normalized_path = normalize_path_for_compare(&appimage_path);
-    match fs::metadata(&appimage_path) {
-        Ok(metadata) => {
-            let modified_s = metadata
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|duration| duration.as_secs())
-                .unwrap_or(0);
-            format!("appimage:{normalized_path}:{}:{modified_s}", metadata.len())
-        }
-        Err(_) => format!("appimage:{normalized_path}"),
-    }
 }
 
 fn set_env_path(key: &str, value: &Path) {
@@ -1595,12 +1312,22 @@ fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str)
         return Ok(());
     }
 
-    let _ = state.storage.delete_user_token(desktop_token);
     let now = now_ts();
+    let expected_scope = UserStore::default_session_scope();
+    if desktop_token_matches_identity(
+        state.storage.get_user_token(desktop_token)?.as_ref(),
+        user_id,
+        expected_scope,
+        now,
+    ) {
+        return Ok(());
+    }
+
+    let _ = state.storage.delete_user_token(desktop_token);
     let record = UserTokenRecord {
         token: desktop_token.to_string(),
         user_id: user_id.to_string(),
-        session_scope: UserStore::default_session_scope().to_string(),
+        session_scope: expected_scope.to_string(),
         expires_at: now + 10.0 * 365.0 * 24.0 * 3600.0,
         created_at: now,
         last_used_at: now,
@@ -1609,7 +1336,27 @@ fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str)
     Ok(())
 }
 
+fn desktop_token_matches_identity(
+    record: Option<&UserTokenRecord>,
+    user_id: &str,
+    session_scope: &str,
+    now: f64,
+) -> bool {
+    record.is_some_and(|record| {
+        record.user_id == user_id
+            && record.session_scope == session_scope
+            && record.expires_at > now
+    })
+}
+
 fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -> Result<()> {
+    let migration_key = format!(
+        "desktop_approval_mode_migration:{DESKTOP_APPROVAL_MODE_MIGRATION_VERSION}:{user_id}"
+    );
+    if state.user_store.get_meta(&migration_key)?.as_deref() == Some("1") {
+        return Ok(());
+    }
+
     for mut record in state.user_store.list_user_agents(user_id)? {
         let normalized = record.approval_mode.trim().to_ascii_lowercase();
         if !(normalized.is_empty() || normalized == "auto_edit" || normalized == "auto-edit") {
@@ -1621,34 +1368,30 @@ fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -
     }
 
     let default_agent_key = format!("default_agent:{user_id}");
-    let Some(raw) = state.user_store.get_meta(&default_agent_key)? else {
-        return Ok(());
-    };
-    let cleaned = raw.trim();
-    if cleaned.is_empty() {
-        return Ok(());
+    if let Some(raw) = state.user_store.get_meta(&default_agent_key)? {
+        let cleaned = raw.trim();
+        if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(cleaned) {
+            let approval_mode = payload
+                .get("approval_mode")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            let legacy_mode = approval_mode.is_empty()
+                || approval_mode == "auto_edit"
+                || approval_mode == "auto-edit";
+            if let (true, Some(object)) = (legacy_mode, payload.as_object_mut()) {
+                object.insert(
+                    "approval_mode".to_string(),
+                    serde_json::Value::String("full_auto".to_string()),
+                );
+                state
+                    .user_store
+                    .set_meta(&default_agent_key, &serde_json::to_string(object)?)?;
+            }
+        }
     }
-    let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(cleaned) else {
-        return Ok(());
-    };
-    let approval_mode = payload
-        .get("approval_mode")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    if !(approval_mode.is_empty() || approval_mode == "auto_edit" || approval_mode == "auto-edit") {
-        return Ok(());
-    }
-    if let Some(object) = payload.as_object_mut() {
-        object.insert(
-            "approval_mode".to_string(),
-            serde_json::Value::String("full_auto".to_string()),
-        );
-        state
-            .user_store
-            .set_meta(&default_agent_key, &serde_json::to_string(object)?)?;
-    }
+    state.user_store.set_meta(&migration_key, "1")?;
     Ok(())
 }
 
@@ -1786,6 +1529,38 @@ mod tests {
         assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
+    }
+
+    #[test]
+    fn desktop_token_identity_reuses_only_valid_matching_records() {
+        let now = 100.0;
+        let record = UserTokenRecord {
+            token: "desktop-token".to_string(),
+            user_id: "desktop-user".to_string(),
+            session_scope: "desktop".to_string(),
+            expires_at: now + 1.0,
+            created_at: now - 1.0,
+            last_used_at: now - 1.0,
+        };
+
+        assert!(desktop_token_matches_identity(
+            Some(&record),
+            "desktop-user",
+            "desktop",
+            now
+        ));
+        assert!(!desktop_token_matches_identity(
+            Some(&record),
+            "other-user",
+            "desktop",
+            now
+        ));
+        assert!(!desktop_token_matches_identity(
+            Some(&record),
+            "desktop-user",
+            "desktop",
+            now + 1.0
+        ));
     }
 
     #[test]
@@ -2096,89 +1871,6 @@ mod tests {
         let content = fs::read_to_string(&config_path).expect("read config");
         assert!(content.contains("existing_model"));
         assert!(!content.contains("seeded_model"));
-
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn builtin_skills_source_key_is_stable_across_appimage_mount_paths() {
-        let root = std::env::temp_dir().join(format!(
-            "wunder-desktop-source-key-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        let appimage_path = root.join("wunder-desktop.AppImage");
-        let mount_a = root.join("mount-a/resources/skills");
-        let mount_b = root.join("mount-b/resources/skills");
-
-        fs::create_dir_all(&mount_a).expect("create mount a");
-        fs::create_dir_all(&mount_b).expect("create mount b");
-        fs::write(&appimage_path, b"appimage-content").expect("write appimage");
-
-        let appimage = appimage_path.to_string_lossy().to_string();
-        let key_a = build_builtin_skills_source_key_with_appimage(&mount_a, Some(&appimage));
-        let key_b = build_builtin_skills_source_key_with_appimage(&mount_b, Some(&appimage));
-
-        assert_eq!(key_a, key_b);
-
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn builtin_skills_source_key_changes_when_appimage_file_changes() {
-        let root = std::env::temp_dir().join(format!(
-            "wunder-desktop-source-key-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        let appimage_path = root.join("wunder-desktop.AppImage");
-        let source = root.join("mount/resources/skills");
-
-        fs::create_dir_all(&source).expect("create source");
-        fs::write(&appimage_path, b"v1").expect("write appimage v1");
-
-        let appimage = appimage_path.to_string_lossy().to_string();
-        let key_v1 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
-
-        fs::write(&appimage_path, b"v2-with-different-size").expect("write appimage v2");
-        let key_v2 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
-
-        assert_ne!(key_v1, key_v2);
-
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn builtin_skill_sync_reuses_matching_packaged_assets() {
-        let root = std::env::temp_dir().join(format!(
-            "wunder-desktop-skill-sync-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        let source = root.join("source");
-        let target = root.join("target");
-        fs::create_dir_all(&source).expect("create source");
-        fs::create_dir_all(&target).expect("create target");
-        fs::create_dir_all(source.join("sample")).expect("create source skill");
-        fs::create_dir_all(target.join("sample")).expect("create target skill");
-        fs::write(source.join("sample/SKILL.md"), "---\nname: sample\n---\n")
-            .expect("write source skill");
-        fs::write(target.join("sample/SKILL.md"), "---\nname: sample\n---\n")
-            .expect("write target skill");
-        write_builtin_skill_manifest(&target, &HashSet::from(["sample".to_string()]))
-            .expect("write manifest");
-        write_builtin_skill_stamp(&target, &source).expect("write stamp");
-
-        assert!(should_skip_builtin_skill_sync_for_runtime(
-            &source, &target, true, false
-        ));
-        fs::remove_dir_all(target.join("sample")).expect("remove target skill");
-        assert!(!should_skip_builtin_skill_sync_for_runtime(
-            &source, &target, true, false
-        ));
-        assert!(!should_skip_builtin_skill_sync_for_runtime(
-            &source, &target, false, false
-        ));
-        assert!(!should_skip_builtin_skill_sync_for_runtime(
-            &source, &target, true, true
-        ));
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -111,6 +111,7 @@ const resolveManualChunk = (rawId: string) => {
 };
 
 export default defineConfig(({ mode }) => {
+  const desktopBuild = mode === 'desktop';
   const loadedEnv = loadEnv(mode, envDir, '');
   const devProxyTarget =
     loadedEnv.VITE_DEV_PROXY_TARGET || process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
@@ -126,7 +127,8 @@ export default defineConfig(({ mode }) => {
     cacheDir: viteCacheDir,
     envDir,
     define: {
-      __WUNDER_APP_VERSION__: JSON.stringify(appVersion)
+      __WUNDER_APP_VERSION__: JSON.stringify(appVersion),
+      __WUNDER_DESKTOP_BUILD__: JSON.stringify(desktopBuild)
     },
     plugins: [vue()],
     build: {

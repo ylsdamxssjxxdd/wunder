@@ -180,9 +180,12 @@ import {
 } from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
-import { registerCompanionOpenHandler } from '@/views/messenger/companionOpenBridge';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
-import { isDesktopSafeModeEnabled, reportDesktopRendererStage } from '@/config/desktop';
+import {
+  dismissDesktopStartupShell,
+  isDesktopSafeModeEnabled,
+  reportDesktopRendererStage
+} from '@/config/desktop';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -1222,8 +1225,19 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
       ctx.initDesktopLaunchBehavior();
       ctx.applyUiFontSize(ctx.uiFontSize.value);
-      ctx.unregisterCompanionOpenHandler = registerCompanionOpenHandler((agentId) => ctx.openAgentById(agentId));
       reportDesktopRendererStage('messenger-bootstrap-start', {
+          section: ctx.sessionHub.activeSection
+      });
+      // Show the rendered messenger shell as soon as its static layout has
+      // painted. Session and agent hydration continues without a blank page.
+      await nextTick();
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          await new Promise<void>((resolve) => {
+              window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+          });
+      }
+      dismissDesktopStartupShell();
+      reportDesktopRendererStage('messenger-shell-frame', {
           section: ctx.sessionHub.activeSection
       });
       await ctx.bootstrap();
@@ -1231,6 +1245,16 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           section: ctx.sessionHub.activeSection,
           sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0,
           activeSessionId: String(ctx.chatStore.activeSessionId || '').trim()
+      });
+      // Keep this paint boundary for timing and future non-desktop callers.
+      await nextTick();
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          await new Promise<void>((resolve) => {
+              window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+          });
+      }
+      reportDesktopRendererStage('messenger-first-frame', {
+          section: ctx.sessionHub.activeSection
       });
       ctx.refreshAudioRecordingSupport();
       ctx.scheduleMessageViewportRefresh({
@@ -1405,10 +1429,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       if (ctx.stopUserToolsUpdatedListener) {
           ctx.stopUserToolsUpdatedListener();
           ctx.stopUserToolsUpdatedListener = null;
-      }
-      if (ctx.unregisterCompanionOpenHandler) {
-          ctx.unregisterCompanionOpenHandler();
-          ctx.unregisterCompanionOpenHandler = null;
       }
       ctx.clearWorkspaceResourceCache();
       ctx.timelinePreviewMap.value.clear();

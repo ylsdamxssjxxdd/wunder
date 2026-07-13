@@ -1,14 +1,12 @@
 <template>
   <span class="messenger-agent-avatar" :class="[sizeClass, stateClass, motionClass]" :title="title">
     <span class="messenger-agent-avatar-image-shell" :style="avatarFaceStyle" aria-hidden="true">
-      <CompanionSprite
-        v-if="companionSpriteUrl"
+      <CompanionAvatarSprite
+        v-if="showCompanionSprite"
         class="messenger-agent-avatar-sprite"
-        :source="companionSpriteUrl"
-        :state="companionSpriteState"
-        :scale="companionSpriteScale"
-        fit
-        :paused="!shouldAnimateCompanionSprite"
+        :icon="avatarConfig"
+        :state="state"
+        :animated="animated"
       />
       <img v-else-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
       <span v-else class="messenger-agent-avatar-initial">{{ avatarInitial }}</span>
@@ -24,20 +22,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watchEffect } from 'vue';
+import { computed, defineAsyncComponent } from 'vue';
 
-import CompanionSprite from '@/components/companions/CompanionSprite.vue';
-import { useCompanionStore } from '@/stores/companions';
-import type { CompanionSpriteStateId } from '@/stores/companions';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import {
   parseAgentAvatarIconConfig,
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
 } from '@/utils/agentAvatar';
-import {
-  STATIC_COMPANION_AVATAR_STATE,
-  resolveCompanionSpriteStateForRuntime
-} from '@/utils/companionRuntimeState';
 
 type AgentAvatarSize = 'sm' | 'md' | 'lg';
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
@@ -67,45 +59,22 @@ const stateClass = computed(() => `state-${props.state}`);
 const motionClass = computed(() => (props.animated ? 'is-motion-enabled' : 'is-motion-static'));
 const showRunningSpinner = computed(() => props.state === 'running');
 const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
-const companionStore = useCompanionStore();
-void companionStore.hydrate().catch(() => undefined);
-watchEffect(() => {
-  if (avatarConfig.value.kind !== 'companion') {
-    return;
-  }
-  const scope = avatarConfig.value.scope || 'global';
-  const id = avatarConfig.value.id || avatarConfig.value.name;
-  if (scope !== 'global' || !String(id || '').trim()) {
-    return;
-  }
-  void companionStore.ensureGlobalCompanion(String(id || '').trim()).catch(() => undefined);
-});
-const companionRecord = computed(() =>
-  avatarConfig.value.kind === 'companion'
-    ? companionStore.findCompanion(avatarConfig.value.scope || 'global', avatarConfig.value.id || avatarConfig.value.name)
-    : null
+// Companion sprites are an optional web affordance. Keep their store and
+// animation runtime out of the desktop messenger's initial module graph.
+const CompanionAvatarSprite = defineAsyncComponent(
+  () => import('@/components/companions/CompanionAvatarSprite.vue')
 );
-const companionSpriteUrl = computed(() => companionRecord.value?.spritesheetDataUrl || companionRecord.value?.spritesheetUrl || '');
-const companionRuntimeSpriteState = computed<CompanionSpriteStateId>(() =>
-  resolveCompanionSpriteStateForRuntime(props.state, {
-    pendingState: 'review'
-  })
+const showCompanionSprite = computed(
+  () => !isDesktopModeEnabled() && avatarConfig.value.kind === 'companion'
 );
-const companionSpriteState = computed<CompanionSpriteStateId>(() =>
-  props.animated ? companionRuntimeSpriteState.value : STATIC_COMPANION_AVATAR_STATE
-);
-const shouldAnimateCompanionSprite = computed(() => props.animated && companionSpriteState.value !== 'idle');
-// The companion display scale is only for the floating character layer.
-// Agent avatars should stay visually stable inside message/list UI.
-const companionSpriteScale = computed(() => 1);
 const avatarImageUrl = computed(
   () =>
     String(props.imageUrl || '').trim() ||
-    (avatarConfig.value.kind === 'companion' ? '' : resolveAgentAvatarImageByConfig(avatarConfig.value))
+    resolveAgentAvatarImageByConfig(avatarConfig.value)
 );
 const avatarInitial = computed(() => resolveAgentAvatarInitial(props.name || props.title));
 const avatarFaceStyle = computed(() => ({
-  background: avatarImageUrl.value || companionSpriteUrl.value ? 'transparent' : avatarConfig.value.color
+  background: avatarImageUrl.value || showCompanionSprite.value ? 'transparent' : avatarConfig.value.color
 }));
 const statusIconClass = computed(() => {
   switch (props.state) {

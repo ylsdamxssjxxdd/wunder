@@ -223,8 +223,7 @@ const writeRendererCrashState = (patch = {}) => {
 const desktopRendererCrashState = readRendererCrashState()
 const rendererCompatibilityModeEnabled =
   String(process.env.WUNDER_DESKTOP_RENDERER_COMPAT_MODE || '').trim() === '1' ||
-  desktopRendererCrashState.compatibleGraphics === true ||
-  runningWin7PackageFlavor
+  desktopRendererCrashState.compatibleGraphics === true
 if (rendererCompatibilityModeEnabled) {
   process.env.WUNDER_DISABLE_GPU = '1'
   console.info('[desktop-debug][electron] renderer compatibility mode enabled')
@@ -4357,7 +4356,9 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
         reject(new Error(`Bridge did not respond in time (attempts=${attempts})`))
         return
       }
-      setTimeout(attempt, 80)
+      // The bridge runs on loopback; a short retry avoids adding a full
+      // 80ms polling slice to an otherwise-ready desktop startup.
+      setTimeout(attempt, 25)
     }
     attempt()
   })
@@ -5149,6 +5150,10 @@ const createLoadingHtml = () => `<!doctype html>
       color: #94a3b8;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Match the renderer startup surface before the local bridge is ready. */
+    body { background: #f1f1f1; color: #344255; }
+    .spinner { border-color: #e2e8f0; border-top-color: #ff9448; }
+    .hint { color: #7a8594; }
   </style>
 </head>
 <body>
@@ -5377,7 +5382,10 @@ const createWindow = async () => {
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'darwin' && !desktopSafeModeEnabled ? { titleBarStyle: 'hidden' } : {}),
-    ...(desktopSafeModeEnabled ? { backgroundColor: '#f8fafc' } : {}),
+    // Keep an opaque surface behind both the native loading document and the
+    // first frontend navigation. Transparent window defaults flash white on
+    // older Windows compositors while Chromium is repainting the renderer.
+    backgroundColor: '#f1f1f1',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -5458,6 +5466,9 @@ const createWindow = async () => {
         lastExitCode: 0
       })
       flushMainWindowMessages()
+      // Tray integration is not needed for the first visible window. Deferring
+      // its synchronous icon work keeps the loading shell and bridge startup hot.
+      createTray()
     }
   })
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -5553,6 +5564,7 @@ const createWindow = async () => {
   const loadingHtml = createLoadingHtml()
   const bridgeReadyPromise = startBridge()
   let shellLoadStarted = false
+  let shellLoadPromise = null
   let targetLoadStarted = false
   let shellTimer = null
   const loadShellIfNeeded = async () => {
@@ -5564,9 +5576,10 @@ const createWindow = async () => {
     }
     shellLoadStarted = true
     const loadShellNs = process.hrtime.bigint()
-    await mainWindow
+    shellLoadPromise = mainWindow
       .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`)
       .catch(() => {})
+    await shellLoadPromise
     logStartupSegment('electron', 'window_loading_shell_loaded', loadShellNs)
   }
   if (loadingShellDelayMs === 0) {
@@ -5590,6 +5603,15 @@ const createWindow = async () => {
         shellTimer = null
       }
       const target = bridgeWebBase ? `${bridgeWebBase}/` : `http://127.0.0.1:${port}/`
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return
+      }
+      // A data URL navigation may still be committing when a fast bridge
+      // becomes ready. Wait for it before the real app navigation so neither
+      // load is canceled and the window ever falls back to a blank page.
+      if (shellLoadPromise) {
+        await shellLoadPromise
+      }
       if (!mainWindow || mainWindow.isDestroyed()) {
         return
       }
@@ -5834,7 +5856,6 @@ if (!gotLock) {
       ipcMain.handle(COMPANION_COMMAND_CHANNEL, (_event, payload) => emitCompanionCommand(payload))
       logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)
-      createTray()
       const createWindowCallNs = process.hrtime.bigint()
       await createWindow()
       logStartupSegment('electron', 'app_create_window_returned', createWindowCallNs)

@@ -33,11 +33,11 @@ if [ "${INCLUDE_NODE_MODULES}" = "1" ]; then
 fi
 
 if [ "${INCLUDE_FRONTEND_DIST}" = "1" ]; then
-  [ -d "${ROOT_DIR}/frontend/dist" ] || {
-    echo "Missing ${ROOT_DIR}/frontend/dist; run one online build first or set INCLUDE_FRONTEND_DIST=0." >&2
+  [ -d "${ROOT_DIR}/frontend/dist-desktop" ] || {
+    echo "Missing ${ROOT_DIR}/frontend/dist-desktop; run one online build first or set INCLUDE_FRONTEND_DIST=0." >&2
     exit 1
   }
-  entries+=("frontend/dist")
+  entries+=("frontend/dist-desktop")
 fi
 
 if [ "${INCLUDE_BRIDGE_BIN}" = "1" ] && [ -f "${ROOT_DIR}/target/arm64-20/release/wunder-desktop-bridge" ]; then

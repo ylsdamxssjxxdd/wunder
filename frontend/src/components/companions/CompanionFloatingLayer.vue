@@ -89,7 +89,6 @@ import {
 } from '@/utils/companionRuntimeState';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { selectVisibleMessageProjections } from '@/realtime/chat/chatRuntimeSelectors';
-import { openCompanionAgent } from '@/views/messenger/companionOpenBridge';
 
 type FloatingEntry = {
   key: string;
@@ -786,12 +785,8 @@ async function openCompanionChat(entry: FloatingEntry): Promise<void> {
       }
       window.requestAnimationFrame(() => resolve());
     });
-    if (!effectiveDesktopMode.value && typeof props.openAgentById === 'function') {
+    if (typeof props.openAgentById === 'function') {
       await Promise.resolve(props.openAgentById(isDefaultAgent ? '__default__' : normalizedAgentId)).catch(() => undefined);
-      return;
-    }
-    const bridged = await openCompanionAgent(isDefaultAgent ? '__default__' : normalizedAgentId).catch(() => false);
-    if (bridged) {
       return;
     }
     await router.replace({

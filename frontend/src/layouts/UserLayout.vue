@@ -8,11 +8,15 @@
 </template>
 
 <script setup lang="ts">
-import { KeepAlive, computed, onMounted, watch } from 'vue';
+import { KeepAlive, computed, defineAsyncComponent, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
-import CompanionFloatingLayer from '@/components/companions/CompanionFloatingLayer.vue';
 import { useAuthStore } from '@/stores/auth';
+
+// Keep companion UI out of every authenticated route's startup graph.
+const CompanionFloatingLayer = defineAsyncComponent(
+  () => import('@/components/companions/CompanionFloatingLayer.vue')
+);
 
 const authStore = useAuthStore();
 const route = useRoute();
@@ -28,9 +32,7 @@ const refreshProfile = () => {
   void authStore.loadProfile().catch(() => undefined);
 };
 
-// 首次挂载时拉取一次用户信息；后续仅在 token 变化时刷新，避免路由切换造成刷新风暴。
-onMounted(refreshProfile);
-
+// Route guards load the initial profile; only refresh here when the active token changes.
 watch(
   () => authStore.token,
   (next, previous) => {

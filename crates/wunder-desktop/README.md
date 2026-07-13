@@ -5,7 +5,7 @@
 ## 环境准备（Windows）
 
 - Rust 工具链（含 `cargo`）
-- Node.js（用于构建 `frontend/dist`）
+- Node.js（用于构建 `frontend/dist-desktop`）
 - Tauri CLI
   - `cargo install tauri-cli --locked`
 - NSIS（用于生成 `.exe` 安装包）
@@ -21,7 +21,7 @@ cargo build --release -p wunder-desktop --bin wunder-desktop-bridge
 
 # 2) 构建前端产物
 npm install --workspaces --include-workspace-root=false
-npm run build --workspace wunder-frontend
+npm run build:desktop --workspace wunder-frontend
 
 # 3) 进入 Tauri 目录
 Set-Location crates/wunder-desktop
@@ -80,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File crates/wunder-desktop/scripts/build-win
 - Tauri 安装包会携带以下运行资源：
   - `config/`
   - `scripts/`
-  - `frontend/dist/`
+  - `frontend/dist-desktop/`（打包时映射为 `frontend/dist/`，不包含网页端 3D 可视化）
 - 运行时会将内置 `config/skills/` 同步到本地工作区：`<userData>/WUNDER_WORK/skills`
   - 同名内置技能会被覆盖为最新打包版本（用于升级后保持一致）
   - 用户上传的自定义技能请放在 `admin_skills` 或 `user_tools/<user>/skills`，不会被内置同步覆盖

@@ -2,12 +2,9 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 
 import api from '@/api/http';
-import {
-  buildCompanionPackageBlob,
-  buildCompanionPackageFilename,
-  parseCompanionPackageFile,
-  type CompanionPackageManifest
-} from '@/utils/companionPackage';
+import type { CompanionPackageManifest } from '@/utils/companionPackage';
+
+const loadCompanionPackageUtilities = async () => import('@/utils/companionPackage');
 
 export type CompanionSpriteStateId =
   | 'idle'
@@ -566,6 +563,7 @@ export const useCompanionStore = defineStore('companions', () => {
     saving.value = true;
     lastError.value = '';
     try {
+      const { parseCompanionPackageFile } = await loadCompanionPackageUtilities();
       const parsed = await parseCompanionPackageFile(file);
       const now = Date.now();
       const existing = companions.value.find((item) => item.id === parsed.id);
@@ -622,6 +620,8 @@ export const useCompanionStore = defineStore('companions', () => {
     if (!target) {
       return;
     }
+    const { buildCompanionPackageBlob, buildCompanionPackageFilename } =
+      await loadCompanionPackageUtilities();
     const blob = buildCompanionPackageBlob(target, target.spritesheetDataUrl);
     downloadBlob(blob, buildCompanionPackageFilename(target.id));
   };
@@ -637,6 +637,7 @@ export const useCompanionStore = defineStore('companions', () => {
         return;
       }
       const blob = await requestGlobalCompanionPackage(cleaned);
+      const { buildCompanionPackageFilename } = await loadCompanionPackageUtilities();
       downloadBlob(blob, buildCompanionPackageFilename(target.id));
       return;
     }

@@ -60,8 +60,8 @@ Please load/pull/build it first, then rerun."
     [ -d "${ELECTRON_BUILDER_CACHE_DIR}" ] || die "Offline mode requires ${ELECTRON_BUILDER_CACHE_DIR}. Run one online build first."
   fi
 
-  if [ "${WUNDER_BUILD_FRONTEND}" != "1" ] && [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
-    die "Missing frontend build output: ${ROOT_DIR}/frontend/dist
+  if [ "${WUNDER_BUILD_FRONTEND}" != "1" ] && [ ! -d "${ROOT_DIR}/frontend/dist-desktop" ]; then
+    die "Missing frontend build output: ${ROOT_DIR}/frontend/dist-desktop
 Set WUNDER_BUILD_FRONTEND=1 to build it automatically."
   fi
 
@@ -123,14 +123,14 @@ else
 fi
 
 if [ "${WUNDER_BUILD_FRONTEND:-1}" = "1" ]; then
-  echo "[js] Building frontend/dist from current source ..."
+  echo "[js] Building frontend/dist-desktop from current source ..."
   cd /app
-  npm run build --workspace wunder-frontend
-elif [ ! -d /app/frontend/dist ]; then
-  echo "frontend/dist is missing and WUNDER_BUILD_FRONTEND=0." >&2
+  npm run build:desktop --workspace wunder-frontend
+elif [ ! -d /app/frontend/dist-desktop ]; then
+  echo "frontend/dist-desktop is missing and WUNDER_BUILD_FRONTEND=0." >&2
   exit 1
 else
-  echo "[js] Reusing existing frontend/dist."
+  echo "[js] Reusing existing frontend/dist-desktop."
 fi
 EOF
 }
@@ -162,7 +162,7 @@ package_electron() {
 set -euo pipefail
 
 cd /app/desktop/electron
-WUNDER_BRIDGE_BIN=/app/target/arm64-20/release/wunder-desktop-bridge WUNDER_FRONTEND_DIST=/app/frontend/dist   npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
+WUNDER_BRIDGE_BIN=/app/target/arm64-20/release/wunder-desktop-bridge WUNDER_FRONTEND_DIST=/app/frontend/dist-desktop   npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 EOF
 }
 

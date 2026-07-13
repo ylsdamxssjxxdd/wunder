@@ -10,13 +10,13 @@
 ### 前置条件
 - Node.js（建议 22.12+）
 - Rust（用于构建 `wunder-desktop-bridge`）
-- 已构建的前端产物（`frontend/dist`）
+- 已构建的桌面前端产物（`frontend/dist-desktop`）
 
 ### 步骤一：构建前端
 在仓库根目录执行：
 ```bash
 npm install --workspaces --include-workspace-root=false
-npm run build --workspace wunder-frontend
+npm run build:desktop --workspace wunder-frontend
 ```
 
 ### 步骤二：构建桥接程序
@@ -78,7 +78,7 @@ OUTPUT_DIR=target/arm64-20/dist \
 
 Electron 打包前会执行 `scripts/prepare-resources.js`，将运行所需资源拷贝到 `desktop/electron/resources`：
 - `wunder-desktop-bridge`（桥接程序）
-- `frontend/dist`（前端静态资源）
+- `frontend/dist-desktop`（桌面前端静态资源；不包含网页端 3D 可视化）
 - `prompts/`、`skills/`（按仓库资源目录自动解析）
 - `config/i18n.messages.json`、`config/wunder.desktop.preconfig.yaml`（如存在）
 
@@ -114,10 +114,10 @@ WUNDER_BRIDGE_BIN=/path/to/wunder-desktop-bridge
 # 首次初始化工具链与缓存
 npm run setup:desktop:win7:gnu
 
-# Win7 默认正式出包入口（会强制重建 frontend/dist，并同时构建 common 补充包）
+# Win7 默认正式出包入口（会强制重建 frontend/dist-desktop，并同时构建 common 补充包）
 npm run build:desktop:win7:gnu
 
-# 已初始化后的快速重建入口（仍会强制重建 frontend/dist，只跳过工具链 bootstrap，并同时构建 common 补充包）
+# 已初始化后的快速重建入口（仍会强制重建 frontend/dist-desktop，只跳过工具链 bootstrap，并同时构建 common 补充包）
 npm run build:desktop:win7:gnu:fast
 
 # 只重打安装包，不生成补充包
@@ -163,7 +163,7 @@ Electron 启动时会：
 - `WUNDER_BRIDGE_BIN`：打包时指定桥接程序路径（prepare-resources）
 - `WUNDER_DISABLE_GPU=1`：禁用硬件加速（用于排查 GPU/驱动问题）
 - `WUNDER_SUPPRESS_GPU_WARNINGS=0`：关闭默认 GPU 警告抑制（默认启用抑制）
-- `WUNDER_LOADING_SHELL_DELAY_MS=0`：配置启动壳页延迟（发布版默认 1200ms，开发模式默认 220ms）
+- `WUNDER_LOADING_SHELL_DELAY_MS=0`：配置启动壳页延迟（默认立即显示，设为正数仅用于启动诊断）
 - `WUNDER_BRIDGE_LOG_VERBOSE=0`：关闭 bridge 全量 stdout（默认开启）
 - `WUNDER_STARTUP_TIMING=0`：关闭默认启用的启动时序日志
 - `WUNDER_SIDECAR_RUNTIME=1`：标记 sidecar 运行态（通常由 sidecar AppRun 自动注入）

@@ -44,6 +44,7 @@ config/wunder.yaml
 node_modules/
 /node_modules-*/
 frontend/dist
+frontend/dist-desktop/
 frontend/.env
 frontend/node_modules/
 download

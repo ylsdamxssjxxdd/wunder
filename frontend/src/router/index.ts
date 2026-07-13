@@ -450,14 +450,14 @@ router.beforeEach(async (to) => {
 
     if (to.path.startsWith('/desktop')) {
       if (!authStore.user) {
-        try {
-          await authStore.loadProfile();
-        } catch (error) {
+        // The local desktop token is injected by the bridge. Messenger
+        // bootstrap already hydrates the profile, so do not block its shell
+        // on a duplicate local /auth/me request.
+        void authStore.loadProfile().catch((error) => {
           if (isAuthRequiredError(error)) {
             authStore.logout();
           }
-          // Ignore initial desktop profile load failures in local desktop mode.
-        }
+        });
       }
       return true;
     }

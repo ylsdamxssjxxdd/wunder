@@ -5,6 +5,7 @@ const DESKTOP_BOOTSTRAP_PATH = '/wunder/desktop/bootstrap';
 const DESKTOP_TOOL_CALL_MODE_KEY = 'wunder_desktop_tool_call_mode';
 const DESKTOP_USER_ID_KEY = 'wunder_desktop_user_id';
 const DESKTOP_LOCAL_TOKEN_KEY = 'wunder_desktop_local_token';
+const DESKTOP_STARTUP_SHELL_ID = 'wunder-desktop-startup-shell';
 
 export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call', 'freeform_call'] as const;
 
@@ -265,6 +266,26 @@ export const isDesktopSafeModeEnabled = (): boolean =>
   Boolean(getDesktopRuntime()?.safe_mode);
 
 export const isDesktopLocalModeEnabled = (): boolean => isDesktopModeEnabled();
+
+export const dismissDesktopStartupShell = (): void => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  const shell = document.getElementById(DESKTOP_STARTUP_SHELL_ID);
+  if (!shell) {
+    return;
+  }
+  shell.classList.add('is-ready');
+  const removeShell = () => {
+    document.documentElement.removeAttribute('data-wunder-desktop-starting');
+    shell.remove();
+  };
+  if (typeof window === 'undefined') {
+    removeShell();
+    return;
+  }
+  window.setTimeout(removeShell, 160);
+};
 
 export const reportDesktopRendererStage = (
   stage: string,

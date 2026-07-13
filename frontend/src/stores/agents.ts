@@ -8,10 +8,19 @@ import {
   listSharedAgents,
   updateAgent as updateAgentApi
 } from '@/api/agents';
+import { resolveAccessToken } from '@/api/requestAuth';
 
 const inflightAgentRequests = new Map<string, Promise<Record<string, unknown> | null>>();
 const agentMutationVersions = new Map<string, number>();
 const pendingAgentMutations = new Map<string, Promise<Record<string, unknown> | null>>();
+type AgentsLoadResult = { owned: Record<string, unknown>[]; shared: Record<string, unknown>[] };
+
+let agentsLoadInFlight: { scope: string; request: Promise<AgentsLoadResult> } | null = null;
+let agentsLoadedAt = 0;
+let agentsLoadedScope = '';
+let agentsLoadVersion = 0;
+
+const AGENTS_LOAD_CACHE_MS = 500;
 
 const bumpAgentMutationVersion = (key: string): number => {
   const next = (agentMutationVersions.get(key) || 0) + 1;
@@ -94,15 +103,30 @@ export const useAgentStore = defineStore('agents', {
       this.agentMap = map;
     },
 
-    async loadAgents() {
+    async loadAgents(options: { force?: boolean } = {}) {
+      const scope = resolveAccessToken();
+      if (
+        !options.force &&
+        agentsLoadedScope === scope &&
+        agentsLoadedAt > Date.now() - AGENTS_LOAD_CACHE_MS
+      ) {
+        return { owned: this.agents, shared: this.sharedAgents };
+      }
+      if (agentsLoadInFlight?.scope === scope) {
+        return agentsLoadInFlight.request;
+      }
       this.loading = true;
-      try {
+      const requestVersion = ++agentsLoadVersion;
+      const request = (async () => {
         const [ownedResult, sharedResult] = await Promise.allSettled([listAgents(), listSharedAgents()]);
         if (ownedResult.status !== 'fulfilled') {
           throw ownedResult.reason;
         }
         if (sharedResult.status !== 'fulfilled') {
           console.warn('[agents] load shared agents failed, fallback to empty list', sharedResult.reason);
+        }
+        if (requestVersion !== agentsLoadVersion) {
+          return { owned: this.agents, shared: this.sharedAgents };
         }
         const ownedItemsRaw = ownedResult.value?.data?.data?.items || [];
         const sharedItemsRaw =
@@ -112,9 +136,18 @@ export const useAgentStore = defineStore('agents', {
         this.agents = ownedItems;
         this.sharedAgents = sharedItems;
         this.hydrateMap(ownedItems, sharedItems);
+        agentsLoadedAt = Date.now();
+        agentsLoadedScope = scope;
         return { owned: ownedItems, shared: sharedItems };
+      })();
+      agentsLoadInFlight = { scope, request };
+      try {
+        return await request;
       } finally {
-        this.loading = false;
+        if (agentsLoadInFlight?.request === request) {
+          agentsLoadInFlight = null;
+          this.loading = false;
+        }
       }
     },
 
@@ -162,7 +195,7 @@ export const useAgentStore = defineStore('agents', {
     async createAgent(payload) {
       const { data } = await createAgentApi(payload);
       const agent = data?.data;
-      await this.loadAgents();
+      await this.loadAgents({ force: true });
       return agent;
     },
 
@@ -178,7 +211,7 @@ export const useAgentStore = defineStore('agents', {
         if (key && agent) {
           this.agentMap = { ...this.agentMap, [key]: agent };
         }
-        await this.loadAgents();
+        await this.loadAgents({ force: true });
         if (key && agent) {
           this.agentMap = { ...this.agentMap, [key]: agent };
         }
@@ -200,7 +233,7 @@ export const useAgentStore = defineStore('agents', {
       const key = String(id || '').trim();
       if (!key) return null;
       const { data } = await deleteAgentApi(key);
-      await this.loadAgents();
+      await this.loadAgents({ force: true });
       return data?.data;
     }
   }

@@ -1885,7 +1885,7 @@
       :total="workerCardImportOverlayTotal"
     />
     <CompanionFloatingLayer
-      v-if="!isEmbeddedChatRoute"
+      v-if="showCompanionLayer"
       :desktop-mode="desktopMode"
       :acknowledged-done-agent-id="companionAcknowledgedDoneAgentId"
       :acknowledged-done-at="companionAcknowledgedDoneAt"
@@ -1914,6 +1914,19 @@ reportDesktopRendererStage('messenger-controller-ready');
 const CompanionFloatingLayer = defineRecoverableAsyncComponent(
   () => import('@/components/companions/CompanionFloatingLayer.vue')
 );
+const companionLayerReady = vueRef(false);
+const showCompanionLayer = vueComputed(() => !isEmbeddedChatRoute.value && companionLayerReady.value);
+const scheduleCompanionLayerLoad = () => {
+  if (companionLayerReady.value || typeof window === 'undefined') return;
+  const load = () => {
+    companionLayerReady.value = true;
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(load, { timeout: 1800 });
+    return;
+  }
+  window.setTimeout(load, 240);
+};
 const companionAcknowledgedDoneAgentId = vueRef('');
 const companionAcknowledgedDoneAt = vueRef(0);
 const acknowledgeCompanionAgentDone = (agentId: unknown) => {
@@ -2450,6 +2463,7 @@ const isContactOnline = controller.isContactOnline;
 const isContactUnitExpanded = controller.isContactUnitExpanded;
 const isDefaultModelSelectorValue = controller.isDefaultModelSelectorValue;
 const isDesktopModeEnabled = controller.isDesktopModeEnabled;
+scheduleCompanionLayerLoad();
 const isDesktopUpdatePending = controller.isDesktopUpdatePending;
 const isDesktopUpdateTerminal = controller.isDesktopUpdateTerminal;
 const isEmbeddedChatRoute = controller.isEmbeddedChatRoute;

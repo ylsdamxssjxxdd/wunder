@@ -15,7 +15,8 @@ import { loadRuntimeConfig } from '@/config/runtime';
 import {
   initDesktopRuntime,
   isDesktopModeEnabled,
-  reportDesktopRendererStage
+  reportDesktopRendererStage,
+  dismissDesktopStartupShell
 } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
 import {
@@ -113,6 +114,7 @@ function renderDesktopFailurePage(payload: RendererFailurePayload): void {
   if (typeof document === 'undefined' || !isDesktopModeEnabled()) {
     return;
   }
+  dismissDesktopStartupShell();
   const root = document.getElementById('app') || document.body;
   if (!root) {
     return;
@@ -289,6 +291,12 @@ const bootstrap = async () => {
   await initI18n();
   rendererBootstrapStage = 'i18n-ready';
   reportDesktopRendererStage('i18n-ready');
+  // Resolve the initial async route before mounting the desktop chrome. This
+  // keeps the startup shell in place instead of briefly rendering an empty
+  // router-view while MessengerView is still loading.
+  await router.isReady();
+  rendererBootstrapStage = 'initial-route-ready';
+  reportDesktopRendererStage('initial-route-ready');
   app.mount('#app');
   rendererBootstrapStage = 'app-mounted';
   reportDesktopRendererStage('app-mounted');

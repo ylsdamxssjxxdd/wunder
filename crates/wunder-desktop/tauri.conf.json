@@ -31,7 +31,7 @@
       "../../config/prompts": "config/prompts",
       "../../config/skills": "config/skills",
       "../../scripts": "scripts",
-      "../../frontend/dist": "frontend/dist"
+      "../../frontend/dist-desktop": "frontend/dist"
     },
     "icon": [
       "icons/icon.ico"

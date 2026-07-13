@@ -27,9 +27,9 @@ if (-not $LabRoot) {
   $LabRoot = Join-Path $repoRoot 'temp_dir\win7-gnu-lab'
 }
 
-$frontendDist = Join-Path $repoRoot 'frontend\dist'
+$frontendDist = Join-Path $repoRoot 'frontend\dist-desktop'
 if (-not (Test-Path $frontendDist)) {
-  throw "frontend/dist is missing. Build it first: npm run build --workspace wunder-frontend"
+  throw "frontend/dist-desktop is missing. Build it first: npm run build:desktop --workspace wunder-frontend"
 }
 
 $nsisDir = 'C:\Program Files (x86)\NSIS'

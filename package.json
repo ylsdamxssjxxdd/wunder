@@ -16,6 +16,7 @@
     "deps:adopt:linux-arm": "python scripts/node_modules_profile.py adopt --profile linux-arm",
     "sync:app-version": "python scripts/sync_app_version.py",
     "build:frontend": "npm run build --workspace wunder-frontend",
+    "build:frontend:desktop": "npm run build:desktop --workspace wunder-frontend",
     "typecheck:frontend": "npm run typecheck --workspace wunder-frontend",
     "prepare:desktop:resources": "npm run prepare:resources --workspace wunder-desktop-electron",
     "build:desktop:linux:x64": "npm run build:linux:x64 --workspace wunder-desktop-electron",

@@ -1,4 +1,4 @@
-import { strFromU8, strToU8, unzipSync, zipSync } from 'three/examples/jsm/libs/fflate.module.js';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
 export type CompanionPackageManifest = {
   id: string;
