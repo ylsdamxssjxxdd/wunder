@@ -144,16 +144,18 @@ const shouldPreferIncomingSubagent = (
   if (incomingMoment !== currentMoment) {
     return incomingMoment > currentMoment;
   }
+  const incomingActive = ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(incoming.status);
+  const currentActive = ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(current.status);
+  // Equal-time snapshots often combine a fresh task update with a historical
+  // terminal session record. Keep the active task until a newer terminal fact arrives.
+  if (incomingActive !== currentActive) {
+    return incomingActive;
+  }
   if (incoming.terminal !== current.terminal) {
     return incoming.terminal;
   }
   if (incoming.failed !== current.failed) {
     return incoming.failed;
-  }
-  const incomingActive = ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(incoming.status);
-  const currentActive = ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(current.status);
-  if (incomingActive !== currentActive) {
-    return incomingActive;
   }
   if (incoming.assistantMessage !== current.assistantMessage) {
     return Boolean(incoming.assistantMessage);

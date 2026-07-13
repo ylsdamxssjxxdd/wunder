@@ -1,3 +1,4 @@
+use crate::core::runtime_tuning;
 use crate::schemas::AbilityDescriptor;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
@@ -90,6 +91,8 @@ fn postgres_fallback_runtime() -> Result<&'static tokio::runtime::Runtime> {
     static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
     match RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(runtime_tuning::postgres_runtime_threads())
+            .max_blocking_threads(8)
             .enable_all()
             .thread_name("postgres-storage-fallback")
             .build()

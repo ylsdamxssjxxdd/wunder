@@ -10,6 +10,7 @@ pub mod auth;
 pub mod beeroom;
 pub mod beeroom_demo;
 pub mod beeroom_packs;
+pub mod beeroom_reset;
 pub mod beeroom_ws;
 pub mod benchmark;
 pub mod browser_control;
@@ -55,6 +56,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
         .merge(beeroom::router())
+        .merge(beeroom_reset::router())
         .merge(beeroom_demo::router())
         .merge(beeroom_ws::router())
         .merge(beeroom_packs::router())

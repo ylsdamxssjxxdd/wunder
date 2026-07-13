@@ -60,6 +60,25 @@ test('agent runtime state still uses local streaming as running fallback', () =>
   );
 });
 
+test('blocking swarm tool outranks a stale terminal agent snapshot', () => {
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      localStreaming: true,
+      activeBlockingSwarm: true,
+      remoteState: 'done',
+      overrideState: 'running'
+    }),
+    'running'
+  );
+  assert.equal(
+    resolveAgentRuntimeStateFromSignals({
+      activeBlockingSwarm: true,
+      remoteState: 'error'
+    }),
+    'running'
+  );
+});
+
 test('agent runtime settlement only clears stale hot or terminal sessions', () => {
   assert.equal(
     shouldSettleAgentSessionsFromRuntimeState({
@@ -121,7 +140,7 @@ test('agent runtime terminal settlement accepts active stale running as evidence
 
 test('agent runtime terminal session can settle stale running agent state', () => {
   assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('idle'), 'done');
-  assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('not_loaded'), 'done');
+  assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('not_loaded'), null);
   assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('system_error'), 'error');
   assert.equal(resolveAgentRuntimeTerminalStateFromSessionStatus('running'), null);
   assert.equal(
@@ -134,10 +153,10 @@ test('agent runtime terminal session can settle stale running agent state', () =
   assert.equal(
     shouldSettleAgentRuntimeFromTerminalSession({
       sessionStatus: 'not_loaded',
-      currentState: 'idle',
+      currentState: 'running',
       localStreaming: true
     }),
-    true
+    false
   );
   assert.equal(
     shouldSettleAgentRuntimeFromTerminalSession({

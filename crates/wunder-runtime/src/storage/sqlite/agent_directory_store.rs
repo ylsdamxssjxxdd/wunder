@@ -60,6 +60,13 @@ pub(super) trait SqliteAgentDirectoryStorage {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<TeamRunRecord>>;
+    fn list_team_runs_by_user_and_status_impl(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>>;
     fn upsert_team_task_impl(&self, record: &TeamTaskRecord) -> Result<()>;
     fn list_team_tasks_impl(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
     fn get_team_task_impl(&self, task_id: &str) -> Result<Option<TeamTaskRecord>>;
@@ -722,6 +729,65 @@ impl SqliteAgentDirectoryStorage for SqliteStorage {
         Ok(rows)
     }
 
+    fn list_team_runs_by_user_and_status_impl(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let mut cleaned_statuses = statuses
+            .iter()
+            .map(|status| status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .collect::<Vec<_>>();
+        cleaned_statuses.sort();
+        cleaned_statuses.dedup();
+        if cleaned_user.is_empty() || cleaned_statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.open()?;
+        let placeholders = vec!["?"; cleaned_statuses.len()].join(",");
+        let query_sql = format!(
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time FROM team_runs WHERE user_id = ? AND status IN ({placeholders}) ORDER BY updated_time DESC LIMIT ? OFFSET ?"
+        );
+        let mut values = vec![SqlValue::from(cleaned_user.to_string())];
+        values.extend(cleaned_statuses.into_iter().map(SqlValue::from));
+        values.push(SqlValue::from(limit.max(1)));
+        values.push(SqlValue::from(offset.max(0)));
+        let mut stmt = conn.prepare(&query_sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(values), |row| {
+                Ok(TeamRunRecord {
+                    team_run_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    hive_id: normalize_hive_id(&row.get::<_, String>(2)?),
+                    parent_session_id: row.get(3)?,
+                    parent_agent_id: row.get(4)?,
+                    mother_agent_id: row.get(5)?,
+                    strategy: row.get(6)?,
+                    status: row.get(7)?,
+                    task_total: row.get(8)?,
+                    task_success: row.get(9)?,
+                    task_failed: row.get(10)?,
+                    context_tokens_total: row.get(11)?,
+                    context_tokens_peak: row.get(12)?,
+                    model_round_total: row.get(13)?,
+                    started_time: row.get(14)?,
+                    finished_time: row.get(15)?,
+                    elapsed_s: row.get(16)?,
+                    summary: row.get(17)?,
+                    error: row.get(18)?,
+                    updated_time: row.get(19)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     fn upsert_team_task_impl(&self, record: &TeamTaskRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
@@ -1058,6 +1124,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["team-run-a"]
         );
+        storage
+            .upsert_team_run(&team_run("team-run-b", "user-b", "hive-b", "running", 6.0))
+            .expect("upsert other user team run");
+        storage
+            .upsert_team_run(&team_run("team-run-c", "user-a", "hive-a", "success", 7.0))
+            .expect("upsert terminal team run");
+        assert_eq!(
+            storage
+                .list_team_runs_by_user_and_status("user-a", &["queued", "running"], 0, 8)
+                .expect("list active runs for user")
+                .iter()
+                .map(|record| record.team_run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["team-run-a"]
+        );
         assert_eq!(
             storage
                 .get_team_task("team-task-a")
@@ -1076,7 +1157,7 @@ mod tests {
             storage
                 .delete_team_runs_by_hive("user-a", "hive-a")
                 .expect("delete team runs"),
-            1
+            2
         );
     }
 }

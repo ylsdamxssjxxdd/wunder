@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  resolveBeeroomMotherDispatchBinding,
   resolveNextBeeroomMotherDispatchSessionId,
   resolvePreferredBeeroomDispatchSessionId,
   shouldCacheBeeroomDispatchPreviewSnapshot,
@@ -10,6 +11,7 @@ import {
   shouldPreserveBeeroomDispatchPreviewOnSyncError
 } from '../../src/components/beeroom/beeroomDispatchSessionPolicy';
 import { overlayBeeroomLiveDispatchLabel } from '../../src/components/beeroom/beeroomDispatchPreviewOverlay';
+import { shouldAbortBeeroomDispatchStreamOnReset } from '../../src/components/beeroom/beeroomDispatchLifecyclePolicy';
 import {
   resolveBeeroomSwarmWorkerReplyFromHistoryMessages,
   resolveBeeroomSwarmWorkerTerminalState
@@ -42,6 +44,32 @@ test('mother dispatch keeps the bound session when explicit main thread is tempo
   assert.equal(sessionId, 'sess-old');
 });
 
+test('dispatch never borrows the foreground chat session as a swarm session', () => {
+  assert.equal(
+    resolvePreferredBeeroomDispatchSessionId({
+      targetRole: 'mother',
+      targetAgentId: 'mother-1',
+      previousSessionId: '',
+      previousTargetAgentId: '',
+      activeSessionId: 'sess-foreground-chat',
+      primarySessionId: 'sess-mother-main',
+      hasExplicitPrimarySession: false
+    }),
+    'sess-mother-main'
+  );
+  assert.equal(
+    resolvePreferredBeeroomDispatchSessionId({
+      targetRole: 'worker',
+      targetAgentId: 'worker-1',
+      previousSessionId: '',
+      previousTargetAgentId: '',
+      activeSessionId: 'sess-foreground-chat',
+      primarySessionId: 'sess-worker-main'
+    }),
+    'sess-worker-main'
+  );
+});
+
 test('mother dispatch stays on the bound session while explicit main thread is still unknown', () => {
   const sessionId = resolvePreferredBeeroomDispatchSessionId({
     targetRole: 'mother',
@@ -53,6 +81,24 @@ test('mother dispatch stays on the bound session while explicit main thread is s
     hasExplicitPrimarySession: false
   });
   assert.equal(sessionId, 'sess-current');
+});
+
+test('authoritative mother-session binding wins over stale group and chat snapshots', () => {
+  assert.equal(
+    resolveBeeroomMotherDispatchBinding({
+      resolvedGroupSessionId: 'sess-new',
+      payloadSessionId: 'sess-stale'
+    }),
+    'sess-new'
+  );
+  assert.equal(
+    resolveBeeroomMotherDispatchBinding({
+      overrideSessionId: 'sess-orchestration',
+      resolvedGroupSessionId: 'sess-new',
+      payloadSessionId: 'sess-stale'
+    }),
+    'sess-orchestration'
+  );
 });
 
 test('worker dispatch only reuses previous session when it belongs to the same worker target', () => {
@@ -76,7 +122,7 @@ test('worker dispatch only reuses previous session when it belongs to the same w
       activeSessionId: 'sess-active-worker-2',
       primarySessionId: 'sess-main-worker-2'
     }),
-    'sess-active-worker-2'
+    'sess-main-worker-2'
   );
 });
 
@@ -113,6 +159,12 @@ test('dispatch preview is preserved only for transient sync errors on the same s
     }),
     false
   );
+});
+
+test('page detach preserves a live beeroom stream while explicit reset aborts it', () => {
+  assert.equal(shouldAbortBeeroomDispatchStreamOnReset({ keepSending: true }), false);
+  assert.equal(shouldAbortBeeroomDispatchStreamOnReset({ keepSending: false }), true);
+  assert.equal(shouldAbortBeeroomDispatchStreamOnReset({}), true);
 });
 
 test('only active dispatch previews are cached and restored for beeroom canvas recovery', () => {
@@ -238,6 +290,7 @@ test('swarm worker terminal resolution keeps workflow-active sessions running', 
 test('swarm worker terminal resolution prefers the latest successful terminal event over earlier errors', () => {
   const completedState = resolveBeeroomSwarmWorkerTerminalState({
     currentStatus: 'running',
+    currentUpdatedTime: 1,
     running: false,
     events: [
       {
@@ -254,6 +307,7 @@ test('swarm worker terminal resolution prefers the latest successful terminal ev
       },
       {
         event: 'turn_terminal',
+        timestamp: 2,
         data: {
           status: 'completed'
         }

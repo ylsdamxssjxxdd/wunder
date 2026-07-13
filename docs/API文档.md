@@ -21,6 +21,7 @@
 - `wunder-frontend` 在 docker compose 中是一次性静态构建任务：先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`，成功后容器退出并由 `wunder-nginx` 提供静态站点，避免 Vite dev server 常驻占用 CPU；如需调试 Vite，可显式设置 `FRONTEND_RUN_DEV_SERVER=1` 并按需暴露 `FRONTEND_PORT`。构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - Docker Compose 下 `wunder-server` / `wunder-sandbox` 默认以 `WUNDER_SERVER_FEATURES=mcp,host-metrics,web-fetch` 编译；`host-metrics` 用于管理员侧系统状态中的 CPU、内存、进程、负载和磁盘采样，`web-fetch` 用于启用内置 `网页抓取` 工具。若自行覆盖 `WUNDER_SERVER_FEATURES`，需要保留这两个 feature，否则 `/wunder/admin/monitor` 的 `system` 主机指标会按轻量降级返回 0，或用户侧智能体工具列表不会显示 `网页抓取`。
+- `wunder-server` 运行时默认使用有界线程预算，避免大核宿主机按 CPU 数量创建多套超大 Tokio 线程池并放大 glibc malloc arena：主运行时默认 `min(可用 CPU, 8)` 个 worker、`16~64` 个 blocking 线程，PostgreSQL fallback runtime 默认 `min(可用 CPU, 2)` 个 worker，session-run runtime 默认 `min(可用 CPU, 4)` 个 worker 与 `16~32` 个 blocking 线程；Linux 容器会优先识别 cgroup CPU 配额。可分别通过 `WUNDER_SERVER_WORKER_THREADS`、`WUNDER_SERVER_MAX_BLOCKING_THREADS`、`WUNDER_POSTGRES_RUNTIME_THREADS`、`WUNDER_SESSION_RUN_WORKER_THREADS`、`WUNDER_SESSION_RUN_MAX_BLOCKING_THREADS` 覆盖。Compose 仅透传这些显式覆盖值，并默认设置 `MALLOC_ARENA_MAX=4` 与 `MALLOC_TRIM_THRESHOLD_=131072`，对应宿主覆盖变量为 `WUNDER_MALLOC_ARENA_MAX`、`WUNDER_MALLOC_TRIM_THRESHOLD_BYTES`；高并发部署应结合压测逐步上调线程预算，不建议直接按宿主逻辑核数配置。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址；compose 下 `wunder-sandbox` 默认不再启用容器级只读根文件系统，确需恢复 Docker `read_only` 时设置 `WUNDER_SANDBOX_DOCKER_READ_ONLY=true`。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
@@ -36,6 +37,7 @@
 - 注册开关接口：`GET /wunder/auth/settings` 无需登录，返回 `data.allow_user_registration`，供用户侧前端决定是否展示注册入口。`security.allow_user_registration=false` 时，`POST /wunder/auth/register` 会返回 403，管理员仍可通过用户管理创建或批量导入账号。
 - 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页/蜂群页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[] / swarms[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，前端可用它在刷新后恢复用户自定义排序。
 - 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的主线程。
+- 蜂群整体重置接口：`POST /wunder/beeroom/groups/{group_id}/reset`，仅作用于当前用户指定蜂群；中止该蜂群成员的活动会话、排队任务和蜂群任务，关闭活动编排，清除蜂群任务与右栏消息投影，并为母蜂及全部工蜂创建新的主线程。返回 `member_threads[]`（`agent_id/agent_name/role/session_id`）以及取消、清理计数。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置支持 `model_type=llm|embedding|tts|image`；向量知识库依赖 embedding 模型调用 `/v1/embeddings`，聊天页语音播放通过 TTS 模型代理 `/v1/audio/speech`。
@@ -3087,6 +3089,21 @@
 
 ## 2026-04-13 增补：beeroom 蜂群元数据编辑
 
+### `POST /wunder/beeroom/groups/{group_id}/mother-session`
+
+- 用途：解析或创建当前蜂群专属的母蜂聊天会话，并在发送前将其绑定为母蜂主线程；蜂群右栏不得从普通聊天页活动会话或母蜂“最近会话”猜测归属。
+- 鉴权：用户侧 Bearer Token；服务端同时校验蜂群归属、母蜂归属和已绑定会话归属。
+- 请求体：空对象 `{}`。
+- 行为：默认复用同一 `user_id + group_id + mother_agent_id` 的蜂群绑定；若用户已在普通聊天页为该母蜂显式新建或切换主线程，且该线程未被另一蜂群绑定，则当前蜂群会采用该主线程，后续右栏消息从新会话第 1 轮开始。不同蜂群即使使用同一母蜂，也不会借用彼此的专属绑定。活动编排存在时继续返回编排态冻结的权威母蜂会话，不在运行中换线。
+- 返回：`data` 包含 `id/title/status/agent_id/is_main/created_at/updated_at/last_message_at/group_id/created`。
+- 蜂群摘要和详情中的 `mother_session_id?` 返回当前已绑定的普通蜂群母会话或活动编排母会话；尚未建立绑定时为 `null`。
+
+### `GET /wunder/agents/running` 蜂群运行态补充
+
+- 活跃 `team_run`（`queued/running/merging`）是阻塞式蜂群工具期间的权威运行证据：母蜂按 `mother_agent_id/parent_session_id` 投影为 `running`，状态为 `queued/running` 的工蜂任务也投影为 `running`。
+- 团队运行态优先于 monitor 中短暂出现的 `done/error` 快照，避免模型动作与工具动作切换时将仍在等待工蜂的母蜂误报为完成；团队运行终止后才恢复普通线程与 monitor 状态。
+- 服务端按 `user_id + status` 查询活跃团队运行，并由 PostgreSQL/SQLite 的 `team_runs(user_id, status, updated_time)` 索引支撑，不进行跨租户全局扫描。
+
 ### `PUT /wunder/beeroom/groups/{group_id}`
 
 - 用途：更新蜂群名称、说明和母蜂配置，供用户侧消息页蜂群中栏“编辑蜂群”弹窗调用。
@@ -3095,6 +3112,7 @@
   - `description?: string`，可选；传空串会清空说明。
   - `mother_agent_id?: string`，可选；传空串会清空母蜂绑定，传有效智能体 ID 时会自动将该智能体迁入目标蜂群并重设为母蜂。
 - 返回：`data` 为更新后的蜂群摘要，结构与 `GET /wunder/beeroom/groups/{group_id}` 返回中的 `group` 基础字段保持一致。
+  - `GET /wunder/beeroom/groups` 的 `members[]` 最多返回 6 个成员摘要；`GET /wunder/beeroom/groups/{group_id}`、创建与更新响应返回完整 `members[]`，蜂群工作台应以详情成员集合为权威来源。
 - 返回补充：
   - 蜂群成员 `agents[]` 现包含 `silent` / `prefer_mother`。
   - 当蜂群未显式绑定 `mother_agent_id` 时，服务端会优先回退到首个 `prefer_mother=true` 的成员作为默认母蜂。

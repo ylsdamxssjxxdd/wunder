@@ -73,7 +73,15 @@
       <div class="beeroom-node-card-body">
         <div class="beeroom-node-card-head">
           <span class="beeroom-node-avatar">
-            <img v-if="node.avatarImageUrl" class="beeroom-node-avatar-img" :src="node.avatarImageUrl" alt="" />
+            <CompanionSprite
+              v-if="companionSpriteUrl"
+              class="beeroom-node-avatar-sprite"
+              :source="companionSpriteUrl"
+              state="idle"
+              fit
+              paused
+            />
+            <img v-else-if="node.avatarImageUrl" class="beeroom-node-avatar-img" :src="node.avatarImageUrl" alt="" />
             <span v-else class="beeroom-node-avatar-text">{{ node.avatarInitial }}</span>
           </span>
           <div class="beeroom-node-title-group">
@@ -146,7 +154,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue';
+
+import CompanionSprite from '@/components/companions/CompanionSprite.vue';
+import { useCompanionStore } from '@/stores/companions';
+import { parseAgentAvatarIconConfig } from '@/utils/agentAvatar';
 
 import type { SwarmProjectionNode } from './swarmCanvasModel';
 
@@ -168,6 +180,23 @@ const emit = defineEmits<{
 }>();
 
 const DEFAULT_ACTIVITY_ACCENT_RGB = '59, 130, 246';
+
+const companionStore = useCompanionStore();
+void companionStore.hydrate().catch(() => undefined);
+const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.node.avatarIcon));
+watchEffect(() => {
+  if (avatarConfig.value.kind !== 'companion' || avatarConfig.value.scope !== 'global') return;
+  const id = avatarConfig.value.id || avatarConfig.value.name;
+  if (id) void companionStore.ensureGlobalCompanion(id).catch(() => undefined);
+});
+const companionSpriteUrl = computed(() => {
+  if (avatarConfig.value.kind !== 'companion') return '';
+  const record = companionStore.findCompanion(
+    avatarConfig.value.scope || 'global',
+    avatarConfig.value.id || avatarConfig.value.name
+  );
+  return record?.spritesheetDataUrl || record?.spritesheetUrl || '';
+});
 
 const resolveAccentRgb = (color: string) => {
   const normalized = String(color || '').trim();
@@ -644,6 +673,13 @@ onBeforeUnmount(() => {
   backface-visibility: hidden;
   transform: translateZ(0);
   filter: saturate(0.92) contrast(1.02) brightness(0.96);
+}
+
+.beeroom-node-avatar-sprite {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
 }
 
 .beeroom-node-avatar-text {

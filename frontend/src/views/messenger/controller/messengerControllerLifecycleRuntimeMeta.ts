@@ -141,6 +141,7 @@ import {
   resolveAssistantMessageRuntimeState
 } from '@/utils/assistantMessageRuntime';
 import {
+  hasActiveBlockingSwarmAfterLatestUser,
   hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
   hasStreamingAssistantMessage
@@ -501,6 +502,13 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
           return;
       }
       const runtime = getRuntime(targetSessionId);
+      const messages = targetSessionId === String(ctx.chatStore.activeSessionId || '').trim()
+          ? ctx.resolveActiveAgentRenderableMessageRecords()
+          : ctx.chatStore.getCachedSessionMessages(targetSessionId);
+      if (hasActiveBlockingSwarmAfterLatestUser(messages)) {
+          localTerminalRuntimeSessionSnapshot.delete(targetSessionId);
+          return;
+      }
       const currentState =
           ctx.agentRuntimeStateMap.value.get(agentId) ||
           fallbackStateMap?.get(agentId) ||
@@ -600,6 +608,11 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
   ) => {
       const targetSessionId = String(sessionId || '').trim();
       if (!targetSessionId)
+          return;
+      const messages = targetSessionId === String(ctx.chatStore.activeSessionId || '').trim()
+          ? ctx.resolveActiveAgentRenderableMessageRecords()
+          : ctx.chatStore.getCachedSessionMessages(targetSessionId);
+      if (hasActiveBlockingSwarmAfterLatestUser(messages))
           return;
       const runtimeBefore = getRuntime(targetSessionId);
       const runtimeBeforeSnapshot = buildRuntimeDebugSnapshot(runtimeBefore);

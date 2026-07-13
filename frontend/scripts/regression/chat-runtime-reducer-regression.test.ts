@@ -66,14 +66,12 @@ test('chat runtime projection renders late user sideband before its assistant tu
   );
 });
 
-test('beeroom dispatch stream events stay bound to the local optimistic turn', () => {
+test('beeroom dispatch stream events promote the optimistic turn to canonical round identity', () => {
   const projection = createChatRuntimeProjection();
   const sessionId = 'session-1';
   const seed = 'beeroom-seed-1';
   const clientMessageId = `local-user:${sessionId}:beeroom:${seed}`;
   const userTurnId = `user-turn:${sessionId}:beeroom:${seed}`;
-  const modelTurnId = `model-turn:${sessionId}:beeroom:${seed}:model:1`;
-  const assistantMessageId = `local-assistant:${modelTurnId}`;
 
   applyChatRuntimeEvent(projection, {
     event_type: 'client_message_submitted',
@@ -88,17 +86,6 @@ test('beeroom dispatch stream events stay bound to the local optimistic turn', (
       client_message_id: clientMessageId
     }
   });
-  applyChatRuntimeEvent(projection, {
-    event_type: 'assistant_message_created',
-    source: 'local',
-    strict: false,
-    session_id: sessionId,
-    event_id: 'local-assistant-1',
-    user_turn_id: userTurnId,
-    model_turn_id: modelTurnId,
-    message_id: assistantMessageId
-  });
-
   const streamEvents = buildCanonicalChatRuntimeEvents({
     sessionId,
     eventType: 'tool_call',
@@ -107,9 +94,6 @@ test('beeroom dispatch stream events stay bound to the local optimistic turn', (
     phase: 'beeroom-dispatch',
     source: 'ws',
     clientMessageId,
-    userTurnId,
-    modelTurnId,
-    assistantMessageId,
     payload: {
       event_id: 2,
       event_seq: 2,
@@ -129,11 +113,139 @@ test('beeroom dispatch stream events stay bound to the local optimistic turn', (
     ['user', 'assistant']
   );
   assert.equal(assistantMessages.length, 1);
-  assert.equal(assistantMessages[0]?.id, assistantMessageId);
-  assert.equal(assistantMessages[0]?.userTurnId, userTurnId);
-  assert.equal(assistantMessages[0]?.modelTurnId, modelTurnId);
-  assert.equal(session.userTurnById[`user-turn:${sessionId}:round:2`], undefined);
-  assert.equal(session.messageById[`assistant-message:model-turn:${sessionId}:user:2:model:1`], undefined);
+  assert.equal(assistantMessages[0]?.id, `assistant-message:model-turn:${sessionId}:user:2:model:1`);
+  assert.equal(assistantMessages[0]?.userTurnId, `user-turn:${sessionId}:round:2`);
+  assert.equal(assistantMessages[0]?.modelTurnId, `model-turn:${sessionId}:user:2:model:1`);
+  assert.equal(session.userTurnById[userTurnId], undefined);
+  assert.notEqual(session.userTurnById[`user-turn:${sessionId}:round:2`], undefined);
+});
+
+test('swarm lifecycle updates do not replace the originating tool call status', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-swarm-tool';
+  const toolCallId = 'tool-swarm-1';
+  const buildPersistedEvent = (eventType: string, eventId: number, detail: Record<string, unknown>) =>
+    buildCanonicalChatRuntimeEvents({
+      sessionId,
+      eventType,
+      eventId,
+      phase: 'send',
+      source: 'test',
+      payload: {
+        event: eventType,
+        data: {
+          data: {
+            user_round: 1,
+            model_round: 1,
+            tool_call_id: toolCallId,
+            tool: 'agent_swarm',
+            ...detail
+          },
+          session_id: sessionId,
+          timestamp: '2026-07-12T00:00:00.000Z'
+        },
+        timestamp: '2026-07-12T00:00:00.000Z'
+      }
+    });
+
+  buildPersistedEvent('tool_call', 1, {}).forEach((event) => applyChatRuntimeEvent(projection, event));
+  buildPersistedEvent('team_task_dispatch', 2, {
+    team_run_id: 'team-1',
+    task_id: 'task-1',
+    target_session_id: 'worker-session-1',
+    status: 'queued'
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  let assistant = selectVisibleMessageProjections(projection, sessionId)
+    .find((message) => message.role === 'assistant');
+  assert.ok(assistant);
+  assert.equal(
+    assistant?.workflowItems?.find((item) => item.toolCallId === toolCallId)?.status,
+    'loading'
+  );
+  assert.ok(assistant?.workflowItems?.some((item) => item.eventType === 'team_task_dispatch'));
+
+  buildPersistedEvent('tool_result', 3, {
+    ok: true,
+    state: 'completed',
+    data: { team_run_id: 'team-1' }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  assistant = selectVisibleMessageProjections(projection, sessionId)
+    .find((message) => message.role === 'assistant');
+  const toolEntries = assistant?.workflowItems?.filter((item) =>
+    item.toolCallId === toolCallId && (item.eventType === 'tool_call' || item.eventType === 'tool_result')
+  ) || [];
+  assert.equal(toolEntries.length, 1);
+  assert.equal(toolEntries[0]?.eventType, 'tool_result');
+  assert.equal(toolEntries[0]?.status, 'completed');
+  assert.ok(assistant?.workflowItems?.some((item) => item.eventType === 'team_task_dispatch'));
+});
+
+test('team error remains collaboration-level until the mother turn terminates', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-team-error';
+  const canonical = buildCanonicalChatRuntimeEvents({
+    sessionId,
+    eventType: 'team_error',
+    eventId: 1,
+    source: 'test',
+    payload: {
+      user_round: 1,
+      model_round: 1,
+      team_run_id: 'team-error-1',
+      status: 'failed',
+      error: 'worker failed'
+    }
+  });
+  canonical.forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  assert.equal(selectSessionRuntimeStatus(projection, sessionId), 'running');
+  assert.equal(selectSessionBusy(projection, sessionId), true);
+  const assistant = selectVisibleMessageProjections(projection, sessionId)
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.workflowItems?.[0]?.eventType, 'team_error');
+  assert.equal(assistant?.workflowItems?.[0]?.status, 'failed');
+});
+
+test('canonical history snapshot replaces an unacknowledged swarm optimistic user turn', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-1';
+  const localTurnId = `user-turn:${sessionId}:beeroom:seed`;
+
+  applyChatRuntimeEvent(projection, buildCanonicalClientMessageSubmittedEvent({
+    sessionId,
+    content: '@mother request',
+    clientMessageId: 'local-user-1',
+    createdAt: '2026-04-30T02:14:06.000Z',
+    userTurnId: localTurnId
+  }));
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    snapshot_seq: 20,
+    messages: [
+      {
+        message_id: 'history:1',
+        role: 'user',
+        content: 'request',
+        user_turn_id: `user-turn:${sessionId}:round:1`,
+        turn_index: 1,
+        created_at: '2026-04-30T02:14:06.200Z'
+      }
+    ],
+    loading: true,
+    running: true
+  });
+
+  const visible = selectVisibleMessageProjections(projection, sessionId);
+  assert.deepEqual(
+    visible.map((message) => `${message.id}:${message.content}:${message.userTurnId}`),
+    [`history:1:request:user-turn:${sessionId}:round:1`]
+  );
+  assert.equal(projection.sessions[sessionId]?.userTurnById[localTurnId], undefined);
 });
 
 test('chat runtime reducer ignores duplicate final events by event id', () => {

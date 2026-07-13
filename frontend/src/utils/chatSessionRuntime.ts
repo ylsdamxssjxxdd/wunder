@@ -35,6 +35,47 @@ const resolveLatestUserIndex = (messages: ChatMessage[]): number => {
   return -1;
 };
 
+const ACTIVE_BLOCKING_TOOL_STATUSES = new Set([
+  'loading',
+  'pending',
+  'queued',
+  'running',
+  'streaming',
+  'waiting'
+]);
+
+const isBlockingSwarmWorkflowItem = (item: unknown): boolean => {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  const record = item as Record<string, unknown>;
+  const status = String(record.status || '').trim().toLowerCase();
+  if (!ACTIVE_BLOCKING_TOOL_STATUSES.has(status)) return false;
+  const eventType = String(
+    record.eventType ?? record.event_type ?? record.event ?? record.sourceEventType ?? record.source_event_type ?? ''
+  ).trim().toLowerCase();
+  if (eventType !== 'tool_call' && eventType !== 'tool_call_started') return false;
+  const identities = [
+    record.toolFunctionName,
+    record.tool_function_name,
+    record.functionName,
+    record.function_name,
+    record.toolRuntimeName,
+    record.tool_runtime_name,
+    record.runtimeName,
+    record.runtime_name,
+    record.toolName,
+    record.tool_name,
+    record.tool,
+    record.name,
+    record.toolDisplayName,
+    record.tool_display_name,
+    record.displayName,
+    record.display_name
+  ].map((value) => String(value || '').trim().toLowerCase());
+  return identities.some((identity) =>
+    identity === 'agent_swarm' || identity.includes('@agent_swarm') || identity === '智能体蜂群'
+  );
+};
+
 export const normalizeThreadRuntimeStatus = (value: unknown): ThreadRuntimeStatus => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'idle') return 'idle';
@@ -88,6 +129,21 @@ export const hasActiveSubagentsAfterLatestUser = (
     if (hasActiveSubagentItems(messages[index]?.subagents)) {
       return true;
     }
+  }
+  return false;
+};
+
+export const hasActiveBlockingSwarmAfterLatestUser = (
+  messages: ChatMessage[] | null | undefined
+): boolean => {
+  if (!Array.isArray(messages) || messages.length === 0) return false;
+  const latestUserIndex = resolveLatestUserIndex(messages);
+  const startIndex = latestUserIndex >= 0 ? latestUserIndex + 1 : 0;
+  for (let index = messages.length - 1; index >= startIndex; index -= 1) {
+    const items = Array.isArray(messages[index]?.workflowItems)
+      ? messages[index].workflowItems as unknown[]
+      : [];
+    if (items.some(isBlockingSwarmWorkflowItem)) return true;
   }
   return false;
 };

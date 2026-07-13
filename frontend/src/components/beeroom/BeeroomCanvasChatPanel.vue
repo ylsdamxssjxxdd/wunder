@@ -30,13 +30,15 @@
             <i class="fa-solid fa-folder-open" aria-hidden="true"></i>
           </button>
           <button
-            v-if="showClearButton !== false"
+            v-if="showResetButton !== false"
             class="beeroom-canvas-icon-btn"
             type="button"
-            :title="t('common.clear')"
-            @click="emit('clear')"
+            :title="t('beeroom.canvas.resetSwarm')"
+            :aria-label="t('beeroom.canvas.resetSwarm')"
+            :disabled="resetting"
+            @click="emit('reset')"
           >
-            <i class="fa-solid fa-broom" aria-hidden="true"></i>
+            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
           </button>
         </div>
       </div>
@@ -238,14 +240,16 @@ const props = withDefaults(defineProps<{
   composerError: string;
   artifactsEnabled: boolean;
   showArtifactsButton?: boolean;
-  showClearButton?: boolean;
+  showResetButton?: boolean;
+  resetting?: boolean;
   showComposer?: boolean;
   composerDisabled?: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
 }>(), {
   showArtifactsButton: true,
-  showClearButton: true,
+  showResetButton: true,
+  resetting: false,
   showComposer: true,
   composerDisabled: false
 });
@@ -254,7 +258,7 @@ const emit = defineEmits<{
   (event: 'update:collapsed', value: boolean): void;
   (event: 'update:composerText', value: string): void;
   (event: 'update:composerTargetAgentId', value: string): void;
-  (event: 'clear'): void;
+  (event: 'reset'): void;
   (event: 'open-artifacts'): void;
   (event: 'send'): void;
   (event: 'open-agent', agentId: string): void;

@@ -147,6 +147,20 @@ export const getBeeroomDemoRun = (groupId: ApiId, runId: ApiId) =>
     }
   );
 
+export const ensureBeeroomMotherSession = (groupId: ApiId) =>
+  api.post(
+    `/beeroom/groups/${encodeURIComponent(String(groupId || '').trim())}/mother-session`,
+    {},
+    { timeout: 60000 }
+  );
+
+export const resetBeeroomGroup = (groupId: ApiId) =>
+  api.post(
+    `/beeroom/groups/${encodeURIComponent(String(groupId || '').trim())}/reset`,
+    {},
+    { timeout: 60000 }
+  );
+
 export const cancelBeeroomDemoRun = (groupId: ApiId, runId: ApiId) =>
   api.post(
     `/beeroom/groups/${encodeURIComponent(groupId)}/demo_runs/${encodeURIComponent(String(runId || '').trim())}/cancel`,

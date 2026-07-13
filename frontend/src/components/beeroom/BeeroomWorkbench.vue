@@ -14,8 +14,6 @@
             :mission="selectedMission"
             :agents="agents"
             :active="active"
-            :active-chat-session-id="activeChatSessionId"
-            :active-chat-agent-id="activeChatAgentId"
             :refreshing="refreshing"
             @refresh="emit('refresh')"
             @open-agent="emit('open-agent', $event)"
@@ -90,8 +88,6 @@ const props = defineProps<{
   refreshing: boolean;
   error: string;
   active?: boolean;
-  activeChatSessionId?: string;
-  activeChatAgentId?: string;
 }>();
 
 const emit = defineEmits<{

@@ -27,11 +27,21 @@ use wunder_server::{
     admin_skills, api, auth, config, i18n, logging, mcp, repo_assets, rustls_provider, sandbox,
     schemas, user_store,
 };
-use wunder_server::{blocking, long_task};
+use wunder_server::{blocking, long_task, runtime_tuning};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     rustls_provider::install_process_default_provider();
+    let runtime_threads = runtime_tuning::server_runtime_threads();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(runtime_threads.worker_threads)
+        .max_blocking_threads(runtime_threads.max_blocking_threads)
+        .thread_name("wunder-server")
+        .enable_all()
+        .build()?;
+    runtime.block_on(run_server(runtime_threads))
+}
+
+async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> anyhow::Result<()> {
     let bootstrap_mode = std::env::var("WUNDER_SERVER_MODE")
         .unwrap_or_default()
         .trim()
@@ -47,6 +57,8 @@ async fn main() -> anyhow::Result<()> {
     let log_dir = logging::init_server_tracing(&config, &server_mode, &config_path)?;
     info!(
         server_mode = %server_mode,
+        runtime_worker_threads = runtime_threads.worker_threads,
+        runtime_max_blocking_threads = runtime_threads.max_blocking_threads,
         bind_addr = %bind_address(&config),
         config_path = %config_path.display(),
         log_dir = %log_dir

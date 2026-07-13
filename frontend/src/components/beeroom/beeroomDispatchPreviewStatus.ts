@@ -19,6 +19,26 @@ const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
   'resuming'
 ]);
 
+const ACTIVE_EVENT_NAMES = new Set([
+  'round_start',
+  'received',
+  'queued',
+  'queue_enter',
+  'queue_update',
+  'queue_start',
+  'llm_request',
+  'llm_output_delta',
+  'tool_call',
+  'tool_call_delta',
+  'tool_output',
+  'tool_output_delta',
+  'team_start',
+  'team_task_dispatch',
+  'team_task_update'
+]);
+
+const ACTIVE_EVENT_STATUSES = new Set(['accepted', 'queued', 'pending', 'running', 'waiting', 'resuming', 'merging']);
+
 const normalizeText = (value: unknown): string => String(value || '').trim();
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
@@ -42,11 +62,16 @@ export const resolveBeeroomTerminalPreviewStatusFromEvents = (events: SessionEve
     const event = events[index];
     const payload = resolveEventPayload(event);
     const eventName = resolveEventName(event);
+    const status = normalizeText(payload.status).toLowerCase();
+    // A newer active event starts another model/task phase. Do not let a final
+    // from an older phase settle the current dispatch during refresh.
+    if (ACTIVE_EVENT_NAMES.has(eventName) || ACTIVE_EVENT_STATUSES.has(status)) {
+      return '';
+    }
     if (eventName === 'error') {
       return 'failed';
     }
     if (eventName === 'turn_terminal') {
-      const status = normalizeText(payload.status).toLowerCase();
       if (status === 'completed') return 'completed';
       if (status === 'cancelled' || status === 'stopped') return 'cancelled';
       if (status === 'rejected' || status === 'failed' || status === 'error') return 'failed';

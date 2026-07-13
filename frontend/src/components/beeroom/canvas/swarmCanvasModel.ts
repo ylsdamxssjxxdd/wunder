@@ -11,6 +11,8 @@ import {
   resolveBeeroomTaskMoment
 } from '@/components/beeroom/beeroomTaskWorkflow';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
+import { isBeeroomGroupMember } from '@/components/beeroom/canvas/beeroomSwarmMemberScope';
+import { resolveBeeroomWorkflowTask } from '@/components/beeroom/canvas/beeroomSwarmWorkflowTask';
 import { resolveBeeroomSwarmNodeStatus } from '@/components/beeroom/canvas/beeroomSwarmNodeStatus';
 import {
   buildBeeroomSwarmSubagentProjectionContext,
@@ -81,6 +83,7 @@ export type SwarmProjectionNode = {
   accentColor: string;
   avatarColor: string;
   avatarInitial: string;
+  avatarIcon?: unknown;
   avatarImageUrl: string;
   x: number;
   y: number;
@@ -278,11 +281,20 @@ const mergeProjectionMembers = (
     });
   };
 
-  (Array.isArray(group?.members) ? group?.members : []).forEach(pushMember);
-  (Array.isArray(agents) ? agents : []).forEach(pushMember);
+  const groupMembers = Array.isArray(group?.members) ? group.members : [];
+  groupMembers.forEach(pushMember);
+  (Array.isArray(agents) ? agents : []).forEach((member) => {
+    const agentId = String(member?.agent_id || '').trim();
+    if (!isBeeroomGroupMember(group, agentId)) return;
+    pushMember(member);
+  });
 
   const motherAgentId = String(group?.mother_agent_id || '').trim();
-  if (motherAgentId && !merged.has(motherAgentId)) {
+  if (
+    motherAgentId &&
+    !merged.has(motherAgentId) &&
+    isBeeroomGroupMember(group, motherAgentId)
+  ) {
     pushMember({
       agent_id: motherAgentId,
       name: String(group?.mother_agent_name || motherAgentId).trim() || motherAgentId,
@@ -292,7 +304,7 @@ const mergeProjectionMembers = (
   }
 
   const dispatchAgentId = String(dispatchPreview?.targetAgentId || '').trim();
-  if (dispatchAgentId) {
+  if (dispatchAgentId && merged.has(dispatchAgentId)) {
     const active = ACTIVE_DISPATCH_STATUSES.has(String(dispatchPreview?.status || '').trim().toLowerCase());
     const current = merged.get(dispatchAgentId) || ({} as BeeroomMember);
     merged.set(dispatchAgentId, {
@@ -316,21 +328,6 @@ const resolveNodeStatus = (tasks: BeeroomMissionTask[], member: BeeroomMember | 
     member,
     missionStatus
   });
-
-const resolveStatusRank = (status: string) => {
-  const normalized = String(status || '').trim().toLowerCase();
-  const rankMap: Record<string, number> = {
-    running: 0,
-    queued: 1,
-    awaiting_idle: 2,
-    failed: 3,
-    cancelled: 4,
-    completed: 5,
-    success: 5,
-    idle: 6
-  };
-  return rankMap[normalized] ?? 7;
-};
 
 const pickLatestTask = (tasks: BeeroomMissionTask[]) =>
   [...tasks].sort(compareBeeroomMissionTasksByDisplayPriority)[0] || null;
@@ -500,6 +497,7 @@ const resolveSubagentAvatarImage = (options: {
 
 const buildWorkflowSnapshot = (options: {
   task: BeeroomMissionTask | null;
+  tasks: BeeroomMissionTask[];
   itemsByTask: Record<string, BeeroomWorkflowItem[]>;
   previewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   motherWorkflowItems: BeeroomWorkflowItem[];
@@ -507,30 +505,39 @@ const buildWorkflowSnapshot = (options: {
   status: string;
   t: TranslationFn;
 }) => {
-  const fallbackRuntime = buildTaskWorkflowRuntime(options.task, [], options.t);
   if (options.isMother && options.motherWorkflowItems.length > 0) {
     return {
       items: options.motherWorkflowItems,
-      tone: resolveNodeWorkflowTone(options.status)
+      tone: resolveNodeWorkflowTone(options.status),
+      taskId: String(options.task?.task_id || '').trim()
     };
   }
-  if (!options.task) {
+  const effectiveTask = resolveBeeroomWorkflowTask({
+    tasks: options.tasks,
+    itemsByTask: options.itemsByTask,
+    fallbackTask: options.task
+  });
+  const fallbackRuntime = buildTaskWorkflowRuntime(effectiveTask, [], options.t);
+  if (!effectiveTask) {
     return {
       items: fallbackRuntime.items,
-      tone: options.isMother ? resolveNodeWorkflowTone(options.status) : fallbackRuntime.preview.badgeTone
+      tone: options.isMother ? resolveNodeWorkflowTone(options.status) : fallbackRuntime.preview.badgeTone,
+      taskId: ''
     };
   }
-  const taskId = String(options.task.task_id || '').trim();
+  const taskId = String(effectiveTask.task_id || '').trim();
   const items = taskId ? options.itemsByTask[taskId] : null;
   if (Array.isArray(items) && items.length) {
     return {
       items,
-      tone: options.previewByTask[taskId]?.badgeTone || fallbackRuntime.preview.badgeTone
+      tone: options.previewByTask[taskId]?.badgeTone || fallbackRuntime.preview.badgeTone,
+      taskId
     };
   }
   return {
     items: fallbackRuntime.items,
-    tone: fallbackRuntime.preview.badgeTone
+    tone: fallbackRuntime.preview.badgeTone,
+    taskId
   };
 };
 
@@ -814,19 +821,18 @@ export const buildBeeroomSwarmProjection = (options: {
     tasksByAgent.set(agentId, bucket);
   });
 
+  const memberOrder = new Map(
+    members.map((member, index) => [String(member.agent_id || '').trim(), index])
+  );
   const orderedAgentIds = Array.from(involvedAgentIds).sort((left, right) => {
     if (left === motherAgentId) return -1;
     if (right === motherAgentId) return 1;
     if (left === entryAgentId) return -1;
     if (right === entryAgentId) return 1;
-    const leftTasks = tasksByAgent.get(left) || [];
-    const rightTasks = tasksByAgent.get(right) || [];
-    const leftStatus = resolveNodeStatus(leftTasks, memberMap.get(left), missionStatus);
-    const rightStatus = resolveNodeStatus(rightTasks, memberMap.get(right), missionStatus);
-    const rankDiff = resolveStatusRank(leftStatus) - resolveStatusRank(rightStatus);
-    if (rankDiff !== 0) return rankDiff;
-    const taskDiff = rightTasks.length - leftTasks.length;
-    if (taskDiff !== 0) return taskDiff;
+    const memberOrderDiff =
+      (memberOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
+      (memberOrder.get(right) ?? Number.MAX_SAFE_INTEGER);
+    if (memberOrderDiff !== 0) return memberOrderDiff;
     return String(memberMap.get(left)?.name || left).localeCompare(String(memberMap.get(right)?.name || right), 'zh-Hans-CN');
   });
 
@@ -866,6 +872,7 @@ export const buildBeeroomSwarmProjection = (options: {
     const position = options.nodePositionOverrides[nodeId] || resolveHoneycombPosition(slot);
     const workflowSnapshot = buildWorkflowSnapshot({
       task: latestTask,
+      tasks: agentTasks,
       itemsByTask: options.workflowItemsByTask,
       previewByTask: options.workflowPreviewByTask,
       motherWorkflowItems: options.motherWorkflowItems,
@@ -920,6 +927,7 @@ export const buildBeeroomSwarmProjection = (options: {
       accentColor,
       avatarColor: accentColor,
       avatarInitial: resolveAgentAvatarInitial(name),
+      avatarIcon: member?.icon,
       avatarImageUrl:
         resolveAgentAvatarImage(member?.icon) ||
         String(options.resolveAgentAvatarImageByAgentId?.(agentId) || '').trim(),
@@ -927,7 +935,7 @@ export const buildBeeroomSwarmProjection = (options: {
       y: position.y,
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
-      workflowTaskId: String(latestTask?.task_id || '').trim(),
+      workflowTaskId: workflowSnapshot.taskId,
       workflowTone: workflowSnapshot.tone,
       workflowLines,
       parentId: '',
@@ -1141,6 +1149,7 @@ export const buildBeeroomSwarmProjection = (options: {
         accentColor,
         avatarColor: accentColor,
         avatarInitial: resolveAgentAvatarInitial(name),
+        avatarIcon: memberMap.get(item.agentId)?.icon,
         avatarImageUrl: resolveSubagentAvatarImage({
           agentId: item.agentId,
           icon: memberMap.get(item.agentId)?.icon,

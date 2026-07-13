@@ -4,7 +4,7 @@ use crate::services::orchestration_context::{
     clear_history_record, clear_hive_state, clear_member_bindings, clear_round_state,
     clear_session_context, list_history_records, load_hive_state,
 };
-use crate::services::swarm::beeroom::mother_meta_key;
+use crate::services::swarm::beeroom::{mother_meta_key, mother_session_meta_key};
 use crate::storage::{normalize_hive_id, UserAgentRecord, DEFAULT_HIVE_ID};
 use anyhow::Result;
 use serde::Serialize;
@@ -247,6 +247,7 @@ fn clear_group_runtime_state(state: &AppState, user_id: &str, group_id: &str) ->
     }
     clear_hive_state(storage, cleaned_user_id, cleaned_group_id)?;
     storage.delete_meta_prefix(&mother_meta_key(cleaned_user_id, cleaned_group_id))?;
+    storage.delete_meta_prefix(&mother_session_meta_key(cleaned_user_id, cleaned_group_id))?;
     Ok(())
 }
 

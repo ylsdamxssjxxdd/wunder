@@ -63,7 +63,7 @@ import {
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
-import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
@@ -1793,12 +1793,6 @@ const COMMAND_SESSION_TOOL_OUTPUT_EVENTS = new Set([
   'tool_output_delta'
 ]);
 
-const TEAM_AGENT_REFRESH_EVENTS = new Set([
-  'team_task_result',
-  'team_finish',
-  'team_error'
-]);
-
 const DESKTOP_OVERLAY_STREAM_EVENTS = new Set([
   'desktop_controller_hint',
   'desktop_controller_hint_done',
@@ -1895,12 +1889,6 @@ const applyCollaborationCanonicalSideEffect = (
       sessionSubagentsCache.delete(key);
     }
   }
-  if (TEAM_AGENT_REFRESH_EVENTS.has(eventType)) {
-    const workerAgentId = String(data.agent_id ?? data.agentId ?? payload.agent_id ?? payload.agentId ?? '').trim();
-    emitAgentRuntimeRefresh({
-      agentIds: workerAgentId ? [workerAgentId] : undefined
-    });
-  }
 };
 
 const collectCanonicalWorkspacePathHints = (
@@ -1947,7 +1935,12 @@ const applyWorkspaceUpdateCanonicalSideEffect = (
   });
 };
 
-const applyCanonicalStreamSideEffects = (store, sessionId, eventType, payload) => {
+const applyCanonicalStreamSideEffects = (
+  store,
+  sessionId,
+  eventType,
+  payload
+) => {
   const normalizedEventType = String(eventType || '').trim().toLowerCase();
   const data = extractCanonicalStreamData(payload);
   if (normalizedEventType === 'thread_control') {

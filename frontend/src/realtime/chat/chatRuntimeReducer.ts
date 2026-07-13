@@ -761,6 +761,13 @@ const bindEventToOptimisticUserTurn = (
   if (!clientMessage || clientMessage.role !== 'user') return;
   const localUserTurn = session.userTurnById[clientMessage.userTurnId];
   if (!localUserTurn) return;
+  const semanticRound = resolveSemanticUserRound(session, event.userTurnId, event.modelTurnId);
+  if (semanticRound !== null) {
+    const canonicalUserTurnId = `user-turn:${session.sessionId}:round:${semanticRound}`;
+    mergeUserTurnInto(session, localUserTurn.id, canonicalUserTurnId);
+    event.userTurnId = canonicalUserTurnId;
+    return;
+  }
   const incomingUserTurn = session.userTurnById[event.userTurnId];
   if (incomingUserTurn && incomingUserTurn.id !== localUserTurn.id) {
     mergeUserTurnInto(session, incomingUserTurn.id, localUserTurn.id);
@@ -1144,8 +1151,14 @@ const applyWorkflowEvent = (
     session.runtimeStatus = 'idle';
     session.busyReason = null;
   } else if (status === 'failed') {
-    session.runtimeStatus = 'failed';
-    session.busyReason = null;
+    if (sourceType === 'team_error') {
+      // A collaboration failure is a tool-level result. The mother turn can
+      // continue, retry, merge partial output, or emit its own terminal event.
+      setSessionBusy(session, 'running', 'tool_running');
+    } else {
+      session.runtimeStatus = 'failed';
+      session.busyReason = null;
+    }
   } else if (status !== 'completed') {
     setSessionBusy(session, 'running', 'tool_running');
   }
@@ -1694,6 +1707,7 @@ const applyCanonicalTranscriptSnapshot = (
     .map((raw, index) => buildCanonicalTranscriptPlan(raw, index, snapshotSeq))
     .filter((plan): plan is LegacyMessagePlan => Boolean(plan))
     .sort((left, right) => left.createdSeq - right.createdSeq || left.index - right.index);
+  reconcilePendingLocalUserTurnsWithCanonicalSnapshot(session, plans);
   const keepMessageIds = new Set<string>();
   const keepUserTurnIds = new Set<string>();
   const keepModelTurnIds = new Set<string>();
@@ -1812,6 +1826,46 @@ const applyCanonicalTranscriptSnapshot = (
   session.snapshotSeq = Math.max(session.snapshotSeq, snapshotSeq);
   session.syncRequired = false;
   return preservedLocal.active;
+};
+
+const reconcilePendingLocalUserTurnsWithCanonicalSnapshot = (
+  session: ChatRuntimeSessionProjection,
+  plans: LegacyMessagePlan[]
+): void => {
+  const consumedLocalTurnIds = new Set<string>();
+  plans
+    .filter((plan) => plan.role === 'user')
+    .forEach((plan) => {
+      const canonicalTurnId = plan.userTurnId;
+      if (!canonicalTurnId || session.userTurnById[canonicalTurnId]) return;
+      const canonicalContent = String(plan.raw.content || '').trim();
+      if (!canonicalContent) return;
+      const candidates = Object.values(session.userTurnById).filter((turn) => {
+        if (consumedLocalTurnIds.has(turn.id) || isTerminalUserTurnStatus(turn.status)) return false;
+        return turn.messageIds.some((messageId) => {
+          const message = session.messageById[messageId];
+          return Boolean(
+            message?.role === 'user' &&
+              isLocalRuntimeProjectionMessage(message) &&
+              isCanonicalSnapshotUserContentMatch(message.content, canonicalContent)
+          );
+        });
+      });
+      // A session can have at most one unacknowledged local turn per composer.
+      // Do not guess when multiple pending messages have equivalent content.
+      if (candidates.length !== 1) return;
+      const [localTurn] = candidates;
+      mergeUserTurnInto(session, localTurn.id, canonicalTurnId);
+      consumedLocalTurnIds.add(localTurn.id);
+    });
+};
+
+const isCanonicalSnapshotUserContentMatch = (localContent: unknown, canonicalContent: string): boolean => {
+  const local = String(localContent || '').trim();
+  if (!local || !canonicalContent) return false;
+  // The swarm composer may retain an @target display prefix while the backend
+  // persists the dispatched body. The body suffix is still unique to this turn.
+  return local === canonicalContent || local.endsWith(canonicalContent);
 };
 
 const preservePendingLocalTurnsOutsideCanonicalSnapshot = (
@@ -4926,12 +4980,14 @@ const upsertProjectedWorkflowEventItem = (
     refs.toolCallId = resolveCompactionWorkflowRef(event, detailSource);
   }
   const itemId = resolveProjectedGenericWorkflowItemId(event, eventType, refs);
+  const isCollaborationEvent =
+    SUBAGENT_WORKFLOW_EVENT_TYPES.has(sourceType) || TEAM_WORKFLOW_EVENT_TYPES.has(sourceType);
   const existing = findProjectedWorkflowItem(
     items,
     itemId,
-    refs.toolCallId || refs.runId || refs.sessionId,
-    refs.commandSessionId || refs.dispatchId,
-    refs.approvalId || refs.taskId
+    isCollaborationEvent ? '' : refs.toolCallId || refs.runId || refs.sessionId,
+    isCollaborationEvent ? '' : refs.commandSessionId || refs.dispatchId,
+    isCollaborationEvent ? '' : refs.approvalId || refs.taskId
   );
   const title = resolveProjectedGenericWorkflowTitle(eventType, detailSource, status);
   const next: ChatRuntimeWorkflowItemProjection = {
@@ -5084,6 +5140,7 @@ const upsertProjectedSubagents = (
 
 type WorkflowEventRefs = {
   dispatchId: string;
+  teamRunId: string;
   sessionId: string;
   runId: string;
   taskId: string;
@@ -5103,6 +5160,12 @@ const resolveWorkflowEventRefs = (
     data.dispatchId,
     payload.dispatch_id,
     payload.dispatchId
+  ),
+  teamRunId: firstText(
+    data.team_run_id,
+    data.teamRunId,
+    payload.team_run_id,
+    payload.teamRunId
   ),
   sessionId: firstText(
     data.session_id,
@@ -5167,6 +5230,16 @@ const resolveProjectedGenericWorkflowItemId = (
       : sourceType || 'workflow';
   if (PLAN_WORKFLOW_EVENT_TYPES.has(sourceType) || QUESTION_PANEL_WORKFLOW_EVENT_TYPES.has(sourceType)) {
     return `runtime-workflow:${event.modelTurnId || event.messageId}:${sourceType}`;
+  }
+  if (TEAM_WORKFLOW_EVENT_TYPES.has(sourceType)) {
+    const workflowRef = sourceType === 'team_task_dispatch' ||
+      sourceType === 'team_task_update' ||
+      sourceType === 'team_task_result'
+      ? refs.taskId || refs.runId || refs.sessionId
+      : refs.teamRunId || refs.dispatchId || refs.toolCallId;
+    if (workflowRef) {
+      return `runtime-workflow:${event.modelTurnId || event.messageId}:team:${workflowRef}`;
+    }
   }
   const workflowRef =
     refs.runId ||

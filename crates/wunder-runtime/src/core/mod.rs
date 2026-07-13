@@ -20,6 +20,7 @@ pub mod path_utils;
 pub mod python_runtime;
 pub mod repo_assets;
 pub mod runtime_metrics;
+pub mod runtime_tuning;
 pub mod rustls_provider;
 pub mod schemas;
 pub mod shutdown;

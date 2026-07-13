@@ -1,5 +1,8 @@
 export type BeeroomSwarmNodeStatusTaskLike = {
   status?: string | null | undefined;
+  updated_time?: number | null | undefined;
+  finished_time?: number | null | undefined;
+  started_time?: number | null | undefined;
 };
 
 export type BeeroomSwarmNodeStatusMemberLike = {
@@ -43,6 +46,22 @@ export const resolveBeeroomSwarmNodeStatus = (options: {
       return 'awaiting_idle';
     }
     return 'running';
+  }
+
+  // A worker can retry several model actions for one swarm invocation. Once
+  // no action remains active, its card reflects the newest action rather than
+  // an earlier recoverable error from the same worker session.
+  const resolveTaskMoment = (task: BeeroomSwarmNodeStatusTaskLike): number =>
+    Math.max(0, Number(task.updated_time || task.finished_time || task.started_time || 0));
+  const latestTask = tasks.reduce<BeeroomSwarmNodeStatusTaskLike | null>((latest, task) => {
+    if (!latest || resolveTaskMoment(task) >= resolveTaskMoment(latest)) return task;
+    return latest;
+  }, null);
+  const latestStatus = String(latestTask?.status || '').trim().toLowerCase();
+  if (resolveTaskMoment(latestTask || {}) > 0) {
+    if (latestStatus === 'failed' || latestStatus === 'error' || latestStatus === 'timeout') return 'failed';
+    if (latestStatus === 'cancelled') return 'cancelled';
+    if (latestStatus === 'success' || latestStatus === 'completed') return 'completed';
   }
   if (statuses.some((status) => status === 'failed' || status === 'error' || status === 'timeout')) return 'failed';
   if (statuses.some((status) => status === 'cancelled')) return 'cancelled';

@@ -1,5 +1,5 @@
 use crate::config_store::ConfigStore;
-use crate::core::{long_task, runtime_metrics};
+use crate::core::{blocking, long_task, runtime_metrics};
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
@@ -33,6 +33,7 @@ use crate::services::swarm::events::{
 
 const RUNNER_CHANNEL_CAPACITY: usize = 128;
 const RUNNER_POLL_INTERVAL_MS: u64 = 600;
+const RUNNER_MAX_IDLE_POLL_INTERVAL_MS: u64 = 5_000;
 const RUNNER_SCAN_BATCH: i64 = 256;
 const TEAM_RUN_SUMMARY_MAX_CHARS: usize = 3000;
 const TEAM_QUESTION_MAX_CHARS: usize = 4000;
@@ -53,6 +54,13 @@ const TEAM_TASK_STATUS_SUCCESS: &str = "success";
 const TEAM_TASK_STATUS_FAILED: &str = "failed";
 const TEAM_TASK_STATUS_TIMEOUT: &str = "timeout";
 const TEAM_TASK_STATUS_CANCELLED: &str = "cancelled";
+
+fn next_idle_poll_interval_ms(current_ms: u64) -> u64 {
+    current_ms
+        .max(RUNNER_POLL_INTERVAL_MS)
+        .saturating_mul(2)
+        .min(RUNNER_MAX_IDLE_POLL_INTERVAL_MS)
+}
 
 struct ActiveRunControl {
     cancel: Arc<AtomicBool>,
@@ -156,18 +164,34 @@ impl MissionRuntime {
             return;
         };
 
+        let mut poll_interval_ms = RUNNER_POLL_INTERVAL_MS;
         loop {
+            let mut woke = false;
             tokio::select! {
-                _ = rx.recv() => {
+                message = rx.recv() => {
+                    if message.is_none() {
+                        warn!("team run runner loop stopped: queue sender dropped");
+                        return;
+                    }
+                    woke = true;
                     runtime_metrics::record_loop_tick("runtime.mission.queue_loop", "wake");
                 }
-                _ = sleep(Duration::from_millis(RUNNER_POLL_INTERVAL_MS)) => {
+                _ = sleep(Duration::from_millis(poll_interval_ms)) => {
                     runtime_metrics::record_loop_tick("runtime.mission.queue_loop", "poll");
                 }
             }
             self.cleanup_finished_workers().await;
-            if let Err(err) = self.dispatch_runs().await {
-                warn!("team run dispatch failed: {err}");
+            match self.dispatch_runs().await {
+                Ok(has_active_runs) if woke || has_active_runs => {
+                    poll_interval_ms = RUNNER_POLL_INTERVAL_MS;
+                }
+                Ok(_) => {
+                    poll_interval_ms = next_idle_poll_interval_ms(poll_interval_ms);
+                }
+                Err(err) => {
+                    poll_interval_ms = RUNNER_POLL_INTERVAL_MS;
+                    warn!("team run dispatch failed: {err}");
+                }
             }
         }
     }
@@ -195,20 +219,30 @@ impl MissionRuntime {
         }
     }
 
-    async fn dispatch_runs(self: &Arc<Self>) -> Result<()> {
+    async fn dispatch_runs(self: &Arc<Self>) -> Result<bool> {
         let config = self.config_store.get().await;
         let max_active = config.tools.swarm.max_active_team_runs.max(1);
-        let runs = self.user_store.list_team_runs_by_status(
-            &[
-                TEAM_RUN_STATUS_QUEUED,
-                TEAM_RUN_STATUS_RUNNING,
-                TEAM_RUN_STATUS_MERGING,
-            ],
-            0,
-            RUNNER_SCAN_BATCH,
-        )?;
+        let user_store = self.user_store.clone();
+        let runs = blocking::run_db("runtime.mission.list_active_runs", move || {
+            user_store.list_team_runs_by_status(
+                &[
+                    TEAM_RUN_STATUS_QUEUED,
+                    TEAM_RUN_STATUS_RUNNING,
+                    TEAM_RUN_STATUS_MERGING,
+                ],
+                0,
+                RUNNER_SCAN_BATCH,
+            )
+        })
+        .await?;
         if runs.is_empty() {
-            return Ok(());
+            return Ok(false);
+        }
+        let has_runtime_managed_runs = runs
+            .iter()
+            .any(|run| !is_tool_managed_strategy(&run.strategy));
+        if !has_runtime_managed_runs {
+            return Ok(false);
         }
 
         let mut to_spawn = Vec::new();
@@ -239,7 +273,7 @@ impl MissionRuntime {
         }
 
         if to_spawn.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
 
         let mut active = self.active_runs.lock().await;
@@ -270,7 +304,7 @@ impl MissionRuntime {
                 },
             );
         }
-        Ok(())
+        Ok(true)
     }
 
     async fn execute_team_run(
@@ -1518,9 +1552,22 @@ fn now_ts() -> f64 {
 mod tests {
     use super::{
         build_merge_summary, build_realtime_event_payload, build_team_task_event_payload,
-        build_team_task_result_payload, TeamProgress, TeamRunRecord, TeamTaskRecord,
+        build_team_task_result_payload, next_idle_poll_interval_ms, TeamProgress, TeamRunRecord,
+        TeamTaskRecord, RUNNER_MAX_IDLE_POLL_INTERVAL_MS, RUNNER_POLL_INTERVAL_MS,
     };
     use serde_json::json;
+
+    #[test]
+    fn idle_poll_interval_backs_off_and_stays_bounded() {
+        assert_eq!(
+            next_idle_poll_interval_ms(RUNNER_POLL_INTERVAL_MS),
+            RUNNER_POLL_INTERVAL_MS * 2
+        );
+        assert_eq!(
+            next_idle_poll_interval_ms(RUNNER_MAX_IDLE_POLL_INTERVAL_MS),
+            RUNNER_MAX_IDLE_POLL_INTERVAL_MS
+        );
+    }
 
     fn sample_run() -> TeamRunRecord {
         TeamRunRecord {

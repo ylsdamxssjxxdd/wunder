@@ -22,6 +22,7 @@ use crate::services::orchestration_context::{
 use crate::services::orchestration_run_control::cancel_active_team_runs_for_parent_session;
 use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
+    resolve_bound_hive_mother_session, resolve_or_create_hive_mother_session,
     resolve_preferred_mother_agent_id, set_mother_agent, snapshot_team_run,
 };
 use crate::state::AppState;
@@ -98,6 +99,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/beeroom/groups/{group_id}/missions/{mission_id}",
             get(get_beeroom_mission),
+        )
+        .route(
+            "/wunder/beeroom/groups/{group_id}/mother-session",
+            axum::routing::post(ensure_beeroom_mother_session),
         )
         .route(
             "/wunder/beeroom/orchestration/prompts",
@@ -2002,7 +2007,7 @@ async fn list_beeroom_groups(
     let limit = query.mission_limit.unwrap_or(10).clamp(1, 50);
     let mut items = Vec::with_capacity(groups.len());
     for group in groups {
-        items.push(group_payload(state.as_ref(), &group, limit)?);
+        items.push(group_payload(state.as_ref(), &group, limit, Some(6))?);
     }
     Ok(Json(
         json!({ "data": { "items": items, "total": items.len() } }),
@@ -2091,7 +2096,7 @@ async fn create_beeroom_group(
     }
 
     Ok(Json(
-        json!({ "data": group_payload(state.as_ref(), &record, 10)? }),
+        json!({ "data": group_payload(state.as_ref(), &record, 10, None)? }),
     ))
 }
 
@@ -2121,12 +2126,102 @@ async fn get_beeroom_group(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
-            "group": group_payload(state.as_ref(), &group, mission_limit)?,
+            "group": group_payload(state.as_ref(), &group, mission_limit, None)?,
             "agents": agents
                 .iter()
                 .map(|agent| agent_payload(agent, activity.get(&agent.agent_id)))
                 .collect::<Vec<_>>(),
             "missions": missions,
+        }
+    })))
+}
+
+async fn ensure_beeroom_mother_session(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let mut agents = state
+        .user_store
+        .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    sort_beeroom_agents(&mut agents);
+    let mother_agent_id = get_mother_agent_id(state.storage.as_ref(), &user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .or_else(|| {
+            resolve_preferred_mother_agent_id(
+                state.storage.as_ref(),
+                &user_id,
+                &group.hive_id,
+                None,
+            )
+            .ok()
+            .flatten()
+        })
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "mother agent is required".to_string(),
+            )
+        })?;
+    let mother_agent = agents
+        .iter()
+        .find(|agent| agent.agent_id.trim() == mother_agent_id.trim())
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "mother agent not found".to_string(),
+            )
+        })?;
+
+    let (session, created) = if let Some(orchestration) =
+        load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id)
+            .filter(|item| item.active && item.mother_agent_id.trim() == mother_agent_id.trim())
+    {
+        let session = state
+            .user_store
+            .get_chat_session(&user_id, &orchestration.mother_session_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .ok_or_else(|| {
+                error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found"))
+            })?;
+        (session, false)
+    } else {
+        resolve_or_create_hive_mother_session(
+            state.storage.as_ref(),
+            &user_id,
+            &group.hive_id,
+            mother_agent,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    };
+    state
+        .kernel
+        .thread_runtime
+        .set_main_session(
+            &user_id,
+            session.agent_id.as_deref().unwrap_or(""),
+            &session.session_id,
+            "beeroom_group_dispatch",
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    Ok(Json(json!({
+        "data": {
+            "id": session.session_id,
+            "title": session.title,
+            "status": session.status,
+            "agent_id": session.agent_id,
+            "is_main": true,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+            "last_message_at": session.last_message_at,
+            "group_id": group.hive_id,
+            "created": created,
         }
     })))
 }
@@ -2195,7 +2290,7 @@ async fn update_beeroom_group(
     }
 
     Ok(Json(
-        json!({ "data": group_payload(state.as_ref(), &group, 10)? }),
+        json!({ "data": group_payload(state.as_ref(), &group, 10, None)? }),
     ))
 }
 
@@ -2389,6 +2484,7 @@ fn group_payload(
     state: &AppState,
     group: &HiveRecord,
     mission_limit: i64,
+    member_limit: Option<usize>,
 ) -> Result<Value, Response> {
     let mut agents = state
         .user_store
@@ -2441,6 +2537,23 @@ fn group_payload(
         .count();
     let orchestration_state =
         load_hive_state(state.storage.as_ref(), &group.user_id, &group.hive_id);
+    let mother_session_id = orchestration_state
+        .as_ref()
+        .filter(|item| item.active)
+        .map(|item| item.mother_session_id.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            let mother_agent_id = mother_agent_id.as_deref()?;
+            resolve_bound_hive_mother_session(
+                state.storage.as_ref(),
+                &group.user_id,
+                &group.hive_id,
+                mother_agent_id,
+            )
+            .ok()
+            .flatten()
+            .map(|session| session.session_id)
+        });
 
     Ok(json!({
         "group_id": group.hive_id,
@@ -2458,9 +2571,10 @@ fn group_payload(
         "mission_total": missions.len(),
         "mother_agent_id": mother_agent_id,
         "mother_agent_name": mother_agent.map(|agent| agent.name.clone()),
+        "mother_session_id": mother_session_id,
         "members": agents
             .iter()
-            .take(6)
+            .take(member_limit.unwrap_or(usize::MAX))
             .map(|agent| agent_payload(agent, activity.get(&agent.agent_id)))
             .collect::<Vec<_>>(),
         "latest_mission": missions.first().cloned(),

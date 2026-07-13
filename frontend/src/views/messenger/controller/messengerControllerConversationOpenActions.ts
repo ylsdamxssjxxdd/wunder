@@ -513,8 +513,7 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       if (!groupId)
           return;
       ctx.beeroomFirstEntryAutoSelectionPending.value = false;
-      ctx.beeroomStore.setActiveGroup(groupId);
-      await ctx.beeroomStore.loadActiveGroup().catch(() => null);
+      await ctx.beeroomStore.selectGroup(groupId).catch(() => null);
   };
 
   ctx.handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {

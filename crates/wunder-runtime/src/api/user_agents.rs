@@ -7,6 +7,7 @@ use crate::services::agent_abilities::{
     normalize_ability_items, resolve_agent_ability_selection, resolve_record_ability_items,
     resolve_record_declared_names,
 };
+use crate::services::agent_runtime_projection::active_team_agent_evidence;
 use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, is_builtin_default_agent_name,
     DefaultAgentConfig, DEFAULT_AGENT_NAME,
@@ -592,6 +593,42 @@ async fn list_running_agents(
             }
         } else {
             status_by_agent.insert(agent_id.to_string(), next);
+        }
+    }
+
+    // 5) A blocking swarm run is authoritative for both its mother and active
+    // workers. Monitor/session rows can briefly look terminal between model and
+    // tool phases, so apply team runtime evidence after transient terminal hints.
+    let team_runs = state
+        .user_store
+        .list_team_runs_by_user_and_status(&user_id, &["queued", "running", "merging"], 0, 2048)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    for run in team_runs {
+        let tasks = state
+            .user_store
+            .list_team_tasks(&run.team_run_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        for evidence in active_team_agent_evidence(&run, &tasks) {
+            if !allowed_set.contains(&evidence.agent_id) {
+                continue;
+            }
+            if status_by_agent
+                .get(&evidence.agent_id)
+                .is_some_and(|candidate| candidate.state == STATE_CANCELLING)
+            {
+                continue;
+            }
+            status_by_agent.insert(
+                evidence.agent_id,
+                AgentStatusCandidate {
+                    state: STATE_RUNNING,
+                    updated_time: evidence.updated_time,
+                    session_id: evidence.session_id,
+                    expires_at: None,
+                    pending_question: false,
+                    last_error: None,
+                },
+            );
         }
     }
 

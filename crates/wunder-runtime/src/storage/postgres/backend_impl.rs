@@ -1391,6 +1391,15 @@ impl AgentDirectoryStore for PostgresStorage {
     ) -> Result<Vec<TeamRunRecord>> {
         self.list_team_runs_by_status_impl(statuses, offset, limit)
     }
+    fn list_team_runs_by_user_and_status(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>> {
+        self.list_team_runs_by_user_and_status_impl(user_id, statuses, offset, limit)
+    }
     fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()> {
         self.upsert_team_task_impl(record)
     }

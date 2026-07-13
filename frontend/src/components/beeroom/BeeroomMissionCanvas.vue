@@ -57,13 +57,14 @@
           :composer-sending="composerSending"
           :composer-can-send="composerCanSend"
           :composer-error="composerError"
+          :resetting="groupResetting"
           :artifacts-enabled="motherWorkspaceAvailable"
           :resolve-message-avatar-image="resolveMessageAvatarImage"
           :avatar-label="avatarLabel"
           @update:collapsed="chatCollapsed = $event"
           @update:composer-text="composerText = $event"
           @update:composer-target-agent-id="composerTargetAgentId = $event"
-          @clear="handleClearHistory"
+          @reset="handleResetSwarm"
           @open-artifacts="openMotherWorkspace"
           @send="handleComposerSend"
           @open-agent="emit('open-agent', $event)"
@@ -104,9 +105,11 @@
 
 <script setup lang="ts">
 import { computed, onActivated, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
 import BeeroomAgentOutputPreviewDialog from '@/components/beeroom/BeeroomAgentOutputPreviewDialog.vue';
 import BeeroomCanvasChatPanel from '@/components/beeroom/BeeroomCanvasChatPanel.vue';
+import { buildBeeroomCanvasReplayScopeKey } from '@/components/beeroom/beeroomCanvasReplayPolicy';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import {
   getBeeroomMissionCanvasState,
@@ -129,8 +132,6 @@ const props = defineProps<{
   refreshing?: boolean;
   hideStandbyWhenMissionEmpty?: boolean;
   active?: boolean;
-  activeChatSessionId?: string;
-  activeChatAgentId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -166,8 +167,6 @@ const requestCanvasRevealReplay = () => {
 const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
 const agentsRef = toRef(props, 'agents');
-const activeChatSessionIdRef = toRef(props, 'activeChatSessionId');
-const activeChatAgentIdRef = toRef(props, 'activeChatAgentId');
 const agentOutputPreviewVisible = ref(false);
 const agentOutputPreviewAgentId = ref('');
 const agentOutputPreviewTitle = ref('');
@@ -190,6 +189,7 @@ const {
   composerSending,
   composerCanSend,
   composerError,
+  groupResetting,
   dispatchApprovals,
   dispatchApprovalBusy,
   dispatchCanStop,
@@ -200,7 +200,8 @@ const {
   subagentsByTask,
   workflowItemsByTask,
   workflowPreviewByTask,
-  clearManualChatHistory,
+  refreshDispatchMessages,
+  resetBeeroomWork,
   handleComposerSend,
   handleDispatchApproval,
   resolveAgentAvatarImageByAgentId,
@@ -213,10 +214,6 @@ const {
   agents: agentsRef,
   t,
   onRefresh: () => emit('refresh'),
-  runtimeOverrides: {
-    fixedMotherDispatchSessionId: activeChatSessionIdRef,
-    fixedMotherDispatchAgentId: activeChatAgentIdRef
-  }
 });
 
 const agentOutputPreviewMessages = computed(() =>
@@ -422,8 +419,20 @@ const toggleCanvasFullscreen = async () => {
   }
 };
 
-const handleClearHistory = async () => {
-  await clearManualChatHistory();
+const handleResetSwarm = async () => {
+  if (groupResetting.value) return;
+  try {
+    await ElMessageBox.confirm(
+      t('beeroom.canvas.resetSwarmConfirm'),
+      t('beeroom.canvas.resetSwarm'),
+      { type: 'warning', confirmButtonText: t('common.reset'), cancelButtonText: t('common.cancel') }
+    );
+  } catch {
+    return;
+  }
+  if (await resetBeeroomWork()) {
+    ElMessage.success(t('beeroom.canvas.resetSwarmSuccess'));
+  }
 };
 
 const openMotherWorkspace = () => {
@@ -454,6 +463,7 @@ onMounted(() => {
 
 onActivated(() => {
   requestCanvasRevealReplay();
+  void refreshDispatchMessages();
 });
 
 onBeforeUnmount(() => {
@@ -488,17 +498,17 @@ watch(hasSwarmNodes, (value) => {
 });
 
 watch(
-  () =>
-    [
-      props.active ? 'active' : 'inactive',
-      props.group?.group_id || '',
-      props.mission?.mission_id || '',
-      props.mission?.team_run_id || '',
-      props.mission?.updated_time || ''
-    ].join('|'),
+  () => buildBeeroomCanvasReplayScopeKey({
+    active: props.active,
+    groupId: props.group?.group_id,
+    missionId: props.mission?.mission_id,
+    teamRunId: props.mission?.team_run_id
+  }),
   (value, previousValue) => {
     if (!value || value === previousValue) return;
-    requestCanvasRevealReplay();
+    if (props.active) {
+      void refreshDispatchMessages();
+    }
   }
 );
 

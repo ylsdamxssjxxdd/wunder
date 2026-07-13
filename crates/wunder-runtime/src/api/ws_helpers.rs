@@ -27,6 +27,7 @@ pub(crate) const WS_PROTOCOL_MIN_VERSION: i32 = 1;
 pub(crate) const WS_PROTOCOL_MAX_VERSION: i32 = 1;
 pub(crate) const WS_MAX_MESSAGE_BYTES: usize = 512 * 1024;
 const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
+const STREAM_EVENT_IDLE_WATCH_MAX_INTERVAL_S: f64 = 5.0;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WsQuery {
@@ -626,9 +627,12 @@ pub(crate) async fn resume_stream_events(
             idle_rounds = idle_rounds.saturating_add(1);
             if idle_rounds > STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
                 let next = poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR;
-                poll_interval = std::time::Duration::from_secs_f64(
-                    next.min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
-                );
+                let max_interval = if running {
+                    STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S
+                } else {
+                    STREAM_EVENT_IDLE_WATCH_MAX_INTERVAL_S
+                };
+                poll_interval = std::time::Duration::from_secs_f64(next.min(max_interval));
             }
             if let Some(token) = cancel.as_ref() {
                 tokio::select! {

@@ -8,7 +8,6 @@ export const WAITING_SESSION_RUNTIME_STATUS_SET = new Set([
 
 export const TERMINAL_SESSION_RUNTIME_STATUS_SET = new Set([
   'idle',
-  'not_loaded',
   'completed',
   'failed',
   'cancelled',
@@ -118,6 +117,7 @@ export const resolveAgentRuntimeStateFromSignals = (options: {
   pendingInquiry?: boolean;
   localWaiting?: boolean;
   localStreaming?: boolean;
+  activeBlockingSwarm?: boolean;
   remoteState?: AgentRuntimeState | null;
   overrideState?: AgentRuntimeState | null;
 }): AgentRuntimeState => {
@@ -129,6 +129,9 @@ export const resolveAgentRuntimeStateFromSignals = (options: {
     remoteState === 'pending'
   ) {
     return 'pending';
+  }
+  if (options.activeBlockingSwarm === true) {
+    return 'running';
   }
   if (isTerminalAgentRuntimeState(remoteState) && options.overrideState === 'running') {
     return remoteState;

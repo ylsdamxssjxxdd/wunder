@@ -222,6 +222,100 @@ test('merged busy state keeps stop available while a send controller is active',
   );
 });
 
+test('active blocking swarm tool survives stale terminal thread status', () => {
+  const projection = createChatRuntimeProjection();
+  const messages = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [{
+        eventType: 'tool_call',
+        toolFunctionName: 'agent_swarm',
+        toolCallId: 'tool-swarm-running',
+        status: 'loading',
+        isTool: true
+      }]
+    }
+  ];
+  applyChatRuntimeEvent(projection, {
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: 'sess_swarm_running',
+    messages,
+    loading: false,
+    running: false
+  });
+
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection,
+      sessionId: 'sess_swarm_running',
+      loading: false,
+      messages,
+      runtimeStatus: 'not_loaded',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    true
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection,
+      sessionId: 'sess_swarm_running',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    'running'
+  );
+});
+
+test('completed swarm tool allows authoritative terminal thread status to settle', () => {
+  const messages = [
+    { role: 'user', content: 'input' },
+    {
+      role: 'assistant',
+      content: 'done',
+      workflowItems: [{
+        eventType: 'tool_result',
+        toolFunctionName: 'agent_swarm',
+        toolCallId: 'tool-swarm-completed',
+        status: 'completed',
+        isTool: true
+      }]
+    }
+  ];
+
+  assert.equal(
+    resolveMergedSessionBusy({
+      projection: null,
+      sessionId: 'sess_swarm_completed',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    false
+  );
+  assert.equal(
+    resolveMergedSessionRuntimeStatus({
+      projection: null,
+      sessionId: 'sess_swarm_completed',
+      loading: false,
+      messages,
+      runtimeStatus: 'completed',
+      runtimeKnown: true,
+      runtimeHasControllers: false
+    }),
+    'completed'
+  );
+});
+
 test('merged busy state lets explicit terminal runtime beat stale controllers', () => {
   const messages = [
     { role: 'user', content: 'input' },

@@ -8,6 +8,7 @@ import {
 } from '@/realtime/chat/chatRuntimeSelectors';
 import { isChatRuntimeBusyStatus } from '@/realtime/chat/chatRuntimeReducer';
 import {
+  hasActiveBlockingSwarmAfterLatestUser,
   hasActiveSubagentsAfterLatestUser,
   isSessionBusyFromSignals,
   isThreadRuntimeBusy,
@@ -71,13 +72,18 @@ export const resolveMergedSessionRuntimeStatus = (
     options.projection,
     sessionId
   );
+  const hasActiveBlockingSwarm = hasActiveBlockingSwarmAfterLatestUser(messages);
   if (isThreadRuntimeBusy(runtimeStatus)) {
     return runtimeStatus;
   }
   if (runtimeStatus === 'queued') {
     return runtimeStatus;
   }
-  if (options.runtimeKnown === true && isExplicitTerminalThreadRuntimeStatus(runtimeStatus)) {
+  if (
+    options.runtimeKnown === true &&
+    isExplicitTerminalThreadRuntimeStatus(runtimeStatus) &&
+    !hasActiveBlockingSwarm
+  ) {
     return runtimeStatus;
   }
   if (isChatRuntimeBusyStatus(projectionStatus) && busy) {
@@ -110,12 +116,18 @@ export const resolveMergedSessionBusy = (
     options.loading,
     messages,
     options.runtimeStatus
-  );
+  ) || hasActiveBlockingSwarmAfterLatestUser(messages);
   const hasLoadingFlag = Boolean(options.loading);
+  const hasActiveBlockingSwarm = hasActiveBlockingSwarmAfterLatestUser(messages);
   const explicitTerminalRuntime =
     options.runtimeKnown === true &&
     isExplicitTerminalThreadRuntimeStatus(options.runtimeStatus);
-  if (!hasLoadingFlag && explicitTerminalRuntime && !hasActiveSubagentsAfterLatestUser(messages)) {
+  if (
+    !hasLoadingFlag &&
+    explicitTerminalRuntime &&
+    !hasActiveSubagentsAfterLatestUser(messages) &&
+    !hasActiveBlockingSwarm
+  ) {
     return false;
   }
   if (options.runtimeHasControllers === true) {
@@ -127,7 +139,12 @@ export const resolveMergedSessionBusy = (
   const terminalRuntime =
     options.runtimeKnown === true &&
     isTerminalThreadRuntimeStatus(options.runtimeStatus);
-  if (!hasLoadingFlag && terminalRuntime && !hasActiveSubagentsAfterLatestUser(messages)) {
+  if (
+    !hasLoadingFlag &&
+    terminalRuntime &&
+    !hasActiveSubagentsAfterLatestUser(messages) &&
+    !hasActiveBlockingSwarm
+  ) {
     // Hydrated snapshots can briefly keep old assistant streaming flags after the
     // thread has already settled. Do not let stale projection/message flags
     // revive the composer after the runtime has confirmed an idle thread.

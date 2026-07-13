@@ -135,6 +135,7 @@ import {
   resolveAssistantMessageRuntimeState
 } from '@/utils/assistantMessageRuntime';
 import {
+  hasActiveBlockingSwarmAfterLatestUser,
   hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
   hasStreamingAssistantMessage
@@ -475,7 +476,8 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
       }
       if (!loadingBySession &&
           isTerminalMessengerRuntimeStatus(runtimeStatus) &&
-          !hasActiveSubagentsAfterLatestUser(messages)) {
+          !hasActiveSubagentsAfterLatestUser(messages) &&
+          !hasActiveBlockingSwarmAfterLatestUser(messages)) {
           if (busyByStoreGetter || hasStreamingAssistantMessage(messages)) {
               chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
                   sessionId: normalizedSessionId,
@@ -552,7 +554,13 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
           if (!sessionId)
               return;
           const runtimeStatus = ctx.resolveSessionRuntimeStatus(sessionId);
-          if (isWaitingMessengerRuntimeStatus(runtimeStatus) || isTerminalMessengerRuntimeStatus(runtimeStatus))
+          if (isWaitingMessengerRuntimeStatus(runtimeStatus))
+              return;
+          const messages = sessionId === activeSessionId
+              ? ctx.resolveActiveAgentRenderableMessageRecords()
+              : ctx.chatStore.getCachedSessionMessages(sessionId);
+          if (isTerminalMessengerRuntimeStatus(runtimeStatus) &&
+              !hasActiveBlockingSwarmAfterLatestUser(messages))
               return;
           if (!ctx.resolveEffectiveSessionBusy(sessionId))
               return;
@@ -1064,7 +1072,7 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
 
   ctx.selectedGroup = computed(() => (Array.isArray(ctx.userWorldStore.groups) ? ctx.userWorldStore.groups : []).find((item) => String(item?.group_id || '') === ctx.selectedGroupId.value) || null);
 
-  ctx.selectedBeeroomGroup = computed<BeeroomGroup | null>(() => ctx.beeroomStore.activeGroup || ctx.beeroomStore.activeGroupSummary || null);
+  ctx.selectedBeeroomGroup = computed<BeeroomGroup | null>(() => ctx.beeroomStore.activeGroup || null);
 
   ctx.showChatSettingsView = computed(() => ctx.sessionHub.activeSection !== 'messages');
 

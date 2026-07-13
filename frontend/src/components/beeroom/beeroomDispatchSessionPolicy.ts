@@ -6,6 +6,15 @@ const ACTIVE_PREVIEW_SUBAGENT_STATUSES = new Set(['accepted', 'queued', 'waiting
 
 const normalizeStatus = (value: unknown) => String(value || '').trim().toLowerCase();
 
+export const isBeeroomDispatchScopeCurrent = (options: {
+  expectedGroupId: unknown;
+  currentGroupId: unknown;
+  expectedSessionId: unknown;
+  currentSessionId: unknown;
+}) =>
+  String(options.expectedGroupId || '').trim() === String(options.currentGroupId || '').trim() &&
+  String(options.expectedSessionId || '').trim() === String(options.currentSessionId || '').trim();
+
 export const resolvePreferredBeeroomDispatchSessionId = (options: {
   targetRole: BeeroomDispatchTargetRole;
   targetAgentId: string;
@@ -18,7 +27,6 @@ export const resolvePreferredBeeroomDispatchSessionId = (options: {
   const targetAgentId = String(options.targetAgentId || '').trim();
   const previousSessionId = String(options.previousSessionId || '').trim();
   const previousTargetAgentId = String(options.previousTargetAgentId || '').trim();
-  const activeSessionId = String(options.activeSessionId || '').trim();
   const primarySessionId = String(options.primarySessionId || '').trim();
   const hasExplicitPrimarySession = options.hasExplicitPrimarySession === true;
   if (!targetAgentId) return '';
@@ -29,12 +37,12 @@ export const resolvePreferredBeeroomDispatchSessionId = (options: {
     if (previousSessionId && previousTargetAgentId === targetAgentId) {
       return previousSessionId;
     }
-    return activeSessionId || primarySessionId;
+    return primarySessionId;
   }
   if (previousSessionId && previousTargetAgentId === targetAgentId) {
     return previousSessionId;
   }
-  return activeSessionId || primarySessionId;
+  return primarySessionId;
 };
 
 export const resolveNextBeeroomMotherDispatchSessionId = (options: {
@@ -57,6 +65,20 @@ export const resolveNextBeeroomMotherDispatchSessionId = (options: {
     return currentSessionId;
   }
   return fallbackPrimarySessionId;
+};
+
+export const resolveBeeroomMotherDispatchBinding = (options: {
+  overrideSessionId?: unknown;
+  resolvedGroupSessionId?: unknown;
+  payloadSessionId?: unknown;
+}) => {
+  const overrideSessionId = String(options.overrideSessionId || '').trim();
+  if (overrideSessionId) return overrideSessionId;
+  // The endpoint resolves the current server-side binding and can be newer
+  // than the group-list snapshot kept by the page.
+  const resolvedGroupSessionId = String(options.resolvedGroupSessionId || '').trim();
+  if (resolvedGroupSessionId) return resolvedGroupSessionId;
+  return String(options.payloadSessionId || '').trim();
 };
 
 export const shouldCacheBeeroomDispatchPreviewSnapshot = (options: {

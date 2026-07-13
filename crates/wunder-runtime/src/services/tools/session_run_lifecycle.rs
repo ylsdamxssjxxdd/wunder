@@ -9,6 +9,7 @@ use super::{
 use crate::config::Config;
 use crate::core::blocking;
 use crate::core::long_task;
+use crate::core::runtime_tuning;
 use crate::history::HistoryManager;
 use crate::i18n;
 use crate::monitor::MonitorState;
@@ -429,12 +430,10 @@ fn resolve_child_agent(
 fn session_run_runtime() -> &'static tokio::runtime::Runtime {
     static SESSION_RUN_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     SESSION_RUN_RUNTIME.get_or_init(|| {
-        let threads = std::thread::available_parallelism()
-            .map(|parallelism| parallelism.get().clamp(8, 128))
-            .unwrap_or(16);
+        let threads = runtime_tuning::session_run_runtime_threads();
         tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(threads)
-            .max_blocking_threads(1024)
+            .worker_threads(threads.worker_threads)
+            .max_blocking_threads(threads.max_blocking_threads)
             .thread_name("wunder-session-run")
             .enable_all()
             .build()

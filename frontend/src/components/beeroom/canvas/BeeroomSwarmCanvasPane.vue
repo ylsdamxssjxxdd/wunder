@@ -924,9 +924,8 @@ const syncNodeRevealState = () => {
       node.role === 'worker' &&
       Boolean(workerRevealSourceId) &&
       (normalizedStatus === 'queued' || normalizedStatus === 'running' || normalizedStatus === 'awaiting_idle');
-    const wasWorkerDispatchActive = knownProjectionNodeDispatchActivity.get(node.id) === true;
     const shouldRevealSubagent = node.role === 'subagent' && Boolean(node.introFromId) && !isKnownNode;
-    const shouldRevealWorker = workerDispatchActive && (!isKnownNode || !wasWorkerDispatchActive);
+    const shouldRevealWorker = workerDispatchActive && !isKnownNode;
     if (shouldRevealSubagent || shouldRevealWorker) {
       const revealSourceId =
         node.role === 'subagent'

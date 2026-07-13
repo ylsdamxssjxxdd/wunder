@@ -1747,8 +1747,12 @@ impl PostgresSchemaStorage for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_team_runs_user_hive
                   ON team_runs (user_id, hive_id, updated_time);
+                CREATE INDEX IF NOT EXISTS idx_team_runs_user_status
+                  ON team_runs (user_id, status, updated_time);
                 CREATE INDEX IF NOT EXISTS idx_team_runs_hive_status
                   ON team_runs (hive_id, status, updated_time);
+                CREATE INDEX IF NOT EXISTS idx_team_runs_status_updated
+                  ON team_runs (status, updated_time);
                 CREATE INDEX IF NOT EXISTS idx_team_runs_hive_parent
                   ON team_runs (hive_id, parent_session_id, updated_time);
                 CREATE TABLE IF NOT EXISTS team_tasks (

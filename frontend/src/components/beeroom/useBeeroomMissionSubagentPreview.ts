@@ -1,5 +1,6 @@
 import { getSessionEvents, getSessionSubagents } from '@/api/chat';
 import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
+import { shouldPollBeeroomTaskSubagents as shouldPollTaskSubagents } from '@/components/beeroom/beeroomSubagentPolling';
 import type { BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
@@ -7,7 +8,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import {
   buildSessionWorkflowItems,
   compareBeeroomMissionTasksByDisplayPriority,
-  isBeeroomTaskStatusActive,
   resolveBeeroomTaskMoment,
   type BeeroomWorkflowItem
 } from './beeroomTaskWorkflow';
@@ -36,7 +36,6 @@ type SessionWorkflowFetchMeta = {
 
 const SUBAGENT_POLL_INTERVAL_MS = 1400;
 const SUBAGENT_LIST_LIMIT = 64;
-const RECENT_TASK_SUBAGENT_POLL_GRACE_S = 18;
 const RECENT_SUBAGENT_WORKFLOW_POLL_GRACE_S = 18;
 
 const clipDebugText = (value: unknown, limit = 120) => {
@@ -151,16 +150,7 @@ export const shouldPollBeeroomTaskSubagents = (
   task: BeeroomMissionTask,
   knownItems: BeeroomMissionSubagentItem[] = [],
   nowSeconds = Math.floor(Date.now() / 1000)
-) => {
-  if (!resolveTaskSessionId(task)) return false;
-  if (isBeeroomTaskStatusActive(task.status)) return true;
-  if (knownItems.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
-    return true;
-  }
-  const updatedTime = Number(resolveBeeroomTaskMoment(task) || 0);
-  if (!updatedTime || !Number.isFinite(updatedTime)) return false;
-  return nowSeconds - updatedTime <= RECENT_TASK_SUBAGENT_POLL_GRACE_S;
-};
+) => shouldPollTaskSubagents(task, knownItems, nowSeconds);
 
 const shouldPollBeeroomSubagentWorkflow = (
   item: BeeroomMissionSubagentItem,

@@ -106,6 +106,7 @@ export type BeeroomGroup = {
   mission_total?: number;
   mother_agent_id?: string | null;
   mother_agent_name?: string | null;
+  mother_session_id?: string | null;
   members?: BeeroomMember[];
   latest_mission?: BeeroomMission | null;
   active_orchestration?: {
@@ -502,6 +503,31 @@ export const useBeeroomStore = defineStore('beeroom', {
       clearBeeroomMissionChatState(`runtime:${normalizedGroupId}`);
     },
 
+    applyGroupReset(groupId: unknown) {
+      const normalizedGroupId = normalizeGroupId(groupId);
+      if (!normalizedGroupId) return;
+      this.clearGroupRuntimeCaches(normalizedGroupId);
+      if (normalizeGroupId(this.activeGroupId) !== normalizedGroupId) return;
+      this.activeMissions = [];
+      this.activeAgents = this.activeAgents.map((agent) => ({
+        ...agent,
+        idle: true,
+        active_session_total: 0
+      }));
+      if (this.activeGroup) {
+        this.activeGroup = {
+          ...this.activeGroup,
+          running_mission_total: 0,
+          mission_total: 0,
+          latest_mission: null,
+          active_agent_total: 0,
+          idle_agent_total: this.activeAgents.length,
+          members: this.activeAgents
+        };
+        this.upsertGroup(this.activeGroup);
+      }
+    },
+
     resetState() {
       this.$reset();
     },
@@ -513,7 +539,11 @@ export const useBeeroomStore = defineStore('beeroom', {
     },
 
     setActiveGroup(groupId: unknown) {
-      this.activeGroupId = normalizeGroupId(groupId);
+      const normalized = normalizeGroupId(groupId);
+      if (normalized !== normalizeGroupId(this.activeGroupId)) {
+        this.clearActiveData();
+      }
+      this.activeGroupId = normalized;
     },
 
     upsertGroup(group: BeeroomGroup | null | undefined) {
@@ -552,13 +582,22 @@ export const useBeeroomStore = defineStore('beeroom', {
       const agents = asArray<BeeroomMember>(source.agents);
       const missions = asArray<BeeroomMission>(source.missions);
       const nextGroup = group && normalizeGroupId(group.group_id || group.hive_id) ? group : null;
+      const hasAuthoritativeMembers = Array.isArray(nextGroup?.members);
+      const authoritativeMemberIds = new Set(
+        (Array.isArray(nextGroup?.members) ? nextGroup.members : [])
+          .map((member) => String(member?.agent_id || '').trim())
+          .filter(Boolean)
+      );
+      const scopedAgents = hasAuthoritativeMembers
+        ? agents.filter((agent) => authoritativeMemberIds.has(String(agent?.agent_id || '').trim()))
+        : agents;
       const currentGroupFingerprint = stableGroupFingerprint(this.activeGroup);
       const nextGroupFingerprint = stableGroupFingerprint(nextGroup);
       if (currentGroupFingerprint !== nextGroupFingerprint) {
         this.activeGroup = nextGroup;
       }
-      if (stableMembersFingerprint(this.activeAgents) !== stableMembersFingerprint(agents)) {
-        this.activeAgents = agents;
+      if (stableMembersFingerprint(this.activeAgents) !== stableMembersFingerprint(scopedAgents)) {
+        this.activeAgents = scopedAgents;
       }
       if (stableMissionsFingerprint(this.activeMissions) !== stableMissionsFingerprint(missions)) {
         this.activeMissions = missions;
@@ -568,9 +607,9 @@ export const useBeeroomStore = defineStore('beeroom', {
         this.activeGroupId = groupId;
         this.upsertGroup({
           ...this.activeGroup,
-          members: this.activeGroup.members || agents.slice(0, 6),
+          members: this.activeGroup.members || scopedAgents,
           latest_mission: this.activeGroup.latest_mission || missions[0] || null,
-          agent_total: this.activeGroup.agent_total ?? agents.length,
+          agent_total: this.activeGroup.agent_total ?? scopedAgents.length,
           mission_total: this.activeGroup.mission_total ?? missions.length
         });
       }
@@ -852,7 +891,7 @@ export const useBeeroomStore = defineStore('beeroom', {
             idle_agent_total: nextAgents.length
               ? Math.max(0, nextAgents.length - activeAgentTotal)
               : this.activeGroup.idle_agent_total,
-            members: nextAgents.length ? nextAgents.slice(0, 6) : this.activeGroup.members
+            members: nextAgents.length ? nextAgents : this.activeGroup.members
           };
           if (stableGroupFingerprint(this.activeGroup) !== stableGroupFingerprint(nextGroup)) {
             this.activeGroup = nextGroup;
@@ -1009,10 +1048,15 @@ export const useBeeroomStore = defineStore('beeroom', {
 
     async selectGroup(groupId: unknown, params: QueryParams & { silent?: boolean } = {}) {
       const normalized = normalizeGroupId(groupId);
+      const previousGroupId = normalizeGroupId(this.activeGroupId);
       this.activeGroupId = normalized;
       if (!normalized) {
         this.clearActiveData();
         return null;
+      }
+      if (normalized !== previousGroupId) {
+        // Do not render a previous group's members while the next detail request is in flight.
+        this.clearActiveData();
       }
       return this.loadActiveGroup(params);
     },

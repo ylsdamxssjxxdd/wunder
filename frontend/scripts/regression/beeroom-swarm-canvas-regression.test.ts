@@ -2,13 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeBeeroomActorName } from '../../src/components/beeroom/beeroomActorIdentity';
+import { buildBeeroomCanvasReplayScopeKey } from '../../src/components/beeroom/beeroomCanvasReplayPolicy';
 import { resolveBeeroomDispatchPreviewStatus } from '../../src/components/beeroom/beeroomDispatchPreviewStatus';
 import { buildNodeWorkflowPreviewLines } from '../../src/components/beeroom/beeroomTaskWorkflow';
-import { shouldPollBeeroomTaskSubagents } from '../../src/components/beeroom/useBeeroomMissionSubagentPreview';
-import {
-  buildBeeroomRuntimeRelayMessageSignature,
-  mergeBeeroomRuntimeRelayMessages
-} from '../../src/components/beeroom/beeroomRuntimeRelayMessages';
+import { shouldPollBeeroomTaskSubagents } from '../../src/components/beeroom/beeroomSubagentPolling';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '../../src/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
 import { resolveBeeroomSwarmNodeStatus } from '../../src/components/beeroom/canvas/beeroomSwarmNodeStatus';
 import {
@@ -22,6 +19,9 @@ import {
   type BeeroomProjectedSubagentLike,
   type BeeroomProjectedTaskLike
 } from '../../src/components/beeroom/canvas/beeroomSwarmSubagentProjection';
+import { isBeeroomGroupMember } from '../../src/components/beeroom/canvas/beeroomSwarmMemberScope';
+import { resolveBeeroomWorkflowTask } from '../../src/components/beeroom/canvas/beeroomSwarmWorkflowTask';
+import { buildBeeroomSwarmProjection } from '../../src/components/beeroom/canvas/swarmCanvasModel';
 
 type TestSubagent = BeeroomProjectedSubagentLike & {
   key: string;
@@ -104,6 +104,132 @@ test('beeroom actor naming normalizes default agent aliases to localized label',
   assert.equal(normalizeBeeroomActorName('Default Agent', t), DEFAULT_AGENT_LABEL);
   assert.equal(normalizeBeeroomActorName('__default__', t), DEFAULT_AGENT_LABEL);
   assert.equal(normalizeBeeroomActorName(DEFAULT_AGENT_LABEL, t), DEFAULT_AGENT_LABEL);
+});
+
+test('canvas member scope rejects a stale dispatch target from another swarm', () => {
+  const group = {
+    group_id: 'group-current',
+    name: 'Current group',
+    members: [{ agent_id: 'agent-member', name: 'Member' }]
+  };
+
+  assert.equal(isBeeroomGroupMember(group, 'agent-member'), true);
+  assert.equal(isBeeroomGroupMember(group, '__default__'), false);
+});
+
+test('canvas member scope treats an empty detail member list as authoritative', () => {
+  assert.equal(isBeeroomGroupMember({ members: [] }, 'stale-agent'), false);
+  assert.equal(isBeeroomGroupMember(null, 'stale-agent'), false);
+});
+
+test('canvas replay scope ignores mission status refreshes', () => {
+  const scope = buildBeeroomCanvasReplayScopeKey({
+    active: true,
+    groupId: 'group-current',
+    missionId: 'mission-current',
+    teamRunId: 'run-current'
+  });
+  assert.equal(scope, 'active|group-current|mission-current|run-current');
+});
+
+test('worker coordinates stay stable when runtime task status changes', () => {
+  const group = {
+    group_id: 'group-current',
+    name: 'Current group',
+    mother_agent_id: 'mother-agent',
+    members: [
+      { agent_id: 'mother-agent', name: 'Mother' },
+      { agent_id: 'worker-a', name: 'Worker A' },
+      { agent_id: 'worker-b', name: 'Worker B' }
+    ]
+  } as never;
+  const buildProjection = (firstStatus: string, secondStatus: string) => buildBeeroomSwarmProjection({
+    group,
+    mission: {
+      mission_id: 'mission-current',
+      team_run_id: 'run-current',
+      hive_id: 'group-current',
+      mother_agent_id: 'mother-agent',
+      status: 'running',
+      tasks: [
+        { task_id: 'task-a', agent_id: 'worker-a', status: firstStatus, updated_time: 100 },
+        { task_id: 'task-b', agent_id: 'worker-b', status: secondStatus, updated_time: 100 }
+      ]
+    } as never,
+    agents: group.members,
+    selectedNodeId: '',
+    nodePositionOverrides: {},
+    dispatchPreview: null,
+    subagentsByTask: {},
+    motherWorkflowItems: [],
+    workflowItemsByTask: {},
+    workflowPreviewByTask: {},
+    t
+  });
+  const before = buildProjection('running', 'completed');
+  const after = buildProjection('completed', 'running');
+  const positions = (projection: ReturnType<typeof buildProjection>) =>
+    Object.fromEntries(projection.nodes.map((node) => [node.id, [node.x, node.y]]));
+
+  assert.deepEqual(positions(after), positions(before));
+});
+
+test('card workflow selects the newest eligible task instead of array order', () => {
+  const olderTask = {
+    task_id: 'task-older',
+    agent_id: 'agent-member',
+    status: 'completed',
+    updated_time: 100
+  };
+  const newerTask = {
+    task_id: 'task-newer',
+    agent_id: 'agent-member',
+    status: 'running',
+    updated_time: 200
+  };
+  const selected = resolveBeeroomWorkflowTask({
+    tasks: [olderTask, newerTask],
+    itemsByTask: {
+      'task-older': [{ id: 'older', title: 'Older', detail: '', status: 'completed', isTool: true }],
+      'task-newer': [{ id: 'newer', title: 'Newer', detail: '', status: 'loading', isTool: true }]
+    },
+    fallbackTask: olderTask
+  });
+
+  assert.equal(selected?.task_id, 'task-newer');
+});
+
+test('card workflow ignores status-only fallback items when a real tool trace exists', () => {
+  const latestTask = {
+    task_id: 'task-latest',
+    agent_id: 'agent-member',
+    status: 'completed',
+    updated_time: 200
+  };
+  const toolTask = {
+    task_id: 'task-with-tool',
+    agent_id: 'agent-member',
+    status: 'completed',
+    updated_time: 100
+  };
+  const selected = resolveBeeroomWorkflowTask({
+    tasks: [latestTask, toolTask],
+    itemsByTask: {
+      'task-latest': [{ id: 'status', title: 'Completed', detail: '', status: 'completed' }],
+      'task-with-tool': [
+        {
+          id: 'tool',
+          title: 'Tool',
+          detail: '',
+          status: 'completed',
+          eventType: 'tool_result'
+        }
+      ]
+    },
+    fallbackTask: latestTask
+  });
+
+  assert.equal(selected?.task_id, 'task-with-tool');
 });
 
 test('canvas projection rejects swarm worker sessions from the generic subagent feed', () => {
@@ -485,62 +611,6 @@ test('derived subagent avatars prefer external agent resolver and keep default-a
   );
 });
 
-test('runtime relay messages stay visible when live preview temporarily goes empty', () => {
-  const merged = mergeBeeroomRuntimeRelayMessages(
-    [
-      {
-        key: 'subagent:run_worker_shadow:request',
-        senderName: '默认智能体',
-        senderAgentId: '__default__',
-        avatarImageUrl: '',
-        mention: '工蜂 A',
-        body: '@工蜂 A 请处理任务',
-        meta: '',
-        time: 100,
-        timeLabel: '10:00:00',
-        tone: 'mother'
-      }
-    ],
-    [],
-    120
-  );
-
-  assert.equal(merged.length, 1);
-  assert.equal(merged[0]?.key, 'subagent:run_worker_shadow:request');
-});
-
-test('runtime relay message signature changes when reply body changes under the same key', () => {
-  const before = buildBeeroomRuntimeRelayMessageSignature([
-    {
-      key: 'subagent:run_worker_shadow:reply',
-      senderName: '工蜂 A',
-      senderAgentId: 'worker-a',
-      avatarImageUrl: '',
-      mention: '默认智能体',
-      body: 'first reply',
-      meta: '',
-      time: 200,
-      timeLabel: '10:00:00',
-      tone: 'worker'
-    }
-  ]);
-  const after = buildBeeroomRuntimeRelayMessageSignature([
-    {
-      key: 'subagent:run_worker_shadow:reply',
-      senderName: '工蜂 A',
-      senderAgentId: 'worker-a',
-      avatarImageUrl: '',
-      mention: '默认智能体',
-      body: 'final reply',
-      meta: '',
-      time: 200,
-      timeLabel: '10:00:00',
-      tone: 'worker'
-    }
-  ]);
-  assert.notEqual(before, after);
-});
-
 test('worker shadow matching prefers the runtime shadow session tied to the current worker task', () => {
   const matched = resolveBeeroomSwarmWorkerShadowMatch({
     workerAgentId: 'worker-1',
@@ -594,45 +664,6 @@ test('worker shadow matching prefers the runtime shadow session tied to the curr
   assert.equal(matched?.agentId, 'worker-1');
 });
 
-test('runtime relay message merge keeps worker reply without dropping the earlier dispatch request', () => {
-  const merged = mergeBeeroomRuntimeRelayMessages(
-    [
-      {
-        key: 'subagent:run_worker_shadow:request',
-        senderName: '默认智能体',
-        senderAgentId: '__default__',
-        avatarImageUrl: '',
-        mention: '工蜂 A',
-        body: '@工蜂 A 请处理任务',
-        meta: '',
-        time: 100,
-        timeLabel: '10:00:00',
-        tone: 'mother'
-      }
-    ],
-    [
-      {
-        key: 'subagent:run_worker_shadow:reply',
-        senderName: '工蜂 A',
-        senderAgentId: 'worker-a',
-        avatarImageUrl: '',
-        mention: '默认智能体',
-        body: '@默认智能体 任务已完成',
-        meta: '',
-        time: 101,
-        timeLabel: '10:00:01',
-        tone: 'worker'
-      }
-    ],
-    120
-  );
-
-  assert.deepEqual(
-    merged.map((message) => message.key),
-    ['subagent:run_worker_shadow:request', 'subagent:run_worker_shadow:reply']
-  );
-});
-
 test('worker node stays in running state while workflow tail still shows live activity', () => {
   const status = resolveBeeroomSwarmNodeStatus({
     tasks: [
@@ -653,6 +684,19 @@ test('worker node stays in running state while workflow tail still shows live ac
   });
 
   assert.equal(status, 'running');
+});
+
+test('worker node keeps the newest successful task over earlier retry errors', () => {
+  const status = resolveBeeroomSwarmNodeStatus({
+    tasks: [
+      { status: 'error', updated_time: 100 },
+      { status: 'completed', updated_time: 200 }
+    ],
+    member: { idle: true, active_session_total: 0 },
+    missionStatus: 'completed'
+  });
+
+  assert.equal(status, 'completed');
 });
 
 test('node workflow preview collapses tool call and result pairs into a single row', () => {
@@ -687,7 +731,7 @@ test('node workflow preview collapses tool call and result pairs into a single r
   ] as never);
 
   assert.equal(lines.length, 1);
-  assert.equal(lines[0]?.main.includes('search'), true);
+  assert.equal(lines[0]?.main, '检索');
   assert.equal(lines[0]?.detail.includes('beeroom'), true);
 });
 
@@ -729,7 +773,7 @@ test('node workflow preview keeps only tool call rows when result events arrive 
   ] as never);
 
   assert.equal(lines.length, 1);
-  assert.equal(lines[0]?.main.includes('search'), true);
+  assert.equal(lines[0]?.main, '检索');
 });
 
 test('recent worker tasks keep polling for subagents even after leaving the active task statuses', () => {

@@ -20,6 +20,11 @@ import {
   getBeeroomMissionChatState,
   setBeeroomMissionChatState
 } from '../../src/components/beeroom/beeroomMissionChatStateCache';
+import {
+  resolveBeeroomDispatchPreviewStatus,
+  resolveBeeroomTerminalPreviewStatusFromEvents
+} from '../../src/components/beeroom/beeroomDispatchPreviewStatus';
+import { resolveBeeroomSwarmWorkerTerminalState } from '../../src/components/beeroom/beeroomSwarmWorkerShadowState';
 
 const terminalTaskStatuses = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
 
@@ -224,20 +229,52 @@ test('beeroom terminal workflow previews keep a short post-completion poll windo
 test('mission chat state keeps realtime cursor even without dispatch snapshot', () => {
   const scopeKey = 'runtime:test-beeroom-cursor';
   setBeeroomMissionChatState(scopeKey, {
-    version: 2,
+    version: 3,
     manualMessages: [],
-    runtimeRelayMessages: [],
     dispatch: null,
     realtimeCursor: 42
   });
   assert.equal(getBeeroomMissionChatState(scopeKey)?.realtimeCursor, 42);
 
   setBeeroomMissionChatState(scopeKey, {
-    version: 2,
+    version: 3,
     manualMessages: [],
-    runtimeRelayMessages: [],
     dispatch: null,
     realtimeCursor: 0
   });
   assert.equal(getBeeroomMissionChatState(scopeKey), null);
+});
+
+test('newer swarm activity prevents an old terminal event from settling the dispatch preview', () => {
+  const events = [
+    { event: 'final', data: {} },
+    { event: 'team_task_dispatch', data: { status: 'queued' } }
+  ];
+  assert.equal(resolveBeeroomTerminalPreviewStatusFromEvents(events), '');
+  assert.equal(
+    resolveBeeroomDispatchPreviewStatus({
+      localStatus: 'queued',
+      running: false,
+      events,
+      subagents: []
+    }),
+    'queued'
+  );
+});
+
+test('active swarm task cannot be overwritten by an earlier worker terminal record', () => {
+  assert.deepEqual(
+    resolveBeeroomSwarmWorkerTerminalState({
+      currentStatus: 'queued',
+      currentUpdatedTime: 2,
+      running: false,
+      events: [{ event: 'turn_terminal', timestamp: 1, data: { status: 'completed' } }],
+      workflowItems: []
+    }),
+    {
+      status: 'running',
+      terminal: false,
+      failed: false
+    }
+  );
 });

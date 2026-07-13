@@ -68,9 +68,35 @@ const asRecord = (value: unknown): Record<string, unknown> =>
     ? value as Record<string, unknown>
     : {};
 
+const STREAM_ENVELOPE_FIELDS = new Set([
+  'data',
+  'event',
+  'event_type',
+  'eventtype',
+  'type',
+  'session_id',
+  'sessionid',
+  'timestamp',
+  'event_id',
+  'eventid',
+  'event_seq',
+  'eventseq'
+]);
+
+const isStreamEnvelope = (value: Record<string, unknown>): boolean => {
+  const nested = asRecord(value.data);
+  if (Object.keys(nested).length === 0) return false;
+  return Object.keys(value).every((key) => STREAM_ENVELOPE_FIELDS.has(key.toLowerCase()));
+};
+
 const readData = (payload: Record<string, unknown>): Record<string, unknown> => {
-  const nested = asRecord(payload.data);
-  return Object.keys(nested).length > 0 ? nested : payload;
+  // Persisted stream records are wrapped as { event, data: { data, session_id, timestamp } }.
+  // Peel only transport envelopes so a tool result's business `data` is never discarded.
+  let current = payload;
+  while (isStreamEnvelope(current)) {
+    current = asRecord(current.data);
+  }
+  return current;
 };
 
 const readSegments = (source: Record<string, unknown>): Record<string, unknown>[] => {

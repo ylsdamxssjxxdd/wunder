@@ -58,6 +58,13 @@ pub(super) trait PostgresAgentDirectoryStorage {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<TeamRunRecord>>;
+    fn list_team_runs_by_user_and_status_impl(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>>;
     fn upsert_team_task_impl(&self, record: &TeamTaskRecord) -> Result<()>;
     fn list_team_tasks_impl(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
     fn get_team_task_impl(&self, task_id: &str) -> Result<Option<TeamTaskRecord>>;
@@ -649,6 +656,61 @@ impl PostgresAgentDirectoryStorage for PostgresStorage {
         let rows = conn.query(
             "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status = ANY($1::text[]) ORDER BY updated_time ASC LIMIT $2 OFFSET $3",
             &[&cleaned_statuses, &safe_limit, &safe_offset],
+        )?;
+        let mut output = Vec::with_capacity(rows.len());
+        for row in rows {
+            output.push(TeamRunRecord {
+                team_run_id: row.get(0),
+                user_id: row.get(1),
+                hive_id: normalize_hive_id(&row.get::<_, String>(2)),
+                parent_session_id: row.get(3),
+                parent_agent_id: row.get(4),
+                mother_agent_id: row.get(5),
+                strategy: row.get(6),
+                status: row.get(7),
+                task_total: row.get(8),
+                task_success: row.get(9),
+                task_failed: row.get(10),
+                context_tokens_total: row.get(11),
+                context_tokens_peak: row.get(12),
+                model_round_total: row.get(13),
+                started_time: row.get(14),
+                finished_time: row.get(15),
+                elapsed_s: row.get(16),
+                summary: row.get(17),
+                error: row.get(18),
+                updated_time: row.get(19),
+            });
+        }
+        Ok(output)
+    }
+
+    fn list_team_runs_by_user_and_status_impl(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let mut cleaned_statuses = statuses
+            .iter()
+            .map(|status| status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .collect::<Vec<_>>();
+        cleaned_statuses.sort();
+        cleaned_statuses.dedup();
+        if cleaned_user.is_empty() || cleaned_statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let safe_limit = limit.max(1);
+        let safe_offset = offset.max(0);
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time FROM team_runs WHERE user_id = $1 AND status = ANY($2::text[]) ORDER BY updated_time DESC LIMIT $3 OFFSET $4",
+            &[&cleaned_user, &cleaned_statuses, &safe_limit, &safe_offset],
         )?;
         let mut output = Vec::with_capacity(rows.len());
         for row in rows {

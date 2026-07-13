@@ -15,12 +15,11 @@ type BeeroomMissionChatDispatchState = {
 export type BeeroomMissionChatState = {
   version: number;
   manualMessages: MissionChatMessage[];
-  runtimeRelayMessages: MissionChatMessage[];
   dispatch: BeeroomMissionChatDispatchState | null;
   realtimeCursor: number;
 };
 
-const CHAT_STATE_VERSION = 2;
+const CHAT_STATE_VERSION = 3;
 const CHAT_STATE_STORAGE_KEY = 'wunder:beeroom-mission-chat-state';
 const MAX_CACHE_ENTRIES = 36;
 const ALLOWED_TONES = new Set(['mother', 'worker', 'system', 'user']);
@@ -95,6 +94,11 @@ const cloneManualMessages = (messages: MissionChatMessage[]): MissionChatMessage
       return {
         key,
         remoteKey: String(message?.remoteKey || '').trim(),
+        sessionId: String(message?.sessionId || '').trim(),
+        userTurnId: String(message?.userTurnId || '').trim(),
+        modelTurnId: String(message?.modelTurnId || '').trim(),
+        turnOrder: normalizeSortOrder(message?.turnOrder),
+        messageOrder: normalizeSortOrder(message?.messageOrder),
         senderName: String(message?.senderName || '').trim() || 'Wunder',
         senderAgentId: String(message?.senderAgentId || '').trim(),
         avatarImageUrl: String(message?.avatarImageUrl || '').trim(),
@@ -131,7 +135,6 @@ const normalizeState = (
 ): BeeroomMissionChatState => ({
   version: CHAT_STATE_VERSION,
   manualMessages: cloneManualMessages(state?.manualMessages || []),
-  runtimeRelayMessages: cloneManualMessages(state?.runtimeRelayMessages || []),
   dispatch: cloneDispatchState(state?.dispatch || null),
   realtimeCursor: normalizeRealtimeCursor(state?.realtimeCursor)
 });
@@ -139,7 +142,6 @@ const normalizeState = (
 const cloneState = (state: BeeroomMissionChatState): BeeroomMissionChatState => ({
   version: CHAT_STATE_VERSION,
   manualMessages: cloneManualMessages(state.manualMessages),
-  runtimeRelayMessages: cloneManualMessages(state.runtimeRelayMessages),
   dispatch: cloneDispatchState(state.dispatch),
   realtimeCursor: normalizeRealtimeCursor(state.realtimeCursor)
 });
@@ -213,7 +215,6 @@ export const setBeeroomMissionChatState = (
   const next = normalizeState(state || null);
   if (
     next.manualMessages.length === 0 &&
-    next.runtimeRelayMessages.length === 0 &&
     !next.dispatch &&
     next.realtimeCursor <= 0
   ) {

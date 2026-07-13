@@ -133,6 +133,7 @@ import {
   resolveAssistantMessageRuntimeState
 } from '@/utils/assistantMessageRuntime';
 import {
+  hasActiveBlockingSwarmAfterLatestUser,
   hasActiveSubagentsAfterLatestUser,
   hasRunningAssistantMessage,
   hasStreamingAssistantMessage
@@ -443,11 +444,22 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
       if (override && override.expiresAt <= now) {
           ctx.runtimeStateOverrides.value.delete(key);
       }
+      const sessionAgentMap = ctx.buildSessionAgentMap();
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      const activeBlockingSwarm = Array.from(sessionAgentMap.entries()).some(([sessionId, mappedAgentId]) => {
+          if ((ctx.normalizeAgentId(mappedAgentId) || DEFAULT_AGENT_KEY) !== key)
+              return false;
+          const messages = sessionId === activeSessionId
+              ? ctx.resolveActiveAgentRenderableMessageRecords()
+              : ctx.chatStore.getCachedSessionMessages(sessionId);
+          return hasActiveBlockingSwarmAfterLatestUser(messages);
+      });
       return resolveAgentRuntimeStateFromSignals({
           pendingApproval: ctx.pendingApprovalAgentIdSet.value.has(key),
           pendingInquiry: Boolean(inquiryAgentId && inquiryAgentId === key),
           localWaiting: Boolean(ctx.waitingAgentIdSet?.value?.has(key)),
           localStreaming: ctx.streamingAgentIdSet.value.has(key),
+          activeBlockingSwarm,
           remoteState,
           overrideState: override && override.expiresAt > now ? override.state : null
       });
@@ -632,10 +644,10 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
   };
 
   ctx.shouldNotifyAgentCompletion = (previousState: AgentRuntimeState, nextState: AgentRuntimeState): boolean => {
-      if (nextState === 'done')
-          return previousState !== 'done';
-      if (nextState === 'idle')
-          return previousState === 'running' || previousState === 'pending';
+      // Runtime list snapshots have no user-turn identity. Do not turn a polling
+      // transition into a user-visible completion notification.
+      void previousState;
+      void nextState;
       return false;
   };
 

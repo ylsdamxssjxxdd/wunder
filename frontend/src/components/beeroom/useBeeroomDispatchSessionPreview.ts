@@ -501,6 +501,7 @@ const hydrateSwarmWorkerShadowItems = async (
         const running = response?.data?.data?.running === true;
         const terminalState = resolveBeeroomSwarmWorkerTerminalState({
           currentStatus: item.status,
+          currentUpdatedTime: item.updatedTime,
           running,
           events,
           workflowItems

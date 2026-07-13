@@ -14,7 +14,25 @@ type SwarmWorkerEventRecord = {
   event?: unknown;
   type?: unknown;
   data?: unknown;
+  timestamp?: unknown;
+  timestamp_ms?: unknown;
 };
+
+const ACTIVE_WORKER_STATUSES = new Set(['accepted', 'queued', 'pending', 'running', 'waiting', 'resuming', 'merging']);
+const ACTIVE_WORKER_EVENT_NAMES = new Set([
+  'round_start',
+  'received',
+  'queued',
+  'queue_enter',
+  'queue_update',
+  'queue_start',
+  'llm_request',
+  'llm_output_delta',
+  'tool_call',
+  'tool_call_delta',
+  'tool_output',
+  'tool_output_delta'
+]);
 
 const normalizeText = (value: unknown): string => String(value || '').trim();
 
@@ -96,13 +114,41 @@ const resolveEventPayload = (event: SwarmWorkerEventRecord): Record<string, unkn
   return source || {};
 };
 
+const normalizeEventMoment = (value: unknown): number => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric > 1_000_000_000_000 ? numeric / 1000 : numeric;
+  }
+  const parsed = Date.parse(normalizeText(value));
+  return Number.isFinite(parsed) ? parsed / 1000 : 0;
+};
+
+const resolveLatestEventMoment = (events: SwarmWorkerEventRecord[]): number =>
+  events.reduce((latest, event) => {
+    const payload = resolveEventPayload(event);
+    return Math.max(
+      latest,
+      normalizeEventMoment(event.timestamp_ms),
+      normalizeEventMoment(event.timestamp),
+      normalizeEventMoment(payload.timestamp_ms),
+      normalizeEventMoment(payload.timestamp),
+      normalizeEventMoment(payload.updated_time),
+      normalizeEventMoment(payload.updated_at)
+    );
+  }, 0);
+
 const resolveTerminalStatusFromEvents = (events: SwarmWorkerEventRecord[]): string => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const eventName = resolveEventName(event);
     const payload = resolveEventPayload(event);
+    const status = normalizeText(payload.status).toLowerCase();
+    // Session histories span multiple worker invocations. A later active event
+    // makes an earlier final/terminal record irrelevant to the current task.
+    if (ACTIVE_WORKER_EVENT_NAMES.has(eventName) || ACTIVE_WORKER_STATUSES.has(status)) {
+      return '';
+    }
     if (eventName === 'turn_terminal') {
-      const status = normalizeText(payload.status).toLowerCase();
       if (status === 'completed' || status === 'success' || status === 'idle') return 'completed';
       if (status === 'cancelled' || status === 'stopped') return 'cancelled';
       if (status === 'rejected' || status === 'failed' || status === 'error' || status === 'timeout') {
@@ -142,6 +188,7 @@ export const resolveBeeroomSwarmWorkerReplyFromHistoryMessages = (
 
 export const resolveBeeroomSwarmWorkerTerminalState = (options: {
   currentStatus: string;
+  currentUpdatedTime?: number;
   running: boolean;
   events: SwarmWorkerEventRecord[];
   workflowItems: SwarmWorkerWorkflowItem[];
@@ -154,6 +201,16 @@ export const resolveBeeroomSwarmWorkerTerminalState = (options: {
     };
   }
   const terminalStatusFromEvents = resolveTerminalStatusFromEvents(options.events);
+  const currentStatusActive = ACTIVE_WORKER_STATUSES.has(normalizeText(options.currentStatus).toLowerCase());
+  const currentUpdatedTime = normalizeEventMoment(options.currentUpdatedTime);
+  const latestEventTime = resolveLatestEventMoment(options.events);
+  if (currentStatusActive && (!latestEventTime || currentUpdatedTime > latestEventTime)) {
+    return {
+      status: 'running',
+      terminal: false,
+      failed: false
+    };
+  }
   const tailWorkflowItem = options.workflowItems[options.workflowItems.length - 1] || null;
   const tailStatus = normalizeText(tailWorkflowItem?.status).toLowerCase();
   const workflowStillActive = tailStatus === 'loading' || tailStatus === 'pending';
@@ -183,6 +240,13 @@ export const resolveBeeroomSwarmWorkerTerminalState = (options: {
       status: 'failed',
       terminal: true,
       failed: true
+    };
+  }
+  if (currentStatusActive) {
+    return {
+      status: 'running',
+      terminal: false,
+      failed: false
     };
   }
   const hasFailedWorkflowItem = options.workflowItems.some(

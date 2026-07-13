@@ -1093,6 +1093,17 @@ impl UserStore {
             .list_team_runs_by_status(statuses, offset, limit)
     }
 
+    pub fn list_team_runs_by_user_and_status(
+        &self,
+        user_id: &str,
+        statuses: &[&str],
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TeamRunRecord>> {
+        self.storage
+            .list_team_runs_by_user_and_status(user_id, statuses, offset, limit)
+    }
+
     pub fn upsert_team_task(&self, record: &TeamTaskRecord) -> Result<()> {
         self.storage.upsert_team_task(record)
     }
