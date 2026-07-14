@@ -17,6 +17,7 @@ pub(super) trait SqliteMonitorStorage {
         since_time: Option<f64>,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn sum_monitor_consumed_tokens_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_monitor_record_impl(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user_impl(&self, user_id: &str) -> Result<i64>;
 }
@@ -168,6 +169,25 @@ impl SqliteMonitorStorage for SqliteStorage {
         Ok(records)
     }
 
+    fn sum_monitor_consumed_tokens_by_user_impl(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let total = conn.query_row(
+            "SELECT COALESCE(SUM(CASE \
+                 WHEN json_valid(payload) \
+                 THEN MAX(COALESCE(CAST(json_extract(payload, '$.consumed_tokens') AS INTEGER), 0), 0) \
+                 ELSE 0 END), 0) \
+             FROM monitor_sessions WHERE user_id = ?",
+            params![cleaned_user],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(total.max(0))
+    }
+
     fn delete_monitor_record_impl(&self, session_id: &str) -> Result<()> {
         self.ensure_initialized()?;
         if session_id.trim().is_empty() {
@@ -219,19 +239,22 @@ mod tests {
                 "session_id": "session-a",
                 "user_id": "user-a",
                 "status": "running",
-                "updated_time": 10.0
+                "updated_time": 10.0,
+                "consumed_tokens": 120
             }),
             json!({
                 "session_id": "session-b",
                 "user_id": "user-a",
                 "status": "completed",
-                "updated_time": 20.0
+                "updated_time": 20.0,
+                "consumed_tokens": 80
             }),
             json!({
                 "session_id": "session-c",
                 "user_id": "user-b",
                 "status": "running",
-                "updated_time": 30.0
+                "updated_time": 30.0,
+                "consumed_tokens": 40
             }),
         ] {
             storage
@@ -263,6 +286,12 @@ mod tests {
                 .map(|record| record["session_id"].as_str().unwrap_or(""))
                 .collect::<Vec<_>>(),
             vec!["session-b"]
+        );
+        assert_eq!(
+            storage
+                .sum_monitor_consumed_tokens_by_user("user-a")
+                .expect("sum consumed tokens"),
+            200
         );
 
         storage

@@ -10,6 +10,11 @@ const MESSENGER_BOOTSTRAP_BACKGROUND_BATCH_SIZE = 2;
 const MESSENGER_BOOTSTRAP_IDLE_TIMEOUT = 1200;
 const MESSENGER_BOOTSTRAP_FALLBACK_DELAY_MS = 16;
 
+export const shouldUseNonBlockingDesktopMessageBootstrap = (
+  desktopMode: boolean,
+  currentSection: MessengerSection
+): boolean => desktopMode && currentSection === 'messages';
+
 const shouldRunAsCritical = (
   currentSection: MessengerSection,
   task: MessengerBootstrapTask

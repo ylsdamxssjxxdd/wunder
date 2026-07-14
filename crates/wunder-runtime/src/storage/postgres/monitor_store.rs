@@ -15,6 +15,7 @@ pub(super) trait PostgresMonitorStorage {
         since_time: Option<f64>,
         limit: i64,
     ) -> Result<Vec<Value>>;
+    fn sum_monitor_consumed_tokens_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_monitor_record_impl(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user_impl(&self, user_id: &str) -> Result<i64>;
 }
@@ -169,6 +170,26 @@ impl PostgresMonitorStorage for PostgresStorage {
             }
         }
         Ok(records)
+    }
+
+    fn sum_monitor_consumed_tokens_by_user_impl(&self, user_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_one(
+            "SELECT COALESCE(SUM(CASE \
+                 WHEN consumed_tokens ~ '^[0-9]+$' THEN consumed_tokens::BIGINT \
+                 ELSE 0 END), 0)::BIGINT \
+             FROM ( \
+                 SELECT payload::jsonb ->> 'consumed_tokens' AS consumed_tokens \
+                 FROM monitor_sessions WHERE user_id = $1 \
+             ) AS monitor_usage",
+            &[&cleaned_user],
+        )?;
+        Ok(row.get::<_, i64>(0).max(0))
     }
 
     fn delete_monitor_record_impl(&self, _session_id: &str) -> Result<()> {

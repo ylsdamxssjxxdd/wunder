@@ -129,6 +129,68 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_stream_event_workflow_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "stream_events")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        let needs_backfill = !columns.contains("event_type") || !columns.contains("user_round");
+        if !columns.contains("event_type") {
+            conn.execute("ALTER TABLE stream_events ADD COLUMN event_type TEXT", [])?;
+        }
+        if !columns.contains("user_round") {
+            conn.execute(
+                "ALTER TABLE stream_events ADD COLUMN user_round INTEGER",
+                [],
+            )?;
+        }
+        // Existing event rows predate the indexed workflow fields. Populate them once so
+        // history hydration stays bounded even for sessions created before this upgrade.
+        if needs_backfill {
+            conn.execute(
+                "UPDATE stream_events
+             SET event_type = LOWER(TRIM(COALESCE(
+                     json_extract(payload, '$.event'),
+                     json_extract(payload, '$.event_type'),
+                     json_extract(payload, '$.type'),
+                     ''
+                 ))),
+                 user_round = CASE
+                     WHEN CAST(COALESCE(
+                         json_extract(payload, '$.data.data.user_round'),
+                         json_extract(payload, '$.data.data.userRound'),
+                         json_extract(payload, '$.data.data.round'),
+                         json_extract(payload, '$.data.user_round'),
+                         json_extract(payload, '$.data.userRound'),
+                         json_extract(payload, '$.data.round'),
+                         json_extract(payload, '$.user_round'),
+                         json_extract(payload, '$.userRound'),
+                         json_extract(payload, '$.round')
+                     ) AS INTEGER) > 0
+                     THEN CAST(COALESCE(
+                         json_extract(payload, '$.data.data.user_round'),
+                         json_extract(payload, '$.data.data.userRound'),
+                         json_extract(payload, '$.data.data.round'),
+                         json_extract(payload, '$.data.user_round'),
+                         json_extract(payload, '$.data.userRound'),
+                         json_extract(payload, '$.data.round'),
+                         json_extract(payload, '$.user_round'),
+                         json_extract(payload, '$.userRound'),
+                         json_extract(payload, '$.round')
+                     ) AS INTEGER)
+                     ELSE NULL
+                 END
+             WHERE json_valid(payload) AND (event_type IS NULL OR user_round IS NULL)",
+                [],
+            )?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stream_events_session_round ON stream_events (session_id, user_round, event_id)",
+            [],
+        )?;
+        Ok(())
+    }
+
     fn ensure_channel_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
@@ -501,6 +563,8 @@ impl SqliteSchemaStorage for SqliteStorage {
               session_id TEXT NOT NULL,
               event_id INTEGER NOT NULL,
               user_id TEXT NOT NULL,
+              event_type TEXT,
+              user_round INTEGER,
               payload TEXT NOT NULL,
               created_time REAL NOT NULL,
               PRIMARY KEY (session_id, event_id)
@@ -1405,6 +1469,7 @@ impl SqliteSchemaStorage for SqliteStorage {
         self.ensure_user_token_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
+        self.ensure_stream_event_workflow_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
         self.ensure_session_run_columns(&conn)?;

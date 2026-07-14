@@ -46,6 +46,12 @@ pub(super) trait SqliteAgentRuntimeStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn load_recent_stream_events_impl(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
+    fn load_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<Vec<Value>>;
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64>;
@@ -381,10 +387,12 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         }
         let now = Self::now_ts();
         let payload_text = Self::json_to_string(payload);
+        let event_type = stream_event_type(payload);
+        let user_round = stream_event_user_round(payload);
         let conn = self.open()?;
         conn.execute(
-            "INSERT OR REPLACE INTO stream_events (session_id, event_id, user_id, payload, created_time) VALUES (?, ?, ?, ?, ?)",
-            params![cleaned_session, event_id, cleaned_user, payload_text, now],
+            "INSERT OR REPLACE INTO stream_events (session_id, event_id, user_id, event_type, user_round, payload, created_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![cleaned_session, event_id, cleaned_user, event_type, user_round, payload_text, now],
         )?;
         Ok(())
     }
@@ -459,6 +467,33 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         Ok(records)
     }
 
+    fn load_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || from_user_round <= 0 || to_user_round < from_user_round {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT event_id, payload FROM stream_events \
+             WHERE session_id = ? AND user_round BETWEEN ? AND ? \
+             AND event_type NOT IN ('llm_output_delta', 'llm_output', 'final', 'thread_closed') \
+             ORDER BY event_id ASC",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![cleaned_session, from_user_round, to_user_round],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )?
+            .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+        Ok(stream_event_rows_to_values(rows))
+    }
+
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64> {
         self.ensure_initialized()?;
         if before_time <= 0.0 {
@@ -499,6 +534,47 @@ impl SqliteAgentRuntimeStorage for SqliteStorage {
         )?;
         Ok(affected as i64)
     }
+}
+
+fn stream_event_type(payload: &Value) -> String {
+    payload
+        .get("event")
+        .or_else(|| payload.get("event_type"))
+        .or_else(|| payload.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn stream_event_user_round(payload: &Value) -> Option<i64> {
+    let outer = payload.get("data").unwrap_or(payload);
+    let data = outer.get("data").unwrap_or(outer);
+    data.get("user_round")
+        .or_else(|| data.get("userRound"))
+        .or_else(|| data.get("round"))
+        .and_then(|value| match value {
+            Value::Number(number) => number.as_i64(),
+            Value::String(text) => text.trim().parse::<i64>().ok(),
+            _ => None,
+        })
+        .filter(|value| *value > 0)
+}
+
+fn stream_event_rows_to_values(rows: Vec<(i64, String)>) -> Vec<Value> {
+    let mut records = Vec::new();
+    for (event_id, payload) in rows {
+        if let Some(mut value) = SqliteStorage::json_from_str(&payload) {
+            if let Value::Object(ref mut map) = value {
+                map.insert("event_id".to_string(), json!(event_id));
+                map.insert("event_seq".to_string(), json!(event_id));
+                records.push(value);
+            } else {
+                records.push(json!({ "event_id": event_id, "event_seq": event_id, "data": value }));
+            }
+        }
+    }
+    records
 }
 
 #[cfg(test)]
@@ -603,5 +679,54 @@ mod tests {
         assert_eq!(running[0].task_id, "task-1");
         assert_eq!(running[0].retry_count, 1);
         assert_eq!(running[0].started_at, Some(4.0));
+    }
+
+    #[test]
+    fn workflow_event_query_filters_rounds_and_output_payloads() {
+        let (storage, _dir) = build_storage();
+        let records = [
+            (
+                1,
+                json!({ "event": "tool_call", "data": { "data": { "user_round": 2, "tool": "tool_a" } } }),
+            ),
+            (
+                2,
+                json!({ "event": "llm_output_delta", "data": { "data": { "user_round": 2, "delta": "hidden" } } }),
+            ),
+            (
+                3,
+                json!({ "event": "tool_result", "data": { "data": { "user_round": 3, "tool": "tool_a" } } }),
+            ),
+            (
+                4,
+                json!({ "event": "tool_result", "data": { "data": { "user_round": 4, "tool": "tool_b" } } }),
+            ),
+            (
+                5,
+                json!({ "event": "turn_terminal", "data": { "data": { "user_round": 3, "status": "completed" } } }),
+            ),
+            (
+                6,
+                json!({ "event": "thread_status", "data": { "data": { "user_round": 3, "status": "idle" } } }),
+            ),
+        ];
+        for (event_id, payload) in records {
+            storage
+                .append_stream_event("session-1", "user-1", event_id, &payload)
+                .expect("append stream event");
+        }
+
+        let events = storage
+            .load_session_workflow_events("session-1", 2, 3)
+            .expect("load workflow events");
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0]["event"], json!("tool_call"));
+        assert_eq!(events[0]["event_id"], json!(1));
+        assert_eq!(events[1]["event"], json!("tool_result"));
+        assert_eq!(events[1]["event_id"], json!(3));
+        assert_eq!(events[2]["event"], json!("turn_terminal"));
+        assert_eq!(events[2]["event_id"], json!(5));
+        assert_eq!(events[3]["event"], json!("thread_status"));
+        assert_eq!(events[3]["event_id"], json!(6));
     }
 }

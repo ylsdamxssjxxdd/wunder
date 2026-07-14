@@ -197,6 +197,67 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_stream_event_workflow_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'stream_events'",
+            &[],
+        )?;
+        let columns = rows
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<HashSet<_>>();
+        let needs_backfill = !columns.contains("event_type") || !columns.contains("user_round");
+        conn.execute(
+            "ALTER TABLE stream_events ADD COLUMN IF NOT EXISTS event_type TEXT",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE stream_events ADD COLUMN IF NOT EXISTS user_round BIGINT",
+            &[],
+        )?;
+        // Fill the index from old JSON payloads before relying on bounded round queries.
+        if needs_backfill {
+            conn.execute(
+                "WITH parsed AS (
+                     SELECT session_id, event_id, payload::jsonb AS value
+                     FROM stream_events
+                     WHERE event_type IS NULL OR user_round IS NULL
+                 ), extracted AS (
+                     SELECT session_id, event_id,
+                         LOWER(BTRIM(COALESCE(value ->> 'event', value ->> 'event_type', value ->> 'type', ''))) AS event_type,
+                         COALESCE(
+                             value #>> '{data,data,user_round}',
+                             value #>> '{data,data,userRound}',
+                             value #>> '{data,data,round}',
+                             value #>> '{data,user_round}',
+                             value #>> '{data,userRound}',
+                             value #>> '{data,round}',
+                             value ->> 'user_round',
+                             value ->> 'userRound',
+                             value ->> 'round'
+                         ) AS user_round_text
+                     FROM parsed
+                 )
+                 UPDATE stream_events AS target
+                 SET event_type = extracted.event_type,
+                     user_round = CASE
+                         WHEN extracted.user_round_text ~ '^[0-9]+$'
+                             THEN extracted.user_round_text::BIGINT
+                         ELSE NULL
+                     END
+                 FROM extracted
+                 WHERE target.session_id = extracted.session_id
+                   AND target.event_id = extracted.event_id",
+                &[],
+            )?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_stream_events_session_round ON stream_events (session_id, user_round, event_id)",
+            &[],
+        )?;
+        Ok(())
+    }
+
     fn ensure_channel_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         fn ensure_table_columns(
             conn: &mut PgConn<'_>,
@@ -920,6 +981,8 @@ impl PostgresSchemaStorage for PostgresStorage {
                   session_id TEXT NOT NULL,
                   event_id BIGINT NOT NULL,
                   user_id TEXT NOT NULL,
+                  event_type TEXT,
+                  user_round BIGINT,
                   payload TEXT NOT NULL,
                   created_time DOUBLE PRECISION NOT NULL,
                   PRIMARY KEY (session_id, event_id)
@@ -1828,6 +1891,7 @@ impl PostgresSchemaStorage for PostgresStorage {
                     self.ensure_user_token_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
+                    self.ensure_stream_event_workflow_columns(&mut conn)?;
                     self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_session_run_columns(&mut conn)?;

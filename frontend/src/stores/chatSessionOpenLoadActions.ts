@@ -1156,6 +1156,7 @@ export const chatSessionOpenLoadActions = {
           startSessionWatcher(this, targetSessionId);
         }
         void this.refreshSessionSubagents(targetSessionId).catch(() => null);
+        void this.hydrateSessionWorkflowHistory(targetSessionId, this.messages);
         if (perfEnabled) {
           chatPerf.recordDuration('chat_session_detail_load', performance.now() - perfStart, {
             sessionId: targetSessionId,
@@ -1241,12 +1242,19 @@ export const chatSessionOpenLoadActions = {
               nextMessages
             );
             this.messages = syncedMessages;
+            syncChatRuntimeProjectionFromSnapshot(this, targetId, syncedMessages, {
+              immediate: true,
+              loading: false,
+              running: false,
+              authoritative: true
+            });
             notifySessionSnapshot(this, targetId, syncedMessages, true, {
               skipWindowing: true
             });
           } else {
             cacheSessionMessages(targetId, nextMessages);
           }
+          void this.hydrateSessionWorkflowHistory(targetId, deduped);
         }
         state.beforeId = incomingBeforeId ?? findOldestHistoryId(messagesForCursor);
         state.hasMore = Boolean(incomingHasMore) && Boolean(state.beforeId);

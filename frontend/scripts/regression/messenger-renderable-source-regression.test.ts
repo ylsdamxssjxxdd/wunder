@@ -486,7 +486,7 @@ test('chat composer debounces draft persistence during typing', () => {
   assert.ok(!inputWatchSource.includes('persistDraftState();'));
 });
 
-test('idle session detail hydration skips event projection replay and avoids bubble-wide hover churn', () => {
+test('idle session detail hydration keeps the transcript lightweight while workflow metadata hydrates separately', () => {
   const sessionOpen = readSource('src/stores/chatSessionOpenLoadActions.ts');
   const cacheActions = readSource('src/stores/chatCacheActions.ts');
   const runtimeState = readSource('src/stores/chatRuntimeState.ts');
@@ -499,6 +499,9 @@ test('idle session detail hydration skips event projection replay and avoids bub
   assert.ok(sessionOpen.includes("events-snapshot-skip-idle-transcript"));
   assert.ok(cacheActions.includes('shouldApplySessionEventsSnapshotToProjection(eventsPayload, runtime)'));
   assert.ok(cacheActions.includes("events-snapshot-skip-idle-transcript"));
+  assert.ok(sessionOpen.includes('void this.hydrateSessionWorkflowHistory(targetSessionId, this.messages);'));
+  assert.ok(cacheActions.includes('loadSessionWorkflowEventsSnapshot'));
+  assert.ok(cacheActions.includes('phase: \'history-workflow\''));
 
   assert.ok(!styles.includes('.messenger-message-main:hover .messenger-message-footer-copy'));
   assert.ok(!styles.includes('.messenger-message-bubble:hover .messenger-bubble-copy-btn'));

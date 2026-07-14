@@ -241,6 +241,8 @@
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
 - 会话事件摘要接口现在同时返回 `data.events[]` 原始持久化事件流，保留既有 `data.rounds[]` 工作流摘要；新前端状态投影应优先消费 `data.events[]`，缺失时再回退到 `data.rounds[]`。
+- 会话历史工作流补水：`GET /wunder/chat/sessions/{session_id}/events?workflow_only=true&from_user_round={n}&to_user_round={n}` 只返回指定用户轮次的 `data.rounds[]` 工作流事件，`data.events=[]`；模型正文增量与终态正文事件不会返回，但会保留 `turn_terminal` 与带用户轮次的 `thread_status`，使渐进补水能结算模型/工具运行态。此模式用于正文先渲染、工具循环和气泡附加信息随后补齐，参数必须是递增的正整数范围。
+- 工作流补水查询按 `session_id + user_round + event_id` 索引读取；历史流事件会在存储升级时补齐 `event_type/user_round` 索引字段，避免长会话刷新时扫描完整事件流。
 - `data.events[]` 与聊天 WS 事件 payload 会补充 `event_seq`；当前 `event_seq` 与会话内递增的 `event_id` 对齐，用于前端 reducer 去重、乱序检测和 HTTP snapshot 回放。
 - 会话级实时订阅支持 `cancel`、连接关闭和任务自然结束后的幂等清理，避免断连后残留状态。
 - 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的短期命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段；tail 为有界 head+tail 预览，中间输出可能以省略标记折叠，用于前端刷新后恢复工作流里的近期终端预览。

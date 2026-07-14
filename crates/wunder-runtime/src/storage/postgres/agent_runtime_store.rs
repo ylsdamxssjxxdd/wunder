@@ -45,6 +45,12 @@ pub(super) trait PostgresAgentRuntimeStorage {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn load_recent_stream_events_impl(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
+    fn load_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<Vec<Value>>;
     fn delete_stream_events_before_impl(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user_impl(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session_impl(&self, session_id: &str) -> Result<i64>;
@@ -363,11 +369,13 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         }
         let now = Self::now_ts();
         let payload_text = Self::json_to_string(_payload);
+        let event_type = stream_event_type(_payload);
+        let user_round = stream_event_user_round(_payload);
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO stream_events (session_id, event_id, user_id, payload, created_time) VALUES ($1, $2, $3, $4, $5) \
-             ON CONFLICT (session_id, event_id) DO UPDATE SET user_id = EXCLUDED.user_id, payload = EXCLUDED.payload, created_time = EXCLUDED.created_time",
-            &[&cleaned_session, &_event_id, &cleaned_user, &payload_text, &now],
+            "INSERT INTO stream_events (session_id, event_id, user_id, event_type, user_round, payload, created_time) VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             ON CONFLICT (session_id, event_id) DO UPDATE SET user_id = EXCLUDED.user_id, event_type = EXCLUDED.event_type, user_round = EXCLUDED.user_round, payload = EXCLUDED.payload, created_time = EXCLUDED.created_time",
+            &[&cleaned_session, &_event_id, &cleaned_user, &event_type, &user_round, &payload_text, &now],
         )?;
         Ok(())
     }
@@ -439,6 +447,30 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         Ok(records)
     }
 
+    fn load_session_workflow_events_impl(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() || from_user_round <= 0 || to_user_round < from_user_round {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT event_id, payload FROM stream_events \
+             WHERE session_id = $1 AND user_round BETWEEN $2 AND $3 \
+             AND event_type NOT IN ('llm_output_delta', 'llm_output', 'final', 'thread_closed') \
+             ORDER BY event_id ASC",
+            &[&cleaned_session, &from_user_round, &to_user_round],
+        )?;
+        Ok(stream_event_rows_to_values(rows.into_iter().map(|row| {
+            (row.get::<_, i64>(0), row.get::<_, String>(1))
+        })))
+    }
+
     fn delete_stream_events_before_impl(&self, _before_time: f64) -> Result<i64> {
         self.ensure_initialized()?;
         if _before_time <= 0.0 {
@@ -476,4 +508,48 @@ impl PostgresAgentRuntimeStorage for PostgresStorage {
         )?;
         Ok(affected as i64)
     }
+}
+
+fn stream_event_type(payload: &Value) -> String {
+    payload
+        .get("event")
+        .or_else(|| payload.get("event_type"))
+        .or_else(|| payload.get("type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn stream_event_user_round(payload: &Value) -> Option<i64> {
+    let outer = payload.get("data").unwrap_or(payload);
+    let data = outer.get("data").unwrap_or(outer);
+    data.get("user_round")
+        .or_else(|| data.get("userRound"))
+        .or_else(|| data.get("round"))
+        .and_then(|value| match value {
+            Value::Number(number) => number.as_i64(),
+            Value::String(text) => text.trim().parse::<i64>().ok(),
+            _ => None,
+        })
+        .filter(|value| *value > 0)
+}
+
+fn stream_event_rows_to_values<I>(rows: I) -> Vec<Value>
+where
+    I: IntoIterator<Item = (i64, String)>,
+{
+    let mut records = Vec::new();
+    for (event_id, payload) in rows {
+        if let Some(mut value) = PostgresStorage::json_from_str(&payload) {
+            if let Value::Object(ref mut map) = value {
+                map.insert("event_id".to_string(), json!(event_id));
+                map.insert("event_seq".to_string(), json!(event_id));
+                records.push(value);
+            } else {
+                records.push(json!({ "event_id": event_id, "event_seq": event_id, "data": value }));
+            }
+        }
+    }
+    records
 }

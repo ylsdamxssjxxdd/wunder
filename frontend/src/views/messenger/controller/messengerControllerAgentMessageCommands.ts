@@ -967,6 +967,11 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
       ctx.agentSendForegroundLockSessionId.value = activeSessionIdBeforeSend || `draft:${targetAgentId}`;
       ctx.autoStickToBottom.value = true;
       ctx.setRuntimeStateOverride(targetAgentId, 'running', 30000);
+      // A short task can finish before the next runtime poll observes it. Record
+      // the local transition so its terminal snapshot still produces one notice.
+      const localRuntimeState = new Map(ctx.agentRuntimeStateMap.value);
+      localRuntimeState.set(targetAgentId, 'running');
+      ctx.handleAgentRuntimeStateUpdate(localRuntimeState);
       ctx.pendingAssistantCenter = true;
       ctx.pendingAssistantCenterCount = ctx.resolveActiveAgentRenderableMessageRecords().length;
       try {
@@ -984,11 +989,15 @@ export function installMessengerControllerAgentMessageCommands(ctx: MessengerCon
               });
           }
           await ctx.scrollMessagesToBottom();
+          void ctx.loadRunningAgents({ force: true });
       }
       catch (error) {
           ctx.pendingAssistantCenter = false;
           ctx.pendingAssistantCenterCount = 0;
           ctx.setRuntimeStateOverride(targetAgentId, 'error', 8000);
+          const failedRuntimeState = new Map(ctx.agentRuntimeStateMap.value);
+          failedRuntimeState.set(targetAgentId, 'error');
+          ctx.handleAgentRuntimeStateUpdate(failedRuntimeState);
           showApiError(error, ctx.t('chat.error.requestFailed'));
       }
       finally {

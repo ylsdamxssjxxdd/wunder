@@ -394,6 +394,61 @@ mod tests {
     }
 
     #[test]
+    fn legacy_stream_events_gain_workflow_columns_before_their_index() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-stream-events.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE stream_events (
+                session_id TEXT NOT NULL,
+                event_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_time REAL NOT NULL,
+                PRIMARY KEY (session_id, event_id)
+            );
+            INSERT INTO stream_events (session_id, event_id, user_id, payload, created_time)
+            VALUES ('session-a', 1, 'user-a',
+                '{\"event\":\"tool_call\",\"data\":{\"data\":{\"user_round\":3}}}', 1);",
+        )
+        .expect("create legacy stream events");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage
+            .ensure_initialized()
+            .expect("migrate legacy stream events");
+
+        let conn = Connection::open(&db_path).expect("open migrated sqlite");
+        let columns = conn
+            .prepare("PRAGMA table_info(stream_events)")
+            .expect("prepare stream event columns")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("read stream event columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect stream event columns");
+        assert!(columns.iter().any(|column| column == "event_type"));
+        assert!(columns.iter().any(|column| column == "user_round"));
+        let workflow_values: (String, Option<i64>) = conn
+            .query_row(
+                "SELECT event_type, user_round FROM stream_events WHERE session_id = 'session-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated workflow fields");
+        assert_eq!(workflow_values, ("tool_call".to_string(), Some(3)));
+        let index_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_stream_events_session_round'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read workflow index");
+        assert_eq!(index_exists, 1);
+    }
+
+    #[test]
     fn prepare_user_token_balance_grants_once_per_day() {
         let temp = tempdir().expect("tempdir");
         let db_path = temp.path().join("prepare-user-tokens.db");

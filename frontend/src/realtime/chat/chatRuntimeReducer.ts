@@ -1100,15 +1100,19 @@ const applyToolFailed = (
   event: NormalizedRuntimeEvent
 ): void => {
   const modelTurn = ensureModelTurn(session, event.modelTurnId, event.userTurnId, event.eventSeq);
-  const message = ensureAssistantMessageForModelTurn(session, event, 'failed');
+  const message = ensureAssistantMessageForModelTurn(session, event, 'tooling');
   upsertToolWorkflowItem(message, event, 'failed', modelTurn);
   syncProjectedToolCallStats(message);
-  message.status = 'failed';
-  message.failed = true;
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
-  modelTurn.status = 'failed';
-  session.runtimeStatus = 'failed';
-  session.busyReason = null;
+  // A failed tool is an observation for the model, not proof that the turn
+  // failed. The model can retry, choose another tool, or still answer.
+  if (isTerminalModelTurnStatus(modelTurn.status) || message.status === 'failed' || message.status === 'cancelled') {
+    return;
+  }
+  message.status = 'tooling';
+  message.failed = false;
+  modelTurn.status = 'tool_running';
+  setSessionBusy(session, 'running', 'tool_running');
 };
 
 const applyWorkflowEvent = (
@@ -1131,36 +1135,28 @@ const applyWorkflowEvent = (
   if (sourceType === 'slow_client') {
     settleProjectedRetryWorkflowItems(message);
   }
+  message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  if (isTerminalModelTurnStatus(modelTurn.status) || message.status === 'failed' || message.status === 'cancelled') {
+    return;
+  }
   message.status = sourceType === 'slow_client'
     ? 'final'
-    : status === 'failed'
-      ? 'failed'
-      : status === 'completed'
-        ? 'streaming'
-        : 'tooling';
-  message.failed = message.failed || (status === 'failed' && sourceType !== 'slow_client');
-  message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+    : status === 'completed'
+      ? 'streaming'
+      : 'tooling';
+  message.failed = false;
   modelTurn.status = sourceType === 'slow_client'
     ? 'finalizing'
-    : status === 'failed'
-      ? 'failed'
-      : status === 'completed'
-        ? 'streaming'
-        : 'tool_running';
+    : status === 'completed'
+      ? 'streaming'
+      : 'tool_running';
   if (sourceType === 'slow_client') {
     session.runtimeStatus = 'idle';
     session.busyReason = null;
-  } else if (status === 'failed') {
-    if (sourceType === 'team_error') {
-      // A collaboration failure is a tool-level result. The mother turn can
-      // continue, retry, merge partial output, or emit its own terminal event.
-      setSessionBusy(session, 'running', 'tool_running');
-    } else {
-      session.runtimeStatus = 'failed';
-      session.busyReason = null;
-    }
-  } else if (status !== 'completed') {
-    setSessionBusy(session, 'running', 'tool_running');
+  } else {
+    // Workflow/tool errors remain local to their item until turn_terminal
+    // confirms whether the whole model turn actually failed.
+    setSessionBusy(session, 'running', status === 'completed' ? 'streaming' : 'tool_running');
   }
 };
 

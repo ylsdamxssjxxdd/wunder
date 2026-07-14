@@ -121,12 +121,31 @@ import { dismissStaleInquiryPanels, ensureGreetingMessage, hydrateSessionCommand
 import { hydrateMessage } from './chatMessageHydration';
 import { DEFAULT_AGENT_KEY, applyMainSession, patchSessionRuntimeFields, persistAgentSession, readChatPersistState, resolvePersistedSessionId, syncGoalFromSessionRecord } from './chatPersist';
 import { resolveKnownSessionEventFloor, resolveMaterializedMessageEventId, resolveSessionDetailMessageLimit } from './chatRuntimeControls';
-import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, syncChatRuntimeProjectionFromSnapshot, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
+import { applyCanonicalSessionEventsSnapshot, applyHistoryMeta, applyMessageWindow, applySessionRuntimeSnapshot, buildRuntimeDebugSnapshot, buildSessionHydratedMessageVersion, cacheSessionDetailSnapshot, cacheSessionMessages, clearCompletedAssistantStreamingState, cloneSessionList, ensureRuntime, filterSessionsByAgent, getSessionMessages, hasCanonicalSessionTranscript, hasKnownSessionInStore, isReusableFreshSession, isSessionDetailWarm, isSessionUnavailableStatus, loadSessionEventsSnapshot, loadSessionWorkflowEventsSnapshot, markSessionDetailWarm, normalizeThreadControlSession, purgeUnavailableSession, readSessionHydratedMessageVersion, readSessionListCache, resolveCanonicalSessionTranscript, resolveChatHttpStatus, resolveInitialSessionIdFromList, resolveSessionKey, resolveSessionListCacheKey, sessionDetailPrefetchInFlight, sessionListCacheInFlight, shouldApplySessionEventsSnapshotToProjection, syncChatRuntimeProjectionFromSnapshot, writeSessionHydratedMessageVersion, writeSessionListCache } from './chatRuntimeState';
 import { readChatSnapshot, scheduleChatSnapshot } from './chatSnapshot';
 import { resolveGreetingContent } from './chatStats';
 import { normalizeStreamEventId, updateRuntimeLastEventId, updateRuntimeRemoteLastEventId } from './chatStreamIds';
 import { InquiryPanelPatch, ListSessionsByStatusOptions } from './chatTypes';
 import { attachWorkflowEvents, buildSessionWorkflowState, getSessionWorkflowState } from './chatWorkflowHydration';
+
+const workflowHistoryHydrationInFlight = new Map<string, Promise<void>>();
+
+const resolveWorkflowHistoryRoundRange = (messages: unknown): { from: number; to: number } | null => {
+  if (!Array.isArray(messages)) return null;
+  const rounds = messages
+    .map((message) => Number.parseInt(
+      String(
+        (message as Record<string, unknown>)?.user_round ??
+        (message as Record<string, unknown>)?.user_turn_index ??
+        (message as Record<string, unknown>)?.stream_round ??
+        ''
+      ),
+      10
+    ))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (rounds.length === 0) return null;
+  return { from: Math.min(...rounds), to: Math.max(...rounds) };
+};
 
 export const chatCacheActions = {
     getPersistedState() {
@@ -208,6 +227,44 @@ export const chatCacheActions = {
         return this.messages;
       }
       return cachedMessages;
+    },
+    async hydrateSessionWorkflowHistory(sessionId, sourceMessages = null) {
+      const targetId = resolveSessionKey(sessionId);
+      const transcript = getSessionMessages(targetId);
+      const range = resolveWorkflowHistoryRoundRange(
+        Array.isArray(sourceMessages) ? sourceMessages : transcript
+      );
+      if (!targetId || !range) return;
+      const key = `${targetId}:${range.from}:${range.to}`;
+      const existing = workflowHistoryHydrationInFlight.get(key);
+      if (existing) return existing;
+      // The API excludes output deltas and is scoped to the visible history rounds.
+      const task = loadSessionWorkflowEventsSnapshot(targetId, {
+        fromUserRound: range.from,
+        toUserRound: range.to
+      }).then((payload) => {
+        if (!payload || !Array.isArray(payload.rounds) || payload.rounds.length === 0) return;
+        // A prefetched session has no projection until workflow hydration starts.
+        // Seed it from the full transcript so cards augment their real bubbles.
+        if (!this.runtimeProjection?.sessions?.[targetId] && Array.isArray(transcript) && transcript.length > 0) {
+          syncChatRuntimeProjectionFromSnapshot(this, targetId, transcript, {
+            immediate: true,
+            loading: false,
+            running: false,
+            authoritative: true
+          });
+        }
+        applyCanonicalSessionEventsSnapshot(this, targetId, payload, {
+          phase: 'history-workflow',
+          includeRuntime: false
+        });
+      }).catch(() => undefined).finally(() => {
+        if (workflowHistoryHydrationInFlight.get(key) === task) {
+          workflowHistoryHydrationInFlight.delete(key);
+        }
+      });
+      workflowHistoryHydrationInFlight.set(key, task);
+      return task;
     },
     getCachedSessions(agentId) {
       const cached = readSessionListCache(agentId);
@@ -455,6 +512,7 @@ export const chatCacheActions = {
           syncedActiveMessages: shouldSyncActiveMessages
         });
         void this.refreshSessionSubagents(targetId).catch(() => null);
+        void this.hydrateSessionWorkflowHistory(targetId, greetingMessages);
         return sessionDetail;
       })().finally(() => {
         sessionDetailPrefetchInFlight.delete(targetId);

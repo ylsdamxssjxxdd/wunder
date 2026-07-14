@@ -29,6 +29,7 @@ import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialo
 import {
   scheduleMessengerBootstrapBackgroundTasks,
   settleMessengerBootstrapTasks,
+  shouldUseNonBlockingDesktopMessageBootstrap,
   splitMessengerBootstrapTasks
 } from '@/views/messenger/bootstrap';
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
@@ -97,7 +98,11 @@ import {
   resolveFileContainerLifecycleText,
   resolveFileWorkspaceEmptyText
 } from '@/views/messenger/fileWorkspacePresentation';
-import { isDesktopModeEnabled, isDesktopSafeModeEnabled } from '@/config/desktop';
+import {
+  isDesktopModeEnabled,
+  isDesktopSafeModeEnabled,
+  reportDesktopRendererStage
+} from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -560,31 +565,87 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
 
   ctx.bootstrap = async () => {
       ctx.bootLoading.value = true;
+      const initialSection = ctx.desktopMode.value
+          ? ('messages' as MessengerSection)
+          : resolveSectionFromRoute(ctx.route.path, ctx.route.query.section);
+      const useNonBlockingDesktopBootstrap = shouldUseNonBlockingDesktopMessageBootstrap(
+          ctx.desktopMode.value,
+          initialSection
+      );
+      let profileAuthDenied = false;
+      let profileHydrationPromise: Promise<unknown> = Promise.resolve(ctx.authStore.user);
       if (!ctx.authStore.user && ctx.authStore.token) {
-          try {
-              await ctx.authStore.loadProfile();
-          }
-          catch (error) {
+          reportDesktopRendererStage('messenger-profile-hydration-start', {
+              section: initialSection
+          });
+          profileHydrationPromise = ctx.authStore.loadProfile().then((profile) => {
+              reportDesktopRendererStage('messenger-profile-hydration-ready', {
+                  section: initialSection
+              });
+              return profile;
+          }).catch((error) => {
               const status = ctx.resolveHttpStatus(error);
               if (ctx.isAuthDeniedStatus(status)) {
-                  ctx.authStore.logout();
+                  profileAuthDenied = true;
+                  void ctx.authStore.logout();
                   ctx.bootLoading.value = false;
                   ctx.router.replace('/login').catch(() => undefined);
+              }
+              reportDesktopRendererStage('messenger-profile-hydration-failed', {
+                  section: initialSection,
+                  status
+              });
+              return null;
+          });
+          if (!useNonBlockingDesktopBootstrap) {
+              await profileHydrationPromise;
+              if (profileAuthDenied) {
                   return;
               }
           }
       }
-      await ctx.hydrateDesktopContainerRoots?.();
-      await Promise.all([ctx.hydrateCurrentUserAppearance(), ctx.hydrateMessengerOrderPreferences()]);
-      const initialSection = ctx.desktopMode.value
-          ? ('messages' as MessengerSection)
-          : resolveSectionFromRoute(ctx.route.path, ctx.route.query.section);
+      const deferredShellTasks = [
+          { run: () => ctx.hydrateDesktopContainerRoots?.() || Promise.resolve() },
+          {
+              run: async () => {
+                  await profileHydrationPromise;
+                  if (!profileAuthDenied) {
+                      await ctx.hydrateCurrentUserAppearance();
+                  }
+              }
+          },
+          {
+              run: async () => {
+                  await profileHydrationPromise;
+                  if (!profileAuthDenied) {
+                      await ctx.hydrateMessengerOrderPreferences();
+                  }
+              }
+          }
+      ];
+      if (!useNonBlockingDesktopBootstrap) {
+          await ctx.hydrateDesktopContainerRoots?.();
+          await Promise.all([ctx.hydrateCurrentUserAppearance(), ctx.hydrateMessengerOrderPreferences()]);
+      }
       const initialQuerySessionId = String(ctx.route.query.session_id || '').trim();
       const initialQueryConversationId = String(ctx.route.query.conversation_id || '').trim();
       const initialQueryAgentId = String(ctx.route.query.agent_id || '').trim();
       const initialQueryEntry = String(ctx.route.query.entry || '').trim().toLowerCase();
       const shouldPrioritizeWorldBootstrap = initialSection === 'messages' &&
           Boolean(initialQueryConversationId);
+      const sessionListTask = {
+          run: () => {
+              if (isDesktopSafeModeEnabled()) {
+                  return Promise.resolve();
+              }
+              return ctx.chatStore.loadSessions({
+                  preferCache: true,
+                  backgroundRefresh: true,
+                  maxCacheAgeMs: 5 * 60 * 1000,
+                  traceSource: 'bootstrap'
+              });
+          }
+      };
       const { critical, background } = splitMessengerBootstrapTasks(initialSection, [
           {
               // Agent metadata enriches the navigation but is not needed to
@@ -600,20 +661,9 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
               sections: ['plaza'],
               run: () => ctx.plazaStore.loadItems()
           },
-          {
-              sections: ['messages'],
-              run: () => {
-                  if (isDesktopSafeModeEnabled()) {
-                      return Promise.resolve();
-                  }
-                  return ctx.chatStore.loadSessions({
-                      preferCache: true,
-                      backgroundRefresh: true,
-                      maxCacheAgeMs: 5 * 60 * 1000,
-                      traceSource: 'bootstrap'
-                  });
-              }
-          },
+          ...(useNonBlockingDesktopBootstrap
+              ? []
+              : [{ ...sessionListTask, sections: ['messages'] as MessengerSection[] }]),
           {
               sections: shouldPrioritizeWorldBootstrap ? ['messages', 'users', 'groups'] : ['users', 'groups'],
               run: () => ctx.userWorldStore.bootstrap()
@@ -629,6 +679,43 @@ export function installMessengerControllerLifecycleRouteBootstrap(ctx: Messenger
               run: () => ctx.loadAgentUserRounds()
           }
       ]);
+      if (useNonBlockingDesktopBootstrap) {
+          // The desktop shell is already painted. Keep the global surface
+          // interactive while the session list and recent conversation hydrate.
+          const sessionListPromise = settleMessengerBootstrapTasks([sessionListTask]);
+          ctx.ensureSectionSelection();
+          ctx.bootLoading.value = false;
+          reportDesktopRendererStage('messenger-bootstrap-ui-ready', {
+              section: initialSection
+          });
+          const scheduleFollowupTasks = () => {
+              scheduleMessengerBootstrapBackgroundTasks([
+                  ...deferredShellTasks,
+                  ...background
+              ]);
+          };
+          void (async () => {
+              try {
+                  await sessionListPromise;
+                  reportDesktopRendererStage('messenger-session-list-ready', {
+                      section: initialSection,
+                      sessionCount: Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0
+                  });
+                  ctx.ensureSectionSelection();
+                  if (!isDesktopSafeModeEnabled()) {
+                      await ctx.restoreConversationFromRoute();
+                  }
+              }
+              finally {
+                  reportDesktopRendererStage('messenger-conversation-ready', {
+                      section: initialSection,
+                      activeSessionId: String(ctx.chatStore.activeSessionId || '').trim()
+                  });
+                  scheduleFollowupTasks();
+              }
+          })().catch(() => undefined);
+          return;
+      }
       await settleMessengerBootstrapTasks(critical);
       ctx.ensureSectionSelection();
       ctx.bootLoading.value = false;

@@ -7,6 +7,7 @@ import {
   isWaitingMessengerRuntimeStatus,
   resolveAgentRuntimeTerminalStateFromSessionStatus,
   resolveAgentRuntimeStateFromSignals,
+  shouldNotifyAgentTaskCompletion,
   shouldSettleAgentRuntimeFromTerminalSession,
   shouldSettleAgentSessionsFromRuntimeState
 } from '../../src/views/messenger/agentRuntimeState';
@@ -164,5 +165,31 @@ test('agent runtime terminal session can settle stale running agent state', () =
       currentState: 'idle'
     }),
     false
+  );
+});
+
+test('task completion notification requires a locally observed successful terminal transition', () => {
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'done' }),
+    true
+  );
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'pending', nextState: 'idle' }),
+    true
+  );
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'idle', nextState: 'done' }),
+    false
+  );
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'error' }),
+    false
+  );
+});
+
+test('task completion notification also recognizes a direct running-to-idle terminal event', () => {
+  assert.equal(
+    shouldNotifyAgentTaskCompletion({ previousState: 'running', nextState: 'idle' }),
+    true
   );
 });

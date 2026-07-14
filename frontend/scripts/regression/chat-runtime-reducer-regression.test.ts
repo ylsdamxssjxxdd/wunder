@@ -3634,7 +3634,7 @@ test('canonical usage and context events project assistant stats display state',
   assert.equal(assistant.display?.stats?.avg_model_round_speed_tps, 5);
 });
 
-test('chat runtime reducer keeps failed tool workflow detail terminal', () => {
+test('tool failure remains workflow-local until the turn terminal confirms failure', () => {
   const projection = createChatRuntimeProjection();
 
   applyChatRuntimeEvent(projection, baseEvent({
@@ -3670,11 +3670,28 @@ test('chat runtime reducer keeps failed tool workflow detail terminal', () => {
   }));
 
   const visible = selectVisibleMessageProjections(projection, 'session-1');
-  assert.equal(visible[0].status, 'failed');
+  assert.equal(visible[0].status, 'tooling');
+  assert.equal(visible[0].failed, false);
   assert.equal(visible[0].workflowItems?.length, 1);
   assert.equal(visible[0].workflowItems?.[0]?.status, 'failed');
   assert.equal(visible[0].workflowItems?.[0]?.eventType, 'tool_result');
+  assert.equal(selectSessionBusy(projection, 'session-1'), true);
+  assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'running');
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'turn_failed',
+    event_id: 'evt-tool-3',
+    event_seq: 3,
+    user_turn_id: 'ut-1',
+    model_turn_id: 'mt-1',
+    message_id: 'am-1'
+  }));
+
+  const terminalVisible = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(terminalVisible[0].status, 'failed');
+  assert.equal(terminalVisible[0].failed, true);
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
+  assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'failed');
 });
 
 test('approval request and result keep one workflow item and explicit waiting status', () => {
@@ -4029,6 +4046,151 @@ test('canonical snapshot bridge replays raw stream events with event_seq', () =>
   assert.equal(visible[0].content, 'snapshot answer');
   assert.equal(visible[0].final, true);
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
+});
+
+test('idle history workflow replay retains terminal workflow metadata', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalSessionEventsSnapshot({
+    sessionId: 'session-history-workflow',
+    payload: {
+      running: false,
+      events: [
+        {
+          event: 'tool_call',
+          event_id: 1,
+          event_seq: 1,
+          data: {
+            data: {
+              user_round: 1,
+              model_round: 1,
+              tool_call_id: 'history-tool-1',
+              tool: 'execute_command'
+            }
+          }
+        },
+        {
+          event: 'tool_result',
+          event_id: 2,
+          event_seq: 2,
+          data: {
+            data: {
+              user_round: 1,
+              model_round: 1,
+              tool_call_id: 'history-tool-1',
+              success: true,
+              data: { ok: true }
+            }
+          }
+        },
+        {
+          event: 'final',
+          event_id: 3,
+          event_seq: 3,
+          data: {
+            data: {
+              user_round: 1,
+              model_round: 1,
+              answer: 'completed'
+            }
+          }
+        }
+      ]
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-history-workflow')
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.content, 'completed');
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.workflowItems?.[0]?.status, 'completed');
+});
+
+test('filtered workflow round snapshot replays tool state without waiting for omitted output deltas', () => {
+  const projection = createChatRuntimeProjection();
+  buildCanonicalSessionEventsSnapshot({
+    sessionId: 'session-history-workflow-filtered',
+    phase: 'history-workflow',
+    payload: {
+      workflow_only: true,
+      events: [],
+      rounds: [{
+        user_round: 2,
+        events: [{
+          event: 'tool_result',
+          event_id: 12,
+          event_seq: 12,
+          data: {
+            user_round: 2,
+            model_round: 1,
+            tool_call_id: 'call-history-filtered',
+            tool: 'tool_a',
+            ok: true
+          }
+        }]
+      }]
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, 'session-history-workflow-filtered')
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.workflowItems?.length, 1);
+  assert.equal(assistant?.workflowItems?.[0]?.status, 'completed');
+  assert.equal(assistant?.workflowItems?.[0]?.toolCallId, 'call-history-filtered');
+});
+
+test('filtered workflow history retains its terminal event so completed tools do not revive the composer', () => {
+  const projection = createChatRuntimeProjection();
+  const sessionId = 'session-history-workflow-terminal';
+  buildCanonicalSessionEventsSnapshot({
+    sessionId,
+    phase: 'history-workflow',
+    payload: {
+      workflow_only: true,
+      events: [],
+      rounds: [{
+        user_round: 1,
+        events: [
+          {
+            event: 'tool_call',
+            event_id: 21,
+            event_seq: 21,
+            data: {
+              user_round: 1,
+              model_round: 1,
+              tool_call_id: 'call-history-terminal',
+              tool: 'tool_a'
+            }
+          },
+          {
+            event: 'turn_terminal',
+            event_id: 22,
+            event_seq: 22,
+            data: {
+              user_round: 1,
+              model_round: 1,
+              status: 'completed'
+            }
+          },
+          {
+            event: 'thread_status',
+            event_id: 23,
+            event_seq: 23,
+            data: {
+              user_round: 1,
+              status: 'idle'
+            }
+          }
+        ]
+      }]
+    }
+  }).forEach((event) => applyChatRuntimeEvent(projection, event));
+
+  const assistant = selectVisibleMessageProjections(projection, sessionId)
+    .find((message) => message.role === 'assistant');
+  assert.equal(assistant?.status, 'final');
+  assert.equal(assistant?.workflowItems?.[0]?.status, 'completed');
+  assert.equal(selectSessionBusy(projection, sessionId), false);
+  assert.equal(selectSessionRuntimeStatus(projection, sessionId), 'idle');
 });
 
 test('canonical error followed by turn terminal keeps one failed assistant bubble', () => {

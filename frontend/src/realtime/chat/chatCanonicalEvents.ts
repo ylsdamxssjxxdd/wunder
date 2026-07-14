@@ -265,7 +265,9 @@ const shouldUseStrictEventSequence = (
   phase?: string | null
 ): boolean => {
   const normalizedPhase = normalizeEventType(phase);
-  if (normalizedPhase === 'send') {
+  // A filtered history replay intentionally omits text deltas, so its persisted
+  // event sequence has gaps and must not wait for records that were not requested.
+  if (normalizedPhase === 'send' || normalizedPhase === 'history_workflow') {
     return false;
   }
   return true;

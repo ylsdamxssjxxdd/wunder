@@ -171,6 +171,9 @@ impl MonitorStore for SqliteStorage {
     ) -> Result<Vec<Value>> {
         self.load_monitor_records_by_user_impl(user_id, statuses, since_time, limit)
     }
+    fn sum_monitor_consumed_tokens_by_user(&self, user_id: &str) -> Result<i64> {
+        self.sum_monitor_consumed_tokens_by_user_impl(user_id)
+    }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()> {
         self.delete_monitor_record_impl(session_id)
     }
@@ -270,6 +273,14 @@ impl AgentRuntimeStore for SqliteStorage {
     }
     fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         self.load_recent_stream_events_impl(session_id, limit)
+    }
+    fn load_session_workflow_events(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<Vec<Value>> {
+        self.load_session_workflow_events_impl(session_id, from_user_round, to_user_round)
     }
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64> {
         self.delete_stream_events_before_impl(before_time)

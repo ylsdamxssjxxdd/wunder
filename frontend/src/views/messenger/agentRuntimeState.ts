@@ -112,6 +112,18 @@ export const shouldSettleAgentSessionsFromRuntimeState = (options: {
     (isHotAgentRuntimeState(previousState) || isTerminalAgentRuntimeState(previousState));
 };
 
+export const shouldNotifyAgentTaskCompletion = (options: {
+  previousState?: AgentRuntimeState | null;
+  nextState?: AgentRuntimeState | null;
+}): boolean => {
+  const previousState = options.previousState || 'idle';
+  const nextState = options.nextState || 'idle';
+  // The first runtime snapshot is intentionally ignored by the caller. A
+  // notification is only valid after this page observed this task in progress.
+  return isHotAgentRuntimeState(previousState) &&
+    (nextState === 'done' || nextState === 'idle');
+};
+
 export const resolveAgentRuntimeStateFromSignals = (options: {
   pendingApproval?: boolean;
   pendingInquiry?: boolean;

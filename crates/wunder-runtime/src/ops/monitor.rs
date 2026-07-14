@@ -1672,6 +1672,23 @@ impl MonitorState {
         })
     }
 
+    pub fn sum_consumed_tokens_by_user(&self, user_id: &str) -> i64 {
+        let cleaned = user_id.trim().to_string();
+        if cleaned.is_empty() {
+            return 0;
+        }
+        self.run_guarded(
+            "monitor.sum_consumed_tokens_by_user",
+            || 0,
+            || {
+                self.storage
+                    .sum_monitor_consumed_tokens_by_user(&cleaned)
+                    .unwrap_or(0)
+                    .max(0)
+            },
+        )
+    }
+
     pub fn get_detail(&self, session_id: &str) -> Option<Value> {
         self.run_guarded(
             "monitor.get_detail",

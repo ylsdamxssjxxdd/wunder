@@ -177,6 +177,23 @@ pub trait MonitorStore {
         records.truncate(limit as usize);
         Ok(records)
     }
+    fn sum_monitor_consumed_tokens_by_user(&self, user_id: &str) -> Result<i64> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        Ok(self
+            .load_monitor_records()?
+            .into_iter()
+            .filter(|record| {
+                record
+                    .get("user_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.trim() == cleaned_user)
+            })
+            .filter_map(|record| record.get("consumed_tokens").and_then(Value::as_i64))
+            .fold(0_i64, |total, value| total.saturating_add(value.max(0))))
+    }
     fn delete_monitor_record(&self, session_id: &str) -> Result<()>;
     fn delete_monitor_records_by_user(&self, user_id: &str) -> Result<i64>;
 }
@@ -235,6 +252,12 @@ pub trait AgentRuntimeStore {
         limit: i64,
     ) -> Result<Vec<Value>>;
     fn load_recent_stream_events(&self, session_id: &str, limit: i64) -> Result<Vec<Value>>;
+    fn load_session_workflow_events(
+        &self,
+        session_id: &str,
+        from_user_round: i64,
+        to_user_round: i64,
+    ) -> Result<Vec<Value>>;
     fn delete_stream_events_before(&self, before_time: f64) -> Result<i64>;
     fn delete_stream_events_by_user(&self, user_id: &str) -> Result<i64>;
     fn delete_stream_events_by_session(&self, session_id: &str) -> Result<i64>;

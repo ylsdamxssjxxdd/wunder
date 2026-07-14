@@ -36,6 +36,12 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 struct SessionEventsQuery {
     #[serde(default)]
     limit: Option<i64>,
+    #[serde(default)]
+    workflow_only: bool,
+    #[serde(default)]
+    from_user_round: Option<i64>,
+    #[serde(default)]
+    to_user_round: Option<i64>,
 }
 
 async fn get_session_events(
@@ -58,11 +64,25 @@ async fn get_session_events(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let requested_limit = normalize_session_events_limit(query.limit);
-    let stream_events = load_session_stream_events(&state, &session_id, requested_limit).await;
-    let rounds = if stream_events.is_empty() {
-        load_session_event_rounds(&state, &session_id).await
+    let (stream_events, rounds) = if query.workflow_only {
+        (
+            Vec::new(),
+            load_session_workflow_rounds(
+                &state,
+                &session_id,
+                query.from_user_round,
+                query.to_user_round,
+            )
+            .await,
+        )
     } else {
-        collect_session_event_rounds(&json!({ "events": stream_events.clone() }))
+        let stream_events = load_session_stream_events(&state, &session_id, requested_limit).await;
+        let rounds = if stream_events.is_empty() {
+            load_session_event_rounds(&state, &session_id).await
+        } else {
+            collect_session_event_rounds(&json!({ "events": stream_events.clone() }))
+        };
+        (stream_events, rounds)
     };
     let command_sessions = state
         .control
@@ -114,7 +134,8 @@ async fn get_session_events(
             "events": stream_events,
             "rounds": rounds,
             "limit": requested_limit,
-            "events_limited": requested_limit > 0,
+            "events_limited": !query.workflow_only && requested_limit > 0,
+            "workflow_only": query.workflow_only,
             "running": running,
             "queued": queued,
             "last_event_id": last_event_id,
@@ -378,6 +399,12 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
             "event": event_type,
             "data": data,
             "timestamp": format_session_event_timestamp(event),
+            "event_id": event.get("event_id").cloned().unwrap_or(Value::Null),
+            "event_seq": event
+                .get("event_seq")
+                .cloned()
+                .or_else(|| event.get("event_id").cloned())
+                .unwrap_or(Value::Null),
         });
         let round_events = grouped.entry(round).or_default();
         if let Some(previous) = round_events.last_mut() {
@@ -401,6 +428,36 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
             }
         })
         .collect()
+}
+
+async fn load_session_workflow_rounds(
+    state: &Arc<AppState>,
+    session_id: &str,
+    from_user_round: Option<i64>,
+    to_user_round: Option<i64>,
+) -> Vec<Value> {
+    let Some((from_user_round, to_user_round)) =
+        normalize_workflow_round_range(from_user_round, to_user_round)
+    else {
+        return Vec::new();
+    };
+    let storage = state.storage.clone();
+    let session_id = session_id.trim().to_string();
+    blocking::run_db("api.chat.events.load_workflow", move || {
+        storage.load_session_workflow_events(&session_id, from_user_round, to_user_round)
+    })
+    .await
+    .map(|events| collect_session_event_rounds(&json!({ "events": events })))
+    .unwrap_or_default()
+}
+
+fn normalize_workflow_round_range(
+    from_user_round: Option<i64>,
+    to_user_round: Option<i64>,
+) -> Option<(i64, i64)> {
+    let from = from_user_round.filter(|value| *value > 0)?;
+    let to = to_user_round.filter(|value| *value >= from)?;
+    Some((from, to))
 }
 
 fn should_merge_round_event(previous: &Value, current: &Value) -> bool {
@@ -552,7 +609,9 @@ fn is_workflow_event(event_type: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_session_event_rounds, should_merge_round_event};
+    use super::{
+        collect_session_event_rounds, normalize_workflow_round_range, should_merge_round_event,
+    };
     use serde_json::{json, Value};
 
     #[test]
@@ -737,5 +796,16 @@ mod tests {
                 .and_then(Value::as_str),
             Some("knowledge")
         );
+    }
+
+    #[test]
+    fn workflow_round_range_requires_an_ordered_positive_window() {
+        assert_eq!(
+            normalize_workflow_round_range(Some(3), Some(5)),
+            Some((3, 5))
+        );
+        assert_eq!(normalize_workflow_round_range(Some(0), Some(5)), None);
+        assert_eq!(normalize_workflow_round_range(Some(5), Some(3)), None);
+        assert_eq!(normalize_workflow_round_range(Some(3), None), None);
     }
 }

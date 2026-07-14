@@ -171,7 +171,7 @@ try {
         } else {
           ''
         }
-        $bootstrapCompleted = $stdout -match '\[startup\]\[renderer\] point=stage total_ms=[0-9.]+ stage=messenger-bootstrap-finish\b'
+        $bootstrapCompleted = $stdout -match '\[startup\]\[renderer\] point=stage total_ms=[0-9.]+ stage=messenger-conversation-ready\b'
       } while (!$bootstrapCompleted -and [DateTime]::UtcNow -lt $deadline -and !$process.HasExited)
 
       if (!$bootstrapCompleted) {
@@ -180,7 +180,7 @@ try {
         } else {
           ''
         }
-        throw "Electron startup did not reach messenger-bootstrap-finish within ${TimeoutMs}ms. $stderr"
+        throw "Electron startup did not reach messenger-conversation-ready within ${TimeoutMs}ms. $stderr"
       }
 
       $samples += [ordered]@{
@@ -192,6 +192,9 @@ try {
         app_mounted_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'app-mounted'
         messenger_shell_frame_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-shell-frame'
         messenger_ready_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-bootstrap-finish'
+        messenger_profile_ready_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-profile-hydration-ready'
+        messenger_session_list_ready_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-session-list-ready'
+        messenger_conversation_ready_ms = Find-RendererStageTotalMs -Text $stdout -Stage 'messenger-conversation-ready'
         stdout_path = $stdoutPath
         stderr_path = $stderrPath
       }
@@ -207,7 +210,7 @@ try {
 }
 
 $measuredSamples = @($samples | Where-Object { $_.kind -eq 'measure' })
-$metrics = @('window_ready_to_show_ms', 'bridge_ready_ms', 'document_loaded_ms', 'app_mounted_ms', 'messenger_shell_frame_ms', 'messenger_ready_ms')
+$metrics = @('window_ready_to_show_ms', 'bridge_ready_ms', 'document_loaded_ms', 'app_mounted_ms', 'messenger_shell_frame_ms', 'messenger_ready_ms', 'messenger_profile_ready_ms', 'messenger_session_list_ready_ms', 'messenger_conversation_ready_ms')
 $median = [ordered]@{}
 foreach ($metric in $metrics) {
   $values = @($measuredSamples | ForEach-Object { [double]$_[$metric] })

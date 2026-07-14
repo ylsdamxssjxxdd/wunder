@@ -216,7 +216,8 @@ import {
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
 import {
-  resolveAgentRuntimeStateFromSignals
+  resolveAgentRuntimeStateFromSignals,
+  shouldNotifyAgentTaskCompletion
 } from '@/views/messenger/agentRuntimeState';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
@@ -636,19 +637,15 @@ export function installMessengerControllerAgentRuntimeSignals(ctx: MessengerCont
       const title = ctx.t('messenger.agent.taskCompletedTitle');
       const message = ctx.t('messenger.agent.taskCompleted', { name: ctx.resolveAgentDisplayName(agentId) });
       if (ctx.agentHeaderModelJumpEnabled.value) {
-          const notified = await ctx.sendSystemNotification(title, message);
-          if (notified)
-              return;
+          // The operating system may suppress desktop notifications. Keep the
+          // in-page confirmation as the reliable completion acknowledgement.
+          void ctx.sendSystemNotification(title, message);
       }
       ElMessage.success(message);
   };
 
   ctx.shouldNotifyAgentCompletion = (previousState: AgentRuntimeState, nextState: AgentRuntimeState): boolean => {
-      // Runtime list snapshots have no user-turn identity. Do not turn a polling
-      // transition into a user-visible completion notification.
-      void previousState;
-      void nextState;
-      return false;
+      return shouldNotifyAgentTaskCompletion({ previousState, nextState });
   };
 
   ctx.handleAgentRuntimeStateUpdate = (stateMap: Map<string, AgentRuntimeState>) => {

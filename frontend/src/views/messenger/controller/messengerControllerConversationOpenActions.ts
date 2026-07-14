@@ -1047,10 +1047,6 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
       if (ctx.isMessengerInteractionBlocked.value) {
           return;
       }
-      if (typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
-          window.location.reload();
-          return;
-      }
       void ctx.refreshActiveAgentConversation();
   };
 
@@ -1297,7 +1293,10 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
           });
           let sessionDetail = null;
           let sessionDetailError: unknown = null;
-          const sessionDetailTask = ctx.chatStore.loadSessionDetail(normalizedSessionId)
+          const sessionDetailTask = ctx.chatStore.loadSessionDetail(normalizedSessionId, {
+              preserveWatcher: true,
+              forceHydrateForeground: true
+          })
               .then((value) => {
               sessionDetail = value;
           })
@@ -1322,8 +1321,8 @@ export function installMessengerControllerConversationOpenActions(ctx: Messenger
               return;
           }
           if (!sessionDetail) {
-              await ctx.openAgentById(fallbackAgentId || DEFAULT_AGENT_KEY);
-              ctx.finishMessengerPerfTrace(perfTrace, 'ok', { recovered: true });
+              ctx.finishMessengerPerfTrace(perfTrace, 'fail', { reason: 'sessionDetailMissing' });
+              ElMessage.warning(ctx.t('messenger.error.openConversation'));
               return;
           }
           const session = ctx.chatStore.sessions.find((item) => String(item?.id || '') === normalizedSessionId);

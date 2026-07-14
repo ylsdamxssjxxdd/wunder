@@ -866,6 +866,31 @@ export const loadSessionEventsSnapshot = (
   });
 };
 
+export const loadSessionWorkflowEventsSnapshot = (
+  sessionId,
+  options: { fromUserRound?: unknown; toUserRound?: unknown; signal?: AbortSignal } = {}
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return Promise.resolve(null);
+  const parseRound = (value: unknown): number | null => {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const fromUserRound = parseRound(options.fromUserRound);
+  const toUserRound = parseRound(options.toUserRound);
+  if (fromUserRound === null || toUserRound === null || fromUserRound > toUserRound) {
+    return Promise.resolve(null);
+  }
+  return getSessionEventsWithParams(sessionKey, {
+    workflow_only: true,
+    from_user_round: fromUserRound,
+    to_user_round: toUserRound
+  }, { signal: options.signal }).then((response) => {
+    const payload = response?.data?.data;
+    return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
+  });
+};
+
 export const resolveTerminableSubagentSessionIds = (items: unknown[]): string[] =>
   normalizeMessageSubagents(items)
     .filter((item) => item.canTerminate && !item.terminal)
@@ -2331,18 +2356,26 @@ export const applyCanonicalSessionEventsSnapshot = (
   store,
   sessionId,
   payload,
-  options: { phase?: string } = {}
+  options: { phase?: string; includeRuntime?: boolean } = {}
 ) => {
   const key = resolveSessionKey(sessionId);
   const projection = ensureChatRuntimeProjectionForStore(store);
   if (!key || !projection) return [];
   touchDesktopChatSession(key);
   projection.activeSessionId = resolveSessionKey(store?.activeSessionId) || null;
+  const snapshotPayload = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  const includeRuntime = options.includeRuntime !== false;
+  const projectionPayload = includeRuntime
+    ? snapshotPayload
+    : (() => {
+        const { runtime: _runtime, running: _running, queued: _queued, ...workflowPayload } = snapshotPayload;
+        return workflowPayload;
+      })();
   const events = buildCanonicalSessionEventsSnapshot({
     sessionId: key,
-    payload: payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? payload as Record<string, unknown>
-      : {},
+    payload: projectionPayload,
     phase: options.phase
   });
   applyChatRuntimeEventsWithInvalidation(store, projection, events, {
