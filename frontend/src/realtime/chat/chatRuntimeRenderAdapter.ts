@@ -88,22 +88,23 @@ let materializedMessageCacheClock = 0;
 const resolveWorkflowMaterializationTarget = (
   messages: ChatRuntimeMessageProjection[],
   runtimeStatus: unknown
-): { messageId: string; workflowActive: boolean } => {
+): { userTurnId: string; placeholderMessageId: string; workflowActive: boolean } => {
   const runtimeBusy = isWorkflowRuntimeBusy(runtimeStatus);
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role === 'assistant') {
-      // Retain the latest model turn after completion for diagnostics. The
-      // runtime-busy fallback only keeps its shell alive during snapshot replay.
+      // One user turn can contain several model/tool loops. Keep that whole
+      // latest user-turn group for diagnosis, while unloading older turns.
       return {
-        messageId: message.id,
+        userTurnId: message.userTurnId,
+        placeholderMessageId: message.id,
         workflowActive: runtimeBusy &&
           !isRuntimeMessageActive(message.status) &&
           !hasProjectedWorkflowRecords(message)
       };
     }
   }
-  return { messageId: '', workflowActive: false };
+  return { userTurnId: '', placeholderMessageId: '', workflowActive: false };
 };
 
 const isWorkflowRuntimeBusy = (status: unknown): boolean => {
@@ -158,7 +159,7 @@ export const materializeChatRuntimeMessages = (
       projectedMessages,
       selectChatRuntimeSession(projection, sessionId)?.runtimeStatus
     )
-    : { messageId: '', workflowActive: false };
+    : { userTurnId: '', placeholderMessageId: '', workflowActive: false };
   const activeMessageIds = new Set<string>();
   let userRound = 0;
   const materialized = projectedMessages
@@ -168,8 +169,12 @@ export const materializeChatRuntimeMessages = (
         userRound += 1;
       }
       const result = materializeChatRuntimeMessageWithCache(sessionCache, message, {
-        includeWorkflow: options.retainActiveWorkflowOnly !== true || message.id === workflowTarget.messageId,
-        workflowActive: message.id === workflowTarget.messageId && workflowTarget.workflowActive
+        includeWorkflow: options.retainActiveWorkflowOnly !== true || (
+          message.role === 'assistant' &&
+          Boolean(workflowTarget.userTurnId) &&
+          message.userTurnId === workflowTarget.userTurnId
+        ),
+        workflowActive: message.id === workflowTarget.placeholderMessageId && workflowTarget.workflowActive
       });
       if (result && message.role === 'assistant' && userRound > 0) {
         // Keep presentation-only round state local so stats do not rescan history.

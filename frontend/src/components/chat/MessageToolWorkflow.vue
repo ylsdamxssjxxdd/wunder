@@ -153,6 +153,10 @@ import {
   extractWorkflowCallArgs
 } from './toolWorkflowCallDebug';
 import {
+  buildCollapsedToolWorkflowSummary,
+  isReadImageWorkflowTool
+} from './toolWorkflowCollapsedSummary';
+import {
   buildWorkflowToolRuns,
   resolveWorkflowPendingPlaceholder,
   type RawToolRun as RawEntry,
@@ -2419,6 +2423,7 @@ const resolveSummaryToolDisplay = (toolName: string, fallback: string): string =
   if (isPtcTool(toolName)) return t('chat.toolWorkflow.toolLabel.ptc');
   if (isExecuteCommandTool(toolName)) return t('chat.toolWorkflow.toolLabel.executeCommand');
   if (isApplyPatchTool(toolName)) return t('chat.toolWorkflow.toolLabel.applyPatch');
+  if (isReadImageWorkflowTool(toolName)) return t('chat.toolWorkflow.toolLabel.readImage');
   if (isReadFileTool(toolName)) return t('chat.toolWorkflow.toolLabel.readFile');
   if (isWriteFileTool(toolName)) return t('chat.toolWorkflow.toolLabel.writeFile');
   if (isListFilesTool(toolName)) return t('chat.toolWorkflow.toolLabel.listFiles');
@@ -3783,12 +3788,13 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
       : resolveEntryStatus(entry, commandSession);
   const isCompaction = isCompactionEntry(entry);
   if (!includeDetails) {
+    const collapsedSummary = buildCollapsedToolWorkflowSummary(entry, toolDisplay);
     return {
       key: entry.key,
       revision: '',
       toolLabel: toolDisplay,
-      summaryBrief: '',
-      summaryTitle: toolDisplay,
+      summaryBrief: collapsedSummary.brief,
+      summaryTitle: collapsedSummary.title,
       toolCallRawTitle: '',
       toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
       isCompaction,

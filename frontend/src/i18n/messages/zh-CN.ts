@@ -1740,6 +1740,7 @@ export default {
   'chat.toolWorkflow.toolLabel.skillCall': '技能',
   'chat.toolWorkflow.toolLabel.executeCommand': '执行',
   'chat.toolWorkflow.toolLabel.applyPatch': '应用补丁',
+  'chat.toolWorkflow.toolLabel.readImage': '读图',
   'chat.toolWorkflow.toolLabel.readFile': '读取',
   'chat.toolWorkflow.toolLabel.writeFile': '写入',
   'chat.toolWorkflow.toolLabel.listFiles': '列出',

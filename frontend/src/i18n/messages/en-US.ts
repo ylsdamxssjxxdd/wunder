@@ -1779,6 +1779,7 @@ export default {
   'chat.toolWorkflow.toolLabel.skillCall': 'Skill',
   'chat.toolWorkflow.toolLabel.executeCommand': 'Run',
   'chat.toolWorkflow.toolLabel.applyPatch': 'Patch',
+  'chat.toolWorkflow.toolLabel.readImage': 'Image',
   'chat.toolWorkflow.toolLabel.readFile': 'Read',
   'chat.toolWorkflow.toolLabel.writeFile': 'Write',
   'chat.toolWorkflow.toolLabel.listFiles': 'List',

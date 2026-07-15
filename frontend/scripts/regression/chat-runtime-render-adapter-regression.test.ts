@@ -212,7 +212,7 @@ test('chat runtime render adapter preserves untouched workflow row identity', ()
   assert.equal(secondRows[1]?.detail, 'updated output');
 });
 
-test('chat runtime render adapter retains the latest model-turn workflow after completion', () => {
+test('chat runtime render adapter retains the latest user-turn workflow after completion', () => {
   const sessionId = 'session-active-workflow-window';
   const projection = apply([{
     event_type: 'session_snapshot',
@@ -220,6 +220,13 @@ test('chat runtime render adapter retains the latest model-turn workflow after c
     strict: false,
     session_id: sessionId,
     messages: [
+      {
+        message_id: 'user-history',
+        user_turn_id: 'turn-history',
+        turn_index: 1,
+        role: 'user',
+        content: 'earlier request'
+      },
       {
         message_id: 'assistant-history',
         user_turn_id: 'turn-history',
@@ -321,6 +328,80 @@ test('chat runtime render adapter retains the latest model-turn workflow after c
 
   assert.deepEqual(previous?.workflowItems, []);
   assert.equal((nextActive?.workflowItems as Array<Record<string, unknown>>).length, 1);
+});
+
+test('chat runtime render adapter retains every model loop in the latest user turn', () => {
+  const sessionId = 'session-user-turn-workflow-window';
+  const projection = apply([{
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    messages: [
+      {
+        message_id: 'user-history',
+        user_turn_id: 'turn-history',
+        turn_index: 1,
+        role: 'user',
+        content: 'earlier request'
+      },
+      {
+        message_id: 'assistant-history',
+        user_turn_id: 'turn-history',
+        model_turn_id: 'model-history',
+        turn_index: 1,
+        role: 'assistant',
+        content: 'previous response',
+        workflowItems: [{ id: 'history-tool', eventType: 'tool_result', status: 'completed' }]
+      },
+      {
+        message_id: 'user-current',
+        user_turn_id: 'turn-current',
+        turn_index: 2,
+        role: 'user',
+        content: 'current request'
+      },
+      {
+        message_id: 'assistant-image',
+        user_turn_id: 'turn-current',
+        model_turn_id: 'model-image',
+        turn_index: 2,
+        role: 'assistant',
+        content: 'inspection complete',
+        workflowItems: [{
+          id: 'image-tool',
+          eventType: 'tool_result',
+          status: 'completed',
+          toolName: 'read_image',
+          toolCallId: 'image-call'
+        }]
+      },
+      {
+        message_id: 'assistant-final',
+        user_turn_id: 'turn-current',
+        model_turn_id: 'model-final',
+        turn_index: 2,
+        role: 'assistant',
+        content: 'current response',
+        workflowItems: [{ id: 'final-tool', eventType: 'tool_result', status: 'completed' }]
+      }
+    ],
+    running: false
+  }]);
+
+  const materialized = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message);
+  const history = materialized.find((message) => message.message_id === 'assistant-history');
+  const imageLoop = materialized.find((message) => message.message_id === 'assistant-image');
+  const finalLoop = materialized.find((message) => message.message_id === 'assistant-final');
+
+  assert.deepEqual(history?.workflowItems, []);
+  assert.equal((imageLoop?.workflowItems as Array<Record<string, unknown>>).length, 1);
+  assert.equal((finalLoop?.workflowItems as Array<Record<string, unknown>>).length, 1);
+  assert.equal(
+    (imageLoop?.workflowItems as Array<Record<string, unknown>>)[0]?.toolName,
+    'read_image'
+  );
 });
 
 test('chat runtime render adapter restores an active workflow placeholder after snapshot hydration', () => {
