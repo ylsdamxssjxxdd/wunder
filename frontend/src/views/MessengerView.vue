@@ -19,9 +19,6 @@
     @pointerenter="handleMessengerRootPointerMove"
     @pointermove="handleMessengerRootPointerMove"
     @pointerleave="handleMessengerRootPointerLeave"
-    @mouseenter="handleMessengerRootPointerMove"
-    @mousemove="handleMessengerRootPointerMove"
-    @mouseleave="handleMessengerRootPointerLeave"
   >
     <aside
       ref="leftRailRef"
@@ -1812,7 +1809,7 @@
     <MessengerTimelineDialog
       v-model:visible="timelineDialogVisible"
       :active-session-id="String(chatStore.activeSessionId || '')"
-      :session-history="rightPanelSessionHistory"
+      :session-history="timelineDialogVisible ? rightPanelSessionHistory : []"
       :timeline-readonly="activeSessionOrchestrationLocked"
       @activate-session="handleTimelineDialogActivateSession"
       @open-session-detail="openTimelineSessionDetail"
@@ -2714,7 +2711,6 @@ const parseWorldVoicePayload = controller.parseWorldVoicePayload;
 const pendingApprovalAgentIdSet = controller.pendingApprovalAgentIdSet;
 const pendingAssistantCenter = controller.pendingAssistantCenter;
 const pendingAssistantCenterCount = controller.pendingAssistantCenterCount;
-const pendingRightDockPointerX = controller.pendingRightDockPointerX;
 const persistAgentUnreadState = controller.persistAgentUnreadState;
 const persistCurrentUserAppearance = controller.persistCurrentUserAppearance;
 const persistDismissedAgentConversationState = controller.persistDismissedAgentConversationState;
@@ -2729,7 +2725,6 @@ const preloadAgentById = controller.preloadAgentById;
 const preloadAgentSettingsPanels = controller.preloadAgentSettingsPanels;
 const preloadMessengerSettingsPanels = controller.preloadMessengerSettingsPanels;
 const preloadMixedConversation = controller.preloadMixedConversation;
-const preloadTimelinePreview = controller.preloadTimelinePreview;
 const prepareMessageMarkdownContent = controller.prepareMessageMarkdownContent;
 const previewMiddlePaneSection = controller.previewMiddlePaneSection;
 const previewLeftRailSection = controller.previewLeftRailSection;
@@ -2913,7 +2908,6 @@ const RIGHT_DOCK_SKILL_AUTO_RETRY_DELAY_MS = controller.RIGHT_DOCK_SKILL_AUTO_RE
 const rightDockCollapsed = controller.rightDockCollapsed;
 const rightDockDisabledSkills = controller.rightDockDisabledSkills;
 const rightDockEdgeHover = controller.rightDockEdgeHover;
-const rightDockEdgeHoverFrame = controller.rightDockEdgeHoverFrame;
 const rightDockEnabledSkills = controller.rightDockEnabledSkills;
 const rightDockRef = controller.rightDockRef;
 const rightDockResizable = controller.rightDockResizable;
@@ -3125,8 +3119,6 @@ const timelineDetailSessionId = controller.timelineDetailSessionId;
 const goalDialogLoading = controller.goalDialogLoading;
 const goalDialogSubmitting = controller.goalDialogSubmitting;
 const timelineDialogVisible = controller.timelineDialogVisible;
-const timelinePrefetchTimer = controller.timelinePrefetchTimer;
-const timelinePreviewLoadingSet = controller.timelinePreviewLoadingSet;
 const timelinePreviewMap = controller.timelinePreviewMap;
 const toggleAgentOverviewMode = controller.toggleAgentOverviewMode;
 const toggleAgentVoiceRecord = controller.toggleAgentVoiceRecord;

@@ -848,8 +848,6 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
 
   ctx.timelinePreviewMap = ref<Map<string, string>>(new Map());
 
-  ctx.timelinePreviewLoadingSet = ref<Set<string>>(new Set());
-
   ctx.rightDockSkillCatalog = ref<RightDockSkillCatalogItem[]>([]);
 
   ctx.rightDockSkillCatalogLoading = ref(false);
@@ -973,8 +971,6 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
   ctx.lifecycleTimer = null;
 
   ctx.worldQuickPanelCloseTimer = null;
-
-  ctx.timelinePrefetchTimer = null;
 
   ctx.sessionDetailPrefetchTimer = null;
 

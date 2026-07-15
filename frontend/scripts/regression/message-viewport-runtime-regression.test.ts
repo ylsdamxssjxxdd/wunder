@@ -141,6 +141,99 @@ test('message viewport runtime remeasures visible message rows on resize observe
   }
 });
 
+test('message viewport runtime batches rapid resize observer updates', () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const originalResizeObserver = (globalThis as Record<string, unknown>).ResizeObserver;
+  const frameQueue: FrameRequestCallback[] = [];
+  const timerQueue: Array<() => void> = [];
+  const flushFrames = () => {
+    while (frameQueue.length > 0) {
+      frameQueue.shift()?.(performance.now());
+    }
+  };
+
+  try {
+    FakeResizeObserver.instances = [];
+    const messageNode = createFakeMessageNode('assistant-batch', 120);
+    const container = {
+      scrollTop: 0,
+      clientHeight: 720,
+      scrollHeight: 720,
+      querySelectorAll: () => [messageNode],
+      getBoundingClientRect: () => ({ height: 720 })
+    } as unknown as HTMLElement;
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frameQueue.push(callback);
+        return frameQueue.length;
+      },
+      cancelAnimationFrame: () => {},
+      setTimeout: (callback: () => void) => {
+        timerQueue.push(callback);
+        return timerQueue.length;
+      },
+      clearTimeout: () => {}
+    };
+    (globalThis as Record<string, unknown>).ResizeObserver = FakeResizeObserver;
+
+    const messageVirtualHeightCache = new Map<string, number>();
+    const messageVirtualLayoutVersion = ref(0);
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container),
+      showChatSettingsView: ref(false),
+      autoStickToBottom: ref(true),
+      showScrollTopButton: ref(false),
+      showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true),
+      isWorldConversationActive: ref(false),
+      activeConversationKey: ref('agent:assistant-batch'),
+      shouldVirtualizeMessages: ref(true),
+      agentRenderableMessages: ref([{ key: 'assistant-batch', message: { role: 'assistant' } }]),
+      worldRenderableMessages: ref([]),
+      messageVirtualHeightCache,
+      messageVirtualLayoutVersion,
+      messageVirtualScrollTop: ref(0),
+      messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0,
+      resolveVirtualMessageHeight: (key: string) => messageVirtualHeightCache.get(key) || 0
+    });
+
+    runtime.scheduleMessageViewportRefresh({ measure: true, measureKeys: ['assistant-batch'] });
+    flushFrames();
+    assert.equal(messageVirtualLayoutVersion.value, 1);
+
+    Object.assign(messageNode, {
+      offsetHeight: 148,
+      getBoundingClientRect: () => ({ height: 148 })
+    });
+    FakeResizeObserver.instances[0]?.emit([messageNode]);
+    Object.assign(messageNode, {
+      offsetHeight: 196,
+      getBoundingClientRect: () => ({ height: 196 })
+    });
+    FakeResizeObserver.instances[0]?.emit([messageNode]);
+
+    assert.equal(timerQueue.length, 1);
+    assert.equal(messageVirtualLayoutVersion.value, 1);
+    assert.equal(messageVirtualHeightCache.get('assistant-batch'), 196);
+
+    timerQueue.shift()?.();
+    assert.equal(messageVirtualLayoutVersion.value, 2);
+    runtime.dispose();
+  } finally {
+    if (originalWindow === undefined) {
+      delete (globalThis as Record<string, unknown>).window;
+    } else {
+      (globalThis as Record<string, unknown>).window = originalWindow;
+    }
+    if (originalResizeObserver === undefined) {
+      delete (globalThis as Record<string, unknown>).ResizeObserver;
+    } else {
+      (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+    }
+  }
+});
+
 test('message viewport runtime bounds retained row-height measurements', () => {
   const messageVirtualHeightCache = new Map<string, number>();
   const messages = Array.from({ length: MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT + 24 }, (_, index) => ({
@@ -235,6 +328,57 @@ test('message viewport runtime does not synchronously measure rows while scrolli
     else (globalThis as Record<string, unknown>).window = originalWindow;
     if (originalResizeObserver === undefined) delete (globalThis as Record<string, unknown>).ResizeObserver;
     else (globalThis as Record<string, unknown>).ResizeObserver = originalResizeObserver;
+  }
+});
+
+test('message viewport runtime releases bottom follow mode before a deferred scroll frame', async () => {
+  const originalWindow = (globalThis as Record<string, unknown>).window;
+  const frameQueue: FrameRequestCallback[] = [];
+  try {
+    const container = {
+      scrollTop: 420,
+      clientHeight: 500,
+      scrollHeight: 1400,
+      querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ top: 0, height: 500 })
+    } as unknown as HTMLElement;
+    (globalThis as Record<string, unknown>).window = {
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        frameQueue.push(callback);
+        return frameQueue.length;
+      },
+      cancelAnimationFrame: () => {}
+    };
+    const autoStickToBottom = ref(true);
+    const runtime = createMessageViewportRuntime({
+      messageListRef: ref(container),
+      showChatSettingsView: ref(false),
+      autoStickToBottom,
+      showScrollTopButton: ref(false),
+      showScrollBottomButton: ref(false),
+      isAgentConversationActive: ref(true),
+      isWorldConversationActive: ref(false),
+      activeConversationKey: ref('agent:manual-scroll'),
+      shouldVirtualizeMessages: ref(false),
+      agentRenderableMessages: ref([]),
+      worldRenderableMessages: ref([]),
+      messageVirtualHeightCache: new Map<string, number>(),
+      messageVirtualLayoutVersion: ref(0),
+      messageVirtualScrollTop: ref(0),
+      messageVirtualViewportHeight: ref(0),
+      estimateVirtualOffsetTop: () => 0,
+      resolveVirtualMessageHeight: () => 0
+    });
+
+    runtime.handleMessageListScroll();
+
+    assert.equal(autoStickToBottom.value, false);
+    await runtime.scrollMessagesToBottom();
+    assert.equal(container.scrollTop, 420);
+    runtime.dispose();
+  } finally {
+    if (originalWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+    else (globalThis as Record<string, unknown>).window = originalWindow;
   }
 });
 

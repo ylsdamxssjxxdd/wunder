@@ -1783,6 +1783,8 @@ export default {
   'chat.toolWorkflow.detail.deleted': '删除',
   'chat.toolWorkflow.detail.moved': '移动',
   'chat.toolWorkflow.moreFiles': '另有 {count} 项',
+  'chat.toolWorkflow.patchPreviewOmittedFiles': '预览省略了 {count} 个文件',
+  'chat.toolWorkflow.patchPreviewOmittedLines': '预览省略了 {count} 行',
   'chat.toolWorkflow.compaction.title': '上下文压缩',
   'chat.toolWorkflow.compaction.titleHistory': '压缩历史上下文',
   'chat.toolWorkflow.compaction.titleOverflow': '处理上下文溢出',

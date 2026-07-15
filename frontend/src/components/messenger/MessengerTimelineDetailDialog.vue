@@ -52,7 +52,7 @@
             </option>
           </select>
           <input
-            v-model.trim="keywordFilter"
+            v-model.trim="keywordInput"
             class="messenger-timeline-detail-filter-input"
             type="text"
             :placeholder="t('messenger.timeline.detail.filterKeyword')"
@@ -63,12 +63,25 @@
         <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
           {{ t('messenger.timeline.detail.noEvents') }}
         </div>
-        <div v-else ref="eventsContainerRef" class="messenger-timeline-detail-events">
+        <div
+          v-else
+          ref="eventsContainerRef"
+          class="messenger-timeline-detail-events"
+          @scroll.passive="scheduleEventViewportSync"
+        >
+          <div
+            v-if="eventTopSpacer"
+            class="messenger-timeline-detail-events-spacer"
+            :style="{ height: `${eventTopSpacer}px` }"
+            aria-hidden="true"
+          ></div>
           <details
-            v-for="item in filteredEvents"
+            v-for="item in visibleFilteredEvents"
             :key="item.key"
             class="messenger-timeline-detail-event-item"
             :data-round="item.round"
+            :open="expandedEventKeys.has(item.key)"
+            @toggle="handleEventToggle(item.key, $event)"
           >
             <summary class="messenger-timeline-detail-event-summary">
               <span class="messenger-timeline-detail-event-time">[{{ item.timestampLabel }}]</span>
@@ -78,8 +91,17 @@
                 {{ t('messenger.timeline.detail.round', { round: item.round }) }}
               </span>
             </summary>
-            <pre class="messenger-timeline-detail-event-raw">{{ item.raw }}</pre>
+            <pre
+              v-if="expandedEventKeys.has(item.key)"
+              class="messenger-timeline-detail-event-raw"
+            >{{ resolveEventRaw(item) }}</pre>
           </details>
+          <div
+            v-if="eventBottomSpacer"
+            class="messenger-timeline-detail-events-spacer"
+            :style="{ height: `${eventBottomSpacer}px` }"
+            aria-hidden="true"
+          ></div>
         </div>
       </div>
     </div>
@@ -91,10 +113,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
-import { getSession as getChatSessionApi, getSessionEvents as getChatSessionEventsApi } from '@/api/chat';
+import {
+  getSessionEvents as getChatSessionEventsApi,
+  getSessionEventsWithParams as getChatSessionEventsWithParams,
+  getSessionWithParams as getChatSessionWithParams
+} from '@/api/chat';
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 import { downloadSessionLogLines } from '@/utils/sessionLogExport';
@@ -119,7 +145,6 @@ type TimelineDetailEventItem = {
   eventType: string;
   timestampLabel: string;
   title: string;
-  raw: string;
   searchText: string;
   rawEvent: TimelineDetailRoundEvent;
 };
@@ -145,6 +170,12 @@ type TimelineDetailSession = {
 type TimelineExportLine = Record<string, unknown>;
 
 const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
+const TIMELINE_DETAIL_EVENT_FETCH_LIMIT = 180;
+const TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT = 32;
+const TIMELINE_DETAIL_EXPANDED_EVENT_LIMIT = 3;
+const TIMELINE_DETAIL_RAW_CACHE_LIMIT = 12;
+const TIMELINE_DETAIL_EVENT_ROW_HEIGHT = 38;
+const TIMELINE_DETAIL_EVENT_OVERSCAN = 10;
 
 const props = defineProps<{
   visible: boolean;
@@ -168,15 +199,27 @@ const rounds = ref<TimelineDetailRound[]>([]);
 const running = ref(false);
 const lastEventId = ref(0);
 const eventTypeFilter = ref('');
+const keywordInput = ref('');
 const keywordFilter = ref('');
 const selectedRound = ref(0);
 const eventsContainerRef = ref<HTMLElement | null>(null);
+const expandedEventKeys = ref<Set<string>>(new Set());
+const eventRawCache = new Map<string, string>();
+const eventScrollTop = ref(0);
+const eventViewportHeight = ref(0);
 
 let requestToken = 0;
+let keywordFilterTimer: ReturnType<typeof setTimeout> | null = null;
+let eventViewportFrame: number | null = null;
 
 const resetFilters = () => {
   eventTypeFilter.value = '';
+  keywordInput.value = '';
   keywordFilter.value = '';
+  if (keywordFilterTimer !== null) {
+    clearTimeout(keywordFilterTimer);
+    keywordFilterTimer = null;
+  }
 };
 
 const resetDetailState = () => {
@@ -186,6 +229,10 @@ const resetDetailState = () => {
   running.value = false;
   lastEventId.value = 0;
   selectedRound.value = 0;
+  expandedEventKeys.value = new Set();
+  eventRawCache.clear();
+  eventScrollTop.value = 0;
+  eventViewportHeight.value = 0;
   resetFilters();
 };
 
@@ -505,11 +552,14 @@ const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSess
     value && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  const messages = Array.isArray(source.messages)
+  const sourceMessages = Array.isArray(source.messages)
     ? source.messages
-        .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
-        .map((item) => item as Record<string, unknown>)
-    : [];
+    : Array.isArray(source.transcript)
+      ? source.transcript
+      : [];
+  const messages = sourceMessages
+    .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    .map((item) => item as Record<string, unknown>);
   return {
     id: String(source.id || sessionId),
     title: String(source.title || ''),
@@ -572,19 +622,20 @@ const formatMetaTime = (value: unknown): string => {
   return new Date(ts).toLocaleString(getCurrentLanguage());
 };
 
-const events = computed<TimelineDetailEventItem[]>(() => {
+const buildTimelineDetailEvents = (
+  sourceRounds: TimelineDetailRound[]
+): TimelineDetailEventItem[] => {
   const result: TimelineDetailEventItem[] = [];
   let order = 0;
-  rounds.value.forEach((round, roundIndex) => {
+  sourceRounds.forEach((round, roundIndex) => {
     const roundIndexValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
     const eventList = Array.isArray(round?.events) ? round.events : [];
     eventList.forEach((event, eventIndex) => {
       order += 1;
       const eventType = String(event?.event || event?.type || 'unknown').trim() || 'unknown';
-      const raw = stringifyEventData(event?.data, true);
       const title = resolveEventTitle(eventType, event?.data);
       const timestampLabel = formatEventTimestamp(event?.timestamp);
-      const searchText = `${eventType} ${title} ${stringifyEventData(event?.data, false)}`.toLowerCase();
+      const searchText = `${eventType} ${title}`.toLowerCase();
       result.push({
         key: `${roundIndexValue}-${eventType}-${order}-${eventIndex}`,
         order,
@@ -592,13 +643,16 @@ const events = computed<TimelineDetailEventItem[]>(() => {
         eventType,
         timestampLabel,
         title,
-        raw,
         searchText,
         rawEvent: event
       });
     });
   });
   return result;
+};
+
+const events = computed<TimelineDetailEventItem[]>(() => {
+  return buildTimelineDetailEvents(rounds.value);
 });
 
 const roundOptions = computed<TimelineRoundOption[]>(() => {
@@ -664,12 +718,12 @@ const eventTypeOptions = computed(() => {
   return Array.from(types).sort((left, right) => left.localeCompare(right));
 });
 
-const filteredEvents = computed(() => {
+const filterTimelineEvents = (items: TimelineDetailEventItem[]): TimelineDetailEventItem[] => {
   const selectedType = String(eventTypeFilter.value || '').trim();
   const keyword = String(keywordFilter.value || '')
     .trim()
     .toLowerCase();
-  return events.value.filter((item) => {
+  return items.filter((item) => {
     if (selectedType && item.eventType !== selectedType) {
       return false;
     }
@@ -679,17 +733,109 @@ const filteredEvents = computed(() => {
     if (!keyword) {
       return true;
     }
-    return item.searchText.includes(keyword);
+    return item.searchText.includes(keyword)
+      || stringifyEventData(item.rawEvent?.data, false).toLowerCase().includes(keyword);
   });
+};
+
+const filteredEvents = computed(() => {
+  return filterTimelineEvents(events.value);
 });
 
-const exportEvents = computed(() => {
+const eventVisibleRange = computed(() => {
+  const count = filteredEvents.value.length;
+  if (!count) return { start: 0, end: 0 };
+  const viewportHeight = Math.max(TIMELINE_DETAIL_EVENT_ROW_HEIGHT * 8, eventViewportHeight.value);
+  const start = Math.max(
+    0,
+    Math.floor(eventScrollTop.value / TIMELINE_DETAIL_EVENT_ROW_HEIGHT) - TIMELINE_DETAIL_EVENT_OVERSCAN
+  );
+  const end = Math.min(
+    count,
+    Math.ceil((eventScrollTop.value + viewportHeight) / TIMELINE_DETAIL_EVENT_ROW_HEIGHT) + TIMELINE_DETAIL_EVENT_OVERSCAN
+  );
+  return { start, end: Math.max(start + 1, end) };
+});
+
+const visibleFilteredEvents = computed(() =>
+  filteredEvents.value.slice(eventVisibleRange.value.start, eventVisibleRange.value.end)
+);
+const eventTopSpacer = computed(() => eventVisibleRange.value.start * TIMELINE_DETAIL_EVENT_ROW_HEIGHT);
+const eventBottomSpacer = computed(() =>
+  Math.max(0, (filteredEvents.value.length - eventVisibleRange.value.end) * TIMELINE_DETAIL_EVENT_ROW_HEIGHT)
+);
+
+const syncEventViewport = () => {
+  const container = eventsContainerRef.value;
+  if (!container) {
+    eventScrollTop.value = 0;
+    eventViewportHeight.value = 0;
+    return;
+  }
+  eventScrollTop.value = container.scrollTop;
+  eventViewportHeight.value = container.clientHeight;
+};
+
+const scheduleEventViewportSync = () => {
+  if (typeof window === 'undefined') {
+    syncEventViewport();
+    return;
+  }
+  if (eventViewportFrame !== null) return;
+  eventViewportFrame = window.requestAnimationFrame(() => {
+    eventViewportFrame = null;
+    syncEventViewport();
+  });
+};
+
+const resolveEventRaw = (item: TimelineDetailEventItem): string => {
+  const cached = eventRawCache.get(item.key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const raw = stringifyEventData(item.rawEvent?.data, true);
+  eventRawCache.set(item.key, raw);
+  while (eventRawCache.size > TIMELINE_DETAIL_RAW_CACHE_LIMIT) {
+    const oldestKey = eventRawCache.keys().next().value;
+    if (!oldestKey) break;
+    eventRawCache.delete(oldestKey);
+  }
+  return raw;
+};
+
+const handleEventToggle = (key: string, event: Event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLDetailsElement) || target !== event.currentTarget) {
+    return;
+  }
+  const next = new Set(expandedEventKeys.value);
+  if (target.open) {
+    next.delete(key);
+    next.add(key);
+    while (next.size > TIMELINE_DETAIL_EXPANDED_EVENT_LIMIT) {
+      const oldestKey = next.values().next().value;
+      if (!oldestKey) break;
+      next.delete(oldestKey);
+    }
+  } else {
+    next.delete(key);
+  }
+  expandedEventKeys.value = next;
+};
+
+const selectTimelineExportEvents = (
+  items: TimelineDetailEventItem[]
+): TimelineDetailEventItem[] => {
   const selectedType = String(eventTypeFilter.value || '').trim();
   const keyword = String(keywordFilter.value || '').trim();
   if (selectedType || keyword) {
-    return filteredEvents.value;
+    return filterTimelineEvents(items);
   }
-  return events.value.filter((item) => !isDefaultHiddenEventType(item.eventType));
+  return items.filter((item) => !isDefaultHiddenEventType(item.eventType));
+};
+
+const exportEvents = computed(() => {
+  return selectTimelineExportEvents(events.value);
 });
 
 const dialogTitle = computed(() => {
@@ -810,10 +956,12 @@ const normalizeExportTimestamp = (value: unknown): string => {
   return '';
 };
 
-const buildTimelineExportLines = (): TimelineExportLine[] => {
+const buildTimelineExportLines = (
+  sourceEvents: TimelineDetailEventItem[] = exportEvents.value
+): TimelineExportLine[] => {
   const output: TimelineExportLine[] = [];
   const uniqueEventTypes = new Set<string>();
-  exportEvents.value.forEach((item, index) => {
+  sourceEvents.forEach((item, index) => {
     const event = item.rawEvent;
     const eventType = item.eventType || 'unknown';
     uniqueEventTypes.add(eventType);
@@ -861,11 +1009,18 @@ const loadTimelineDetail = async (sessionId: string) => {
   rounds.value = [];
   running.value = false;
   lastEventId.value = 0;
+  expandedEventKeys.value = new Set();
+  eventRawCache.clear();
   resetFilters();
   try {
     const [sessionRes, eventsRes] = await Promise.all([
-      getChatSessionApi(targetId),
-      getChatSessionEventsApi(targetId).catch(() => null)
+      getChatSessionWithParams(targetId, {
+        limit: TIMELINE_DETAIL_SESSION_MESSAGE_LIMIT,
+        summary: true
+      }),
+      getChatSessionEventsWithParams(targetId, {
+        limit: TIMELINE_DETAIL_EVENT_FETCH_LIMIT
+      }).catch(() => null)
     ]);
     if (currentToken !== requestToken) {
       return;
@@ -896,7 +1051,12 @@ const exportTimelineDetail = async () => {
     return;
   }
   try {
-    const lines = buildTimelineExportLines();
+    const response = await getChatSessionEventsApi(session.id).catch(() => null);
+    const payload = (response?.data as { data?: Record<string, unknown> } | undefined)?.data;
+    const sourceEvents = payload
+      ? selectTimelineExportEvents(buildTimelineDetailEvents(normalizeRounds(payload.rounds)))
+      : exportEvents.value;
+    const lines = buildTimelineExportLines(sourceEvents);
     downloadSessionLogLines(lines, {
       sessionId: session.id,
       agentName: session.agentName,
@@ -917,6 +1077,10 @@ const scrollToSelectedRound = () => {
   const container = eventsContainerRef.value;
   if (!container) {
     return;
+  }
+  const selectedIndex = filteredEvents.value.findIndex((item) => item.round === selectedRound.value);
+  if (selectedIndex >= 0) {
+    container.scrollTop = selectedIndex * TIMELINE_DETAIL_EVENT_ROW_HEIGHT;
   }
   const selector = `.messenger-timeline-detail-event-item[data-round="${selectedRound.value}"]`;
   const target = container.querySelector<HTMLElement>(selector);
@@ -961,7 +1125,7 @@ watch(
 );
 
 watch(
-  [selectedRound, () => filteredEvents.value.length],
+  selectedRound,
   () => {
     void nextTick(() => {
       scrollToSelectedRound();
@@ -969,6 +1133,25 @@ watch(
   },
   { flush: 'post' }
 );
+
+watch(
+  () => [dialogVisible.value, filteredEvents.value.length] as const,
+  ([visible]) => {
+    if (!visible) return;
+    void nextTick(scheduleEventViewportSync);
+  },
+  { flush: 'post' }
+);
+
+watch(keywordInput, (value) => {
+  if (keywordFilterTimer !== null) {
+    clearTimeout(keywordFilterTimer);
+  }
+  keywordFilterTimer = setTimeout(() => {
+    keywordFilterTimer = null;
+    keywordFilter.value = String(value || '').trim();
+  }, 120);
+});
 
 watch(
   () => dialogVisible.value,
@@ -980,4 +1163,15 @@ watch(
     resetDetailState();
   }
 );
+
+onBeforeUnmount(() => {
+  if (keywordFilterTimer !== null) {
+    clearTimeout(keywordFilterTimer);
+    keywordFilterTimer = null;
+  }
+  if (typeof window !== 'undefined' && eventViewportFrame !== null) {
+    window.cancelAnimationFrame(eventViewportFrame);
+    eventViewportFrame = null;
+  }
+});
 </script>

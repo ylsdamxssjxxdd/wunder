@@ -8,7 +8,6 @@ import { createAgent as createAgentApi, deleteAgent as deleteAgentApi, listAgent
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
 import {
-  getSession as getChatSessionApi,
   fetchSessionSystemPrompt,
   fetchRealtimeSystemPrompt
 } from '@/api/chat';
@@ -469,10 +468,6 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
 
   ctx.RIGHT_DOCK_EDGE_HOVER_THRESHOLD = 84;
 
-  ctx.rightDockEdgeHoverFrame = null;
-
-  ctx.pendingRightDockPointerX = null;
-
   ctx.cachedMessengerRootRight = 0;
 
   ctx.cachedMessengerRootWidth = 0;
@@ -481,7 +476,6 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
 
   watch(() => ctx.showRightDock.value, (visible) => {
       if (!visible) {
-          ctx.pendingRightDockPointerX = null;
           ctx.setRightDockEdgeHover(false);
           return;
       }
@@ -573,22 +567,27 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
       session?.summary ||
       '');
 
-  ctx.resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
-      const sessionId = String(session?.id || '').trim();
-      const fieldPreview = ctx.resolveSessionPreviewFromFields(session);
-      const fieldTimestamp = ctx.normalizeTimestamp(session?.last_message_at || session?.updated_at || session?.created_at);
-      if (sessionId) {
-          const cachedMessages = ctx.chatStore.getCachedSessionMessages(sessionId);
-          if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
-              const preview = ctx.extractLatestConversationPreview(cachedMessages as unknown[]);
-              const previewTimestamp = ctx.resolveLatestConversationMessageTimestamp(cachedMessages as unknown[]);
-              if (preview && (!fieldPreview || previewTimestamp >= fieldTimestamp)) {
-                  return preview;
-              }
-          }
-          const cached = String(ctx.timelinePreviewMap.value.get(sessionId) || '').trim();
-          if (cached)
-              return cached;
+   ctx.resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
+       const sessionId = String(session?.id || '').trim();
+       const fieldPreview = ctx.resolveSessionPreviewFromFields(session);
+       const fieldTimestamp = ctx.normalizeTimestamp(session?.last_message_at || session?.updated_at || session?.created_at);
+       if (sessionId) {
+           const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+           // Materializing every cached thread is expensive while the timeline is open.
+           // Only the active thread needs a live projection; other rows use summaries.
+           if (sessionId === activeSessionId) {
+               const cachedMessages = ctx.chatStore.getCachedSessionMessages(sessionId);
+               if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
+                   const preview = ctx.extractLatestConversationPreview(cachedMessages as unknown[]);
+                   const previewTimestamp = ctx.resolveLatestConversationMessageTimestamp(cachedMessages as unknown[]);
+                   if (preview && (!fieldPreview || previewTimestamp >= fieldTimestamp)) {
+                       return preview;
+                   }
+               }
+           }
+           const cached = String(ctx.timelinePreviewMap.value.get(sessionId) || '').trim();
+           if (cached)
+               return cached;
       }
       return fieldPreview;
   };
@@ -650,46 +649,4 @@ export function installMessengerControllerRightDockSessionRuntime(ctx: Messenger
       return result;
   });
 
-  ctx.preloadTimelinePreview = async (sessionId: string) => {
-      const targetId = String(sessionId || '').trim();
-      if (!targetId)
-          return;
-      if (ctx.timelinePreviewMap.value.has(targetId) || ctx.timelinePreviewLoadingSet.value.has(targetId)) {
-          return;
-      }
-      ctx.timelinePreviewLoadingSet.value.add(targetId);
-      try {
-          const sessionRecord = (Array.isArray(ctx.chatStore.sessions)
-              ? ctx.chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId)
-              : null) || null;
-          const sessionPreview = sessionRecord
-              ? ctx.resolveSessionTimelinePreview(sessionRecord as Record<string, unknown>)
-              : '';
-          if (sessionPreview) {
-              ctx.timelinePreviewMap.value.set(targetId, sessionPreview);
-              return;
-          }
-          const cachedMessages = ctx.chatStore.getCachedSessionMessages(targetId);
-          if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
-              const preview = ctx.extractLatestConversationPreview(cachedMessages as unknown[]);
-              ctx.timelinePreviewMap.value.set(targetId, preview);
-              return;
-          }
-          const result = await getChatSessionApi(targetId).catch(() => null);
-          const messages = Array.isArray(result?.data?.data?.transcript)
-              ? result.data.data.transcript
-              : [];
-          if (!Array.isArray(messages) || !messages.length) {
-              ctx.timelinePreviewMap.value.set(targetId, '');
-              return;
-          }
-          const preview = ctx.extractLatestConversationPreview(messages as unknown[]);
-          ctx.timelinePreviewMap.value.set(targetId, preview);
-      }
-      catch {
-      }
-      finally {
-          ctx.timelinePreviewLoadingSet.value.delete(targetId);
-      }
-  };
 }

@@ -11,9 +11,20 @@
     <div v-if="!sessionHistory.length" class="messenger-list-empty">
       {{ t('messenger.empty.timeline') }}
     </div>
-    <div v-else class="messenger-timeline messenger-timeline--dialog">
+    <div
+      v-else
+      ref="timelineListRef"
+      class="messenger-timeline messenger-timeline--dialog"
+      @scroll.passive="handleTimelineScroll"
+    >
       <div
-        v-for="item in sessionHistory"
+        v-if="timelineTopSpacer"
+        class="messenger-timeline-virtual-spacer"
+        :style="{ height: `${timelineTopSpacer}px` }"
+        aria-hidden="true"
+      ></div>
+      <div
+        v-for="item in visibleSessionHistory"
         :key="item.id"
         class="messenger-timeline-item"
         :class="{
@@ -82,11 +93,19 @@
           <span class="messenger-timeline-time">{{ formatTime(item.lastAt) }}</span>
         </div>
       </div>
+      <div
+        v-if="timelineBottomSpacer"
+        class="messenger-timeline-virtual-spacer"
+        :style="{ height: `${timelineBottomSpacer}px` }"
+        aria-hidden="true"
+      ></div>
     </div>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+
 import { useI18n } from '@/i18n';
 
 type TimelineSessionItem = {
@@ -102,7 +121,7 @@ type TimelineSessionItem = {
   } | null;
 };
 
-defineProps<{
+const props = defineProps<{
   visible: boolean;
   activeSessionId: string;
   sessionHistory: TimelineSessionItem[];
@@ -118,6 +137,82 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+// Each row has a 64px minimum height plus the timeline's 6px flex gap.
+const TIMELINE_ROW_HEIGHT = 70;
+const TIMELINE_OVERSCAN = 8;
+
+const timelineListRef = ref<HTMLElement | null>(null);
+const timelineScrollTop = ref(0);
+const timelineViewportHeight = ref(0);
+let timelineViewportFrame: number | null = null;
+
+const visibleRange = computed(() => {
+  const count = props.sessionHistory.length;
+  if (!count) {
+    return { start: 0, end: 0 };
+  }
+  const viewportHeight = Math.max(TIMELINE_ROW_HEIGHT * 8, timelineViewportHeight.value);
+  const start = Math.max(0, Math.floor(timelineScrollTop.value / TIMELINE_ROW_HEIGHT) - TIMELINE_OVERSCAN);
+  const end = Math.min(
+    count,
+    Math.ceil((timelineScrollTop.value + viewportHeight) / TIMELINE_ROW_HEIGHT) + TIMELINE_OVERSCAN
+  );
+  return { start, end: Math.max(start + 1, end) };
+});
+
+const visibleSessionHistory = computed(() =>
+  props.sessionHistory.slice(visibleRange.value.start, visibleRange.value.end)
+);
+const timelineTopSpacer = computed(() => visibleRange.value.start * TIMELINE_ROW_HEIGHT);
+const timelineBottomSpacer = computed(() =>
+  Math.max(0, (props.sessionHistory.length - visibleRange.value.end) * TIMELINE_ROW_HEIGHT)
+);
+
+const syncTimelineViewport = () => {
+  const element = timelineListRef.value;
+  if (!element) {
+    timelineViewportHeight.value = 0;
+    return;
+  }
+  timelineViewportHeight.value = element.clientHeight;
+  timelineScrollTop.value = element.scrollTop;
+};
+
+const scheduleTimelineViewportSync = () => {
+  if (typeof window === 'undefined') {
+    syncTimelineViewport();
+    return;
+  }
+  if (timelineViewportFrame !== null) return;
+  timelineViewportFrame = window.requestAnimationFrame(() => {
+    timelineViewportFrame = null;
+    syncTimelineViewport();
+  });
+};
+
+const handleTimelineScroll = () => {
+  scheduleTimelineViewportSync();
+};
+
+watch(
+  () => [props.visible, props.sessionHistory.length] as const,
+  ([visible]) => {
+    if (!visible) {
+      timelineScrollTop.value = 0;
+      return;
+    }
+    void nextTick(scheduleTimelineViewportSync);
+  },
+  { flush: 'post' }
+);
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined' && timelineViewportFrame !== null) {
+    window.cancelAnimationFrame(timelineViewportFrame);
+    timelineViewportFrame = null;
+  }
+});
 
 const normalizeTimestamp = (value: unknown): number => {
   if (value === null || value === undefined) return 0;

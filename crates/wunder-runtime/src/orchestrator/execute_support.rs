@@ -1092,6 +1092,36 @@ pub(super) fn build_final_event_payload(
     final_payload
 }
 
+pub(super) fn build_persisted_message_stats(
+    usage: &TokenUsage,
+    round_usage: &TokenUsage,
+    context_occupancy_tokens: Option<i64>,
+    turn_decode_speed: &TurnDecodeSpeedAccumulator,
+) -> Value {
+    let mut stats = serde_json::Map::new();
+    stats.insert("usage".to_string(), json!(usage));
+    stats.insert("round_usage".to_string(), json!(round_usage));
+    stats.insert(
+        "quotaConsumed".to_string(),
+        json!(round_usage.total.max(usage.total)),
+    );
+    if let Some(context_tokens) = context_occupancy_tokens.filter(|value| *value > 0) {
+        stats.insert("contextTokens".to_string(), json!(context_tokens));
+        stats.insert(
+            "context_occupancy_tokens".to_string(),
+            json!(context_tokens),
+        );
+    }
+    turn_decode_speed.insert_into_map(&mut stats);
+    Value::Object(stats)
+}
+
+pub(super) fn merge_persisted_message_stats_meta(meta: &Value, message_stats: Value) -> Value {
+    let mut merged = meta.as_object().cloned().unwrap_or_default();
+    merged.insert("message_stats".to_string(), message_stats);
+    Value::Object(merged)
+}
+
 pub(super) fn extract_workspace_changed_paths(
     meta: Option<&Value>,
     data: &Value,

@@ -1822,6 +1822,8 @@ export default {
   'chat.toolWorkflow.detail.deleted': 'Deleted',
   'chat.toolWorkflow.detail.moved': 'Moved',
   'chat.toolWorkflow.moreFiles': '{count} more',
+  'chat.toolWorkflow.patchPreviewOmittedFiles': 'Preview omits {count} files',
+  'chat.toolWorkflow.patchPreviewOmittedLines': 'Preview omits {count} lines',
   'chat.toolWorkflow.compaction.title': 'Context compaction',
   'chat.toolWorkflow.compaction.titleHistory': 'History context compacted',
   'chat.toolWorkflow.compaction.titleOverflow': 'Preventing context overflow',

@@ -3866,16 +3866,24 @@ button.messenger-chat-header-model {
   padding-right: 2px;
 }
 
+.messenger-timeline-virtual-spacer {
+  flex: 0 0 auto;
+  width: 100%;
+  pointer-events: none;
+}
+
 .messenger-timeline-item {
   position: relative;
   width: 100%;
+  min-height: 64px;
+  box-sizing: border-box;
   text-align: left;
   cursor: pointer;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
   padding: 8px;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  contain: layout paint;
 }
 
 .messenger-timeline-item:hover,
@@ -3963,7 +3971,6 @@ button.messenger-chat-header-model {
   gap: 4px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
 }
 
 .messenger-timeline-main-badge {
@@ -4001,7 +4008,6 @@ button.messenger-chat-header-model {
   justify-content: center;
   cursor: pointer;
   transform: translateY(1px);
-  transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
 .messenger-timeline-item:hover .messenger-timeline-actions,
@@ -8136,6 +8142,11 @@ body.desktop-shell-active .workspace-editor-shell {
   flex-direction: column;
   gap: 6px;
   scroll-behavior: smooth;
+}
+
+.messenger-timeline-detail-events-spacer {
+  flex: 0 0 auto;
+  pointer-events: none;
 }
 
 .messenger-timeline-detail-event-item {

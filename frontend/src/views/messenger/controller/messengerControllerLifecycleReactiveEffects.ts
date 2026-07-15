@@ -932,34 +932,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.selectedFileContainerId.value = value;
   }, { immediate: true });
 
-  watch(() => [ctx.timelineDialogVisible.value, ctx.rightPanelSessionHistory.value.map((item) => item.id).join('|')] as const, ([visible, value]) => {
-      if (!visible || !value) {
-          if (typeof window !== 'undefined' && ctx.timelinePrefetchTimer) {
-              window.clearTimeout(ctx.timelinePrefetchTimer);
-              ctx.timelinePrefetchTimer = null;
-          }
-          return;
-      }
-      if (typeof window !== 'undefined' && ctx.timelinePrefetchTimer) {
-          window.clearTimeout(ctx.timelinePrefetchTimer);
-          ctx.timelinePrefetchTimer = null;
-      }
-      const prefetchTargets = ctx.rightPanelSessionHistory.value.slice(0, 4).map((item) => item.id);
-      const runPrefetch = () => {
-          prefetchTargets.forEach((sessionId) => {
-              void ctx.preloadTimelinePreview(sessionId);
-          });
-      };
-      if (typeof window !== 'undefined') {
-          ctx.timelinePrefetchTimer = window.setTimeout(() => {
-              ctx.timelinePrefetchTimer = null;
-              runPrefetch();
-          }, 80);
-          return;
-      }
-      runPrefetch();
-  }, { immediate: true });
-
   watch(() => [
       ctx.sessionHub.activeSection,
       ctx.filteredMixedConversations.value
@@ -1378,11 +1350,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       ctx.clearWorldQuickPanelClose();
       ctx.clearMiddlePaneOverlayHide();
       ctx.clearMiddlePanePrewarm();
-      if (typeof window !== 'undefined' && ctx.rightDockEdgeHoverFrame !== null) {
-          window.cancelAnimationFrame(ctx.rightDockEdgeHoverFrame);
-          ctx.rightDockEdgeHoverFrame = null;
-      }
-      ctx.pendingRightDockPointerX = null;
       ctx.clearKeywordDebounce();
       ctx.closeResourcePreview();
       ctx.stopWorldComposerResize();
@@ -1407,10 +1374,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
           window.clearInterval(ctx.lifecycleTimer);
           ctx.lifecycleTimer = null;
       }
-      if (typeof window !== 'undefined' && ctx.timelinePrefetchTimer) {
-          window.clearTimeout(ctx.timelinePrefetchTimer);
-          ctx.timelinePrefetchTimer = null;
-      }
       if (typeof window !== 'undefined' && ctx.sessionDetailPrefetchTimer !== null) {
           window.clearTimeout(ctx.sessionDetailPrefetchTimer);
           ctx.sessionDetailPrefetchTimer = null;
@@ -1432,7 +1395,6 @@ export function installMessengerControllerLifecycleReactiveEffects(ctx: Messenge
       }
       ctx.clearWorkspaceResourceCache();
       ctx.timelinePreviewMap.value.clear();
-      ctx.timelinePreviewLoadingSet.value.clear();
       ctx.userWorldStore.stopAllWatchers();
   });
 }

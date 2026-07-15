@@ -773,41 +773,19 @@ export function installMessengerControllerSharedHelpers(ctx: MessengerController
           ctx.setRightDockEdgeHover(false);
           return;
       }
-      ctx.pendingRightDockPointerX = pointerX;
-      if (typeof window === 'undefined') {
+      // Root bounds are refreshed when the viewport or dock layout changes. Reading
+      // geometry for every pointer frame forces layout and makes long workflow cards jank.
+      if (!Number.isFinite(ctx.cachedMessengerRootRight) || ctx.cachedMessengerRootWidth <= 0) {
           ctx.refreshMessengerRootBounds();
-          if (!Number.isFinite(ctx.cachedMessengerRootRight) || ctx.cachedMessengerRootWidth <= 0) {
-              ctx.setRightDockEdgeHover(false);
-              return;
-          }
-          ctx.setRightDockEdgeHover(pointerX >= ctx.cachedMessengerRootRight - ctx.RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
+      }
+      if (!Number.isFinite(ctx.cachedMessengerRootRight) || ctx.cachedMessengerRootWidth <= 0) {
+          ctx.setRightDockEdgeHover(false);
           return;
       }
-      if (ctx.rightDockEdgeHoverFrame !== null) {
-          return;
-      }
-      ctx.rightDockEdgeHoverFrame = window.requestAnimationFrame(() => {
-          ctx.rightDockEdgeHoverFrame = null;
-          if (!ctx.showRightDock.value) {
-              ctx.setRightDockEdgeHover(false);
-              return;
-          }
-          ctx.refreshMessengerRootBounds();
-          if (!Number.isFinite(ctx.cachedMessengerRootRight) || ctx.cachedMessengerRootWidth <= 0) {
-              ctx.setRightDockEdgeHover(false);
-              return;
-          }
-          const nextPointerX = ctx.pendingRightDockPointerX;
-          if (!Number.isFinite(nextPointerX)) {
-              ctx.setRightDockEdgeHover(false);
-              return;
-          }
-          ctx.setRightDockEdgeHover(nextPointerX >= ctx.cachedMessengerRootRight - ctx.RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
-      });
+      ctx.setRightDockEdgeHover(pointerX >= ctx.cachedMessengerRootRight - ctx.RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
   };
 
   ctx.handleMessengerRootPointerLeave = function handleMessengerRootPointerLeave(): void {
-      ctx.pendingRightDockPointerX = null;
       ctx.setRightDockEdgeHover(false);
   };
 

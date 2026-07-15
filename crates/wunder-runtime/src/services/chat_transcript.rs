@@ -165,6 +165,11 @@ fn map_transcript_message(
         if role == "assistant" && !reasoning.is_empty() {
             map.insert("reasoning".to_string(), json!(reasoning));
         }
+        if role == "assistant" {
+            if let Some(stats) = extract_persisted_message_stats(&item) {
+                map.insert("stats".to_string(), stats);
+            }
+        }
         if let Some(panel) = extract_question_panel(&item) {
             map.insert("questionPanel".to_string(), panel);
         }
@@ -180,6 +185,12 @@ fn map_transcript_message(
         }
     }
     Some(message)
+}
+
+fn extract_persisted_message_stats(item: &Value) -> Option<Value> {
+    let meta = item.get("meta")?.as_object()?;
+    let stats = meta.get("message_stats")?.as_object()?;
+    (!stats.is_empty()).then(|| Value::Object(stats.clone()))
 }
 
 fn resolve_message_id(
@@ -548,6 +559,34 @@ mod tests {
         assert_eq!(transcript[1]["status"], json!("cancelled"));
         assert_eq!(transcript[1]["cancelled"], json!(true));
         assert_eq!(transcript[1]["user_turn_index"], json!(1));
+    }
+
+    #[test]
+    fn transcript_restores_persisted_assistant_message_stats() {
+        let history = vec![json!({
+            "role": "assistant",
+            "content": "answer",
+            "timestamp": "2026-04-30T02:14:07Z",
+            "meta": {
+                "message_stats": {
+                    "round_usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20},
+                    "decode_duration_total_s": 0.5,
+                    "avg_model_round_speed_tps": 16.0
+                }
+            },
+            "_history_id": 12
+        })];
+
+        let transcript = build_chat_transcript("sess", history, &HashMap::new());
+
+        assert_eq!(
+            transcript[0]["stats"]["round_usage"]["total_tokens"],
+            json!(20)
+        );
+        assert_eq!(
+            transcript[0]["stats"]["avg_model_round_speed_tps"],
+            json!(16.0)
+        );
     }
 
     #[test]

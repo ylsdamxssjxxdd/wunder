@@ -194,10 +194,12 @@ type PatchDiffBlock = {
   title: string;
   pathHint: string;
   lines: PatchDiffLine[];
+  omittedLines: number;
 };
 
 type ToolEntryView = {
   key: string;
+  revision: string;
   toolLabel: string;
   summaryBrief: string;
   summaryTitle: string;
@@ -253,6 +255,9 @@ type RawPatchPreview = {
 const FILE_HINT_LIMIT = 5;
 const FILE_HINT_SUMMARY_LIMIT = 2;
 const PATCH_RESULT_FILE_LIMIT = 10;
+const PATCH_RENDER_FILE_LIMIT = 6;
+const PATCH_RENDER_LINE_LIMIT = 80;
+const PATCH_RENDER_HEAD_LINE_LIMIT = 56;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 const WORKFLOW_STATE_CACHE_LIMIT = 120;
@@ -301,7 +306,7 @@ const emit = defineEmits<{
   (event: 'layout-change'): void;
 }>();
 
-const { t } = useI18n();
+const { t, language } = useI18n();
 const commandSessionStore = useCommandSessionStore();
 const expandedKeys = ref<Set<string>>(new Set());
 const streamBodyRefMap = new Map<string, HTMLPreElement>();
@@ -313,6 +318,7 @@ const workflowUserCollapsed = ref(true);
 const userCollapsedEntryKeys = ref<Set<string>>(new Set());
 const detailParseCache = new Map<string, UnknownObject | false>();
 const previewCache = new Map<string, string>();
+const entryViewCache = new Map<string, { revision: string; view: ToolEntryView }>();
 const entryDetailRefMap = new Map<string, HTMLDetailsElement>();
 const toolCallDebugHintRef = ref<HTMLElement | null>(null);
 const toolCallDebugHint = ref<ToolCallDebugHintState>({
@@ -423,21 +429,6 @@ const terminalAutoStickMode = computed<TerminalAutoStickMode>(() =>
   normalizeTerminalAutoStickMode(props.terminalAutoStick)
 );
 const workflowOpen = computed(() => !workflowUserCollapsed.value);
-const commandSessionRenderToken = computed(() =>
-  Object.values(commandSessionStore.entries)
-    .map((entry) => [
-      entry.commandSessionId,
-      entry.seq,
-      entry.status,
-      entry.stdoutBytes,
-      entry.stderrBytes,
-      entry.ptyBytes,
-      entry.stdoutDroppedBytes,
-      entry.stderrDroppedBytes,
-      entry.ptyDroppedBytes
-    ].join(':'))
-    .join('|')
-);
 
 const shouldAutoStickStream = (key: string): boolean => {
   const mode = terminalAutoStickMode.value;
@@ -625,7 +616,9 @@ const handleWorkflowScroll = (event: Event) => {
 
 const handleWorkflowToggle = (event: Event) => {
   const target = event.target;
-  if (!(target instanceof HTMLDetailsElement)) return;
+  // Nested entry details can also emit toggle events. Only the shell controls
+  // the shell state, otherwise opening an entry can collapse the whole panel.
+  if (!(target instanceof HTMLDetailsElement) || target !== event.currentTarget) return;
   if (workflowToggleProgrammatic) {
     workflowToggleProgrammatic = false;
     if (isChatDebugEnabled()) {
@@ -1668,14 +1661,23 @@ const parseApplyPatchPreview = (patchText: string): RawPatchPreview[] => {
 
   const flush = () => {
     if (current && (current.path || current.toPath)) {
-      previews.push(current);
+      if (previews.length < PATCH_RENDER_FILE_LIMIT) {
+        previews.push(current);
+      }
     }
     current = null;
   };
 
   const pushLine = (line: string) => {
     if (!current) return;
-    current.lines.push(normalizePatchPreviewLine(line));
+    const normalizedLine = normalizePatchPreviewLine(line);
+    if (current.lines.length < PATCH_RENDER_LINE_LIMIT) {
+      current.lines.push(normalizedLine);
+      return;
+    }
+    current.omitted += 1;
+    current.lines.splice(PATCH_RENDER_HEAD_LINE_LIMIT, 1);
+    current.lines.push(normalizedLine);
   };
 
   for (const row of rows) {
@@ -1746,6 +1748,13 @@ const buildApplyPatchDiffBlocks = (callItem: WorkflowItem | null, toolName: stri
     const lines: PatchDiffLine[] = [];
 
     preview.lines.forEach((line, lineIndex) => {
+      if (preview.omitted > 0 && lineIndex === PATCH_RENDER_HEAD_LINE_LIMIT) {
+        lines.push({
+          key: `line-${index}-omit`,
+          kind: 'omit',
+          text: t('chat.toolWorkflow.patchPreviewOmittedLines', { count: preview.omitted })
+        });
+      }
       let kind: PatchDiffLine['kind'] = 'meta';
       if (line.startsWith('+')) kind = 'add';
       else if (line.startsWith('-')) kind = 'delete';
@@ -1764,19 +1773,12 @@ const buildApplyPatchDiffBlocks = (callItem: WorkflowItem | null, toolName: stri
       });
     }
 
-    if (preview.omitted > 0) {
-      lines.push({
-        key: `line-${index}-omit`,
-        kind: 'omit',
-        text: `... (+${preview.omitted})`
-      });
-    }
-
     return {
       key: `diff-${index}`,
       title: buildCompactPatchPathLabel(preview.path, preview.toPath) || pathText || `file-${index + 1}`,
       pathHint: pathText,
-      lines
+      lines,
+      omittedLines: preview.omitted
     };
   });
 };
@@ -1975,6 +1977,7 @@ const buildApplyPatchCallFiles = (patchDiffBlocks: PatchDiffBlock[]): PatchFileV
     key: block.key,
     title: block.title,
     meta: block.pathHint && block.pathHint !== block.title ? block.pathHint : '',
+    omittedLines: block.omittedLines,
     lines: block.lines.map((line): PatchLine => {
       const kind: PatchLine['kind'] = line.kind === 'omit' ? 'note' : line.kind;
       return {
@@ -2058,7 +2061,7 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
   const files = Array.isArray(dataObject?.files) ? (dataObject.files as unknown[]) : [];
   const output: PatchFileView[] = [];
 
-  files.forEach((file, fileIndex) => {
+  files.slice(0, PATCH_RENDER_FILE_LIMIT).forEach((file, fileIndex) => {
     const fileObject = asObject(file);
     if (!fileObject) return;
     const diffBlocks = Array.isArray(fileObject.diff_blocks) ? (fileObject.diff_blocks as unknown[]) : [];
@@ -2173,6 +2176,42 @@ const buildApplyPatchResultFilesFromDiffBlocks = (
   }
 
   return output;
+};
+
+type LimitedPatchFileViews = {
+  files: PatchFileView[];
+  omittedFiles: number;
+};
+
+const limitPatchFileViews = (files: PatchFileView[]): LimitedPatchFileViews => {
+  const visibleFiles = files.slice(0, PATCH_RENDER_FILE_LIMIT).map((file) => {
+    const preOmittedLineCount = Math.max(file.omittedLines || 0, 0);
+    const visibleLineLimit = PATCH_RENDER_LINE_LIMIT + (preOmittedLineCount > 0 ? 1 : 0);
+    if (file.lines.length <= visibleLineLimit) {
+      return file;
+    }
+
+    const headCount = Math.min(PATCH_RENDER_HEAD_LINE_LIMIT, PATCH_RENDER_LINE_LIMIT - 1);
+    const tailCount = Math.max(PATCH_RENDER_LINE_LIMIT - headCount - 1, 1);
+    const skippedLineCount = Math.max(file.lines.length - headCount - tailCount, 0);
+    return {
+      ...file,
+      lines: [
+        ...file.lines.slice(0, headCount),
+        {
+          key: `${file.key}-preview-omitted`,
+          kind: 'note' as const,
+          text: t('chat.toolWorkflow.patchPreviewOmittedLines', { count: skippedLineCount })
+        },
+        ...file.lines.slice(-tailCount)
+      ]
+    };
+  });
+
+  return {
+    files: visibleFiles,
+    omittedFiles: Math.max(files.length - visibleFiles.length, 0)
+  };
 };
 
 const formatPatchHeaderForDisplay = (header: string): string => {
@@ -3493,9 +3532,16 @@ const buildToolResultSection = (
         ? resultDiffFiles
         : mergeApplyPatchResultFilesWithPreview(patchEntries, patchDiffBlocks, errorText);
     const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
-    const patchView = buildPatchResultView(counts, patchFiles, t);
+    const limitedPatchFiles = limitPatchFileViews(patchFiles);
+    const patchView = {
+      ...buildPatchResultView(counts, limitedPatchFiles.files, t),
+      omittedFiles: Math.max(counts.changedFiles - limitedPatchFiles.files.length, limitedPatchFiles.omittedFiles)
+    };
     const summary = buildPatchResultNote(counts, t);
-    const copyText = [rawResultDetail, rawOutputDetail].filter(Boolean).join('\n\n').trim();
+    const copyText = [resolvePatchInput(entry.callItem), rawResultDetail, rawOutputDetail]
+      .filter(Boolean)
+      .join('\n\n')
+      .trim();
     return {
       key: sectionKey,
       title: sectionTitle,
@@ -3717,6 +3763,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
 
   return {
     key: entry.key,
+    revision: '',
     toolLabel: summary.toolLabel,
     summaryBrief: summary.summaryBrief,
     summaryTitle,
@@ -3731,6 +3778,87 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     durationLabel,
     sections
   };
+};
+
+const summarizeEntryRevisionItem = (value: WorkflowItem | null): string => {
+  if (!value) return '';
+  const detail = String(value.detail || '');
+  const rawCallDetail = String(value.toolCallRawDetail || value.tool_call_raw_detail || '');
+  const rawResultDetail = String(value.toolResultRawDetail || value.tool_result_raw_detail || '');
+  return [
+    value.id,
+    value.itemId,
+    value.item_id,
+    value.eventType,
+    value.event,
+    value.event_type,
+    value.status,
+    value.title,
+    value.toolName,
+    value.tool,
+    value.tool_name,
+    value.toolDisplayName,
+    value.tool_display_name,
+    value.toolRuntimeName,
+    value.tool_runtime_name,
+    value.toolFunctionName,
+    value.tool_function_name,
+    value.toolCallId,
+    value.tool_call_id,
+    value.commandSessionId,
+    value.command_session_id,
+    detail,
+    rawCallDetail,
+    rawResultDetail,
+    (value as UnknownObject).updatedSeq,
+    (value as UnknownObject).updated_seq
+  ].map((item) => String(item ?? '')).join('\u0002');
+};
+
+const summarizeCommandSessionRevision = (entry: RawEntry): string => {
+  const snapshot = resolveCommandSessionSnapshot(entry);
+  if (!snapshot) return '';
+  return [
+    snapshot.commandSessionId,
+    snapshot.seq,
+    snapshot.status,
+    snapshot.exitCode,
+    snapshot.timedOut,
+    snapshot.error,
+    snapshot.stdoutBytes,
+    snapshot.stderrBytes,
+    snapshot.ptyBytes,
+    snapshot.stdoutTail.length,
+    snapshot.stderrTail.length,
+    snapshot.ptyTail.length
+  ].join('\u0002');
+};
+
+const buildEntryRevision = (entry: RawEntry): string => [
+  entry.key,
+  summarizeEntryRevisionItem(entry.callItem),
+  summarizeEntryRevisionItem(entry.outputItem),
+  summarizeEntryRevisionItem(entry.resultItem),
+  summarizeCommandSessionRevision(entry),
+  language.value
+].join('\u0001');
+
+const buildCachedEntryView = (entry: RawEntry): ToolEntryView => {
+  const revision = buildEntryRevision(entry);
+  const cached = entryViewCache.get(entry.key);
+  if (cached?.revision === revision) {
+    entryViewCache.delete(entry.key);
+    entryViewCache.set(entry.key, cached);
+    return cached.view;
+  }
+  const view = { ...buildEntryView(entry), revision };
+  entryViewCache.set(entry.key, { revision, view });
+  while (entryViewCache.size > PREVIEW_CACHE_LIMIT) {
+    const oldestKey = entryViewCache.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    entryViewCache.delete(oldestKey);
+  }
+  return view;
 };
 
 const findLastPendingIndex = (rows: RawEntry[]): number => {
@@ -3782,10 +3910,12 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 };
 
 const buildEntries = (): ToolEntryView[] => {
-  void props.renderVersion;
-  void commandSessionRenderToken.value;
-  return buildWorkflowToolRuns(props.items)
-    .map(buildEntryView);
+  const rawEntries = buildWorkflowToolRuns(props.items);
+  const validKeys = new Set(rawEntries.map((entry) => entry.key));
+  entryViewCache.forEach((_cached, key) => {
+    if (!validKeys.has(key)) entryViewCache.delete(key);
+  });
+  return rawEntries.map(buildCachedEntryView);
 };
 
 const isLiveEntryStatus = (status: string): boolean =>
@@ -3892,7 +4022,7 @@ watch(
 
 const handleEntryToggle = (key: string, event: Event) => {
   const target = event.target as HTMLDetailsElement | null;
-  if (!target) return;
+  if (!target || target !== event.currentTarget) return;
   const programmatic = programmaticEntryToggleKeys.has(key);
   if (programmatic) {
     programmaticEntryToggleKeys.delete(key);
@@ -4052,6 +4182,7 @@ const buildPendingEntryView = (
       : t('chat.toolWorkflow.pendingTool');
   return {
     key: `pending:${placeholder.kind}:${toolName || placeholder.eventType || 'unknown'}`,
+    revision: `pending:${placeholder.kind}:${toolName}:${placeholder.eventType}`,
     toolLabel: isCompaction ? t('chat.toolWorkflow.pendingCompaction') : toolDisplayName || t('chat.toolWorkflow.pendingTool'),
     summaryBrief: '',
     summaryTitle,
@@ -4202,13 +4333,10 @@ onBeforeUnmount(() => {
   color: var(--workflow-banner-text);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .tool-workflow-banner:hover {
   border-color: rgba(var(--chat-primary-rgb, 59, 130, 246), 0.42);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
 }
 
 .tool-workflow-banner-dot {
@@ -4595,17 +4723,15 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   background: transparent;
   overflow: hidden;
-  transition: border-color 0.16s ease, background 0.16s ease;
+  contain: layout paint;
 }
 
 .tool-workflow-entry + .tool-workflow-entry {
   margin-top: 4px;
 }
 
-.tool-workflow-entry:hover,
 .tool-workflow-entry[open] {
   border-color: var(--workflow-term-border-strong);
-  background: var(--workflow-term-bg-hover);
 }
 
 .tool-workflow-entry > summary {
@@ -4614,8 +4740,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
+  border-radius: 9px;
   cursor: pointer;
   color: var(--workflow-term-text);
+}
+
+.tool-workflow-entry > summary:hover,
+.tool-workflow-entry[open] > summary {
+  background: var(--workflow-term-bg-hover);
 }
 
 .tool-workflow-entry > summary::marker {

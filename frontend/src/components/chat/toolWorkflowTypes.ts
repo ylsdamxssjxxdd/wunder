@@ -60,12 +60,14 @@ export type ToolWorkflowPatchFileView = {
   title: string;
   meta?: string;
   lines: ToolWorkflowPatchLine[];
+  omittedLines?: number;
   tone?: 'default' | 'success' | 'warning' | 'danger';
 };
 
 export type ToolWorkflowPatchView = {
   metrics: ToolWorkflowStructuredMetric[];
   files: ToolWorkflowPatchFileView[];
+  omittedFiles?: number;
 };
 
 export type ToolWorkflowDetailSection = {

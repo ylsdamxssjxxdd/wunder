@@ -39,11 +39,22 @@
         </div>
       </section>
     </div>
+
+    <div
+      v-if="view.omittedFiles"
+      class="tool-workflow-patch-preview-limit"
+      role="note"
+    >
+      {{ t('chat.toolWorkflow.patchPreviewOmittedFiles', { count: view.omittedFiles }) }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { ToolWorkflowPatchLine, ToolWorkflowPatchView } from './toolWorkflowTypes';
+import { useI18n } from '@/i18n';
+
+const { t } = useI18n();
 
 defineProps<{
   view: ToolWorkflowPatchView;
@@ -134,6 +145,7 @@ const resolveDisplayedLineNo = (line: ToolWorkflowPatchLine): string | number =>
   border-radius: 10px;
   border: 1px solid var(--workflow-term-border);
   background: var(--workflow-term-bg-soft);
+  contain: paint;
 }
 
 .tool-workflow-patch-file.is-danger {
@@ -187,7 +199,7 @@ const resolveDisplayedLineNo = (line: ToolWorkflowPatchLine): string | number =>
   align-items: start;
   column-gap: 0;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
   overflow: hidden;
@@ -361,6 +373,17 @@ const resolveDisplayedLineNo = (line: ToolWorkflowPatchLine): string | number =>
 
 .tool-workflow-patch-line.is-error .tool-workflow-patch-line-body {
   background: rgba(153, 27, 27, 0.48);
+}
+
+.tool-workflow-patch-preview-limit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(148, 163, 184, 0.34);
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 @media (max-width: 640px) {

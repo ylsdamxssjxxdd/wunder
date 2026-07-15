@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::llm_speed::LlmSpeedSummary;
 
 #[test]
 fn build_max_rounds_user_guidance_encourages_continue_or_raise_limit() {
@@ -659,6 +660,52 @@ fn build_round_usage_payload_keeps_context_occupancy_distinct_from_consumed_tota
     );
     assert_eq!(payload.get("user_round").and_then(Value::as_i64), Some(3));
     assert_eq!(payload.get("model_round").and_then(Value::as_i64), Some(2));
+}
+
+#[test]
+fn persisted_message_stats_include_round_usage_and_decode_speed() {
+    let mut speed = TurnDecodeSpeedAccumulator::default();
+    speed.record_summary(&LlmSpeedSummary::from_usage_and_durations(
+        Some(10),
+        Some(20),
+        Some(0.25),
+        Some(0.5),
+    ));
+    let stats = build_persisted_message_stats(
+        &TokenUsage {
+            input: 10,
+            output: 20,
+            total: 30,
+        },
+        &TokenUsage {
+            input: 30,
+            output: 20,
+            total: 50,
+        },
+        Some(80),
+        &speed,
+    );
+
+    assert_eq!(stats["round_usage"]["total_tokens"], json!(50));
+    assert_eq!(stats["quotaConsumed"], json!(50));
+    assert_eq!(stats["contextTokens"], json!(80));
+    assert_eq!(stats["decode_duration_total_s"], json!(0.5));
+    assert_eq!(stats["avg_model_round_speed_tps"], json!(40.0));
+}
+
+#[test]
+fn persisted_message_stats_merge_keeps_existing_message_metadata() {
+    let merged = merge_persisted_message_stats_meta(
+        &json!({ "type": "terminal", "panel": { "status": "pending" } }),
+        json!({ "round_usage": { "total_tokens": 20 } }),
+    );
+
+    assert_eq!(merged["type"], json!("terminal"));
+    assert_eq!(merged["panel"]["status"], json!("pending"));
+    assert_eq!(
+        merged["message_stats"]["round_usage"]["total_tokens"],
+        json!(20)
+    );
 }
 
 #[test]

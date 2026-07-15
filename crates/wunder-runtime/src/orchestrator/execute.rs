@@ -905,13 +905,19 @@ impl Orchestrator {
                         &assistant_model_message,
                     );
                     if !assistant_content.trim().is_empty() {
+                        let message_stats = build_persisted_message_stats(
+                            &usage,
+                            &round_usage,
+                            confirmed_context_occupancy_tokens,
+                            &turn_decode_speed,
+                        );
                         self.append_chat(
                             &user_id,
                             &session_id,
                             "assistant",
                             Some(&json!(assistant_content)),
                             None,
-                            None,
+                            Some(&json!({ "message_stats": message_stats })),
                             Some(&reasoning),
                             None,
                             None,
@@ -975,13 +981,19 @@ impl Orchestrator {
                     messages.push(assistant_message);
                 }
                 if has_tool_calls_payload {
+                    let message_stats = build_persisted_message_stats(
+                        &usage,
+                        &round_usage,
+                        confirmed_context_occupancy_tokens,
+                        &turn_decode_speed,
+                    );
                     self.append_chat(
                         &user_id,
                         &session_id,
                         "assistant",
                         Some(&json!(assistant_content)),
                         None,
-                        Some(&json!({ "type": "tool_call" })),
+                        Some(&json!({ "type": "tool_call", "message_stats": message_stats })),
                         Some(&assistant_reasoning),
                         assistant_history.persisted_tool_calls.as_ref(),
                         None,
@@ -1534,13 +1546,22 @@ impl Orchestrator {
                             } else {
                                 Some(&json!(answer.clone()))
                             };
+                            let message_stats = build_persisted_message_stats(
+                                &usage,
+                                &round_usage,
+                                confirmed_context_occupancy_tokens,
+                                &turn_decode_speed,
+                            );
+                            let meta = question_panel_meta.as_ref().map(|value| {
+                                merge_persisted_message_stats_meta(value, message_stats)
+                            });
                             self.append_chat(
                                 &user_id,
                                 &session_id,
                                 "assistant",
                                 content,
                                 None,
-                                question_panel_meta.as_ref(),
+                                meta.as_ref(),
                                 None,
                                 None,
                                 None,
@@ -1553,13 +1574,20 @@ impl Orchestrator {
                             } else {
                                 Some(&json!(answer.clone()))
                             };
+                            let message_stats = build_persisted_message_stats(
+                                &usage,
+                                &round_usage,
+                                confirmed_context_occupancy_tokens,
+                                &turn_decode_speed,
+                            );
+                            let meta = merge_persisted_message_stats_meta(meta, message_stats);
                             self.append_chat(
                                 &user_id,
                                 &session_id,
                                 "assistant",
                                 content,
                                 None,
-                                Some(meta),
+                                Some(&meta),
                                 None,
                                 None,
                                 None,
@@ -1702,6 +1730,15 @@ impl Orchestrator {
                                         round_info.insert_into(map);
                                     }
                                     emitter.emit("progress", guard_payload).await;
+                                    let guard_meta = merge_persisted_message_stats_meta(
+                                        &guard_meta,
+                                        build_persisted_message_stats(
+                                            &usage,
+                                            &round_usage,
+                                            confirmed_context_occupancy_tokens,
+                                            &turn_decode_speed,
+                                        ),
+                                    );
                                     self.append_chat(
                                         &user_id,
                                         &session_id,
@@ -1833,13 +1870,19 @@ impl Orchestrator {
                                     log_payload,
                                 );
                                 if !answer.trim().is_empty() {
+                                    let message_stats = build_persisted_message_stats(
+                                        &usage,
+                                        &round_usage,
+                                        confirmed_context_occupancy_tokens,
+                                        &turn_decode_speed,
+                                    );
                                     self.append_chat(
                                         &user_id,
                                         &session_id,
                                         "assistant",
                                         Some(&json!(answer.clone())),
                                         None,
-                                        None,
+                                        Some(&json!({ "message_stats": message_stats })),
                                         None,
                                         None,
                                         None,
@@ -1915,13 +1958,19 @@ impl Orchestrator {
                                 }
                                 stop_reason = Some("final_tool".to_string());
                                 if !answer.trim().is_empty() {
+                                    let message_stats = build_persisted_message_stats(
+                                        &usage,
+                                        &round_usage,
+                                        confirmed_context_occupancy_tokens,
+                                        &turn_decode_speed,
+                                    );
                                     self.append_chat(
                                         &user_id,
                                         &session_id,
                                         "assistant",
                                         Some(&json!(answer.clone())),
                                         None,
-                                        None,
+                                        Some(&json!({ "message_stats": message_stats })),
                                         None,
                                         None,
                                         None,

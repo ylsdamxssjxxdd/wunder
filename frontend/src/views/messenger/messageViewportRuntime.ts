@@ -60,6 +60,7 @@ const clamp = (value: number, min: number, max: number): number => Math.max(min,
 
 // Measurements are disposable UI state; retain only a bounded recent working set.
 export const MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT = 384;
+const MESSAGE_RESIZE_REFRESH_DELAY_MS = 64;
 
 export const createMessageViewportRuntime = (
   options: MessageViewportRuntimeOptions
@@ -69,6 +70,7 @@ export const createMessageViewportRuntime = (
   let messageVirtualMeasureFrame: number | null = null;
   let messageViewportRefreshFrame: number | null = null;
   let messageDeferredMeasureHandle: number | null = null;
+  let messageResizeRefreshHandle: number | null = null;
   let messageDeferredMeasureUsesIdleCallback = false;
   let scheduledViewportRefreshNeedsScrollState = false;
   let scheduledViewportRefreshNeedsMeasure = false;
@@ -79,6 +81,7 @@ export const createMessageViewportRuntime = (
   let scheduledVirtualMeasureKeys = new Set<string>();
   let messageResizeObserver: ResizeObserver | null = null;
   const observedMessageNodes = new Map<string, HTMLElement>();
+  const pendingObservedResizeChanges = new Map<string, { key: string; previous: number | null; next: number }>();
   let olderHistoryLoadInFlight = false;
 
   const logViewportDebug = (event: string, payload?: unknown) => {
@@ -200,6 +203,39 @@ export const createMessageViewportRuntime = (
     observedMessageNodes.clear();
   };
 
+  const flushObservedMessageResizeChanges = () => {
+    messageResizeRefreshHandle = null;
+    const changes = Array.from(pendingObservedResizeChanges.values());
+    pendingObservedResizeChanges.clear();
+    if (!changes.length) {
+      return;
+    }
+    options.messageVirtualLayoutVersion.value += 1;
+    syncMessageVirtualMetrics();
+    updateMessageScrollState();
+    logViewportDebug('row-resize', {
+      changeCount: changes.length,
+      changes
+    });
+  };
+
+  const scheduleObservedMessageResizeRefresh = (
+    changes: Array<{ key: string; previous: number | null; next: number }>
+  ) => {
+    changes.forEach((change) => pendingObservedResizeChanges.set(change.key, change));
+    if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') {
+      flushObservedMessageResizeChanges();
+      return;
+    }
+    if (messageResizeRefreshHandle !== null) {
+      return;
+    }
+    messageResizeRefreshHandle = window.setTimeout(
+      flushObservedMessageResizeChanges,
+      MESSAGE_RESIZE_REFRESH_DELAY_MS
+    );
+  };
+
   const syncVisibleMessageResizeObserverTargets = () => {
     const container = options.messageListRef.value;
     if (
@@ -219,13 +255,7 @@ export const createMessageViewportRuntime = (
         if (!changes.length) {
           return;
         }
-        options.messageVirtualLayoutVersion.value += 1;
-        syncMessageVirtualMetrics();
-        updateMessageScrollState();
-        logViewportDebug('row-resize', {
-          changeCount: changes.length,
-          changes
-        });
+        scheduleObservedMessageResizeRefresh(changes);
       });
     }
     const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
@@ -521,9 +551,11 @@ export const createMessageViewportRuntime = (
   };
 
   const handleMessageListScroll = () => {
+    // Commit the follow mode in the scroll event itself. Streaming layout
+    // updates may request a bottom scroll before the deferred frame runs.
+    updateMessageScrollState();
     if (typeof window === 'undefined') {
       syncMessageVirtualMetrics();
-      updateMessageScrollState();
       rememberCurrentScroll();
       return;
     }
@@ -675,6 +707,10 @@ export const createMessageViewportRuntime = (
       messageDeferredMeasureHandle = null;
       messageDeferredMeasureUsesIdleCallback = false;
     }
+    if (typeof window !== 'undefined' && messageResizeRefreshHandle !== null) {
+      window.clearTimeout(messageResizeRefreshHandle);
+      messageResizeRefreshHandle = null;
+    }
     rememberCurrentScroll();
     releaseObservedMessageNodes();
     messageResizeObserver = null;
@@ -685,6 +721,7 @@ export const createMessageViewportRuntime = (
     scheduledViewportRefreshMeasureKeys.clear();
     scheduledVirtualMeasureAll = false;
     scheduledVirtualMeasureKeys.clear();
+    pendingObservedResizeChanges.clear();
   };
 
   return {
