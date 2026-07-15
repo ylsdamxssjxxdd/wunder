@@ -61,6 +61,7 @@ const clamp = (value: number, min: number, max: number): number => Math.max(min,
 // Measurements are disposable UI state; retain only a bounded recent working set.
 export const MESSAGE_VIRTUAL_HEIGHT_CACHE_LIMIT = 384;
 const MESSAGE_RESIZE_REFRESH_DELAY_MS = 64;
+const WORKFLOW_LAYOUT_REFRESH_INTERVAL_MS = 120;
 
 export const createMessageViewportRuntime = (
   options: MessageViewportRuntimeOptions
@@ -80,6 +81,9 @@ export const createMessageViewportRuntime = (
   let scheduledVirtualMeasureAll = false;
   let scheduledVirtualMeasureKeys = new Set<string>();
   let messageResizeObserver: ResizeObserver | null = null;
+  let workflowLayoutRefreshHandle: number | null = null;
+  let lastWorkflowLayoutRefreshAt = Number.NEGATIVE_INFINITY;
+  let pendingWorkflowLayoutMessageKey = '';
   const observedMessageNodes = new Map<string, HTMLElement>();
   const pendingObservedResizeChanges = new Map<string, { key: string; previous: number | null; next: number }>();
   let olderHistoryLoadInFlight = false;
@@ -570,16 +574,34 @@ export const createMessageViewportRuntime = (
     });
   };
 
-  const handleMessageWorkflowLayoutChange = (messageKey?: string) => {
+  const flushWorkflowLayoutChange = () => {
+    workflowLayoutRefreshHandle = null;
+    const messageKey = pendingWorkflowLayoutMessageKey;
+    pendingWorkflowLayoutMessageKey = '';
+    lastWorkflowLayoutRefreshAt = Date.now();
     logViewportDebug('workflow-layout-change', {
       messageKey: String(messageKey || '').trim()
     });
     scheduleMessageViewportRefresh({
       updateScrollState: true,
-      measure: true,
-      measureKeys: messageKey ? [messageKey] : undefined
+      // The tool list owns a fixed-height scroll area. Its output deltas do
+      // not change the message-row height, so skip forced geometry reads.
+      measure: false
     });
-    scheduleMessageVirtualMeasure(messageKey ? [messageKey] : undefined);
+  };
+
+  const handleMessageWorkflowLayoutChange = (messageKey?: string) => {
+    const normalizedKey = String(messageKey || '').trim();
+    if (normalizedKey) {
+      pendingWorkflowLayoutMessageKey = normalizedKey;
+    }
+    if (typeof window === 'undefined') {
+      flushWorkflowLayoutChange();
+      return;
+    }
+    if (workflowLayoutRefreshHandle !== null) return;
+    const delay = Math.max(0, WORKFLOW_LAYOUT_REFRESH_INTERVAL_MS - (Date.now() - lastWorkflowLayoutRefreshAt));
+    workflowLayoutRefreshHandle = window.setTimeout(flushWorkflowLayoutChange, delay);
   };
 
   const scrollVirtualMessageToIndex = (
@@ -711,6 +733,10 @@ export const createMessageViewportRuntime = (
       window.clearTimeout(messageResizeRefreshHandle);
       messageResizeRefreshHandle = null;
     }
+    if (typeof window !== 'undefined' && workflowLayoutRefreshHandle !== null) {
+      window.clearTimeout(workflowLayoutRefreshHandle);
+      workflowLayoutRefreshHandle = null;
+    }
     rememberCurrentScroll();
     releaseObservedMessageNodes();
     messageResizeObserver = null;
@@ -722,6 +748,7 @@ export const createMessageViewportRuntime = (
     scheduledVirtualMeasureAll = false;
     scheduledVirtualMeasureKeys.clear();
     pendingObservedResizeChanges.clear();
+    pendingWorkflowLayoutMessageKey = '';
   };
 
   return {

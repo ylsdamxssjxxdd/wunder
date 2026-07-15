@@ -1003,7 +1003,7 @@
               :style="{ height: `${agentVirtualTopSpacer.height}px` }"
               aria-hidden="true"
             ></div>
-            <template v-for="group in agentVirtualGroups" :key="group.length ? group[0].key : 'empty-group'">
+            <template v-for="(group, groupIndex) in agentVirtualGroups" :key="`agent-virtual-group:${groupIndex}`">
               <template v-for="item in group" :key="item.key">
               <div
                 v-if="
@@ -1105,32 +1105,27 @@
                   />
                 </div>
                 <div
-                  v-if="
-                    item.message.role === 'assistant' &&
-                      (Boolean(item.message.workflowStreaming) ||
-                        (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0) ||
-                        (Array.isArray(item.message.subagents) && item.message.subagents.length > 0))
-                  "
+                  v-if="shouldMountAgentWorkflow(item.message)"
                   class="messenger-workflow-scope chat-shell"
                 >
                   <MessageToolWorkflow
-                    v-if="
-                      Boolean(item.message.workflowStreaming) ||
-                        (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
-                    "
                     :key="`workflow:${item.key}`"
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
                     :render-version="buildMessageWorkflowRenderVersion(item.message)"
+                    :runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || '')"
+                    :session-id="String(chatStore.activeSessionId || '')"
                     :state-key="`${sessionHub.activeConversationKey}:workflow:${resolveMessageWorkflowStateKey(item.message, item.sourceIndex)}`"
                     :state-aliases="resolveMessageWorkflowStateAliases(item.message, item.sourceIndex, item.key)
                       .map((key) => `${sessionHub.activeConversationKey}:workflow:${key}`)"
                     :visible="
                       Boolean(
-                        item.message.workflowStreaming ||
+                        item.message.stream_incomplete ||
+                          item.message.workflowStreaming ||
                           (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
                       )
                     "
+                    :pending-placeholder="item.message.workflowPendingPlaceholder || null"
                     @layout-change="handleMessageWorkflowLayoutChange(item.key)"
                   />
                   <MessageSubagentPanel
@@ -1375,7 +1370,7 @@
               :style="{ height: `${worldVirtualTopSpacer.height}px` }"
               aria-hidden="true"
             ></div>
-            <template v-for="group in worldVirtualGroups" :key="group.length ? group[0].key : 'empty-world-group'">
+            <template v-for="(group, groupIndex) in worldVirtualGroups" :key="`world-virtual-group:${groupIndex}`">
               <div
                 v-for="item in group"
                 :key="item.key"
@@ -3012,6 +3007,7 @@ const shouldRenderAgentMessage = controller.shouldRenderAgentMessage;
 const shouldReuseAgentMetaResult = controller.shouldReuseAgentMetaResult;
 const shouldShowAgentMessageBubble = controller.shouldShowAgentMessageBubble;
 const shouldMountAgentMessageBubble = controller.shouldMountAgentMessageBubble;
+const shouldMountAgentWorkflow = controller.shouldMountAgentWorkflow;
 const shouldShowAgentResumeButton = controller.shouldShowAgentResumeButton;
 const shouldShowCompactionDivider = controller.shouldShowCompactionDivider;
 const shouldVirtualizeMessages = controller.shouldVirtualizeMessages;

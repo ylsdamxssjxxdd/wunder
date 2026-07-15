@@ -5,6 +5,7 @@ type HarnessApi = {
   switchSessionAndReturn: () => Promise<void>;
   prependHistory: () => Promise<void>;
   streamLatestMessage: () => Promise<void>;
+  streamToolOutputWhileTyping: () => Promise<void>;
   expandToolDetails: () => Promise<void>;
   showEarlierToolEntries: () => Promise<void>;
 };
@@ -33,6 +34,7 @@ test('real MessengerView keeps a bounded DOM through long history, scroll and se
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.runScrollProbe());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.prependHistory());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.streamLatestMessage());
+  await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.streamToolOutputWhileTyping());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.expandToolDetails());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.showEarlierToolEntries());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.switchSessionAndReturn());
@@ -45,11 +47,16 @@ test('real MessengerView keeps a bounded DOM through long history, scroll and se
   expect(metrics.maxExpandedToolCount).toBeLessThanOrEqual(3);
   expect(metrics.availableToolSummaryCount).toBeGreaterThanOrEqual(0);
   expect(metrics.initialToolSummaryCount).toBeGreaterThan(0);
-  expect(metrics.initialToolSummaryCount).toBeLessThanOrEqual(40);
+  // The active row remains mounted alongside the 40-entry virtual page.
+  expect(metrics.initialToolSummaryCount).toBeLessThanOrEqual(41);
   expect(metrics.earlierToolSummaryCount).toBeGreaterThan(metrics.initialToolSummaryCount);
-  expect(metrics.earlierToolSummaryCount).toBeLessThanOrEqual(80);
+  expect(metrics.earlierToolSummaryCount).toBeLessThanOrEqual(81);
   expect(metrics.domNodeCount).toBeLessThan(5000);
   expect(metrics.requestCount).toBeLessThan(80);
   expect(metrics.historyBackfillCount).toBe(40);
   expect(metrics.streamedCharacters).toBeGreaterThan(0);
+  expect(metrics.toolStreamUpdates).toBe(24);
+  expect(metrics.streamingWorkflowShellVisible).toBe(true);
+  expect(metrics.toolStreamFrameGapMs).toBeLessThan(250);
+  expect(metrics.composerInputLatencyMs).toBeLessThan(5000);
 });

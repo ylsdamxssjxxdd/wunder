@@ -872,11 +872,11 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
           });
       if (ctx.isAgentConversationActive.value) {
           const items = ctx.agentRenderableMessages.value;
-          return items.length > 12 || (items.length > 4 && hasExpensiveRenderableMessage(items));
+          return items.length > 24 || (items.length > 12 && hasExpensiveRenderableMessage(items));
       }
       if (ctx.retainedMessageRenderKind?.value === 'world' || ctx.isWorldConversationActive.value) {
           const items = ctx.worldRenderableMessages.value;
-          return items.length > 12 || (items.length > 4 && hasExpensiveRenderableMessage(items));
+          return items.length > 24 || (items.length > 12 && hasExpensiveRenderableMessage(items));
       }
       return false;
   });
@@ -1108,6 +1108,19 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
   ctx.shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.hasMessageContent(buildAssistantDisplayContent(message, ctx.t));
 
   ctx.shouldMountAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.shouldShowAgentMessageBubble(message);
+
+  ctx.shouldMountAgentWorkflow = (message: Record<string, unknown>): boolean => {
+      if (String(message?.role || '') !== 'assistant') {
+          return false;
+      }
+      const hasWorkflow = Boolean(message?.stream_incomplete) ||
+          Boolean(message?.workflowStreaming) ||
+          (Array.isArray(message?.workflowItems) && message.workflowItems.length > 0) ||
+          (Array.isArray(message?.subagents) && message.subagents.length > 0);
+      // Only the current model turn keeps a live workflow component. Older
+      // turns remain in the projection but must not retain hidden watchers.
+      return hasWorkflow && ctx.latestVisibleAgentAssistantMessage.value === message;
+  };
 
   ctx.hasPlanSteps = (plan: unknown): boolean => Array.isArray((plan as {
       steps?: unknown[];

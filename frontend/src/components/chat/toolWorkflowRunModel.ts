@@ -181,7 +181,8 @@ export const resolveWorkflowToolEventKind = (item: WorkflowItem): ToolEventKind 
 };
 
 export const resolveWorkflowPendingPlaceholder = (
-  items: WorkflowItem[]
+  items: WorkflowItem[],
+  fallback: WorkflowPendingPlaceholder | null = null
 ): WorkflowPendingPlaceholder | null => {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
@@ -242,7 +243,7 @@ export const resolveWorkflowPendingPlaceholder = (
       };
     }
   }
-  return null;
+  return fallback;
 };
 
 const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {

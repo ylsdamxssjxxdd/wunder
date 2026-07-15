@@ -212,6 +212,230 @@ test('chat runtime render adapter preserves untouched workflow row identity', ()
   assert.equal(secondRows[1]?.detail, 'updated output');
 });
 
+test('chat runtime render adapter retains the latest model-turn workflow after completion', () => {
+  const sessionId = 'session-active-workflow-window';
+  const projection = apply([{
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    messages: [
+      {
+        message_id: 'assistant-history',
+        user_turn_id: 'turn-history',
+        model_turn_id: 'model-history',
+        turn_index: 1,
+        role: 'assistant',
+        content: 'previous response',
+        workflowItems: [{
+          id: 'tool-history',
+          eventType: 'tool_result',
+          status: 'completed',
+          detail: 'previous detail'
+        }]
+      },
+      {
+        message_id: 'assistant-active',
+        user_turn_id: 'turn-active',
+        model_turn_id: 'model-active',
+        turn_index: 2,
+        role: 'assistant',
+        content: '',
+        workflowItems: [{
+          id: 'tool-active',
+          eventType: 'tool_call',
+          status: 'loading',
+          detail: 'active detail'
+        }]
+      }
+    ],
+    running: true
+  }, {
+    event_type: 'session_runtime',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    runtime_status: 'running'
+  }]);
+
+  const materialized = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message);
+  const history = materialized.find((message) => message.message_id === 'assistant-history');
+  const active = materialized.find((message) => message.message_id === 'assistant-active');
+
+  assert.deepEqual(history?.workflowItems, []);
+  assert.equal(history?.workflowStreaming, false);
+  assert.equal((active?.workflowItems as Array<Record<string, unknown>>).length, 1);
+  assert.equal(active?.workflowStreaming, true);
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'turn_completed',
+    source: 'test',
+    strict: true,
+    session_id: sessionId,
+    event_id: 'active-complete',
+    event_seq: 10,
+    user_turn_id: 'turn-active',
+    model_turn_id: 'model-active'
+  });
+
+  const completed = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message);
+  const completedHistory = completed.find((message) => message.message_id === 'assistant-history');
+  const completedActive = completed.find((message) => message.message_id === 'assistant-active');
+
+  assert.deepEqual(completedHistory?.workflowItems, []);
+  assert.equal((completedActive?.workflowItems as Array<Record<string, unknown>>).length, 1);
+  assert.equal(completedActive?.workflowStreaming, false);
+  assert.equal(completedActive?.stream_incomplete, false);
+
+  applyChatRuntimeEvent(projection, {
+    event_type: 'user_message_created',
+    source: 'test',
+    strict: true,
+    session_id: sessionId,
+    event_id: 'next-user-message',
+    event_seq: 11,
+    user_turn_id: 'turn-next',
+    message_id: 'user-next',
+    content: 'next question'
+  });
+  applyChatRuntimeEvent(projection, {
+    event_type: 'tool_call_started',
+    source: 'test',
+    strict: true,
+    session_id: sessionId,
+    event_id: 'next-tool-call',
+    event_seq: 12,
+    user_turn_id: 'turn-next',
+    model_turn_id: 'model-next',
+    message_id: 'assistant-next',
+    tool_call_id: 'tool-next',
+    tool_name: 'lookup'
+  });
+
+  const next = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message);
+  const previous = next.find((message) => message.message_id === 'assistant-active');
+  const nextActive = next.find((message) => message.message_id === 'assistant-next');
+
+  assert.deepEqual(previous?.workflowItems, []);
+  assert.equal((nextActive?.workflowItems as Array<Record<string, unknown>>).length, 1);
+});
+
+test('chat runtime render adapter restores an active workflow placeholder after snapshot hydration', () => {
+  const sessionId = 'session-workflow-refresh-placeholder';
+  const projection = apply([{
+    event_type: 'session_snapshot',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    messages: [
+      {
+        message_id: 'assistant-history',
+        user_turn_id: 'turn-history',
+        model_turn_id: 'model-history',
+        turn_index: 1,
+        role: 'assistant',
+        content: 'previous response',
+        workflowItems: [{ id: 'tool-history', eventType: 'tool_result', status: 'completed' }]
+      },
+      {
+        message_id: 'assistant-active',
+        user_turn_id: 'turn-active',
+        model_turn_id: 'model-active',
+        turn_index: 2,
+        role: 'assistant',
+        content: 'partial response',
+        status: 'final'
+      }
+    ],
+    running: true
+  }, {
+    event_type: 'session_runtime',
+    source: 'snapshot',
+    strict: false,
+    session_id: sessionId,
+    runtime_status: 'running'
+  }]);
+
+  const materialized = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message);
+  const history = materialized.find((message) => message.message_id === 'assistant-history');
+  const active = materialized.find((message) => message.message_id === 'assistant-active');
+
+  assert.deepEqual(history?.workflowItems, []);
+  assert.equal(history?.workflowStreaming, false);
+  assert.deepEqual(active?.workflowItems, []);
+  assert.equal(active?.workflowStreaming, true);
+  assert.deepEqual(active?.workflowPendingPlaceholder, {
+    kind: 'tool',
+    toolName: '',
+    toolDisplayName: '',
+    toolRuntimeName: '',
+    toolFunctionName: '',
+    eventType: 'runtime_pending'
+  });
+});
+
+test('chat runtime render adapter keeps the latest workflow while final text settles', () => {
+  const sessionId = 'session-workflow-final-text';
+  const projection = createChatRuntimeProjection();
+  const event = (event_type: string, event_id: string, event_seq: number, extra: Record<string, unknown> = {}) => ({
+    event_type,
+    source: 'test',
+    strict: true,
+    session_id: sessionId,
+    event_id,
+    event_seq,
+    user_turn_id: 'turn-1',
+    model_turn_id: 'model-1',
+    message_id: 'assistant-1',
+    ...extra
+  });
+
+  applyChatRuntimeEvent(projection, event('tool_call_started', 'tool-start', 1, {
+    payload: {
+      tool_call_id: 'call-1',
+      tool_name: 'lookup'
+    }
+  }));
+  const duringTool = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message)
+    .find((message) => message.message_id === 'assistant-1');
+  assert.equal((duringTool?.workflowItems as Array<Record<string, unknown>>).length, 1);
+  assert.equal(duringTool?.workflowStreaming, true);
+
+  applyChatRuntimeEvent(projection, event('tool_call_completed', 'tool-complete', 2, {
+    payload: {
+      tool_call_id: 'call-1',
+      tool_name: 'lookup'
+    }
+  }));
+  applyChatRuntimeEvent(projection, event('assistant_delta', 'answer-delta', 3, {
+    delta: 'partial answer'
+  }));
+  const duringAnswer = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message)
+    .find((message) => message.message_id === 'assistant-1');
+  assert.equal((duringAnswer?.workflowItems as Array<Record<string, unknown>>).length, 1);
+  assert.equal(duringAnswer?.content, 'partial answer');
+
+  applyChatRuntimeEvent(projection, event('assistant_final', 'answer-final', 4, {
+    content: 'final answer'
+  }));
+  const finalMessage = buildChatRuntimeRenderableMessages({ projection, sessionId })
+    .map((item) => item.message)
+    .find((message) => message.message_id === 'assistant-1');
+  const finalItems = finalMessage?.workflowItems as Array<Record<string, unknown>>;
+
+  assert.equal(finalMessage?.content, 'final answer');
+  assert.equal(finalItems.length, 1);
+  assert.equal(finalItems[0]?.status, 'completed');
+  assert.equal(finalMessage?.workflowStreaming, false);
+  assert.equal(finalMessage?.stream_incomplete, false);
+});
+
 test('bounded structural revisions avoid scanning large detail strings while tracking runtime sequence changes', () => {
   const detail = 'x'.repeat(500_000);
   const first = buildBoundedStructuralRevision([{ id: 'tool-1', updatedSeq: 1, detail }]);

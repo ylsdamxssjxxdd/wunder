@@ -28,6 +28,10 @@ type HarnessMetrics = {
   heapBytes: number | null;
   historyBackfillCount: number;
   streamedCharacters: number;
+  toolStreamFrameGapMs: number;
+  composerInputLatencyMs: number;
+  toolStreamUpdates: number;
+  streamingWorkflowShellVisible: boolean;
 };
 
 const SESSION_A = 'perf-session-a';
@@ -47,6 +51,10 @@ const metrics = ref<HarnessMetrics>({
   heapBytes: null
   ,historyBackfillCount: 0
   ,streamedCharacters: 0
+  ,toolStreamFrameGapMs: 0
+  ,composerInputLatencyMs: 0
+  ,toolStreamUpdates: 0
+  ,streamingWorkflowShellVisible: false
 });
 let requestCount = 0;
 const originalFetch = window.fetch.bind(window);
@@ -170,6 +178,55 @@ const streamLatestMessage = async () => {
   collectMetrics();
 };
 
+const streamToolOutputWhileTyping = async () => {
+  const chat = useChatStore();
+  const session = chat.runtimeProjection?.sessions?.[SESSION_A];
+  const latestAssistantId = [...(session?.messages || [])]
+    .reverse()
+    .find((messageId) => session?.messageById?.[messageId]?.role === 'assistant');
+  const latestAssistant = latestAssistantId ? session?.messageById?.[latestAssistantId] : null;
+  if (!latestAssistant) return;
+  latestAssistant.workflowItems = buildWorkflowItems(SESSION_A, 319, 50);
+  const liveItem = latestAssistant.workflowItems[latestAssistant.workflowItems.length - 1];
+  if (!liveItem) return;
+  latestAssistant.status = 'tooling';
+  liveItem.status = 'loading';
+  latestAssistant.structureVersion = Number(latestAssistant.structureVersion || 0) + 1;
+  chat.runtimeProjectionVersion += 1;
+  await nextTick();
+  metrics.value.streamingWorkflowShellVisible = Boolean(
+    document.querySelector('.message-tool-workflow')?.querySelector('.tool-workflow-entry-summary')
+  );
+
+  const input = document.querySelector<HTMLTextAreaElement>('.messenger-agent-composer textarea');
+  const frameGaps: number[] = [];
+  let previousFrameAt = performance.now();
+  const inputStartedAt = performance.now();
+  for (let index = 0; index < 24; index += 1) {
+    liveItem.detail = `Live output ${index}: ${'x'.repeat(384)}`;
+    liveItem.updatedSeq = index + 1;
+    chat.runtimeProjectionContentVersion += 1;
+    chat.runtimeProjectionContentVersionByMessage[latestAssistant.id] =
+      Number(chat.runtimeProjectionContentVersionByMessage[latestAssistant.id] || 0) + 1;
+    if (input) {
+      input.value = `typing-${index}`;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const now = performance.now();
+    frameGaps.push(now - previousFrameAt);
+    previousFrameAt = now;
+  }
+  await nextTick();
+  metrics.value.toolStreamFrameGapMs = Math.max(...frameGaps, 0);
+  metrics.value.composerInputLatencyMs = performance.now() - inputStartedAt;
+  metrics.value.toolStreamUpdates = 24;
+  latestAssistant.status = 'streaming';
+  liveItem.status = 'completed';
+  chat.runtimeProjectionVersion += 1;
+  collectMetrics();
+};
+
 const expandToolDetails = async () => {
   const list = document.querySelector<HTMLElement>('[data-testid="messenger-message-list"]');
   if (list) {
@@ -236,6 +293,7 @@ onMounted(async () => {
     runScrollProbe,
     prependHistory,
     streamLatestMessage,
+    streamToolOutputWhileTyping,
     expandToolDetails,
     showEarlierToolEntries,
     switchSessionAndReturn,

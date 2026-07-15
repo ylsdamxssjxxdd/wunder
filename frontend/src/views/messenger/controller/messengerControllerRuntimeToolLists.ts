@@ -494,7 +494,6 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
 
   ctx.activeMessengerSessionBusy = computed(() => {
       const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
-      const _projectionContentVersion = ctx.chatStore.runtimeProjectionContentVersion;
       const sessionId = String(ctx.chatStore.activeSessionId || '').trim();
       if (!sessionId)
           return false;
@@ -503,7 +502,6 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
 
   ctx.waitingAgentIdSet = computed(() => {
       const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
-      const _projectionContentVersion = ctx.chatStore.runtimeProjectionContentVersion;
       const sessionAgentMap = ctx.buildSessionAgentMap();
       const loadingBySession = (ctx.chatStore.loadingBySession && typeof ctx.chatStore.loadingBySession === 'object'
           ? ctx.chatStore.loadingBySession
@@ -536,7 +534,6 @@ export function installMessengerControllerRuntimeToolLists(ctx: MessengerControl
 
   ctx.streamingAgentIdSet = computed(() => {
       const _projectionVersion = ctx.chatStore.runtimeProjectionVersion;
-      const _projectionContentVersion = ctx.chatStore.runtimeProjectionContentVersion;
       const sessionAgentMap = ctx.buildSessionAgentMap();
       const loadingBySession = (ctx.chatStore.loadingBySession && typeof ctx.chatStore.loadingBySession === 'object'
           ? ctx.chatStore.loadingBySession

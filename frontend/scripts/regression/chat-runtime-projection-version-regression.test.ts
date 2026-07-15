@@ -208,6 +208,63 @@ test('runtime projection invalidation coalesces bursty steady assistant text del
   assert.equal(runtimeProjectionContentInvalidationState.pending, false);
 });
 
+test('runtime projection invalidation isolates steady tool output deltas to the message clock', async () => {
+  const store = createStore();
+  const initialEvent = (eventId: number, output: string) => buildCanonicalChatRuntimeEvents({
+    sessionId: 'session-1',
+    eventType: 'command_session_delta',
+    eventId,
+    requestId: 'request-tool-output',
+    phase: 'send',
+    payload: {
+      event_id: eventId,
+      event_seq: eventId,
+      user_round: 1,
+      model_round: 1,
+      command_session_id: 'command-1',
+      tool_call_id: 'tool-1',
+      tool: 'execute_command',
+      output
+    }
+  }).map((event) => ({
+    ...event,
+    payload: {
+      ...event.payload,
+      command_session_id: 'command-1',
+      tool_call_id: 'tool-1'
+    }
+  }));
+
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    initialEvent(1, 'first'),
+    { reason: 'stream:send' }
+  );
+  await flushTimers();
+  assert.equal(store.runtimeProjectionVersion, 1);
+
+  applyChatRuntimeEventsWithInvalidation(
+    store,
+    store.runtimeProjection,
+    initialEvent(2, 'second'),
+    { reason: 'stream:send' }
+  );
+  await flushTimers();
+
+  const [messageId, assistant] = Object.entries(store.runtimeProjection.sessions['session-1'].messageById)
+    .find(([, message]) => message.role === 'assistant') || [];
+  assert.ok(messageId);
+  assert.ok(assistant);
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersionByMessage[messageId], 1);
+  assert.equal(
+    assistant.workflowItems?.[0]?.detail.includes('second'),
+    true
+  );
+});
+
 test('runtime projection content invalidation has a timer fallback when animation frames stall', async () => {
   const store = createStore();
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;

@@ -39,6 +39,7 @@ test('messenger installs renderable messages before identity and navigation deri
 test('message workflow component keeps a stable key across live tool updates', () => {
   const messengerView = readSource('src/views/MessengerView.vue');
   const workflowComponent = readSource('src/components/chat/MessageToolWorkflow.vue');
+  const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
   const workflowStart = messengerView.indexOf('<MessageToolWorkflow');
   assert.ok(workflowStart >= 0);
   const workflowEnd = messengerView.indexOf('@layout-change', workflowStart);
@@ -48,6 +49,7 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(workflowSource.includes(':key="`workflow:${item.key}`"'));
   assert.ok(!workflowSource.includes(':key="`workflow:${item.key}:${buildMessageWorkflowRenderVersion'));
   assert.ok(workflowSource.includes(':render-version="buildMessageWorkflowRenderVersion(item.message)"'));
+  assert.ok(messengerView.includes('v-if="shouldMountAgentWorkflow(item.message)"'));
   assert.ok(workflowSource.includes(':state-key="`${sessionHub.activeConversationKey}:workflow:${resolveMessageWorkflowStateKey(item.message, item.sourceIndex)}`"'));
   assert.ok(workflowSource.includes(':state-aliases="resolveMessageWorkflowStateAliases(item.message, item.sourceIndex, item.key)'));
   assert.ok(workflowSource.includes('.map((key) => `${sessionHub.activeConversationKey}:workflow:${key}`)"'));
@@ -82,6 +84,19 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(routingPreferences.includes('`workflow-model-turn:${modelTurnId}`'));
   assert.ok(routingPreferences.includes('`workflow-first-item:${firstWorkflowRef}`'));
   assert.ok(routingPreferences.includes('context_occupancy_tokens'));
+  assert.ok(renderableMessages.includes('ctx.shouldMountAgentWorkflow = (message: Record<string, unknown>): boolean => {'));
+  assert.ok(renderableMessages.includes('ctx.latestVisibleAgentAssistantMessage.value === message'));
+});
+
+test('message virtual groups keep stable slots while their visible rows change', () => {
+  const messengerView = readSource('src/views/MessengerView.vue');
+  const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
+
+  assert.ok(messengerView.includes('v-for="(group, groupIndex) in agentVirtualGroups" :key="`agent-virtual-group:${groupIndex}`"'));
+  assert.ok(messengerView.includes('v-for="(group, groupIndex) in worldVirtualGroups" :key="`world-virtual-group:${groupIndex}`"'));
+  assert.ok(!messengerView.includes(":key=\"group.length ? group[0].key : 'empty-group'\""));
+  assert.ok(!messengerView.includes(":key=\"group.length ? group[0].key : 'empty-world-group'\""));
+  assert.ok(renderableMessages.includes('return items.length > 24 || (items.length > 12 && hasExpensiveRenderableMessage(items));'));
 });
 
 test('active agent plan panel preserves user expansion across streaming projection churn', () => {
@@ -326,6 +341,7 @@ test('realtime pulse does not refresh the full session list during interactive s
 test('streaming message text updates are scoped to the markdown body component', () => {
   const messengerView = readSource('src/views/MessengerView.vue');
   const markdownBody = readSource('src/components/chat/MessageMarkdownBody.vue');
+  const runtimeContent = readSource('src/components/chat/messageRuntimeContent.ts');
   const renderAdapter = readSource('src/realtime/chat/chatRuntimeRenderAdapter.ts');
   const renderableController = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
   const companionFloatingLayer = readSource('src/components/companions/CompanionFloatingLayer.vue');
@@ -335,20 +351,24 @@ test('streaming message text updates are scoped to the markdown body component',
   assert.ok(messengerView.includes(':runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || \'\')"'));
   assert.ok(messengerView.includes(':session-id="String(chatStore.activeSessionId || \'\')"'));
   assert.ok(messengerView.includes('shouldMountAgentMessageBubble(item.message)'));
-  assert.ok(markdownBody.includes('selectLatestAssistantForTurn'));
-  assert.ok(markdownBody.includes('resolveRuntimeContentSubscriptionMessageIds'));
+  assert.ok(markdownBody.includes('resolveRuntimeMessageContentSource'));
+  assert.ok(markdownBody.includes('resolveRuntimeMessageContentSubscriptionIds'));
+  assert.ok(markdownBody.includes('projection: chatStore.runtimeProjection'));
+  assert.ok(!markdownBody.includes('toRaw(chatStore.runtimeProjection)'));
   assert.ok(markdownBody.includes('props.runtimeUserTurnId'));
   assert.ok(markdownBody.includes('props.runtimeModelTurnId'));
   assert.ok(!markdownBody.includes('runtimeProjectionVersion'));
   assert.ok(markdownBody.includes('runtimeContentVersion.value'));
-  assert.ok(markdownBody.includes('const turnMessage = resolveRuntimeProjectedMessageByTurn(projection, sessionId);'));
   assert.ok(markdownBody.includes('runtimeProjectionContentVersionByMessage?.[messageId]'));
   assert.ok(markdownBody.includes('const resolveRuntimeProjectedMessage = () => {'));
   assert.ok(markdownBody.includes('const _contentVersion = runtimeContentVersion.value;'));
   assert.ok(markdownBody.includes('const projected = resolveRuntimeProjectedMessage();'));
   assert.ok(markdownBody.includes("chatDebugLog('chat.stream.perf', 'message-body-stream-render'"));
   assert.ok(markdownBody.includes('const isStreamingTextPreview = computed(() =>'));
-  assert.ok(markdownBody.includes('runtimeProjectionContentVersion || 0'));
+  assert.ok(!markdownBody.includes('runtimeProjectionContentVersion || 0'));
+  assert.ok(runtimeContent.includes('const direct = messageId'));
+  assert.ok(runtimeContent.includes('return direct || resolveRuntimeProjectedMessageByTurn(options);'));
+  assert.ok(runtimeContent.includes('rendered message\n// id is authoritative'));
   assert.ok(markdownBody.includes('ref="plainTextRef"'));
   assert.ok(markdownBody.includes('syncPlainTextDom(source);'));
   assert.ok(markdownBody.includes('LIVE_STREAM_TEXT_POLL_MS'));

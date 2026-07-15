@@ -25,19 +25,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, toRaw, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { renderMarkdown } from '@/utils/markdown';
 import { t } from '@/i18n';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
 import {
-  selectChatRuntimeMessage,
-  selectChatRuntimeSession,
-  selectLatestAssistantForTurn
-} from '@/realtime/chat/chatRuntimeSelectors';
-import type {
-  ChatRuntimeMessageProjection,
-  ChatRuntimeProjection
-} from '@/realtime/chat/chatRuntimeTypes';
+  resolveRuntimeMessageContentSource,
+  resolveRuntimeMessageContentSubscriptionIds
+} from './messageRuntimeContent';
 import { useChatStore } from '@/stores/chat';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
@@ -144,85 +139,36 @@ let lastStreamRenderTraceSignature = '';
 let lastPlainTextSource = '';
 
 const runtimeContentVersion = computed(() => {
-  const messageIds = resolveRuntimeContentSubscriptionMessageIds();
+  const messageIds = resolveRuntimeMessageContentSubscriptionIds({
+    // Keep this lookup reactive at the exact message path. Rendering the
+    // transcript stays isolated, while a final event can still replace the
+    // last streamed preview without requiring a full projection repaint.
+    projection: chatStore.runtimeProjection,
+    sessionId: String(props.sessionId || chatStore.activeSessionId || '').trim(),
+    runtimeMessageId: props.runtimeMessageId,
+    runtimeUserTurnId: props.runtimeUserTurnId,
+    runtimeModelTurnId: props.runtimeModelTurnId,
+    message: (props.message || {}) as MessageRecord
+  });
   const messageScopedVersion = messageIds.reduce(
     (sum, messageId) =>
       sum + Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0),
     0
   );
-  if (props.streaming === true && String(props.sessionId || chatStore.activeSessionId || '').trim()) {
-    return messageScopedVersion + Number(chatStore.runtimeProjectionContentVersion || 0);
-  }
   return messageScopedVersion;
 });
-
-const resolveRuntimeContentSubscriptionMessageIds = (): string[] => {
-  const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
-  const projection = toRaw(chatStore.runtimeProjection);
-  const ids = new Set<string>();
-  const explicitMessageId = String(props.runtimeMessageId || '').trim();
-  if (explicitMessageId) ids.add(explicitMessageId);
-  if (!sessionId) return Array.from(ids);
-
-  const turnMessage = resolveRuntimeProjectedMessageByTurn(projection, sessionId);
-  if (turnMessage?.id) ids.add(turnMessage.id);
-  return Array.from(ids);
-};
-
-const resolveMessageText = (...values: unknown[]): string => {
-  for (const value of values) {
-    const text = String(value ?? '').trim();
-    if (text) return text;
-  }
-  return '';
-};
-
-const resolveRuntimeProjectedMessageByTurn = (
-  projection: ChatRuntimeProjection | null | undefined,
-  sessionId: string
-): ChatRuntimeMessageProjection | null => {
-  const message = (props.message || {}) as MessageRecord;
-  if (String(message.role || '').trim() !== 'assistant') {
-    return null;
-  }
-  const modelTurnId = resolveMessageText(
-    props.runtimeModelTurnId,
-    message.__runtime_model_turn_id,
-    message.model_turn_id,
-    message.modelTurnId
-  );
-  if (modelTurnId) {
-    const session = selectChatRuntimeSession(projection, sessionId);
-    const modelTurn = session?.modelTurnById?.[modelTurnId];
-    if (modelTurn) {
-      for (let index = modelTurn.messageIds.length - 1; index >= 0; index -= 1) {
-        const candidate = session.messageById[modelTurn.messageIds[index]];
-        if (candidate?.role === 'assistant') return candidate;
-      }
-    }
-  }
-
-  const userTurnId = resolveMessageText(
-    props.runtimeUserTurnId,
-    message.__runtime_user_turn_id,
-    message.user_turn_id,
-    message.userTurnId
-  );
-  return userTurnId
-    ? selectLatestAssistantForTurn(projection, sessionId, userTurnId)
-    : null;
-};
 
 const resolveRuntimeProjectedMessage = () => {
   const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
   if (!sessionId) return null;
-  const projection = toRaw(chatStore.runtimeProjection);
-  const messageId = String(props.runtimeMessageId || '').trim();
-  const explicitMessage = messageId
-    ? selectChatRuntimeMessage(projection, sessionId, messageId)
-    : null;
-  const turnMessage = resolveRuntimeProjectedMessageByTurn(projection, sessionId);
-  return turnMessage || explicitMessage;
+  return resolveRuntimeMessageContentSource({
+    projection: chatStore.runtimeProjection,
+    sessionId,
+    runtimeMessageId: props.runtimeMessageId,
+    runtimeUserTurnId: props.runtimeUserTurnId,
+    runtimeModelTurnId: props.runtimeModelTurnId,
+    message: (props.message || {}) as MessageRecord
+  });
 };
 const displayMessage = computed<MessageRecord>(() => {
   const _contentVersion = runtimeContentVersion.value;

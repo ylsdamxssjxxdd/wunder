@@ -733,7 +733,6 @@ export function installMessengerControllerLifecycleRuntimeMeta(ctx: MessengerCon
   watch(
       () => [
           ctx.chatStore.runtimeProjectionVersion,
-          ctx.chatStore.runtimeProjectionContentVersion,
           String(ctx.chatStore.activeSessionId || ''),
           Array.isArray(ctx.chatStore.sessions) ? ctx.chatStore.sessions.length : 0,
           Object.keys(ctx.chatStore.loadingBySession || {}).sort().join('|')

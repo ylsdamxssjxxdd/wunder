@@ -297,7 +297,8 @@ export const applyChatRuntimeEvent = (
   }
 
   const hardGapReason = shouldApplySequentialGapImmediately(session, event) ? 'event_seq_gap' : '';
-  const contentOnlyMessageId = resolveContentOnlyRuntimeMessageId(session, event);
+  const contentOnlyMessageId = resolveContentOnlyRuntimeMessageId(session, event) ||
+    resolveWorkflowOutputOnlyRuntimeMessageId(session, event);
   if (
     contentOnlyMessageId &&
     !expiredGapReason &&
@@ -305,7 +306,11 @@ export const applyChatRuntimeEvent = (
     session.pendingSequentialEvents.length === 0 &&
     !shouldIgnoreEventForCancelledTurn(session, event)
   ) {
-    applyContentOnlyRuntimeEvent(session, event, contentOnlyMessageId);
+    if (isContentOnlyRuntimeEvent(event)) {
+      applyContentOnlyRuntimeEvent(session, event, contentOnlyMessageId);
+    } else {
+      applyWorkflowOutputOnlyRuntimeEvent(session, event, contentOnlyMessageId);
+    }
     appendDebugEvent(projection, session, event, beforeSummary, summarizeSession(session));
     return {
       applied: true,
@@ -356,6 +361,43 @@ const resolveContentOnlyRuntimeMessageId = (
   return '';
 };
 
+const resolveWorkflowOutputOnlyRuntimeMessageId = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent
+): string => {
+  if (event.type !== 'tool_call_delta') return '';
+  const sourceType = normalizeText(event.payload.source_event_type);
+  // Only an already-visible command/output stream is presentation-only. New
+  // calls, status transitions, and final results still take the structural path.
+  if (sourceType !== 'command_session_delta' && sourceType !== 'tool_output_delta') return '';
+  const modelTurn = session.modelTurnById[event.modelTurnId];
+  const messageId = modelTurn
+    ? resolveAssistantMessageIdForModelTurn(session, modelTurn, event.messageId)
+    : event.messageId;
+  const message = messageId ? session.messageById[messageId] : null;
+  if (!message || message.role !== 'assistant' || message.status !== 'tooling') return '';
+  const payload = event.payload;
+  const data = asRecord(payload.data);
+  const toolCallId = resolveExplicitToolWorkflowRef(payload, data);
+  const commandSessionId = firstText(
+    data.command_session_id,
+    data.commandSessionId,
+    payload.command_session_id,
+    payload.commandSessionId
+  );
+  const existing = Array.isArray(message.workflowItems)
+    ? message.workflowItems.find((item) =>
+      firstText(
+        item.toolCallId,
+        item.tool_call_id,
+        item.commandSessionId,
+        item.command_session_id
+      ) === (toolCallId || commandSessionId)
+    )
+    : null;
+  return existing && normalizeText(existing.status) === 'loading' ? message.id : '';
+};
+
 const applyContentOnlyRuntimeEvent = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent,
@@ -396,6 +438,33 @@ const applyContentOnlyRuntimeEvent = (
     session.appliedSeq = event.eventSeq;
   }
   setSessionBusy(session, 'running', 'streaming');
+};
+
+const applyWorkflowOutputOnlyRuntimeEvent = (
+  session: ChatRuntimeSessionProjection,
+  event: NormalizedRuntimeEvent,
+  messageId: string
+): void => {
+  if (event.eventId) {
+    session.eventIdIndex[event.eventId] = true;
+  }
+  markAppliedStreamEventId(session, event.eventId);
+  if (event.agentId) {
+    session.agentId = event.agentId;
+  }
+  const modelTurn = session.modelTurnById[event.modelTurnId];
+  const message = session.messageById[messageId];
+  if (message?.role === 'assistant') {
+    upsertToolWorkflowItem(message, event, 'loading', modelTurn);
+    message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  }
+  if (modelTurn) {
+    modelTurn.status = 'tool_running';
+  }
+  if (!isCommandSessionRuntimeEvent(event) && event.eventSeq !== null && event.eventSeq > session.appliedSeq) {
+    session.appliedSeq = event.eventSeq;
+  }
+  setSessionBusy(session, 'running', 'tool_running');
 };
 
 type NormalizedRuntimeEvent = ChatRuntimeEvent & {
@@ -4114,7 +4183,7 @@ const upsertToolWorkflowItem = (
   const existing = findProjectedWorkflowItem(
     items,
     itemId,
-    workflowRef,
+    workflowRef || toolCallId || commandSessionId,
     isCommandSessionEvent && toolCallId ? '' : commandSessionId,
     approvalId
   );

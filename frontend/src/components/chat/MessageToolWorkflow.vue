@@ -131,9 +131,11 @@ let workflowStateCacheClock = 0;
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, toRaw, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
+import { selectChatRuntimeMessage } from '@/realtime/chat/chatRuntimeSelectors';
+import { useChatStore } from '@/stores/chat';
 import {
   useCommandSessionStore,
   type CommandSessionRuntimeEntry
@@ -154,8 +156,10 @@ import {
   buildWorkflowToolRuns,
   resolveWorkflowPendingPlaceholder,
   type RawToolRun as RawEntry,
-  type WorkflowItem
+  type WorkflowItem,
+  type WorkflowPendingPlaceholder
 } from './toolWorkflowRunModel';
+import { createToolWorkflowRenderBatcher } from './toolWorkflowRenderBatcher';
 import { shouldRenderWorkflowShell } from './toolWorkflowVisibility';
 import {
   formatWorkflowContextTokensLabel,
@@ -249,8 +253,11 @@ type Props = {
   visible?: boolean;
   terminalAutoStick?: TerminalAutoStickMode;
   renderVersion?: number | string;
+  runtimeMessageId?: string;
+  sessionId?: string;
   stateKey?: string;
   stateAliases?: string[];
+  pendingPlaceholder?: WorkflowPendingPlaceholder | null;
 };
 
 type UnknownObject = Record<string, unknown>;
@@ -312,16 +319,21 @@ const props = withDefaults(defineProps<Props>(), {
   visible: false,
   terminalAutoStick: 'smart',
   renderVersion: 0,
+  runtimeMessageId: '',
+  sessionId: '',
   stateKey: '',
-  stateAliases: () => []
+  stateAliases: () => [],
+  pendingPlaceholder: null
 });
 const emit = defineEmits<{
   (event: 'layout-change'): void;
 }>();
 
 const { t, language } = useI18n();
+const chatStore = useChatStore();
 const commandSessionStore = useCommandSessionStore();
 const expandedKeys = ref<Set<string>>(new Set());
+const renderedItems = ref<WorkflowItem[]>([]);
 const visibleEntryLimit = ref(WORKFLOW_ENTRY_PAGE_SIZE);
 const visibleSourceItemLimit = ref(WORKFLOW_EVENT_PAGE_SIZE);
 const streamBodyRefMap = new Map<string, HTMLPreElement>();
@@ -350,6 +362,36 @@ let workflowLayoutFrame: number | null = null;
 let workflowToggleProgrammatic = false;
 let toolCallDebugHintHideTimer: ReturnType<typeof setTimeout> | null = null;
 const programmaticEntryToggleKeys = new Set<string>();
+const resolveRuntimeWorkflowItems = (): WorkflowItem[] | null => {
+  // Historical workflow DOM is intentionally unloaded by the render adapter.
+  // Do not bypass that window by reading the complete runtime projection here.
+  if (!props.visible) return null;
+  const messageId = String(props.runtimeMessageId || '').trim();
+  const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
+  if (!messageId || !sessionId) return null;
+  const runtimeMessage = selectChatRuntimeMessage(
+    toRaw(chatStore.runtimeProjection),
+    sessionId,
+    messageId
+  );
+  return Array.isArray(runtimeMessage?.workflowItems)
+    ? runtimeMessage.workflowItems as WorkflowItem[]
+    : null;
+};
+
+const workflowRenderBatcher = createToolWorkflowRenderBatcher(() => {
+  // The runtime keeps the workflow list identity stable. A shallow list copy
+  // publishes the coalesced revision while retaining each row object's cache.
+  const runtimeItems = resolveRuntimeWorkflowItems();
+  // A projection can briefly retain an empty workflow list while its already
+  // materialized message still has the latest structural snapshot. Do not let
+  // that transient erase the workflow shell before the local clock catches up.
+  const propItems = Array.isArray(props.items) ? props.items : [];
+  const sourceItems = runtimeItems && (runtimeItems.length > 0 || propItems.length === 0)
+    ? runtimeItems
+    : propItems;
+  renderedItems.value = sourceItems.map((item) => toRaw(item) as WorkflowItem);
+});
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
 
@@ -3956,10 +3998,7 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 };
 
 const rawToolEntries = computed<RawEntry[]>(() => {
-  // Render version changes on a projected tool delta even when the cached
-  // workflow array intentionally keeps its identity stable.
-  void props.renderVersion;
-  const items = Array.isArray(props.items) ? props.items : [];
+  const items = renderedItems.value;
   const startIndex = Math.max(0, items.length - visibleSourceItemLimit.value);
   return buildWorkflowToolRuns(items.slice(startIndex));
 });
@@ -4024,25 +4063,60 @@ const showEarlierEntries = async (): Promise<void> => {
   } else {
     visibleSourceItemLimit.value += WORKFLOW_EVENT_PAGE_SIZE;
   }
+  workflowRenderBatcher.request(true);
   await nextTick();
   if (element) {
     element.scrollTop = previousTop + Math.max(0, element.scrollHeight - previousHeight);
   }
-  scheduleWorkflowLayoutChange();
 };
 
 watch(
-  () => Array.isArray(props.items) ? props.items.length : 0,
-  (count, previousCount) => {
+  () => {
+    const messageId = String(props.runtimeMessageId || '').trim();
+    const sessionId = String(props.sessionId || chatStore.activeSessionId || '').trim();
+    const contentVersion = messageId
+      ? Number(chatStore.runtimeProjectionContentVersionByMessage?.[messageId] || 0)
+      : 0;
+    return [sessionId, messageId, contentVersion].join('\u0001');
+  },
+  (signature, previousSignature) => {
+    const [sessionId, messageId] = signature.split('\u0001');
+    if (!sessionId || !messageId) return;
+    const [previousSessionId, previousMessageId] = String(previousSignature || '').split('\u0001');
+    workflowRenderBatcher.request(
+      sessionId !== previousSessionId || messageId !== previousMessageId
+    );
+  },
+  { immediate: true }
+);
+
+watch(
+  () => {
+    const items = Array.isArray(props.items) ? props.items : [];
+    const latest = items[items.length - 1] as WorkflowItem | undefined;
+    return [
+      items.length,
+      latest?.updatedSeq ?? latest?.updated_seq ?? '',
+      latest?.status ?? '',
+      props.renderVersion,
+      props.loading ? 1 : 0,
+      props.visible ? 1 : 0
+    ].join('\u0001');
+  },
+  (_signature, previousSignature) => {
+    const count = Array.isArray(props.items) ? props.items.length : 0;
+    const previousCount = Number(String(previousSignature || '').split('\u0001')[0] || 0);
     if (count < previousCount) {
       visibleEntryLimit.value = WORKFLOW_ENTRY_PAGE_SIZE;
       visibleSourceItemLimit.value = WORKFLOW_EVENT_PAGE_SIZE;
-      return;
-    }
-    if (count > previousCount && hiddenSourceItemCount.value === 0) {
+    } else if (count > previousCount && hiddenSourceItemCount.value === 0) {
       visibleSourceItemLimit.value = Math.max(visibleSourceItemLimit.value, count);
     }
-  }
+    // New rows and terminal states are immediate; high-frequency output deltas
+    // are coalesced outside the input event path.
+    workflowRenderBatcher.request(props.loading === false || count !== previousCount);
+  },
+  { immediate: true }
 );
 
 watch(
@@ -4099,7 +4173,6 @@ watch(
         if (shouldAutoScrollWorkflow()) {
           scrollWorkflowToBottom();
         }
-        scheduleWorkflowLayoutChange();
       }
     });
   },
@@ -4122,7 +4195,6 @@ watch(
   () => {
     void nextTick(() => {
       syncEntryOpenStates();
-      scheduleWorkflowLayoutChange();
     });
   },
   { immediate: true, flush: 'post' }
@@ -4160,7 +4232,6 @@ const handleEntryToggle = (key: string, event: Event) => {
     if (shouldAutoScrollWorkflow()) {
       scrollWorkflowToBottom();
     }
-    scheduleWorkflowLayoutChange();
   });
 };
 
@@ -4169,7 +4240,7 @@ const latestEntry = computed(() =>
 );
 const pendingPlaceholder = computed(() =>
   (void props.renderVersion, props.visible && props.loading && entries.value.length === 0)
-    ? resolveWorkflowPendingPlaceholder(props.items)
+    ? resolveWorkflowPendingPlaceholder(renderedItems.value, props.pendingPlaceholder)
     : null
 );
 const pendingPlaceholderTitle = computed(() => {
@@ -4371,6 +4442,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  workflowRenderBatcher.dispose();
   saveWorkflowPanelState();
   clearToolCallDebugHintHideTimer();
   hideToolCallDebugHint();
@@ -4423,6 +4495,7 @@ onBeforeUnmount(() => {
   background: transparent;
   padding: 0;
   color: var(--workflow-term-text);
+  contain: layout style paint;
 }
 
 .tool-workflow-banner {
@@ -4758,6 +4831,7 @@ onBeforeUnmount(() => {
   background: var(--workflow-term-bg);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
+  contain: layout paint;
 }
 
 .tool-workflow-list::-webkit-scrollbar {

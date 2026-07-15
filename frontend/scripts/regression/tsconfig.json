@@ -114,6 +114,7 @@
     "./message-viewport-runtime-regression.test.ts",
     "./compaction-ui-regression.test.ts",
     "./tool-workflow-regression.test.ts",
+    "./tool-workflow-render-batcher-regression.test.ts",
     "./tool-workflow-visibility-regression.test.ts",
     "./tool-workflow-command-regression.test.ts",
     "./tool-workflow-patch-preview-regression.test.ts",
