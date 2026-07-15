@@ -245,6 +245,21 @@ const materializeChatRuntimeMessageWithCache = (
     sessionCache.byMessageId.delete(message.id);
     return null;
   }
+  if (cached) {
+    // Runtime tool events normally touch only the newest workflow record. Keep
+    // the previous materialized row objects so Vue does not patch every tool
+    // entry when a single streaming delta arrives.
+    syncMaterializedMessage(cached.message, materialized);
+    const lastUsed = ++materializedMessageCacheClock;
+    sessionCache.byMessageId.set(message.id, {
+      sourceRevision,
+      materializedMutableRevision: buildMaterializedMutableFieldsRevision(cached.message),
+      message: cached.message,
+      lastUsed
+    });
+    sessionCache.lastUsed = lastUsed;
+    return cached.message;
+  }
   const lastUsed = ++materializedMessageCacheClock;
   sessionCache.byMessageId.set(message.id, {
     sourceRevision,
@@ -254,6 +269,97 @@ const materializeChatRuntimeMessageWithCache = (
   });
   sessionCache.lastUsed = lastUsed;
   return materialized;
+};
+
+const syncMaterializedMessage = (
+  target: ChatMessageLike,
+  source: ChatMessageLike
+): void => {
+  const preservedRecordLists = new Set(['workflowItems', 'subagents']);
+  Object.keys(target).forEach((key) => {
+    if (!preservedRecordLists.has(key) && source[key] === undefined) {
+      delete target[key];
+    }
+  });
+  Object.entries(source).forEach(([key, value]) => {
+    if (key === 'workflowItems' || key === 'subagents') return;
+    target[key] = value;
+  });
+  syncMaterializedProjectionRecords(target, source, 'workflowItems');
+  syncMaterializedProjectionRecords(target, source, 'subagents');
+};
+
+const syncMaterializedProjectionRecords = (
+  target: ChatMessageLike,
+  source: ChatMessageLike,
+  field: 'workflowItems' | 'subagents'
+): void => {
+  const incoming = Array.isArray(source[field])
+    ? source[field].filter(isPlainRecord)
+    : [];
+  const existing = Array.isArray(target[field])
+    ? target[field].filter(isPlainRecord)
+    : [];
+  if (incoming.length === 0) {
+    if (existing.length > 0 || target[field] !== undefined) {
+      target[field] = [];
+    }
+    return;
+  }
+  const existingByKey = new Map(
+    existing.map((record, index) => [resolveMaterializedProjectionRecordKey(record, index), record])
+  );
+  const next = incoming.map((record, index) => {
+    const key = resolveMaterializedProjectionRecordKey(record, index);
+    const previous = existingByKey.get(key);
+    if (!previous) return record;
+    if (buildMaterializedProjectionRecordRevision(previous) !== buildMaterializedProjectionRecordRevision(record)) {
+      Object.keys(previous).forEach((property) => {
+        if (record[property] === undefined) delete previous[property];
+      });
+      Object.assign(previous, record);
+    }
+    return previous;
+  });
+  if (!Array.isArray(target[field])) {
+    target[field] = next;
+    return;
+  }
+  // Mutate in place to retain the list identity consumed by the workflow UI.
+  (target[field] as Record<string, unknown>[]).splice(0, existing.length, ...next);
+};
+
+const resolveMaterializedProjectionRecordKey = (
+  record: Record<string, unknown>,
+  index: number
+): string => firstText(
+  record.id,
+  record.itemId,
+  record.item_id,
+  record.key,
+  record.toolCallId,
+  record.tool_call_id,
+  record.run_id,
+  record.runId,
+  record.session_id,
+  record.sessionId
+) || `index:${index}`;
+
+const buildMaterializedProjectionRecordRevision = (
+  record: Record<string, unknown>
+): string => {
+  const updateSequence = record.updatedSeq ?? record.updated_seq;
+  const hasUpdateSequence = updateSequence !== undefined && updateSequence !== null && updateSequence !== '';
+  return [
+  updateSequence,
+  record.status,
+  record.eventType,
+  record.event_type,
+  record.event,
+  // Runtime projections carry an update sequence. Do not invalidate every
+  // untouched row merely because materialization cloned its wrapper object.
+  hasUpdateSequence ? '' : buildBoundedStructuralRevision(record)
+].join('\u0001');
 };
 
 const resolveMaterializedSessionMessageCache = (

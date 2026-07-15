@@ -153,6 +153,65 @@ test('chat runtime render adapter reuses materialized objects across steady cont
   assert.equal(updated[0].content, 'stable update');
 });
 
+test('chat runtime render adapter preserves untouched workflow row identity', () => {
+  const sessionId = 'session-workflow-row-cache';
+  const projection = apply([
+    {
+      event_type: 'session_snapshot',
+      source: 'snapshot',
+      strict: false,
+      session_id: sessionId,
+      messages: [{
+        message_id: 'assistant-workflow-row-cache',
+        user_turn_id: 'turn-workflow-row-cache',
+        model_turn_id: 'model-workflow-row-cache',
+        turn_index: 1,
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        workflowItems: [
+          {
+            id: 'tool-row-1',
+            eventType: 'tool_result',
+            status: 'completed',
+            toolCallId: 'tool-row-1',
+            updatedSeq: 1,
+            detail: 'first result'
+          },
+          {
+            id: 'tool-row-2',
+            eventType: 'tool_output_delta',
+            status: 'loading',
+            toolCallId: 'tool-row-2',
+            updatedSeq: 2,
+            detail: 'initial output'
+          }
+        ]
+      }],
+      loading: false,
+      running: true
+    }
+  ]);
+
+  const first = materializeChatRuntimeMessages(projection, sessionId)[0];
+  const firstRows = first.workflowItems as Array<Record<string, unknown>>;
+  const firstRow = firstRows[0];
+  const secondRow = firstRows[1];
+  const projected = projection.sessions[sessionId]?.messageById['assistant-workflow-row-cache'];
+  assert.ok(projected);
+  (projected?.workflowItems?.[1] as Record<string, unknown>).detail = 'updated output';
+  (projected?.workflowItems?.[1] as Record<string, unknown>).updatedSeq = 3;
+  projected!.structureVersion = Number(projected!.structureVersion || 0) + 1;
+
+  const second = materializeChatRuntimeMessages(projection, sessionId)[0];
+  const secondRows = second.workflowItems as Array<Record<string, unknown>>;
+  assert.equal(second, first);
+  assert.equal(secondRows, firstRows);
+  assert.equal(secondRows[0], firstRow);
+  assert.equal(secondRows[1], secondRow);
+  assert.equal(secondRows[1]?.detail, 'updated output');
+});
+
 test('bounded structural revisions avoid scanning large detail strings while tracking runtime sequence changes', () => {
   const detail = 'x'.repeat(500_000);
   const first = buildBoundedStructuralRevision([{ id: 'tool-1', updatedSeq: 1, detail }]);
@@ -1266,7 +1325,7 @@ test('chat runtime render adapter materializes projected usage stats for message
   assert.equal(second.stats.roundUsage.total, 150);
 });
 
-test('chat runtime render adapter invalidates cached materialization when projected stats mutate in place', () => {
+test('chat runtime render adapter updates cached materialization when projected stats mutate in place', () => {
   const projection = createChatRuntimeProjection();
   applyChatRuntimeEvent(projection, {
     event_type: 'assistant_message_created',
@@ -1337,7 +1396,7 @@ test('chat runtime render adapter invalidates cached materialization when projec
   const second = materializeChatRuntimeMessages(projection, 'session-1')[0] as Record<string, any>;
   const entries = buildAssistantMessageStatsEntries(second, t, [second]);
 
-  assert.notEqual(second, first);
+  assert.equal(second, first);
   assert.equal(second.stats.avg_model_round_speed_tps, 5);
   assert.equal(second.stats.toolCalls, 1);
   assert.equal(entries.find((item) => item.key === 'speed')?.value, '5.00 token/s');

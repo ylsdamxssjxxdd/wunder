@@ -315,8 +315,14 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
       stats?.elapsed_s
   );
   if (interaction !== null) return interaction;
-  const prefill = normalizeDurationSeconds(stats?.prefill_duration_s);
-  const decode = normalizeDurationSeconds(stats?.decode_duration_s);
+  // Persisted history stores turn aggregates, while live events often carry
+  // per-model-round values. Prefer aggregates so a page reload keeps duration.
+  const prefill = normalizeDurationSeconds(
+    stats?.prefill_duration_total_s ?? stats?.prefill_duration_s
+  );
+  const decode = normalizeDurationSeconds(
+    stats?.decode_duration_total_s ?? stats?.decode_duration_s
+  );
   if (prefill === null && decode === null) return null;
   return (prefill ?? 0) + (decode ?? 0);
 };

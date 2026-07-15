@@ -129,6 +129,24 @@ test('message stats shows backend average decode speed even when usage is absent
   assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
+test('message stats keeps persisted aggregate duration after history refresh', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        prefill_duration_total_s: 0.75,
+        decode_duration_total_s: 2.25,
+        avg_model_round_speed_tps: 48,
+        avg_model_round_speed_rounds: 3
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Duration'), '3.00 s');
+});
+
 test('message stats context ignores final usage and round usage totals without occupancy', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

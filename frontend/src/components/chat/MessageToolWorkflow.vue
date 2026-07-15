@@ -333,7 +333,11 @@ const workflowUserCollapsed = ref(true);
 const userCollapsedEntryKeys = ref<Set<string>>(new Set());
 const detailParseCache = new Map<string, UnknownObject | false>();
 const previewCache = new Map<string, string>();
-const entryViewCache = new Map<string, { revision: string; view: ToolEntryView }>();
+const entryViewCache = new Map<string, {
+  revision: string;
+  includesDetails: boolean;
+  view: ToolEntryView;
+}>();
 const entryDetailRefMap = new Map<string, HTMLDetailsElement>();
 const toolCallDebugHintRef = ref<HTMLElement | null>(null);
 const toolCallDebugHint = ref<ToolCallDebugHintState>({
@@ -3726,24 +3730,46 @@ const resolveCompactionDetailObject = (entry: RawEntry): UnknownObject | null =>
   || parseDetailObject(entry.outputItem?.detail)
   || parseDetailObject(entry.callItem?.detail);
 
-const buildEntryView = (entry: RawEntry): ToolEntryView => {
+const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView => {
   const commandSession = resolveCommandSessionSnapshot(entry);
+  const isCommand = isExecuteCommandTool(entry.toolName);
+  const isPatch = isApplyPatchTool(entry.toolName);
+  const toolDisplay = resolveEntryToolDisplayName(entry);
+  const status =
+    isPatch && isToolResultPayloadFailed(entry.resultItem)
+      ? 'failed'
+      : resolveEntryStatus(entry, commandSession);
+  const isCompaction = isCompactionEntry(entry);
+  if (!includeDetails) {
+    return {
+      key: entry.key,
+      revision: '',
+      toolLabel: toolDisplay,
+      summaryBrief: '',
+      summaryTitle: toolDisplay,
+      toolCallRawTitle: '',
+      toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
+      isCompaction,
+      status,
+      contextTokensLabel: '',
+      contextTokensSource: 'none',
+      consumedTokensLabel: '',
+      consumedTokensSource: 'none',
+      durationLabel: '',
+      sections: []
+    };
+  }
+
   const rawCommand = pickString(
     commandSession?.command,
     resolveCommandFromCall(entry.callItem),
     resolveCommandFromOutput(entry.outputItem),
     resolveCommandFromResult(entry.resultItem)
   );
-  const command = isExecuteCommandTool(entry.toolName) ? rawCommand : '';
-  const toolDisplay = resolveEntryToolDisplayName(entry);
+  const command = isCommand ? rawCommand : '';
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
-  const status =
-    isApplyPatchTool(entry.toolName) && isToolResultPayloadFailed(entry.resultItem)
-      ? 'failed'
-      : resolveEntryStatus(entry, commandSession);
-  const isCompaction = isCompactionEntry(entry);
   const compactionDisplay = isCompaction
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
@@ -3769,14 +3795,18 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const durationLabel = formatWorkflowDurationLabel(
     resolveWorkflowEntryDurationMs(entry, resolveCommandSessionDurationMs(commandSession))
   );
-  const toolResultSection = buildToolResultSection(
-    entry,
-    status,
-    compactionDisplay,
-    commandSession,
-    command,
-    errorText
-  );
+  // Detail bodies can parse and format large tool payloads. Keep that work out
+  // of the live collapsed list; Vue mounts it only for an explicitly opened row.
+  const toolResultSection = includeDetails
+    ? buildToolResultSection(
+        entry,
+        status,
+        compactionDisplay,
+        commandSession,
+        command,
+        errorText
+      )
+    : null;
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
@@ -3800,6 +3830,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
 
 const summarizeEntryRevisionItem = (value: WorkflowItem | null): string => {
   if (!value) return '';
+  const updateSequence = (value as UnknownObject).updatedSeq ?? (value as UnknownObject).updated_seq;
+  const hasUpdateSequence = updateSequence !== undefined && updateSequence !== null && updateSequence !== '';
   return [
     value.id,
     value.itemId,
@@ -3822,11 +3854,10 @@ const summarizeEntryRevisionItem = (value: WorkflowItem | null): string => {
     value.tool_call_id,
     value.commandSessionId,
     value.command_session_id,
-    buildBoundedStructuralRevision(value.detail),
-    buildBoundedStructuralRevision(value.toolCallRawDetail || value.tool_call_raw_detail),
-    buildBoundedStructuralRevision(value.toolResultRawDetail || value.tool_result_raw_detail),
-    (value as UnknownObject).updatedSeq,
-    (value as UnknownObject).updated_seq
+    hasUpdateSequence ? '' : buildBoundedStructuralRevision(value.detail),
+    hasUpdateSequence ? '' : buildBoundedStructuralRevision(value.toolCallRawDetail || value.tool_call_raw_detail),
+    hasUpdateSequence ? '' : buildBoundedStructuralRevision(value.toolResultRawDetail || value.tool_result_raw_detail),
+    updateSequence
   ].map((item) => String(item ?? '')).join('\u0002');
 };
 
@@ -3858,16 +3889,16 @@ const buildEntryRevision = (entry: RawEntry): string => [
   language.value
 ].join('\u0001');
 
-const buildCachedEntryView = (entry: RawEntry): ToolEntryView => {
+const buildCachedEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView => {
   const revision = buildEntryRevision(entry);
   const cached = entryViewCache.get(entry.key);
-  if (cached?.revision === revision) {
+  if (cached?.revision === revision && (!includeDetails || cached.includesDetails)) {
     entryViewCache.delete(entry.key);
     entryViewCache.set(entry.key, cached);
     return cached.view;
   }
-  const view = { ...buildEntryView(entry), revision };
-  entryViewCache.set(entry.key, { revision, view });
+  const view = { ...buildEntryView(entry, includeDetails), revision };
+  entryViewCache.set(entry.key, { revision, includesDetails: includeDetails, view });
   while (entryViewCache.size > PREVIEW_CACHE_LIMIT) {
     const oldestKey = entryViewCache.keys().next().value as string | undefined;
     if (!oldestKey) break;
@@ -3925,6 +3956,9 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 };
 
 const rawToolEntries = computed<RawEntry[]>(() => {
+  // Render version changes on a projected tool delta even when the cached
+  // workflow array intentionally keeps its identity stable.
+  void props.renderVersion;
   const items = Array.isArray(props.items) ? props.items : [];
   const startIndex = Math.max(0, items.length - visibleSourceItemLimit.value);
   return buildWorkflowToolRuns(items.slice(startIndex));
@@ -3939,7 +3973,7 @@ const buildEntries = (): ToolEntryView[] => {
   const startIndex = Math.max(0, rawEntries.length - visibleEntryLimit.value);
   return rawEntries
     .filter((entry, index) => index >= startIndex || expandedKeys.value.has(entry.key))
-    .map(buildCachedEntryView);
+    .map((entry) => buildCachedEntryView(entry, expandedKeys.value.has(entry.key)));
 };
 
 const isLiveEntryStatus = (status: string): boolean =>

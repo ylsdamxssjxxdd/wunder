@@ -1,3 +1,5 @@
+import { buildBoundedStructuralRevision } from '@/utils/boundedStructuralRevision';
+
 export type WorkflowItem = {
   id?: string | number;
   itemId?: string | number;
@@ -36,6 +38,8 @@ export type WorkflowItem = {
   tool_call_raw_detail?: string;
   toolResultRawDetail?: string;
   tool_result_raw_detail?: string;
+  updatedSeq?: number | string;
+  updated_seq?: number | string;
 };
 
 export type RawToolRun = {
@@ -251,13 +255,20 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
       lastKey = '';
       return;
     }
+    const updatedSequence = item.updatedSeq ?? item.updated_seq;
+    // Tool output can contain multi-megabyte logs. A bounded revision keeps
+    // duplicate suppression correct without trimming every payload per delta.
+    const detailRevision = updatedSequence === undefined || updatedSequence === null || updatedSequence === ''
+      ? buildBoundedStructuralRevision(item.detail)
+      : '';
     const key = [
       kind,
       resolveWorkflowToolName(item).trim().toLowerCase(),
       resolveWorkflowPrimaryRef(item),
       normalizeWorkflowText(item.status).toLowerCase(),
       normalizeWorkflowText(item.title),
-      normalizeWorkflowText(item.detail)
+      updatedSequence,
+      detailRevision
     ].join('::');
     if (key && key === lastKey) {
       return;
