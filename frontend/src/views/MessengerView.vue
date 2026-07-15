@@ -1301,45 +1301,16 @@
                   "
                   :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                 />
-                <div
-                  v-if="hasMessageContent(item.message.content) || shouldShowMessageStats(item.message, item.sourceIndex)"
-                  class="messenger-message-extra"
-                >
-                  <div v-if="shouldShowMessageStats(item.message, item.sourceIndex)" class="messenger-message-stats">
-                    <span
-                      v-for="entry in buildMessageStatsEntries(item.message, item.sourceIndex)"
-                      :key="entry.key"
-                      :class="[
-                        'messenger-message-stat',
-                        entry.kind === 'status' ? 'is-status' : 'is-metric',
-                        entry.tone ? `is-${entry.tone}` : '',
-                        entry.live ? 'is-live' : ''
-                      ]"
-                    >
-                      <template v-if="entry.kind === 'status'">
-                        <i
-                          :class="[
-                            entry.iconClass || 'fa-solid fa-circle-info',
-                            'messenger-message-stat-icon'
-                          ]"
-                          aria-hidden="true"
-                        ></i>
-                        <span class="messenger-message-stat-value">{{ entry.value }}</span>
-                      </template>
-                      <template v-else>
-                        <i
-                          :class="[
-                            entry.iconClass || 'fa-solid fa-circle-info',
-                            'messenger-message-stat-icon'
-                          ]"
-                          :title="entry.label"
-                          :aria-label="entry.label"
-                          aria-hidden="true"
-                        ></i>
-                        <span class="messenger-message-stat-value">{{ entry.value }}</span>
-                      </template>
-                    </span>
-                  </div>
+                  <div
+                    v-if="hasMessageContent(item.message.content) || item.message.role === 'assistant'"
+                    class="messenger-message-extra"
+                  >
+                    <MessageStats
+                      v-if="item.message.role === 'assistant'"
+                      :message="item.message"
+                      :active-session-busy="activeMessengerSessionBusy"
+                      :latest-visible-assistant="latestVisibleAgentAssistantMessage === item.message"
+                    />
                   <button
                     v-if="shouldShowAgentResumeButton(item.message)"
                     class="messenger-message-footer-copy"
@@ -1899,6 +1870,7 @@ defineOptions({
 
 import { useMessengerViewController } from '@/views/messenger/useMessengerViewController';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
+import MessageStats from '@/components/chat/MessageStats.vue';
 import WorkspaceBindingDialog from '@/components/chat/WorkspaceBindingDialog.vue';
 import SkillMarkdownPreview from '@/components/messenger/SkillMarkdownPreview.vue';
 import { computed as vueComputed, ref as vueRef, watch as vueWatch } from 'vue';
@@ -2105,12 +2077,10 @@ const buildAgentApprovalOptions = controller.buildAgentApprovalOptions;
 const buildAgentInquiryReply = controller.buildAgentInquiryReply;
 const buildAgentVoiceFileName = controller.buildAgentVoiceFileName;
 const buildAssistantDisplayContent = controller.buildAssistantDisplayContent;
-const buildAssistantMessageStatsEntries = controller.buildAssistantMessageStatsEntries;
 const buildCurrentUserFallbackUnitTree = controller.buildCurrentUserFallbackUnitTree;
 const buildDeclaredDependencyPayload = controller.buildDeclaredDependencyPayload;
 const buildDesktopUpdateStatusText = controller.buildDesktopUpdateStatusText;
 const buildLatestAssistantLayoutSignature = controller.buildLatestAssistantLayoutSignature;
-const buildMessageStatsEntries = controller.buildMessageStatsEntries;
 const buildMessageWorkflowRenderVersion = controller.buildMessageWorkflowRenderVersion;
 const buildProfileAvatarOptionLabel = controller.buildProfileAvatarOptionLabel;
 const buildQuickAgentName = controller.buildQuickAgentName;
@@ -2549,8 +2519,6 @@ const MessageGoalDivider = controller.MessageGoalDivider;
 const MessageFeedbackActions = controller.MessageFeedbackActions;
 const MessageKnowledgeCitation = controller.MessageKnowledgeCitation;
 const messageListRef = controller.messageListRef;
-const messageStatsNowTick = controller.messageStatsNowTick;
-const messageStatsTimer = controller.messageStatsTimer;
 const MessageSubagentPanel = controller.MessageSubagentPanel;
 const MessageThinking = controller.MessageThinking;
 const MessageToolWorkflow = controller.MessageToolWorkflow;
@@ -3046,7 +3014,6 @@ const shouldShowAgentMessageBubble = controller.shouldShowAgentMessageBubble;
 const shouldMountAgentMessageBubble = controller.shouldMountAgentMessageBubble;
 const shouldShowAgentResumeButton = controller.shouldShowAgentResumeButton;
 const shouldShowCompactionDivider = controller.shouldShowCompactionDivider;
-const shouldShowMessageStats = controller.shouldShowMessageStats;
 const shouldVirtualizeMessages = controller.shouldVirtualizeMessages;
 const showAgentComposerApprovalHint = controller.showAgentComposerApprovalHint;
 const showAgentComposerApprovalSelector = controller.showAgentComposerApprovalSelector;

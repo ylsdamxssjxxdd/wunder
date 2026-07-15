@@ -1082,11 +1082,6 @@ export function installMessengerControllerStateRefs(ctx: MessengerControllerCont
       updatedAt: number;
   }>();
 
-  ctx.messageStatsEntryCache = new Map<string, {
-      signature: string;
-      entries: unknown[];
-  }>();
-
   ctx.KEYWORD_INPUT_DEBOUNCE_MS = 120;
 
   ctx.RIGHT_DOCK_SKILL_AUTO_RETRY_DELAY_MS = 1200;

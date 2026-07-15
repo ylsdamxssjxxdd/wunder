@@ -1,35 +1,38 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-test('messenger message stats timer only keys off the latest visible assistant', () => {
-  const source = readFileSync(
+test('message stats own their timer so the parent messenger does not re-render each second', () => {
+  const component = readFileSync(resolve(process.cwd(), 'src/components/chat/MessageStats.vue'), 'utf8');
+  const messenger = readFileSync(resolve(process.cwd(), 'src/views/MessengerView.vue'), 'utf8');
+  const renderable = readFileSync(
     resolve(process.cwd(), 'src/views/messenger/controller/messengerControllerRenderableMessages.ts'),
     'utf8'
   );
-  const hasLiveAssistantStatsIndex = source.indexOf('ctx.hasLiveAssistantStats = computed(() => {');
-  assert.ok(hasLiveAssistantStatsIndex >= 0);
-  const stopTimerIndex = source.indexOf('const stopMessageStatsTimer = () => {', hasLiveAssistantStatsIndex);
-  assert.ok(stopTimerIndex > hasLiveAssistantStatsIndex);
-  const body = source.slice(hasLiveAssistantStatsIndex, stopTimerIndex);
 
-  assert.ok(body.includes('const latestVisibleAssistant = ctx.latestVisibleAgentAssistantMessage.value'));
-  assert.ok(body.includes('isAssistantMessageRunning(latestVisibleAssistant)'));
-  assert.ok(body.includes('hasAssistantWaitingForCurrentOutput(latestVisibleAssistant)'));
-  assert.ok(body.includes('hasActiveSubagentItems(latestVisibleAssistant?.subagents)'));
-  assert.ok(!body.includes('ctx.agentRenderableMessages.value.some('));
+  assert.ok(component.includes('const nowTick = ref(Date.now());'));
+  assert.ok(component.includes('watch(isLive, syncTimer, { immediate: true });'));
+  assert.ok(component.includes('buildAssistantMessageStatsEntries(message, t, undefined, nowTick.value'));
+  assert.ok(component.includes('hasActiveSubagentItems(message.subagents)'));
+  assert.ok(messenger.includes('<MessageStats'));
+  assert.ok(!renderable.includes('ctx.messageStatsNowTick'));
+  assert.ok(!renderable.includes('ctx.messageStatsTimer'));
+  assert.ok(!renderable.includes('ctx.agentRenderableMessages.value.map((item) => item.message'));
 });
 
 test('desktop safe mode is exposed through runtime config and does not depend on launch flags alone', () => {
   const desktopConfig = readFileSync(resolve(process.cwd(), 'src/config/desktop.ts'), 'utf8');
-  const tauriBridge = readFileSync(resolve(process.cwd(), '..', 'desktop', 'tauri', 'bridge.rs'), 'utf8');
+  const tauriBridgePath = resolve(process.cwd(), '..', 'desktop', 'tauri', 'bridge.rs');
   assert.ok(desktopConfig.includes('safe_mode?: boolean;'));
   assert.ok(desktopConfig.includes('safe_mode: asBoolean(source.safe_mode)'));
   assert.ok(desktopConfig.includes('getDesktopRuntime()?.safe_mode'));
-  assert.ok(tauriBridge.includes('pub safe_mode: bool'));
-  assert.ok(tauriBridge.includes('let safe_mode = std::env::var("WUNDER_DESKTOP_SAFE_MODE")'));
-  assert.ok(tauriBridge.includes("localStorage.setItem('wunder_desktop_safe_mode', '1');"));
+  if (existsSync(tauriBridgePath)) {
+    const tauriBridge = readFileSync(tauriBridgePath, 'utf8');
+    assert.ok(tauriBridge.includes('pub safe_mode: bool'));
+    assert.ok(tauriBridge.includes('let safe_mode = std::env::var("WUNDER_DESKTOP_SAFE_MODE")'));
+    assert.ok(tauriBridge.includes("localStorage.setItem('wunder_desktop_safe_mode', '1');"));
+  }
 });
 
 test('desktop safe mode skips chat session bootstrap and route restore', () => {

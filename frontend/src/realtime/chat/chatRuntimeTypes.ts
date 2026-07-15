@@ -138,6 +138,7 @@ export type ChatRuntimeMessageProjection = {
   createdAt: string;
   createdSeq: number;
   updatedSeq: number;
+  structureVersion?: number;
   userTurnId: string;
   modelTurnId: string;
   final: boolean;
@@ -182,6 +183,7 @@ export type ChatRuntimeSessionProjection = {
   userTurns: string[];
   modelTurns: string[];
   messages: string[];
+  visibleMessagesVersion: number;
   messageById: Record<string, ChatRuntimeMessageProjection>;
   userTurnById: Record<string, ChatRuntimeUserTurnProjection>;
   modelTurnById: Record<string, ChatRuntimeModelTurnProjection>;

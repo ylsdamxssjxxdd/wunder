@@ -17,6 +17,7 @@ import { resolveComposerContextUsageSource } from '../../src/components/chat/com
 import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
 import { resolveAssistantMessageRuntimeState } from '../../src/utils/assistantMessageRuntime';
 import type { ChatRuntimeEvent } from '../../src/realtime/chat/chatRuntimeTypes';
+import { buildBoundedStructuralRevision } from '../../src/utils/boundedStructuralRevision';
 
 const apply = (events: ChatRuntimeEvent[]) => {
   const projection = createChatRuntimeProjection();
@@ -150,6 +151,14 @@ test('chat runtime render adapter reuses materialized objects across steady cont
 
   assert.equal(updated[0], recovered[0]);
   assert.equal(updated[0].content, 'stable update');
+});
+
+test('bounded structural revisions avoid scanning large detail strings while tracking runtime sequence changes', () => {
+  const detail = 'x'.repeat(500_000);
+  const first = buildBoundedStructuralRevision([{ id: 'tool-1', updatedSeq: 1, detail }]);
+  const second = buildBoundedStructuralRevision([{ id: 'tool-1', updatedSeq: 2, detail }]);
+
+  assert.notEqual(first, second);
 });
 
 test('chat runtime render adapter orders user messages before assistant turns', () => {

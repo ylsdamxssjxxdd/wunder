@@ -9,6 +9,7 @@ import type {
   ChatRuntimeMessageStatus,
   ChatRuntimeProjection
 } from './chatRuntimeTypes';
+import { buildBoundedStructuralRevision } from '@/utils/boundedStructuralRevision';
 
 type ChatMessageLike = Record<string, unknown>;
 
@@ -73,9 +74,7 @@ const materializedMessageCache = new WeakMap<
   ChatRuntimeProjection,
   Map<string, MaterializedSessionMessageCache>
 >();
-const projectionObjectIdentity = new WeakMap<object, number>();
 let materializedMessageCacheClock = 0;
-let projectionObjectIdentityClock = 0;
 
 export const isChatRuntimeProjectionRenderEnabled = (): boolean =>
   resolveChatRuntimeProjectionRenderMode() === 'projection';
@@ -109,10 +108,19 @@ export const materializeChatRuntimeMessages = (
   const projectedMessages = selectVisibleMessageProjections(projection, sessionId);
   const sessionCache = resolveMaterializedSessionMessageCache(projection, sessionId);
   const activeMessageIds = new Set<string>();
+  let userRound = 0;
   const materialized = projectedMessages
     .map((message) => {
       activeMessageIds.add(message.id);
-      return materializeChatRuntimeMessageWithCache(sessionCache, message);
+      if (message.role === 'user') {
+        userRound += 1;
+      }
+      const result = materializeChatRuntimeMessageWithCache(sessionCache, message);
+      if (result && message.role === 'assistant' && userRound > 0) {
+        // Keep presentation-only round state local so stats do not rescan history.
+        result.__runtime_user_round = userRound;
+      }
+      return result;
     })
     .filter((message): message is ChatMessageLike => Boolean(message));
   pruneMaterializedSessionMessageCache(sessionCache, activeMessageIds);
@@ -192,6 +200,7 @@ export const materializeChatRuntimeMessage = (
   base.__runtime_user_turn_id = message.userTurnId;
   base.__runtime_model_turn_id = message.modelTurnId;
   base.__runtime_render_key = resolveChatRuntimeProjectionKey(message);
+  base.__runtime_structure_version = message.structureVersion || 0;
 
   if (message.role === 'assistant') {
     base.status = message.status;
@@ -307,34 +316,16 @@ const buildProjectionMessageMaterializationRevision = (
     message.status,
     message.createdAt,
     message.createdSeq,
+    message.structureVersion || 0,
     message.userTurnId,
     message.modelTurnId,
     message.final,
     message.failed,
     message.cancelled,
-    buildProjectionMetadataRevision(message.display),
-    buildProjectionMetadataRevision(message.workflowItems),
-    buildProjectionMetadataRevision(message.subagents)
+    buildBoundedStructuralRevision(message.display),
+    buildBoundedStructuralRevision(message.workflowItems),
+    buildBoundedStructuralRevision(message.subagents)
   ].join('\u0001');
-
-const buildProjectionMetadataRevision = (value: unknown): string => {
-  if (!value || typeof value !== 'object') return '';
-  try {
-    return JSON.stringify(value) || '';
-  } catch {
-    return String(resolveProjectionObjectIdentity(value));
-  }
-};
-
-const resolveProjectionObjectIdentity = (value: unknown): number => {
-  if (!value || typeof value !== 'object') return 0;
-  const objectValue = value as object;
-  const existing = projectionObjectIdentity.get(objectValue);
-  if (existing) return existing;
-  const next = ++projectionObjectIdentityClock;
-  projectionObjectIdentity.set(objectValue, next);
-  return next;
-};
 
 const isMaterializedMessageAligned = (
   materialized: ChatMessageLike,
@@ -368,6 +359,7 @@ const syncMaterializedStreamingFields = (
   materialized.final = source.status === 'final';
   materialized.failed = source.status === 'failed';
   materialized.cancelled = source.status === 'cancelled';
+  materialized.__runtime_structure_version = source.structureVersion || 0;
   settleTerminalMaterializedArtifacts(materialized, source.status);
 };
 
@@ -382,17 +374,10 @@ const MATERIALIZED_MUTABLE_FIELDS = [
 ];
 
 const buildMaterializedMutableFieldsRevision = (message: ChatMessageLike): string => {
-  const values = MATERIALIZED_MUTABLE_FIELDS
-    .map((field) => [field, message[field]])
-    .filter(([, value]) => value !== undefined);
-  if (values.length === 0) return '';
-  try {
-    return JSON.stringify(values) || '';
-  } catch {
-    return values
-      .map(([field, value]) => `${field}:${Array.isArray(value) ? value.length : typeof value}`)
-      .join('|');
-  }
+  return MATERIALIZED_MUTABLE_FIELDS
+    .filter((field) => message[field] !== undefined)
+    .map((field) => `${field}:${buildBoundedStructuralRevision(message[field])}`)
+    .join('|');
 };
 
 const cloneDisplayProjection = (display: unknown): ChatMessageLike => {

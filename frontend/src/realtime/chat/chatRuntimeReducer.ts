@@ -174,6 +174,7 @@ export const createChatRuntimeSessionProjection = (
   userTurns: [],
   modelTurns: [],
   messages: [],
+  visibleMessagesVersion: 0,
   messageById: {},
   userTurnById: {},
   modelTurnById: {},
@@ -814,6 +815,7 @@ const mergeUserTurnInto = (
   targetTurn.status = mergeUserTurnStatus(targetTurn.status, sourceTurn.status);
   delete session.userTurnById[sourceTurnId];
   session.userTurns = session.userTurns.filter((turnId) => turnId !== sourceTurnId);
+  markVisibleMessageTopologyChanged(session);
 };
 
 const mergeUserTurnStatus = (
@@ -886,6 +888,7 @@ const removeModelTurnProjection = (
   }
   delete session.modelTurnById[modelTurnId];
   session.modelTurns = session.modelTurns.filter((id) => id !== modelTurnId);
+  markVisibleMessageTopologyChanged(session);
 };
 
 const resolveStrictEventQuarantineReason = (event: NormalizedRuntimeEvent): string => {
@@ -963,6 +966,7 @@ const applyUserMessageCreated = (
       .map((item) => cloneProjectedDisplayValue(item));
   }
   markLocalRuntimeProjectionMessage(message, event);
+  markVisibleMessageTopologyChanged(session);
   addUnique(turn.messageIds, message.id);
   addUnique(session.messages, message.id);
   pruneUserTurnUserMessages(session, turn, message.id);
@@ -977,6 +981,7 @@ const applyAssistantMessageCreated = (
   modelTurn.status = 'waiting_first_output';
   const message = ensureAssistantMessageForModelTurn(session, event, 'waiting_first_output');
   markLocalRuntimeProjectionMessage(message, event);
+  markVisibleMessageTopologyChanged(session);
   addUnique(modelTurn.messageIds, message.id);
   setSessionBusy(session, 'running', 'waiting_first_output');
 };
@@ -1052,6 +1057,8 @@ const applyAssistantFinal = (
   message.failed = false;
   message.cancelled = false;
   settleProjectedWorkflowItems(message, 'completed');
+  markMessageStructureChanged(message);
+  markVisibleMessageTopologyChanged(session);
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
   modelTurn.status = 'completed';
   modelTurn.finalMessageId = message.id;
@@ -1082,6 +1089,7 @@ const applyToolActivity = (
   syncProjectedToolCallStats(message);
   message.status = completed ? 'streaming' : 'tooling';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  markMessageStructureChanged(message);
   modelTurn.status = completed ? 'streaming' : 'tool_running';
   if (sourceType === 'approval_request') {
     setSessionBusy(session, 'waiting_approval', 'waiting_approval');
@@ -1104,6 +1112,7 @@ const applyToolFailed = (
   upsertToolWorkflowItem(message, event, 'failed', modelTurn);
   syncProjectedToolCallStats(message);
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  markMessageStructureChanged(message);
   // A failed tool is an observation for the model, not proof that the turn
   // failed. The model can retry, choose another tool, or still answer.
   if (isTerminalModelTurnStatus(modelTurn.status) || message.status === 'failed' || message.status === 'cancelled') {
@@ -1136,6 +1145,7 @@ const applyWorkflowEvent = (
     settleProjectedRetryWorkflowItems(message);
   }
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  markMessageStructureChanged(message);
   if (isTerminalModelTurnStatus(modelTurn.status) || message.status === 'failed' || message.status === 'cancelled') {
     return;
   }
@@ -1182,6 +1192,7 @@ const applyUsageStats = (
     updateWorkflowContextSnapshotRecord(modelTurn as unknown as Record<string, unknown>, event);
   }
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  markMessageStructureChanged(message);
 };
 
 const applyTurnTerminal = (
@@ -1205,6 +1216,7 @@ const applyTurnTerminal = (
       message.status = 'final';
       message.final = true;
       settleProjectedWorkflowItems(message, 'completed');
+      markMessageStructureChanged(message);
       modelTurn.finalMessageId = modelTurn.finalMessageId || message.id;
     } else if (terminal === 'failed') {
       if (event.content && !message.content) {
@@ -1216,6 +1228,7 @@ const applyTurnTerminal = (
       message.status = 'failed';
       message.failed = true;
       settleProjectedWorkflowItems(message, 'failed');
+      markMessageStructureChanged(message);
     } else if (terminal === 'cancelled') {
       if (event.content && !message.content) {
         message.content = event.content;
@@ -1226,8 +1239,10 @@ const applyTurnTerminal = (
       message.status = 'cancelled';
       message.cancelled = true;
       settleProjectedWorkflowItems(message, 'failed');
+      markMessageStructureChanged(message);
     }
   });
+  markVisibleMessageTopologyChanged(session);
   const userTurn = session.userTurnById[modelTurn.userTurnId];
   if (userTurn) {
     userTurn.status = terminal === 'completed' ? 'completed' : terminal;
@@ -1336,6 +1351,7 @@ const applyQueueStatus = (
   upsertProjectedQueueWorkflowItem(message, event);
   message.status = 'queued';
   message.updatedSeq = event.eventSeq ?? message.updatedSeq;
+  markMessageStructureChanged(message);
   modelTurn.status = 'waiting_first_output';
   setSessionBusy(session, 'queued', 'queued');
 };
@@ -1364,6 +1380,8 @@ const applySessionSnapshot = (
   session: ChatRuntimeSessionProjection,
   event: NormalizedRuntimeEvent
 ): void => {
+  // A snapshot may reorder, merge, or prune messages even when its count is unchanged.
+  markVisibleMessageTopologyChanged(session);
   const snapshotSeq = event.snapshotSeq ?? event.eventSeq ?? nextLocalSeq(session);
   if (snapshotSeq > session.snapshotSeq) {
     session.snapshotSeq = snapshotSeq;
@@ -1539,6 +1557,7 @@ const mergeLegacyMessages = (
   if (options.authoritative === true) {
     pruneProjectionToAuthoritativeMessages(session, authoritativeMessageIds, authoritativeMessageOrder);
   }
+  markVisibleMessageTopologyChanged(session);
 };
 
 const pruneProjectionToAuthoritativeMessages = (
@@ -1603,6 +1622,7 @@ const pruneProjectionToAuthoritativeMessages = (
       resolveModelTurnAuthoritativeOrder(session, leftId, orderIndex) -
       resolveModelTurnAuthoritativeOrder(session, rightId, orderIndex)
     );
+  markVisibleMessageTopologyChanged(session);
 };
 
 const resolveUserTurnAuthoritativeOrder = (
@@ -1819,6 +1839,7 @@ const applyCanonicalTranscriptSnapshot = (
     resolveModelTurnAuthoritativeOrder(session, left, orderIndex) -
     resolveModelTurnAuthoritativeOrder(session, right, orderIndex)
   );
+  markVisibleMessageTopologyChanged(session);
   session.snapshotSeq = Math.max(session.snapshotSeq, snapshotSeq);
   session.syncRequired = false;
   return preservedLocal.active;
@@ -2453,6 +2474,7 @@ const patchMessageFromRaw = (
   patchProjectionRecordsFromRaw(message, 'workflowItems', raw.workflowItems);
   patchProjectionRecordsFromRaw(message, 'subagents', raw.subagents);
   message.updatedSeq = Math.max(message.updatedSeq, seq);
+  markMessageStructureChanged(message);
 };
 
 const mergeMessageFromRaw = (
@@ -2477,6 +2499,7 @@ const mergeMessageFromRaw = (
   mergeProjectionRecords(message, 'workflowItems', raw.workflowItems);
   mergeProjectionRecords(message, 'subagents', raw.subagents);
   message.updatedSeq = Math.max(message.updatedSeq, seq);
+  markMessageStructureChanged(message);
 };
 
 const shouldMergeFoldedLegacyMessage = (
@@ -2902,6 +2925,7 @@ const ensureUserTurn = (
       status: 'created'
     };
     addUnique(session.userTurns, id);
+    markVisibleMessageTopologyChanged(session);
   }
   return session.userTurnById[id];
 };
@@ -3009,6 +3033,7 @@ const pruneUserTurnUserMessages = (
   staleIds.forEach((messageId) => {
     delete session.messageById[messageId];
   });
+  markVisibleMessageTopologyChanged(session);
 };
 
 const isLocalOptimisticUserTurn = (userTurnId: string): boolean =>
@@ -3047,6 +3072,7 @@ const ensureModelTurn = (
       status: 'created'
     };
     addUnique(session.modelTurns, id);
+    markVisibleMessageTopologyChanged(session);
     addUnique(userTurn.modelTurnIds, id);
   } else if (preferredUserTurnId) {
     const turn = session.modelTurnById[id];
@@ -3200,6 +3226,7 @@ const rekeyModelTurn = (
       message.modelTurnId = targetTurnId;
     }
   });
+  markVisibleMessageTopologyChanged(session);
   return sourceTurn;
 };
 
@@ -3709,6 +3736,7 @@ const mergeModelTurnInto = (
     });
     pruneModelTurnAssistantMessages(session, targetTurn, preferredMessageId);
   }
+  markVisibleMessageTopologyChanged(session);
 };
 
 const mergeWeakSiblingModelTurnsInto = (
@@ -3998,6 +4026,7 @@ const pruneModelTurnAssistantMessages = (
   staleIds.forEach((messageId) => {
     delete session.messageById[messageId];
   });
+  markVisibleMessageTopologyChanged(session);
 };
 
 const upsertToolWorkflowItem = (
@@ -5694,6 +5723,14 @@ const ensureProjectedWorkflowItems = (
   return message.workflowItems;
 };
 
+const markMessageStructureChanged = (message: ChatRuntimeMessageProjection): void => {
+  message.structureVersion = Number(message.structureVersion || 0) + 1;
+};
+
+const markVisibleMessageTopologyChanged = (session: ChatRuntimeSessionProjection): void => {
+  session.visibleMessagesVersion = Number(session.visibleMessagesVersion || 0) + 1;
+};
+
 const settleProjectedWorkflowItems = (
   message: ChatRuntimeMessageProjection,
   terminalStatus: 'completed' | 'failed'
@@ -5983,6 +6020,7 @@ const ensureMessage = (
       cancelled: false,
       ...(options.role === 'assistant' ? { workflowItems: [], subagents: [] } : {})
     };
+    markVisibleMessageTopologyChanged(session);
   }
   const message = session.messageById[id];
   if (!message.userTurnId && options.userTurnId) {

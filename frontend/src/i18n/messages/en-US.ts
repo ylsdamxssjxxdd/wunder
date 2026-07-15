@@ -1753,6 +1753,7 @@ export default {
   'chat.workflow.toolUnknown': 'Unknown tool',
   'chat.toolWorkflow.title': 'Agent Loop',
   'chat.toolWorkflow.empty': 'No tool actions',
+  'chat.toolWorkflow.showEarlier': 'Show {count} earlier records',
   'chat.toolWorkflow.pendingTool': 'Calling tool',
   'chat.toolWorkflow.pendingToolDetail': 'The agent has entered the tool phase and is waiting for the first tool detail to reach the UI.',
   'chat.toolWorkflow.pendingCompaction': 'Compacting context',

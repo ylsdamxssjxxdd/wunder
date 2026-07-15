@@ -546,6 +546,7 @@ const resolveAssistantUserRound = (
   return parsePositiveInteger(
     message?.user_round ??
       message?.userRound ??
+      message?.__runtime_user_round ??
       message?.stream_round ??
       message?.streamRound
   );

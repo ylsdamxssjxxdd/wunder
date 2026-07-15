@@ -6,6 +6,7 @@ type HarnessApi = {
   prependHistory: () => Promise<void>;
   streamLatestMessage: () => Promise<void>;
   expandToolDetails: () => Promise<void>;
+  showEarlierToolEntries: () => Promise<void>;
 };
 
 const readMetrics = async (page) =>
@@ -33,6 +34,7 @@ test('real MessengerView keeps a bounded DOM through long history, scroll and se
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.prependHistory());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.streamLatestMessage());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.expandToolDetails());
+  await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.showEarlierToolEntries());
   await page.evaluate(() => (window as unknown as { __messengerViewPerformanceE2E: HarnessApi }).__messengerViewPerformanceE2E.switchSessionAndReturn());
 
   const metrics = await readMetrics(page);
@@ -42,6 +44,10 @@ test('real MessengerView keeps a bounded DOM through long history, scroll and se
   expect(metrics.expandedToolCount).toBeLessThanOrEqual(3);
   expect(metrics.maxExpandedToolCount).toBeLessThanOrEqual(3);
   expect(metrics.availableToolSummaryCount).toBeGreaterThanOrEqual(0);
+  expect(metrics.initialToolSummaryCount).toBeGreaterThan(0);
+  expect(metrics.initialToolSummaryCount).toBeLessThanOrEqual(40);
+  expect(metrics.earlierToolSummaryCount).toBeGreaterThan(metrics.initialToolSummaryCount);
+  expect(metrics.earlierToolSummaryCount).toBeLessThanOrEqual(80);
   expect(metrics.domNodeCount).toBeLessThan(5000);
   expect(metrics.requestCount).toBeLessThan(80);
   expect(metrics.historyBackfillCount).toBe(40);

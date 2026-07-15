@@ -22,6 +22,8 @@ type HarnessMetrics = {
   expandedToolCount: number;
   maxExpandedToolCount: number;
   availableToolSummaryCount: number;
+  initialToolSummaryCount: number;
+  earlierToolSummaryCount: number;
   requestCount: number;
   heapBytes: number | null;
   historyBackfillCount: number;
@@ -39,6 +41,8 @@ const metrics = ref<HarnessMetrics>({
   expandedToolCount: 0,
   maxExpandedToolCount: 0,
   availableToolSummaryCount: 0,
+  initialToolSummaryCount: 0,
+  earlierToolSummaryCount: 0,
   requestCount: 0,
   heapBytes: null
   ,historyBackfillCount: 0
@@ -46,6 +50,17 @@ const metrics = ref<HarnessMetrics>({
 });
 let requestCount = 0;
 const originalFetch = window.fetch.bind(window);
+
+const buildWorkflowItems = (sessionId: string, messageIndex: number, count: number) =>
+  Array.from({ length: count }, (_, toolIndex) => ({
+    id: `${sessionId}-tool-${messageIndex}-${toolIndex}`,
+    eventType: 'tool_result',
+    toolName: 'read_file',
+    toolCallId: `${sessionId}-tool-${messageIndex}-${toolIndex}`,
+    title: `Tool ${toolIndex}`,
+    status: 'completed',
+    detail: 'Bounded tool detail output.'
+  }));
 
 const buildMessages = (sessionId: string, count: number) =>
   Array.from({ length: count }, (_, index) => {
@@ -60,15 +75,7 @@ const buildMessages = (sessionId: string, count: number) =>
         : `User message ${index}`,
       created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
       workflowItems: assistant && (index >= count - 8 || index % 20 === 19)
-        ? Array.from({ length: 5 }, (_, toolIndex) => ({
-          id: `${sessionId}-tool-${index}-${toolIndex}`,
-            eventType: 'tool_result',
-            toolName: 'read_file',
-            toolCallId: `${sessionId}-tool-${index}-${toolIndex}`,
-            title: `Tool ${toolIndex}`,
-            status: 'completed',
-            detail: 'Bounded tool detail output. '.repeat(40)
-          }))
+        ? buildWorkflowItems(sessionId, index, 5)
         : []
     };
   });
@@ -176,6 +183,34 @@ const expandToolDetails = async () => {
   collectMetrics();
 };
 
+const showEarlierToolEntries = async () => {
+  const chat = useChatStore();
+  const session = chat.runtimeProjection?.sessions?.[SESSION_A];
+  const latestAssistantId = [...(session?.messages || [])]
+    .reverse()
+    .find((messageId) => session?.messageById?.[messageId]?.role === 'assistant');
+  const latestAssistant = latestAssistantId ? session?.messageById?.[latestAssistantId] : null;
+  if (latestAssistant) {
+    latestAssistant.workflowItems = buildWorkflowItems(SESSION_A, 319, 260);
+    latestAssistant.structureVersion = Number(latestAssistant.structureVersion || 0) + 1;
+    chat.runtimeProjectionVersion += 1;
+    await nextTick();
+  }
+  const workflow = Array.from(document.querySelectorAll<HTMLElement>('.message-tool-workflow'))
+    .find((node) => Boolean(node.querySelector('.tool-workflow-load-earlier')));
+  const summary = workflow?.querySelector<HTMLElement>('summary');
+  if (workflow && !workflow.hasAttribute('open')) {
+    summary?.click();
+    await nextTick();
+  }
+  const workflowEntries = workflow?.querySelectorAll('.tool-workflow-entry-summary');
+  metrics.value.initialToolSummaryCount = workflowEntries?.length || 0;
+  workflow?.querySelector<HTMLElement>('.tool-workflow-load-earlier')?.click();
+  await nextTick();
+  metrics.value.earlierToolSummaryCount = workflow?.querySelectorAll('.tool-workflow-entry-summary').length || 0;
+  collectMetrics();
+};
+
 const switchSessionAndReturn = async () => {
   await installSession(SESSION_B, 120);
   await installSession(SESSION_A, 320);
@@ -202,6 +237,7 @@ onMounted(async () => {
     prependHistory,
     streamLatestMessage,
     expandToolDetails,
+    showEarlierToolEntries,
     switchSessionAndReturn,
     collectMetrics
   };

@@ -66,6 +66,58 @@ test('chat runtime projection renders late user sideband before its assistant tu
   );
 });
 
+test('visible message selector reuses a stable topology during tool updates and invalidates for a new turn', () => {
+  const projection = createChatRuntimeProjection();
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'topology-user-1',
+    event_seq: 1,
+    user_turn_id: 'topology-turn-1',
+    message_id: 'topology-message-user-1',
+    content: 'request'
+  }));
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'assistant_message_created',
+    event_id: 'topology-assistant-1',
+    event_seq: 2,
+    user_turn_id: 'topology-turn-1',
+    model_turn_id: 'topology-model-1',
+    message_id: 'topology-message-assistant-1'
+  }));
+
+  const first = selectVisibleMessageProjections(projection, 'session-1');
+  const second = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(second, first);
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'tool_call_started',
+    event_id: 'topology-tool-1',
+    event_seq: 3,
+    user_turn_id: 'topology-turn-1',
+    model_turn_id: 'topology-model-1',
+    message_id: 'topology-message-assistant-1',
+    payload: {
+      tool_call_id: 'topology-tool-call-1',
+      name: 'read_file'
+    }
+  }));
+  const afterTool = selectVisibleMessageProjections(projection, 'session-1');
+  assert.equal(afterTool, first);
+
+  applyChatRuntimeEvent(projection, baseEvent({
+    event_type: 'user_message_created',
+    event_id: 'topology-user-2',
+    event_seq: 4,
+    user_turn_id: 'topology-turn-2',
+    message_id: 'topology-message-user-2',
+    content: 'follow-up'
+  }));
+  const afterNewTurn = selectVisibleMessageProjections(projection, 'session-1');
+  assert.notEqual(afterNewTurn, first);
+  assert.equal(afterNewTurn.at(-1)?.content, 'follow-up');
+});
+
 test('beeroom dispatch stream events promote the optimistic turn to canonical round identity', () => {
   const projection = createChatRuntimeProjection();
   const sessionId = 'session-1';

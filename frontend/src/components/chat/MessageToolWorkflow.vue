@@ -29,6 +29,16 @@
         </div>
         <div v-else-if="displayEntries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
 
+        <button
+          v-if="hasEarlierEntries"
+          class="tool-workflow-load-earlier"
+          type="button"
+          @click="showEarlierEntries"
+        >
+          <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+          <span>{{ t('chat.toolWorkflow.showEarlier', { count: earlierEntryPageCount }) }}</span>
+        </button>
+
         <details
           v-for="entry in displayEntries"
           :key="entry.key"
@@ -175,6 +185,7 @@ import type {
   ToolWorkflowPatchFileView as PatchFileView,
   ToolWorkflowPatchLine as PatchLine
 } from './toolWorkflowTypes';
+import { buildBoundedStructuralRevision } from '@/utils/boundedStructuralRevision';
 
 type PatchEntry = {
   key: string;
@@ -262,6 +273,8 @@ const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 const WORKFLOW_STATE_CACHE_LIMIT = 120;
 const WORKFLOW_EXPANDED_ENTRY_LIMIT = 3;
+const WORKFLOW_ENTRY_PAGE_SIZE = 40;
+const WORKFLOW_EVENT_PAGE_SIZE = 240;
 const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
 const TOOL_CALL_DEBUG_HINT_MARGIN = 12;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH = 360;
@@ -309,6 +322,8 @@ const emit = defineEmits<{
 const { t, language } = useI18n();
 const commandSessionStore = useCommandSessionStore();
 const expandedKeys = ref<Set<string>>(new Set());
+const visibleEntryLimit = ref(WORKFLOW_ENTRY_PAGE_SIZE);
+const visibleSourceItemLimit = ref(WORKFLOW_EVENT_PAGE_SIZE);
 const streamBodyRefMap = new Map<string, HTMLPreElement>();
 const streamFollowState = new Map<string, boolean>();
 const workflowRef = ref<HTMLDetailsElement | null>(null);
@@ -360,6 +375,9 @@ const limitExpandedKeys = (keys: Iterable<string>): Set<string> => {
   }
   return limited;
 };
+
+const haveSameKeys = (left: Set<string>, right: Set<string>): boolean =>
+  left.size === right.size && Array.from(left).every((key) => right.has(key));
 
 const rememberWorkflowStateCacheOrder = (key: string): void => {
   if (!workflowStateCache.has(key)) return;
@@ -3782,9 +3800,6 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
 
 const summarizeEntryRevisionItem = (value: WorkflowItem | null): string => {
   if (!value) return '';
-  const detail = String(value.detail || '');
-  const rawCallDetail = String(value.toolCallRawDetail || value.tool_call_raw_detail || '');
-  const rawResultDetail = String(value.toolResultRawDetail || value.tool_result_raw_detail || '');
   return [
     value.id,
     value.itemId,
@@ -3807,9 +3822,9 @@ const summarizeEntryRevisionItem = (value: WorkflowItem | null): string => {
     value.tool_call_id,
     value.commandSessionId,
     value.command_session_id,
-    detail,
-    rawCallDetail,
-    rawResultDetail,
+    buildBoundedStructuralRevision(value.detail),
+    buildBoundedStructuralRevision(value.toolCallRawDetail || value.tool_call_raw_detail),
+    buildBoundedStructuralRevision(value.toolResultRawDetail || value.tool_result_raw_detail),
     (value as UnknownObject).updatedSeq,
     (value as UnknownObject).updated_seq
   ].map((item) => String(item ?? '')).join('\u0002');
@@ -3909,13 +3924,22 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
   return output;
 };
 
+const rawToolEntries = computed<RawEntry[]>(() => {
+  const items = Array.isArray(props.items) ? props.items : [];
+  const startIndex = Math.max(0, items.length - visibleSourceItemLimit.value);
+  return buildWorkflowToolRuns(items.slice(startIndex));
+});
+
 const buildEntries = (): ToolEntryView[] => {
-  const rawEntries = buildWorkflowToolRuns(props.items);
+  const rawEntries = rawToolEntries.value;
   const validKeys = new Set(rawEntries.map((entry) => entry.key));
   entryViewCache.forEach((_cached, key) => {
     if (!validKeys.has(key)) entryViewCache.delete(key);
   });
-  return rawEntries.map(buildCachedEntryView);
+  const startIndex = Math.max(0, rawEntries.length - visibleEntryLimit.value);
+  return rawEntries
+    .filter((entry, index) => index >= startIndex || expandedKeys.value.has(entry.key))
+    .map(buildCachedEntryView);
 };
 
 const isLiveEntryStatus = (status: string): boolean =>
@@ -3944,6 +3968,49 @@ const entries = computed<ToolEntryView[]>(() => {
   );
 });
 
+const totalEntryCount = computed(() => rawToolEntries.value.length);
+const hiddenEntryCount = computed(() => Math.max(0, totalEntryCount.value - entries.value.length));
+const hiddenSourceItemCount = computed(() =>
+  Math.max(0, (Array.isArray(props.items) ? props.items.length : 0) - visibleSourceItemLimit.value)
+);
+const hasEarlierEntries = computed(() => hiddenEntryCount.value > 0 || hiddenSourceItemCount.value > 0);
+const earlierEntryPageCount = computed(() =>
+  Math.min(
+    WORKFLOW_ENTRY_PAGE_SIZE,
+    Math.max(hiddenEntryCount.value, hiddenSourceItemCount.value)
+  )
+);
+
+const showEarlierEntries = async (): Promise<void> => {
+  const element = workflowListRef.value;
+  const previousHeight = element?.scrollHeight || 0;
+  const previousTop = element?.scrollTop || 0;
+  if (hiddenEntryCount.value > 0) {
+    visibleEntryLimit.value += WORKFLOW_ENTRY_PAGE_SIZE;
+  } else {
+    visibleSourceItemLimit.value += WORKFLOW_EVENT_PAGE_SIZE;
+  }
+  await nextTick();
+  if (element) {
+    element.scrollTop = previousTop + Math.max(0, element.scrollHeight - previousHeight);
+  }
+  scheduleWorkflowLayoutChange();
+};
+
+watch(
+  () => Array.isArray(props.items) ? props.items.length : 0,
+  (count, previousCount) => {
+    if (count < previousCount) {
+      visibleEntryLimit.value = WORKFLOW_ENTRY_PAGE_SIZE;
+      visibleSourceItemLimit.value = WORKFLOW_EVENT_PAGE_SIZE;
+      return;
+    }
+    if (count > previousCount && hiddenSourceItemCount.value === 0) {
+      visibleSourceItemLimit.value = Math.max(visibleSourceItemLimit.value, count);
+    }
+  }
+);
+
 watch(
   () => [
     normalizeWorkflowStateKey(props.stateKey),
@@ -3955,6 +4022,8 @@ watch(
       .map(normalizeWorkflowStateKey)
       .filter(Boolean);
     saveWorkflowPanelStateForKeys(oldKeys);
+    visibleEntryLimit.value = WORKFLOW_ENTRY_PAGE_SIZE;
+    visibleSourceItemLimit.value = WORKFLOW_EVENT_PAGE_SIZE;
     restoreWorkflowPanelState(props.stateKey, props.stateAliases);
     void nextTick(() => {
       syncWorkflowOpenState();
@@ -3976,12 +4045,17 @@ watch(
     userCollapsedEntryKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextUserCollapsed.add(key);
     });
-    userCollapsedEntryKeys.value = nextUserCollapsed;
+    if (!haveSameKeys(userCollapsedEntryKeys.value, nextUserCollapsed)) {
+      userCollapsedEntryKeys.value = nextUserCollapsed;
+    }
     const nextExpanded = new Set<string>();
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
-    expandedKeys.value = limitExpandedKeys(nextExpanded);
+    const limitedExpanded = limitExpandedKeys(nextExpanded);
+    if (!haveSameKeys(expandedKeys.value, limitedExpanded)) {
+      expandedKeys.value = limitedExpanded;
+    }
     saveWorkflowPanelState();
     void nextTick(() => {
       syncWorkflowOpenState();
@@ -4663,6 +4737,29 @@ onBeforeUnmount(() => {
 .tool-workflow-list::-webkit-scrollbar-thumb {
   background: var(--workflow-term-scroll-thumb);
   border-radius: 999px;
+}
+
+.tool-workflow-load-earlier {
+  width: 100%;
+  min-height: 32px;
+  margin-bottom: 6px;
+  border: 1px dashed var(--workflow-term-border-strong);
+  border-radius: 8px;
+  background: var(--workflow-term-bg-soft);
+  color: var(--workflow-term-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tool-workflow-load-earlier:hover,
+.tool-workflow-load-earlier:focus-visible {
+  border-style: solid;
+  color: var(--workflow-term-text);
+  outline: none;
 }
 
 .tool-workflow-empty {

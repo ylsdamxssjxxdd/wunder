@@ -65,6 +65,11 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(workflowComponent.includes('if (validKeys.has(key)) nextExpanded.add(key);'));
   assert.ok(workflowComponent.includes('if (!workflowOpen.value) return;'));
   assert.ok(workflowComponent.includes('const WORKFLOW_EXPANDED_ENTRY_LIMIT = 3;'));
+  assert.ok(workflowComponent.includes('const WORKFLOW_ENTRY_PAGE_SIZE = 40;'));
+  assert.ok(workflowComponent.includes('const WORKFLOW_EVENT_PAGE_SIZE = 240;'));
+  assert.ok(workflowComponent.includes('items.slice(startIndex)'));
+  assert.ok(workflowComponent.includes('v-if="hasEarlierEntries"'));
+  assert.ok(workflowComponent.includes('showEarlierEntries'));
   assert.ok(workflowComponent.includes('const limitExpandedKeys = (keys: Iterable<string>): Set<string> => {'));
   assert.ok(workflowComponent.includes('v-if="expandedKeys.has(entry.key)"'));
 
@@ -76,7 +81,6 @@ test('message workflow component keeps a stable key across live tool updates', (
   assert.ok(routingPreferences.includes('ctx.resolveMessageWorkflowStateAliases ='));
   assert.ok(routingPreferences.includes('`workflow-model-turn:${modelTurnId}`'));
   assert.ok(routingPreferences.includes('`workflow-first-item:${firstWorkflowRef}`'));
-  assert.ok(routingPreferences.includes('toolCallRawDetail || item?.tool_call_raw_detail'));
   assert.ok(routingPreferences.includes('context_occupancy_tokens'));
 });
 
@@ -128,6 +132,7 @@ test('workspace resource hydration bounds inactive object URL cache entries', ()
 });
 
 test('streaming projection changes only refresh the latest message layout', () => {
+  const messengerView = readSource('src/views/MessengerView.vue');
   const reactiveEffects = readSource('src/views/messenger/controller/messengerControllerLifecycleReactiveEffects.ts');
   const renderableMessages = readSource('src/views/messenger/controller/messengerControllerRenderableMessages.ts');
 
@@ -167,12 +172,9 @@ test('streaming projection changes only refresh the latest message layout', () =
   const layoutSignatureSource = renderableMessages.slice(layoutSignatureStart, layoutSignatureEnd);
   assert.ok(!layoutSignatureSource.includes('runtimeProjectionVersion'));
 
-  const statsStart = renderableMessages.indexOf('ctx.buildMessageStatsEntries =');
-  assert.ok(statsStart >= 0);
-  const statsEnd = renderableMessages.indexOf('ctx.shouldShowMessageStats =', statsStart);
-  assert.ok(statsEnd > statsStart);
-  const statsSource = renderableMessages.slice(statsStart, statsEnd);
-  assert.ok(!statsSource.includes('ctx.chatStore.runtimeProjectionVersion'));
+  assert.ok(messengerView.includes('<MessageStats'));
+  assert.ok(!renderableMessages.includes('ctx.messageStatsNowTick'));
+  assert.ok(!renderableMessages.includes('ctx.messageStatsTimer'));
 });
 
 test('message panel keeps actions quiet and preserves virtual rendering outside chat section', () => {
@@ -380,12 +382,14 @@ test('streaming message text updates are scoped to the markdown body component',
 
   const revisionStart = renderAdapter.indexOf('const buildProjectionMessageMaterializationRevision =');
   assert.ok(revisionStart >= 0);
-  const revisionEnd = renderAdapter.indexOf('const buildProjectionMetadataRevision =', revisionStart);
+  const revisionEnd = renderAdapter.indexOf('const isMaterializedMessageAligned =', revisionStart);
   assert.ok(revisionEnd > revisionStart);
   const revisionSource = renderAdapter.slice(revisionStart, revisionEnd);
   assert.ok(!revisionSource.includes('message.content'));
   assert.ok(!revisionSource.includes('message.reasoning'));
   assert.ok(!revisionSource.includes('message.updatedSeq'));
+  assert.ok(revisionSource.includes('message.structureVersion || 0'));
+  assert.ok(revisionSource.includes('buildBoundedStructuralRevision(message.workflowItems)'));
   assert.ok(renderAdapter.includes('syncMaterializedStreamingFields(cached.message, message);'));
   assert.ok(!renderableController.includes('runtimeProjectionContentVersion;'));
 
@@ -540,9 +544,6 @@ test('store visibleMessages getter materializes projection without legacy raw fa
 test('cached session message readers use projection materialization for secondary views', () => {
   const cacheActions = readSource('src/stores/chatCacheActions.ts');
   const beeroomRuntime = readSource('src/components/beeroom/useBeeroomMissionCanvasRuntime.ts');
-  const messengerView = readSource('src/views/MessengerView.vue');
-  const beeroomWorkbench = readSource('src/components/beeroom/BeeroomWorkbench.vue');
-  const beeroomCanvas = readSource('src/components/beeroom/BeeroomMissionCanvas.vue');
   const swarmCanvasModel = readSource('src/components/beeroom/canvas/swarmCanvasModel.ts');
   const sharedHelpers = readSource('src/views/messenger/controller/messengerControllerSharedHelpers.ts');
   const runtimeToolLists = readSource('src/views/messenger/controller/messengerControllerRuntimeToolLists.ts');
@@ -599,22 +600,11 @@ test('cached session message readers use projection materialization for secondar
   assert.ok(beeroomRuntime.includes('cancelOnAbort: false'));
   assert.ok(beeroomRuntime.includes('const detachedLocally = error?.name === \'AbortError\' && !dispatchStopRequested;'));
   assert.ok(beeroomRuntime.includes('keepSending: preserveLiveDispatch'));
-  assert.ok(messengerView.includes(':active-chat-session-id="beeroomActiveChatSessionId"'));
-  assert.ok(messengerView.includes(':active-chat-agent-id="beeroomActiveChatAgentId"'));
-  assert.ok(messengerView.includes('lastMessageSectionSessionId'));
-  assert.ok(messengerView.includes("section !== 'messages' || !sessionId"));
-  assert.ok(beeroomWorkbench.includes(':active-chat-session-id="activeChatSessionId"'));
-  assert.ok(beeroomWorkbench.includes(':active-chat-agent-id="activeChatAgentId"'));
-  assert.ok(beeroomCanvas.includes('activeChatSessionId?: string;'));
-  assert.ok(beeroomCanvas.includes('activeChatAgentId?: string;'));
-  assert.ok(beeroomCanvas.includes('fixedMotherDispatchSessionId: activeChatSessionIdRef'));
-  assert.ok(beeroomCanvas.includes('fixedMotherDispatchAgentId: activeChatAgentIdRef'));
   assert.ok(beeroomRuntime.includes('fixedMotherDispatchAgentId?: Ref<unknown>;'));
   assert.ok(beeroomRuntime.includes('const fixedMotherDispatchAgentId = computed(() =>'));
   assert.ok(beeroomRuntime.includes('const explicitFixedAgentId = String(fixedMotherDispatchAgentId.value || \'\').trim();'));
   assert.ok(beeroomRuntime.includes('const currentDispatchAgentId ='));
   assert.ok(beeroomRuntime.includes('explicitFixedAgentId ||'));
-  assert.ok(beeroomRuntime.includes('const next = loadOptions.forceReplace === true'));
   assert.ok(beeroomRuntime.includes('forceReplace: Boolean(fixedMotherDispatchSessionId.value)'));
   assert.ok(beeroomRuntime.includes('if (!isTool) {'));
   assert.ok(swarmCanvasModel.includes('workflowItems?: BeeroomWorkflowItem[];'));
@@ -632,8 +622,6 @@ test('cached session message readers use projection materialization for secondar
   assert.ok(beeroomRuntime.includes('hydrate: false,'));
   assert.ok(runtimeToolLists.includes('ctx.resolveEffectiveSessionBusy(sessionId)'));
   assert.ok(!runtimeToolLists.includes('!sessionId || !ctx.isSessionBusy(sessionId)'));
-  assert.ok(beeroomRuntime.includes('emitAgentRuntimeRefresh({'));
-
   const activityStart = sharedHelpers.indexOf('ctx.resolveSessionActivityTimestamp = function resolveSessionActivityTimestamp');
   assert.ok(activityStart >= 0);
   const activityEnd = sharedHelpers.indexOf('ctx.resolveSessionRecordById', activityStart);

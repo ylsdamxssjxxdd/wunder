@@ -63,7 +63,7 @@ import {
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
-import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled, isChatDebugVerboseEnabled } from '@/utils/chatDebug';
 import {
@@ -1908,11 +1908,24 @@ const applyCollaborationCanonicalSideEffect = (
   payload: Record<string, unknown>,
   data: Record<string, unknown>
 ) => {
+  const agentIds = new Set(
+    [
+      data.agent_id,
+      data.agentId,
+      payload.agent_id,
+      payload.agentId
+    ]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  );
   if (isSubagentCanonicalEvent(eventType) || isSubagentControlToolResultEvent(eventType, payload, data)) {
     const key = resolveSessionKey(sessionId);
     if (key) {
       sessionSubagentsCache.delete(key);
     }
+  }
+  if (agentIds.size > 0) {
+    emitAgentRuntimeRefresh({ agentIds: Array.from(agentIds) });
   }
 };
 

@@ -135,12 +135,13 @@ let historyDetailAbortController: AbortController | null = null;
 const STREAM_RENDER_DEBUG_SLOW_MS = 48;
 const MARKDOWN_RENDER_DEBUG_SLOW_MS = 12;
 const STREAM_TEXT_FLUSH_MIN_MS = 32;
-const LIVE_STREAM_TEXT_POLL_MS = 64;
+const LIVE_STREAM_TEXT_POLL_MS = 120;
 const PLAIN_TEXT_LAYOUT_THROTTLE_MIN_MS = 220;
 const STREAMING_TEXT_PREVIEW_MAX_CHARS = 60000;
 const HISTORY_MARKDOWN_INITIAL_CHARS = 24000;
 let lastStreamRenderTraceAt = 0;
 let lastStreamRenderTraceSignature = '';
+let lastPlainTextSource = '';
 
 const runtimeContentVersion = computed(() => {
   const messageIds = resolveRuntimeContentSubscriptionMessageIds();
@@ -378,9 +379,15 @@ const clearPlainTextFlushTimer = () => {
 const syncPlainTextDom = (source: string) => {
   const el = plainTextRef.value;
   if (el) {
-    if (el.textContent !== source) {
+    if (el.textContent === lastPlainTextSource && source.startsWith(lastPlainTextSource)) {
+      const delta = source.slice(lastPlainTextSource.length);
+      if (delta) {
+        el.append(document.createTextNode(delta));
+      }
+    } else if (el.textContent !== source) {
       el.textContent = source;
     }
+    lastPlainTextSource = source;
     return;
   }
   if (plainTextDomSyncPending) return;
@@ -391,6 +398,7 @@ const syncPlainTextDom = (source: string) => {
     if (target && target.textContent !== visiblePlainText.value) {
       target.textContent = visiblePlainText.value;
     }
+    lastPlainTextSource = visiblePlainText.value;
   });
 };
 

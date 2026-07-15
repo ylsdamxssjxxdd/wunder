@@ -1,7 +1,7 @@
 // @ts-nocheck
 // User attachments, agent/world renderable message lists, virtualization helpers, and plan state.
 import type { MessengerControllerContext } from './messengerControllerContext';
-import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, toRaw, watch } from 'vue';
+import { computed, nextTick, onUpdated, ref, toRaw, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 import { createAgent as createAgentApi, deleteAgent as deleteAgentApi, listAgentUserRounds, listRunningAgents } from '@/api/agents';
@@ -130,8 +130,6 @@ import {
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
 import {
-  hasAssistantPendingQuestion,
-  isAssistantMessageRunning,
   hasAssistantWaitingForCurrentOutput,
   normalizeAssistantMessageRuntimeState,
   resolveAssistantMessageRuntimeState
@@ -142,7 +140,6 @@ import {
   hasStreamingAssistantMessage
 } from '@/utils/chatSessionRuntime';
 import { hasActiveSubagentItems } from '@/utils/subagentRuntime';
-import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
   isCompactionOnlyWorkflowItems,
   isCompactionRunningFromWorkflowItems,
@@ -1111,167 +1108,6 @@ export function installMessengerControllerRenderableMessages(ctx: MessengerContr
   ctx.shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.hasMessageContent(buildAssistantDisplayContent(message, ctx.t));
 
   ctx.shouldMountAgentMessageBubble = (message: Record<string, unknown>): boolean => ctx.shouldShowAgentMessageBubble(message);
-
-  ctx.messageStatsNowTick = ref(Date.now());
-
-  ctx.messageStatsTimer = null;
-  const isDesktopSafeModeActive = (): boolean => {
-      try {
-          return Boolean(ctx.desktopMode.value && isDesktopSafeModeEnabled());
-      } catch {
-          return false;
-      }
-  };
-
-  ctx.hasLiveAssistantStats = computed(() => {
-      if (isDesktopSafeModeActive()) {
-          return false;
-      }
-      const latestVisibleAssistant = ctx.latestVisibleAgentAssistantMessage.value as Record<string, unknown> | null;
-      if (!latestVisibleAssistant || latestVisibleAssistant.isGreeting) {
-          return false;
-      }
-      return Boolean(
-          latestVisibleAssistant?.resume_available ||
-          latestVisibleAssistant?.slow_client ||
-          latestVisibleAssistant?.workflowStreaming ||
-          latestVisibleAssistant?.reasoningStreaming ||
-          latestVisibleAssistant?.stream_incomplete ||
-          hasAssistantPendingQuestion(latestVisibleAssistant) ||
-          hasAssistantWaitingForCurrentOutput(latestVisibleAssistant) ||
-          isAssistantMessageRunning(latestVisibleAssistant) ||
-          hasActiveSubagentItems(latestVisibleAssistant?.subagents) ||
-          Number.isFinite(Number(latestVisibleAssistant?.retry_started_at_ms ?? latestVisibleAssistant?.retryStartedAtMs)) ||
-          Number.isFinite(Number(latestVisibleAssistant?.retry_next_attempt_at_ms ?? latestVisibleAssistant?.retryNextAttemptAtMs)) ||
-          Number.isFinite(Number(latestVisibleAssistant?.retry_attempt ?? latestVisibleAssistant?.retryAttempt)) ||
-          Number.isFinite(Number(latestVisibleAssistant?.retry_max_attempts ?? latestVisibleAssistant?.retryMaxAttempts))
-      );
-  });
-
-  ctx.buildMessageStatsEntries = (message: Record<string, unknown>, index = 0) => {
-      const nowTick = ctx.messageStatsNowTick.value;
-      if (!message || String(message?.role || '') !== 'assistant' || message?.isGreeting) {
-          return [];
-      }
-      const sourceIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
-      const messageKey = ctx.resolveAgentMessageKey(message, sourceIndex);
-      const scopedMessageKey = `${String(ctx.sessionHub.activeConversationKey || '')}:${messageKey}`;
-      const activeSessionBusy = Boolean(ctx.isAgentConversationActive.value && ctx.activeMessengerSessionBusy.value);
-      const latestVisibleAssistant = ctx.latestVisibleAgentAssistantMessage.value === message;
-      const latestActiveAssistantBusy = Boolean(
-          activeSessionBusy &&
-          latestVisibleAssistant
-      );
-      const workflowItems = Array.isArray(message.workflowItems) ? (message.workflowItems as unknown[]) : [];
-      const subagents = Array.isArray(message.subagents) ? (message.subagents as unknown[]) : [];
-      const lastWorkflowItem = workflowItems[workflowItems.length - 1] as Record<string, unknown> | undefined;
-      const workflowSignature = lastWorkflowItem
-          ? [
-              workflowItems.length,
-              String(lastWorkflowItem.eventType || lastWorkflowItem.event || lastWorkflowItem.event_type || '').trim(),
-              String(lastWorkflowItem.status || '').trim(),
-              String(lastWorkflowItem.title || lastWorkflowItem.toolName || '').length,
-              String(lastWorkflowItem.detail || '').length
-          ].join(':')
-          : String(workflowItems.length);
-      const lastSubagent = subagents[subagents.length - 1] as Record<string, unknown> | undefined;
-      const subagentSignature = lastSubagent
-          ? [
-              subagents.length,
-              String(lastSubagent.key || lastSubagent.run_id || lastSubagent.session_id || '').trim(),
-              String(lastSubagent.status || '').trim(),
-              String(lastSubagent.summary || '').length
-          ].join(':')
-          : String(subagents.length);
-      const signature = [
-          ctx.chatStore.activeSessionId,
-          nowTick,
-          String(messageKey || '').trim(),
-          latestActiveAssistantBusy,
-          String(message.content || '').length,
-          String(message.reasoning || '').length,
-          String(message.state || '').trim(),
-          Boolean(message.workflowStreaming),
-          Boolean(message.reasoningStreaming),
-          Boolean(message.stream_incomplete),
-          Boolean(message.resume_available),
-          Boolean(message.slow_client),
-          workflowSignature,
-          subagentSignature,
-          String(message.retry_started_at_ms ?? message.retryStartedAtMs ?? ''),
-          String(message.retry_next_attempt_at_ms ?? message.retryNextAttemptAtMs ?? ''),
-          String(message.retry_attempt ?? message.retryAttempt ?? ''),
-          String(message.retry_max_attempts ?? message.retryMaxAttempts ?? ''),
-          JSON.stringify(message.stats || null)
-      ].join('::');
-      const cached = ctx.messageStatsEntryCache.get(scopedMessageKey);
-      if (cached?.signature === signature) {
-          return cached.entries;
-      }
-      const entries = buildAssistantMessageStatsEntries(
-          message as Record<string, any>,
-          ctx.t,
-          ctx.agentRenderableMessages.value.map((item) => item.message as Record<string, any>),
-          nowTick,
-          {
-              activeSessionBusy,
-              latestVisibleAssistant
-          }
-      );
-      ctx.messageStatsEntryCache.set(scopedMessageKey, { signature, entries });
-      if (ctx.messageStatsEntryCache.size > 80) {
-          const firstKey = ctx.messageStatsEntryCache.keys().next().value;
-          if (firstKey) {
-              ctx.messageStatsEntryCache.delete(firstKey);
-          }
-      }
-      return entries;
-  };
-
-  ctx.shouldShowMessageStats = (message: Record<string, unknown>, index = 0): boolean => ctx.buildMessageStatsEntries(message, index).length > 0;
-
-  const stopMessageStatsTimer = () => {
-      if (typeof window !== 'undefined' && ctx.messageStatsTimer !== null) {
-          window.clearInterval(ctx.messageStatsTimer);
-          ctx.messageStatsTimer = null;
-      }
-  };
-
-  const ensureMessageStatsTimer = () => {
-      if (typeof window === 'undefined') {
-          return;
-      }
-      if (isDesktopSafeModeActive()) {
-          stopMessageStatsTimer();
-          return;
-      }
-      if (!ctx.hasLiveAssistantStats.value) {
-          stopMessageStatsTimer();
-          return;
-      }
-      if (ctx.messageStatsTimer !== null) {
-          return;
-      }
-      ctx.messageStatsTimer = window.setInterval(() => {
-          ctx.messageStatsNowTick.value = Date.now();
-      }, 1000);
-  };
-
-  watch(() => ctx.hasLiveAssistantStats.value, (enabled) => {
-      if (enabled) {
-          ensureMessageStatsTimer();
-          return;
-      }
-      stopMessageStatsTimer();
-  }, { immediate: true });
-
-  onMounted(() => {
-      ensureMessageStatsTimer();
-  });
-
-  onBeforeUnmount(() => {
-      stopMessageStatsTimer();
-  });
 
   ctx.hasPlanSteps = (plan: unknown): boolean => Array.isArray((plan as {
       steps?: unknown[];

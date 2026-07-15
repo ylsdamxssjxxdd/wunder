@@ -1714,6 +1714,7 @@ export default {
   'chat.workflow.toolUnknown': '未知工具',
   'chat.toolWorkflow.title': '智能体循环',
   'chat.toolWorkflow.empty': '暂无工具调用',
+  'chat.toolWorkflow.showEarlier': '查看更早的 {count} 条记录',
   'chat.toolWorkflow.pendingTool': '正在调用工具',
   'chat.toolWorkflow.pendingToolDetail': '已进入工具阶段，正在等待首条工具详情同步到前端。',
   'chat.toolWorkflow.pendingCompaction': '正在压缩上下文',

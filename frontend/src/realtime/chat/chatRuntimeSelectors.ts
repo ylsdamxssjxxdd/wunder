@@ -9,6 +9,13 @@ import { isChatRuntimeBusyStatus, normalizeChatRuntimeStatus } from './chatRunti
 
 type ChatMessageLike = Record<string, unknown>;
 
+type VisibleMessageCacheEntry = {
+  version: number;
+  messages: ChatRuntimeMessageProjection[];
+};
+
+const visibleMessageCache = new WeakMap<ChatRuntimeSessionProjection, VisibleMessageCacheEntry>();
+
 export const selectChatRuntimeSession = (
   projection: ChatRuntimeProjection | null | undefined,
   sessionId: unknown
@@ -83,6 +90,11 @@ export const selectVisibleMessageProjections = (
 ): ChatRuntimeMessageProjection[] => {
   const session = selectChatRuntimeSession(projection, sessionId);
   if (!session) return [];
+  const topologyVersion = Number(session.visibleMessagesVersion || 0);
+  const cached = visibleMessageCache.get(session);
+  if (cached?.version === topologyVersion) {
+    return cached.messages;
+  }
   const ordered: ChatRuntimeMessageProjection[] = [];
   const seen = new Set<string>();
   const pushMessage = (messageId: string): void => {
@@ -116,8 +128,22 @@ export const selectVisibleMessageProjections = (
     if (left.createdSeq !== right.createdSeq) return left.createdSeq - right.createdSeq;
     return left.id.localeCompare(right.id);
   });
-  return coalesceVisibleMessagesByTurn(session, sorted);
+  const visible = coalesceVisibleMessagesByTurn(session, sorted);
+  if (isCacheableVisibleMessageList(session, visible)) {
+    visibleMessageCache.set(session, {
+      version: topologyVersion,
+      messages: visible
+    });
+  } else {
+    visibleMessageCache.delete(session);
+  }
+  return visible;
 };
+
+const isCacheableVisibleMessageList = (
+  session: ChatRuntimeSessionProjection,
+  messages: ChatRuntimeMessageProjection[]
+): boolean => messages.every((message) => session.messageById[message.id] === message);
 
 const isSyntheticGreetingProjection = (
   message: ChatRuntimeMessageProjection | null | undefined
