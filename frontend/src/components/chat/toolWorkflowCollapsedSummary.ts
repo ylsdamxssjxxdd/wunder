@@ -106,6 +106,13 @@ const compactPath = (value: string): string => {
   return `.../${segments.slice(-2).join('/')}`;
 };
 
+const basenameOfPath = (value: string): string => {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '').trim();
+  if (!normalized) return '';
+  const segments = normalized.split('/').filter(Boolean);
+  return segments.at(-1) || normalized;
+};
+
 // Collapsed rows intentionally inspect only a bounded prefix of raw payloads.
 // Full JSON parsing and result formatting remain an explicit expand-time cost.
 export const buildCollapsedToolWorkflowSummary = (
@@ -117,7 +124,7 @@ export const buildCollapsedToolWorkflowSummary = (
   if (isExecuteCommandTool(entry.toolName)) {
     brief = readEntryField(items, COMMAND_KEYS);
   } else if (isReadImageWorkflowTool(entry.toolName)) {
-    brief = compactPath(readEntryField(items, PATH_KEYS));
+    brief = basenameOfPath(readEntryField(items, PATH_KEYS));
   } else if (isWebFetchTool(entry.toolName)) {
     brief = readEntryField(items, URL_KEYS) || readEntryField(items, QUERY_KEYS);
   } else if (isQueryTool(entry.toolName)) {

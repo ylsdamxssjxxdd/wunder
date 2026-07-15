@@ -156,6 +156,7 @@ import {
   buildCollapsedToolWorkflowSummary,
   isReadImageWorkflowTool
 } from './toolWorkflowCollapsedSummary';
+import { resolveCollapsedWorkflowEntryMetadata } from './toolWorkflowCollapsedMetadata';
 import {
   buildWorkflowToolRuns,
   resolveWorkflowPendingPlaceholder,
@@ -165,12 +166,6 @@ import {
 } from './toolWorkflowRunModel';
 import { createToolWorkflowRenderBatcher } from './toolWorkflowRenderBatcher';
 import { shouldRenderWorkflowShell } from './toolWorkflowVisibility';
-import {
-  formatWorkflowContextTokensLabel,
-  formatWorkflowConsumedTokensLabel,
-  resolveWorkflowEntryContextTokenResolution,
-  resolveWorkflowEntryConsumedTokenResolution
-} from './toolWorkflowUsage';
 import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { extractToolResultDataObject } from './toolWorkflowResultPayload';
 import { chatPerf } from '@/utils/chatPerf';
@@ -182,10 +177,6 @@ import {
   type CompactionDisplay
 } from '@/utils/chatCompactionUi';
 import { resolveAbilityVisual, resolveToolIconClass } from '@/utils/abilityVisuals';
-import {
-  formatWorkflowDurationLabel,
-  resolveWorkflowEntryDurationMs
-} from '@/utils/toolWorkflowTiming';
 import MessageToolWorkflowSection from './MessageToolWorkflowSection.vue';
 import type {
   ToolWorkflowCommandView as CommandView,
@@ -3759,19 +3750,6 @@ const resolveEntryStatus = (
     || 'completed'
   );
 
-const resolveEntryContextTokenResolution = (
-  entry: RawEntry
-): { tokens: number | null; source: string } => {
-  const entryResolution = resolveWorkflowEntryContextTokenResolution(entry);
-  if (entryResolution.tokens !== null) {
-    return {
-      tokens: entryResolution.tokens,
-      source: entryResolution.source
-    };
-  }
-  return { tokens: null, source: 'none' };
-};
-
 const resolveCompactionDetailObject = (entry: RawEntry): UnknownObject | null =>
   parseDetailObject(entry.resultItem?.detail)
   || parseDetailObject(entry.outputItem?.detail)
@@ -3787,8 +3765,14 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
       ? 'failed'
       : resolveEntryStatus(entry, commandSession);
   const isCompaction = isCompactionEntry(entry);
+  // Use one bounded summary in both states so expanding a row never moves or
+  // removes its key call information while the detail body is built lazily.
+  const collapsedSummary = buildCollapsedToolWorkflowSummary(entry, toolDisplay);
+  const collapsedMetadata = resolveCollapsedWorkflowEntryMetadata(
+    entry,
+    resolveCommandSessionDurationMs(commandSession)
+  );
   if (!includeDetails) {
-    const collapsedSummary = buildCollapsedToolWorkflowSummary(entry, toolDisplay);
     return {
       key: entry.key,
       revision: '',
@@ -3799,11 +3783,11 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
       toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
       isCompaction,
       status,
-      contextTokensLabel: '',
-      contextTokensSource: 'none',
-      consumedTokensLabel: '',
-      consumedTokensSource: 'none',
-      durationLabel: '',
+      contextTokensLabel: collapsedMetadata.contextTokensLabel,
+      contextTokensSource: collapsedMetadata.contextTokensSource,
+      consumedTokensLabel: collapsedMetadata.consumedTokensLabel,
+      consumedTokensSource: collapsedMetadata.consumedTokensSource,
+      durationLabel: collapsedMetadata.durationLabel,
       sections: []
     };
   }
@@ -3836,13 +3820,6 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
         )
       }
     : splitEntrySummary(summaryTitle, toolDisplay);
-  const consumedTokenResolution = resolveWorkflowEntryConsumedTokenResolution(entry);
-  const consumedTokensLabel = formatWorkflowConsumedTokensLabel(consumedTokenResolution.tokens);
-  const contextTokenResolution = resolveEntryContextTokenResolution(entry);
-  const contextTokensLabel = formatWorkflowContextTokensLabel(contextTokenResolution.tokens);
-  const durationLabel = formatWorkflowDurationLabel(
-    resolveWorkflowEntryDurationMs(entry, resolveCommandSessionDurationMs(commandSession))
-  );
   // Detail bodies can parse and format large tool payloads. Keep that work out
   // of the live collapsed list; Vue mounts it only for an explicitly opened row.
   const toolResultSection = includeDetails
@@ -3861,17 +3838,17 @@ const buildEntryView = (entry: RawEntry, includeDetails: boolean): ToolEntryView
     key: entry.key,
     revision: '',
     toolLabel: summary.toolLabel,
-    summaryBrief: summary.summaryBrief,
+    summaryBrief: collapsedSummary.brief || summary.summaryBrief,
     summaryTitle,
     toolCallRawTitle: buildToolCallDebugText(entry),
     toolIconClass: resolveWorkflowToolIconClass(entry.toolName, isCompaction),
     isCompaction,
     status,
-    contextTokensLabel,
-    contextTokensSource: contextTokenResolution.source,
-    consumedTokensLabel,
-    consumedTokensSource: consumedTokenResolution.source,
-    durationLabel,
+    contextTokensLabel: collapsedMetadata.contextTokensLabel,
+    contextTokensSource: collapsedMetadata.contextTokensSource,
+    consumedTokensLabel: collapsedMetadata.consumedTokensLabel,
+    consumedTokensSource: collapsedMetadata.consumedTokensSource,
+    durationLabel: collapsedMetadata.durationLabel,
     sections
   };
 };
@@ -4985,7 +4962,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex: 1 1 72%;
   display: grid;
-  grid-template-columns: minmax(104px, 25%) minmax(0, 1fr);
+  grid-template-columns: 144px minmax(0, 1fr);
   align-items: center;
   column-gap: 6px;
 }
@@ -5012,7 +4989,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 760px) {
   .tool-workflow-entry-title {
-    grid-template-columns: minmax(92px, 25%) minmax(0, 1fr);
+    grid-template-columns: 124px minmax(0, 1fr);
     column-gap: 5px;
   }
 }
