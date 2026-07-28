@@ -2,7 +2,7 @@ use super::aggregate::{build_run_summary, build_task_aggregate};
 use super::executor::execute_prompt;
 use super::grader_auto::grade_automated;
 use super::grader_judge::grade_with_judge;
-use super::loader::{default_tasks_dir, load_task_specs};
+use super::bank::{bank_snapshot, load_question_bank, task_specs_snapshot, QuestionBankSummary};
 use super::models::BenchmarkEvent;
 use super::profiles::resolve_profile_tasks;
 use super::spec::{BenchmarkGradingType, BenchmarkTaskSpec};
@@ -62,6 +62,8 @@ struct BenchmarkRunContext {
     model_name: Option<String>,
     judge_model_name: Option<String>,
     suite_ids: Vec<String>,
+    question_bank: QuestionBankSummary,
+    task_specs_snapshot: Value,
     requested_tool_names: Vec<String>,
     tool_snapshot: Vec<String>,
     runs_per_task: u32,
@@ -123,9 +125,12 @@ impl BenchmarkManager {
             &request.tool_names,
         );
 
-        let tasks = load_task_specs(&default_tasks_dir())?;
+        let question_bank = load_question_bank(
+            request.question_bank_id.as_deref(),
+            request.question_bank_version.as_deref(),
+        )?;
         let selection = resolve_profile_tasks(
-            tasks,
+            question_bank.tasks,
             request.profile.as_deref(),
             &request.suite_ids,
             &request.task_ids,
@@ -136,6 +141,7 @@ impl BenchmarkManager {
         }
         let profile = selection.profile;
         let suite_ids = selection.suite_ids;
+        let task_specs_snapshot = task_specs_snapshot(&tasks);
         let runs_per_task = request
             .runs_per_task
             .unwrap_or_else(|| default_runs_per_task(&profile))
@@ -149,6 +155,8 @@ impl BenchmarkManager {
         let run_payload = json!({
             "benchmark": "wunderbench",
             "profile": profile,
+            "question_bank": bank_snapshot(&question_bank.summary),
+            "task_specs": task_specs_snapshot.clone(),
             "run_id": run_id,
             "user_id": user_id,
             "model_name": model_name.clone().unwrap_or_default(),
@@ -191,6 +199,8 @@ impl BenchmarkManager {
             model_name,
             judge_model_name,
             suite_ids: suite_ids.clone(),
+            question_bank: question_bank.summary,
+            task_specs_snapshot,
             requested_tool_names: request.tool_names.clone(),
             tool_snapshot: tool_snapshot.clone(),
             runs_per_task,
@@ -218,6 +228,7 @@ impl BenchmarkManager {
             "task_count": run_payload["task_count"],
             "attempt_count": run_payload["attempt_count"],
             "suite_ids": suite_ids,
+            "question_bank": run_payload["question_bank"],
         }))
     }
 
@@ -470,6 +481,8 @@ async fn run_benchmark(ctx: BenchmarkRunContext) {
         "model_name": ctx.model_name.unwrap_or_default(),
         "judge_model_name": ctx.judge_model_name.unwrap_or_default(),
         "suite_ids": ctx.suite_ids,
+        "question_bank": bank_snapshot(&ctx.question_bank),
+        "task_specs": ctx.task_specs_snapshot,
         "tool_snapshot": ctx.tool_snapshot,
         "task_count": task_aggregates.len(),
         "attempt_count": all_attempts.len(),

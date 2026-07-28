@@ -374,6 +374,7 @@ mod tests {
             automated_checks: None,
             llm_judge_rubric: None,
             file_path: format!("{id}.md"),
+            asset_root: None,
         }
     }
 }

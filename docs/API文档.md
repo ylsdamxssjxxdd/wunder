@@ -2780,13 +2780,25 @@
 - 旧 `/wunder/admin/evaluation/*` 能力评估接口已移除。
 - 当前统一使用 WunderBench 模型评测接口，旧 `/wunder/admin/benchmark/*` 作为兼容别名保留；旧 `start` 入口在未传筛选条件时仍运行全量题库。
 - WunderBench 复用 Wunder 真实智能体执行链路，默认运行全部可用任务；也可通过 `suite_ids` 或 `task_ids` 手动筛选用例。运行过程会准备工作区、执行工具、记录产物，并输出自动评分、LLM 裁判评分与 scorecard。
+- 题库是版本化配置资源而非运行结果：运行快照会固化 `question_bank` 和 `task_specs`，确保题库升级、移除后仍能复盘历史结果。
 
 ### WunderBench API
 
 #### `GET /wunder/admin/wunderbench/profiles`
 - 方法：`GET`
-- 返回（JSON）：`{ "benchmark": "wunderbench", "profiles": [...] }`
+- 入参（Query，可选）：`question_bank_id`、`question_bank_version`；未传或传 `builtin` 时读取内置题库。
+- 返回（JSON）：`{ "benchmark": "wunderbench", "question_bank": {...}, "profiles": [...] }`
 - 每个 profile 包含 `id`、`name`、`description`、`task_count`、`recommended_runs`、`default`。当前仅返回 `full`，表示运行全部可用任务；历史 `quick`、`core`、`standard` 等入参会兼容归一为 `full`。
+
+#### `GET /wunder/admin/wunderbench/banks`
+- 方法：`GET`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "banks": [...] }`。每个题库包含 `id`、`version`、`name`、`description`、`subject`、`languages`、`task_count`、`task_ids`、`suites`、`checksum`、`has_executable_grading` 与 `built_in`。
+
+#### `POST /wunder/admin/wunderbench/banks/import`
+- 方法：`POST`，`multipart/form-data`，最大 32 MiB。
+- 字段：`file`（必填，ZIP 题库包）、`allow_executable_grading`（可选布尔值；题库包含 `automated` 评分脚本时必须显式为 `true`）。
+- 题库包根目录必须有 `wunderbench.json`：`protocol` 固定为 `wunderbench.question_bank`，`schema_version` 当前为 `1`，并声明稳定的 `id`、`version`、`name`、`tasks_path`、`assets_path`。`tasks_path` 内任务继续使用 WunderBench Markdown 规范。
+- 同一 `id + version` 不允许覆盖导入；目录、资产和 workspace 路径均限制在包或 attempt 工作区内，导入会拒绝路径穿越、重复 task id、缺失资产、超大或超量 ZIP 条目。
 
 #### `GET /wunder/admin/wunderbench/suites`
 - 方法：`GET`
@@ -2795,14 +2807,14 @@
 
 #### `GET /wunder/admin/wunderbench/tasks`
 - 方法：`GET`
-- 入参（Query，可选）：`suite`、`category`、`grading_type`。
-- 返回（JSON）：`{ "benchmark": "wunderbench", "tasks": [...] }`。每个任务项包含 `id`、`name`、`suite`、`category`、`grading_type`、`timeout_seconds`、`runs_recommended`、`difficulty`、`required_tools`、`tags`、`languages`、`criteria_count`、`has_automated_checks`、`has_judge_rubric`、`coverage`、`prompt`、`expected_behavior`。
+- 入参（Query，可选）：`question_bank_id`、`question_bank_version`、`suite`、`category`、`grading_type`。
+- 返回（JSON）：`{ "benchmark": "wunderbench", "question_bank": {...}, "tasks": [...] }`。每个任务项包含 `id`、`name`、`suite`、`category`、`grading_type`、`timeout_seconds`、`runs_recommended`、`difficulty`、`required_tools`、`tags`、`languages`、`criteria_count`、`has_automated_checks`、`has_judge_rubric`、`coverage`、`prompt`、`expected_behavior`。
 
 #### `POST /wunder/admin/wunderbench/start`
 - 方法：`POST`
-- 入参（JSON）：`user_id`（必填）、`profile`（可选，默认 `full`，旧值兼容归一为 `full`）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
+- 入参（JSON）：`user_id`（必填）、`question_bank_id` / `question_bank_version`（可选；指定导入题库时两者必须同时提供）、`profile`（可选，默认 `full`，旧值兼容归一为 `full`）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
 - 说明：未传 `suite_ids/task_ids` 时运行全量题库；传入后进入手动筛选模式。
-- 返回（JSON）：`run_id`、`status`、`benchmark`、`profile`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 WunderBench。
+- 返回（JSON）：`run_id`、`status`、`benchmark`、`question_bank`、`profile`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 WunderBench。
 
 #### `GET /wunder/admin/wunderbench/runs`
 - 方法：`GET`
@@ -2816,7 +2828,7 @@
 #### `GET /wunder/admin/wunderbench/runs/{run_id}/export`
 - 方法：`GET`
 - 返回：`application/json` 附件下载，文件名形如 `wunderbench-{run_id}-export.json`。
-- 内容：导出单次评测的完整复盘包，包含 `run`、`task_aggregates`、`attempts`、`task_specs`、`attempt_logs` 与 `diagnostics`。
+- 内容：导出单次评测的完整复盘包，包含 `run`、`question_bank`、`task_aggregates`、`attempts`、`task_specs`、`attempt_logs` 与 `diagnostics`。`task_specs` 优先使用启动时固化快照，而不是读取当前题库。
 - `task_aggregates` 仅保留聚合分数和 `attempt_refs` 轻量引用，完整 attempt payload 只在顶层 `attempts` 出现一次，避免导出文件重复膨胀。
 - `attempt_logs` 仅保留 `attempt_ref`、主执行线程与裁判线程 monitor 记录，不再重复嵌入完整 attempt。
 - `attempt_logs` 会按 `bench-{run_id}-{task_id}-{attempt_no}` 和 `bench-{run_id}-{task_id}-{attempt_no}-judge` 收集主执行与裁判线程的 monitor 记录，包含已持久化的模型请求、模型输出、工具调用、工具结果、工作区更新、token/速度统计等事件。

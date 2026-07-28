@@ -1,5 +1,6 @@
 ﻿use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 fn default_runs_recommended() -> u32 {
     3
@@ -66,6 +67,9 @@ pub struct BenchmarkTaskSpec {
     #[serde(default)]
     pub llm_judge_rubric: Option<String>,
     pub file_path: String,
+    /// Imported banks can use a package-local asset directory.
+    #[serde(skip)]
+    pub asset_root: Option<PathBuf>,
 }
 
 impl BenchmarkTaskSpec {

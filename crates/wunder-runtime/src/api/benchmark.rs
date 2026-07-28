@@ -1,10 +1,10 @@
-use crate::benchmark::loader::{default_tasks_dir, load_task_specs};
+use crate::benchmark::bank::{bank_snapshot, list_question_banks, load_question_bank};
 use crate::benchmark::profiles::available_profiles;
 use crate::benchmark::spec::BenchmarkTaskSpec;
 use crate::benchmark::BenchmarkStartRequest;
 use crate::state::AppState;
 use axum::body::Body;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
@@ -16,11 +16,18 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
 
+const MAX_QUESTION_BANK_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/wunder/admin/wunderbench/profiles",
             get(benchmark_profiles),
+        )
+        .route("/wunder/admin/wunderbench/banks", get(benchmark_banks))
+        .route(
+            "/wunder/admin/wunderbench/banks/import",
+            post(benchmark_bank_import).layer(DefaultBodyLimit::max(MAX_QUESTION_BANK_UPLOAD_BYTES)),
         )
         .route("/wunder/admin/wunderbench/suites", get(benchmark_suites))
         .route("/wunder/admin/wunderbench/tasks", get(benchmark_tasks))
@@ -43,6 +50,7 @@ pub fn router() -> Router<Arc<AppState>> {
             get(benchmark_stream),
         )
         .route("/wunder/admin/benchmark/profiles", get(benchmark_profiles))
+        .route("/wunder/admin/benchmark/banks", get(benchmark_banks))
         .route("/wunder/admin/benchmark/suites", get(benchmark_suites))
         .route("/wunder/admin/benchmark/tasks", get(benchmark_tasks))
         .route(
@@ -68,13 +76,76 @@ pub fn router() -> Router<Arc<AppState>> {
         )
 }
 
-async fn benchmark_profiles(State(_state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
-    let tasks = load_task_specs(default_tasks_dir().as_path())
+#[derive(Debug, Deserialize, Default)]
+struct QuestionBankQuery {
+    #[serde(default)]
+    question_bank_id: Option<String>,
+    #[serde(default)]
+    question_bank_version: Option<String>,
+}
+
+async fn benchmark_profiles(
+    State(_state): State<Arc<AppState>>,
+    Query(query): Query<QuestionBankQuery>,
+) -> Result<Json<Value>, Response> {
+    let bank = load_question_bank(
+        query.question_bank_id.as_deref(),
+        query.question_bank_version.as_deref(),
+    )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "benchmark": "wunderbench",
-        "profiles": available_profiles(&tasks),
+        "question_bank": bank_snapshot(&bank.summary),
+        "profiles": available_profiles(&bank.tasks),
     })))
+}
+
+async fn benchmark_banks(State(_state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
+    let banks = list_question_banks()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "benchmark": "wunderbench", "banks": banks })))
+}
+
+async fn benchmark_bank_import(mut multipart: Multipart) -> Result<Json<Value>, Response> {
+    let mut data = Vec::new();
+    let mut allow_executable_grading = false;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        let name = field.name().unwrap_or("").trim().to_string();
+        if matches!(name.as_str(), "allow_executable_grading" | "allowExecutableGrading") {
+            let value = field
+                .text()
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            allow_executable_grading = matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            );
+            continue;
+        }
+        if field.file_name().is_some() || name == "file" {
+            data = field
+                .bytes()
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+                .to_vec();
+        }
+    }
+    let preview = crate::benchmark::bank::build_import_preview(&data)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if preview.has_executable_grading && !allow_executable_grading {
+        return Ok(Json(json!({
+            "ok": false,
+            "confirmation_required": true,
+            "question_bank": preview,
+        })));
+    }
+    let bank = crate::benchmark::bank::import_question_bank(&data, allow_executable_grading)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "ok": true, "question_bank": bank })))
 }
 
 async fn benchmark_start(
@@ -254,6 +325,8 @@ async fn benchmark_stream(
 
 #[derive(Debug, Deserialize)]
 struct BenchmarkTasksQuery {
+    #[serde(flatten)]
+    question_bank: QuestionBankQuery,
     #[serde(default)]
     suite: Option<String>,
     #[serde(default)]
@@ -262,10 +335,16 @@ struct BenchmarkTasksQuery {
     grading_type: Option<String>,
 }
 
-async fn benchmark_suites(State(_state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
-    let task_dir = default_tasks_dir();
-    let tasks = load_task_specs(task_dir.as_path())
+async fn benchmark_suites(
+    State(_state): State<Arc<AppState>>,
+    Query(query): Query<QuestionBankQuery>,
+) -> Result<Json<Value>, Response> {
+    let bank = load_question_bank(
+        query.question_bank_id.as_deref(),
+        query.question_bank_version.as_deref(),
+    )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let tasks = bank.tasks;
     let mut suites: BTreeMap<String, Value> = BTreeMap::new();
     for task in &tasks {
         let suite_id = task.frontmatter.suite.clone();
@@ -292,6 +371,7 @@ async fn benchmark_suites(State(_state): State<Arc<AppState>>) -> Result<Json<Va
     }
     Ok(Json(json!({
         "benchmark": "wunderbench",
+        "question_bank": bank_snapshot(&bank.summary),
         "profiles": available_profiles(&tasks),
         "suites": suites.into_values().collect::<Vec<_>>()
     })))
@@ -301,12 +381,19 @@ async fn benchmark_tasks(
     State(_state): State<Arc<AppState>>,
     Query(query): Query<BenchmarkTasksQuery>,
 ) -> Result<Json<Value>, Response> {
-    let task_dir = default_tasks_dir();
-    let mut tasks = load_task_specs(task_dir.as_path())
+    let bank = load_question_bank(
+        query.question_bank.question_bank_id.as_deref(),
+        query.question_bank.question_bank_version.as_deref(),
+    )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut tasks = bank.tasks;
     tasks.retain(|task| filter_task(task, &query));
     let items = tasks.into_iter().map(task_to_summary).collect::<Vec<_>>();
-    Ok(Json(json!({ "benchmark": "wunderbench", "tasks": items })))
+    Ok(Json(json!({
+        "benchmark": "wunderbench",
+        "question_bank": bank_snapshot(&bank.summary),
+        "tasks": items,
+    })))
 }
 
 fn filter_task(task: &BenchmarkTaskSpec, query: &BenchmarkTasksQuery) -> bool {
@@ -390,14 +477,26 @@ fn build_benchmark_export_payload(state: &AppState, run_id: &str) -> anyhow::Res
     };
     let tasks = state.benchmark.load_task_aggregates(cleaned_run_id)?;
     let attempts = state.benchmark.load_attempts(cleaned_run_id)?;
-    let task_specs = load_task_specs(default_tasks_dir().as_path()).unwrap_or_default();
-    let task_spec_map = task_specs
-        .into_iter()
-        .map(|task| {
-            let id = task.frontmatter.id.clone();
-            (id, task_to_export_spec(task))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let task_spec_map = run.get("task_specs").cloned().unwrap_or_else(|| {
+        let bank_id = run
+            .pointer("/question_bank/id")
+            .and_then(Value::as_str);
+        let bank_version = run
+            .pointer("/question_bank/version")
+            .and_then(Value::as_str);
+        let task_specs = load_question_bank(bank_id, bank_version)
+            .map(|bank| bank.tasks)
+            .unwrap_or_default();
+        Value::Object(
+            task_specs
+                .into_iter()
+                .map(|task| {
+                    let id = task.frontmatter.id.clone();
+                    (id, task_to_export_spec(task))
+                })
+                .collect::<serde_json::Map<_, _>>(),
+        )
+    });
     let task_aggregates = tasks
         .into_iter()
         .map(compact_task_aggregate_for_export)
@@ -415,11 +514,12 @@ fn build_benchmark_export_payload(state: &AppState, run_id: &str) -> anyhow::Res
         })
         .count();
     Ok(json!({
-        "export_schema_version": 1,
+        "export_schema_version": 2,
         "export_type": "wunderbench_run",
         "exported_at": chrono::Utc::now().to_rfc3339(),
         "run_id": cleaned_run_id,
         "run": run,
+        "question_bank": run.get("question_bank").cloned().unwrap_or(Value::Null),
         "task_aggregates": task_aggregates,
         "attempts": attempts,
         "task_specs": task_spec_map,

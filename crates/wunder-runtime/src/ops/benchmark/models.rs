@@ -5,6 +5,10 @@ use serde_json::Value;
 pub struct BenchmarkStartRequest {
     pub user_id: String,
     #[serde(default)]
+    pub question_bank_id: Option<String>,
+    #[serde(default)]
+    pub question_bank_version: Option<String>,
+    #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
     pub model_name: Option<String>,

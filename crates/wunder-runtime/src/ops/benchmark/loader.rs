@@ -32,6 +32,13 @@ fn resolve_config_path(relative: &str) -> PathBuf {
 }
 
 pub fn load_task_specs(dir: &Path) -> Result<Vec<BenchmarkTaskSpec>> {
+    load_task_specs_with_asset_root(dir, None)
+}
+
+pub fn load_task_specs_with_asset_root(
+    dir: &Path,
+    asset_root: Option<&Path>,
+) -> Result<Vec<BenchmarkTaskSpec>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -49,7 +56,8 @@ pub fn load_task_specs(dir: &Path) -> Result<Vec<BenchmarkTaskSpec>> {
 
     let mut tasks = Vec::new();
     for path in paths {
-        let task = load_task_spec(&path)?;
+        let mut task = load_task_spec(&path)?;
+        task.asset_root = asset_root.map(Path::to_path_buf);
         if task.id() == "task_XX_name" {
             continue;
         }
@@ -91,6 +99,7 @@ pub fn load_task_spec(path: &Path) -> Result<BenchmarkTaskSpec> {
         automated_checks,
         llm_judge_rubric: llm_judge_rubric.map(|value| value.trim().to_string()),
         file_path: path.to_string_lossy().to_string(),
+        asset_root: None,
     };
     validate_task_spec(&spec, path)?;
     Ok(spec)

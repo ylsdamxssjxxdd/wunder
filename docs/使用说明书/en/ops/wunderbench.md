@@ -28,6 +28,8 @@ Open **Debug / WunderBench** in the admin console.
 
 The page has four main operations:
 
+- **Choose a question bank**: run the built-in bank or an imported versioned bank without mixing their tasks.
+- **Import a question bank**: upload a trusted ZIP package; an explicit confirmation is required when it contains automated Python graders.
 - **Run the full suite**: WunderBench runs every available task by default; quick, core, and full profile tiers are no longer separate choices.
 - **Choose the tested model**: the model that actually performs the task.
 - **Choose the judge model**: used only by `llm_judge` and `hybrid` tasks.
@@ -38,6 +40,8 @@ Admin APIs are also available:
 | Operation | API |
 |-----------|-----|
 | List profiles | `GET /wunder/admin/wunderbench/profiles` |
+| List question banks | `GET /wunder/admin/wunderbench/banks` |
+| Import question bank | `POST /wunder/admin/wunderbench/banks/import` |
 | List tasks | `GET /wunder/admin/wunderbench/tasks` |
 | Start run | `POST /wunder/admin/wunderbench/start` |
 | List runs | `GET /wunder/admin/wunderbench/runs` |
@@ -73,6 +77,22 @@ The **judge model** assists scoring. It does not execute the task and is only us
 ## Current Coverage
 
 Built-in task specs live in `config/benchmark/tasks/*.md`; optional assets live in `config/benchmark/assets/`.
+
+## Importing Question Banks
+
+A question bank is a versioned ZIP package. Its root contains `wunderbench.json`, `tasks/`, and optionally `assets/`:
+
+```text
+wunderbench.json
+tasks/
+  task_example.md
+assets/
+  input.txt
+```
+
+The manifest uses protocol `wunderbench.question_bank`, schema version `1`, and stable `id` plus `version` fields. Its `tasks_path` task Markdown uses the same WunderBench task specification as built-in tasks. Imported packages are stored separately at `config/benchmark/banks/{id}/{version}/`.
+
+Task asset references and attempt workspace paths are constrained to their respective roots. Packages containing automated Python graders require explicit administrator confirmation and should only be imported from trusted sources. Each run stores its question-bank identity and task-spec snapshot, so later package changes do not alter historical exports.
 
 Current suites cover these areas:
 

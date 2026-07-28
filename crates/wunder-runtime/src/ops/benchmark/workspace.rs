@@ -1,7 +1,7 @@
 use super::loader::default_assets_dir;
 use super::spec::{BenchmarkTaskSpec, WorkspaceFileSpec};
 use crate::workspace::WorkspaceManager;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,15 @@ pub fn prepare_attempt_workspace(
         .with_context(|| format!("创建 benchmark 工作区失败: {target:?}"))?;
 
     for file in &task.frontmatter.workspace_files {
-        write_workspace_file(&target, run_id, task.id(), attempt_no, &relative_root, file)?;
+        write_workspace_file(
+            &target,
+            run_id,
+            task.id(),
+            attempt_no,
+            &relative_root,
+            task.asset_root.as_deref(),
+            file,
+        )?;
     }
     workspace.bump_version(workspace_id);
     Ok((target, relative_root))
@@ -95,18 +103,22 @@ fn write_workspace_file(
     task_id: &str,
     attempt_no: u32,
     attempt_root: &str,
+    asset_root: Option<&Path>,
     spec: &WorkspaceFileSpec,
 ) -> Result<()> {
     match spec {
         WorkspaceFileSpec::Asset { source, dest } => {
-            let source_path = default_assets_dir().join(source);
-            let target_path = root.join(apply_task_placeholders(
+            let asset_base = asset_root
+                .map(Path::to_path_buf)
+                .unwrap_or_else(default_assets_dir);
+            let source_path = resolve_asset_source(&asset_base, source)?;
+            let target_path = resolve_workspace_target(root, &apply_task_placeholders(
                 dest,
                 run_id,
                 task_id,
                 attempt_no,
                 attempt_root,
-            ));
+            ))?;
             if let Some(parent) = target_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -115,13 +127,13 @@ fn write_workspace_file(
             })?;
         }
         WorkspaceFileSpec::Inline { path, content } => {
-            let target_path = root.join(apply_task_placeholders(
+            let target_path = resolve_workspace_target(root, &apply_task_placeholders(
                 path,
                 run_id,
                 task_id,
                 attempt_no,
                 attempt_root,
-            ));
+            ))?;
             if let Some(parent) = target_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -132,6 +144,44 @@ fn write_workspace_file(
         }
     }
     Ok(())
+}
+
+fn resolve_asset_source(root: &Path, source: &str) -> Result<PathBuf> {
+    let relative = Path::new(source);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(anyhow!("benchmark asset source must stay inside its asset directory"));
+    }
+    let path = root.join(relative);
+    if !path.is_file() {
+        return Err(anyhow!("benchmark asset not found: {source}"));
+    }
+    Ok(path)
+}
+
+fn resolve_workspace_target(root: &Path, value: &str) -> Result<PathBuf> {
+    let relative = Path::new(value);
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(anyhow!("benchmark workspace file path must stay inside its attempt workspace"));
+    }
+    Ok(root.join(relative))
 }
 
 #[cfg(test)]

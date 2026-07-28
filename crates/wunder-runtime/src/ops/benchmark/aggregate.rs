@@ -244,6 +244,7 @@ mod tests {
             ),
             llm_judge_rubric: None,
             file_path: "task_demo.md".to_string(),
+            asset_root: None,
         };
         let aggregate = build_task_aggregate(&task, &[]);
         assert_eq!(aggregate["status"], "cancelled");

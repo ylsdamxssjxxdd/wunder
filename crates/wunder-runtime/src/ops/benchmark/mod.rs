@@ -1,4 +1,5 @@
 ﻿pub mod aggregate;
+pub mod bank;
 pub mod executor;
 pub mod grader_auto;
 pub mod grader_judge;

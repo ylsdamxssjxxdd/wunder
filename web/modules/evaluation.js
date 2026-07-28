@@ -12,6 +12,8 @@ const benchmarkState = {
   initialized: false,
   refs: null,
   profiles: [],
+  banks: [],
+  selectedBankKey: "builtin@1",
   history: [],
   activeRunId: "",
   activeStatus: "idle",
@@ -212,11 +214,14 @@ function cacheRefs() {
   return {
     panel,
     startBtn: panel.querySelector("#benchmarkStartBtn"),
+    importBtn: panel.querySelector("#benchmarkImportBtn"),
+    bankFile: panel.querySelector("#benchmarkBankFile"),
     historyBtn: panel.querySelector("#benchmarkHistoryBtn"),
     exportBtn: panel.querySelector("#benchmarkExportBtn"),
     statusIndicator: panel.querySelector("#benchmarkStatusIndicator"),
     userId: panel.querySelector("#benchmarkUserId"),
     profileList: panel.querySelector("#benchmarkProfileList"),
+    bankSelect: panel.querySelector("#benchmarkBankSelect"),
     modelSelect: panel.querySelector("#benchmarkModelSelect"),
     judgeModelSelect: panel.querySelector("#benchmarkJudgeModelSelect"),
     formStatus: panel.querySelector("#benchmarkFormStatus"),
@@ -339,6 +344,32 @@ function renderModelOptions() {
       select.value = current;
     }
   });
+}
+
+function questionBankKey(bank) {
+  return `${String(bank?.id || "").trim()}@${String(bank?.version || "").trim()}`;
+}
+
+function selectedQuestionBank() {
+  return benchmarkState.banks.find((bank) => questionBankKey(bank) === benchmarkState.selectedBankKey) || benchmarkState.banks[0] || null;
+}
+
+function renderQuestionBankOptions() {
+  const select = benchmarkState.refs?.bankSelect;
+  if (!select) {
+    return;
+  }
+  select.textContent = "";
+  benchmarkState.banks.forEach((bank) => {
+    const option = document.createElement("option");
+    option.value = questionBankKey(bank);
+    option.textContent = `${bank.name || bank.id} (${bank.version || "-"}, ${Number(bank.task_count) || 0} 题)`;
+    select.appendChild(option);
+  });
+  if (!benchmarkState.banks.some((bank) => questionBankKey(bank) === benchmarkState.selectedBankKey)) {
+    benchmarkState.selectedBankKey = questionBankKey(benchmarkState.banks[0]);
+  }
+  select.value = benchmarkState.selectedBankKey;
 }
 
 function renderProfileOptions() {
@@ -655,13 +686,20 @@ async function loadCatalog() {
   benchmarkState.catalogLoaded = false;
   updatePrimaryAction();
 
-  const payload = await fetchJson("/admin/wunderbench/profiles");
+  const banksPayload = await fetchJson("/admin/wunderbench/banks");
+  benchmarkState.banks = Array.isArray(banksPayload.banks) ? banksPayload.banks : [];
+  renderQuestionBankOptions();
+  const bank = selectedQuestionBank();
+  const params = bank?.id && bank.id !== "builtin"
+    ? `?question_bank_id=${encodeURIComponent(bank.id)}&question_bank_version=${encodeURIComponent(bank.version || "")}`
+    : "";
+  const payload = await fetchJson(`/admin/wunderbench/profiles${params}`);
   benchmarkState.profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
 
   benchmarkState.catalogLoaded = true;
   renderProfileOptions();
   updatePrimaryAction();
-  setFormStatus("WunderBench 现在统一运行全量题库");
+  setFormStatus(`已加载题库：${bank?.name || "内置题库"}`);
 }
 
 async function loadHistory() {
@@ -722,9 +760,12 @@ function buildStartPayload() {
     refs.userId.value = userId;
   }
 
+  const bank = selectedQuestionBank();
   return {
     user_id: userId,
     profile: "full",
+    question_bank_id: bank?.id === "builtin" ? undefined : bank?.id,
+    question_bank_version: bank?.id === "builtin" ? undefined : bank?.version,
     model_name: String(refs.modelSelect?.value || "").trim() || undefined,
     judge_model_name: String(refs.judgeModelSelect?.value || "").trim() || undefined,
     capture_artifacts: true,
@@ -849,6 +890,38 @@ async function exportBenchmarkRun(runId) {
   }
 }
 
+async function importQuestionBank(file) {
+  if (!file) {
+    return;
+  }
+  if (!String(file.name || "").toLowerCase().endsWith(".zip")) {
+    throw new Error("请导入 .zip 题库包");
+  }
+  const upload = async (allowExecutableGrading) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    form.append("allow_executable_grading", String(allowExecutableGrading));
+    const response = await fetch(buildApiUrl("/admin/wunderbench/banks/import"), { method: "POST", body: form });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || payload?.detail?.message || `HTTP ${response.status}`);
+    }
+    return payload;
+  };
+  let payload = await upload(false);
+  if (payload.confirmation_required) {
+    const name = payload.question_bank?.name || payload.question_bank?.id || "此题库";
+    if (!window.confirm(`${name} 包含自动评分脚本。仅导入可信来源，并允许其在评测时由本机 Python 执行吗？`)) {
+      return;
+    }
+    payload = await upload(true);
+  }
+  const bank = payload.question_bank || {};
+  benchmarkState.selectedBankKey = questionBankKey(bank);
+  await loadCatalog();
+  setFormStatus(`已导入题库：${bank.name || bank.id}`);
+}
+
 async function handlePrimaryAction() {
   if (isRunning()) {
     await cancelBenchmark();
@@ -885,6 +958,23 @@ function bindEvents() {
     exportBenchmarkRun().catch((error) => {
       setFormStatus(error.message || "导出评测记录失败");
     });
+  });
+
+  refs.importBtn?.addEventListener("click", () => refs.bankFile?.click());
+  refs.bankFile?.addEventListener("change", () => {
+    const file = refs.bankFile?.files?.[0];
+    importQuestionBank(file)
+      .catch((error) => setFormStatus(error.message || "题库导入失败"))
+      .finally(() => {
+        if (refs.bankFile) {
+          refs.bankFile.value = "";
+        }
+      });
+  });
+
+  refs.bankSelect?.addEventListener("change", () => {
+    benchmarkState.selectedBankKey = String(refs.bankSelect?.value || "");
+    loadCatalog().catch((error) => setFormStatus(error.message || "加载题库失败"));
   });
 
   refs.profileList?.addEventListener("click", (event) => {

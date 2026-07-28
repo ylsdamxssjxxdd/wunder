@@ -4406,6 +4406,10 @@
                 <i class="fa-solid fa-play"></i>
                 <span>开始运行</span>
               </button>
+              <button id="benchmarkImportBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-file-import"></i>
+                <span>导入题库</span>
+              </button>
               <button id="benchmarkHistoryBtn" class="secondary btn-with-icon" type="button">
                 <i class="fa-solid fa-clock-rotate-left"></i>
                 <span>运行历史</span>
@@ -4425,6 +4429,7 @@
             <div class="evaluation-side">
               <div class="monitor-block benchmark-control-card">
                 <div class="monitor-block-title"><i class="fa-solid fa-sliders"></i><span>运行配置</span></div>
+                <div class="form-row"><label for="benchmarkBankSelect">题库</label><select id="benchmarkBankSelect"></select></div>
                 <div id="benchmarkProfileList" class="benchmark-profile-list"></div>
                 <div class="benchmark-form-grid">
                   <div class="form-row"><label for="benchmarkUserId">user_id</label><input id="benchmarkUserId" type="text" value="benchmark_admin" placeholder="benchmark_admin" /></div>
@@ -4494,6 +4499,7 @@
               </div>
             </div>
           </div>
+          <input id="benchmarkBankFile" type="file" accept=".zip,application/zip" hidden />
         </section>
         <section id="apiDocsPanel" class="panel" data-api-docs-src="/docs/api-docs.json?v=20260126-01">
           <div class="list-header">

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-06T01:39:40.286845+00:00",
+  "generated_at": "2026-07-28T02:43:03.765594+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -7301,7 +7301,7 @@
       "language": "zh-CN",
       "title": "WunderBench 模型评测",
       "summary": "使用全量题库自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-07-28",
       "read_when": [
         "用户需要评估模型在 Wunder 中的真实任务完成能力",
         "用户需要导出完整评测记录，复盘模型日志、工具调用和工作区结果",
@@ -7347,65 +7347,70 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "阅读结果"
+          "text": "导入题库协议"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Attempt、产物与日志"
+          "text": "阅读结果"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "导出评测记录"
+          "text": "Attempt、产物与日志"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "新增题目"
+          "text": "导出评测记录"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "评分方式"
+          "text": "新增题目"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "题目设计原则"
+          "text": "评分方式"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "排障"
+          "text": "题目设计原则"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "模型说目录为空"
+          "level": 2,
+          "text": "排障"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "自动评分全是 0"
+          "text": "模型说目录为空"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "裁判分数波动大"
+          "text": "自动评分全是 0"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "运行卡住或耗时过长"
+          "text": "裁判分数波动大"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "运行卡住或耗时过长"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "与其他观测能力的关系"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -15364,7 +15369,7 @@
       "language": "en",
       "title": "WunderBench Model Evaluation",
       "summary": "Use the full benchmark suite to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
-      "updated_at": "2026-06-29",
+      "updated_at": "2026-07-28",
       "read_when": [
         "You need to evaluate model quality inside Wunder's real agent pipeline",
         "You need to export full benchmark records with model logs, tool calls, and workspace artifacts",
@@ -15410,65 +15415,70 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "Reading Results"
+          "text": "Importing Question Banks"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "Attempts, Artifacts, and Logs"
+          "text": "Reading Results"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "Exporting Evaluation Records"
+          "text": "Attempts, Artifacts, and Logs"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "Adding Tasks"
+          "text": "Exporting Evaluation Records"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Grading Methods"
+          "text": "Adding Tasks"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Task Design Principles"
+          "text": "Grading Methods"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "Troubleshooting"
+          "text": "Task Design Principles"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "The model says the directory is empty"
+          "level": 2,
+          "text": "Troubleshooting"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "Automated scores are all zero"
+          "text": "The model says the directory is empty"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "Judge scores vary too much"
+          "text": "Automated scores are all zero"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "Runs hang or take too long"
+          "text": "Judge scores vary too much"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "Runs hang or take too long"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "Relation to Other Observability Tools"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "Further Reading"
         }

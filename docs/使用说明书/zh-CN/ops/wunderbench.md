@@ -28,7 +28,8 @@ WunderBench 是 Wunder 内置的模型能力评测系统。它不只是向模型
 
 页面上主要有四类操作：
 
-- **运行全量题库**：默认执行全部可用 WunderBench 题目，不再区分快速、标准和全量档位。
+- **选择题库**：可选择内置题库或已导入的版本化题库；每次运行只执行所选题库的全部可用任务。
+- **导入题库**：上传可信来源的 `.zip` 题库包。含自动评分脚本的题库会要求明确确认，因为脚本会在评测阶段由本机 Python 执行。
 - **选择被测模型**：真正执行任务的模型。
 - **选择裁判模型**：只用于 `llm_judge` 和 `hybrid` 题目的主观评分。
 - **导出评测记录**：下载包含运行过程、attempt、题目规格和模型日志的 JSON 文件。
@@ -38,6 +39,8 @@ WunderBench 是 Wunder 内置的模型能力评测系统。它不只是向模型
 | 操作 | API |
 |------|-----|
 | 查看档位 | `GET /wunder/admin/wunderbench/profiles` |
+| 查看题库 | `GET /wunder/admin/wunderbench/banks` |
+| 导入题库 | `POST /wunder/admin/wunderbench/banks/import` |
 | 查看任务 | `GET /wunder/admin/wunderbench/tasks` |
 | 启动评测 | `POST /wunder/admin/wunderbench/start` |
 | 查看运行列表 | `GET /wunder/admin/wunderbench/runs` |
@@ -72,7 +75,7 @@ WunderBench 现在只保留一个评测范围：`full`。它会运行全部可�
 
 ## 当前题库覆盖
 
-当前内置题目位于 `config/benchmark/tasks/*.md`，素材目录为 `config/benchmark/assets/`。
+内置题目位于 `config/benchmark/tasks/*.md`，素材目录为 `config/benchmark/assets/`。导入题库保存在 `config/benchmark/banks/{id}/{version}/`，每个版本相互隔离，不会混入内置题库或其他题库。
 
 内置任务组覆盖以下方向：
 
@@ -88,6 +91,42 @@ WunderBench 现在只保留一个评测范围：`full`。它会运行全部可�
 | `security-triage` | 依赖风险分级、处置建议 | 能否按策略分配优先级和动作 |
 
 当前题库更偏向 Wunder 的基础智能体能力：文件与工作区、代码修复、办公流程、知识摘要。它已经适合作为早期模型选型和回归基线，但还不是完整的通用模型排行榜。后续应继续补充长上下文、多轮协作、浏览器操作、外部渠道、复杂工具链和失败恢复类题目。
+
+## 导入题库协议
+
+题库包是一个 ZIP 文件，根目录必须包含 `wunderbench.json`，并按下列结构组织：
+
+```text
+wunderbench.json
+tasks/
+  task_example.md
+assets/
+  input.txt
+```
+
+`wunderbench.json` 的最小示例：
+
+```json
+{
+  "protocol": "wunderbench.question_bank",
+  "schema_version": 1,
+  "id": "sample-bank",
+  "version": "1.0",
+  "name": "Sample task bank",
+  "tasks_path": "tasks",
+  "assets_path": "assets"
+}
+```
+
+规则如下：
+
+- `id + version` 是不可覆盖的版本身份；修订题目时应增加版本，而不是替换历史文件。
+- `tasks_path` 内任务沿用本页的 Markdown 任务格式，无需针对具体行业编写新的执行器。
+- `assets_path` 中的文件只能由任务 `workspace_files.source` 相对引用，任务写入位置也必须在当前 attempt 工作区内。
+- ZIP 不能包含路径穿越条目，导入会校验任务 ID 唯一性、资产存在性和包大小。
+- 使用 `automated` 或 `hybrid` 的 Python 评分脚本前，确认题库来源可信；评分脚本是可执行代码。
+
+运行记录会保存题库标识、校验和与任务规格快照。因此，即使之后导入新版本或删除旧包，已经导出的评测证据仍可独立复盘。
 
 ## 阅读结果
 
@@ -167,7 +206,7 @@ GET /wunder/admin/wunderbench/runs/{run_id}/export
 
 ## 新增题目
 
-新增题目时，在 `config/benchmark/tasks/` 下创建一个 Markdown 文件。每个题目由 YAML frontmatter 和固定 Markdown 区块组成。
+新增内置题目时，在 `config/benchmark/tasks/` 下创建 Markdown 文件。为可分发题库新增题目时，在题库包的 `tasks/` 下创建同样的 Markdown 文件。每个题目由 YAML frontmatter 和固定 Markdown 区块组成。
 
 基本结构：
 
