@@ -1,6 +1,6 @@
 import { elements } from "./elements.js?v=20260215-01";
 import { getWunderBase } from "./api.js";
-import { formatDuration } from "./utils.js";
+import { escapeHtml, formatDuration } from "./utils.js";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { state } from "./state.js";
 import { getCurrentLanguage } from "./i18n.js?v=20260215-01";
@@ -12,6 +12,7 @@ const benchmarkState = {
   initialized: false,
   refs: null,
   profiles: [],
+  presetAgents: [],
   banks: [],
   selectedBankKey: "builtin@1",
   history: [],
@@ -222,6 +223,7 @@ function cacheRefs() {
     userId: panel.querySelector("#benchmarkUserId"),
     profileList: panel.querySelector("#benchmarkProfileList"),
     bankSelect: panel.querySelector("#benchmarkBankSelect"),
+    presetAgentSelect: panel.querySelector("#benchmarkPresetAgentSelect"),
     modelSelect: panel.querySelector("#benchmarkModelSelect"),
     judgeModelSelect: panel.querySelector("#benchmarkJudgeModelSelect"),
     formStatus: panel.querySelector("#benchmarkFormStatus"),
@@ -346,6 +348,39 @@ function renderModelOptions() {
   });
 }
 
+function renderPresetAgentOptions() {
+  const select = benchmarkState.refs?.presetAgentSelect;
+  if (!select) {
+    return;
+  }
+  const current = String(select.value || "").trim();
+  select.textContent = "";
+
+  const modelOnly = document.createElement("option");
+  modelOnly.value = "";
+  modelOnly.textContent = "仅模型配置（不使用预设智能体）";
+  select.appendChild(modelOnly);
+
+  benchmarkState.presetAgents.forEach((agent) => {
+    const presetId = String(agent?.preset_id || "").trim();
+    if (!presetId) {
+      return;
+    }
+    const option = document.createElement("option");
+    const modelName = String(agent?.model_name || "").trim();
+    const toolCount = Number(agent?.tool_count) || 0;
+    const active = String(agent?.status || "active").trim().toLowerCase() === "active";
+    option.value = presetId;
+    option.disabled = !active;
+    option.textContent = `${agent?.name || presetId}${modelName ? ` · ${modelName}` : ""} · ${toolCount} 工具${active ? "" : "（已停用）"}`;
+    select.appendChild(option);
+  });
+
+  if (current && Array.from(select.options).some((option) => option.value === current && !option.disabled)) {
+    select.value = current;
+  }
+}
+
 function questionBankKey(bank) {
   return `${String(bank?.id || "").trim()}@${String(bank?.version || "").trim()}`;
 }
@@ -442,7 +477,7 @@ function renderHistory() {
       <td>${formatDateTime(Number(run.started_time))}</td>
       <td><span class="benchmark-status-pill" data-status="${run.status || "idle"}">${run.status || "-"}</span></td>
       <td>${formatScore(run.total_score)}</td>
-      <td>${run.model_name || "\u9ed8\u8ba4"}</td>
+      <td>${escapeHtml(formatRunTarget(run))}</td>
       <td class="benchmark-row-actions">
         <button type="button" class="icon-btn" data-action="export" data-run-id="${run.run_id}" title="导出评测记录"><i class="fa-solid fa-file-export"></i></button>
         <button type="button" class="icon-btn" data-action="delete" data-run-id="${run.run_id}" title="\u5220\u9664"><i class="fa-solid fa-trash"></i></button>
@@ -587,12 +622,19 @@ function renderAttempts(attempts) {
   });
 }
 
+function formatRunTarget(run) {
+  const agentName = String(run?.preset_agent?.name || "").trim();
+  const modelName = String(run?.model_name || "").trim() || "默认模型";
+  return agentName ? `${agentName} · ${modelName}` : modelName;
+}
+
 function buildSummaryText(run = {}, summary = {}, scorecard = {}, efficiency = {}, attempts = []) {
   const weakestSuites = Array.isArray(scorecard.weakest_suites) ? scorecard.weakest_suites : [];
   const topFailures = Array.isArray(scorecard.top_failures) ? scorecard.top_failures : [];
   const lines = [
     `Run ID：${run.run_id || "-"}`,
     `档位：${formatProfileName(String(run.profile || summary.profile || ""), run.profile || summary.profile)}`,
+    `被测目标：${formatRunTarget(run)}`,
     `状态：${run.status || "-"}    开始：${formatDateTime(Number(run.started_time))}    耗时：${formatDuration(Number(run.elapsed_s))}`,
     `总分：${formatScore(run.total_score ?? summary.total_score)}    结论：${formatReadiness(scorecard.readiness)}`,
     `可靠性：${formatPercentScore(scorecard.reliability_score)}    工具成功率：${formatPercentScore(scorecard.tool_success_score)}    稳定性：${formatPercentScore(scorecard.stability_score)}    效率：${formatPercentScore(scorecard.efficiency_score)}`,
@@ -686,9 +728,14 @@ async function loadCatalog() {
   benchmarkState.catalogLoaded = false;
   updatePrimaryAction();
 
-  const banksPayload = await fetchJson("/admin/wunderbench/banks");
+  const [banksPayload, presetAgentsPayload] = await Promise.all([
+    fetchJson("/admin/wunderbench/banks"),
+    fetchJson("/admin/wunderbench/preset_agents"),
+  ]);
   benchmarkState.banks = Array.isArray(banksPayload.banks) ? banksPayload.banks : [];
+  benchmarkState.presetAgents = Array.isArray(presetAgentsPayload.preset_agents) ? presetAgentsPayload.preset_agents : [];
   renderQuestionBankOptions();
+  renderPresetAgentOptions();
   const bank = selectedQuestionBank();
   const params = bank?.id && bank.id !== "builtin"
     ? `?question_bank_id=${encodeURIComponent(bank.id)}&question_bank_version=${encodeURIComponent(bank.version || "")}`
@@ -767,6 +814,7 @@ function buildStartPayload() {
     question_bank_id: bank?.id === "builtin" ? undefined : bank?.id,
     question_bank_version: bank?.id === "builtin" ? undefined : bank?.version,
     model_name: String(refs.modelSelect?.value || "").trim() || undefined,
+    preset_agent_id: String(refs.presetAgentSelect?.value || "").trim() || undefined,
     judge_model_name: String(refs.judgeModelSelect?.value || "").trim() || undefined,
     capture_artifacts: true,
     capture_transcript: true,

@@ -31,7 +31,8 @@ The page has four main operations:
 - **Choose a question bank**: run the built-in bank or an imported versioned bank without mixing their tasks.
 - **Import a question bank**: upload a trusted ZIP package; an explicit confirmation is required when it contains automated Python graders.
 - **Run the full suite**: WunderBench runs every available task by default; quick, core, and full profile tiers are no longer separate choices.
-- **Choose the tested model**: the model that actually performs the task.
+- **Choose a preset agent**: use the default agent or a configured preset agent with its system prompt, tools, skill preview setting, and sandbox container.
+- **Choose the tested model**: the model that actually performs the task; an explicit selection overrides the model configured by the preset agent.
 - **Choose the judge model**: used only by `llm_judge` and `hybrid` tasks.
 - **Export evaluation record**: download a JSON package with run details, attempts, task specs, and model logs.
 
@@ -40,6 +41,7 @@ Admin APIs are also available:
 | Operation | API |
 |-----------|-----|
 | List profiles | `GET /wunder/admin/wunderbench/profiles` |
+| List preset agents | `GET /wunder/admin/wunderbench/preset_agents` |
 | List question banks | `GET /wunder/admin/wunderbench/banks` |
 | Import question bank | `POST /wunder/admin/wunderbench/banks/import` |
 | List tasks | `GET /wunder/admin/wunderbench/tasks` |
@@ -63,7 +65,19 @@ Compatibility notes:
 - Old clients or scripts may still send `quick`, `core`, or `standard`; the backend normalizes those values to `full`.
 - You can still pass `suite_ids` or `task_ids` to manually narrow the task set when investigating a suite or failed task.
 
-## Tested Model and Judge Model
+## Preset Agent, Tested Model, and Judge Model
+
+When you choose a **preset agent**, WunderBench reads its current configuration when the run starts and saves a run snapshot of its system prompt, declared tools and skills, skill preview setting, sandbox container, configured model, identifier, and revision. Editing the preset later does not change an in-progress or historical run, so the export remains reproducible.
+
+The preset is used as evaluation configuration, not as a real user-agent record attached to the benchmark thread. Leaving the preset unselected preserves the existing model-only evaluation behavior.
+
+The tested model is resolved in this order:
+
+1. An explicit UI or `model_name` selection.
+2. The model configured by the selected preset agent.
+3. The system default model.
+
+The preset contributes its configured tool set. A non-empty `tool_names` value in the API request overrides the preset tool set for controlled tool-regression testing.
 
 The **tested model** performs the task. It reads the prompt, calls tools, writes workspace files, and produces final outputs.
 
@@ -139,7 +153,7 @@ A run contains tasks, and each task can contain multiple attempts. An attempt is
 
 Each attempt records:
 
-- Task, tested model, judge model, and elapsed time.
+- Task, preset-agent identity, tested model, judge model, and elapsed time.
 - Workspace-relative path, such as `benchmark/{run_id}/{task_id}/attempt_{attempt_no}`.
 - Model transcript, tool calls, tool results, and final output.
 - Automated score details, judge score details, and final score.

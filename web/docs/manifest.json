@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-07-28T02:43:03.765594+00:00",
+  "generated_at": "2026-08-02T00:59:14.901183+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -7301,7 +7301,7 @@
       "language": "zh-CN",
       "title": "WunderBench 模型评测",
       "summary": "使用全量题库自动验证模型在 Wunder 真实智能体链路中的任务完成质量，并为题库扩展、回归检测和模型选型提供依据。",
-      "updated_at": "2026-07-28",
+      "updated_at": "2026-08-02",
       "read_when": [
         "用户需要评估模型在 Wunder 中的真实任务完成能力",
         "用户需要导出完整评测记录，复盘模型日志、工具调用和工作区结果",
@@ -7337,7 +7337,7 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "被测模型与裁判模型"
+          "text": "预设智能体、被测模型与裁判模型"
         },
         {
           "id": "section-5",
@@ -15369,7 +15369,7 @@
       "language": "en",
       "title": "WunderBench Model Evaluation",
       "summary": "Use the full benchmark suite to automatically measure how well a model completes real Wunder agent tasks, and use the results for regression checks, model selection, and benchmark extension.",
-      "updated_at": "2026-07-28",
+      "updated_at": "2026-08-02",
       "read_when": [
         "You need to evaluate model quality inside Wunder's real agent pipeline",
         "You need to export full benchmark records with model logs, tool calls, and workspace artifacts",
@@ -15405,7 +15405,7 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "Tested Model and Judge Model"
+          "text": "Preset Agent, Tested Model, and Judge Model"
         },
         {
           "id": "section-5",

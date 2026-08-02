@@ -204,8 +204,7 @@ fn preset_from_config_with_skill_names(
     })
 }
 
-pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
-    let config = state.config_store.get().await;
+pub fn configured_preset_agents_for_config(config: &crate::config::Config) -> Vec<PresetAgent> {
     let skill_name_keys = collect_configured_skill_names(&config);
     let configured =
         match preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys) {
@@ -232,6 +231,11 @@ pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
         }
     }
     presets
+}
+
+pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
+    let config = state.config_store.get().await;
+    configured_preset_agents_for_config(&config)
 }
 
 fn snapshot_from_record(

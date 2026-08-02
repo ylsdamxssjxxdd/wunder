@@ -12,6 +12,8 @@ pub struct BenchmarkStartRequest {
     pub profile: Option<String>,
     #[serde(default)]
     pub model_name: Option<String>,
+    #[serde(default, alias = "presetAgentId", alias = "agent_preset_id")]
+    pub preset_agent_id: Option<String>,
     #[serde(default)]
     pub judge_model_name: Option<String>,
     #[serde(default)]

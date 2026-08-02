@@ -2790,6 +2790,11 @@
 - 返回（JSON）：`{ "benchmark": "wunderbench", "question_bank": {...}, "profiles": [...] }`
 - 每个 profile 包含 `id`、`name`、`description`、`task_count`、`recommended_runs`、`default`。当前仅返回 `full`，表示运行全部可用任务；历史 `quick`、`core`、`standard` 等入参会兼容归一为 `full`。
 
+#### `GET /wunder/admin/wunderbench/preset_agents`
+- 方法：`GET`
+- 返回（JSON）：`{ "benchmark": "wunderbench", "preset_agents": [...] }`。每项包含 `preset_id`、`revision`、`name`、`description`、`model_name`、`preview_skill`、`sandbox_container_id`、`tool_count`、`status`、`is_default_agent`。
+- 仅 `active` 的预设智能体可以启动评测；默认智能体使用稳定标识 `default_agent`。`/wunder/admin/benchmark/preset_agents` 是兼容别名。
+
 #### `GET /wunder/admin/wunderbench/banks`
 - 方法：`GET`
 - 返回（JSON）：`{ "benchmark": "wunderbench", "banks": [...] }`。每个题库包含 `id`、`version`、`name`、`description`、`subject`、`languages`、`task_count`、`task_ids`、`suites`、`checksum`、`has_executable_grading` 与 `built_in`。
@@ -2812,9 +2817,10 @@
 
 #### `POST /wunder/admin/wunderbench/start`
 - 方法：`POST`
-- 入参（JSON）：`user_id`（必填）、`question_bank_id` / `question_bank_version`（可选；指定导入题库时两者必须同时提供）、`profile`（可选，默认 `full`，旧值兼容归一为 `full`）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
+- 入参（JSON）：`user_id`（必填）、`question_bank_id` / `question_bank_version`（可选；指定导入题库时两者必须同时提供）、`profile`（可选，默认 `full`，旧值兼容归一为 `full`）、`preset_agent_id`（可选；兼容别名 `presetAgentId` 与 `agent_preset_id`）、`model_name`、`judge_model_name`、`suite_ids`、`task_ids`、`runs_per_task`、`capture_artifacts`、`capture_transcript`、`tool_names`、`config_overrides`。
 - 说明：未传 `suite_ids/task_ids` 时运行全量题库；传入后进入手动筛选模式。
-- 返回（JSON）：`run_id`、`status`、`benchmark`、`question_bank`、`profile`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 WunderBench。
+- `preset_agent_id` 指向默认智能体或配置预设时，运行会使用其系统提示词、工具集合、技能预览和沙盒容器，并固化完整预设快照。显式 `model_name` 优先于预设模型；非空 `tool_names` 优先于预设工具。未传预设时保持仅模型评测行为。
+- 返回（JSON）：`run_id`、`status`、`benchmark`、`question_bank`、`profile`、`preset_agent`、`task_count`、`attempt_count`、`suite_ids`。启动后服务端会异步执行 WunderBench。
 
 #### `GET /wunder/admin/wunderbench/runs`
 - 方法：`GET`

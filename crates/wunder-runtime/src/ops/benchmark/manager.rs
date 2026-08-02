@@ -1,8 +1,9 @@
+use super::agent::{resolve_preset_agent, BenchmarkAgentProfile};
 use super::aggregate::{build_run_summary, build_task_aggregate};
+use super::bank::{bank_snapshot, load_question_bank, task_specs_snapshot, QuestionBankSummary};
 use super::executor::execute_prompt;
 use super::grader_auto::grade_automated;
 use super::grader_judge::grade_with_judge;
-use super::bank::{bank_snapshot, load_question_bank, task_specs_snapshot, QuestionBankSummary};
 use super::models::BenchmarkEvent;
 use super::profiles::resolve_profile_tasks;
 use super::spec::{BenchmarkGradingType, BenchmarkTaskSpec};
@@ -60,6 +61,7 @@ struct BenchmarkRunContext {
     user_id: String,
     profile: String,
     model_name: Option<String>,
+    preset_agent: Option<BenchmarkAgentProfile>,
     judge_model_name: Option<String>,
     suite_ids: Vec<String>,
     question_bank: QuestionBankSummary,
@@ -79,6 +81,12 @@ struct BenchmarkRunContext {
     orchestrator: Arc<Orchestrator>,
     state: Arc<Mutex<BenchmarkState>>,
     config: Config,
+}
+
+fn resolved_workspace_container_id(preset_agent: Option<&BenchmarkAgentProfile>) -> i32 {
+    preset_agent
+        .map(|agent| agent.sandbox_container_id)
+        .unwrap_or(DEFAULT_SANDBOX_CONTAINER_ID)
 }
 
 impl BenchmarkManager {
@@ -111,18 +119,43 @@ impl BenchmarkManager {
             return Err(anyhow!("user_id required"));
         }
         let config = self.config_store.get().await;
-        let model_name = resolve_model_name(request.model_name.as_deref(), &config);
+        let preset_agent = resolve_preset_agent(
+            &config,
+            self.storage.as_ref(),
+            request.preset_agent_id.as_deref(),
+        )?;
+        if let Some(agent) = preset_agent.as_ref() {
+            if !agent.status.eq_ignore_ascii_case("active") {
+                return Err(anyhow!("preset agent is not active"));
+            }
+        }
+        let model_name = resolve_model_name(
+            request.model_name.as_deref().or_else(|| {
+                preset_agent
+                    .as_ref()
+                    .and_then(|agent| agent.model_name.as_deref())
+            }),
+            &config,
+        );
         let judge_model_name = resolve_model_name(request.judge_model_name.as_deref(), &config)
             .or_else(|| model_name.clone());
         let skills_snapshot = self.skills.read().await.clone();
         let user_tool_bindings =
             self.user_tool_manager
                 .build_bindings(&config, &skills_snapshot, user_id);
+        let requested_tool_names = if request.tool_names.is_empty() {
+            preset_agent
+                .as_ref()
+                .map(BenchmarkAgentProfile::requested_tool_names)
+                .unwrap_or_default()
+        } else {
+            request.tool_names.clone()
+        };
         let allowed_tool_names = resolve_allowed_tool_names(
             &config,
             &skills_snapshot,
             Some(&user_tool_bindings),
-            &request.tool_names,
+            &requested_tool_names,
         );
 
         let question_bank = load_question_bank(
@@ -160,9 +193,10 @@ impl BenchmarkManager {
             "run_id": run_id,
             "user_id": user_id,
             "model_name": model_name.clone().unwrap_or_default(),
+            "preset_agent": preset_agent.as_ref().map(BenchmarkAgentProfile::snapshot).unwrap_or(Value::Null),
             "judge_model_name": judge_model_name.clone().unwrap_or_default(),
             "suite_ids": suite_ids.clone(),
-            "tool_names": request.tool_names,
+            "tool_names": requested_tool_names,
             "tool_snapshot": tool_snapshot.clone(),
             "status": "running",
             "task_count": tasks.len(),
@@ -197,11 +231,12 @@ impl BenchmarkManager {
             user_id: user_id.to_string(),
             profile,
             model_name,
+            preset_agent,
             judge_model_name,
             suite_ids: suite_ids.clone(),
             question_bank: question_bank.summary,
             task_specs_snapshot,
-            requested_tool_names: request.tool_names.clone(),
+            requested_tool_names,
             tool_snapshot: tool_snapshot.clone(),
             runs_per_task,
             capture_artifacts,
@@ -225,6 +260,7 @@ impl BenchmarkManager {
             "status": "running",
             "benchmark": "wunderbench",
             "profile": run_payload["profile"],
+            "preset_agent": run_payload["preset_agent"],
             "task_count": run_payload["task_count"],
             "attempt_count": run_payload["attempt_count"],
             "suite_ids": suite_ids,
@@ -479,6 +515,7 @@ async fn run_benchmark(ctx: BenchmarkRunContext) {
         "run_id": ctx.run_id,
         "user_id": ctx.user_id,
         "model_name": ctx.model_name.unwrap_or_default(),
+        "preset_agent": ctx.preset_agent.as_ref().map(BenchmarkAgentProfile::snapshot).unwrap_or(Value::Null),
         "judge_model_name": ctx.judge_model_name.unwrap_or_default(),
         "suite_ids": ctx.suite_ids,
         "question_bank": bank_snapshot(&ctx.question_bank),
@@ -510,7 +547,7 @@ async fn run_attempt(
 ) -> Value {
     let started_time = now_ts();
     let session_id = format!("bench-{}-{}-{attempt_no}", ctx.run_id, task.id());
-    let workspace_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
+    let workspace_container_id = resolved_workspace_container_id(ctx.preset_agent.as_ref());
     let workspace_id = ctx
         .workspace
         .scoped_user_id_by_container(&ctx.user_id, workspace_container_id);
@@ -526,6 +563,8 @@ async fn run_attempt(
             return json!({
                 "run_id": ctx.run_id,
                 "task_id": task.id(),
+                "preset_agent_id": ctx.preset_agent.as_ref().map(|agent| agent.preset_id.as_str()),
+                "preset_agent_name": ctx.preset_agent.as_ref().map(|agent| agent.name.as_str()),
                 "attempt_no": attempt_no,
                 "status": "error",
                 "error": err.to_string(),
@@ -542,6 +581,8 @@ async fn run_attempt(
         data: json!({
             "run_id": ctx.run_id,
             "task_id": task.id(),
+            "preset_agent_id": ctx.preset_agent.as_ref().map(|agent| agent.preset_id.as_str()),
+            "preset_agent_name": ctx.preset_agent.as_ref().map(|agent| agent.name.as_str()),
             "name": task.frontmatter.name,
             "suite": task.frontmatter.suite,
             "category": task.frontmatter.category,
@@ -576,8 +617,16 @@ async fn run_attempt(
             .preferred_language()
             .or_else(|| Some(i18n::get_default_language())),
         config_overrides: ctx.config_overrides.clone(),
-        agent_prompt: None,
-        preview_skill: false,
+        agent_prompt: ctx
+            .preset_agent
+            .as_ref()
+            .map(|agent| agent.system_prompt.clone())
+            .filter(|prompt| !prompt.trim().is_empty()),
+        preview_skill: ctx
+            .preset_agent
+            .as_ref()
+            .map(|agent| agent.preview_skill)
+            .unwrap_or(false),
         attachments: None,
         allow_queue: true,
         is_admin: true,
@@ -649,6 +698,8 @@ async fn run_attempt(
             json!({
                 "run_id": ctx.run_id,
                 "task_id": task.id(),
+                "preset_agent_id": ctx.preset_agent.as_ref().map(|agent| agent.preset_id.as_str()),
+                "preset_agent_name": ctx.preset_agent.as_ref().map(|agent| agent.name.as_str()),
                 "name": task.frontmatter.name,
                 "suite": task.frontmatter.suite,
                 "category": task.frontmatter.category,
@@ -679,6 +730,8 @@ async fn run_attempt(
         Ok(Err(err)) => json!({
             "run_id": ctx.run_id,
             "task_id": task.id(),
+            "preset_agent_id": ctx.preset_agent.as_ref().map(|agent| agent.preset_id.as_str()),
+            "preset_agent_name": ctx.preset_agent.as_ref().map(|agent| agent.name.as_str()),
             "name": task.frontmatter.name,
             "suite": task.frontmatter.suite,
             "category": task.frontmatter.category,
@@ -697,6 +750,8 @@ async fn run_attempt(
             json!({
                 "run_id": ctx.run_id,
                 "task_id": task.id(),
+                "preset_agent_id": ctx.preset_agent.as_ref().map(|agent| agent.preset_id.as_str()),
+                "preset_agent_name": ctx.preset_agent.as_ref().map(|agent| agent.name.as_str()),
                 "name": task.frontmatter.name,
                 "suite": task.frontmatter.suite,
                 "category": task.frontmatter.category,
@@ -896,6 +951,33 @@ fn read_string_list(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolved_workspace_container_id;
+    use crate::benchmark::agent::BenchmarkAgentProfile;
+
+    #[test]
+    fn benchmark_agent_uses_its_sandbox_container() {
+        let agent = BenchmarkAgentProfile {
+            preset_id: "preset_example".to_string(),
+            revision: 1,
+            name: "Example".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            model_name: None,
+            preview_skill: false,
+            sandbox_container_id: 2,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            status: "active".to_string(),
+            is_default_agent: false,
+        };
+
+        assert_eq!(resolved_workspace_container_id(Some(&agent)), 2);
+    }
 }
 
 fn now_ts() -> f64 {
