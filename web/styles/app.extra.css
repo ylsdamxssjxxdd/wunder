@@ -566,21 +566,16 @@
 .benchmark-summary-text {
   margin: 0;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   min-height: 0;
-  padding: 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #f8fafc, #fff);
+  padding: 2px 0 0;
   color: #0f172a;
   font-size: 13px;
   word-break: break-word;
 }
 
 .benchmark-summary-head,
-.benchmark-summary-metrics,
-.benchmark-summary-meta,
-.benchmark-summary-details {
+.benchmark-summary-context {
   display: grid;
   gap: 10px;
 }
@@ -589,43 +584,28 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.benchmark-summary-metrics {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.benchmark-summary-meta {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding-top: 14px;
-  border-top: 1px solid #e2e8f0;
-}
-
-.benchmark-summary-details {
-  grid-template-columns: minmax(0, 1fr);
+.benchmark-summary-context {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
 }
 
 .benchmark-summary-head > div,
-.benchmark-summary-metrics > div,
-.benchmark-summary-meta > div,
-.benchmark-summary-details > div {
+.benchmark-summary-context {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
 .benchmark-summary-head span:first-child,
-.benchmark-summary-metrics span,
-.benchmark-summary-meta span,
-.benchmark-summary-details span {
+.benchmark-summary-context > span:first-child {
   color: #64748b;
   font-size: 12px;
 }
 
 .benchmark-summary-head strong,
-.benchmark-summary-metrics strong,
-.benchmark-summary-meta strong,
-.benchmark-summary-details strong {
+.benchmark-summary-context strong {
   overflow: hidden;
   color: #0f172a;
   font-size: 13px;
@@ -634,8 +614,10 @@
   white-space: nowrap;
 }
 
-.benchmark-summary-details strong {
-  white-space: normal;
+.benchmark-summary-elapsed {
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .evaluation-progress {
@@ -754,8 +736,7 @@
 @media (max-width: 720px) {
   .benchmark-form-grid,
   .benchmark-summary-head,
-  .benchmark-summary-metrics,
-  .benchmark-summary-meta {
+  .benchmark-summary-context {
     grid-template-columns: minmax(0, 1fr);
   }
 }

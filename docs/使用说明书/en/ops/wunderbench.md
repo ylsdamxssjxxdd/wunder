@@ -26,6 +26,8 @@ Use it to answer:
 
 Open **Debug / WunderBench** in the admin console.
 
+The run overview shows only status, total score, readiness, the evaluation target, and elapsed time. Open an attempt in the execution record or export the evaluation record for full task, scoring, and tool-call diagnostics.
+
 The page has four main operations:
 
 - **Choose a question bank**: run the built-in bank or an imported versioned bank without mixing their tasks.

@@ -143,23 +143,6 @@ function formatInteger(value) {
   return Number.isFinite(Number(value)) ? String(Math.round(Number(value))) : "-";
 }
 
-function trimDecimalText(value) {
-  return String(value).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
-}
-
-function formatContextTokens(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0) {
-    return "-";
-  }
-  if (amount >= 1_000_000) {
-    const digits = amount >= 10_000_000 ? 0 : 1;
-    return `${trimDecimalText((amount / 1_000_000).toFixed(digits))}M`;
-  }
-  const digits = amount >= 100_000 ? 0 : 1;
-  return `${trimDecimalText((amount / 1_000).toFixed(digits))}k`;
-}
-
 function buildAttemptKey(attempt) {
   return `${attempt.task_id || ""}#${attempt.attempt_no || 0}`;
 }
@@ -597,43 +580,19 @@ function formatRunTarget(run) {
   return agentName ? `${agentName} · ${modelName}` : modelName;
 }
 
-function buildSummaryMarkup(run = {}, summary = {}, scorecard = {}, efficiency = {}, attempts = []) {
-  const weakestSuites = Array.isArray(scorecard.weakest_suites) ? scorecard.weakest_suites : [];
-  const topFailures = Array.isArray(scorecard.top_failures) ? scorecard.top_failures : [];
+function buildSummaryMarkup(run = {}, summary = {}, scorecard = {}) {
   const status = String(run.status || "idle").trim().toLowerCase() || "idle";
-  const taskCount = Number(summary.task_count || run.task_count || 0);
-  const attemptCount = attempts.length || Number(summary.attempt_count || run.attempt_count || 0);
-  const metrics = [
-    ["可靠性", formatPercentScore(scorecard.reliability_score)],
-    ["工具成功率", formatPercentScore(scorecard.tool_success_score)],
-    ["稳定性", formatPercentScore(scorecard.stability_score)],
-    ["效率", formatPercentScore(scorecard.efficiency_score)],
-  ];
-  const metadata = [
-    ["运行 ID", run.run_id || "-"],
-    ["评测目标", formatRunTarget(run)],
-    ["开始时间", formatDateTime(Number(run.started_time))],
-    ["耗时", formatDuration(Number(run.elapsed_s))],
-    ["任务 / Attempt", `${taskCount} / ${attemptCount}`],
-    ["上下文 Token", formatContextTokens(efficiency.total_context_tokens)],
-  ];
-  const details = [];
-  if (weakestSuites.length) {
-    details.push(["薄弱任务组", weakestSuites.map((item) => `${item.suite || "-"} ${formatScore(item.mean_score)}`).join(" / ")]);
-  }
-  if (topFailures.length) {
-    details.push(["需复查任务", topFailures.map((item) => `${item.task_id || "-"} ${formatScore(item.score)}`).join(" / ")]);
-  }
-  const item = ([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
   return `
     <div class="benchmark-summary-head">
       <div><span>当前状态</span><span class="benchmark-status-pill" data-status="${escapeHtml(status)}">${escapeHtml(formatRunStatus(run.status))}</span></div>
       <div><span>总分</span><strong>${escapeHtml(formatScore(run.total_score ?? summary.total_score))}</strong></div>
       <div><span>结论</span><strong>${escapeHtml(formatReadiness(scorecard.readiness))}</strong></div>
     </div>
-    <div class="benchmark-summary-metrics">${metrics.map(item).join("")}</div>
-    <div class="benchmark-summary-meta">${metadata.map(item).join("")}</div>
-    ${details.length ? `<div class="benchmark-summary-details">${details.map(item).join("")}</div>` : ""}
+    <div class="benchmark-summary-context">
+      <span>评测目标</span>
+      <strong>${escapeHtml(formatRunTarget(run))}</strong>
+      <span class="benchmark-summary-elapsed">耗时 ${escapeHtml(formatDuration(Number(run.elapsed_s)))}</span>
+    </div>
   `;
 }
 
@@ -646,7 +605,6 @@ function renderRunDetail(detail) {
   const run = detail?.run || {};
   const attempts = Array.isArray(detail?.attempts) ? detail.attempts : [];
   const summary = run.summary || {};
-  const efficiency = summary.efficiency || {};
   const scorecard = summary.scorecard || {};
   const viewingActiveRun = Boolean(run.run_id) && run.run_id === benchmarkState.activeRunId;
   const trackedTotalAttempts = viewingActiveRun ? Number(benchmarkState.progress.totalAttempts) || 0 : 0;
@@ -656,7 +614,7 @@ function renderRunDetail(detail) {
   const ratio = totalAttempts > 0 ? Math.min(1, completedAttempts / totalAttempts) : 0;
 
   if (refs.summaryText) {
-    refs.summaryText.innerHTML = buildSummaryMarkup(run, summary, scorecard, efficiency, attempts);
+    refs.summaryText.innerHTML = buildSummaryMarkup(run, summary, scorecard);
   }
   refs.progressFill.style.width = `${Math.round(ratio * 100)}%`;
   refs.progressText.textContent = `${completedAttempts} / ${totalAttempts || attempts.length}`;
@@ -687,13 +645,7 @@ function refreshElapsedClock() {
       ...currentRun,
       elapsed_s: Math.max(0, Date.now() / 1000 - Number(currentRun.started_time)),
     };
-    benchmarkState.refs.summaryText.innerHTML = buildSummaryMarkup(
-      displayRun,
-      summary,
-      summary.scorecard || {},
-      summary.efficiency || {},
-      Array.isArray(detail.attempts) ? detail.attempts : []
-    );
+    benchmarkState.refs.summaryText.innerHTML = buildSummaryMarkup(displayRun, summary, summary.scorecard || {});
   }, 1000);
 }
 
