@@ -30,7 +30,7 @@ The page has four main operations:
 
 - **Choose a question bank**: run the built-in bank or an imported versioned bank without mixing their tasks.
 - **Import a question bank**: upload a trusted ZIP package; an explicit confirmation is required when it contains automated Python graders.
-- **Run the full suite**: WunderBench runs every available task by default; quick, core, and full profile tiers are no longer separate choices.
+- **Run the selected bank**: choosing a question bank runs every available task in that bank; the page no longer exposes profile cards.
 - **Choose a preset agent**: use the default agent or a configured preset agent with its system prompt, tools, skill preview setting, and sandbox container.
 - **Choose the tested model**: the model that actually performs the task; an explicit selection overrides the model configured by the preset agent.
 - **Choose the judge model**: used only by `llm_judge` and `hybrid` tasks.
@@ -40,7 +40,6 @@ Admin APIs are also available:
 
 | Operation | API |
 |-----------|-----|
-| List profiles | `GET /wunder/admin/wunderbench/profiles` |
 | List preset agents | `GET /wunder/admin/wunderbench/preset_agents` |
 | List question banks | `GET /wunder/admin/wunderbench/banks` |
 | Import question bank | `POST /wunder/admin/wunderbench/banks/import` |
@@ -53,7 +52,7 @@ Admin APIs are also available:
 
 ## Evaluation Scope
 
-WunderBench now exposes a single evaluation scope: `full`. It runs every available task so model comparison is consistent across runs.
+The WunderBench page no longer exposes profile cards. Choosing a question bank runs every available task in that bank, so results remain comparable within the selected bank.
 
 | Scope | Purpose | Selection Rule | Recommended Runs |
 |-------|---------|----------------|------------------|
@@ -61,7 +60,7 @@ WunderBench now exposes a single evaluation scope: `full`. It runs every availab
 
 Compatibility notes:
 
-- `/wunder/admin/wunderbench/profiles` returns only `full`.
+- `profile` remains an API compatibility field; the page always sends `full`.
 - Old clients or scripts may still send `quick`, `core`, or `standard`; the backend normalizes those values to `full`.
 - You can still pass `suite_ids` or `task_ids` to manually narrow the task set when investigating a suite or failed task.
 

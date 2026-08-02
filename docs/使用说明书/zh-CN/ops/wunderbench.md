@@ -39,7 +39,6 @@ WunderBench 是 Wunder 内置的模型能力评测系统。它不只是向模型
 
 | 操作 | API |
 |------|-----|
-| 查看档位 | `GET /wunder/admin/wunderbench/profiles` |
 | 查看预设智能体 | `GET /wunder/admin/wunderbench/preset_agents` |
 | 查看题库 | `GET /wunder/admin/wunderbench/banks` |
 | 导入题库 | `POST /wunder/admin/wunderbench/banks/import` |
@@ -52,7 +51,7 @@ WunderBench 是 Wunder 内置的模型能力评测系统。它不只是向模型
 
 ## 评测范围
 
-WunderBench 现在只保留一个评测范围：`full`。它会运行全部可用任务，避免同一模型在不同档位下得到难以比较的结果。
+WunderBench 的页面不再提供档位卡片。选择题库后，页面会运行其中全部可用任务，避免同一题库在不同档位下得到难以比较的结果。
 
 | 范围 | 用途 | 选择规则 | 推荐次数 |
 |------|------|----------|----------|
@@ -60,7 +59,7 @@ WunderBench 现在只保留一个评测范围：`full`。它会运行全部可�
 
 兼容说明：
 
-- `/wunder/admin/wunderbench/profiles` 只返回 `full`。
+- `profile` 是 API 兼容字段，页面固定传入 `full`。
 - 旧客户端或脚本传入 `quick`、`core`、`standard` 等值时，后端会兼容归一为 `full`。
 - 仍可通过 `suite_ids` 或 `task_ids` 手动筛选任务，用于定位单个任务组或复查失败题。
 

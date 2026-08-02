@@ -4429,10 +4429,13 @@
             <div class="evaluation-side">
               <div class="monitor-block benchmark-control-card">
                 <div class="monitor-block-title"><i class="fa-solid fa-sliders"></i><span>运行配置</span></div>
-                <div class="form-row"><label for="benchmarkBankSelect">题库</label><select id="benchmarkBankSelect"></select></div>
-                <div id="benchmarkProfileList" class="benchmark-profile-list"></div>
+                <div class="form-row benchmark-bank-field">
+                  <label for="benchmarkBankSelect">题库与评测范围</label>
+                  <select id="benchmarkBankSelect"></select>
+                  <div id="benchmarkBankMeta" class="muted benchmark-bank-meta">选择题库后运行其中全部可用题目</div>
+                </div>
                 <div class="benchmark-form-grid">
-                  <div class="form-row"><label for="benchmarkUserId">user_id</label><input id="benchmarkUserId" type="text" value="benchmark_admin" placeholder="benchmark_admin" /></div>
+                  <div class="form-row"><label for="benchmarkUserId">评测用户 ID</label><input id="benchmarkUserId" type="text" value="benchmark_admin" placeholder="benchmark_admin" /></div>
                   <div class="form-row"><label for="benchmarkPresetAgentSelect">预设智能体</label><select id="benchmarkPresetAgentSelect"></select></div>
                   <div class="form-row"><label for="benchmarkModelSelect">被测模型</label><select id="benchmarkModelSelect"></select></div>
                   <div class="form-row"><label for="benchmarkJudgeModelSelect">裁判模型</label><select id="benchmarkJudgeModelSelect"></select></div>
@@ -4444,7 +4447,7 @@
               <div class="evaluation-results benchmark-results">
                 <div class="monitor-block benchmark-summary-card">
                   <div class="monitor-block-title"><i class="fa-solid fa-flag-checkered"></i><span>运行概览</span></div>
-                  <pre id="benchmarkSummaryText" class="benchmark-summary-text">暂无运行。WunderBench 将运行全量题库。</pre>
+                  <div id="benchmarkSummaryText" class="benchmark-summary-text" aria-live="polite">暂无运行。请选择题库并配置评测目标。</div>
                   <div class="evaluation-progress">
                     <div class="evaluation-progress-bar"><span id="benchmarkProgressFill"></span></div>
                     <div id="benchmarkProgressText" class="muted">0 / 0</div>
@@ -4453,9 +4456,10 @@
                   <div id="benchmarkRunHint" class="muted evaluation-run-hint"></div>
                 </div>
                 <div class="monitor-block benchmark-attempt-card">
-                  <div class="monitor-block-title"><i class="fa-solid fa-list-check"></i><span>Attempt 列表</span></div>
+                  <div class="monitor-block-title"><i class="fa-solid fa-list-check"></i><span>执行记录</span></div>
                   <div class="monitor-table-scroll">
                     <table class="monitor-table evaluation-case-table">
+                      <colgroup><col class="benchmark-col-task" /><col class="benchmark-col-attempt" /><col class="benchmark-col-status" /><col class="benchmark-col-score" /><col class="benchmark-col-elapsed" /><col class="benchmark-col-tools" /></colgroup>
                       <thead><tr><th>任务</th><th>轮次</th><th>状态</th><th>得分</th><th>耗时</th><th>工具数</th></tr></thead>
                       <tbody id="benchmarkAttemptBody"></tbody>
                     </table>
@@ -4475,7 +4479,7 @@
               <div class="modal-body">
                 <div class="monitor-table-scroll benchmark-history-modal-scroll">
                   <table class="monitor-table evaluation-history-table">
-                    <thead><tr><th>时间</th><th>状态</th><th>得分</th><th>模型</th><th>操作</th></tr></thead>
+                    <thead><tr><th>时间</th><th>状态</th><th>得分</th><th>评测目标</th><th>操作</th></tr></thead>
                     <tbody id="benchmarkHistoryBody"></tbody>
                   </table>
                 </div>

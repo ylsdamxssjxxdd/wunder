@@ -457,7 +457,7 @@
 
 .evaluation-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
@@ -489,7 +489,7 @@
 
 .benchmark-form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -514,45 +514,16 @@
 
 .benchmark-form-status {
   min-height: 20px;
+  padding-top: 2px;
 }
 
-.benchmark-profile-list {
+.benchmark-bank-field {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 7px;
 }
 
-.benchmark-profile-option {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-height: 104px;
-  padding: 12px;
-  text-align: left;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.benchmark-profile-option:hover {
-  border-color: #bfdbfe;
-  background: #f8fbff;
-}
-
-.benchmark-profile-option.is-active {
-  border-color: #2563eb;
-  background: linear-gradient(135deg, #eff6ff, #fff);
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.12);
-}
-
-.benchmark-profile-option strong {
-  color: #0f172a;
-  font-size: 16px;
-}
-
-.benchmark-profile-option span,
-.benchmark-profile-option small {
+.benchmark-bank-meta {
+  min-height: 18px;
   color: #64748b;
   font-size: 12px;
   line-height: 1.4;
@@ -594,16 +565,77 @@
 
 .benchmark-summary-text {
   margin: 0;
-  min-height: 168px;
-  padding: 14px 16px;
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   background: linear-gradient(135deg, #f8fafc, #fff);
   color: #0f172a;
   font-size: 13px;
-  line-height: 1.75;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.benchmark-summary-head,
+.benchmark-summary-metrics,
+.benchmark-summary-meta,
+.benchmark-summary-details {
+  display: grid;
+  gap: 10px;
+}
+
+.benchmark-summary-head {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.benchmark-summary-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.benchmark-summary-meta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 14px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.benchmark-summary-details {
+  grid-template-columns: minmax(0, 1fr);
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.benchmark-summary-head > div,
+.benchmark-summary-metrics > div,
+.benchmark-summary-meta > div,
+.benchmark-summary-details > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.benchmark-summary-head span:first-child,
+.benchmark-summary-metrics span,
+.benchmark-summary-meta span,
+.benchmark-summary-details span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.benchmark-summary-head strong,
+.benchmark-summary-metrics strong,
+.benchmark-summary-meta strong,
+.benchmark-summary-details strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.benchmark-summary-details strong {
+  white-space: normal;
 }
 
 .evaluation-progress {
@@ -637,6 +669,18 @@
 .evaluation-history .monitor-table-scroll,
 .benchmark-attempt-card .monitor-table-scroll {
   max-height: min(360px, 42vh);
+}
+
+.evaluation-case-table .benchmark-col-task {
+  width: 38%;
+}
+
+.evaluation-case-table .benchmark-col-attempt,
+.evaluation-case-table .benchmark-col-status,
+.evaluation-case-table .benchmark-col-score,
+.evaluation-case-table .benchmark-col-elapsed,
+.evaluation-case-table .benchmark-col-tools {
+  width: 12.4%;
 }
 
 .benchmark-history-modal-card,
@@ -702,8 +746,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .benchmark-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
   .benchmark-form-grid,
-  .benchmark-profile-list {
+  .benchmark-summary-head,
+  .benchmark-summary-metrics,
+  .benchmark-summary-meta {
     grid-template-columns: minmax(0, 1fr);
   }
 }

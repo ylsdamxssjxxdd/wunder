@@ -11,7 +11,6 @@ const RUN_POLL_INTERVAL_MS = 2500;
 const benchmarkState = {
   initialized: false,
   refs: null,
-  profiles: [],
   presetAgents: [],
   banks: [],
   selectedBankKey: "builtin@1",
@@ -20,7 +19,6 @@ const benchmarkState = {
   activeStatus: "idle",
   viewRunId: "",
   viewDetail: null,
-  selectedProfileId: "full",
   progress: { completedAttempts: 0, totalAttempts: 0, currentTaskId: "", hint: "" },
   refreshTimer: null,
   elapsedTimer: null,
@@ -35,6 +33,18 @@ const benchmarkState = {
 
 function isFinishedStatus(status) {
   return ["finished", "cancelled", "error", "failed"].includes(String(status || "").trim().toLowerCase());
+}
+
+function formatRunStatus(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  return {
+    idle: "空闲",
+    running: "运行中",
+    finished: "已完成",
+    cancelled: "已取消",
+    error: "异常",
+    failed: "失败",
+  }[normalized] || String(status || "-");
 }
 
 function getControllableRunId() {
@@ -221,8 +231,8 @@ function cacheRefs() {
     exportBtn: panel.querySelector("#benchmarkExportBtn"),
     statusIndicator: panel.querySelector("#benchmarkStatusIndicator"),
     userId: panel.querySelector("#benchmarkUserId"),
-    profileList: panel.querySelector("#benchmarkProfileList"),
     bankSelect: panel.querySelector("#benchmarkBankSelect"),
+    bankMeta: panel.querySelector("#benchmarkBankMeta"),
     presetAgentSelect: panel.querySelector("#benchmarkPresetAgentSelect"),
     modelSelect: panel.querySelector("#benchmarkModelSelect"),
     judgeModelSelect: panel.querySelector("#benchmarkJudgeModelSelect"),
@@ -390,7 +400,8 @@ function selectedQuestionBank() {
 }
 
 function renderQuestionBankOptions() {
-  const select = benchmarkState.refs?.bankSelect;
+  const refs = benchmarkState.refs;
+  const select = refs?.bankSelect;
   if (!select) {
     return;
   }
@@ -405,57 +416,12 @@ function renderQuestionBankOptions() {
     benchmarkState.selectedBankKey = questionBankKey(benchmarkState.banks[0]);
   }
   select.value = benchmarkState.selectedBankKey;
-}
-
-function renderProfileOptions() {
-  const list = benchmarkState.refs?.profileList;
-  if (!list) {
-    return;
+  const bank = selectedQuestionBank();
+  if (refs?.bankMeta) {
+    const version = String(bank?.version || "-").trim() || "-";
+    const taskCount = Number(bank?.task_count) || 0;
+    refs.bankMeta.textContent = `版本 ${version} · ${taskCount} 题 · 将运行该题库全部可用题目`;
   }
-  list.textContent = "";
-  const profiles = benchmarkState.profiles.length
-    ? benchmarkState.profiles
-    : [
-        { id: "full", name: "Full Suite", task_count: 0, recommended_runs: 2 },
-      ];
-  const fallback = profiles.find((profile) => profile.default)?.id || profiles[0]?.id || "full";
-  if (!profiles.some((profile) => profile.id === benchmarkState.selectedProfileId)) {
-    benchmarkState.selectedProfileId = fallback;
-  }
-  profiles.forEach((profile) => {
-    const profileId = String(profile.id || "");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "benchmark-profile-option";
-    button.dataset.profileId = profileId;
-    button.classList.toggle("is-active", profileId === benchmarkState.selectedProfileId);
-    const taskText = Number(profile.task_count) > 0 ? `${profile.task_count} 题` : "自动题集";
-    const runsText = Number(profile.recommended_runs) > 0 ? `${profile.recommended_runs} 轮` : "推荐轮次";
-    button.innerHTML = `
-      <strong>${formatProfileName(profileId, profile.name)}</strong>
-      <span>${taskText} · ${runsText}</span>
-      <small>${formatProfileDescription(profileId, profile.description)}</small>
-    `;
-    list.appendChild(button);
-  });
-}
-
-function formatProfileName(profileId, fallback) {
-  return {
-    quick: "全量",
-    core: "全量",
-    standard: "全量",
-    full: "全量",
-  }[profileId] || fallback || profileId || "-";
-}
-
-function formatProfileDescription(profileId, fallback) {
-  return {
-    quick: "历史档位已归一为全量题库",
-    core: "历史档位已归一为全量题库",
-    standard: "历史档位已归一为全量题库",
-    full: "运行全部可用题目，适合发布前确认和模型对比",
-  }[profileId] || fallback || "";
 }
 
 function renderHistory() {
@@ -475,7 +441,7 @@ function renderHistory() {
     }
     row.innerHTML = `
       <td>${formatDateTime(Number(run.started_time))}</td>
-      <td><span class="benchmark-status-pill" data-status="${run.status || "idle"}">${run.status || "-"}</span></td>
+      <td><span class="benchmark-status-pill" data-status="${escapeHtml(run.status || "idle")}">${escapeHtml(formatRunStatus(run.status))}</span></td>
       <td>${formatScore(run.total_score)}</td>
       <td>${escapeHtml(formatRunTarget(run))}</td>
       <td class="benchmark-row-actions">
@@ -557,7 +523,7 @@ function clearDetail() {
   }
 
   if (refs.summaryText) {
-    refs.summaryText.textContent = "暂无运行。WunderBench 将运行全量题库。";
+    refs.summaryText.textContent = "暂无运行。请选择题库并配置评测目标。";
   }
   refs.progressFill.style.width = "0%";
   refs.progressText.textContent = "0 / 0";
@@ -605,15 +571,18 @@ function renderAttempts(attempts) {
 
   attempts.forEach((attempt) => {
     const key = buildAttemptKey(attempt);
+    const taskId = String(attempt.task_id || "-");
+    const taskName = String(attempt.name || taskId);
+    const status = String(attempt.status || "idle");
     const row = document.createElement("tr");
     row.dataset.attemptKey = key;
     if (key === benchmarkState.selectedAttemptKey) {
       row.classList.add("is-active");
     }
     row.innerHTML = `
-      <td>${attempt.task_id || "-"}</td>
-      <td>${attempt.attempt_no || "-"}</td>
-      <td><span class="benchmark-status-pill" data-status="${attempt.status || "idle"}">${attempt.status || "-"}</span></td>
+      <td title="${escapeHtml(taskId)}">${escapeHtml(taskName)}</td>
+      <td>${escapeHtml(attempt.attempt_no || "-")}</td>
+      <td><span class="benchmark-status-pill" data-status="${escapeHtml(status)}">${escapeHtml(formatRunStatus(status))}</span></td>
       <td>${formatScore(attempt.final_score)}</td>
       <td>${formatDuration(Number(attempt.elapsed_s))}</td>
       <td>${Array.isArray(attempt.tool_calls) ? attempt.tool_calls.length : 0}</td>
@@ -628,25 +597,44 @@ function formatRunTarget(run) {
   return agentName ? `${agentName} · ${modelName}` : modelName;
 }
 
-function buildSummaryText(run = {}, summary = {}, scorecard = {}, efficiency = {}, attempts = []) {
+function buildSummaryMarkup(run = {}, summary = {}, scorecard = {}, efficiency = {}, attempts = []) {
   const weakestSuites = Array.isArray(scorecard.weakest_suites) ? scorecard.weakest_suites : [];
   const topFailures = Array.isArray(scorecard.top_failures) ? scorecard.top_failures : [];
-  const lines = [
-    `Run ID：${run.run_id || "-"}`,
-    `档位：${formatProfileName(String(run.profile || summary.profile || ""), run.profile || summary.profile)}`,
-    `被测目标：${formatRunTarget(run)}`,
-    `状态：${run.status || "-"}    开始：${formatDateTime(Number(run.started_time))}    耗时：${formatDuration(Number(run.elapsed_s))}`,
-    `总分：${formatScore(run.total_score ?? summary.total_score)}    结论：${formatReadiness(scorecard.readiness)}`,
-    `可靠性：${formatPercentScore(scorecard.reliability_score)}    工具成功率：${formatPercentScore(scorecard.tool_success_score)}    稳定性：${formatPercentScore(scorecard.stability_score)}    效率：${formatPercentScore(scorecard.efficiency_score)}`,
-    `上下文 Token：${formatContextTokens(efficiency.total_context_tokens)}    任务：${Number(summary.task_count || run.task_count || 0)}    Attempt：${attempts.length || Number(summary.attempt_count || run.attempt_count || 0)}`,
+  const status = String(run.status || "idle").trim().toLowerCase() || "idle";
+  const taskCount = Number(summary.task_count || run.task_count || 0);
+  const attemptCount = attempts.length || Number(summary.attempt_count || run.attempt_count || 0);
+  const metrics = [
+    ["可靠性", formatPercentScore(scorecard.reliability_score)],
+    ["工具成功率", formatPercentScore(scorecard.tool_success_score)],
+    ["稳定性", formatPercentScore(scorecard.stability_score)],
+    ["效率", formatPercentScore(scorecard.efficiency_score)],
   ];
+  const metadata = [
+    ["运行 ID", run.run_id || "-"],
+    ["评测目标", formatRunTarget(run)],
+    ["开始时间", formatDateTime(Number(run.started_time))],
+    ["耗时", formatDuration(Number(run.elapsed_s))],
+    ["任务 / Attempt", `${taskCount} / ${attemptCount}`],
+    ["上下文 Token", formatContextTokens(efficiency.total_context_tokens)],
+  ];
+  const details = [];
   if (weakestSuites.length) {
-    lines.push(`薄弱任务组：${weakestSuites.map((item) => `${item.suite || "-"} ${formatScore(item.mean_score)}`).join(" / ")}`);
+    details.push(["薄弱任务组", weakestSuites.map((item) => `${item.suite || "-"} ${formatScore(item.mean_score)}`).join(" / ")]);
   }
   if (topFailures.length) {
-    lines.push(`需复查任务：${topFailures.map((item) => `${item.task_id || "-"} ${formatScore(item.score)}`).join(" / ")}`);
+    details.push(["需复查任务", topFailures.map((item) => `${item.task_id || "-"} ${formatScore(item.score)}`).join(" / ")]);
   }
-  return lines.join("\n");
+  const item = ([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+  return `
+    <div class="benchmark-summary-head">
+      <div><span>当前状态</span><span class="benchmark-status-pill" data-status="${escapeHtml(status)}">${escapeHtml(formatRunStatus(run.status))}</span></div>
+      <div><span>总分</span><strong>${escapeHtml(formatScore(run.total_score ?? summary.total_score))}</strong></div>
+      <div><span>结论</span><strong>${escapeHtml(formatReadiness(scorecard.readiness))}</strong></div>
+    </div>
+    <div class="benchmark-summary-metrics">${metrics.map(item).join("")}</div>
+    <div class="benchmark-summary-meta">${metadata.map(item).join("")}</div>
+    ${details.length ? `<div class="benchmark-summary-details">${details.map(item).join("")}</div>` : ""}
+  `;
 }
 
 function renderRunDetail(detail) {
@@ -668,7 +656,7 @@ function renderRunDetail(detail) {
   const ratio = totalAttempts > 0 ? Math.min(1, completedAttempts / totalAttempts) : 0;
 
   if (refs.summaryText) {
-    refs.summaryText.textContent = buildSummaryText(run, summary, scorecard, efficiency, attempts);
+    refs.summaryText.innerHTML = buildSummaryMarkup(run, summary, scorecard, efficiency, attempts);
   }
   refs.progressFill.style.width = `${Math.round(ratio * 100)}%`;
   refs.progressText.textContent = `${completedAttempts} / ${totalAttempts || attempts.length}`;
@@ -699,7 +687,7 @@ function refreshElapsedClock() {
       ...currentRun,
       elapsed_s: Math.max(0, Date.now() / 1000 - Number(currentRun.started_time)),
     };
-    benchmarkState.refs.summaryText.textContent = buildSummaryText(
+    benchmarkState.refs.summaryText.innerHTML = buildSummaryMarkup(
       displayRun,
       summary,
       summary.scorecard || {},
@@ -737,14 +725,7 @@ async function loadCatalog() {
   renderQuestionBankOptions();
   renderPresetAgentOptions();
   const bank = selectedQuestionBank();
-  const params = bank?.id && bank.id !== "builtin"
-    ? `?question_bank_id=${encodeURIComponent(bank.id)}&question_bank_version=${encodeURIComponent(bank.version || "")}`
-    : "";
-  const payload = await fetchJson(`/admin/wunderbench/profiles${params}`);
-  benchmarkState.profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
-
   benchmarkState.catalogLoaded = true;
-  renderProfileOptions();
   updatePrimaryAction();
   setFormStatus(`已加载题库：${bank?.name || "内置题库"}`);
 }
@@ -1025,17 +1006,6 @@ function bindEvents() {
     loadCatalog().catch((error) => setFormStatus(error.message || "加载题库失败"));
   });
 
-  refs.profileList?.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("button[data-profile-id]") : null;
-    if (!button) {
-      return;
-    }
-    benchmarkState.selectedProfileId = String(button.dataset.profileId || "full") || "full";
-    renderProfileOptions();
-    const selected = benchmarkState.profiles.find((profile) => profile.id === benchmarkState.selectedProfileId);
-    setFormStatus(`当前档位：${formatProfileName(benchmarkState.selectedProfileId, selected?.name)}`);
-  });
-
   refs.historyBody?.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const button = target?.closest("button[data-action]");
@@ -1109,12 +1079,11 @@ export async function initEvaluationPanel() {
 
   bindEvents();
   renderModelOptions();
-  renderProfileOptions();
   clearDetail();
   updateIndicator(benchmarkState.activeStatus);
   updatePrimaryAction();
   updateExportAction();
-  setFormStatus("正在加载评测档位...");
+  setFormStatus("正在加载题库与评测配置...");
 
   try {
     await Promise.all([loadCatalog(), loadHistory()]);
